@@ -403,7 +403,7 @@ void main() {
     immutable float maxDist = 50.0f;
     immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
 
-    enum DragMode { None, Orbit, Zoom, Pan }
+    enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd }
     DragMode dragMode = DragMode.None;
     int lastMouseX, lastMouseY;
 
@@ -442,20 +442,13 @@ void main() {
                         if      (ctrl && alt)  dragMode = DragMode.Zoom;
                         else if (alt && shift) dragMode = DragMode.Pan;
                         else if (alt)          dragMode = DragMode.Orbit;
-                        else {
-                            // Vertex selection
-                            if (hoveredVertex >= 0) {
-                                if (shift) {
-                                    // Shift+click: toggle without clearing others
-                                    selected[hoveredVertex] = !selected[hoveredVertex];
-                                } else {
-                                    // Plain click: exclusive select
-                                    selected[] = false;
-                                    selected[hoveredVertex] = true;
-                                }
-                            } else if (!shift) {
-                                selected[] = false;  // click empty = clear
-                            }
+                        else if (shift) {
+                            // Shift: рисуем добавление к выделению
+                            dragMode = DragMode.SelectAdd;
+                        } else {
+                            // Без модификаторов: сбрасываем выделение и рисуем новое
+                            selected[] = false;
+                            dragMode = DragMode.Select;
                         }
                         lastMouseX = event.button.x;
                         lastMouseY = event.button.y;
@@ -463,8 +456,12 @@ void main() {
                     break;
 
                 case SDL_MOUSEBUTTONUP:
-                    if (event.button.button == SDL_BUTTON_LEFT)
+                    if (event.button.button == SDL_BUTTON_LEFT) {
+                        // Если отпустили без наведения на вершину в режиме Select — сброс
+                        if (dragMode == DragMode.Select && hoveredVertex < 0)
+                            selected[] = false;
                         dragMode = DragMode.None;
+                    }
                     break;
 
                 case SDL_MOUSEMOTION:
@@ -569,8 +566,8 @@ void main() {
             ImGui.TextDisabled("Alt+drag        orbit");
             ImGui.TextDisabled("Alt+Shift+drag  pan");
             ImGui.TextDisabled("Ctrl+Alt+drag   zoom");
-            ImGui.TextDisabled("LMB             select");
-            ImGui.TextDisabled("Shift+LMB       multi-select");
+            ImGui.TextDisabled("LMB / drag      select");
+            ImGui.TextDisabled("Shift+LMB/drag  add to select");
         }
         ImGui.End();
         ImGui.Render();
@@ -586,7 +583,10 @@ void main() {
 
         // ---- Vertex picking (reads depth buffer written above) ----
         hoveredVertex = -1;
-        if (!io.WantCaptureMouse && dragMode == DragMode.None) {
+        bool doingCameraDrag = (dragMode == DragMode.Orbit ||
+                                dragMode == DragMode.Zoom  ||
+                                dragMode == DragMode.Pan);
+        if (!io.WantCaptureMouse && !doingCameraDrag) {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
             float closest = 3.0f;  // pixel radius
@@ -597,11 +597,10 @@ void main() {
                                      sx, sy, ndcZ))
                     continue;
 
-                // Visibility: compare projected depth with depth buffer
                 float expectedDepth = ndcZ * 0.5f + 0.5f;
                 float bufDepth      = readDepth(WIN_W, WIN_H, fbW, fbH, sx, sy);
                 if (expectedDepth > bufDepth + 0.01f)
-                    continue;  // occluded by geometry
+                    continue;  // occluded
 
                 float dx = sx - mx;
                 float dy = sy - my;
@@ -610,6 +609,13 @@ void main() {
                     closest       = d;
                     hoveredVertex = cast(int)i;
                 }
+            }
+
+            // Paint selection: пока кнопка зажата, добавляем hovered-вершину
+            if (hoveredVertex >= 0 &&
+                (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd))
+            {
+                selected[hoveredVertex] = true;
             }
         }
 
