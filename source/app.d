@@ -123,6 +123,21 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
     return depth;
 }
 
+// Closest distance from point (px,py) to segment (ax,ay)-(bx,by).
+// t is the interpolation parameter [0..1] of the closest point on segment.
+float closestOnSegment2D(float px, float py,
+                          float ax, float ay, float bx, float by,
+                          out float t) {
+    float dx = bx - ax, dy = by - ay;
+    float len2 = dx*dx + dy*dy;
+    if (len2 < 1e-6f) { t = 0.0f; return sqrt((px-ax)*(px-ax)+(py-ay)*(py-ay)); }
+    t = ((px-ax)*dx + (py-ay)*dy) / len2;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float cx = ax + t*dx, cy = ay + t*dy;
+    return sqrt((px-cx)*(px-cx) + (py-cy)*(py-cy));
+}
+
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -240,18 +255,42 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
-    // Draw faces + edges (writes depth buffer)
-    void draw(GLuint program, GLint locColor) {
+    // Draw faces only (writes depth buffer)
+    void drawFaces(GLuint program, GLint locColor) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glUniform3f(locColor, 0.25f, 0.45f, 0.75f);
         glBindVertexArray(faceVao);
         glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
         glDisable(GL_POLYGON_OFFSET_FILL);
+        glBindVertexArray(0);
+    }
 
-        glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
+    // Draw edges with optional hover/selection highlights.
+    // hoveredEdge = -1 means no hover; selectedEdges may be shorter than edgeCount.
+    void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges) {
+        int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
-        glDrawArrays(GL_LINES, 0, edgeVertCount);
+
+        // Default gray edges (skip hovered and selected)
+        glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
+        foreach (i; 0 .. edgeCount) {
+            if (i == hoveredEdge) continue;
+            if (i < cast(int)selectedEdges.length && selectedEdges[i]) continue;
+            glDrawArrays(GL_LINES, i * 2, 2);
+        }
+
+        // Selected edges — orange
+        glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
+        foreach (i; 0 .. cast(int)selectedEdges.length)
+            if (selectedEdges[i] && i != hoveredEdge)
+                glDrawArrays(GL_LINES, i * 2, 2);
+
+        // Hovered edge — yellow (drawn last = on top)
+        if (hoveredEdge >= 0 && hoveredEdge < edgeCount) {
+            glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
+            glDrawArrays(GL_LINES, hoveredEdge * 2, 2);
+        }
 
         glBindVertexArray(0);
     }
@@ -389,10 +428,15 @@ void main() {
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
-    // Selection state
+    // Selection state — vertices
     int    hoveredVertex = -1;
     bool[] selected;
     selected.length = mesh.vertices.length;
+
+    // Selection state — edges
+    int    hoveredEdge = -1;
+    bool[] selectedEdges;
+    selectedEdges.length = mesh.edges.length;
 
     // Camera
     float azimuth   =  0.5f;
@@ -405,6 +449,9 @@ void main() {
 
     enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
     DragMode dragMode = DragMode.None;
+
+    enum EditMode { Vertices, Edges, Polygons }
+    EditMode editMode = EditMode.Vertices;
     int lastMouseX, lastMouseY;
 
     bool running = true;
@@ -428,8 +475,13 @@ void main() {
                     break;
 
                 case SDL_KEYDOWN:
-                    if (event.key.keysym.sym == SDLK_ESCAPE)
-                        running = false;
+                    switch (event.key.keysym.sym) {
+                        case SDLK_ESCAPE: running = false;              break;
+                        case SDLK_1:      editMode = EditMode.Vertices;  break;
+                        case SDLK_2:      editMode = EditMode.Edges;     break;
+                        case SDLK_3:      editMode = EditMode.Polygons;  break;
+                        default: break;
+                    }
                     break;
 
                 case SDL_MOUSEBUTTONDOWN:
@@ -445,8 +497,11 @@ void main() {
                         else if (ctrl)         dragMode = DragMode.SelectRemove;
                         else if (shift)        dragMode = DragMode.SelectAdd;
                         else {
-                            // Без модификаторов: сбрасываем выделение и рисуем новое
-                            selected[] = false;
+                            // No modifiers: clear selection for current mode
+                            if (editMode == EditMode.Vertices)
+                                selected[] = false;
+                            else if (editMode == EditMode.Edges)
+                                selectedEdges[] = false;
                             dragMode = DragMode.Select;
                         }
                         lastMouseX = event.button.x;
@@ -520,6 +575,8 @@ void main() {
 
         int selCount;
         foreach (s; selected) if (s) selCount++;
+        int selEdgeCount;
+        foreach (s; selectedEdges) if (s) selEdgeCount++;
 
         ImGui.SetNextWindowPos(ImVec2(10, 10), ImGuiCond.Always);
         ImGui.SetNextWindowSize(ImVec2(230, 0), ImGuiCond.Always);
@@ -528,29 +585,58 @@ void main() {
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
+            // Edit mode selector
+            ImGui.Text("Edit Mode");
+            int em = cast(int)editMode;
+            if (ImGui.RadioButton("Vertices [1]",  &em, 0)) editMode = EditMode.Vertices;
+            if (ImGui.RadioButton("Edges [2]",     &em, 1)) editMode = EditMode.Edges;
+            if (ImGui.RadioButton("Polygons [3]",  &em, 2)) editMode = EditMode.Polygons;
+
+            ImGui.Separator();
             ImGui.LabelText("Vertices", "%d", cast(int)mesh.vertices.length);
             ImGui.LabelText("Edges",    "%d", cast(int)mesh.edges.length);
             ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
 
             ImGui.Separator();
             ImGui.Text("Selection");
-            if (hoveredVertex >= 0)
-                ImGui.LabelText("Hover", "v%d  (%.2f, %.2f, %.2f)",
-                    hoveredVertex,
-                    cast(double)mesh.vertices[hoveredVertex].x,
-                    cast(double)mesh.vertices[hoveredVertex].y,
-                    cast(double)mesh.vertices[hoveredVertex].z);
-            else
-                ImGui.LabelText("Hover", "—");
-            ImGui.LabelText("Selected", "%d", selCount);
-            if (selCount > 0) {
-                foreach (i; 0 .. selected.length) {
-                    if (!selected[i]) continue;
-                    ImGui.Text("  v%d  (%.2f, %.2f, %.2f)",
-                        cast(int)i,
-                        cast(double)mesh.vertices[i].x,
-                        cast(double)mesh.vertices[i].y,
-                        cast(double)mesh.vertices[i].z);
+
+            if (editMode == EditMode.Vertices) {
+                if (hoveredVertex >= 0)
+                    ImGui.LabelText("Hover", "v%d  (%.2f, %.2f, %.2f)",
+                        hoveredVertex,
+                        cast(double)mesh.vertices[hoveredVertex].x,
+                        cast(double)mesh.vertices[hoveredVertex].y,
+                        cast(double)mesh.vertices[hoveredVertex].z);
+                else
+                    ImGui.LabelText("Hover", "—");
+                ImGui.LabelText("Selected", "%d", selCount);
+                if (selCount > 0) {
+                    foreach (i; 0 .. selected.length) {
+                        if (!selected[i]) continue;
+                        ImGui.Text("  v%d  (%.2f, %.2f, %.2f)",
+                            cast(int)i,
+                            cast(double)mesh.vertices[i].x,
+                            cast(double)mesh.vertices[i].y,
+                            cast(double)mesh.vertices[i].z);
+                    }
+                }
+            } else if (editMode == EditMode.Edges) {
+                if (hoveredEdge >= 0)
+                    ImGui.LabelText("Hover", "e%d  v%d-v%d",
+                        hoveredEdge,
+                        cast(int)mesh.edges[hoveredEdge][0],
+                        cast(int)mesh.edges[hoveredEdge][1]);
+                else
+                    ImGui.LabelText("Hover", "—");
+                ImGui.LabelText("Selected", "%d", selEdgeCount);
+                if (selEdgeCount > 0) {
+                    foreach (i; 0 .. selectedEdges.length) {
+                        if (!selectedEdges[i]) continue;
+                        ImGui.Text("  e%d  v%d-v%d",
+                            cast(int)i,
+                            cast(int)mesh.edges[i][0],
+                            cast(int)mesh.edges[i][1]);
+                    }
                 }
             }
 
@@ -578,14 +664,19 @@ void main() {
         glUseProgram(program);
         glUniformMatrix4fv(locView, 1, GL_FALSE, view.ptr);
         glUniformMatrix4fv(locProj, 1, GL_FALSE, proj.ptr);
-        gpu.draw(program, locColor);
 
-        // ---- Vertex picking (reads depth buffer written above) ----
-        hoveredVertex = -1;
+        // Draw faces — writes depth buffer
+        gpu.drawFaces(program, locColor);
+
         bool doingCameraDrag = (dragMode == DragMode.Orbit ||
                                 dragMode == DragMode.Zoom  ||
                                 dragMode == DragMode.Pan);
-        if (!io.WantCaptureMouse && !doingCameraDrag) {
+
+        // ---- Vertex picking (EditMode.Vertices only) ----
+        hoveredVertex = -1;
+        if (!io.WantCaptureMouse && !doingCameraDrag &&
+            editMode == EditMode.Vertices)
+        {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
             float closest = 3.0f;  // pixel radius
@@ -610,7 +701,6 @@ void main() {
                 }
             }
 
-            // Paint selection / deselection
             if (hoveredVertex >= 0) {
                 if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
                     selected[hoveredVertex] = true;
@@ -619,8 +709,60 @@ void main() {
             }
         }
 
-        // ---- Vertex dots (hover + selection highlight) ----
-        gpu.drawVertices(locColor, hoveredVertex, selected);
+        // ---- Edge picking (EditMode.Edges only) ----
+        hoveredEdge = -1;
+        if (!io.WantCaptureMouse && !doingCameraDrag &&
+            editMode == EditMode.Edges)
+        {
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            float closest = 4.0f;  // pixel radius for edges
+
+            foreach (i; 0 .. mesh.edges.length) {
+                uint a = mesh.edges[i][0], b = mesh.edges[i][1];
+                float sax, say, ndcZa, sbx, sby, ndcZb;
+                if (!projectToWindow(mesh.vertices[a], view, proj, WIN_W, WIN_H,
+                                     sax, say, ndcZa))
+                    continue;
+                if (!projectToWindow(mesh.vertices[b], view, proj, WIN_W, WIN_H,
+                                     sbx, sby, ndcZb))
+                    continue;
+
+                float t;
+                float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                             sax, say, sbx, sby, t);
+                if (d >= closest) continue;
+
+                // Check occlusion at the closest point on the projected segment
+                float cpx = sax + t * (sbx - sax);
+                float cpy = say + t * (sby - say);
+                float ndcZ = ndcZa + t * (ndcZb - ndcZa);
+                float expectedDepth = ndcZ * 0.5f + 0.5f;
+                float bufDepth = readDepth(WIN_W, WIN_H, fbW, fbH, cpx, cpy);
+                if (expectedDepth > bufDepth + 0.01f)
+                    continue;  // occluded by a face
+
+                closest    = d;
+                hoveredEdge = cast(int)i;
+            }
+
+            if (hoveredEdge >= 0) {
+                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                    selectedEdges[hoveredEdge] = true;
+                else if (dragMode == DragMode.SelectRemove)
+                    selectedEdges[hoveredEdge] = false;
+            }
+        }
+
+        // ---- Draw edges (with highlights in Edges mode) ----
+        if (editMode == EditMode.Edges)
+            gpu.drawEdges(locColor, hoveredEdge, selectedEdges);
+        else
+            gpu.drawEdges(locColor, -1, []);
+
+        // ---- Vertex dots (EditMode.Vertices only) ----
+        if (editMode == EditMode.Vertices)
+            gpu.drawVertices(locColor, hoveredVertex, selected);
 
         // ---- ImGui draw ----
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
