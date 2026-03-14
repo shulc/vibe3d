@@ -527,6 +527,9 @@ void main() {
                         case SDLK_1:      editMode = EditMode.Vertices;  break;
                         case SDLK_2:      editMode = EditMode.Edges;     break;
                         case SDLK_3:      editMode = EditMode.Polygons;  break;
+                        case SDLK_SPACE:
+                            editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
+                            break;
                         default: break;
                     }
                     break;
