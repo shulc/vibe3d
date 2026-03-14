@@ -123,6 +123,18 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
     return depth;
 }
 
+// 2D point-in-polygon test (ray casting, works for convex and concave polygons).
+bool pointInPolygon2D(float px, float py, float[] xs, float[] ys) {
+    int n = cast(int)xs.length;
+    bool inside = false;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        if (((ys[i] > py) != (ys[j] > py)) &&
+            (px < (xs[j] - xs[i]) * (py - ys[i]) / (ys[j] - ys[i]) + xs[i]))
+            inside = !inside;
+    }
+    return inside;
+}
+
 // Closest distance from point (px,py) to segment (ax,ay)-(bx,by).
 // t is the interpolation parameter [0..1] of the closest point on segment.
 float closestOnSegment2D(float px, float py,
@@ -196,6 +208,8 @@ struct GpuMesh {
     int    faceVertCount;
     int    edgeVertCount;
     int    vertCount;
+    int[]  faceTriStart;   // first vertex index in faceVbo for each face
+    int[]  faceTriCount;   // vertex count for each face
 
     void init() {
         glGenVertexArrays(1, &faceVao); glGenBuffers(1, &faceVbo);
@@ -210,16 +224,23 @@ struct GpuMesh {
     }
 
     void upload(ref const Mesh mesh) {
-        // Faces (fan triangulation)
+        // Faces (fan triangulation) — track per-face offsets
         float[] faceData;
+        faceTriStart.length = 0;
+        faceTriCount.length = 0;
         foreach (face; mesh.faces) {
-            if (face.length < 3) continue;
-            for (uint i = 1; i + 1 < face.length; i++) {
-                foreach (idx; [face[0], face[i], face[i+1]]) {
-                    Vec3 v = mesh.vertices[idx];
-                    faceData ~= [v.x, v.y, v.z];
+            int start = cast(int)(faceData.length / 3);
+            if (face.length >= 3) {
+                for (uint i = 1; i + 1 < face.length; i++) {
+                    foreach (idx; [face[0], face[i], face[i+1]]) {
+                        Vec3 v = mesh.vertices[idx];
+                        faceData ~= [v.x, v.y, v.z];
+                    }
                 }
             }
+            int count = cast(int)(faceData.length / 3) - start;
+            faceTriStart ~= start;
+            faceTriCount  ~= count;
         }
         faceVertCount = cast(int)(faceData.length / 3);
         glBindVertexArray(faceVao);
@@ -262,6 +283,27 @@ struct GpuMesh {
         glUniform3f(locColor, 0.25f, 0.45f, 0.75f);
         glBindVertexArray(faceVao);
         glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glBindVertexArray(0);
+    }
+
+    // Draw faces with per-face hover/selection highlights (Polygons mode).
+    void drawFacesHighlighted(GLuint program, GLint locColor,
+                               int hoveredFace, const bool[] selectedFaces) {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(1.0f, 1.0f);
+        glBindVertexArray(faceVao);
+        foreach (i; 0 .. cast(int)faceTriStart.length) {
+            bool sel = i < cast(int)selectedFaces.length && selectedFaces[i];
+            bool hov = (i == hoveredFace);
+            if (hov)
+                glUniform3f(locColor, 1.0f, 0.95f, 0.15f);   // yellow
+            else if (sel)
+                glUniform3f(locColor, 1.0f, 0.5f, 0.1f);     // orange
+            else
+                glUniform3f(locColor, 0.25f, 0.45f, 0.75f);  // default blue
+            glDrawArrays(GL_TRIANGLES, faceTriStart[i], faceTriCount[i]);
+        }
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindVertexArray(0);
     }
@@ -438,6 +480,11 @@ void main() {
     bool[] selectedEdges;
     selectedEdges.length = mesh.edges.length;
 
+    // Selection state — faces
+    int    hoveredFace = -1;
+    bool[] selectedFaces;
+    selectedFaces.length = mesh.faces.length;
+
     // Camera
     float azimuth   =  0.5f;
     float elevation =  0.4f;
@@ -502,6 +549,8 @@ void main() {
                                 selected[] = false;
                             else if (editMode == EditMode.Edges)
                                 selectedEdges[] = false;
+                            else if (editMode == EditMode.Polygons)
+                                selectedFaces[] = false;
                             dragMode = DragMode.Select;
                         }
                         lastMouseX = event.button.x;
@@ -577,6 +626,8 @@ void main() {
         foreach (s; selected) if (s) selCount++;
         int selEdgeCount;
         foreach (s; selectedEdges) if (s) selEdgeCount++;
+        int selFaceCount;
+        foreach (s; selectedFaces) if (s) selFaceCount++;
 
         ImGui.SetNextWindowPos(ImVec2(10, 10), ImGuiCond.Always);
         ImGui.SetNextWindowSize(ImVec2(230, 0), ImGuiCond.Always);
@@ -638,6 +689,22 @@ void main() {
                             cast(int)mesh.edges[i][1]);
                     }
                 }
+            } else if (editMode == EditMode.Polygons) {
+                if (hoveredFace >= 0)
+                    ImGui.LabelText("Hover", "f%d  (%d verts)",
+                        hoveredFace,
+                        cast(int)mesh.faces[hoveredFace].length);
+                else
+                    ImGui.LabelText("Hover", "—");
+                ImGui.LabelText("Selected", "%d", selFaceCount);
+                if (selFaceCount > 0) {
+                    foreach (i; 0 .. selectedFaces.length) {
+                        if (!selectedFaces[i]) continue;
+                        ImGui.Text("  f%d  (%d verts)",
+                            cast(int)i,
+                            cast(int)mesh.faces[i].length);
+                    }
+                }
             }
 
             ImGui.Separator();
@@ -665,8 +732,11 @@ void main() {
         glUniformMatrix4fv(locView, 1, GL_FALSE, view.ptr);
         glUniformMatrix4fv(locProj, 1, GL_FALSE, proj.ptr);
 
-        // Draw faces — writes depth buffer
-        gpu.drawFaces(program, locColor);
+        // Draw faces — writes depth buffer (with per-face highlights in Polygons mode)
+        if (editMode == EditMode.Polygons)
+            gpu.drawFacesHighlighted(program, locColor, hoveredFace, selectedFaces);
+        else
+            gpu.drawFaces(program, locColor);
 
         bool doingCameraDrag = (dragMode == DragMode.Orbit ||
                                 dragMode == DragMode.Zoom  ||
@@ -751,6 +821,51 @@ void main() {
                     selectedEdges[hoveredEdge] = true;
                 else if (dragMode == DragMode.SelectRemove)
                     selectedEdges[hoveredEdge] = false;
+            }
+        }
+
+        // ---- Face picking (EditMode.Polygons only) ----
+        hoveredFace = -1;
+        if (!io.WantCaptureMouse && !doingCameraDrag &&
+            editMode == EditMode.Polygons)
+        {
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            float bestZ = float.infinity;
+
+            foreach (fi; 0 .. mesh.faces.length) {
+                uint[] face = mesh.faces[fi];
+                if (face.length < 3) continue;
+
+                float[] sxs, sys, ndcZs;
+                bool allOk = true;
+                foreach (vi; face) {
+                    float sx, sy, ndcZ;
+                    if (!projectToWindow(mesh.vertices[vi], view, proj, WIN_W, WIN_H,
+                                        sx, sy, ndcZ)) { allOk = false; break; }
+                    sxs ~= sx; sys ~= sy; ndcZs ~= ndcZ;
+                }
+                if (!allOk) continue;
+                if (!pointInPolygon2D(cast(float)mx, cast(float)my, sxs, sys)) continue;
+
+                // Occlusion check at screen centroid
+                float cx = 0, cy = 0, cZ = 0;
+                foreach (k; 0 .. sxs.length) { cx += sxs[k]; cy += sys[k]; cZ += ndcZs[k]; }
+                int n = cast(int)sxs.length;
+                cx /= n; cy /= n; cZ /= n;
+                float expectedDepth = cZ * 0.5f + 0.5f;
+                float bufDepth = readDepth(WIN_W, WIN_H, fbW, fbH, cx, cy);
+                if (expectedDepth > bufDepth + 0.02f) continue;
+
+                // Pick face closest to camera
+                if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
+            }
+
+            if (hoveredFace >= 0) {
+                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                    selectedFaces[hoveredFace] = true;
+                else if (dragMode == DragMode.SelectRemove)
+                    selectedFaces[hoveredFace] = false;
             }
         }
 
