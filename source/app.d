@@ -403,7 +403,7 @@ void main() {
     immutable float maxDist = 50.0f;
     immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
 
-    enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd }
+    enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
     DragMode dragMode = DragMode.None;
     int lastMouseX, lastMouseY;
 
@@ -442,10 +442,9 @@ void main() {
                         if      (ctrl && alt)  dragMode = DragMode.Zoom;
                         else if (alt && shift) dragMode = DragMode.Pan;
                         else if (alt)          dragMode = DragMode.Orbit;
-                        else if (shift) {
-                            // Shift: рисуем добавление к выделению
-                            dragMode = DragMode.SelectAdd;
-                        } else {
+                        else if (ctrl)         dragMode = DragMode.SelectRemove;
+                        else if (shift)        dragMode = DragMode.SelectAdd;
+                        else {
                             // Без модификаторов: сбрасываем выделение и рисуем новое
                             selected[] = false;
                             dragMode = DragMode.Select;
@@ -456,12 +455,8 @@ void main() {
                     break;
 
                 case SDL_MOUSEBUTTONUP:
-                    if (event.button.button == SDL_BUTTON_LEFT) {
-                        // Если отпустили без наведения на вершину в режиме Select — сброс
-                        if (dragMode == DragMode.Select && hoveredVertex < 0)
-                            selected[] = false;
+                    if (event.button.button == SDL_BUTTON_LEFT)
                         dragMode = DragMode.None;
-                    }
                     break;
 
                 case SDL_MOUSEMOTION:
@@ -472,9 +467,12 @@ void main() {
                         bool alt   = (mods & KMOD_ALT)   != 0;
                         bool shift = (mods & KMOD_SHIFT)  != 0;
 
-                        bool modOk = (dragMode == DragMode.Zoom)  ? (ctrl && alt)
-                                   : (dragMode == DragMode.Pan)   ? (alt && shift)
-                                   : (dragMode == DragMode.Orbit) ? (alt && !shift)
+                        bool modOk = (dragMode == DragMode.Zoom)      ? (ctrl && alt)
+                                   : (dragMode == DragMode.Pan)       ? (alt && shift)
+                                   : (dragMode == DragMode.Orbit)     ? (alt && !shift)
+                                   : (dragMode == DragMode.Select    ||
+                                      dragMode == DragMode.SelectAdd  ||
+                                      dragMode == DragMode.SelectRemove) ? true
                                    : false;
                         if (!modOk) { dragMode = DragMode.None; break; }
 
@@ -490,7 +488,7 @@ void main() {
                             distance -= dx * 0.01f * distance;
                             if (distance < minDist) distance = minDist;
                             if (distance > maxDist) distance = maxDist;
-                        } else {
+                        } else if (dragMode == DragMode.Pan) {
                             Vec3 off     = sphericalToCartesian(azimuth, elevation, distance);
                             Vec3 forward = normalize(Vec3(-off.x, -off.y, -off.z));
                             Vec3 right   = normalize(cross(forward, Vec3(0, 1, 0)));
@@ -566,8 +564,9 @@ void main() {
             ImGui.TextDisabled("Alt+drag        orbit");
             ImGui.TextDisabled("Alt+Shift+drag  pan");
             ImGui.TextDisabled("Ctrl+Alt+drag   zoom");
-            ImGui.TextDisabled("LMB / drag      select");
-            ImGui.TextDisabled("Shift+LMB/drag  add to select");
+            ImGui.TextDisabled("LMB / drag       select");
+            ImGui.TextDisabled("Shift+LMB/drag   add to select");
+            ImGui.TextDisabled("Ctrl+LMB/drag    remove from select");
         }
         ImGui.End();
         ImGui.Render();
@@ -611,11 +610,12 @@ void main() {
                 }
             }
 
-            // Paint selection: пока кнопка зажата, добавляем hovered-вершину
-            if (hoveredVertex >= 0 &&
-                (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd))
-            {
-                selected[hoveredVertex] = true;
+            // Paint selection / deselection
+            if (hoveredVertex >= 0) {
+                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                    selected[hoveredVertex] = true;
+                else if (dragMode == DragMode.SelectRemove)
+                    selected[hoveredVertex] = false;
             }
         }
 
