@@ -4,6 +4,11 @@ import std.string : toStringz;
 import std.stdio : writeln, writefln;
 import std.math : tan, sin, cos, sqrt, PI;
 
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+import imgui_impl_sdl2;
+import imgui_impl_opengl3;
+
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -308,6 +313,20 @@ void main() {
     SDL_GL_SetSwapInterval(1);
     glEnable(GL_DEPTH_TEST);
 
+    // --- Dear ImGui setup ---
+    IMGUI_CHECKVERSION();
+    ImGui.CreateContext();
+    ImGuiIO* io = &ImGui.GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+    ImGui.StyleColorsDark();
+    ImGui_ImplSDL2_Init(window);
+    imgui_impl_opengl3.ImGui_ImplOpenGL3_Init("#version 330 core");
+    scope(exit) {
+        imgui_impl_opengl3.ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplSDL2_Shutdown();
+        ImGui.DestroyContext();
+    }
+
     GLuint program  = createProgram();
     scope(exit) glDeleteProgram(program);
 
@@ -343,6 +362,14 @@ void main() {
 
     while (running) {
         while (SDL_PollEvent(&event)) {
+            ImGui_ImplSDL2_ProcessEvent(&event);
+            // Не передавать ввод в камеру, если ImGui захватывает его
+            if (io.WantCaptureMouse &&
+                (event.type == SDL_MOUSEBUTTONDOWN ||
+                 event.type == SDL_MOUSEBUTTONUP   ||
+                 event.type == SDL_MOUSEMOTION      ||
+                 event.type == SDL_MOUSEWHEEL))
+                continue;
             switch (event.type) {
                 case SDL_QUIT:
                     running = false;
@@ -417,6 +444,38 @@ void main() {
             }
         }
 
+        // --- ImGui frame ---
+        imgui_impl_opengl3.ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui.NewFrame();
+
+        ImGui.SetNextWindowPos(ImVec2(10, 10), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(ImVec2(220, 0), ImGuiCond.Always);
+        if (ImGui.Begin("Mesh Info",  null,
+                        ImGuiWindowFlags.NoResize |
+                        ImGuiWindowFlags.NoMove   |
+                        ImGuiWindowFlags.NoCollapse))
+        {
+            ImGui.LabelText("Vertices", "%d", cast(int)mesh.vertices.length);
+            ImGui.LabelText("Edges",    "%d", cast(int)mesh.edges.length);
+            ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
+
+            ImGui.Separator();
+            ImGui.Text("Camera");
+            ImGui.LabelText("Distance",  "%.2f",   distance);
+            ImGui.LabelText("Azimuth",   "%.1f deg", cast(double)(azimuth   * 180.0f / PI));
+            ImGui.LabelText("Elevation", "%.1f deg", cast(double)(elevation * 180.0f / PI));
+
+            ImGui.Separator();
+            ImGui.TextDisabled("Alt+drag        orbit");
+            ImGui.TextDisabled("Alt+Shift+drag  pan");
+            ImGui.TextDisabled("Ctrl+Alt+drag   zoom");
+        }
+        ImGui.End();
+
+        ImGui.Render();
+
+        // --- 3D scene ---
         glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -430,6 +489,9 @@ void main() {
         glUniformMatrix4fv(locProj, 1, GL_FALSE, proj.ptr);
 
         gpu.draw(program, locColor);
+
+        // --- ImGui render (поверх 3D) ---
+        imgui_impl_opengl3.ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
 
         SDL_GL_SwapWindow(window);
     }
