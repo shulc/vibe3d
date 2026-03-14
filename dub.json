@@ -1,0 +1,13 @@
+{
+    "name": "gl_triangle",
+    "description": "OpenGL triangle in D",
+    "authors": ["user"],
+    "license": "MIT",
+    "dependencies": {
+        "bindbc-sdl": "~>1.4",
+        "bindbc-opengl": "~>1.1"
+    },
+    "versions": ["SDL_2020", "GL33"],
+    "sourcePaths": ["source"],
+    "mainSourceFile": "source/app.d"
+}
