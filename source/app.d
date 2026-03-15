@@ -16,10 +16,11 @@ import imgui_impl_opengl3;
 immutable string vertexShaderSrc = q{
     #version 330 core
     layout(location = 0) in vec3 aPos;
+    uniform mat4 u_model;
     uniform mat4 u_view;
     uniform mat4 u_proj;
     void main() {
-        gl_Position = u_proj * u_view * vec4(aPos, 1.0);
+        gl_Position = u_proj * u_view * u_model * vec4(aPos, 1.0);
     }
 };
 
@@ -51,6 +52,22 @@ Vec3 cross(Vec3 a, Vec3 b) {
     return Vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
 }
 float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+
+immutable float[16] identityMatrix = [
+    1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1,
+];
+
+// Build a column-major model matrix from a local frame + scale + translation.
+// Columns are: right*scale.x, up*scale.y, fwd*scale.z, translation.
+float[16] modelMatrix(Vec3 right, Vec3 up, Vec3 fwd,
+                      Vec3 scale, Vec3 translate) {
+    return [
+        right.x*scale.x, right.y*scale.x, right.z*scale.x, 0,
+        up.x   *scale.y, up.y   *scale.y, up.z   *scale.y, 0,
+        fwd.x  *scale.z, fwd.y  *scale.z, fwd.z  *scale.z, 0,
+        translate.x,     translate.y,     translate.z,      1,
+    ];
+}
 
 // Column-major 4x4 * Vec4
 Vec4 mulMV(const ref float[16] m, Vec4 v) {
@@ -365,6 +382,426 @@ struct GpuMesh {
 }
 
 // ---------------------------------------------------------------------------
+// Enums shared across tools and main
+// ---------------------------------------------------------------------------
+
+enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
+enum EditMode { Vertices, Edges, Polygons }
+
+// ---------------------------------------------------------------------------
+// Handler — base class for interactive 3-D overlays (gizmos, manipulators…)
+// ---------------------------------------------------------------------------
+
+class Handler {
+    // Called once per frame to render the overlay into the 3-D view.
+    // view / proj are the current camera matrices; winW/winH are window dims.
+    void draw(GLuint program, GLint locColor,
+              const ref float[16] view, const ref float[16] proj,
+              int winW, int winH) {}
+
+    // Mouse events — return true to consume (stops further processing).
+    bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
+    bool onMouseButtonUp  (ref const SDL_MouseButtonEvent e) { return false; }
+    bool onMouseMotion    (ref const SDL_MouseMotionEvent  e) { return false; }
+
+    // Keyboard events — return true to consume.
+    bool onKeyDown(ref const SDL_KeyboardEvent e) { return false; }
+    bool onKeyUp  (ref const SDL_KeyboardEvent e) { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// Arrow : Handler
+// Unit shaft  — line  (0,0,0)→(0,0,1)  along +Z
+// Unit cone   — tip at Z=1, base at Z=0, radius=1
+// Both are created once; draw() transforms them via u_model.
+// ---------------------------------------------------------------------------
+
+class Arrow : Handler {
+    Vec3 start;
+    Vec3 end;
+    Vec3 color;
+
+private:
+    GLuint shaftVao, shaftVbo;
+    GLuint headVao,  headVbo;
+    int    headVertCount;
+    bool   hovered;
+
+    enum CONE_SEGS = 16;
+
+public:
+    this(Vec3 start, Vec3 end, Vec3 color) {
+        this.start = start;
+        this.end   = end;
+        this.color = color;
+
+        // ---- Unit shaft: (0,0,0) → (0,0,1) ----
+        float[6] shaftData = [0,0,0,  0,0,1];
+        glGenVertexArrays(1, &shaftVao); glGenBuffers(1, &shaftVbo);
+        glBindVertexArray(shaftVao);
+        glBindBuffer(GL_ARRAY_BUFFER, shaftVbo);
+        glBufferData(GL_ARRAY_BUFFER, shaftData.sizeof, shaftData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        // ---- Unit cone: tip (0,0,1), base circle at Z=0, radius=1 ----
+        float[] coneData;
+        foreach (i; 0 .. CONE_SEGS) {
+            float a0 = 2*PI *  i      / CONE_SEGS;
+            float a1 = 2*PI * (i + 1) / CONE_SEGS;
+            float c0 = cos(a0), s0 = sin(a0);
+            float c1 = cos(a1), s1 = sin(a1);
+            // Side face
+            coneData ~= [0f,0f,1f,  c0,s0,0f,  c1,s1,0f];
+            // Base cap (inward winding)
+            coneData ~= [0f,0f,0f,  c1,s1,0f,  c0,s0,0f];
+        }
+        headVertCount = cast(int)(coneData.length / 3);
+
+        glGenVertexArrays(1, &headVao); glGenBuffers(1, &headVbo);
+        glBindVertexArray(headVao);
+        glBindBuffer(GL_ARRAY_BUFFER, headVbo);
+        glBufferData(GL_ARRAY_BUFFER, coneData.length * float.sizeof,
+                     coneData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindVertexArray(0);
+    }
+
+    void destroy() {
+        glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
+        glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
+    }
+
+    bool isHovered() const { return hovered; }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        Vec3 dir = vec3Sub(end, start);
+        float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+        if (len < 1e-6f) return;
+        Vec3 fwd = Vec3(dir.x/len, dir.y/len, dir.z/len);
+
+        // Local frame (right, up perpendicular to fwd)
+        Vec3 tmp   = (abs(fwd.x) < 0.9f) ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        float coneLen    = len * 0.25f;
+        float coneRadius = len * 0.05f;
+        float shaftLen   = len - coneLen;
+        Vec3  coneBase   = vec3Sub(end, vec3Scale(fwd, coneLen));
+
+        updateHover(view, proj, winW, winH);
+        Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
+
+        GLint locModel = glGetUniformLocation(program, "u_model");
+        glUniform3f(locColor, c.x, c.y, c.z);
+
+        glDisable(GL_DEPTH_TEST);
+
+        // ---- Draw shaft ----
+        auto shaftModel = modelMatrix(right, up, fwd,
+                                      Vec3(1, 1, shaftLen), start);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, shaftModel.ptr);
+        glBindVertexArray(shaftVao);
+        glDrawArrays(GL_LINES, 0, 2);
+
+        // ---- Draw cone head ----
+        auto headModel = modelMatrix(right, up, fwd,
+                                     Vec3(coneRadius, coneRadius, coneLen), coneBase);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, headModel.ptr);
+        glBindVertexArray(headVao);
+        glDrawArrays(GL_TRIANGLES, 0, headVertCount);
+
+        glBindVertexArray(0);
+        glEnable(GL_DEPTH_TEST);
+        // Restore identity so subsequent draws are unaffected
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
+
+private:
+    void updateHover(const ref float[16] view, const ref float[16] proj,
+                     int winW, int winH)
+    {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        float sax, say, ndcZa, sbx, sby, ndcZb;
+        if (!projectToWindow(start, view, proj, winW, winH, sax, say, ndcZa) ||
+            !projectToWindow(end,   view, proj, winW, winH, sbx, sby, ndcZb))
+        {
+            hovered = false;
+            return;
+        }
+        float t;
+        hovered = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                     sax, say, sbx, sby, t) < 8.0f;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MoveHandler : Handler — three axis arrows (X=red, Y=green, Z=blue)
+// ---------------------------------------------------------------------------
+
+class MoveHandler : Handler {
+    Vec3  center;
+    float screenFraction = 0.15f;  // gizmo size as fraction of eye-to-center distance
+    Arrow arrowX, arrowY, arrowZ;
+
+    this(Vec3 center) {
+        this.center = center;
+        arrowX = new Arrow(center, vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY = new Arrow(center, vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ = new Arrow(center, vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+    }
+
+    void destroy() {
+        arrowX.destroy();
+        arrowY.destroy();
+        arrowZ.destroy();
+    }
+
+    void setPosition(Vec3 pos) {
+        center = pos;
+    }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        // Extract eye position from view matrix (view = R*T, eye = -R^T * t).
+        Vec3 eye = Vec3(
+            -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
+            -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
+            -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]),
+        );
+
+        Vec3  d    = vec3Sub(eye, center);
+        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+        float size = dist * screenFraction;
+
+        arrowX.start = center; arrowX.end = vec3Add(center, Vec3(size, 0,    0   ));
+        arrowY.start = center; arrowY.end = vec3Add(center, Vec3(0,    size, 0   ));
+        arrowZ.start = center; arrowZ.end = vec3Add(center, Vec3(0,    0,    size));
+
+        arrowX.draw(program, locColor, view, proj, winW, winH);
+        arrowY.draw(program, locColor, view, proj, winW, winH);
+        arrowZ.draw(program, locColor, view, proj, winW, winH);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        return arrowX.onMouseButtonDown(e) ||
+               arrowY.onMouseButtonDown(e) ||
+               arrowZ.onMouseButtonDown(e);
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        return arrowX.onMouseButtonUp(e) ||
+               arrowY.onMouseButtonUp(e) ||
+               arrowZ.onMouseButtonUp(e);
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        return arrowX.onMouseMotion(e) ||
+               arrowY.onMouseMotion(e) ||
+               arrowZ.onMouseMotion(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MoveTool : Tool — shows MoveHandler at selection/mesh center
+// ---------------------------------------------------------------------------
+
+class MoveTool : Tool {
+    MoveHandler handler;
+    bool        active;
+
+private:
+    Mesh*     mesh;
+    bool[]*   selected;
+    GpuMesh*  gpu;
+    EditMode* editMode;
+
+    int       dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
+    int       lastMX, lastMY;
+    float[16] cachedView;
+    float[16] cachedProj;
+    int       cachedWinW, cachedWinH;
+
+public:
+    this(Mesh* mesh, bool[]* selected, GpuMesh* gpu, EditMode* editMode) {
+        this.mesh     = mesh;
+        this.selected = selected;
+        this.gpu      = gpu;
+        this.editMode = editMode;
+        handler = new MoveHandler(Vec3(0, 0, 0));
+    }
+
+    void destroy() { handler.destroy(); }
+
+    override string name() const { return "Move"; }
+    override void activate()   { active = true;              }
+    override void deactivate() { active = false; dragAxis = -1; }
+
+    // Recompute gizmo center from current selection / mesh state.
+    void update() {
+        if (!active) return;
+        Vec3 sum   = Vec3(0, 0, 0);
+        int  count = 0;
+        if (*editMode == EditMode.Vertices) {
+            bool anySelected = false;
+            foreach (s; *selected) if (s) { anySelected = true; break; }
+            foreach (i, v; mesh.vertices) {
+                if (!anySelected || (i < (*selected).length && (*selected)[i])) {
+                    sum = vec3Add(sum, v);
+                    count++;
+                }
+            }
+        }
+        handler.setPosition(count > 0
+            ? Vec3(sum.x / count, sum.y / count, sum.z / count)
+            : Vec3(0, 0, 0));
+    }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        if (!active) return;
+        cachedView = view;
+        cachedProj = proj;
+        cachedWinW = winW;
+        cachedWinH = winH;
+        handler.draw(program, locColor, view, proj, winW, winH);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        // Fresh hit-test at the actual click position — do not rely on the
+        // previous-frame hover state (click and hover-enter can arrive in the
+        // same event-poll iteration, before draw() has a chance to update it).
+        dragAxis = hitTestAxes(e.x, e.y);
+        if (dragAxis < 0) return false;
+        lastMX = e.x;
+        lastMY = e.y;
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
+        dragAxis = -1;
+        return true;
+    }
+
+    // Returns 0/1/2 for X/Y/Z if (mx,my) is within 8 px of that arrow, else -1.
+    private int hitTestAxes(int mx, int my) {
+        Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        foreach (i, arrow; arrows) {
+            float sax, say, ndcZa, sbx, sby, ndcZb;
+            if (!projectToWindow(arrow.start, cachedView, cachedProj,
+                                 cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
+            if (!projectToWindow(arrow.end,   cachedView, cachedProj,
+                                 cachedWinW, cachedWinH, sbx, sby, ndcZb)) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   sax, say, sbx, sby, t) < 8.0f)
+                return cast(int)i;
+        }
+        return -1;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        if (!active || dragAxis == -1) return false;
+
+        // Axis direction in world space
+        Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
+                  : dragAxis == 1 ? Vec3(0,1,0)
+                                  : Vec3(0,0,1);
+
+        // Project center and center+axis to screen to get pixels-per-world-unit
+        Vec3  center = handler.center;
+        float cx, cy, cndcZ, ax_, ay_, andcZ;
+        if (!projectToWindow(center, cachedView, cachedProj,
+                             cachedWinW, cachedWinH, cx, cy, cndcZ))
+        { lastMX = e.x; lastMY = e.y; return true; }
+        if (!projectToWindow(vec3Add(center, axis), cachedView, cachedProj,
+                             cachedWinW, cachedWinH, ax_, ay_, andcZ))
+        { lastMX = e.x; lastMY = e.y; return true; }
+
+        float sdx   = ax_ - cx;
+        float sdy   = ay_ - cy;
+        float slen2 = sdx*sdx + sdy*sdy;
+        if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
+
+        // Project mouse delta onto screen-space axis → world delta
+        float worldDelta = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
+
+        // Move selected vertices (or all if nothing selected)
+        bool anySelected = false;
+        foreach (s; *selected) if (s) { anySelected = true; break; }
+        foreach (i; 0 .. mesh.vertices.length) {
+            if (anySelected && !(i < (*selected).length && (*selected)[i]))
+                continue;
+            mesh.vertices[i].x += axis.x * worldDelta;
+            mesh.vertices[i].y += axis.y * worldDelta;
+            mesh.vertices[i].z += axis.z * worldDelta;
+        }
+
+        gpu.upload(*mesh);
+        update();   // recompute gizmo center
+
+        lastMX = e.x;
+        lastMY = e.y;
+        return true;
+    }
+
+    override void drawImGui() {
+        bool wasActive = active;
+        if (wasActive)
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+        if (ImGui.Button("Move [W]"))
+            active = !active;
+        if (wasActive)
+            ImGui.PopStyleColor();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tool — base class for all editing tools
+// ---------------------------------------------------------------------------
+
+class Tool {
+    // Human-readable name shown in the UI.
+    string name() const { return "Tool"; }
+
+    // Called when the tool becomes the active tool.
+    void activate() {}
+
+    // Called when another tool becomes active.
+    void deactivate() {}
+
+    // SDL event handlers.
+    // Return true to mark the event as consumed (stops further processing).
+    bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
+    bool onMouseButtonUp  (ref const SDL_MouseButtonEvent e) { return false; }
+    bool onMouseMotion    (ref const SDL_MouseMotionEvent  e) { return false; }
+    bool onKeyDown        (ref const SDL_KeyboardEvent     e) { return false; }
+    bool onKeyUp          (ref const SDL_KeyboardEvent     e) { return false; }
+
+    // Called once per frame after the 3-D geometry has been drawn.
+    // Override to render tool-specific overlays (gizmos, highlights, etc.).
+    void draw(GLuint program, GLint locColor,
+              const ref float[16] view, const ref float[16] proj,
+              int winW, int winH) {}
+
+    // Called once per frame inside the ImGui window to append tool UI.
+    void drawImGui() {}
+}
+
+// ---------------------------------------------------------------------------
 // Shader helpers
 // ---------------------------------------------------------------------------
 
@@ -457,6 +894,7 @@ void main() {
 
     GLuint program = createProgram();
     scope(exit) glDeleteProgram(program);
+    GLint locModel = glGetUniformLocation(program, "u_model");
     GLint locView  = glGetUniformLocation(program, "u_view");
     GLint locProj  = glGetUniformLocation(program, "u_proj");
     GLint locColor = glGetUniformLocation(program, "u_color");
@@ -494,11 +932,11 @@ void main() {
     immutable float maxDist = 50.0f;
     immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
 
-    enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
     DragMode dragMode = DragMode.None;
-
-    enum EditMode { Vertices, Edges, Polygons }
     EditMode editMode = EditMode.Vertices;
+
+    auto moveTool = new MoveTool(&mesh, &selected, &gpu, &editMode);
+    scope(exit) moveTool.destroy();
     int lastMouseX, lastMouseY;
 
     bool running = true;
@@ -528,13 +966,21 @@ void main() {
                         case SDLK_2:      editMode = EditMode.Edges;     break;
                         case SDLK_3:      editMode = EditMode.Polygons;  break;
                         case SDLK_SPACE:
-                            editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
+                            if (moveTool.active)
+                                moveTool.deactivate();
+                            else
+                                editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
+                            break;
+                        case SDLK_w:
+                            if (moveTool.active) moveTool.deactivate();
+                            else                 moveTool.activate();
                             break;
                         default: break;
                     }
                     break;
 
                 case SDL_MOUSEBUTTONDOWN:
+                    if (moveTool.onMouseButtonDown(event.button)) break;
                     if (event.button.button == SDL_BUTTON_LEFT) {
                         SDL_Keymod mods = SDL_GetModState();
                         bool ctrl  = (mods & KMOD_CTRL)  != 0;
@@ -544,9 +990,9 @@ void main() {
                         if      (ctrl && alt)  dragMode = DragMode.Zoom;
                         else if (alt && shift) dragMode = DragMode.Pan;
                         else if (alt)          dragMode = DragMode.Orbit;
-                        else if (ctrl)         dragMode = DragMode.SelectRemove;
-                        else if (shift)        dragMode = DragMode.SelectAdd;
-                        else {
+                        else if (ctrl && !moveTool.active)  dragMode = DragMode.SelectRemove;
+                        else if (shift && !moveTool.active) dragMode = DragMode.SelectAdd;
+                        else if (!moveTool.active) {
                             // No modifiers: clear selection for current mode
                             if (editMode == EditMode.Vertices)
                                 selected[] = false;
@@ -562,11 +1008,13 @@ void main() {
                     break;
 
                 case SDL_MOUSEBUTTONUP:
+                    moveTool.onMouseButtonUp(event.button);
                     if (event.button.button == SDL_BUTTON_LEFT)
                         dragMode = DragMode.None;
                     break;
 
                 case SDL_MOUSEMOTION:
+                    if (moveTool.onMouseMotion(event.motion)) break;
                     if (dragMode == DragMode.None) break;
                     {
                         SDL_Keymod mods = SDL_GetModState();
@@ -652,6 +1100,10 @@ void main() {
             ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
 
             ImGui.Separator();
+            ImGui.Text("Tools");
+            moveTool.drawImGui();
+
+            ImGui.Separator();
             ImGui.Text("Selection");
 
             if (editMode == EditMode.Vertices) {
@@ -732,8 +1184,9 @@ void main() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(program);
-        glUniformMatrix4fv(locView, 1, GL_FALSE, view.ptr);
-        glUniformMatrix4fv(locProj, 1, GL_FALSE, proj.ptr);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
 
         // Draw faces — writes depth buffer (with per-face highlights in Polygons mode)
         if (editMode == EditMode.Polygons)
@@ -748,7 +1201,7 @@ void main() {
         // ---- Vertex picking (EditMode.Vertices only) ----
         hoveredVertex = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Vertices)
+            editMode == EditMode.Vertices && !moveTool.active)
         {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
@@ -785,7 +1238,7 @@ void main() {
         // ---- Edge picking (EditMode.Edges only) ----
         hoveredEdge = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Edges)
+            editMode == EditMode.Edges && !moveTool.active)
         {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
@@ -830,7 +1283,7 @@ void main() {
         // ---- Face picking (EditMode.Polygons only) ----
         hoveredFace = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Polygons)
+            editMode == EditMode.Polygons && !moveTool.active)
         {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
@@ -881,6 +1334,10 @@ void main() {
         // ---- Vertex dots (EditMode.Vertices only) ----
         if (editMode == EditMode.Vertices)
             gpu.drawVertices(locColor, hoveredVertex, selected);
+
+        // ---- Active tool ----
+        moveTool.update();
+        moveTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
 
         // ---- ImGui draw ----
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
