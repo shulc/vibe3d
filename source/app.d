@@ -426,6 +426,7 @@ private:
     GLuint headVao,  headVbo;
     int    headVertCount;
     bool   hovered;
+    bool   forceHovered;
 
     enum CONE_SEGS = 16;
 
@@ -474,7 +475,8 @@ public:
         glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
     }
 
-    bool isHovered() const { return hovered; }
+    bool isHovered()  const { return hovered; }
+    void setForceHovered(bool v) { forceHovered = v; }
 
     override void draw(GLuint program, GLint locColor,
                        const ref float[16] view, const ref float[16] proj,
@@ -527,6 +529,7 @@ private:
     void updateHover(const ref float[16] view, const ref float[16] proj,
                      int winW, int winH)
     {
+        if (forceHovered) { hovered = true; return; }
         int mx, my;
         SDL_GetMouseState(&mx, &my);
         float sax, say, ndcZa, sbx, sby, ndcZb;
@@ -622,6 +625,7 @@ class MoveTool : Tool {
 private:
     Mesh*     mesh;
     bool[]*   selected;
+    bool[]*   selectedEdges;
     GpuMesh*  gpu;
     EditMode* editMode;
 
@@ -632,11 +636,13 @@ private:
     int       cachedWinW, cachedWinH;
 
 public:
-    this(Mesh* mesh, bool[]* selected, GpuMesh* gpu, EditMode* editMode) {
-        this.mesh     = mesh;
-        this.selected = selected;
-        this.gpu      = gpu;
-        this.editMode = editMode;
+    this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges,
+         GpuMesh* gpu, EditMode* editMode) {
+        this.mesh          = mesh;
+        this.selected      = selected;
+        this.selectedEdges = selectedEdges;
+        this.gpu           = gpu;
+        this.editMode      = editMode;
         handler = new MoveHandler(Vec3(0, 0, 0));
     }
 
@@ -660,6 +666,21 @@ public:
                     count++;
                 }
             }
+        } else if (*editMode == EditMode.Edges) {
+            bool anySelected = false;
+            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
+            bool[] visited = new bool[](mesh.vertices.length);
+            foreach (i, edge; mesh.edges) {
+                if (anySelected && !(i < (*selectedEdges).length && (*selectedEdges)[i]))
+                    continue;
+                foreach (vi; edge) {
+                    if (!visited[vi]) {
+                        sum = vec3Add(sum, mesh.vertices[vi]);
+                        count++;
+                        visited[vi] = true;
+                    }
+                }
+            }
         }
         handler.setPosition(count > 0
             ? Vec3(sum.x / count, sum.y / count, sum.z / count)
@@ -675,6 +696,12 @@ public:
         cachedProj = proj;
         cachedWinW = winW;
         cachedWinH = winH;
+
+        // Keep the active drag arrow yellow regardless of mouse position.
+        Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        foreach (i, arrow; arrows)
+            arrow.setForceHovered(dragAxis == cast(int)i);
+
         handler.draw(program, locColor, view, proj, winW, winH);
     }
 
@@ -739,12 +766,29 @@ public:
         // Project mouse delta onto screen-space axis → world delta
         float worldDelta = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
 
-        // Move selected vertices (or all if nothing selected)
-        bool anySelected = false;
-        foreach (s; *selected) if (s) { anySelected = true; break; }
+        // Determine which vertices to move based on edit mode + selection.
+        bool[] toMove = new bool[](mesh.vertices.length);
+        if (*editMode == EditMode.Vertices) {
+            bool anySelected = false;
+            foreach (s; *selected) if (s) { anySelected = true; break; }
+            foreach (i; 0 .. mesh.vertices.length)
+                toMove[i] = !anySelected || (i < (*selected).length && (*selected)[i]);
+        } else if (*editMode == EditMode.Edges) {
+            bool anySelected = false;
+            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
+            if (!anySelected) {
+                toMove[] = true;
+            } else {
+                foreach (i, edge; mesh.edges) {
+                    if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
+                        toMove[edge[0]] = true;
+                        toMove[edge[1]] = true;
+                    }
+                }
+            }
+        }
         foreach (i; 0 .. mesh.vertices.length) {
-            if (anySelected && !(i < (*selected).length && (*selected)[i]))
-                continue;
+            if (!toMove[i]) continue;
             mesh.vertices[i].x += axis.x * worldDelta;
             mesh.vertices[i].y += axis.y * worldDelta;
             mesh.vertices[i].z += axis.z * worldDelta;
@@ -935,7 +979,7 @@ void main() {
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
 
-    auto moveTool = new MoveTool(&mesh, &selected, &gpu, &editMode);
+    auto moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &gpu, &editMode);
     scope(exit) moveTool.destroy();
     int lastMouseX, lastMouseY;
 
