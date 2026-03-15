@@ -129,6 +129,24 @@ bool projectToWindow(Vec3 world,
     return true;
 }
 
+// Like projectToWindow but does NOT reject points outside the screen boundary.
+// Only rejects points behind the camera (w <= 0).
+// Use this for hit-testing line segments that may extend off-screen.
+bool projectToWindowFull(Vec3 world,
+                         const ref float[16] view, const ref float[16] proj,
+                         int winW, int winH,
+                         out float px, out float py, out float ndcZ) {
+    Vec4 vp = mulMV(view, Vec4(world.x, world.y, world.z, 1.0f));
+    Vec4 cp = mulMV(proj, vp);
+    if (cp.w <= 0.0f) return false;
+    float nx = cp.x / cp.w;
+    float ny = cp.y / cp.w;
+    ndcZ = cp.z / cp.w;
+    px = (nx * 0.5f + 0.5f)          * winW;
+    py = (1.0f - (ny * 0.5f + 0.5f)) * winH;
+    return true;
+}
+
 // Read depth buffer at window position (px, py),
 // accounting for HiDPI framebuffer scale.
 float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
@@ -427,6 +445,7 @@ private:
     int    headVertCount;
     bool   hovered;
     bool   forceHovered;
+    bool   hoverBlocked;
 
     enum CONE_SEGS = 16;
 
@@ -475,8 +494,9 @@ public:
         glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
     }
 
-    bool isHovered()  const { return hovered; }
-    void setForceHovered(bool v) { forceHovered = v; }
+    bool isHovered()    const { return hovered; }
+    void setForceHovered(bool v) { forceHovered  = v; }
+    void setHoverBlocked(bool v) { hoverBlocked  = v; }
 
     override void draw(GLuint program, GLint locColor,
                        const ref float[16] view, const ref float[16] proj,
@@ -529,12 +549,13 @@ private:
     void updateHover(const ref float[16] view, const ref float[16] proj,
                      int winW, int winH)
     {
-        if (forceHovered) { hovered = true; return; }
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
         int mx, my;
         SDL_GetMouseState(&mx, &my);
         float sax, say, ndcZa, sbx, sby, ndcZb;
-        if (!projectToWindow(start, view, proj, winW, winH, sax, say, ndcZa) ||
-            !projectToWindow(end,   view, proj, winW, winH, sbx, sby, ndcZb))
+        if (!projectToWindowFull(start, view, proj, winW, winH, sax, say, ndcZa) ||
+            !projectToWindowFull(end,   view, proj, winW, winH, sbx, sby, ndcZb))
         {
             hovered = false;
             return;
@@ -714,10 +735,13 @@ public:
         cachedWinW = winW;
         cachedWinH = winH;
 
-        // Keep the active drag arrow yellow regardless of mouse position.
+        // During drag: keep active arrow yellow, block hover on the other two.
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
-        foreach (i, arrow; arrows)
-            arrow.setForceHovered(dragAxis == cast(int)i);
+        foreach (i, arrow; arrows) {
+            bool isActive = (dragAxis == cast(int)i);
+            arrow.setForceHovered(isActive);
+            arrow.setHoverBlocked(dragAxis >= 0 && !isActive);
+        }
 
         handler.draw(program, locColor, view, proj, winW, winH);
     }
@@ -745,10 +769,10 @@ public:
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {
             float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindow(arrow.start, cachedView, cachedProj,
-                                 cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
-            if (!projectToWindow(arrow.end,   cachedView, cachedProj,
-                                 cachedWinW, cachedWinH, sbx, sby, ndcZb)) continue;
+            if (!projectToWindowFull(arrow.start, cachedView, cachedProj,
+                                     cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   cachedView, cachedProj,
+                                     cachedWinW, cachedWinH, sbx, sby, ndcZb)) continue;
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
                                    sax, say, sbx, sby, t) < 8.0f)
@@ -768,11 +792,11 @@ public:
         // Project center and center+axis to screen to get pixels-per-world-unit
         Vec3  center = handler.center;
         float cx, cy, cndcZ, ax_, ay_, andcZ;
-        if (!projectToWindow(center, cachedView, cachedProj,
-                             cachedWinW, cachedWinH, cx, cy, cndcZ))
+        if (!projectToWindowFull(center, cachedView, cachedProj,
+                                 cachedWinW, cachedWinH, cx, cy, cndcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
-        if (!projectToWindow(vec3Add(center, axis), cachedView, cachedProj,
-                             cachedWinW, cachedWinH, ax_, ay_, andcZ))
+        if (!projectToWindowFull(vec3Add(center, axis), cachedView, cachedProj,
+                                 cachedWinW, cachedWinH, ax_, ay_, andcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
 
         float sdx   = ax_ - cx;
