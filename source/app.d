@@ -626,6 +626,7 @@ private:
     Mesh*     mesh;
     bool[]*   selected;
     bool[]*   selectedEdges;
+    bool[]*   selectedFaces;
     GpuMesh*  gpu;
     EditMode* editMode;
 
@@ -636,11 +637,12 @@ private:
     int       cachedWinW, cachedWinH;
 
 public:
-    this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges,
+    this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
          GpuMesh* gpu, EditMode* editMode) {
         this.mesh          = mesh;
         this.selected      = selected;
         this.selectedEdges = selectedEdges;
+        this.selectedFaces = selectedFaces;
         this.gpu           = gpu;
         this.editMode      = editMode;
         handler = new MoveHandler(Vec3(0, 0, 0));
@@ -674,6 +676,21 @@ public:
                 if (anySelected && !(i < (*selectedEdges).length && (*selectedEdges)[i]))
                     continue;
                 foreach (vi; edge) {
+                    if (!visited[vi]) {
+                        sum = vec3Add(sum, mesh.vertices[vi]);
+                        count++;
+                        visited[vi] = true;
+                    }
+                }
+            }
+        } else if (*editMode == EditMode.Polygons) {
+            bool anySelected = false;
+            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
+            bool[] visited = new bool[](mesh.vertices.length);
+            foreach (i, face; mesh.faces) {
+                if (anySelected && !(i < (*selectedFaces).length && (*selectedFaces)[i]))
+                    continue;
+                foreach (vi; face) {
                     if (!visited[vi]) {
                         sum = vec3Add(sum, mesh.vertices[vi]);
                         count++;
@@ -783,6 +800,18 @@ public:
                     if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
                         toMove[edge[0]] = true;
                         toMove[edge[1]] = true;
+                    }
+                }
+            }
+        } else if (*editMode == EditMode.Polygons) {
+            bool anySelected = false;
+            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
+            if (!anySelected) {
+                toMove[] = true;
+            } else {
+                foreach (i, face; mesh.faces) {
+                    if (i < (*selectedFaces).length && (*selectedFaces)[i]) {
+                        foreach (vi; face) toMove[vi] = true;
                     }
                 }
             }
@@ -979,7 +1008,7 @@ void main() {
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
 
-    auto moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &gpu, &editMode);
+    auto moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
     scope(exit) moveTool.destroy();
     int lastMouseX, lastMouseY;
 
