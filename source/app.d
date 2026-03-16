@@ -1050,20 +1050,38 @@ void main() {
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
-    // Grid axis lines (X = pale red, Z = pale blue)
+    // Grid: lines on XZ plane + axis lines
     GLuint gridVao, gridVbo;
+    int    gridOnlyVertCount; // vertex count of plain grid lines (before axes)
     glGenVertexArrays(1, &gridVao);
     glGenBuffers(1, &gridVbo);
     scope(exit) { glDeleteVertexArrays(1, &gridVao); glDeleteBuffers(1, &gridVbo); }
     {
-        immutable float E = 100.0f;  // extent
-        float[12] gridVerts = [
-            -E, 0, 0,   E, 0, 0,   // X axis
-             0, 0,-E,   0, 0, E,   // Z axis
-        ];
+        immutable int   N = 50;   // grid half-extent in cells
+        immutable float F = cast(float)N;
+        float[] verts;
+
+        // Lines parallel to X axis (constant Z), skip Z=0 (that's the X axis)
+        foreach (z; -N .. N + 1) {
+            if (z == 0) continue;
+            float fz = cast(float)z;
+            verts ~= [-F, 0, fz,   F, 0, fz];
+        }
+        // Lines parallel to Z axis (constant X), skip X=0 (that's the Z axis)
+        foreach (x; -N .. N + 1) {
+            if (x == 0) continue;
+            float fx = cast(float)x;
+            verts ~= [fx, 0, -F,   fx, 0,  F];
+        }
+        gridOnlyVertCount = cast(int)(verts.length / 3);
+
+        // Axis lines appended last so they draw on top
+        verts ~= [-F, 0, 0,   F, 0, 0];   // X axis
+        verts ~= [ 0, 0,-F,   0, 0,  F];  // Z axis
+
         glBindVertexArray(gridVao);
         glBindBuffer(GL_ARRAY_BUFFER, gridVbo);
-        glBufferData(GL_ARRAY_BUFFER, gridVerts.sizeof, gridVerts.ptr, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, verts.length * float.sizeof, verts.ptr, GL_STATIC_DRAW);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
         glBindVertexArray(0);
@@ -1362,10 +1380,15 @@ void main() {
         glUniform2f(gridLocScreenSize, cast(float)fbW, cast(float)fbH);
 
         glBindVertexArray(gridVao);
+        // Grid lines — gray
+        glUniform3f(gridLocColor, 0.5f, 0.5f, 0.5f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        // X axis — pale red
         glUniform3f(gridLocColor, 0.5f, 0.15f, 0.15f);
-        glDrawArrays(GL_LINES, 0, 2);
+        glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
+        // Z axis — pale blue
         glUniform3f(gridLocColor, 0.15f, 0.15f, 0.5f);
-        glDrawArrays(GL_LINES, 2, 2);
+        glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
         glBindVertexArray(0);
 
         // glDepthMask(GL_TRUE);
