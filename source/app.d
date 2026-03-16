@@ -33,6 +33,41 @@ immutable string fragmentShaderSrc = q{
     }
 };
 
+// Grid shaders — vertex passes world pos, fragment computes fade alpha.
+immutable string gridVertSrc = q{
+    #version 330 core
+    layout(location = 0) in vec3 aPos;
+    uniform mat4 u_model;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    out vec3 vWorldPos;
+    void main() {
+        vWorldPos   = (u_model * vec4(aPos, 1.0)).xyz;
+        gl_Position = u_proj * u_view * vec4(vWorldPos, 1.0);
+    }
+};
+
+immutable string gridFragSrc = q{
+    #version 330 core
+    uniform vec3  u_color;
+    uniform float u_maxDist;    // world-space fade radius
+    uniform vec2  u_screenSize; // framebuffer size in pixels
+    in  vec3 vWorldPos;
+    out vec4 fragColor;
+    void main() {
+        // Distance fade: full opacity at origin, zero at u_maxDist
+        float dist      = length(vWorldPos.xz);
+        float distAlpha = 1.0 - smoothstep(0.0, u_maxDist, dist);
+
+        // Screen-edge fade (left / right only): min 10%
+        float sx        = gl_FragCoord.x / u_screenSize.x;
+        float edgeFade  = smoothstep(0.0, 0.15, sx) * smoothstep(1.0, 0.85, sx);
+        float edgeAlpha = mix(0.1, 1.0, edgeFade);
+
+        fragColor = vec4(u_color, distAlpha * edgeAlpha);
+    }
+};
+
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -315,7 +350,7 @@ struct GpuMesh {
     void drawFaces(GLuint program, GLint locColor) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
-        glUniform3f(locColor, 0.25f, 0.45f, 0.75f);
+        glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
         glBindVertexArray(faceVao);
         glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -332,11 +367,11 @@ struct GpuMesh {
             bool sel = i < cast(int)selectedFaces.length && selectedFaces[i];
             bool hov = (i == hoveredFace);
             if (hov)
-                glUniform3f(locColor, 1.0f, 0.95f, 0.15f);   // yellow
+                glUniform3f(locColor, 0.5f, 0.71f, 0.79f);
             else if (sel)
-                glUniform3f(locColor, 1.0f, 0.5f, 0.1f);     // orange
+                glUniform3f(locColor, 1.0f, 0.64f, 0.0f);     // orange
             else
-                glUniform3f(locColor, 0.25f, 0.45f, 0.75f);  // default blue
+                glUniform3f(locColor, 0.8f, 0.8f, 0.8f);  // default grey
             glDrawArrays(GL_TRIANGLES, faceTriStart[i], faceTriCount[i]);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -918,9 +953,10 @@ GLuint compileShader(GLenum type, string src) {
     return shader;
 }
 
-GLuint createProgram() {
-    GLuint vert = compileShader(GL_VERTEX_SHADER,   vertexShaderSrc);
-    GLuint frag = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSrc);
+GLuint createProgram(string vertSrc = vertexShaderSrc,
+                     string fragSrc = fragmentShaderSrc) {
+    GLuint vert = compileShader(GL_VERTEX_SHADER,   vertSrc);
+    GLuint frag = compileShader(GL_FRAGMENT_SHADER, fragSrc);
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
@@ -996,6 +1032,15 @@ void main() {
     GLint locProj  = glGetUniformLocation(program, "u_proj");
     GLint locColor = glGetUniformLocation(program, "u_color");
 
+    GLuint gridProgram = createProgram(gridVertSrc, gridFragSrc);
+    scope(exit) glDeleteProgram(gridProgram);
+    GLint gridLocModel      = glGetUniformLocation(gridProgram, "u_model");
+    GLint gridLocView       = glGetUniformLocation(gridProgram, "u_view");
+    GLint gridLocProj       = glGetUniformLocation(gridProgram, "u_proj");
+    GLint gridLocColor      = glGetUniformLocation(gridProgram, "u_color");
+    GLint gridLocMaxDist    = glGetUniformLocation(gridProgram, "u_maxDist");
+    GLint gridLocScreenSize = glGetUniformLocation(gridProgram, "u_screenSize");
+
     Mesh mesh = makeCube();
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
@@ -1004,6 +1049,25 @@ void main() {
     gpu.init();
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
+
+    // Grid axis lines (X = pale red, Z = pale blue)
+    GLuint gridVao, gridVbo;
+    glGenVertexArrays(1, &gridVao);
+    glGenBuffers(1, &gridVbo);
+    scope(exit) { glDeleteVertexArrays(1, &gridVao); glDeleteBuffers(1, &gridVbo); }
+    {
+        immutable float E = 100.0f;  // extent
+        float[12] gridVerts = [
+            -E, 0, 0,   E, 0, 0,   // X axis
+             0, 0,-E,   0, 0, E,   // Z axis
+        ];
+        glBindVertexArray(gridVao);
+        glBindBuffer(GL_ARRAY_BUFFER, gridVbo);
+        glBufferData(GL_ARRAY_BUFFER, gridVerts.sizeof, gridVerts.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+    }
 
     // Selection state — vertices
     int    hoveredVertex = -1;
@@ -1277,13 +1341,36 @@ void main() {
         ImGui.Render();
 
         // ---- 3D render ----
-        glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+        glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
+
+        // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // glDepthMask(GL_FALSE);
+
+        glUseProgram(gridProgram);
+        glUniformMatrix4fv(gridLocModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(gridLocView,  1, GL_FALSE, view.ptr);
+        glUniformMatrix4fv(gridLocProj,  1, GL_FALSE, proj.ptr);
+        glUniform1f(gridLocMaxDist,    distance * 2.0f);
+        glUniform2f(gridLocScreenSize, cast(float)fbW, cast(float)fbH);
+
+        glBindVertexArray(gridVao);
+        glUniform3f(gridLocColor, 0.5f, 0.15f, 0.15f);
+        glDrawArrays(GL_LINES, 0, 2);
+        glUniform3f(gridLocColor, 0.15f, 0.15f, 0.5f);
+        glDrawArrays(GL_LINES, 2, 2);
+        glBindVertexArray(0);
+
+        // glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glUseProgram(program);
 
         // Draw faces — writes depth buffer (with per-face highlights in Polygons mode)
         if (editMode == EditMode.Polygons)
