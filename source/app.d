@@ -481,6 +481,7 @@ private:
     bool   hovered;
     bool   forceHovered;
     bool   hoverBlocked;
+    bool   visible = true;
 
     enum CONE_SEGS = 16;
 
@@ -532,11 +533,14 @@ public:
     bool isHovered()    const { return hovered; }
     void setForceHovered(bool v) { forceHovered  = v; }
     void setHoverBlocked(bool v) { hoverBlocked  = v; }
+    void setVisible(bool v)      { visible = v; if (!v) hovered = false; }
+    bool isVisible() const       { return visible; }
 
     override void draw(GLuint program, GLint locColor,
                        const ref float[16] view, const ref float[16] proj,
                        int winW, int winH)
     {
+        if (!visible) return;
         Vec3 dir = vec3Sub(end, start);
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
         if (len < 1e-6f) return;
@@ -609,12 +613,13 @@ class MoveHandler : Handler {
     Vec3  center;
     float screenFraction = 0.15f;  // gizmo size as fraction of eye-to-center distance
     Arrow arrowX, arrowY, arrowZ;
+    Vec3 viewDir;
 
     this(Vec3 center) {
         this.center = center;
-        arrowX = new Arrow(center, vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY = new Arrow(center, vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ = new Arrow(center, vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+        arrowX = new Arrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY = new Arrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ = new Arrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
     }
 
     void destroy() {
@@ -642,9 +647,23 @@ class MoveHandler : Handler {
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         float size = dist * screenFraction;
 
-        arrowX.start = center; arrowX.end = vec3Add(center, Vec3(size, 0,    0   ));
-        arrowY.start = center; arrowY.end = vec3Add(center, Vec3(0,    size, 0   ));
-        arrowZ.start = center; arrowZ.end = vec3Add(center, Vec3(0,    0,    size));
+        arrowX.start = vec3Add(center, Vec3(size/10, 0,    0   ));;
+        arrowX.end = vec3Add(center, Vec3(size, 0,    0   ));
+        arrowY.start = vec3Add(center, Vec3(0,    size/10, 0   ));;
+        arrowY.end = vec3Add(center, Vec3(0,    size, 0   ));
+        arrowZ.start = vec3Add(center, Vec3(0,    0,    size/10));
+        arrowZ.end = vec3Add(center, Vec3(0,    0,    size));
+
+        // Hide arrows that point too directly toward/away from the camera.
+        // viewDir is the normalised vector from eye to center.
+        viewDir = dist > 1e-6f
+            ? Vec3(d.x / dist, d.y / dist, d.z / dist)  // eye→center direction (d = eye-center, flip)
+            : Vec3(0,0,1);
+        // d = eye - center, so viewDir (center→eye) = d/dist; axis dot with that.
+        enum float HIDE_THRESHOLD = 0.995f;
+        arrowX.setVisible(abs(viewDir.x) < HIDE_THRESHOLD);
+        arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
+        arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
         arrowX.draw(program, locColor, view, proj, winW, winH);
         arrowY.draw(program, locColor, view, proj, winW, winH);
@@ -772,10 +791,12 @@ public:
 
         // During drag: keep active arrow yellow, block hover on the other two.
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        bool isHovered = false;
         foreach (i, arrow; arrows) {
             bool isActive = (dragAxis == cast(int)i);
             arrow.setForceHovered(isActive);
-            arrow.setHoverBlocked(dragAxis >= 0 && !isActive);
+            arrow.setHoverBlocked(dragAxis >= 0 && !isActive || isHovered);
+            isHovered |= arrow.isHovered();
         }
 
         handler.draw(program, locColor, view, proj, winW, winH);
@@ -803,6 +824,7 @@ public:
     private int hitTestAxes(int mx, int my) {
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {
+            if (!arrow.isVisible()) continue;
             float sax, say, ndcZa, sbx, sby, ndcZb;
             if (!projectToWindowFull(arrow.start, cachedView, cachedProj,
                                      cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
@@ -898,6 +920,15 @@ public:
             active = !active;
         if (wasActive)
             ImGui.PopStyleColor();
+
+        if (active) {
+            ImGui.LabelText("viewDir.x", "%.8f",
+                cast(double)handler.viewDir.x);
+            ImGui.LabelText("viewDir.y", "%.8f",
+                cast(double)handler.viewDir.y);
+            ImGui.LabelText("viewDir.z", "%.8f",
+                cast(double)handler.viewDir.z);
+        }
     }
 }
 
