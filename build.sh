@@ -27,6 +27,8 @@ ldc2 \
   source/math.d \
   source/mesh.d \
   source/eventlog.d \
+  source/handler.d \
+  source/tool.d \
   $(find ${DUB_PKGS}/d_snprintf/${SNPRINTF}/d_snprintf/source -name "*.d") \
   $(find ${DUB_PKGS}/d_imgui/${DIMGUI}/d_imgui/source -name "*.d") \
   ${DUB_PKGS}/d_imgui/${DIMGUI}/d_imgui/backends_d/imgui_impl_opengl3.d \
