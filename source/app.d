@@ -292,10 +292,34 @@ void main(string[] args) {
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
 
-    auto moveTool  = new MoveTool (&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
-    scope(exit) moveTool.destroy();
-    auto scaleTool = new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
-    scope(exit) scaleTool.destroy();
+    // Tools are created lazily on first activation and kept alive until exit.
+    MoveTool  moveTool  = null;
+    ScaleTool scaleTool = null;
+    Tool      activeTool = null;
+
+    scope(exit) {
+        if (moveTool)  moveTool.destroy();
+        if (scaleTool) scaleTool.destroy();
+    }
+
+    void setActiveTool(Tool t) {
+        if (activeTool) activeTool.deactivate();
+        activeTool = t;
+        if (activeTool) activeTool.activate();
+    }
+
+    // Returns (creating lazily if needed) the MoveTool instance.
+    MoveTool getMoveTool() {
+        if (!moveTool)
+            moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
+        return moveTool;
+    }
+    ScaleTool getScaleTool() {
+        if (!scaleTool)
+            scaleTool = new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
+        return scaleTool;
+    }
+
     int lastMouseX, lastMouseY;
 
     bool running = true;
@@ -329,33 +353,27 @@ void main(string[] args) {
                         case SDLK_2:      editMode = EditMode.Edges;     break;
                         case SDLK_3:      editMode = EditMode.Polygons;  break;
                         case SDLK_SPACE:
-                            if (moveTool.active)       moveTool.deactivate();
-                            else if (scaleTool.active) scaleTool.deactivate();
+                            if (activeTool) setActiveTool(null);
                             else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
                             break;
                         case SDLK_w:
-                            scaleTool.deactivate();
-                            if (moveTool.active) moveTool.deactivate();
-                            else                 moveTool.activate();
+                            setActiveTool(cast(MoveTool)activeTool ? null : getMoveTool());
                             break;
                         case SDLK_r:
-                            moveTool.deactivate();
-                            if (scaleTool.active) scaleTool.deactivate();
-                            else                  scaleTool.activate();
+                            setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
                             break;
                         default: break;
                     }
                     break;
 
                 case SDL_MOUSEBUTTONDOWN:
-                    if (moveTool.onMouseButtonDown(event.button)) break;
-                    if (scaleTool.onMouseButtonDown(event.button)) break;
+                    if (activeTool && activeTool.onMouseButtonDown(event.button)) break;
                     if (event.button.button == SDL_BUTTON_LEFT) {
                         SDL_Keymod mods = SDL_GetModState();
                         bool ctrl  = (mods & KMOD_CTRL)  != 0;
                         bool alt   = (mods & KMOD_ALT)   != 0;
                         bool shift = (mods & KMOD_SHIFT)  != 0;
-                        bool anyToolActive = moveTool.active || scaleTool.active;
+                        bool anyToolActive = activeTool !is null;
 
                         if      (ctrl && alt)  dragMode = DragMode.Zoom;
                         else if (alt && shift) dragMode = DragMode.Pan;
@@ -378,15 +396,13 @@ void main(string[] args) {
                     break;
 
                 case SDL_MOUSEBUTTONUP:
-                    moveTool.onMouseButtonUp(event.button);
-                    scaleTool.onMouseButtonUp(event.button);
+                    if (activeTool) activeTool.onMouseButtonUp(event.button);
                     if (event.button.button == SDL_BUTTON_LEFT)
                         dragMode = DragMode.None;
                     break;
 
                 case SDL_MOUSEMOTION:
-                    if (moveTool.onMouseMotion(event.motion)) break;
-                    if (scaleTool.onMouseMotion(event.motion)) break;
+                    if (activeTool && activeTool.onMouseMotion(event.motion)) break;
                     if (dragMode == DragMode.None) break;
                     {
                         SDL_Keymod mods = SDL_GetModState();
@@ -473,8 +489,10 @@ void main(string[] args) {
 
             ImGui.Separator();
             ImGui.Text("Tools");
-            moveTool.drawImGui();
-            scaleTool.drawImGui();
+            if (getMoveTool().drawImGui())
+                setActiveTool(cast(MoveTool)activeTool ? null : getMoveTool());
+            if (getScaleTool().drawImGui())
+                setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
 
             ImGui.Separator();
             ImGui.Text("Selection");
@@ -616,7 +634,7 @@ void main(string[] args) {
         // ---- Vertex picking (EditMode.Vertices only) ----
         hoveredVertex = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Vertices && !moveTool.active && !scaleTool.active)
+            editMode == EditMode.Vertices && activeTool is null)
         {
             int mx, my;
             queryMouse(mx, my);
@@ -653,7 +671,7 @@ void main(string[] args) {
         // ---- Edge picking (EditMode.Edges only) ----
         hoveredEdge = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Edges && !moveTool.active && !scaleTool.active)
+            editMode == EditMode.Edges && activeTool is null)
         {
             int mx, my;
             queryMouse(mx, my);
@@ -698,7 +716,7 @@ void main(string[] args) {
         // ---- Face picking (EditMode.Polygons only) ----
         hoveredFace = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Polygons && !moveTool.active && !scaleTool.active)
+            editMode == EditMode.Polygons && activeTool is null)
         {
             int mx, my;
             queryMouse(mx, my);
@@ -751,10 +769,10 @@ void main(string[] args) {
             gpu.drawVertices(locColor, hoveredVertex, selected);
 
         // ---- Active tool ----
-        moveTool.update();
-        moveTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
-        scaleTool.update();
-        scaleTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
+        if (activeTool) {
+            activeTool.update();
+            activeTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
+        }
 
         // ---- ImGui draw ----
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());

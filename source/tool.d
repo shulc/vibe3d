@@ -52,7 +52,7 @@ public:
     override void deactivate() { active = false; dragAxis = -1; }
 
     // Recompute gizmo center from current selection / mesh state.
-    void update() {
+    override void update() {
         if (!active) return;
         Vec3 sum   = Vec3(0, 0, 0);
         int  count = 0;
@@ -234,23 +234,13 @@ public:
         return true;
     }
 
-    override void drawImGui() {
-        bool wasActive = active;
-        if (wasActive)
+    override bool drawImGui() {
+        if (active)
             ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        if (ImGui.Button("Move [W]"))
-            active = !active;
-        if (wasActive)
+        bool clicked = ImGui.Button("Move [W]");
+        if (active)
             ImGui.PopStyleColor();
-
-        if (active) {
-            ImGui.LabelText("viewDir.x", "%.8f",
-                cast(double)handler.viewDir.x);
-            ImGui.LabelText("viewDir.y", "%.8f",
-                cast(double)handler.viewDir.y);
-            ImGui.LabelText("viewDir.z", "%.8f",
-                cast(double)handler.viewDir.z);
-        }
+        return clicked;
     }
 }
 
@@ -295,7 +285,7 @@ public:
     override void activate()   { active = true;               }
     override void deactivate() { active = false; dragAxis = -1; }
 
-    void update() {
+    override void update() {
         if (!active) return;
         Vec3 sum   = Vec3(0, 0, 0);
         int  count = 0;
@@ -431,14 +421,13 @@ public:
         return true;
     }
 
-    override void drawImGui() {
-        bool wasActive = active;
-        if (wasActive)
+    override bool drawImGui() {
+        if (active)
             ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        if (ImGui.Button("Scale [R]"))
-            active = !active;
-        if (wasActive)
+        bool clicked = ImGui.Button("Scale [R]");
+        if (active)
             ImGui.PopStyleColor();
+        return clicked;
     }
 
 private:
@@ -474,6 +463,9 @@ class Tool {
     // Called when another tool becomes active.
     void deactivate() {}
 
+    // Called once per frame to recompute tool state (e.g. gizmo position).
+    void update() {}
+
     // SDL event handlers.
     // Return true to mark the event as consumed (stops further processing).
     bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
@@ -489,5 +481,6 @@ class Tool {
               int winW, int winH) {}
 
     // Called once per frame inside the ImGui window to append tool UI.
-    void drawImGui() {}
+    // Returns true if the user clicked the activation button.
+    bool drawImGui() { return false; }
 }
