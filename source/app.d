@@ -857,6 +857,151 @@ private:
 }
 
 // ---------------------------------------------------------------------------
+// CubicArrow : Handler
+// Like Arrow but with a small cube at the tip instead of a cone.
+// Unit shaft  — line  (0,0,0)→(0,0,1)  along +Z
+// Unit cube   — centred at origin, half-extent 1  (placed at tip via model matrix)
+// ---------------------------------------------------------------------------
+
+class CubicArrow : Handler {
+    Vec3 start;
+    Vec3 end;
+    Vec3 color;
+
+private:
+    GLuint shaftVao, shaftVbo;
+    GLuint headVao,  headVbo;
+    int    headVertCount;
+    bool   hovered;
+    bool   forceHovered;
+    bool   hoverBlocked;
+    bool   visible = true;
+
+public:
+    this(Vec3 start, Vec3 end, Vec3 color) {
+        this.start = start;
+        this.end   = end;
+        this.color = color;
+
+        // ---- Unit shaft: (0,0,0) → (0,0,1) ----
+        float[6] shaftData = [0,0,0,  0,0,1];
+        glGenVertexArrays(1, &shaftVao); glGenBuffers(1, &shaftVbo);
+        glBindVertexArray(shaftVao);
+        glBindBuffer(GL_ARRAY_BUFFER, shaftVbo);
+        glBufferData(GL_ARRAY_BUFFER, shaftData.sizeof, shaftData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        // ---- Unit cube: centred at origin, half-extent 1 ----
+        // 6 faces × 2 triangles × 3 vertices
+        immutable float[3][8] v = [
+            [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],  // back
+            [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],  // front
+        ];
+        immutable int[6][6] faces = [
+            [0,1,2, 2,3,0], // -Z
+            [4,6,5, 6,4,7], // +Z
+            [0,4,5, 5,1,0], // -Y
+            [2,6,7, 7,3,2], // +Y
+            [0,3,7, 7,4,0], // -X
+            [1,5,6, 6,2,1], // +X
+        ];
+        float[] cubeData;
+        foreach (ref f; faces)
+            foreach (idx; f)
+                cubeData ~= v[idx];
+        headVertCount = cast(int)(cubeData.length / 3);
+
+        glGenVertexArrays(1, &headVao); glGenBuffers(1, &headVbo);
+        glBindVertexArray(headVao);
+        glBindBuffer(GL_ARRAY_BUFFER, headVbo);
+        glBufferData(GL_ARRAY_BUFFER, cubeData.length * float.sizeof,
+                     cubeData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindVertexArray(0);
+    }
+
+    void destroy() {
+        glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
+        glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
+    }
+
+    bool isHovered()         const { return hovered; }
+    void setForceHovered(bool v)   { forceHovered = v; }
+    void setHoverBlocked(bool v)   { hoverBlocked = v; }
+    void setVisible(bool v)        { visible = v; if (!v) hovered = false; }
+    bool isVisible()         const { return visible; }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        if (!visible) return;
+        Vec3 dir = vec3Sub(end, start);
+        float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+        if (len < 1e-6f) return;
+        Vec3 fwd = Vec3(dir.x/len, dir.y/len, dir.z/len);
+
+        Vec3 tmp   = (abs(fwd.x) < 0.9f) ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        float cubeHalf  = len * 0.06f;       // half-extent of the cube
+        float shaftLen  = len - cubeHalf * 2;
+        Vec3  cubeCenter = vec3Sub(end, vec3Scale(fwd, cubeHalf));
+
+        updateHover(view, proj, winW, winH);
+        Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
+
+        GLint locModel = glGetUniformLocation(program, "u_model");
+        glUniform3f(locColor, c.x, c.y, c.z);
+
+        glDisable(GL_DEPTH_TEST);
+
+        // ---- Draw shaft ----
+        auto shaftModel = modelMatrix(right, up, fwd,
+                                      Vec3(1, 1, shaftLen), start);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, shaftModel.ptr);
+        glBindVertexArray(shaftVao);
+        glDrawArrays(GL_LINES, 0, 2);
+
+        // ---- Draw cube head ----
+        // Scale unit cube (half-extent 1) to cubeHalf, translate to cubeCenter
+        auto headModel = modelMatrix(right, up, fwd,
+                                     Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, headModel.ptr);
+        glBindVertexArray(headVao);
+        glDrawArrays(GL_TRIANGLES, 0, headVertCount);
+
+        glBindVertexArray(0);
+        glEnable(GL_DEPTH_TEST);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
+
+private:
+    void updateHover(const ref float[16] view, const ref float[16] proj,
+                     int winW, int winH)
+    {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        float sax, say, ndcZa, sbx, sby, ndcZb;
+        if (!projectToWindowFull(start, view, proj, winW, winH, sax, say, ndcZa) ||
+            !projectToWindowFull(end,   view, proj, winW, winH, sbx, sby, ndcZb))
+        {
+            hovered = false;
+            return;
+        }
+        float t;
+        hovered = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                     sax, say, sbx, sby, t) < 8.0f;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MoveHandler : Handler — three axis arrows (X=red, Y=green, Z=blue)
 // ---------------------------------------------------------------------------
 
@@ -911,6 +1056,86 @@ class MoveHandler : Handler {
             ? Vec3(d.x / dist, d.y / dist, d.z / dist)  // eye→center direction (d = eye-center, flip)
             : Vec3(0,0,1);
         // d = eye - center, so viewDir (center→eye) = d/dist; axis dot with that.
+        enum float HIDE_THRESHOLD = 0.995f;
+        arrowX.setVisible(abs(viewDir.x) < HIDE_THRESHOLD);
+        arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
+        arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
+
+        arrowX.draw(program, locColor, view, proj, winW, winH);
+        arrowY.draw(program, locColor, view, proj, winW, winH);
+        arrowZ.draw(program, locColor, view, proj, winW, winH);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        return arrowX.onMouseButtonDown(e) ||
+               arrowY.onMouseButtonDown(e) ||
+               arrowZ.onMouseButtonDown(e);
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        return arrowX.onMouseButtonUp(e) ||
+               arrowY.onMouseButtonUp(e) ||
+               arrowZ.onMouseButtonUp(e);
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        return arrowX.onMouseMotion(e) ||
+               arrowY.onMouseMotion(e) ||
+               arrowZ.onMouseMotion(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ScaleHandler : Handler — three axis CubicArrows (X=red, Y=green, Z=blue)
+// ---------------------------------------------------------------------------
+
+class ScaleHandler : Handler {
+    Vec3  center;
+    float screenFraction = 0.15f;
+    CubicArrow arrowX, arrowY, arrowZ;
+    Vec3 viewDir;
+
+    this(Vec3 center) {
+        this.center = center;
+        arrowX = new CubicArrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY = new CubicArrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ = new CubicArrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+    }
+
+    void destroy() {
+        arrowX.destroy();
+        arrowY.destroy();
+        arrowZ.destroy();
+    }
+
+    void setPosition(Vec3 pos) {
+        center = pos;
+    }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        Vec3 eye = Vec3(
+            -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
+            -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
+            -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]),
+        );
+
+        Vec3  d    = vec3Sub(eye, center);
+        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+        float size = dist * screenFraction;
+
+        arrowX.start = vec3Add(center, Vec3(size/10, 0,      0     ));
+        arrowX.end   = vec3Add(center, Vec3(size,    0,      0     ));
+        arrowY.start = vec3Add(center, Vec3(0,       size/10, 0    ));
+        arrowY.end   = vec3Add(center, Vec3(0,       size,    0    ));
+        arrowZ.start = vec3Add(center, Vec3(0,       0,      size/10));
+        arrowZ.end   = vec3Add(center, Vec3(0,       0,      size  ));
+
+        viewDir = dist > 1e-6f
+            ? Vec3(d.x / dist, d.y / dist, d.z / dist)
+            : Vec3(0,0,1);
         enum float HIDE_THRESHOLD = 0.995f;
         arrowX.setVisible(abs(viewDir.x) < HIDE_THRESHOLD);
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
@@ -1184,6 +1409,212 @@ public:
 }
 
 // ---------------------------------------------------------------------------
+// ScaleTool : Tool — shows ScaleHandler at selection/mesh center; scales
+//             selected vertices along the dragged axis relative to the center.
+// ---------------------------------------------------------------------------
+
+class ScaleTool : Tool {
+    ScaleHandler handler;
+    bool         active;
+
+private:
+    Mesh*     mesh;
+    bool[]*   selected;
+    bool[]*   selectedEdges;
+    bool[]*   selectedFaces;
+    GpuMesh*  gpu;
+    EditMode* editMode;
+
+    int       dragAxis = -1;
+    int       lastMX, lastMY;
+    float[16] cachedView;
+    float[16] cachedProj;
+    int       cachedWinW, cachedWinH;
+
+public:
+    this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
+         GpuMesh* gpu, EditMode* editMode) {
+        this.mesh          = mesh;
+        this.selected      = selected;
+        this.selectedEdges = selectedEdges;
+        this.selectedFaces = selectedFaces;
+        this.gpu           = gpu;
+        this.editMode      = editMode;
+        handler = new ScaleHandler(Vec3(0, 0, 0));
+    }
+
+    void destroy() { handler.destroy(); }
+
+    override string name() const { return "Scale"; }
+    override void activate()   { active = true;               }
+    override void deactivate() { active = false; dragAxis = -1; }
+
+    void update() {
+        if (!active) return;
+        Vec3 sum   = Vec3(0, 0, 0);
+        int  count = 0;
+        if (*editMode == EditMode.Vertices) {
+            bool anySelected = false;
+            foreach (s; *selected) if (s) { anySelected = true; break; }
+            foreach (i, v; mesh.vertices) {
+                if (!anySelected || (i < (*selected).length && (*selected)[i])) {
+                    sum = vec3Add(sum, v); count++;
+                }
+            }
+        } else if (*editMode == EditMode.Edges) {
+            bool anySelected = false;
+            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
+            bool[] visited = new bool[](mesh.vertices.length);
+            foreach (i, edge; mesh.edges) {
+                if (anySelected && !(i < (*selectedEdges).length && (*selectedEdges)[i])) continue;
+                foreach (vi; edge) {
+                    if (!visited[vi]) { sum = vec3Add(sum, mesh.vertices[vi]); count++; visited[vi] = true; }
+                }
+            }
+        } else if (*editMode == EditMode.Polygons) {
+            bool anySelected = false;
+            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
+            bool[] visited = new bool[](mesh.vertices.length);
+            foreach (i, face; mesh.faces) {
+                if (anySelected && !(i < (*selectedFaces).length && (*selectedFaces)[i])) continue;
+                foreach (vi; face) {
+                    if (!visited[vi]) { sum = vec3Add(sum, mesh.vertices[vi]); count++; visited[vi] = true; }
+                }
+            }
+        }
+        handler.setPosition(count > 0
+            ? Vec3(sum.x / count, sum.y / count, sum.z / count)
+            : Vec3(0, 0, 0));
+    }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        if (!active) return;
+        cachedView = view; cachedProj = proj;
+        cachedWinW = winW; cachedWinH = winH;
+
+        CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        bool anyHovered = false;
+        foreach (i, arrow; arrows) {
+            bool isActive = (dragAxis == cast(int)i);
+            arrow.setForceHovered(isActive);
+            arrow.setHoverBlocked(dragAxis >= 0 && !isActive || anyHovered);
+            anyHovered |= arrow.isHovered();
+        }
+        handler.draw(program, locColor, view, proj, winW, winH);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        dragAxis = hitTestAxes(e.x, e.y);
+        if (dragAxis < 0) return false;
+        lastMX = e.x; lastMY = e.y;
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
+        dragAxis = -1;
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        if (!active || dragAxis == -1) return false;
+
+        Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
+                  : dragAxis == 1 ? Vec3(0,1,0)
+                                  : Vec3(0,0,1);
+
+        // Project axis to screen to get pixels-per-world-unit
+        Vec3  center = handler.center;
+        float cx, cy, cndcZ, ax_, ay_, andcZ;
+        if (!projectToWindowFull(center, cachedView, cachedProj,
+                                 cachedWinW, cachedWinH, cx, cy, cndcZ))
+        { lastMX = e.x; lastMY = e.y; return true; }
+        if (!projectToWindowFull(vec3Add(center, axis), cachedView, cachedProj,
+                                 cachedWinW, cachedWinH, ax_, ay_, andcZ))
+        { lastMX = e.x; lastMY = e.y; return true; }
+
+        float sdx   = ax_ - cx;
+        float sdy   = ay_ - cy;
+        float slen2 = sdx*sdx + sdy*sdy;
+        if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
+
+        // Mouse delta projected onto screen-space axis → scale factor
+        float delta      = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
+        float scaleFactor = 1.0f + delta;
+
+        // Collect vertices to scale
+        bool[] toScale = new bool[](mesh.vertices.length);
+        if (*editMode == EditMode.Vertices) {
+            bool anySelected = false;
+            foreach (s; *selected) if (s) { anySelected = true; break; }
+            foreach (i; 0 .. mesh.vertices.length)
+                toScale[i] = !anySelected || (i < (*selected).length && (*selected)[i]);
+        } else if (*editMode == EditMode.Edges) {
+            bool anySelected = false;
+            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
+            if (!anySelected) { toScale[] = true; }
+            else foreach (i, edge; mesh.edges)
+                if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
+                    toScale[edge[0]] = true; toScale[edge[1]] = true;
+                }
+        } else if (*editMode == EditMode.Polygons) {
+            bool anySelected = false;
+            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
+            if (!anySelected) { toScale[] = true; }
+            else foreach (i, face; mesh.faces)
+                if (i < (*selectedFaces).length && (*selectedFaces)[i])
+                    foreach (vi; face) toScale[vi] = true;
+        }
+
+        // Scale each vertex along the axis relative to the gizmo center
+        foreach (i; 0 .. mesh.vertices.length) {
+            if (!toScale[i]) continue;
+            mesh.vertices[i].x += axis.x * (mesh.vertices[i].x - center.x) * (scaleFactor - 1.0f);
+            mesh.vertices[i].y += axis.y * (mesh.vertices[i].y - center.y) * (scaleFactor - 1.0f);
+            mesh.vertices[i].z += axis.z * (mesh.vertices[i].z - center.z) * (scaleFactor - 1.0f);
+        }
+
+        gpu.upload(*mesh);
+        update();
+
+        lastMX = e.x; lastMY = e.y;
+        return true;
+    }
+
+    override void drawImGui() {
+        bool wasActive = active;
+        if (wasActive)
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+        if (ImGui.Button("Scale [R]"))
+            active = !active;
+        if (wasActive)
+            ImGui.PopStyleColor();
+    }
+
+private:
+    private int hitTestAxes(int mx, int my) {
+        CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        foreach (i, arrow; arrows) {
+            if (!arrow.isVisible()) continue;
+            float sax, say, ndcZa, sbx, sby, ndcZb;
+            if (!projectToWindowFull(arrow.start, cachedView, cachedProj,
+                                     cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   cachedView, cachedProj,
+                                     cachedWinW, cachedWinH, sbx, sby, ndcZb)) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   sax, say, sbx, sby, t) < 8.0f)
+                return cast(int)i;
+        }
+        return -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tool — base class for all editing tools
 // ---------------------------------------------------------------------------
 
@@ -1414,8 +1845,10 @@ void main(string[] args) {
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
 
-    auto moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
+    auto moveTool  = new MoveTool (&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
     scope(exit) moveTool.destroy();
+    auto scaleTool = new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
+    scope(exit) scaleTool.destroy();
     int lastMouseX, lastMouseY;
 
     bool running = true;
@@ -1449,14 +1882,19 @@ void main(string[] args) {
                         case SDLK_2:      editMode = EditMode.Edges;     break;
                         case SDLK_3:      editMode = EditMode.Polygons;  break;
                         case SDLK_SPACE:
-                            if (moveTool.active)
-                                moveTool.deactivate();
-                            else
-                                editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
+                            if (moveTool.active)       moveTool.deactivate();
+                            else if (scaleTool.active) scaleTool.deactivate();
+                            else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
                             break;
                         case SDLK_w:
+                            scaleTool.deactivate();
                             if (moveTool.active) moveTool.deactivate();
                             else                 moveTool.activate();
+                            break;
+                        case SDLK_r:
+                            moveTool.deactivate();
+                            if (scaleTool.active) scaleTool.deactivate();
+                            else                  scaleTool.activate();
                             break;
                         default: break;
                     }
@@ -1464,18 +1902,20 @@ void main(string[] args) {
 
                 case SDL_MOUSEBUTTONDOWN:
                     if (moveTool.onMouseButtonDown(event.button)) break;
+                    if (scaleTool.onMouseButtonDown(event.button)) break;
                     if (event.button.button == SDL_BUTTON_LEFT) {
                         SDL_Keymod mods = SDL_GetModState();
                         bool ctrl  = (mods & KMOD_CTRL)  != 0;
                         bool alt   = (mods & KMOD_ALT)   != 0;
                         bool shift = (mods & KMOD_SHIFT)  != 0;
+                        bool anyToolActive = moveTool.active || scaleTool.active;
 
                         if      (ctrl && alt)  dragMode = DragMode.Zoom;
                         else if (alt && shift) dragMode = DragMode.Pan;
                         else if (alt)          dragMode = DragMode.Orbit;
-                        else if (ctrl && !moveTool.active)  dragMode = DragMode.SelectRemove;
-                        else if (shift && !moveTool.active) dragMode = DragMode.SelectAdd;
-                        else if (!moveTool.active) {
+                        else if (ctrl && !anyToolActive)  dragMode = DragMode.SelectRemove;
+                        else if (shift && !anyToolActive) dragMode = DragMode.SelectAdd;
+                        else if (!anyToolActive) {
                             // No modifiers: clear selection for current mode
                             if (editMode == EditMode.Vertices)
                                 selected[] = false;
@@ -1492,12 +1932,14 @@ void main(string[] args) {
 
                 case SDL_MOUSEBUTTONUP:
                     moveTool.onMouseButtonUp(event.button);
+                    scaleTool.onMouseButtonUp(event.button);
                     if (event.button.button == SDL_BUTTON_LEFT)
                         dragMode = DragMode.None;
                     break;
 
                 case SDL_MOUSEMOTION:
                     if (moveTool.onMouseMotion(event.motion)) break;
+                    if (scaleTool.onMouseMotion(event.motion)) break;
                     if (dragMode == DragMode.None) break;
                     {
                         SDL_Keymod mods = SDL_GetModState();
@@ -1585,6 +2027,7 @@ void main(string[] args) {
             ImGui.Separator();
             ImGui.Text("Tools");
             moveTool.drawImGui();
+            scaleTool.drawImGui();
 
             ImGui.Separator();
             ImGui.Text("Selection");
@@ -1726,7 +2169,7 @@ void main(string[] args) {
         // ---- Vertex picking (EditMode.Vertices only) ----
         hoveredVertex = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Vertices && !moveTool.active)
+            editMode == EditMode.Vertices && !moveTool.active && !scaleTool.active)
         {
             int mx, my;
             queryMouse(mx, my);
@@ -1763,7 +2206,7 @@ void main(string[] args) {
         // ---- Edge picking (EditMode.Edges only) ----
         hoveredEdge = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Edges && !moveTool.active)
+            editMode == EditMode.Edges && !moveTool.active && !scaleTool.active)
         {
             int mx, my;
             queryMouse(mx, my);
@@ -1808,7 +2251,7 @@ void main(string[] args) {
         // ---- Face picking (EditMode.Polygons only) ----
         hoveredFace = -1;
         if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Polygons && !moveTool.active)
+            editMode == EditMode.Polygons && !moveTool.active && !scaleTool.active)
         {
             int mx, my;
             queryMouse(mx, my);
@@ -1863,6 +2306,8 @@ void main(string[] args) {
         // ---- Active tool ----
         moveTool.update();
         moveTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
+        scaleTool.update();
+        scaleTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
 
         // ---- ImGui draw ----
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
