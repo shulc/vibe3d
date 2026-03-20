@@ -441,6 +441,16 @@ struct GpuMesh {
 enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 enum EditMode { Vertices, Edges, Polygons }
 
+// Mouse position source — overridden during event playback so that
+// SDL_GetMouseState()-based picking uses replayed coordinates.
+private int  g_mouseX, g_mouseY;
+private bool g_mouseOverride;
+
+void queryMouse(out int mx, out int my) {
+    if (g_mouseOverride) { mx = g_mouseX; my = g_mouseY; }
+    else SDL_GetMouseState(&mx, &my);
+}
+
 // ---------------------------------------------------------------------------
 // EventLogger — serialises SDL events to a text file with ms timestamps
 // ---------------------------------------------------------------------------
@@ -486,17 +496,18 @@ struct EventLogger {
                 break;
             case SDL_MOUSEBUTTONDOWN:
             case SDL_MOUSEBUTTONUP:
-                file.writefln("%.3f %-24s btn=%d x=%d y=%d clicks=%d",
+                file.writefln("%.3f %-24s btn=%d x=%d y=%d clicks=%d mod=0x%04x",
                     t,
                     e.type == SDL_MOUSEBUTTONDOWN ? "SDL_MOUSEBUTTONDOWN"
                                                   : "SDL_MOUSEBUTTONUP",
                     e.button.button, e.button.x, e.button.y,
-                    cast(int)e.button.clicks);
+                    cast(int)e.button.clicks, cast(uint)SDL_GetModState());
                 break;
             case SDL_MOUSEMOTION:
-                file.writefln("%.3f SDL_MOUSEMOTION          x=%d y=%d xrel=%d yrel=%d state=0x%x",
+                file.writefln("%.3f SDL_MOUSEMOTION          x=%d y=%d xrel=%d yrel=%d state=0x%x mod=0x%04x",
                     t, e.motion.x, e.motion.y,
-                    e.motion.xrel, e.motion.yrel, e.motion.state);
+                    e.motion.xrel, e.motion.yrel, e.motion.state,
+                    cast(uint)SDL_GetModState());
                 break;
             case SDL_MOUSEWHEEL:
                 file.writefln("%.3f SDL_MOUSEWHEEL            x=%d y=%d",
@@ -514,6 +525,170 @@ struct EventLogger {
                 break;
         }
         file.flush();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EventPlayer — replays a recorded event log file
+// ---------------------------------------------------------------------------
+
+struct EventPlayer {
+    struct Entry { double timeMs; SDL_Event event; SDL_Keymod mod; }
+    Entry[] entries;
+    size_t  idx;
+    ulong   startCounter;
+    ulong   freq;
+    bool    active;
+    int     mouseX, mouseY;   // current replayed cursor position
+    bool    mouseDown;        // left button state (for visual feedback)
+
+    // Load and parse a log file written by EventLogger.
+    // Returns true on success.
+    bool open(string path) {
+        import std.stdio   : File;
+        import std.string  : startsWith, stripLeft, stripRight;
+        import std.conv    : to, ConvException;
+        import std.array   : split;
+        import std.algorithm : startsWith;
+
+        File f;
+        try { f = File(path, "r"); }
+        catch (Exception) { writefln("EventPlayer: cannot open '%s'", path); return false; }
+
+        foreach (raw; f.byLine()) {
+            string line = cast(string)raw.idup;
+            // Strip trailing whitespace
+            while (line.length && (line[$-1] == '\r' || line[$-1] == '\n' || line[$-1] == ' '))
+                line = line[0..$-1];
+            if (line.length == 0 || line[0] == '#') continue;
+
+            // First token: timestamp
+            auto parts = line.split(" ");
+            if (parts.length < 2) continue;
+            double t;
+            try { t = to!double(parts[0]); } catch (ConvException) { continue; }
+
+            // Second token: event type name (may have trailing spaces in log)
+            string typeName = parts[1];
+
+            // Remaining tokens: key=value pairs
+            import std.string : indexOf;
+            int[string] kv;
+            foreach (p; parts[2..$]) {
+                auto eq = p.indexOf('=');
+                if (eq < 0) continue;
+                string key = p[0..eq];
+                string val = p[eq+1..$];
+                try {
+                    if (val.length > 2 && val[0..2] == "0x")
+                        kv[key] = cast(int)to!uint(val[2..$], 16);
+                    else
+                        kv[key] = to!int(val);
+                } catch (ConvException) {}
+            }
+
+            SDL_Event e;
+            switch (typeName) {
+                case "SDL_QUIT":
+                    e.type = SDL_QUIT;
+                    break;
+                case "SDL_KEYDOWN", "SDL_KEYUP":
+                    e.type = typeName == "SDL_KEYDOWN" ? SDL_KEYDOWN : SDL_KEYUP;
+                    e.key.keysym.sym      = cast(SDL_Keycode)(kv.get("sym",  0));
+                    e.key.keysym.scancode = cast(SDL_Scancode)(kv.get("scan", 0));
+                    e.key.keysym.mod      = cast(SDL_Keymod)(kv.get("mod",  0));
+                    e.key.repeat          = cast(ubyte)(kv.get("repeat", 0));
+                    break;
+                case "SDL_MOUSEBUTTONDOWN", "SDL_MOUSEBUTTONUP":
+                    e.type        = typeName == "SDL_MOUSEBUTTONDOWN"
+                                  ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+                    e.button.button = cast(ubyte)(kv.get("btn",    1));
+                    e.button.x      = cast(int)  (kv.get("x",      0));
+                    e.button.y      = cast(int)  (kv.get("y",      0));
+                    e.button.clicks = cast(ubyte)(kv.get("clicks", 1));
+                    e.button.state  = e.type == SDL_MOUSEBUTTONDOWN
+                                    ? SDL_PRESSED : SDL_RELEASED;
+                    entries ~= Entry(t, e, cast(SDL_Keymod)(kv.get("mod", 0)));
+                    continue;
+                case "SDL_MOUSEMOTION":
+                    e.type        = SDL_MOUSEMOTION;
+                    e.motion.x    = kv.get("x",    0);
+                    e.motion.y    = kv.get("y",    0);
+                    e.motion.xrel = kv.get("xrel", 0);
+                    e.motion.yrel = kv.get("yrel", 0);
+                    e.motion.state= cast(uint)(kv.get("state", 0));
+                    entries ~= Entry(t, e, cast(SDL_Keymod)(kv.get("mod", 0)));
+                    continue;
+                case "SDL_MOUSEWHEEL":
+                    e.type    = SDL_MOUSEWHEEL;
+                    e.wheel.x = kv.get("x", 0);
+                    e.wheel.y = kv.get("y", 0);
+                    break;
+                case "SDL_WINDOWEVENT":
+                    e.type         = SDL_WINDOWEVENT;
+                    e.window.event = cast(ubyte)(kv.get("sub", 0));
+                    break;
+                case "SDL_TEXTINPUT":
+                    e.type = SDL_TEXTINPUT;
+                    break;
+                default:
+                    if (typeName == "SDL_EVENT") {
+                        e.type = cast(uint)(kv.get("type", 0));
+                    } else {
+                        continue; // unknown — skip
+                    }
+                    break;
+            }
+
+            entries ~= Entry(t, e);
+        }
+        f.close();
+
+        startCounter = SDL_GetPerformanceCounter();
+        freq         = SDL_GetPerformanceFrequency();
+        active       = entries.length > 0;
+        idx          = 0;
+        writefln("EventPlayer: loaded %d events from '%s'", entries.length, path);
+        return true;
+    }
+
+    // Call once per frame. Pushes all events whose timestamp has elapsed.
+    // Returns false when playback is finished.
+    bool tick() {
+        if (!active) return false;
+        double nowMs = cast(double)(SDL_GetPerformanceCounter() - startCounter)
+                     / cast(double)freq * 1000.0;
+        while (idx < entries.length && entries[idx].timeMs <= nowMs) {
+            auto  entry = entries[idx];
+            SDL_Event e = entry.event;
+            // Restore modifier key state for mouse events so that
+            // SDL_GetModState() returns the correct value when the app
+            // processes the pushed event (SDL_PushEvent does not update
+            // SDL's internal modifier state on macOS).
+            // Also update the global mouse-position override so that
+            // queryMouse() returns the replayed position for picking code.
+            if (e.type == SDL_MOUSEMOTION) {
+                SDL_SetModState(entry.mod);
+                mouseX = e.motion.x;
+                mouseY = e.motion.y;
+                g_mouseX = mouseX; g_mouseY = mouseY; g_mouseOverride = true;
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                SDL_SetModState(entry.mod);
+                mouseX = e.button.x;
+                mouseY = e.button.y;
+                g_mouseX = mouseX; g_mouseY = mouseY; g_mouseOverride = true;
+                if (e.button.button == SDL_BUTTON_LEFT)
+                    mouseDown = (e.type == SDL_MOUSEBUTTONDOWN);
+            }
+            SDL_PushEvent(&e);
+            ++idx;
+        }
+        if (idx >= entries.length) {
+            active = false;
+            writeln("EventPlayer: playback finished");
+            return false;
+        }
+        return true;
     }
 }
 
@@ -667,7 +842,7 @@ private:
         if (hoverBlocked) { hovered = false; return; }
         if (forceHovered) { hovered = true;  return; }
         int mx, my;
-        SDL_GetMouseState(&mx, &my);
+        queryMouse(mx, my);
         float sax, say, ndcZa, sbx, sby, ndcZb;
         if (!projectToWindowFull(start, view, proj, winW, winH, sax, say, ndcZa) ||
             !projectToWindowFull(end,   view, proj, winW, winH, sbx, sby, ndcZb))
@@ -1085,14 +1260,28 @@ GLuint createProgram(string vertSrc = vertexShaderSrc,
 // Main
 // ---------------------------------------------------------------------------
 
-void main() {
+void main(string[] args) {
+    // Parse --playback <file> flag
+    string playbackFile;
+    for (size_t i = 1; i < args.length; ++i) {
+        if (args[i] == "--playback" && i + 1 < args.length)
+            playbackFile = args[++i];
+    }
+    bool playbackMode = playbackFile.length > 0;
+
     if (loadSDL() != sdlSupport) { writeln("Failed to load SDL2"); return; }
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
     scope(exit) SDL_Quit();
 
     EventLogger evLog;
-    evLog.open("events.log");
+    if (!playbackMode) {
+        evLog.open("events.log");
+    }
     scope(exit) evLog.close();
+
+    EventPlayer evPlay;
+    if (playbackMode && !evPlay.open(playbackFile)) return;
+    if (playbackMode) g_mouseOverride = true;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -1233,6 +1422,9 @@ void main() {
     SDL_Event event;
 
     while (running) {
+        // ---- Playback: push due events before polling ----
+        if (playbackMode) evPlay.tick();
+
         // ---- Events ----
         while (SDL_PollEvent(&event)) {
             evLog.log(event);
@@ -1468,6 +1660,20 @@ void main() {
             ImGui.TextDisabled("Ctrl+LMB/drag    remove from select");
         }
         ImGui.End();
+
+        // ---- Playback cursor overlay ----
+        if (playbackMode) {
+            ImDrawList* dl = ImGui.GetForegroundDrawList();
+            ImVec2 pos = ImVec2(cast(float)evPlay.mouseX, cast(float)evPlay.mouseY);
+            // Outer ring
+            dl.AddCircle(pos, 12.0f, IM_COL32(255, 220, 0, 220), 24, 2.0f);
+            // Inner dot — filled red when button is pressed, white otherwise
+            uint dotColor = evPlay.mouseDown
+                ? IM_COL32(255, 80, 80, 255)
+                : IM_COL32(255, 255, 255, 200);
+            dl.AddCircleFilled(pos, 3.0f, dotColor, 12);
+        }
+
         ImGui.Render();
 
         // ---- 3D render ----
@@ -1523,7 +1729,7 @@ void main() {
             editMode == EditMode.Vertices && !moveTool.active)
         {
             int mx, my;
-            SDL_GetMouseState(&mx, &my);
+            queryMouse(mx, my);
             float closest = 3.0f;  // pixel radius
 
             foreach (i; 0 .. mesh.vertices.length) {
@@ -1560,7 +1766,7 @@ void main() {
             editMode == EditMode.Edges && !moveTool.active)
         {
             int mx, my;
-            SDL_GetMouseState(&mx, &my);
+            queryMouse(mx, my);
             float closest = 4.0f;  // pixel radius for edges
 
             foreach (i; 0 .. mesh.edges.length) {
@@ -1605,7 +1811,7 @@ void main() {
             editMode == EditMode.Polygons && !moveTool.active)
         {
             int mx, my;
-            SDL_GetMouseState(&mx, &my);
+            queryMouse(mx, my);
             float bestZ = float.infinity;
 
             foreach (fi; 0 .. mesh.faces.length) {
