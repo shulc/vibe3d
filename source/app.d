@@ -1,7 +1,7 @@
 import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz;
-import std.stdio : writeln, writefln;
+import std.stdio : writeln, writefln, File;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 
 import ImGui = d_imgui;
@@ -440,6 +440,82 @@ struct GpuMesh {
 
 enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 enum EditMode { Vertices, Edges, Polygons }
+
+// ---------------------------------------------------------------------------
+// EventLogger — serialises SDL events to a text file with ms timestamps
+// ---------------------------------------------------------------------------
+
+struct EventLogger {
+    File  file;
+    ulong startCounter;
+    ulong freq;
+    bool  active;
+
+    void open(string path) {
+        file         = File(path, "w");
+        startCounter = SDL_GetPerformanceCounter();
+        freq         = SDL_GetPerformanceFrequency();
+        active       = true;
+        file.writefln("# SDL event log — timestamps are ms from program start");
+        file.flush();
+    }
+
+    void close() {
+        if (!active) return;
+        file.close();
+        active = false;
+    }
+
+    void log(ref const SDL_Event e) {
+        if (!active) return;
+        double t = cast(double)(SDL_GetPerformanceCounter() - startCounter)
+                 / cast(double)freq * 1000.0;
+        switch (e.type) {
+            case SDL_QUIT:
+                file.writefln("%.3f SDL_QUIT", t);
+                break;
+            case SDL_KEYDOWN:
+            case SDL_KEYUP:
+                file.writefln("%.3f %-16s sym=%d scan=%d mod=0x%04x repeat=%d",
+                    t,
+                    e.type == SDL_KEYDOWN ? "SDL_KEYDOWN" : "SDL_KEYUP",
+                    e.key.keysym.sym,
+                    cast(int)e.key.keysym.scancode,
+                    cast(uint)e.key.keysym.mod,
+                    cast(int)e.key.repeat);
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONUP:
+                file.writefln("%.3f %-24s btn=%d x=%d y=%d clicks=%d",
+                    t,
+                    e.type == SDL_MOUSEBUTTONDOWN ? "SDL_MOUSEBUTTONDOWN"
+                                                  : "SDL_MOUSEBUTTONUP",
+                    e.button.button, e.button.x, e.button.y,
+                    cast(int)e.button.clicks);
+                break;
+            case SDL_MOUSEMOTION:
+                file.writefln("%.3f SDL_MOUSEMOTION          x=%d y=%d xrel=%d yrel=%d state=0x%x",
+                    t, e.motion.x, e.motion.y,
+                    e.motion.xrel, e.motion.yrel, e.motion.state);
+                break;
+            case SDL_MOUSEWHEEL:
+                file.writefln("%.3f SDL_MOUSEWHEEL            x=%d y=%d",
+                    t, e.wheel.x, e.wheel.y);
+                break;
+            case SDL_WINDOWEVENT:
+                file.writefln("%.3f SDL_WINDOWEVENT           sub=%d",
+                    t, cast(int)e.window.event);
+                break;
+            case SDL_TEXTINPUT:
+                file.writefln("%.3f SDL_TEXTINPUT", t);
+                break;
+            default:
+                file.writefln("%.3f SDL_EVENT                 type=0x%08x", t, e.type);
+                break;
+        }
+        file.flush();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Handler — base class for interactive 3-D overlays (gizmos, manipulators…)
@@ -1014,6 +1090,10 @@ void main() {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
     scope(exit) SDL_Quit();
 
+    EventLogger evLog;
+    evLog.open("events.log");
+    scope(exit) evLog.close();
+
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -1155,6 +1235,7 @@ void main() {
     while (running) {
         // ---- Events ----
         while (SDL_PollEvent(&event)) {
+            evLog.log(event);
             ImGui_ImplSDL2_ProcessEvent(&event);
 
             if (io.WantCaptureMouse &&
