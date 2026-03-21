@@ -50,6 +50,157 @@ Mesh makeCube() {
 }
 
 // ---------------------------------------------------------------------------
+// Catmull-Clark subdivision
+// ---------------------------------------------------------------------------
+
+// Returns a new mesh that is one Catmull-Clark subdivision of `m`.
+// Each n-gon face is replaced by n quads.
+Mesh catmullClark(ref const Mesh m) {
+    uint nV = cast(uint)m.vertices.length;
+    uint nF = cast(uint)m.faces.length;
+    uint nE = cast(uint)m.edges.length;
+
+    // Canonical edge key: always (min, max) packed into a ulong.
+    static ulong edgeKey(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32 | cast(ulong)b)
+                     : (cast(ulong)b << 32 | cast(ulong)a);
+    }
+
+    // Map edge key → index into m.edges
+    uint[ulong] edgeLookup;
+    foreach (i, e; m.edges)
+        edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+
+    // Adjacency lists
+    uint[][] edgeFaces = new uint[][](nE);   // faces sharing this edge (1 or 2)
+    uint[][] vertFaces = new uint[][](nV);   // faces that contain this vertex
+    uint[][] vertEdges = new uint[][](nV);   // edges that contain this vertex
+
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        foreach (vi; face)
+            vertFaces[vi] ~= cast(uint)fi;
+        foreach (i; 0 .. len) {
+            uint a = face[i], b = face[(i + 1) % len];
+            uint ei = edgeLookup[edgeKey(a, b)];
+            edgeFaces[ei] ~= cast(uint)fi;
+        }
+    }
+    foreach (ei, e; m.edges) {
+        vertEdges[e[0]] ~= cast(uint)ei;
+        vertEdges[e[1]] ~= cast(uint)ei;
+    }
+
+    // Step 1 — face points: centroid of each face
+    Vec3[] facePoints = new Vec3[](nF);
+    foreach (fi, face; m.faces) {
+        Vec3 s = Vec3(0, 0, 0);
+        foreach (vi; face) s = vec3Add(s, m.vertices[vi]);
+        float inv = 1.0f / cast(float)face.length;
+        facePoints[fi] = Vec3(s.x * inv, s.y * inv, s.z * inv);
+    }
+
+    // Step 2 — edge points
+    Vec3[] edgePoints = new Vec3[](nE);
+    foreach (ei, e; m.edges) {
+        Vec3 a = m.vertices[e[0]], b = m.vertices[e[1]];
+        if (edgeFaces[ei].length == 2) {
+            // Interior: average of 2 endpoints + 2 face points
+            Vec3 f0 = facePoints[edgeFaces[ei][0]];
+            Vec3 f1 = facePoints[edgeFaces[ei][1]];
+            edgePoints[ei] = Vec3((a.x + b.x + f0.x + f1.x) * 0.25f,
+                                  (a.y + b.y + f0.y + f1.y) * 0.25f,
+                                  (a.z + b.z + f0.z + f1.z) * 0.25f);
+        } else {
+            // Boundary: midpoint
+            edgePoints[ei] = Vec3((a.x + b.x) * 0.5f,
+                                  (a.y + b.y) * 0.5f,
+                                  (a.z + b.z) * 0.5f);
+        }
+    }
+
+    // Step 3 — updated original vertex positions
+    Vec3[] newVerts = new Vec3[](nV);
+    foreach (vi; 0 .. nV) {
+        Vec3 v  = m.vertices[vi];
+        uint n  = cast(uint)vertFaces[vi].length;
+        if (n == 0) { newVerts[vi] = v; continue; }
+
+        // Check for boundary (vertex has at least one boundary edge)
+        bool boundary = false;
+        foreach (ei; vertEdges[vi])
+            if (edgeFaces[ei].length < 2) { boundary = true; break; }
+
+        if (boundary) {
+            // Boundary rule: average of v and midpoints of its boundary edges
+            Vec3 sum = v;
+            int  cnt = 1;
+            foreach (ei; vertEdges[vi]) {
+                if (edgeFaces[ei].length >= 2) continue;
+                Vec3 ea = m.vertices[m.edges[ei][0]];
+                Vec3 eb = m.vertices[m.edges[ei][1]];
+                sum = vec3Add(sum, Vec3((ea.x + eb.x) * 0.5f,
+                                       (ea.y + eb.y) * 0.5f,
+                                       (ea.z + eb.z) * 0.5f));
+                cnt++;
+            }
+            float inv = 1.0f / cast(float)cnt;
+            newVerts[vi] = Vec3(sum.x * inv, sum.y * inv, sum.z * inv);
+        } else {
+            // Interior rule: (F + 2R + (n-3)*v) / n
+            Vec3 F = Vec3(0, 0, 0);
+            foreach (fi; vertFaces[vi]) F = vec3Add(F, facePoints[fi]);
+            float fn = cast(float)n;
+            F = Vec3(F.x / fn, F.y / fn, F.z / fn);
+
+            uint  ne = cast(uint)vertEdges[vi].length;
+            Vec3  R  = Vec3(0, 0, 0);
+            foreach (ei; vertEdges[vi]) {
+                Vec3 ea = m.vertices[m.edges[ei][0]];
+                Vec3 eb = m.vertices[m.edges[ei][1]];
+                R = vec3Add(R, Vec3((ea.x + eb.x) * 0.5f,
+                                   (ea.y + eb.y) * 0.5f,
+                                   (ea.z + eb.z) * 0.5f));
+            }
+            R = Vec3(R.x / ne, R.y / ne, R.z / ne);
+
+            newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
+                                (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
+                                (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
+        }
+    }
+
+    // Assemble output mesh.
+    // Vertex layout in result:
+    //   [0 .. nV)          — updated original vertices
+    //   [nV .. nV+nE)      — edge points
+    //   [nV+nE .. nV+nE+nF) — face points
+    Mesh result;
+    result.vertices.length = nV + nE + nF;
+    foreach (vi; 0 .. nV)  result.vertices[vi]           = newVerts[vi];
+    foreach (ei; 0 .. nE)  result.vertices[nV + ei]      = edgePoints[ei];
+    foreach (fi; 0 .. nF)  result.vertices[nV + nE + fi] = facePoints[fi];
+
+    // Each original n-gon → n quads.
+    // For corner i of face fi with verts [..., v_{i-1}, v_i, v_{i+1}, ...]:
+    //   quad = [ v_i, edge_point(v_i→v_{i+1}), face_point, edge_point(v_{i-1}→v_i) ]
+    foreach (fi, face; m.faces) {
+        uint fpIdx = nV + nE + cast(uint)fi;
+        uint len   = cast(uint)face.length;
+        foreach (i; 0 .. len) {
+            uint vi0  = face[i];
+            uint vi1  = face[(i + 1) % len];
+            uint vim1 = face[(i + len - 1) % len];
+            uint eiFwd  = edgeLookup[edgeKey(vi0, vi1)];
+            uint eiBack = edgeLookup[edgeKey(vim1, vi0)];
+            result.addFace([vi0, nV + eiFwd, fpIdx, nV + eiBack]);
+        }
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // GpuMesh
 // ---------------------------------------------------------------------------
 

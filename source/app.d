@@ -352,6 +352,14 @@ void main(string[] args) {
                         case SDLK_1:      editMode = EditMode.Vertices;  break;
                         case SDLK_2:      editMode = EditMode.Edges;     break;
                         case SDLK_3:      editMode = EditMode.Polygons;  break;
+                        case SDLK_TAB:
+                            setActiveTool(null);
+                            mesh = catmullClark(mesh);
+                            selected.length      = mesh.vertices.length; selected[]      = false;
+                            selectedEdges.length = mesh.edges.length;    selectedEdges[] = false;
+                            selectedFaces.length = mesh.faces.length;    selectedFaces[] = false;
+                            gpu.upload(mesh);
+                            break;
                         case SDLK_SPACE:
                             if (activeTool) setActiveTool(null);
                             else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
