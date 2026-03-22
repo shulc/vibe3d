@@ -4,10 +4,13 @@
     "authors": ["user"],
     "license": "MIT",
     "dependencies": {
-        "bindbc-sdl": "~>1.4",
-        "bindbc-opengl": "~>1.1"
+        "bindbc-sdl": "~>1.5.2",
+        "bindbc-opengl": "~>1.1.1",
+        "bindbc-loader": "~>1.1.5",
+        "bindbc-common": "~>1.0.5",
+        "d_imgui": "~>1.89.7"
     },
-    "versions": ["SDL_2020", "GL33"],
+    "versions": ["SDL_2020", "GL_33", "IMGUI_OPENGL3"],
     "sourcePaths": ["source"],
     "mainSourceFile": "source/app.d"
 }
