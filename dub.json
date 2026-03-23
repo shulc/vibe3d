@@ -1,7 +1,7 @@
 {
-    "name": "gl_triangle",
-    "description": "OpenGL triangle in D",
-    "authors": ["user"],
+    "name": "vibe3d",
+    "description": "simple 3d modeller inspired MODO and LigthWave",
+    "authors": ["Alexander Shaagarov"],
     "license": "MIT",
     "dependencies": {
         "bindbc-sdl": "~>1.5.2",

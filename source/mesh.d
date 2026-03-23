@@ -1,6 +1,7 @@
 module mesh;
 
 import bindbc.opengl;
+import std.math : sqrt;
 import math;
 // ---------------------------------------------------------------------------
 // Mesh
@@ -227,30 +228,46 @@ struct GpuMesh {
     }
 
     void upload(ref const Mesh mesh) {
-        // Faces (fan triangulation) — track per-face offsets
+        // Faces — interleaved [pos(3) + normal(3)] per vertex, flat shading.
+        enum FACE_STRIDE = 6;
         float[] faceData;
         faceTriStart.length = 0;
         faceTriCount.length = 0;
         foreach (face; mesh.faces) {
-            int start = cast(int)(faceData.length / 3);
+            int start = cast(int)(faceData.length / FACE_STRIDE);
             if (face.length >= 3) {
+                // Flat normal from the first triangle of the face.
+                Vec3 v0 = mesh.vertices[face[0]];
+                Vec3 v1 = mesh.vertices[face[1]];
+                Vec3 v2 = mesh.vertices[face[2]];
+                Vec3 e1 = vec3Sub(v1, v0), e2 = vec3Sub(v2, v0);
+                Vec3 cr = cross(e1, e2);
+                float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
+                Vec3  n   = nlen > 1e-6f
+                            ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)
+                            : Vec3(0, 1, 0);
                 for (uint i = 1; i + 1 < face.length; i++) {
                     foreach (idx; [face[0], face[i], face[i+1]]) {
                         Vec3 v = mesh.vertices[idx];
-                        faceData ~= [v.x, v.y, v.z];
+                        faceData ~= [v.x, v.y, v.z, n.x, n.y, n.z];
                     }
                 }
             }
-            int count = cast(int)(faceData.length / 3) - start;
+            int count = cast(int)(faceData.length / FACE_STRIDE) - start;
             faceTriStart ~= start;
             faceTriCount  ~= count;
         }
-        faceVertCount = cast(int)(faceData.length / 3);
+        faceVertCount = cast(int)(faceData.length / FACE_STRIDE);
         glBindVertexArray(faceVao);
         glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
         glBufferData(GL_ARRAY_BUFFER, faceData.length * float.sizeof, faceData.ptr, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
+        // attr 0: position
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, FACE_STRIDE * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
+        // attr 1: normal
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, FACE_STRIDE * float.sizeof,
+                              cast(void*)(3 * float.sizeof));
+        glEnableVertexAttribArray(1);
 
         // Edges
         float[] edgeData;

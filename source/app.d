@@ -39,6 +39,48 @@ immutable string fragmentShaderSrc = q{
     }
 };
 
+// Lit shaders — Blinn-Phong with flat per-face normals.
+immutable string litVertSrc = q{
+    #version 330 core
+    layout(location = 0) in vec3 aPos;
+    layout(location = 1) in vec3 aNormal;
+    uniform mat4 u_model;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    out vec3 vNormal;
+    out vec3 vWorldPos;
+    void main() {
+        vec4 worldPos = u_model * vec4(aPos, 1.0);
+        vWorldPos     = worldPos.xyz;
+        vNormal       = mat3(u_model) * aNormal;
+        gl_Position   = u_proj * u_view * worldPos;
+    }
+};
+
+immutable string litFragSrc = q{
+    #version 330 core
+    in  vec3 vNormal;
+    in  vec3 vWorldPos;
+    uniform vec3  u_color;
+    uniform vec3  u_lightDir;  // normalized, world space
+    uniform vec3  u_eyePos;
+    uniform float u_ambient;
+    uniform float u_specStr;
+    uniform float u_specPow;
+    out vec4 fragColor;
+    void main() {
+        vec3 N    = normalize(vNormal);
+        vec3 L    = u_lightDir;
+        vec3 V    = normalize(u_eyePos - vWorldPos);
+        vec3 H    = normalize(L + V);
+        float dif = max(dot(N, L), 0.0);
+        float spc = pow(max(dot(N, H), 0.0), u_specPow);
+        vec3  col = u_color * (u_ambient + dif * (1.0 - u_ambient))
+                  + vec3(1.0) * spc * u_specStr;
+        fragColor = vec4(col, 1.0);
+    }
+};
+
 // Grid shaders — vertex passes world pos, fragment computes fade alpha.
 immutable string gridVertSrc = q{
     #version 330 core
@@ -262,6 +304,18 @@ void main(string[] args) {
     GLint locView  = glGetUniformLocation(program, "u_view");
     GLint locProj  = glGetUniformLocation(program, "u_proj");
     GLint locColor = glGetUniformLocation(program, "u_color");
+
+    GLuint litProgram = createProgram(litVertSrc, litFragSrc);
+    scope(exit) glDeleteProgram(litProgram);
+    GLint litLocModel    = glGetUniformLocation(litProgram, "u_model");
+    GLint litLocView     = glGetUniformLocation(litProgram, "u_view");
+    GLint litLocProj     = glGetUniformLocation(litProgram, "u_proj");
+    GLint litLocColor    = glGetUniformLocation(litProgram, "u_color");
+    GLint litLocLightDir = glGetUniformLocation(litProgram, "u_lightDir");
+    GLint litLocEyePos   = glGetUniformLocation(litProgram, "u_eyePos");
+    GLint litLocAmbient  = glGetUniformLocation(litProgram, "u_ambient");
+    GLint litLocSpecStr  = glGetUniformLocation(litProgram, "u_specStr");
+    GLint litLocSpecPow  = glGetUniformLocation(litProgram, "u_specPow");
 
     GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, fragmentShaderSrc);
     scope(exit) glDeleteProgram(thickLineProgram);
@@ -700,13 +754,29 @@ void main(string[] args) {
 
         // glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
-        glUseProgram(program);
 
-        // Draw faces — writes depth buffer (with per-face highlights in Polygons mode)
-        if (editMode == EditMode.Polygons)
-            gpu.drawFacesHighlighted(program, locColor, hoveredFace, selectedFaces);
-        else
-            gpu.drawFaces(program, locColor);
+        // Draw faces with Blinn-Phong lighting
+        {
+            Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+            glUseProgram(litProgram);
+            glUniformMatrix4fv(litLocModel, 1, GL_FALSE, identityMatrix.ptr);
+            glUniformMatrix4fv(litLocView,  1, GL_FALSE, view.ptr);
+            glUniformMatrix4fv(litLocProj,  1, GL_FALSE, proj.ptr);
+            glUniform3f(litLocLightDir, lightDir.x, lightDir.y, lightDir.z);
+            glUniform3f(litLocEyePos,   eye.x, eye.y, eye.z);
+            glUniform1f(litLocAmbient,  0.20f);
+            glUniform1f(litLocSpecStr,  0.25f);
+            glUniform1f(litLocSpecPow,  32.0f);
+            if (editMode == EditMode.Polygons)
+                gpu.drawFacesHighlighted(litProgram, litLocColor, hoveredFace, selectedFaces);
+            else
+                gpu.drawFaces(litProgram, litLocColor);
+        }
+
+        glUseProgram(program);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
 
         bool doingCameraDrag = (dragMode == DragMode.Orbit ||
                                 dragMode == DragMode.Zoom  ||
