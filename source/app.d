@@ -260,11 +260,11 @@ void main(string[] args) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-    immutable int WIN_W = 800, WIN_H = 600;
+    int winW = 800, winH = 600;
     SDL_Window* window = SDL_CreateWindow(
         "OpenGL Mesh  |  Alt+drag=orbit  Alt+Shift=pan  Ctrl+Alt=zoom  LMB=select",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
     if (!window) { writefln("SDL_CreateWindow: %s", SDL_GetError()); return; }
     scope(exit) SDL_DestroyWindow(window);
@@ -463,6 +463,17 @@ void main(string[] args) {
                     running = false;
                     break;
 
+                case SDL_WINDOWEVENT:
+                    if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                        if (playbackMode)
+                            SDL_SetWindowSize(window, event.window.data1, event.window.data2);
+                        SDL_GetWindowSize(window, &winW, &winH);
+                        SDL_GL_GetDrawableSize(window, &fbW, &fbH);
+                        glViewport(0, 0, fbW, fbH);
+                        initThickLineProgram(thickLineProgram, fbW, fbH);
+                    }
+                    break;
+
                 case SDL_KEYDOWN:
                     switch (event.key.keysym.sym) {
                         case SDLK_ESCAPE: running = false;              break;
@@ -587,8 +598,8 @@ void main(string[] args) {
         Vec3 eye    = vec3Add(focus, offset);
         auto view   = lookAt(eye, focus, Vec3(0, 1, 0));
         auto proj   = perspectiveMatrix(45.0f * PI / 180.0f,
-                                        cast(float)WIN_W / WIN_H, 0.1f, 100.0f);
-        Viewport vp = Viewport(view, proj, WIN_W, WIN_H);
+                                        cast(float)winW / winH, 0.1f, 100.0f);
+        Viewport vp = Viewport(view, proj, winW, winH);
 
         // ---- ImGui ----
         ImGui_ImplOpenGL3_NewFrame();
@@ -798,7 +809,7 @@ void main(string[] args) {
                     continue;
 
                 float expectedDepth = ndcZ * 0.5f + 0.5f;
-                float bufDepth      = readDepth(WIN_W, WIN_H, fbW, fbH, sx, sy);
+                float bufDepth      = readDepth(winW, winH, fbW, fbH, sx, sy);
                 if (expectedDepth > bufDepth + 0.01f)
                     continue;  // occluded
 
@@ -846,7 +857,7 @@ void main(string[] args) {
                 float cpy = say + t * (sby - say);
                 float ndcZ = ndcZa + t * (ndcZb - ndcZa);
                 float expectedDepth = ndcZ * 0.5f + 0.5f;
-                float bufDepth = readDepth(WIN_W, WIN_H, fbW, fbH, cpx, cpy);
+                float bufDepth = readDepth(winW, winH, fbW, fbH, cpx, cpy);
                 if (expectedDepth > bufDepth + 0.01f)
                     continue;  // occluded by a face
 
@@ -891,7 +902,7 @@ void main(string[] args) {
                 int n = cast(int)sxs.length;
                 cx /= n; cy /= n; cZ /= n;
                 float expectedDepth = cZ * 0.5f + 0.5f;
-                float bufDepth = readDepth(WIN_W, WIN_H, fbW, fbH, cx, cy);
+                float bufDepth = readDepth(winW, winH, fbW, fbH, cx, cy);
                 if (expectedDepth > bufDepth + 0.02f) continue;
 
                 // Pick face closest to camera

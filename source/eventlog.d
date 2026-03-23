@@ -82,8 +82,13 @@ struct EventLogger {
                     t, e.wheel.x, e.wheel.y);
                 break;
             case SDL_WINDOWEVENT:
-                file.writefln("%.3f SDL_WINDOWEVENT           sub=%d",
-                    t, cast(int)e.window.event);
+                if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                    file.writefln("%.3f SDL_WINDOWEVENT           sub=%d w=%d h=%d",
+                        t, cast(int)e.window.event,
+                        e.window.data1, e.window.data2);
+                else
+                    file.writefln("%.3f SDL_WINDOWEVENT           sub=%d",
+                        t, cast(int)e.window.event);
                 break;
             case SDL_TEXTINPUT:
                 file.writefln("%.3f SDL_TEXTINPUT", t);
@@ -195,6 +200,8 @@ struct EventPlayer {
                 case "SDL_WINDOWEVENT":
                     e.type         = SDL_WINDOWEVENT;
                     e.window.event = cast(ubyte)(kv.get("sub", 0));
+                    e.window.data1 = kv.get("w", 0);
+                    e.window.data2 = kv.get("h", 0);
                     break;
                 case "SDL_TEXTINPUT":
                     e.type = SDL_TEXTINPUT;
