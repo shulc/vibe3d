@@ -227,7 +227,7 @@ public:
     override bool drawImGui() {
         if (active)
             ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        bool clicked = ImGui.Button("Move [W]");
+        bool clicked = ImGui.Button("Move             W");
         if (active)
             ImGui.PopStyleColor();
         return clicked;
@@ -407,7 +407,7 @@ public:
     override bool drawImGui() {
         if (active)
             ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        bool clicked = ImGui.Button("Scale [R]");
+        bool clicked = ImGui.Button("Scale            R");
         if (active)
             ImGui.PopStyleColor();
         return clicked;
@@ -616,7 +616,7 @@ public:
     override bool drawImGui() {
         if (active)
             ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        bool clicked = ImGui.Button("Rotate [E]");
+        bool clicked = ImGui.Button("Rotate           E");
         if (active)
             ImGui.PopStyleColor();
         return clicked;

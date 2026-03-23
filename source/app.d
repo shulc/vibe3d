@@ -6,8 +6,10 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
+import d_imgui.imgui_demo;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
+
 
 import math;
 import mesh;
@@ -613,21 +615,14 @@ void main(string[] args) {
         int selFaceCount;
         foreach (s; selectedFaces) if (s) selFaceCount++;
 
-        ImGui.SetNextWindowPos(ImVec2(10, 10), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(ImVec2(230, 0), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(ImVec2(0, 0), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(ImVec2(150, winH), ImGuiCond.Always);
         if (ImGui.Begin("Mesh Info", null,
+                        ImGuiWindowFlags.NoTitleBar |
                         ImGuiWindowFlags.NoResize |
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
-            // Edit mode selector
-            ImGui.Text("Edit Mode");
-            int em = cast(int)editMode;
-            if (ImGui.RadioButton("Vertices [1]",  &em, 0)) editMode = EditMode.Vertices;
-            if (ImGui.RadioButton("Edges [2]",     &em, 1)) editMode = EditMode.Edges;
-            if (ImGui.RadioButton("Polygons [3]",  &em, 2)) editMode = EditMode.Polygons;
-
-            ImGui.Separator();
             ImGui.LabelText("Vertices", "%d", cast(int)mesh.vertices.length);
             ImGui.LabelText("Edges",    "%d", cast(int)mesh.edges.length);
             ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
@@ -636,10 +631,10 @@ void main(string[] args) {
             ImGui.Text("Tools");
             if (getMoveTool().drawImGui())
                 setActiveTool(cast(MoveTool)activeTool ? null : getMoveTool());
-            if (getScaleTool().drawImGui())
-                setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
             if (getRotateTool().drawImGui())
                 setActiveTool(cast(RotateTool)activeTool ? null : getRotateTool());
+            if (getScaleTool().drawImGui())
+                setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
 
             ImGui.Separator();
             ImGui.Text("Selection");
@@ -715,6 +710,58 @@ void main(string[] args) {
             ImGui.TextDisabled("Ctrl+LMB/drag    remove from select");
         }
         ImGui.End();
+
+        ImGui.SetNextWindowPos(ImVec2(150, winH - 38), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(ImVec2(winW - 150, 38), ImGuiCond.Always);
+        if (ImGui.Begin("Status line", null,
+                        ImGuiWindowFlags.NoTitleBar |
+                        ImGuiWindowFlags.NoResize |
+                        ImGuiWindowFlags.NoMove   |
+                        ImGuiWindowFlags.NoCollapse))
+        {
+            {
+                bool active = false;
+                if (editMode == EditMode.Vertices) {
+                    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    active = true;
+                }
+                bool clicked = ImGui.Button("Vertices  1");
+                if (clicked)
+                    editMode = EditMode.Vertices;
+                if (active)
+                    ImGui.PopStyleColor();
+                ImGui.SameLine();
+            }
+            {
+                bool active = false;
+                if (editMode == EditMode.Edges) {
+                    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    active = true;
+                }
+                bool clicked = ImGui.Button("Edges     2");
+                if (clicked)
+                    editMode = EditMode.Edges;
+                if (active)
+                    ImGui.PopStyleColor();
+                ImGui.SameLine();
+            }
+            {
+                bool active = false;
+                if (editMode == EditMode.Polygons) {
+                    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    active = true;
+                }
+                bool clicked = ImGui.Button("Polygons  3");
+                if (clicked)
+                    editMode = EditMode.Polygons;
+                if (active)
+                    ImGui.PopStyleColor();
+                ImGui.SameLine();
+            }
+        }
+        ImGui.End();
+        ShowDemoWindow();
+
 
         // ---- Playback cursor overlay ----
         if (playbackMode) {
