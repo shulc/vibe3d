@@ -36,15 +36,14 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
 // then restore the caller's program.
 private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
                              const ref float[16] model,
-                             const ref float[16] view,
-                             const ref float[16] proj,
+                             const ref Viewport vp,
                              Vec3 color, float lineWidth,
                              GLuint restoreProgram)
 {
     glUseProgram(g_thickLine.prog);
     glUniformMatrix4fv(g_thickLine.locModel, 1, GL_FALSE, model.ptr);
-    glUniformMatrix4fv(g_thickLine.locView,  1, GL_FALSE, view.ptr);
-    glUniformMatrix4fv(g_thickLine.locProj,  1, GL_FALSE, proj.ptr);
+    glUniformMatrix4fv(g_thickLine.locView,  1, GL_FALSE, vp.view.ptr);
+    glUniformMatrix4fv(g_thickLine.locProj,  1, GL_FALSE, vp.proj.ptr);
     glUniform3f(g_thickLine.locColor, color.x, color.y, color.z);
     glUniform1f(g_thickLine.locWidth, lineWidth);
     glUniform2f(g_thickLine.locScreen, g_thickLine.screenW, g_thickLine.screenH);
@@ -59,10 +58,7 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 
 class Handler {
     // Called once per frame to render the overlay into the 3-D view.
-    // view / proj are the current camera matrices; winW/winH are window dims.
-    void draw(GLuint program, GLint locColor,
-              const ref float[16] view, const ref float[16] proj,
-              int winW, int winH) {}
+    void draw(GLuint program, GLint locColor, const ref Viewport vp) {}
 
     // Mouse events — return true to consume (stops further processing).
     bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
@@ -149,9 +145,7 @@ public:
     void setVisible(bool v)      { visible = v; if (!v) hovered = false; }
     bool isVisible() const       { return visible; }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 dir = vec3Sub(end, start);
@@ -169,7 +163,7 @@ public:
         float shaftLen   = len - coneLen;
         Vec3  coneBase   = vec3Sub(end, vec3Scale(fwd, coneLen));
 
-        updateHover(view, proj, winW, winH);
+        updateHover(vp);
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         GLint locModel = glGetUniformLocation(program, "u_model");
@@ -180,7 +174,7 @@ public:
         // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
                                       Vec3(1, 1, shaftLen), start);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, view, proj, c, lineWidth, program);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, program);
         glUniform3f(locColor, c.x, c.y, c.z);
 
         // ---- Draw cone head ----
@@ -197,16 +191,15 @@ public:
     }
 
 private:
-    void updateHover(const ref float[16] view, const ref float[16] proj,
-                     int winW, int winH)
+    void updateHover(const ref Viewport vp)
     {
         if (hoverBlocked) { hovered = false; return; }
         if (forceHovered) { hovered = true;  return; }
         int mx, my;
         queryMouse(mx, my);
         float sax, say, ndcZa, sbx, sby, ndcZb;
-        if (!projectToWindowFull(start, view, proj, winW, winH, sax, say, ndcZa) ||
-            !projectToWindowFull(end,   view, proj, winW, winH, sbx, sby, ndcZb))
+        if (!projectToWindowFull(start, vp, sax, say, ndcZa) ||
+            !projectToWindowFull(end,   vp, sbx, sby, ndcZb))
         {
             hovered = false;
             return;
@@ -296,9 +289,7 @@ public:
     void setVisible(bool v)        { visible = v; if (!v) hovered = false; }
     bool isVisible()         const { return visible; }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 dir = vec3Sub(end, start);
@@ -314,7 +305,7 @@ public:
         float shaftLen  = len - cubeHalf * 2;
         Vec3  cubeCenter = vec3Sub(end, vec3Scale(fwd, cubeHalf));
 
-        updateHover(view, proj, winW, winH);
+        updateHover(vp);
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         GLint locModel = glGetUniformLocation(program, "u_model");
@@ -325,7 +316,7 @@ public:
         // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
                                       Vec3(1, 1, shaftLen), start);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, view, proj, c, lineWidth, program);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, program);
         glUniform3f(locColor, c.x, c.y, c.z);
 
         // ---- Draw cube head ----
@@ -342,16 +333,15 @@ public:
     }
 
 private:
-    void updateHover(const ref float[16] view, const ref float[16] proj,
-                     int winW, int winH)
+    void updateHover(const ref Viewport vp)
     {
         if (hoverBlocked) { hovered = false; return; }
         if (forceHovered) { hovered = true;  return; }
         int mx, my;
         queryMouse(mx, my);
         float sax, say, ndcZa, sbx, sby, ndcZb;
-        if (!projectToWindowFull(start, view, proj, winW, winH, sax, say, ndcZa) ||
-            !projectToWindowFull(end,   view, proj, winW, winH, sbx, sby, ndcZb))
+        if (!projectToWindowFull(start, vp, sax, say, ndcZa) ||
+            !projectToWindowFull(end,   vp, sbx, sby, ndcZb))
         {
             hovered = false;
             return;
@@ -419,16 +409,14 @@ public:
     void setHoverBlocked(bool v)   { hoverBlocked = v; }
     void setForceHovered(bool v)   { forceHovered = v; }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         Vec3 fwd = normalize(normal);
         Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
         Vec3 right = normalize(cross(fwd, tmp));
         Vec3 up    = cross(right, fwd);
 
-        updateHover(view, proj, winW, winH, right, up);
+        updateHover(vp, right, up);
 
         Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
                : selected ? Vec3(1.0f, 0.64f, 0.0f)    // orange
@@ -441,7 +429,7 @@ public:
 
         auto model = modelMatrix(right, up, fwd,
                                  Vec3(radius, radius, radius), center);
-        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, view, proj, c, lineWidth, program);
+        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, program);
 
         glEnable(GL_DEPTH_TEST);
         // Restore main program's u_model to identity
@@ -455,22 +443,18 @@ public:
     }
 
     // Fresh hit test — does not rely on cached hover state.
-    bool hitTest(int mx, int my,
-                 const ref float[16] view, const ref float[16] proj,
-                 int winW, int winH)
+    bool hitTest(int mx, int my, const ref Viewport vp)
     {
         Vec3 fwd = normalize(normal);
         Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
         Vec3 right = normalize(cross(fwd, tmp));
         Vec3 up    = cross(right, fwd);
-        return arcHitCheck(mx, my, view, proj, winW, winH, right, up);
+        return arcHitCheck(mx, my, vp, right, up);
     }
 
 private:
     // Returns true if (mx,my) is within 8 px of the projected arc.
-    bool arcHitCheck(int mx, int my,
-                     const ref float[16] view, const ref float[16] proj,
-                     int winW, int winH, Vec3 right, Vec3 up)
+    bool arcHitCheck(int mx, int my, const ref Viewport vp, Vec3 right, Vec3 up)
     {
         float[2][SEGS + 1] pts;
         bool[SEGS + 1]     valid;
@@ -480,7 +464,7 @@ private:
                         vec3Add(vec3Scale(right, cos(a) * radius),
                                 vec3Scale(up,    sin(a) * radius)));
             float sx, sy, ndcZ;
-            valid[i] = projectToWindowFull(w, view, proj, winW, winH, sx, sy, ndcZ);
+            valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
             pts[i]   = [sx, sy];
         }
         foreach (i; 0 .. SEGS) {
@@ -494,14 +478,13 @@ private:
         return false;
     }
 
-    void updateHover(const ref float[16] view, const ref float[16] proj,
-                     int winW, int winH, Vec3 right, Vec3 up)
+    void updateHover(const ref Viewport vp, Vec3 right, Vec3 up)
     {
         if (hoverBlocked) { hovered = false; return; }
         if (forceHovered) { hovered = true;  return; }
         int mx, my;
         queryMouse(mx, my);
-        hovered = arcHitCheck(mx, my, view, proj, winW, winH, right, up);
+        hovered = arcHitCheck(mx, my, vp, right, up);
     }
 }
 
@@ -532,11 +515,10 @@ class MoveHandler : Handler {
         center = pos;
     }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         // Extract eye position from view matrix (view = R*T, eye = -R^T * t).
+        const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
             -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
             -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
@@ -565,9 +547,9 @@ class MoveHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
-        arrowX.draw(program, locColor, view, proj, winW, winH);
-        arrowY.draw(program, locColor, view, proj, winW, winH);
-        arrowZ.draw(program, locColor, view, proj, winW, winH);
+        arrowX.draw(program, locColor, vp);
+        arrowY.draw(program, locColor, vp);
+        arrowZ.draw(program, locColor, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -609,10 +591,9 @@ class RotateHandler : Handler {
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); }
     void setPosition(Vec3 pos) { center = pos; }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
+        const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
             -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
             -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
@@ -626,9 +607,9 @@ class RotateHandler : Handler {
         arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
         arcZ.center = center; arcZ.normal = Vec3(0,0,1); arcZ.radius = size;
 
-        arcX.draw(program, locColor, view, proj, winW, winH);
-        arcY.draw(program, locColor, view, proj, winW, winH);
-        arcZ.draw(program, locColor, view, proj, winW, winH);
+        arcX.draw(program, locColor, vp);
+        arcY.draw(program, locColor, vp);
+        arcZ.draw(program, locColor, vp);
     }
 }
 
@@ -659,10 +640,9 @@ class ScaleHandler : Handler {
         center = pos;
     }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
+        const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
             -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
             -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
@@ -688,9 +668,9 @@ class ScaleHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
-        arrowX.draw(program, locColor, view, proj, winW, winH);
-        arrowY.draw(program, locColor, view, proj, winW, winH);
-        arrowZ.draw(program, locColor, view, proj, winW, winH);
+        arrowX.draw(program, locColor, vp);
+        arrowY.draw(program, locColor, vp);
+        arrowZ.draw(program, locColor, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {

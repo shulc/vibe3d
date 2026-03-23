@@ -8,6 +8,13 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 struct Vec3 { float x, y, z; }
 struct Vec4 { float x, y, z, w; }
 
+struct Viewport {
+    float[16] view;
+    float[16] proj;
+    int width;
+    int height;
+}
+
 Vec3 vec3Add  (Vec3 a, Vec3 b)  { return Vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
 Vec3 vec3Sub  (Vec3 a, Vec3 b)  { return Vec3(a.x-b.x, a.y-b.y, a.z-b.z); }
 Vec3 vec3Scale(Vec3 v, float s) { return Vec3(v.x*s, v.y*s, v.z*s); }
@@ -80,38 +87,34 @@ Vec3 sphericalToCartesian(float az, float el, float dist) {
 // Returns false if behind camera or outside frustum.
 // px, py  — window-space pixels (Y down)
 // ndcZ    — NDC depth in [-1, 1]
-bool projectToWindow(Vec3 world,
-                     const ref float[16] view, const ref float[16] proj,
-                     int winW, int winH,
+bool projectToWindow(Vec3 world, const ref Viewport vp,
                      out float px, out float py, out float ndcZ) {
-    Vec4 vp = mulMV(view, Vec4(world.x, world.y, world.z, 1.0f));
-    Vec4 cp = mulMV(proj, vp);
-    if (cp.w <= 0.0f) return false;
-    float nx = cp.x / cp.w;
-    float ny = cp.y / cp.w;
-    ndcZ     = cp.z / cp.w;
+    Vec4 v = mulMV(vp.view, Vec4(world.x, world.y, world.z, 1.0f));
+    Vec4 c = mulMV(vp.proj, v);
+    if (c.w <= 0.0f) return false;
+    float nx = c.x / c.w;
+    float ny = c.y / c.w;
+    ndcZ     = c.z / c.w;
     if (nx < -1 || nx > 1 || ny < -1 || ny > 1 || ndcZ < -1 || ndcZ > 1)
         return false;
-    px = (nx * 0.5f + 0.5f)        * winW;
-    py = (1.0f - (ny * 0.5f + 0.5f)) * winH;
+    px = (nx * 0.5f + 0.5f)          * vp.width;
+    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height;
     return true;
 }
 
 // Like projectToWindow but does NOT reject points outside the screen boundary.
 // Only rejects points behind the camera (w <= 0).
 // Use this for hit-testing line segments that may extend off-screen.
-bool projectToWindowFull(Vec3 world,
-                         const ref float[16] view, const ref float[16] proj,
-                         int winW, int winH,
+bool projectToWindowFull(Vec3 world, const ref Viewport vp,
                          out float px, out float py, out float ndcZ) {
-    Vec4 vp = mulMV(view, Vec4(world.x, world.y, world.z, 1.0f));
-    Vec4 cp = mulMV(proj, vp);
-    if (cp.w <= 0.0f) return false;
-    float nx = cp.x / cp.w;
-    float ny = cp.y / cp.w;
-    ndcZ = cp.z / cp.w;
-    px = (nx * 0.5f + 0.5f)          * winW;
-    py = (1.0f - (ny * 0.5f + 0.5f)) * winH;
+    Vec4 v = mulMV(vp.view, Vec4(world.x, world.y, world.z, 1.0f));
+    Vec4 c = mulMV(vp.proj, v);
+    if (c.w <= 0.0f) return false;
+    float nx = c.x / c.w;
+    float ny = c.y / c.w;
+    ndcZ = c.z / c.w;
+    px = (nx * 0.5f + 0.5f)          * vp.width;
+    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height;
     return true;
 }
 

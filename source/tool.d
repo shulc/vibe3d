@@ -28,11 +28,9 @@ private:
     GpuMesh*  gpu;
     EditMode* editMode;
 
-    int       dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
-    int       lastMX, lastMY;
-    float[16] cachedView;
-    float[16] cachedProj;
-    int       cachedWinW, cachedWinH;
+    int      dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
+    int      lastMX, lastMY;
+    Viewport cachedVp;
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -102,15 +100,10 @@ public:
             : Vec3(0, 0, 0));
     }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         if (!active) return;
-        cachedView = view;
-        cachedProj = proj;
-        cachedWinW = winW;
-        cachedWinH = winH;
+        cachedVp = vp;
 
         // During drag: keep active arrow yellow, block hover on the other two.
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
@@ -122,7 +115,7 @@ public:
             isHovered |= arrow.isHovered();
         }
 
-        handler.draw(program, locColor, view, proj, winW, winH);
+        handler.draw(program, locColor, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -149,10 +142,8 @@ public:
         foreach (i, arrow; arrows) {
             if (!arrow.isVisible()) continue;
             float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, cachedView, cachedProj,
-                                     cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   cachedView, cachedProj,
-                                     cachedWinW, cachedWinH, sbx, sby, ndcZb)) continue;
+            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
                                    sax, say, sbx, sby, t) < 8.0f)
@@ -172,11 +163,9 @@ public:
         // Project center and center+axis to screen to get pixels-per-world-unit
         Vec3  center = handler.center;
         float cx, cy, cndcZ, ax_, ay_, andcZ;
-        if (!projectToWindowFull(center, cachedView, cachedProj,
-                                 cachedWinW, cachedWinH, cx, cy, cndcZ))
+        if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
-        if (!projectToWindowFull(vec3Add(center, axis), cachedView, cachedProj,
-                                 cachedWinW, cachedWinH, ax_, ay_, andcZ))
+        if (!projectToWindowFull(vec3Add(center, axis), cachedVp, ax_, ay_, andcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
 
         float sdx   = ax_ - cx;
@@ -262,11 +251,9 @@ private:
     GpuMesh*  gpu;
     EditMode* editMode;
 
-    int       dragAxis = -1;
-    int       lastMX, lastMY;
-    float[16] cachedView;
-    float[16] cachedProj;
-    int       cachedWinW, cachedWinH;
+    int      dragAxis = -1;
+    int      lastMX, lastMY;
+    Viewport cachedVp;
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -324,13 +311,10 @@ public:
             : Vec3(0, 0, 0));
     }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         if (!active) return;
-        cachedView = view; cachedProj = proj;
-        cachedWinW = winW; cachedWinH = winH;
+        cachedVp = vp;
 
         CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         bool anyHovered = false;
@@ -340,7 +324,7 @@ public:
             arrow.setHoverBlocked(dragAxis >= 0 && !isActive || anyHovered);
             anyHovered |= arrow.isHovered();
         }
-        handler.draw(program, locColor, view, proj, winW, winH);
+        handler.draw(program, locColor, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -367,11 +351,9 @@ public:
         // Project axis to screen to get pixels-per-world-unit
         Vec3  center = handler.center;
         float cx, cy, cndcZ, ax_, ay_, andcZ;
-        if (!projectToWindowFull(center, cachedView, cachedProj,
-                                 cachedWinW, cachedWinH, cx, cy, cndcZ))
+        if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
-        if (!projectToWindowFull(vec3Add(center, axis), cachedView, cachedProj,
-                                 cachedWinW, cachedWinH, ax_, ay_, andcZ))
+        if (!projectToWindowFull(vec3Add(center, axis), cachedVp, ax_, ay_, andcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
 
         float sdx   = ax_ - cx;
@@ -437,10 +419,8 @@ private:
         foreach (i, arrow; arrows) {
             if (!arrow.isVisible()) continue;
             float sax, say, ndcZa, sbx, sby, ndcZb;
-            if (!projectToWindowFull(arrow.start, cachedView, cachedProj,
-                                     cachedWinW, cachedWinH, sax, say, ndcZa)) continue;
-            if (!projectToWindowFull(arrow.end,   cachedView, cachedProj,
-                                     cachedWinW, cachedWinH, sbx, sby, ndcZb)) continue;
+            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
                                    sax, say, sbx, sby, t) < 8.0f)
@@ -467,12 +447,10 @@ private:
     GpuMesh*  gpu;
     EditMode* editMode;
 
-    int       dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
-    int       lastMX, lastMY;
-    float[16] cachedView;
-    float[16] cachedProj;
-    int       cachedWinW, cachedWinH;
-    float     cachedSize;      // gizmo radius in world units (from last draw)
+    int      dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
+    int      lastMX, lastMY;
+    Viewport cachedVp;
+    float    cachedSize;      // gizmo radius in world units (from last draw)
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -526,13 +504,10 @@ public:
             : Vec3(0, 0, 0));
     }
 
-    override void draw(GLuint program, GLint locColor,
-                       const ref float[16] view, const ref float[16] proj,
-                       int winW, int winH)
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
         if (!active) return;
-        cachedView = view; cachedProj = proj;
-        cachedWinW = winW; cachedWinH = winH;
+        cachedVp = vp;
 
         SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
         bool anyHovered = false;
@@ -543,7 +518,7 @@ public:
             anyHovered |= arc.isHovered();
         }
 
-        handler.draw(program, locColor, view, proj, winW, winH);
+        handler.draw(program, locColor, vp);
         cachedSize = handler.size;
     }
 
@@ -576,10 +551,10 @@ public:
         // Project the 'up' rim point to get screen radius and tangent direction.
         Vec3  center = handler.center;
         float cx, cy, cndcZ, rx, ry, rndcZ;
-        if (!projectToWindowFull(center, cachedView, cachedProj, cachedWinW, cachedWinH, cx, cy, cndcZ))
+        if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
         Vec3 rimPt = vec3Add(center, vec3Scale(up, cachedSize));
-        if (!projectToWindowFull(rimPt, cachedView, cachedProj, cachedWinW, cachedWinH, rx, ry, rndcZ))
+        if (!projectToWindowFull(rimPt, cachedVp, rx, ry, rndcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
 
         float screen_r = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
@@ -651,7 +626,7 @@ private:
     int hitTestAxes(int mx, int my) {
         SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
         foreach (i, arc; arcs)
-            if (arc.hitTest(mx, my, cachedView, cachedProj, cachedWinW, cachedWinH))
+            if (arc.hitTest(mx, my, cachedVp))
                 return cast(int)i;
         return -1;
     }
@@ -684,9 +659,7 @@ class Tool {
 
     // Called once per frame after the 3-D geometry has been drawn.
     // Override to render tool-specific overlays (gizmos, highlights, etc.).
-    void draw(GLuint program, GLint locColor,
-              const ref float[16] view, const ref float[16] proj,
-              int winW, int winH) {}
+    void draw(GLuint program, GLint locColor, const ref Viewport vp) {}
 
     // Called once per frame inside the ImGui window to append tool UI.
     // Returns true if the user clicked the activation button.

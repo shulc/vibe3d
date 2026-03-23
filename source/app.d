@@ -588,6 +588,7 @@ void main(string[] args) {
         auto view   = lookAt(eye, focus, Vec3(0, 1, 0));
         auto proj   = perspectiveMatrix(45.0f * PI / 180.0f,
                                         cast(float)WIN_W / WIN_H, 0.1f, 100.0f);
+        Viewport vp = Viewport(view, proj, WIN_W, WIN_H);
 
         // ---- ImGui ----
         ImGui_ImplOpenGL3_NewFrame();
@@ -793,8 +794,7 @@ void main(string[] args) {
 
             foreach (i; 0 .. mesh.vertices.length) {
                 float sx, sy, ndcZ;
-                if (!projectToWindow(mesh.vertices[i], view, proj, WIN_W, WIN_H,
-                                     sx, sy, ndcZ))
+                if (!projectToWindow(mesh.vertices[i], vp, sx, sy, ndcZ))
                     continue;
 
                 float expectedDepth = ndcZ * 0.5f + 0.5f;
@@ -831,11 +831,9 @@ void main(string[] args) {
             foreach (i; 0 .. mesh.edges.length) {
                 uint a = mesh.edges[i][0], b = mesh.edges[i][1];
                 float sax, say, ndcZa, sbx, sby, ndcZb;
-                if (!projectToWindow(mesh.vertices[a], view, proj, WIN_W, WIN_H,
-                                     sax, say, ndcZa))
+                if (!projectToWindow(mesh.vertices[a], vp, sax, say, ndcZa))
                     continue;
-                if (!projectToWindow(mesh.vertices[b], view, proj, WIN_W, WIN_H,
-                                     sbx, sby, ndcZb))
+                if (!projectToWindow(mesh.vertices[b], vp, sbx, sby, ndcZb))
                     continue;
 
                 float t;
@@ -881,8 +879,7 @@ void main(string[] args) {
                 bool allOk = true;
                 foreach (vi; face) {
                     float sx, sy, ndcZ;
-                    if (!projectToWindow(mesh.vertices[vi], view, proj, WIN_W, WIN_H,
-                                        sx, sy, ndcZ)) { allOk = false; break; }
+                    if (!projectToWindow(mesh.vertices[vi], vp, sx, sy, ndcZ)) { allOk = false; break; }
                     sxs ~= sx; sys ~= sy; ndcZs ~= ndcZ;
                 }
                 if (!allOk) continue;
@@ -922,7 +919,7 @@ void main(string[] args) {
         // ---- Active tool ----
         if (activeTool) {
             activeTool.update();
-            activeTool.draw(program, locColor, view, proj, WIN_W, WIN_H);
+            activeTool.draw(program, locColor, vp);
         }
 
         // ---- ImGui draw ----
