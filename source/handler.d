@@ -9,6 +9,51 @@ import math;
 import eventlog;
 
 // ---------------------------------------------------------------------------
+// Thick-line shader state — set once from app.d via initThickLineProgram().
+// All handlers use this program to draw line geometry.
+// ---------------------------------------------------------------------------
+
+private struct ThickLineState {
+    GLuint prog;
+    GLint  locModel, locView, locProj, locColor, locWidth, locScreen;
+    float  screenW, screenH;
+}
+private ThickLineState g_thickLine;
+
+void initThickLineProgram(GLuint prog, int screenW, int screenH) {
+    g_thickLine.prog      = prog;
+    g_thickLine.locModel  = glGetUniformLocation(prog, "u_model");
+    g_thickLine.locView   = glGetUniformLocation(prog, "u_view");
+    g_thickLine.locProj   = glGetUniformLocation(prog, "u_proj");
+    g_thickLine.locColor  = glGetUniformLocation(prog, "u_color");
+    g_thickLine.locWidth  = glGetUniformLocation(prog, "u_lineWidth");
+    g_thickLine.locScreen = glGetUniformLocation(prog, "u_screenSize");
+    g_thickLine.screenW   = cast(float)screenW;
+    g_thickLine.screenH   = cast(float)screenH;
+}
+
+// Draw VAO with GL_LINES/GL_LINE_STRIP using the thick-line program,
+// then restore the caller's program.
+private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
+                             const ref float[16] model,
+                             const ref float[16] view,
+                             const ref float[16] proj,
+                             Vec3 color, float lineWidth,
+                             GLuint restoreProgram)
+{
+    glUseProgram(g_thickLine.prog);
+    glUniformMatrix4fv(g_thickLine.locModel, 1, GL_FALSE, model.ptr);
+    glUniformMatrix4fv(g_thickLine.locView,  1, GL_FALSE, view.ptr);
+    glUniformMatrix4fv(g_thickLine.locProj,  1, GL_FALSE, proj.ptr);
+    glUniform3f(g_thickLine.locColor, color.x, color.y, color.z);
+    glUniform1f(g_thickLine.locWidth, lineWidth);
+    glUniform2f(g_thickLine.locScreen, g_thickLine.screenW, g_thickLine.screenH);
+    glBindVertexArray(vao);
+    glDrawArrays(mode, 0, vertCount);
+    glUseProgram(restoreProgram);
+}
+
+// ---------------------------------------------------------------------------
 // Handler — base class for interactive 3-D overlays (gizmos, manipulators…)
 // ---------------------------------------------------------------------------
 
@@ -37,9 +82,10 @@ class Handler {
 // ---------------------------------------------------------------------------
 
 class Arrow : Handler {
-    Vec3 start;
-    Vec3 end;
-    Vec3 color;
+    Vec3  start;
+    Vec3  end;
+    Vec3  color;
+    float lineWidth = 5.0f;
 
 private:
     GLuint shaftVao, shaftVbo;
@@ -131,12 +177,11 @@ public:
 
         glDisable(GL_DEPTH_TEST);
 
-        // ---- Draw shaft ----
+        // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
                                       Vec3(1, 1, shaftLen), start);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, shaftModel.ptr);
-        glBindVertexArray(shaftVao);
-        glDrawArrays(GL_LINES, 0, 2);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, view, proj, c, lineWidth, program);
+        glUniform3f(locColor, c.x, c.y, c.z);
 
         // ---- Draw cone head ----
         auto headModel = modelMatrix(right, up, fwd,
@@ -180,9 +225,10 @@ private:
 // ---------------------------------------------------------------------------
 
 class CubicArrow : Handler {
-    Vec3 start;
-    Vec3 end;
-    Vec3 color;
+    Vec3  start;
+    Vec3  end;
+    Vec3  color;
+    float lineWidth = 5.0f;
 
 private:
     GLuint shaftVao, shaftVbo;
@@ -276,12 +322,11 @@ public:
 
         glDisable(GL_DEPTH_TEST);
 
-        // ---- Draw shaft ----
+        // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
                                       Vec3(1, 1, shaftLen), start);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, shaftModel.ptr);
-        glBindVertexArray(shaftVao);
-        glDrawArrays(GL_LINES, 0, 2);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, view, proj, c, lineWidth, program);
+        glUniform3f(locColor, c.x, c.y, c.z);
 
         // ---- Draw cube head ----
         // Scale unit cube (half-extent 1) to cubeHalf, translate to cubeCenter
@@ -314,6 +359,149 @@ private:
         float t;
         hovered = closestOnSegment2D(cast(float)mx, cast(float)my,
                                      sax, say, sbx, sby, t) < 8.0f;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SemicircleHandler : Handler
+// Draws a half-circle arc (0..π) with a given color.
+// Highlights on hover (yellow); toggles selected state on click (orange).
+// ---------------------------------------------------------------------------
+
+class SemicircleHandler : Handler {
+    Vec3  center;
+    Vec3  normal;   // axis perpendicular to the plane of the arc
+    float radius;
+    Vec3  color;
+    bool  selected;
+    float lineWidth = 5.0f;
+
+private:
+    GLuint arcVao, arcVbo;
+    bool   hovered;
+    bool   hoverBlocked;
+    bool   forceHovered;
+
+    enum SEGS = 32;
+
+public:
+    this(Vec3 center, Vec3 normal, float radius, Vec3 color) {
+        this.center = center;
+        this.normal = normal;
+        this.radius = radius;
+        this.color  = color;
+
+        // Unit semicircle in XY plane: (cos a, sin a, 0) for a ∈ [0, π].
+        float[] arcData;
+        foreach (i; 0 .. SEGS + 1) {
+            float a = cast(float)i * PI / SEGS;
+            arcData ~= [cos(a), sin(a), 0.0f];
+        }
+
+        glGenVertexArrays(1, &arcVao); glGenBuffers(1, &arcVbo);
+        glBindVertexArray(arcVao);
+        glBindBuffer(GL_ARRAY_BUFFER, arcVbo);
+        glBufferData(GL_ARRAY_BUFFER, arcData.length * float.sizeof,
+                     arcData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+    }
+
+    void destroy() {
+        glDeleteVertexArrays(1, &arcVao);
+        glDeleteBuffers(1, &arcVbo);
+    }
+
+    bool isHovered()         const { return hovered;  }
+    bool isSelected()        const { return selected; }
+    void setSelected(bool v)       { selected = v; }
+    void setHoverBlocked(bool v)   { hoverBlocked = v; }
+    void setForceHovered(bool v)   { forceHovered = v; }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        updateHover(view, proj, winW, winH, right, up);
+
+        Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
+               : selected ? Vec3(1.0f, 0.64f, 0.0f)    // orange
+               :            color;
+
+        GLint locModel = glGetUniformLocation(program, "u_model");
+        glUniform3f(locColor, c.x, c.y, c.z);
+
+        glDisable(GL_DEPTH_TEST);
+
+        auto model = modelMatrix(right, up, fwd,
+                                 Vec3(radius, radius, radius), center);
+        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, view, proj, c, lineWidth, program);
+
+        glEnable(GL_DEPTH_TEST);
+        // Restore main program's u_model to identity
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
+        selected = !selected;
+        return true;
+    }
+
+    // Fresh hit test — does not rely on cached hover state.
+    bool hitTest(int mx, int my,
+                 const ref float[16] view, const ref float[16] proj,
+                 int winW, int winH)
+    {
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+        return arcHitCheck(mx, my, view, proj, winW, winH, right, up);
+    }
+
+private:
+    // Returns true if (mx,my) is within 8 px of the projected arc.
+    bool arcHitCheck(int mx, int my,
+                     const ref float[16] view, const ref float[16] proj,
+                     int winW, int winH, Vec3 right, Vec3 up)
+    {
+        float[2][SEGS + 1] pts;
+        bool[SEGS + 1]     valid;
+        foreach (i; 0 .. SEGS + 1) {
+            float a = cast(float)i * PI / SEGS;
+            Vec3 w = vec3Add(center,
+                        vec3Add(vec3Scale(right, cos(a) * radius),
+                                vec3Scale(up,    sin(a) * radius)));
+            float sx, sy, ndcZ;
+            valid[i] = projectToWindowFull(w, view, proj, winW, winH, sx, sy, ndcZ);
+            pts[i]   = [sx, sy];
+        }
+        foreach (i; 0 .. SEGS) {
+            if (!valid[i] || !valid[i + 1]) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   pts[i][0], pts[i][1],
+                                   pts[i+1][0], pts[i+1][1], t) < 8.0f)
+                return true;
+        }
+        return false;
+    }
+
+    void updateHover(const ref float[16] view, const ref float[16] proj,
+                     int winW, int winH, Vec3 right, Vec3 up)
+    {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        hovered = arcHitCheck(mx, my, view, proj, winW, winH, right, up);
     }
 }
 
@@ -398,6 +586,49 @@ class MoveHandler : Handler {
         return arrowX.onMouseMotion(e) ||
                arrowY.onMouseMotion(e) ||
                arrowZ.onMouseMotion(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RotateHandler : Handler — three semicircle arcs (X=red, Y=green, Z=blue)
+// ---------------------------------------------------------------------------
+
+class RotateHandler : Handler {
+    Vec3  center;
+    float screenFraction = 0.15f;
+    float size;              // world-space radius, updated each frame in draw()
+    SemicircleHandler arcX, arcY, arcZ;
+
+    this(Vec3 center) {
+        this.center = center;
+        arcX = new SemicircleHandler(center, Vec3(1,0,0), 1.0f, Vec3(0.9f, 0.2f, 0.2f));
+        arcY = new SemicircleHandler(center, Vec3(0,1,0), 1.0f, Vec3(0.2f, 0.9f, 0.2f));
+        arcZ = new SemicircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.2f, 0.2f, 0.9f));
+    }
+
+    void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); }
+    void setPosition(Vec3 pos) { center = pos; }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        Vec3 eye = Vec3(
+            -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
+            -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
+            -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]),
+        );
+        Vec3  d    = vec3Sub(eye, center);
+        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+        size = dist * screenFraction;
+
+        arcX.center = center; arcX.normal = Vec3(1,0,0); arcX.radius = size;
+        arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
+        arcZ.center = center; arcZ.normal = Vec3(0,0,1); arcZ.radius = size;
+
+        arcX.draw(program, locColor, view, proj, winW, winH);
+        arcY.draw(program, locColor, view, proj, winW, winH);
+        arcZ.draw(program, locColor, view, proj, winW, winH);
     }
 }
 

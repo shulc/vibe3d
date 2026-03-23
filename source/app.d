@@ -134,6 +134,59 @@ GLuint createProgram(string vertSrc = vertexShaderSrc,
     return prog;
 }
 
+// Geometry shader that expands GL_LINES into screen-aligned quads
+// to produce thick lines on macOS Core Profile (where glLineWidth > 1 is unsupported).
+immutable string thickLineGeomSrc = q{
+    #version 330 core
+    layout(lines) in;
+    layout(triangle_strip, max_vertices = 4) out;
+    uniform float u_lineWidth;   // desired line width in pixels
+    uniform vec2  u_screenSize;  // framebuffer size in pixels
+    void main() {
+        vec4 p0 = gl_in[0].gl_Position;
+        vec4 p1 = gl_in[1].gl_Position;
+        // Convert to screen space
+        vec2 s0 = p0.xy / p0.w * u_screenSize;
+        vec2 s1 = p1.xy / p1.w * u_screenSize;
+        vec2 dir = s1 - s0;
+        float len = length(dir);
+        if (len < 0.001) return;
+        // Perpendicular in screen space, half-width
+        vec2 perp = vec2(-dir.y, dir.x) / len * (u_lineWidth * 0.5);
+        // Back to NDC offsets (un-divide by w)
+        vec2 off0 = perp / u_screenSize * p0.w;
+        vec2 off1 = perp / u_screenSize * p1.w;
+        gl_Position = vec4(p0.xy + off0, p0.zw); EmitVertex();
+        gl_Position = vec4(p0.xy - off0, p0.zw); EmitVertex();
+        gl_Position = vec4(p1.xy + off1, p1.zw); EmitVertex();
+        gl_Position = vec4(p1.xy - off1, p1.zw); EmitVertex();
+        EndPrimitive();
+    }
+};
+
+GLuint createProgramWithGeom(string vertSrc, string geomSrc, string fragSrc) {
+    GLuint vert = compileShader(GL_VERTEX_SHADER,   vertSrc);
+    GLuint geom = compileShader(GL_GEOMETRY_SHADER, geomSrc);
+    GLuint frag = compileShader(GL_FRAGMENT_SHADER, fragSrc);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, geom);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+    GLint ok;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char[512] log;
+        glGetProgramInfoLog(prog, 512, null, log.ptr);
+        import std.conv : to;
+        throw new Exception("Link error: " ~ log[].to!string);
+    }
+    glDeleteShader(vert);
+    glDeleteShader(geom);
+    glDeleteShader(frag);
+    return prog;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -209,6 +262,10 @@ void main(string[] args) {
     GLint locView  = glGetUniformLocation(program, "u_view");
     GLint locProj  = glGetUniformLocation(program, "u_proj");
     GLint locColor = glGetUniformLocation(program, "u_color");
+
+    GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, fragmentShaderSrc);
+    scope(exit) glDeleteProgram(thickLineProgram);
+    initThickLineProgram(thickLineProgram, fbW, fbH);
 
     GLuint gridProgram = createProgram(gridVertSrc, gridFragSrc);
     scope(exit) glDeleteProgram(gridProgram);
@@ -293,13 +350,15 @@ void main(string[] args) {
     EditMode editMode = EditMode.Vertices;
 
     // Tools are created lazily on first activation and kept alive until exit.
-    MoveTool  moveTool  = null;
-    ScaleTool scaleTool = null;
-    Tool      activeTool = null;
+    MoveTool   moveTool   = null;
+    ScaleTool  scaleTool  = null;
+    RotateTool rotateTool = null;
+    Tool       activeTool = null;
 
     scope(exit) {
-        if (moveTool)  moveTool.destroy();
-        if (scaleTool) scaleTool.destroy();
+        if (moveTool)   moveTool.destroy();
+        if (scaleTool)  scaleTool.destroy();
+        if (rotateTool) rotateTool.destroy();
     }
 
     void setActiveTool(Tool t) {
@@ -308,7 +367,6 @@ void main(string[] args) {
         if (activeTool) activeTool.activate();
     }
 
-    // Returns (creating lazily if needed) the MoveTool instance.
     MoveTool getMoveTool() {
         if (!moveTool)
             moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
@@ -318,6 +376,11 @@ void main(string[] args) {
         if (!scaleTool)
             scaleTool = new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
         return scaleTool;
+    }
+    RotateTool getRotateTool() {
+        if (!rotateTool)
+            rotateTool = new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
+        return rotateTool;
     }
 
     int lastMouseX, lastMouseY;
@@ -361,6 +424,9 @@ void main(string[] args) {
                             break;
                         case SDLK_r:
                             setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
+                            break;
+                        case SDLK_e:
+                            setActiveTool(cast(RotateTool)activeTool ? null : getRotateTool());
                             break;
                         case SDLK_d: {
                                 bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
@@ -506,6 +572,8 @@ void main(string[] args) {
                 setActiveTool(cast(MoveTool)activeTool ? null : getMoveTool());
             if (getScaleTool().drawImGui())
                 setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
+            if (getRotateTool().drawImGui())
+                setActiveTool(cast(RotateTool)activeTool ? null : getRotateTool());
 
             ImGui.Separator();
             ImGui.Text("Selection");

@@ -7,6 +7,7 @@ import mesh;
 import handler;
 import editmode;
 import math;
+import std.math;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -445,6 +446,213 @@ private:
                                    sax, say, sbx, sby, t) < 8.0f)
                 return cast(int)i;
         }
+        return -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RotateTool : Tool — shows RotateHandler at selection/mesh center;
+//              rotates selected vertices around the dragged axis.
+// ---------------------------------------------------------------------------
+
+class RotateTool : Tool {
+    RotateHandler handler;
+    bool          active;
+
+private:
+    Mesh*     mesh;
+    bool[]*   selected;
+    bool[]*   selectedEdges;
+    bool[]*   selectedFaces;
+    GpuMesh*  gpu;
+    EditMode* editMode;
+
+    int       dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
+    int       lastMX, lastMY;
+    float[16] cachedView;
+    float[16] cachedProj;
+    int       cachedWinW, cachedWinH;
+    float     cachedSize;      // gizmo radius in world units (from last draw)
+
+public:
+    this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
+         GpuMesh* gpu, EditMode* editMode) {
+        this.mesh          = mesh;
+        this.selected      = selected;
+        this.selectedEdges = selectedEdges;
+        this.selectedFaces = selectedFaces;
+        this.gpu           = gpu;
+        this.editMode      = editMode;
+        handler = new RotateHandler(Vec3(0, 0, 0));
+    }
+
+    void destroy() { handler.destroy(); }
+
+    override string name() const { return "Rotate"; }
+    override void activate()   { active = true; }
+    override void deactivate() { active = false; dragAxis = -1; }
+
+    override void update() {
+        if (!active) return;
+        Vec3 sum   = Vec3(0, 0, 0);
+        int  count = 0;
+        if (*editMode == EditMode.Vertices) {
+            bool any = false;
+            foreach (s; *selected) if (s) { any = true; break; }
+            foreach (i, v; mesh.vertices)
+                if (!any || (i < (*selected).length && (*selected)[i]))
+                    { sum = vec3Add(sum, v); count++; }
+        } else if (*editMode == EditMode.Edges) {
+            bool any = false;
+            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            bool[] vis = new bool[](mesh.vertices.length);
+            foreach (i, edge; mesh.edges) {
+                if (any && !(i < (*selectedEdges).length && (*selectedEdges)[i])) continue;
+                foreach (vi; edge)
+                    if (!vis[vi]) { sum = vec3Add(sum, mesh.vertices[vi]); count++; vis[vi]=true; }
+            }
+        } else if (*editMode == EditMode.Polygons) {
+            bool any = false;
+            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            bool[] vis = new bool[](mesh.vertices.length);
+            foreach (i, face; mesh.faces) {
+                if (any && !(i < (*selectedFaces).length && (*selectedFaces)[i])) continue;
+                foreach (vi; face)
+                    if (!vis[vi]) { sum = vec3Add(sum, mesh.vertices[vi]); count++; vis[vi]=true; }
+            }
+        }
+        handler.setPosition(count > 0
+            ? Vec3(sum.x / count, sum.y / count, sum.z / count)
+            : Vec3(0, 0, 0));
+    }
+
+    override void draw(GLuint program, GLint locColor,
+                       const ref float[16] view, const ref float[16] proj,
+                       int winW, int winH)
+    {
+        if (!active) return;
+        cachedView = view; cachedProj = proj;
+        cachedWinW = winW; cachedWinH = winH;
+
+        SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
+        bool anyHovered = false;
+        foreach (i, arc; arcs) {
+            bool isActive = (dragAxis == cast(int)i);
+            arc.setForceHovered(isActive);
+            arc.setHoverBlocked(dragAxis >= 0 && !isActive || anyHovered);
+            anyHovered |= arc.isHovered();
+        }
+
+        handler.draw(program, locColor, view, proj, winW, winH);
+        cachedSize = handler.size;
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        dragAxis = hitTestAxes(e.x, e.y);
+        if (dragAxis < 0) return false;
+        lastMX = e.x; lastMY = e.y;
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
+        dragAxis = -1;
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        if (!active || dragAxis == -1) return false;
+
+        Vec3 axisVec = dragAxis == 0 ? Vec3(1,0,0)
+                     : dragAxis == 1 ? Vec3(0,1,0)
+                                     : Vec3(0,0,1);
+
+        // Build the arc's local frame (same formula as SemicircleHandler.draw).
+        Vec3 tmp   = abs(axisVec.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(axisVec, tmp));
+        Vec3 up    = cross(right, axisVec);
+
+        // Project the 'up' rim point to get screen radius and tangent direction.
+        Vec3  center = handler.center;
+        float cx, cy, cndcZ, rx, ry, rndcZ;
+        if (!projectToWindowFull(center, cachedView, cachedProj, cachedWinW, cachedWinH, cx, cy, cndcZ))
+        { lastMX = e.x; lastMY = e.y; return true; }
+        Vec3 rimPt = vec3Add(center, vec3Scale(up, cachedSize));
+        if (!projectToWindowFull(rimPt, cachedView, cachedProj, cachedWinW, cachedWinH, rx, ry, rndcZ))
+        { lastMX = e.x; lastMY = e.y; return true; }
+
+        float screen_r = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
+        if (screen_r < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
+
+        // Tangent at the rim point: perpendicular to the screen-space radius.
+        float tdx = -(ry - cy) / screen_r;
+        float tdy =  (rx - cx) / screen_r;
+
+        // Angle in radians = - arc-length / radius = dot(mouse_delta, tangent) / screen_r
+        float angle = - ((e.x - lastMX) * tdx + (e.y - lastMY) * tdy) / screen_r;
+
+        // Collect vertices to rotate.
+        bool[] toRotate = new bool[](mesh.vertices.length);
+        if (*editMode == EditMode.Vertices) {
+            bool any = false;
+            foreach (s; *selected) if (s) { any = true; break; }
+            foreach (i; 0 .. mesh.vertices.length)
+                toRotate[i] = !any || (i < (*selected).length && (*selected)[i]);
+        } else if (*editMode == EditMode.Edges) {
+            bool any = false;
+            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            if (!any) { toRotate[] = true; }
+            else foreach (i, edge; mesh.edges)
+                if (i < (*selectedEdges).length && (*selectedEdges)[i])
+                    { toRotate[edge[0]] = true; toRotate[edge[1]] = true; }
+        } else if (*editMode == EditMode.Polygons) {
+            bool any = false;
+            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            if (!any) { toRotate[] = true; }
+            else foreach (i, face; mesh.faces)
+                if (i < (*selectedFaces).length && (*selectedFaces)[i])
+                    foreach (vi; face) toRotate[vi] = true;
+        }
+
+        // Rodrigues rotation around axisVec through center.
+        import std.math : cos, sin;
+        float c = cos(angle), s = sin(angle);
+        Vec3  pivot = center;
+        foreach (i; 0 .. mesh.vertices.length) {
+            if (!toRotate[i]) continue;
+            Vec3 p = vec3Sub(mesh.vertices[i], pivot);
+            float d = p.x*axisVec.x + p.y*axisVec.y + p.z*axisVec.z;
+            Vec3  cr = cross(axisVec, p);
+            mesh.vertices[i] = vec3Add(pivot, Vec3(
+                p.x*c + cr.x*s + axisVec.x*d*(1.0f - c),
+                p.y*c + cr.y*s + axisVec.y*d*(1.0f - c),
+                p.z*c + cr.z*s + axisVec.z*d*(1.0f - c),
+            ));
+        }
+
+        gpu.upload(*mesh);
+        update();
+
+        lastMX = e.x; lastMY = e.y;
+        return true;
+    }
+
+    override bool drawImGui() {
+        if (active)
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+        bool clicked = ImGui.Button("Rotate [E]");
+        if (active)
+            ImGui.PopStyleColor();
+        return clicked;
+    }
+
+private:
+    int hitTestAxes(int mx, int my) {
+        SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
+        foreach (i, arc; arcs)
+            if (arc.hitTest(mx, my, cachedView, cachedProj, cachedWinW, cachedWinH))
+                return cast(int)i;
         return -1;
     }
 }
