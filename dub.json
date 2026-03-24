@@ -15,5 +15,6 @@
     },
     "versions": ["SDL_2020", "GL_33", "IMGUI_OPENGL3", "IMGUI_SDL2"],
     "sourcePaths": ["source"],
-    "mainSourceFile": "source/app.d"
+    "mainSourceFile": "source/app.d",
+    "libs-windows": ["Imm32", "User32"]
 }
