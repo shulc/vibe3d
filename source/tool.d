@@ -106,14 +106,18 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // During drag: keep active arrow yellow, block hover on the other two.
-        Handler[4] handlers = [handler.arrowX, handler.arrowY, handler.arrowZ, handler.centerBox];
+        // During drag: keep active handler yellow, block hover on others.
+        // Indices: 0=arrowX 1=arrowY 2=arrowZ 3=centerBox 4=circleXY 5=circleYZ 6=circleXZ
+        Handler[7] handlers = [
+            handler.arrowX, handler.arrowY, handler.arrowZ, handler.centerBox,
+            handler.circleXY, handler.circleYZ, handler.circleXZ,
+        ];
         bool isHovered = false;
-        foreach (i, handler; handlers) {
+        foreach (i, h; handlers) {
             bool isActive = (dragAxis == cast(int)i);
-            handler.setForceHovered(isActive);
-            handler.setHoverBlocked(dragAxis >= 0 && !isActive || isHovered);
-            isHovered |= handler.isHovered();
+            h.setForceHovered(isActive);
+            h.setHoverBlocked(dragAxis >= 0 && !isActive || isHovered);
+            isHovered |= h.isHovered();
         }
 
         handler.draw(program, locColor, vp);
@@ -125,10 +129,14 @@ public:
         return true;
     }
 
-    // Returns 0/1/2 for X/Y/Z axis drag, 3 for plane drag, -1 for miss.
+    // Returns 0/1/2=axis  3=most-facing plane  4/5/6=XY/YZ/XZ plane  -1=miss
     private int hitTestAxes(int mx, int my) {
-        if (handler.centerBox.hitTest(mx, my, cachedVp))
-            return 3;
+        // Circles checked first (larger hit area, drawn behind arrows)
+        if (handler.circleXY.hitTest(mx, my, cachedVp)) return 4;
+        if (handler.circleYZ.hitTest(mx, my, cachedVp)) return 5;
+        if (handler.circleXZ.hitTest(mx, my, cachedVp)) return 6;
+
+        if (handler.centerBox.hitTest(mx, my, cachedVp)) return 3;
 
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {
@@ -202,12 +210,20 @@ public:
             worldDelta = vec3Scale(axis, d);
         } else {
             // ---- Plane drag: ray-plane intersection ----
-            import std.math : abs;
+            // dragAxis 3 = most-facing plane; 4=XY(Z) 5=YZ(X) 6=XZ(Y)
+            Vec3 n;
+            if      (dragAxis == 4) n = Vec3(0,0,1);
+            else if (dragAxis == 5) n = Vec3(1,0,0);
+            else if (dragAxis == 6) n = Vec3(0,1,0);
+            else {
+                import std.math : abs;
+                const ref float[16] v2 = cachedVp.view;
+                float avx = abs(v2[2]), avy = abs(v2[6]), avz = abs(v2[10]);
+                n = avx >= avy && avx >= avz ? Vec3(1,0,0)
+                  : avy >= avx && avy >= avz ? Vec3(0,1,0)
+                                            : Vec3(0,0,1);
+            }
             const ref float[16] v = cachedVp.view;
-            float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
-            Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
-                   : avy >= avx && avy >= avz ? Vec3(0,1,0)
-                                              : Vec3(0,0,1);
             Vec3 camOrigin = Vec3(
                 -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
                 -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),

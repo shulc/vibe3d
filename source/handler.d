@@ -479,8 +479,9 @@ private:
 class MoveHandler : Handler {
     Vec3  center;
     float screenFraction = 0.15f;  // gizmo size as fraction of eye-to-center distance
-    Arrow arrowX, arrowY, arrowZ;
-    BoxHandler centerBox;
+    Arrow         arrowX, arrowY, arrowZ;
+    BoxHandler    centerBox;
+    CircleHandler circleXY, circleYZ, circleXZ;
     Vec3 viewDir;
 
     this(Vec3 center) {
@@ -489,6 +490,15 @@ class MoveHandler : Handler {
         arrowY    = new Arrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
         arrowZ    = new Arrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
         centerBox = new BoxHandler(center, Vec3(0.0f, 0.9f, 0.9f));
+        // XY plane (Z normal) — blue tint
+        circleXY  = new CircleHandler(vec3Add(center, Vec3(1, 1,0)), Vec3(0,0,1), 1.0f,
+                        Vec3(0.2f, 0.2f, 0.9f), Vec3(0.1f, 0.1f, 0.4f));
+        // YZ plane (X normal) — red tint
+        circleYZ  = new CircleHandler(vec3Add(center, Vec3(0,1,1)), Vec3(1,0,0), 1.0f,
+                        Vec3(0.9f, 0.2f, 0.2f), Vec3(0.4f, 0.1f, 0.1f));
+        // XZ plane (Y normal) — green tint
+        circleXZ  = new CircleHandler(vec3Add(center, Vec3(1,0,1)), Vec3(0,1,0), 1.0f,
+                        Vec3(0.2f, 0.9f, 0.2f), Vec3(0.1f, 0.4f, 0.1f));
     }
 
     void destroy() {
@@ -496,6 +506,9 @@ class MoveHandler : Handler {
         arrowY.destroy();
         arrowZ.destroy();
         centerBox.destroy();
+        circleXY.destroy();
+        circleYZ.destroy();
+        circleXZ.destroy();
     }
 
     void setPosition(Vec3 pos) {
@@ -526,6 +539,12 @@ class MoveHandler : Handler {
         centerBox.pos  = center;
         centerBox.size = size * 0.04f;
 
+        float circR = size * 0.07f;
+        float cirOffset = size * 0.75;
+        circleXY.center = vec3Add(center, Vec3(cirOffset, cirOffset, 0   )); circleXY.radius = circR;
+        circleYZ.center = vec3Add(center, Vec3(0   , cirOffset, cirOffset)); circleYZ.radius = circR;
+        circleXZ.center = vec3Add(center, Vec3(size, 0   , cirOffset)); circleXZ.radius = circR;
+
         // Hide arrows that point too directly toward/away from the camera.
         // viewDir is the normalised vector from eye to center.
         viewDir = dist > 1e-6f
@@ -537,6 +556,9 @@ class MoveHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
+        circleXY.draw(program, locColor, vp);
+        circleYZ.draw(program, locColor, vp);
+        circleXZ.draw(program, locColor, vp);
         centerBox.draw(program, locColor, vp);
         arrowX.draw(program, locColor, vp);
         arrowY.draw(program, locColor, vp);
@@ -729,6 +751,158 @@ private:
                 return true;
         }
         return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CircleHandler : Handler
+// Filled disc + outline ring at a given position in a given plane.
+// Outline color = color; fill color = fillColor.
+// Highlights on hover (yellow); toggles selected on click (orange).
+// ---------------------------------------------------------------------------
+
+class CircleHandler : Handler {
+    Vec3  center;
+    Vec3  normal;
+    float radius    = 1.0f;
+    Vec3  color;        // outline
+    Vec3  fillColor;    // disc fill
+    float lineWidth = 1.5f;
+    bool  selected;
+
+private:
+    GLuint outlineVao, outlineVbo;
+    GLuint fillVao,    fillVbo;
+    int    fillVertCount;
+    enum   SEGS = 32;
+
+public:
+    this(Vec3 center, Vec3 normal, float radius, Vec3 color, Vec3 fillColor) {
+        this.center    = center;
+        this.normal    = normal;
+        this.radius    = radius;
+        this.color     = color;
+        this.fillColor = fillColor;
+
+        // ---- Outline: unit circle in XY plane, SEGS+1 pts (last = first) ----
+        float[] outData;
+        foreach (i; 0 .. SEGS + 1) {
+            float a = 2.0f * PI * i / SEGS;
+            outData ~= [cos(a), sin(a), 0.0f];
+        }
+        glGenVertexArrays(1, &outlineVao); glGenBuffers(1, &outlineVbo);
+        glBindVertexArray(outlineVao);
+        glBindBuffer(GL_ARRAY_BUFFER, outlineVbo);
+        glBufferData(GL_ARRAY_BUFFER, outData.length * float.sizeof,
+                     outData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        // ---- Fill: triangle fan (SEGS triangles × 3 verts) ----
+        float[] fillData;
+        foreach (i; 0 .. SEGS) {
+            float a0 = 2.0f * PI *  i      / SEGS;
+            float a1 = 2.0f * PI * (i + 1) / SEGS;
+            fillData ~= [0.0f, 0.0f, 0.0f];
+            fillData ~= [cos(a0), sin(a0), 0.0f];
+            fillData ~= [cos(a1), sin(a1), 0.0f];
+        }
+        fillVertCount = cast(int)(fillData.length / 3);
+
+        glGenVertexArrays(1, &fillVao); glGenBuffers(1, &fillVbo);
+        glBindVertexArray(fillVao);
+        glBindBuffer(GL_ARRAY_BUFFER, fillVbo);
+        glBufferData(GL_ARRAY_BUFFER, fillData.length * float.sizeof,
+                     fillData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindVertexArray(0);
+    }
+
+    void destroy() {
+        glDeleteVertexArrays(1, &outlineVao); glDeleteBuffers(1, &outlineVbo);
+        glDeleteVertexArrays(1, &fillVao);    glDeleteBuffers(1, &fillVbo);
+    }
+
+    bool isSelected()        const { return selected; }
+    void setSelected(bool v)       { selected = v; }
+
+    bool hitTest(int mx, int my, const ref Viewport vp) {
+        return doHitTest(mx, my, vp);
+    }
+
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    {
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        updateHover(vp, right, up);
+
+        Vec3 oc = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
+                : selected ? Vec3(1.0f, 0.64f, 0.0f)
+                :            color;
+        Vec3 fc = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
+                : selected ? Vec3(1.0f, 0.64f, 0.0f)
+                :            fillColor;
+
+        auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
+
+        GLint locModel = glGetUniformLocation(program, "u_model");
+        glDisable(GL_DEPTH_TEST);
+
+        // ---- Fill ----
+        glUniform3f(locColor, fc.x, fc.y, fc.z);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, m.ptr);
+        glBindVertexArray(fillVao);
+        glDrawArrays(GL_TRIANGLES, 0, fillVertCount);
+
+        // ---- Outline ----
+        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth, program);
+
+        glBindVertexArray(0);
+        glEnable(GL_DEPTH_TEST);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
+        selected = !selected;
+        return true;
+    }
+
+private:
+    void updateHover(const ref Viewport vp, Vec3 right, Vec3 up)
+    {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        hovered = doHitTest(mx, my, vp);
+    }
+
+    bool doHitTest(int mx, int my, const ref Viewport vp)
+    {
+        // Project SEGS circle points and check if mouse is inside the polygon.
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        float[] xs, ys;
+        foreach (i; 0 .. SEGS) {
+            float a = 2.0f * PI * i / SEGS;
+            Vec3 w = vec3Add(center,
+                        vec3Add(vec3Scale(right, cos(a) * radius),
+                                vec3Scale(up,    sin(a) * radius)));
+            float sx, sy, ndcZ;
+            if (!projectToWindowFull(w, vp, sx, sy, ndcZ)) return false;
+            xs ~= sx;
+            ys ~= sy;
+        }
+        return pointInPolygon2D(cast(float)mx, cast(float)my, xs, ys);
     }
 }
 
