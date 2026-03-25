@@ -17,6 +17,8 @@ import eventlog;
 import handler;
 import tool;
 import editmode;
+import gizmo;
+
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -762,6 +764,9 @@ void main(string[] args) {
         ImGui.End();
         ShowDemoWindow();
 
+
+        // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
+        DrawGizmo(150 + 32.0f, winH - 38 - 32.0f, view);
 
         // ---- Playback cursor overlay ----
         if (playbackMode) {
