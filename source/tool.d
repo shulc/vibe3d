@@ -31,6 +31,7 @@ private:
     int      dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
     int      lastMX, lastMY;
     Viewport cachedVp;
+    bool     centerManual;   // true = update() must not recompute handler.center
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -48,11 +49,11 @@ public:
 
     override string name() const { return "Move"; }
     override void activate()   { active = true;              }
-    override void deactivate() { active = false; dragAxis = -1; }
+    override void deactivate() { active = false; dragAxis = -1; centerManual = false; }
 
     // Recompute gizmo center from current selection / mesh state.
     override void update() {
-        if (!active) return;
+        if (!active || centerManual) return;
         Vec3 sum   = Vec3(0, 0, 0);
         int  count = 0;
         if (*editMode == EditMode.Vertices) {
@@ -118,18 +119,6 @@ public:
         handler.draw(program, locColor, vp);
     }
 
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (!active || e.button != SDL_BUTTON_LEFT) return false;
-        // Fresh hit-test at the actual click position — do not rely on the
-        // previous-frame hover state (click and hover-enter can arrive in the
-        // same event-poll iteration, before draw() has a chance to update it).
-        dragAxis = hitTestAxes(e.x, e.y);
-        if (dragAxis < 0) return false;
-        lastMX = e.x;
-        lastMY = e.y;
-        return true;
-    }
-
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
         dragAxis = -1;
@@ -155,6 +144,41 @@ public:
         return -1;
     }
 
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        // Don't interfere with pan/rotate/zoom modifier combos.
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) return false;
+        dragAxis = hitTestAxes(e.x, e.y);
+        if (dragAxis >= 0) {
+            lastMX = e.x; lastMY = e.y;
+            return true;
+        }
+
+        // Click outside gizmo: teleport to most-facing plane at click point.
+        import std.math : abs;
+        const ref float[16] v = cachedVp.view;
+        float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
+        Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
+               : avy >= avx && avy >= avz ? Vec3(0,1,0)
+                                          : Vec3(0,0,1);
+        Vec3 camOrigin = Vec3(
+            -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
+            -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
+            -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
+        );
+        Vec3 hit;
+        if (!rayPlaneIntersect(camOrigin, screenRay(e.x, e.y, cachedVp),
+                               handler.center, n, hit))
+            return false;
+
+        handler.setPosition(hit);
+        centerManual = true;
+        dragAxis = 3;
+        lastMX = e.x; lastMY = e.y;
+        return true;
+    }
+
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active || dragAxis == -1) return false;
 
@@ -177,61 +201,26 @@ public:
             float d = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
             worldDelta = vec3Scale(axis, d);
         } else {
-            // ---- Plane drag (dragAxis == 3): ray-plane intersection ----
-            // Most-facing plane normal (same logic as gizmo.d)
+            // ---- Plane drag: ray-plane intersection ----
             import std.math : abs;
             const ref float[16] v = cachedVp.view;
             float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
             Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
                    : avy >= avx && avy >= avz ? Vec3(0,1,0)
                                               : Vec3(0,0,1);
-
             Vec3 camOrigin = Vec3(
                 -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
                 -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
                 -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
             );
-
             Vec3 hitCurr, hitPrev;
             if (!rayPlaneIntersect(camOrigin, screenRay(e.x,    e.y,    cachedVp), center, n, hitCurr) ||
                 !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, cachedVp), center, n, hitPrev))
             { lastMX = e.x; lastMY = e.y; return true; }
-
             worldDelta = vec3Sub(hitCurr, hitPrev);
         }
 
-        // Collect vertices to move.
-        bool[] toMove = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool anySelected = false;
-            foreach (s; *selected) if (s) { anySelected = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toMove[i] = !anySelected || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool anySelected = false;
-            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
-            if (!anySelected) { toMove[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toMove[edge[0]] = true; toMove[edge[1]] = true; }
-        } else if (*editMode == EditMode.Polygons) {
-            bool anySelected = false;
-            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
-            if (!anySelected) { toMove[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toMove[vi] = true;
-        }
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!toMove[i]) continue;
-            mesh.vertices[i].x += worldDelta.x;
-            mesh.vertices[i].y += worldDelta.y;
-            mesh.vertices[i].z += worldDelta.z;
-        }
-
-        gpu.upload(*mesh);
-        update();
-
+        applyDelta(worldDelta);
         lastMX = e.x;
         lastMY = e.y;
         return true;
@@ -244,6 +233,42 @@ public:
         if (active)
             ImGui.PopStyleColor();
         return clicked;
+    }
+
+private:
+    void applyDelta(Vec3 delta) {
+        bool[] toMove = new bool[](mesh.vertices.length);
+        if (*editMode == EditMode.Vertices) {
+            bool any = false;
+            foreach (s; *selected) if (s) { any = true; break; }
+            foreach (i; 0 .. mesh.vertices.length)
+                toMove[i] = !any || (i < (*selected).length && (*selected)[i]);
+        } else if (*editMode == EditMode.Edges) {
+            bool any = false;
+            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            if (!any) { toMove[] = true; }
+            else foreach (i, edge; mesh.edges)
+                if (i < (*selectedEdges).length && (*selectedEdges)[i])
+                    { toMove[edge[0]] = true; toMove[edge[1]] = true; }
+        } else if (*editMode == EditMode.Polygons) {
+            bool any = false;
+            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            if (!any) { toMove[] = true; }
+            else foreach (i, face; mesh.faces)
+                if (i < (*selectedFaces).length && (*selectedFaces)[i])
+                    foreach (vi; face) toMove[vi] = true;
+        }
+        foreach (i; 0 .. mesh.vertices.length) {
+            if (!toMove[i]) continue;
+            mesh.vertices[i].x += delta.x;
+            mesh.vertices[i].y += delta.y;
+            mesh.vertices[i].z += delta.z;
+        }
+        gpu.upload(*mesh);
+        if (centerManual)
+            handler.setPosition(vec3Add(handler.center, delta));
+        else
+            update();
     }
 }
 
