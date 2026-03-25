@@ -1,5 +1,4 @@
 module handler;
-
 import bindbc.sdl;
 import bindbc.opengl;
 
@@ -57,6 +56,13 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 // ---------------------------------------------------------------------------
 
 class Handler {
+private:
+    bool   hovered;
+    bool   forceHovered;
+    bool   hoverBlocked;
+    bool   visible = true;
+
+public:
     // Called once per frame to render the overlay into the 3-D view.
     void draw(GLuint program, GLint locColor, const ref Viewport vp) {}
 
@@ -68,6 +74,13 @@ class Handler {
     // Keyboard events — return true to consume.
     bool onKeyDown(ref const SDL_KeyboardEvent e) { return false; }
     bool onKeyUp  (ref const SDL_KeyboardEvent e) { return false; }
+
+    // Hover/visible functions
+    bool isHovered()    const { return hovered; }
+    void setForceHovered(bool v) { forceHovered  = v; }
+    void setHoverBlocked(bool v) { hoverBlocked  = v; }
+    void setVisible(bool v)      { visible = v; if (!v) hovered = false; }
+    bool isVisible() const       { return visible; }
 }
 
 // ---------------------------------------------------------------------------
@@ -87,10 +100,6 @@ private:
     GLuint shaftVao, shaftVbo;
     GLuint headVao,  headVbo;
     int    headVertCount;
-    bool   hovered;
-    bool   forceHovered;
-    bool   hoverBlocked;
-    bool   visible = true;
 
     enum CONE_SEGS = 16;
 
@@ -138,12 +147,6 @@ public:
         glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
         glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
     }
-
-    bool isHovered()    const { return hovered; }
-    void setForceHovered(bool v) { forceHovered  = v; }
-    void setHoverBlocked(bool v) { hoverBlocked  = v; }
-    void setVisible(bool v)      { visible = v; if (!v) hovered = false; }
-    bool isVisible() const       { return visible; }
 
     override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
@@ -227,10 +230,6 @@ private:
     GLuint shaftVao, shaftVbo;
     GLuint headVao,  headVbo;
     int    headVertCount;
-    bool   hovered;
-    bool   forceHovered;
-    bool   hoverBlocked;
-    bool   visible = true;
 
 public:
     this(Vec3 start, Vec3 end, Vec3 color) {
@@ -282,12 +281,6 @@ public:
         glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
         glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
     }
-
-    bool isHovered()         const { return hovered; }
-    void setForceHovered(bool v)   { forceHovered = v; }
-    void setHoverBlocked(bool v)   { hoverBlocked = v; }
-    void setVisible(bool v)        { visible = v; if (!v) hovered = false; }
-    bool isVisible()         const { return visible; }
 
     override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
@@ -368,9 +361,6 @@ class SemicircleHandler : Handler {
 
 private:
     GLuint arcVao, arcVbo;
-    bool   hovered;
-    bool   hoverBlocked;
-    bool   forceHovered;
 
     enum SEGS = 32;
 
@@ -402,12 +392,6 @@ public:
         glDeleteVertexArrays(1, &arcVao);
         glDeleteBuffers(1, &arcVbo);
     }
-
-    bool isHovered()         const { return hovered;  }
-    bool isSelected()        const { return selected; }
-    void setSelected(bool v)       { selected = v; }
-    void setHoverBlocked(bool v)   { hoverBlocked = v; }
-    void setForceHovered(bool v)   { forceHovered = v; }
 
     override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {
@@ -634,9 +618,6 @@ class BoxHandler : Handler {
 private:
     GLuint vao, vbo;
     int    vertCount;
-    bool   hovered;
-    bool   hoverBlocked;
-    bool   forceHovered;
 
 public:
     this(Vec3 pos, Vec3 color) {
@@ -675,12 +656,6 @@ public:
         glDeleteVertexArrays(1, &vao);
         glDeleteBuffers(1, &vbo);
     }
-
-    bool isHovered()         const { return hovered;  }
-    bool isSelected()        const { return selected; }
-    void setSelected(bool v)       { selected = v; }
-    void setHoverBlocked(bool v)   { hoverBlocked = v; }
-    void setForceHovered(bool v)   { forceHovered = v; }
 
     override void draw(GLuint program, GLint locColor, const ref Viewport vp)
     {

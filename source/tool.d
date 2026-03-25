@@ -106,17 +106,14 @@ public:
         cachedVp = vp;
 
         // During drag: keep active arrow yellow, block hover on the other two.
-        Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        Handler[4] handlers = [handler.arrowX, handler.arrowY, handler.arrowZ, handler.centerBox];
         bool isHovered = false;
-        foreach (i, arrow; arrows) {
+        foreach (i, handler; handlers) {
             bool isActive = (dragAxis == cast(int)i);
-            arrow.setForceHovered(isActive);
-            arrow.setHoverBlocked(dragAxis >= 0 && !isActive || isHovered);
-            isHovered |= arrow.isHovered();
+            handler.setForceHovered(isActive);
+            handler.setHoverBlocked(dragAxis >= 0 && !isActive || isHovered);
+            isHovered |= handler.isHovered();
         }
-        // centerBox: force-hover when plane drag is active, block when axis drag is active.
-        handler.centerBox.setForceHovered(dragAxis == 3);
-        handler.centerBox.setHoverBlocked(dragAxis >= 0 && dragAxis != 3);
 
         handler.draw(program, locColor, vp);
     }
@@ -141,6 +138,9 @@ public:
 
     // Returns 0/1/2 for X/Y/Z axis drag, 3 for plane drag, -1 for miss.
     private int hitTestAxes(int mx, int my) {
+        if (handler.centerBox.hitTest(mx, my, cachedVp))
+            return 3;
+
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {
             if (!arrow.isVisible()) continue;
@@ -152,8 +152,6 @@ public:
                                    sax, say, sbx, sby, t) < 8.0f)
                 return cast(int)i;
         }
-        if (handler.centerBox.hitTest(mx, my, cachedVp))
-            return 3;
         return -1;
     }
 
