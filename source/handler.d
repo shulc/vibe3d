@@ -496,19 +496,22 @@ class MoveHandler : Handler {
     Vec3  center;
     float screenFraction = 0.15f;  // gizmo size as fraction of eye-to-center distance
     Arrow arrowX, arrowY, arrowZ;
+    BoxHandler centerBox;
     Vec3 viewDir;
 
     this(Vec3 center) {
         this.center = center;
-        arrowX = new Arrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY = new Arrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ = new Arrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+        arrowX    = new Arrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY    = new Arrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ    = new Arrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+        centerBox = new BoxHandler(center, Vec3(0.0f, 0.9f, 0.9f));
     }
 
     void destroy() {
         arrowX.destroy();
         arrowY.destroy();
         arrowZ.destroy();
+        centerBox.destroy();
     }
 
     void setPosition(Vec3 pos) {
@@ -529,12 +532,15 @@ class MoveHandler : Handler {
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         float size = dist * screenFraction;
 
-        arrowX.start = vec3Add(center, Vec3(size/10, 0,    0   ));;
-        arrowX.end = vec3Add(center, Vec3(size, 0,    0   ));
-        arrowY.start = vec3Add(center, Vec3(0,    size/10, 0   ));;
-        arrowY.end = vec3Add(center, Vec3(0,    size, 0   ));
-        arrowZ.start = vec3Add(center, Vec3(0,    0,    size/10));
-        arrowZ.end = vec3Add(center, Vec3(0,    0,    size));
+        arrowX.start = vec3Add(center, Vec3(size/6, 0     , 0));;
+        arrowX.end   = vec3Add(center, Vec3(size  , 0.    , 0));
+        arrowY.start = vec3Add(center, Vec3(0     , size/6, 0));;
+        arrowY.end   = vec3Add(center, Vec3(0     , size  , 0));
+        arrowZ.start = vec3Add(center, Vec3(0     , 0     , size/6));
+        arrowZ.end   = vec3Add(center, Vec3(0     , 0     , size));
+
+        centerBox.pos  = center;
+        centerBox.size = size * 0.04f;
 
         // Hide arrows that point too directly toward/away from the camera.
         // viewDir is the normalised vector from eye to center.
@@ -547,6 +553,7 @@ class MoveHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
+        centerBox.draw(program, locColor, vp);
         arrowX.draw(program, locColor, vp);
         arrowY.draw(program, locColor, vp);
         arrowZ.draw(program, locColor, vp);
@@ -610,6 +617,143 @@ class RotateHandler : Handler {
         arcX.draw(program, locColor, vp);
         arcY.draw(program, locColor, vp);
         arcZ.draw(program, locColor, vp);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BoxHandler : Handler — solid-colour axis-aligned box at a given position.
+// Highlights on hover (yellow); toggles selected state on click (orange).
+// ---------------------------------------------------------------------------
+
+class BoxHandler : Handler {
+    Vec3  pos;
+    Vec3  color;
+    float size = 0.5f;   // half-extent
+    bool  selected;
+
+private:
+    GLuint vao, vbo;
+    int    vertCount;
+    bool   hovered;
+    bool   hoverBlocked;
+    bool   forceHovered;
+
+public:
+    this(Vec3 pos, Vec3 color) {
+        this.pos   = pos;
+        this.color = color;
+
+        // Unit cube (half-extent 1), 6 faces × 2 triangles × 3 vertices
+        immutable float[3][8] cv = [
+            [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],
+            [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],
+        ];
+        immutable int[6][6] faces = [
+            [0,1,2, 2,3,0],  // -Z
+            [4,6,5, 6,4,7],  // +Z
+            [0,4,5, 5,1,0],  // -Y
+            [2,6,7, 7,3,2],  // +Y
+            [0,3,7, 7,4,0],  // -X
+            [1,5,6, 6,2,1],  // +X
+        ];
+        float[] data;
+        foreach (ref f; faces)
+            foreach (idx; f)
+                data ~= cv[idx][];
+        vertCount = cast(int)(data.length / 3);
+
+        glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, data.length * float.sizeof, data.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+    }
+
+    void destroy() {
+        glDeleteVertexArrays(1, &vao);
+        glDeleteBuffers(1, &vbo);
+    }
+
+    bool isHovered()         const { return hovered;  }
+    bool isSelected()        const { return selected; }
+    void setSelected(bool v)       { selected = v; }
+    void setHoverBlocked(bool v)   { hoverBlocked = v; }
+    void setForceHovered(bool v)   { forceHovered = v; }
+
+    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    {
+        updateHover(vp);
+
+        Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
+               : selected ? Vec3(1.0f, 0.64f, 0.0f)
+               :            color;
+
+        GLint locModel = glGetUniformLocation(program, "u_model");
+        glUniform3f(locColor, c.x, c.y, c.z);
+        glDisable(GL_DEPTH_TEST);
+
+        auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                             Vec3(size, size, size), pos);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, m.ptr);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, vertCount);
+        glBindVertexArray(0);
+
+        glEnable(GL_DEPTH_TEST);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
+        selected = !selected;
+        return true;
+    }
+
+    // Fresh hit-test (does not rely on cached hover state).
+    bool hitTest(int mx, int my, const ref Viewport vp)
+    {
+        return doHitTest(mx, my, vp);
+    }
+
+private:
+    void updateHover(const ref Viewport vp)
+    {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        hovered = doHitTest(mx, my, vp);
+    }
+
+    bool doHitTest(int mx, int my, const ref Viewport vp)
+    {
+        // Project all 8 corners and check if mouse is inside any projected face.
+        immutable float[3][8] cv = [
+            [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],
+            [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],
+        ];
+        float[8] sx, sy; bool[8] valid;
+        foreach (i; 0 .. 8) {
+            float ndcZ;
+            Vec3 w = vec3Add(pos, Vec3(cv[i][0]*size, cv[i][1]*size, cv[i][2]*size));
+            valid[i] = projectToWindowFull(w, vp, sx[i], sy[i], ndcZ);
+        }
+
+        immutable int[4][6] faceQuads = [
+            [0,1,2,3], [4,7,6,5],  // -Z, +Z
+            [0,4,5,1], [3,2,6,7],  // -Y, +Y
+            [0,3,7,4], [1,5,6,2],  // -X, +X
+        ];
+        foreach (ref q; faceQuads) {
+            if (!valid[q[0]] || !valid[q[1]] || !valid[q[2]] || !valid[q[3]]) continue;
+            float[4] xs = [sx[q[0]], sx[q[1]], sx[q[2]], sx[q[3]]];
+            float[4] ys = [sy[q[0]], sy[q[1]], sy[q[2]], sy[q[3]]];
+            if (pointInPolygon2D(cast(float)mx, cast(float)my, xs[], ys[]))
+                return true;
+        }
+        return false;
     }
 }
 

@@ -114,6 +114,9 @@ public:
             arrow.setHoverBlocked(dragAxis >= 0 && !isActive || isHovered);
             isHovered |= arrow.isHovered();
         }
+        // centerBox: force-hover when plane drag is active, block when axis drag is active.
+        handler.centerBox.setForceHovered(dragAxis == 3);
+        handler.centerBox.setHoverBlocked(dragAxis >= 0 && dragAxis != 3);
 
         handler.draw(program, locColor, vp);
     }
@@ -136,7 +139,7 @@ public:
         return true;
     }
 
-    // Returns 0/1/2 for X/Y/Z if (mx,my) is within 8 px of that arrow, else -1.
+    // Returns 0/1/2 for X/Y/Z axis drag, 3 for plane drag, -1 for miss.
     private int hitTestAxes(int mx, int my) {
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {
@@ -149,34 +152,57 @@ public:
                                    sax, say, sbx, sby, t) < 8.0f)
                 return cast(int)i;
         }
+        if (handler.centerBox.hitTest(mx, my, cachedVp))
+            return 3;
         return -1;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active || dragAxis == -1) return false;
 
-        // Axis direction in world space
-        Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
-                  : dragAxis == 1 ? Vec3(0,1,0)
-                                  : Vec3(0,0,1);
+        Vec3 center = handler.center;
+        Vec3 worldDelta = Vec3(0, 0, 0);
 
-        // Project center and center+axis to screen to get pixels-per-world-unit
-        Vec3  center = handler.center;
-        float cx, cy, cndcZ, ax_, ay_, andcZ;
-        if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
-        { lastMX = e.x; lastMY = e.y; return true; }
-        if (!projectToWindowFull(vec3Add(center, axis), cachedVp, ax_, ay_, andcZ))
-        { lastMX = e.x; lastMY = e.y; return true; }
+        if (dragAxis <= 2) {
+            // ---- Single-axis drag ----
+            Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
+                      : dragAxis == 1 ? Vec3(0,1,0)
+                                      : Vec3(0,0,1);
+            float cx, cy, cndcZ, ax_, ay_, andcZ;
+            if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
+            { lastMX = e.x; lastMY = e.y; return true; }
+            if (!projectToWindowFull(vec3Add(center, axis), cachedVp, ax_, ay_, andcZ))
+            { lastMX = e.x; lastMY = e.y; return true; }
+            float sdx = ax_ - cx, sdy = ay_ - cy;
+            float slen2 = sdx*sdx + sdy*sdy;
+            if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
+            float d = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
+            worldDelta = vec3Scale(axis, d);
+        } else {
+            // ---- Plane drag (dragAxis == 3): ray-plane intersection ----
+            // Most-facing plane normal (same logic as gizmo.d)
+            import std.math : abs;
+            const ref float[16] v = cachedVp.view;
+            float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
+            Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
+                   : avy >= avx && avy >= avz ? Vec3(0,1,0)
+                                              : Vec3(0,0,1);
 
-        float sdx   = ax_ - cx;
-        float sdy   = ay_ - cy;
-        float slen2 = sdx*sdx + sdy*sdy;
-        if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
+            Vec3 camOrigin = Vec3(
+                -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
+                -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
+                -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
+            );
 
-        // Project mouse delta onto screen-space axis → world delta
-        float worldDelta = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
+            Vec3 hitCurr, hitPrev;
+            if (!rayPlaneIntersect(camOrigin, screenRay(e.x,    e.y,    cachedVp), center, n, hitCurr) ||
+                !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, cachedVp), center, n, hitPrev))
+            { lastMX = e.x; lastMY = e.y; return true; }
 
-        // Determine which vertices to move based on edit mode + selection.
+            worldDelta = vec3Sub(hitCurr, hitPrev);
+        }
+
+        // Collect vertices to move.
         bool[] toMove = new bool[](mesh.vertices.length);
         if (*editMode == EditMode.Vertices) {
             bool anySelected = false;
@@ -186,38 +212,27 @@ public:
         } else if (*editMode == EditMode.Edges) {
             bool anySelected = false;
             foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
-            if (!anySelected) {
-                toMove[] = true;
-            } else {
-                foreach (i, edge; mesh.edges) {
-                    if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
-                        toMove[edge[0]] = true;
-                        toMove[edge[1]] = true;
-                    }
-                }
-            }
+            if (!anySelected) { toMove[] = true; }
+            else foreach (i, edge; mesh.edges)
+                if (i < (*selectedEdges).length && (*selectedEdges)[i])
+                    { toMove[edge[0]] = true; toMove[edge[1]] = true; }
         } else if (*editMode == EditMode.Polygons) {
             bool anySelected = false;
             foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
-            if (!anySelected) {
-                toMove[] = true;
-            } else {
-                foreach (i, face; mesh.faces) {
-                    if (i < (*selectedFaces).length && (*selectedFaces)[i]) {
-                        foreach (vi; face) toMove[vi] = true;
-                    }
-                }
-            }
+            if (!anySelected) { toMove[] = true; }
+            else foreach (i, face; mesh.faces)
+                if (i < (*selectedFaces).length && (*selectedFaces)[i])
+                    foreach (vi; face) toMove[vi] = true;
         }
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toMove[i]) continue;
-            mesh.vertices[i].x += axis.x * worldDelta;
-            mesh.vertices[i].y += axis.y * worldDelta;
-            mesh.vertices[i].z += axis.z * worldDelta;
+            mesh.vertices[i].x += worldDelta.x;
+            mesh.vertices[i].y += worldDelta.y;
+            mesh.vertices[i].z += worldDelta.z;
         }
 
         gpu.upload(*mesh);
-        update();   // recompute gizmo center
+        update();
 
         lastMX = e.x;
         lastMY = e.y;
@@ -664,4 +679,51 @@ class Tool {
     // Called once per frame inside the ImGui window to append tool UI.
     // Returns true if the user clicked the activation button.
     bool drawImGui() { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// Ray helpers used by plane drag
+// ---------------------------------------------------------------------------
+
+// World-space ray direction through screen pixel (sx, sy).
+// Uses the view+proj stored in vp; accounts for viewport offset.
+private Vec3 screenRay(float sx, float sy, const ref Viewport vp)
+{
+    import std.math : sqrt;
+    // NDC, Y-up
+    float nx = ((sx - vp.x) / vp.width)  * 2.0f - 1.0f;
+    float ny = 1.0f - ((sy - vp.y) / vp.height) * 2.0f;
+
+    // View-space direction: invert perspective projection.
+    // proj[0] = f/aspect, proj[5] = f  (diagonal of perspective matrix, row/col 0 and 1).
+    // Using M[row][col] = m[row + col*4]: proj[0]=m[0], proj[5]=m[5].
+    float vx = nx / vp.proj[0];
+    float vy = ny / vp.proj[5];
+    // vz = -1 (camera looks along -Z in view space)
+
+    // Rotate to world space: world = R^T * view_dir,
+    // where R rows are view[0,4,8], view[1,5,9], view[2,6,10]  (M[row][col]=m[row+col*4]).
+    // R^T col j = R row j, so world.x = R col0 · view_dir = view[0]*vx + view[1]*vy + view[2]*(-1)
+    const ref float[16] v = vp.view;
+    Vec3 d = Vec3(
+        v[0]*vx + v[1]*vy + v[2]*(-1.0f),
+        v[4]*vx + v[5]*vy + v[6]*(-1.0f),
+        v[8]*vx + v[9]*vy + v[10]*(-1.0f),
+    );
+    float len = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    return len > 1e-9f ? Vec3(d.x/len, d.y/len, d.z/len) : Vec3(0,0,-1);
+}
+
+// Intersect ray (origin + t*dir) with plane (point on plane + normal).
+// Returns false when ray is parallel to the plane.
+private bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
+                               out Vec3 hit)
+{
+    import std.math : abs;
+    float denom = n.x*dir.x + n.y*dir.y + n.z*dir.z;
+    if (abs(denom) < 1e-6f) return false;
+    Vec3 d = vec3Sub(planePoint, origin);
+    float t = (n.x*d.x + n.y*d.y + n.z*d.z) / denom;
+    hit = Vec3(origin.x + t*dir.x, origin.y + t*dir.y, origin.z + t*dir.z);
+    return true;
 }
