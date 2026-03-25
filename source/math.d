@@ -13,6 +13,8 @@ struct Viewport {
     float[16] proj;
     int width;
     int height;
+    int x = 0;   // window-space left edge
+    int y = 0;   // window-space top edge
 }
 
 Vec3 vec3Add  (Vec3 a, Vec3 b)  { return Vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
@@ -97,8 +99,8 @@ bool projectToWindow(Vec3 world, const ref Viewport vp,
     ndcZ     = c.z / c.w;
     if (nx < -1 || nx > 1 || ny < -1 || ny > 1 || ndcZ < -1 || ndcZ > 1)
         return false;
-    px = (nx * 0.5f + 0.5f)          * vp.width;
-    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height;
+    px = (nx * 0.5f + 0.5f)          * vp.width  + vp.x;
+    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height + vp.y;
     return true;
 }
 
@@ -113,8 +115,8 @@ bool projectToWindowFull(Vec3 world, const ref Viewport vp,
     float nx = c.x / c.w;
     float ny = c.y / c.w;
     ndcZ = c.z / c.w;
-    px = (nx * 0.5f + 0.5f)          * vp.width;
-    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height;
+    px = (nx * 0.5f + 0.5f)          * vp.width  + vp.x;
+    py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height + vp.y;
     return true;
 }
 

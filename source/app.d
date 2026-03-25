@@ -102,8 +102,9 @@ immutable string gridVertSrc = q{
 immutable string gridFragSrc = q{
     #version 330 core
     uniform vec3  u_color;
-    uniform float u_maxDist;    // world-space fade radius
-    uniform vec2  u_screenSize; // framebuffer size in pixels
+    uniform float u_maxDist;     // world-space fade radius
+    uniform vec2  u_screenSize;  // 3D viewport size in fb pixels
+    uniform float u_vpOriginX;   // 3D viewport left edge in fb pixels
     in  vec3 vWorldPos;
     out vec4 fragColor;
     void main() {
@@ -112,7 +113,7 @@ immutable string gridFragSrc = q{
         float distAlpha = 1.0 - smoothstep(0.0, u_maxDist, dist);
 
         // Screen-edge fade (left / right only): min 10%
-        float sx        = gl_FragCoord.x / u_screenSize.x;
+        float sx        = (gl_FragCoord.x - u_vpOriginX) / u_screenSize.x;
         float edgeFade  = smoothstep(0.0, 0.15, sx) * smoothstep(1.0, 0.85, sx);
         float edgeAlpha = mix(0.1, 1.0, edgeFade);
 
@@ -332,7 +333,8 @@ void main(string[] args) {
     GLint gridLocProj       = glGetUniformLocation(gridProgram, "u_proj");
     GLint gridLocColor      = glGetUniformLocation(gridProgram, "u_color");
     GLint gridLocMaxDist    = glGetUniformLocation(gridProgram, "u_maxDist");
-    GLint gridLocScreenSize = glGetUniformLocation(gridProgram, "u_screenSize");
+    GLint gridLocScreenSize  = glGetUniformLocation(gridProgram, "u_screenSize");
+    GLint gridLocVpOriginX   = glGetUniformLocation(gridProgram, "u_vpOriginX");
 
     Mesh mesh = makeCube();
     writefln("Mesh: %d verts, %d edges, %d faces",
@@ -598,12 +600,17 @@ void main(string[] args) {
         }
 
         // ---- Build matrices ----
+        enum int PANEL_W  = 150;
+        enum int STATUS_H = 38;
+        int vp3dW = winW - PANEL_W;
+        int vp3dH = winH - STATUS_H;
+
         Vec3 offset = sphericalToCartesian(azimuth, elevation, distance);
         Vec3 eye    = vec3Add(focus, offset);
         auto view   = lookAt(eye, focus, Vec3(0, 1, 0));
         auto proj   = perspectiveMatrix(45.0f * PI / 180.0f,
-                                        cast(float)winW / winH, 0.1f, 100.0f);
-        Viewport vp = Viewport(view, proj, winW, winH);
+                                        cast(float)vp3dW / vp3dH, 0.1f, 100.0f);
+        Viewport vp = Viewport(view, proj, vp3dW, vp3dH, PANEL_W, 0);
 
         // ---- ImGui ----
         ImGui_ImplOpenGL3_NewFrame();
@@ -618,7 +625,7 @@ void main(string[] args) {
         foreach (s; selectedFaces) if (s) selFaceCount++;
 
         ImGui.SetNextWindowPos(ImVec2(0, 0), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(ImVec2(150, winH), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(ImVec2(PANEL_W, winH), ImGuiCond.Always);
         if (ImGui.Begin("Mesh Info", null,
                         ImGuiWindowFlags.NoTitleBar |
                         ImGuiWindowFlags.NoResize |
@@ -713,8 +720,8 @@ void main(string[] args) {
         }
         ImGui.End();
 
-        ImGui.SetNextWindowPos(ImVec2(150, winH - 38), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(ImVec2(winW - 150, 38), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(ImVec2(PANEL_W, winH - STATUS_H), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(ImVec2(winW - PANEL_W, STATUS_H), ImGuiCond.Always);
         if (ImGui.Begin("Status line", null,
                         ImGuiWindowFlags.NoTitleBar |
                         ImGuiWindowFlags.NoResize |
@@ -766,7 +773,7 @@ void main(string[] args) {
 
 
         // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
-        DrawGizmo(150 + 32.0f, winH - 38 - 32.0f, view);
+        DrawGizmo(PANEL_W + 32.0f, winH - STATUS_H - 32.0f, view);
 
         // ---- Playback cursor overlay ----
         if (playbackMode) {
@@ -787,6 +794,14 @@ void main(string[] args) {
         glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // Restrict rendering to the 3D viewport area (exclude panels).
+        float scaleX = cast(float)fbW / winW;
+        float scaleY = cast(float)fbH / winH;
+        glViewport(cast(int)(PANEL_W  * scaleX),
+                   cast(int)(STATUS_H * scaleY),
+                   cast(int)(vp3dW   * scaleX),
+                   cast(int)(vp3dH   * scaleY));
+
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
@@ -802,7 +817,8 @@ void main(string[] args) {
         glUniformMatrix4fv(gridLocView,  1, GL_FALSE, view.ptr);
         glUniformMatrix4fv(gridLocProj,  1, GL_FALSE, proj.ptr);
         glUniform1f(gridLocMaxDist,    distance * 2.0f);
-        glUniform2f(gridLocScreenSize, cast(float)fbW, cast(float)fbH);
+        glUniform2f(gridLocScreenSize, cast(float)vp3dW * scaleX, cast(float)vp3dH * scaleY);
+        glUniform1f(gridLocVpOriginX,  cast(float)PANEL_W * scaleX);
 
         glBindVertexArray(gridVao);
         // Grid lines — gray
@@ -986,6 +1002,8 @@ void main(string[] args) {
         }
 
         // ---- ImGui draw ----
+        // Restore full viewport for ImGui rendering.
+        glViewport(0, 0, fbW, fbH);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
 
         SDL_GL_SwapWindow(window);
