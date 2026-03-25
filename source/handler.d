@@ -357,7 +357,8 @@ class SemicircleHandler : Handler {
     float radius;
     Vec3  color;
     bool  selected;
-    float lineWidth = 5.0f;
+    float lineWidth  = 5.0f;
+    float startAngle = 0.0f;  // arc begins at this angle (radians) in the local XY plane
 
 private:
     GLuint arcVao, arcVbo;
@@ -411,7 +412,10 @@ public:
 
         glDisable(GL_DEPTH_TEST);
 
-        auto model = modelMatrix(right, up, fwd,
+        float ca = cos(startAngle), sa = sin(startAngle);
+        Vec3 rr = Vec3(right.x*ca + up.x*sa, right.y*ca + up.y*sa, right.z*ca + up.z*sa);
+        Vec3 ru = Vec3(-right.x*sa + up.x*ca, -right.y*sa + up.y*ca, -right.z*sa + up.z*ca);
+        auto model = modelMatrix(rr, ru, fwd,
                                  Vec3(radius, radius, radius), center);
         drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, program);
 
@@ -424,6 +428,19 @@ public:
         if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
         selected = !selected;
         return true;
+    }
+
+    // Set startAngle so the arc begins at the direction of `dir` in the arc plane.
+    // `dir` is projected onto the local right/up frame; its angle becomes startAngle.
+    void setStartDirection(Vec3 dir) {
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+        float dx = dot(dir, right);
+        float dy = dot(dir, up);
+        import std.math : atan2;
+        startAngle = atan2(dy, dx);
     }
 
     // Fresh hit test — does not rely on cached hover state.
@@ -443,7 +460,7 @@ private:
         float[2][SEGS + 1] pts;
         bool[SEGS + 1]     valid;
         foreach (i; 0 .. SEGS + 1) {
-            float a = cast(float)i * PI / SEGS;
+            float a = startAngle + cast(float)i * PI / SEGS;
             Vec3 w = vec3Add(center,
                         vec3Add(vec3Scale(right, cos(a) * radius),
                                 vec3Scale(up,    sin(a) * radius)));
@@ -619,6 +636,33 @@ class RotateHandler : Handler {
         arcX.center = center; arcX.normal = Vec3(1,0,0); arcX.radius = size;
         arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
         arcZ.center = center; arcZ.normal = Vec3(0,0,1); arcZ.radius = size;
+
+        // Camera forward vector (world space): f = (-view[2], -view[6], -view[10])
+        Vec3 camFwd = Vec3(-view[2], -view[6], -view[10]);
+
+        // For each arc, the start direction is the intersection of the arc plane
+        // and the viewport plane: cross(arcNormal, camFwd).
+        // Falls back to the arc's own "right" if the vectors are nearly parallel.
+        void applyStart(SemicircleHandler arc, Vec3 n) {
+            Vec3 dir = cross(n, camFwd);
+            float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+            if (len <= 1e-4f) return;
+            dir = Vec3(dir.x/len, dir.y/len, dir.z/len);
+            // Midpoint of arc is at 90° CCW from dir around n: cross(n, dir).
+            // If it faces away from camera (dot > 0 with camFwd), flip dir.
+            Vec3 mid = cross(n, dir);
+            if (dot(mid, camFwd) < 0.0f)
+                dir = Vec3(-dir.x, -dir.y, -dir.z);
+
+            // Arrow a = new Arrow(center, vec3Add(center, dir), Vec3(0.2f, 0.2f, 0.9f));
+            // a.draw(program, locColor, vp);
+            // a.destroy();
+
+            arc.setStartDirection(dir);
+        }
+        applyStart(arcX, Vec3(1,0,0));
+        applyStart(arcY, Vec3(0,1,0));
+        applyStart(arcZ, Vec3(0,0,1));
 
         arcX.draw(program, locColor, vp);
         arcY.draw(program, locColor, vp);
