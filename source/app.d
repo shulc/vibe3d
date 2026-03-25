@@ -105,6 +105,7 @@ immutable string gridFragSrc = q{
     uniform float u_maxDist;     // world-space fade radius
     uniform vec2  u_screenSize;  // 3D viewport size in fb pixels
     uniform float u_vpOriginX;   // 3D viewport left edge in fb pixels
+    uniform float u_vpOriginY;   // 3D viewport bottom edge in fb pixels
     in  vec3 vWorldPos;
     out vec4 fragColor;
     void main() {
@@ -112,10 +113,12 @@ immutable string gridFragSrc = q{
         float dist      = length(vWorldPos.xz);
         float distAlpha = 1.0 - smoothstep(0.0, u_maxDist, dist);
 
-        // Screen-edge fade (left / right only): min 10%
-        float sx        = (gl_FragCoord.x - u_vpOriginX) / u_screenSize.x;
-        float edgeFade  = smoothstep(0.0, 0.15, sx) * smoothstep(1.0, 0.85, sx);
-        float edgeAlpha = mix(0.1, 1.0, edgeFade);
+        // Screen-edge fade (all four edges): min 20%
+        float sx       = (gl_FragCoord.x - u_vpOriginX) / u_screenSize.x;
+        float sy       = (gl_FragCoord.y - u_vpOriginY) / u_screenSize.y;
+        float edgeFade = smoothstep(0.0, 0.15, sx) * smoothstep(1.0, 0.85, sx)
+                       * smoothstep(0.0, 0.15, sy) * smoothstep(1.0, 0.85, sy);
+        float edgeAlpha = mix(0.2, 1.0, edgeFade);
 
         fragColor = vec4(u_color, distAlpha * edgeAlpha);
     }
@@ -335,6 +338,7 @@ void main(string[] args) {
     GLint gridLocMaxDist    = glGetUniformLocation(gridProgram, "u_maxDist");
     GLint gridLocScreenSize  = glGetUniformLocation(gridProgram, "u_screenSize");
     GLint gridLocVpOriginX   = glGetUniformLocation(gridProgram, "u_vpOriginX");
+    GLint gridLocVpOriginY   = glGetUniformLocation(gridProgram, "u_vpOriginY");
 
     Mesh mesh = makeCube();
     writefln("Mesh: %d verts, %d edges, %d faces",
@@ -818,7 +822,8 @@ void main(string[] args) {
         glUniformMatrix4fv(gridLocProj,  1, GL_FALSE, proj.ptr);
         glUniform1f(gridLocMaxDist,    distance * 2.0f);
         glUniform2f(gridLocScreenSize, cast(float)vp3dW * scaleX, cast(float)vp3dH * scaleY);
-        glUniform1f(gridLocVpOriginX,  cast(float)PANEL_W * scaleX);
+        glUniform1f(gridLocVpOriginX,  cast(float)PANEL_W  * scaleX);
+        glUniform1f(gridLocVpOriginY,  cast(float)STATUS_H * scaleY);
 
         glBindVertexArray(gridVao);
         // Grid lines — gray
