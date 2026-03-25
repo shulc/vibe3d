@@ -17,7 +17,7 @@ void DrawGizmo(float x, float y, float[16] view) {
 
     // Sort back-to-front so closer axes draw on top
     import std.algorithm : sort;
-    sort!((a, b) => a.depth > b.depth)(gaxes[]);
+    sort!((a, b) => a.depth < b.depth)(gaxes[]);
 
     foreach (ref ax; gaxes) {
         gdl.AddLine(ImVec2(x, y), ImVec2(ax.sx, ax.sy), ax.col, 1.0f);
