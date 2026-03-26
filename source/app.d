@@ -614,6 +614,110 @@ void main(string[] args) {
                             break;
                         }
 
+                        case SDLK_RIGHTBRACKET: {
+                            // Connected selection — add all vertices/edges/faces
+                            // adjacent to the current selection.
+                            if (editMode == EditMode.Vertices) {
+                                bool[] wasSelected = selected.dup;
+                                bool any = false;
+                                foreach (s; wasSelected) if (s) { any = true; break; }
+                                if (!any) {
+                                    // If nothing selected, pick hovered (if any)
+                                    if (hoveredVertex >= 0)
+                                        wasSelected[hoveredVertex] = true;
+                                }
+                                // Flood-fill via edges
+                                bool[] visited = new bool[](mesh.vertices.length);
+                                int[] queue;
+                                foreach (i; 0 .. wasSelected.length)
+                                    if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
+                                while (queue.length > 0) {
+                                    int vi = queue[0];
+                                    queue = queue[1..$];
+                                    selected[vi] = true;
+                                    // Add all edge-adjacent vertices
+                                    foreach (edge; mesh.edges) {
+                                        if (edge[0] == vi && !visited[edge[1]]) {
+                                            visited[edge[1]] = true;
+                                            queue ~= edge[1];
+                                        } else if (edge[1] == vi && !visited[edge[0]]) {
+                                            visited[edge[0]] = true;
+                                            queue ~= edge[0];
+                                        }
+                                    }
+                                }
+                            } else if (editMode == EditMode.Edges) {
+                                bool[] wasSelected = selectedEdges.dup;
+                                bool any = false;
+                                foreach (s; wasSelected) if (s) { any = true; break; }
+                                if (!any) {
+                                    if (hoveredEdge >= 0)
+                                        wasSelected[hoveredEdge] = true;
+                                }
+                                // Flood-fill via shared vertices
+                                bool[] visited = new bool[](mesh.edges.length);
+                                int[] queue;
+                                foreach (i; 0 .. wasSelected.length)
+                                    if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
+                                while (queue.length > 0) {
+                                    int ei = queue[0];
+                                    queue = queue[1..$];
+                                    selectedEdges[ei] = true;
+                                    uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
+                                    // Add all edges that touch a or b
+                                    foreach (i; 0 .. mesh.edges.length) {
+                                        if (visited[i]) continue;
+                                        uint ea = mesh.edges[i][0], eb = mesh.edges[i][1];
+                                        if (ea == a || ea == b || eb == a || eb == b) {
+                                            visited[i] = true;
+                                            queue ~= cast(int)i;
+                                        }
+                                    }
+                                }
+                            } else if (editMode == EditMode.Polygons) {
+                                bool[] wasSelected = selectedFaces.dup;
+                                bool any = false;
+                                foreach (s; wasSelected) if (s) { any = true; break; }
+                                if (!any) {
+                                    if (hoveredFace >= 0)
+                                        wasSelected[hoveredFace] = true;
+                                }
+                                // Flood-fill via shared edges
+                                bool[] visited = new bool[](mesh.faces.length);
+                                int[] queue;
+                                foreach (i; 0 .. wasSelected.length)
+                                    if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
+                                // Build edge → adjacent face list
+                                uint[][ulong] edgeFaces;
+                                foreach (fi, face; mesh.faces) {
+                                    for (size_t j = 0; j < face.length; j++) {
+                                        uint a = face[j], b = face[(j + 1) % face.length];
+                                        uint lo = a < b ? a : b, hi = a < b ? b : a;
+                                        ulong key = (cast(ulong)lo << 32) | hi;
+                                        edgeFaces[key] ~= cast(uint)fi;
+                                    }
+                                }
+                                while (queue.length > 0) {
+                                    int fi = queue[0];
+                                    queue = queue[1..$];
+                                    selectedFaces[fi] = true;
+                                    // Check all edges of this face
+                                    uint[] face = mesh.faces[fi];
+                                    for (size_t j = 0; j < face.length; j++) {
+                                        uint a = face[j], b = face[(j + 1) % face.length];
+                                        uint lo = a < b ? a : b, hi = a < b ? b : a;
+                                        ulong key = (cast(ulong)lo << 32) | hi;
+                                        foreach (adjFi; edgeFaces[key]) {
+                                            if (adjFi == fi || visited[adjFi]) continue;
+                                            visited[adjFi] = true;
+                                            queue ~= adjFi;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+
                         case SDLK_d: {
                                 bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
                                 if (shift) {
