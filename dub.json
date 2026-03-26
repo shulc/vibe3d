@@ -10,7 +10,7 @@
         "bindbc-common": "~>1.0.5",
         "d_imgui": {
             "repository": "git+https://github.com/shulc/imgui.git",
-            "version": "549388ccbf2209177ea1222b70a2bcd169a296a2"
+            "version": "b67c6bf0b3f9474d3a783051ced6ff9acdd620bf"
         }
     },
     "versions": ["SDL_2020", "GL_33", "IMGUI_OPENGL3", "IMGUI_SDL2"],
