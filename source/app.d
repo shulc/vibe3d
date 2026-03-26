@@ -85,6 +85,18 @@ immutable string litFragSrc = q{
     }
 };
 
+// Checkerboard overlay shader — every other screen pixel is discarded,
+// the rest are filled with u_color.  Used to highlight selected faces.
+immutable string checkerFragSrc = q{
+    #version 330 core
+    uniform vec3 u_color;
+    out vec4 fragColor;
+    void main() {
+        if ((int(gl_FragCoord.x)/2 + int(gl_FragCoord.y)) % 2 == 0 || int(gl_FragCoord.x) % 2 == 0) discard;
+        fragColor = vec4(u_color, 1.0);
+    }
+};
+
 // Grid shaders — vertex passes world pos, fragment computes fade alpha.
 immutable string gridVertSrc = q{
     #version 330 core
@@ -372,6 +384,13 @@ void main(string[] args) {
     GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, fragmentShaderSrc);
     scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, fbW, fbH);
+
+    GLuint checkerProgram = createProgram(vertexShaderSrc, checkerFragSrc);
+    scope(exit) glDeleteProgram(checkerProgram);
+    GLint checkerLocModel = glGetUniformLocation(checkerProgram, "u_model");
+    GLint checkerLocView  = glGetUniformLocation(checkerProgram, "u_view");
+    GLint checkerLocProj  = glGetUniformLocation(checkerProgram, "u_proj");
+    GLint checkerLocColor = glGetUniformLocation(checkerProgram, "u_color");
 
     GLuint gridProgram = createProgram(gridVertSrc, gridFragSrc);
     scope(exit) glDeleteProgram(gridProgram);
@@ -947,6 +966,22 @@ void main(string[] args) {
                 gpu.drawFaces(litProgram, litLocColor);
         }
 
+        // Checkerboard overlay for selected faces (Polygons mode).
+        if (editMode == EditMode.Polygons) {
+            bool anySelected = false;
+            foreach (s; selectedFaces) if (s) { anySelected = true; break; }
+            if (anySelected) {
+                glUseProgram(checkerProgram);
+                glUniformMatrix4fv(checkerLocModel, 1, GL_FALSE, identityMatrix.ptr);
+                glUniformMatrix4fv(checkerLocView,  1, GL_FALSE, view.ptr);
+                glUniformMatrix4fv(checkerLocProj,  1, GL_FALSE, proj.ptr);
+                glUniform3f(checkerLocColor, 1.0f, 0.5f, 0.1f);  // orange
+                glDisable(GL_DEPTH_TEST);
+                gpu.drawSelectedFacesOverlay(selectedFaces);
+                glEnable(GL_DEPTH_TEST);
+            }
+        }
+
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
@@ -1079,11 +1114,35 @@ void main(string[] args) {
             }
         }
 
-        // ---- Draw edges (with highlights in Edges mode) ----
-        if (editMode == EditMode.Edges)
+        // ---- Draw edges (with highlights in Edges / Polygons mode) ----
+        if (editMode == EditMode.Edges) {
             gpu.drawEdges(locColor, hoveredEdge, selectedEdges);
-        else
+        } else if (editMode == EditMode.Polygons) {
+            // Build selected-edge mask from selected faces.
+            bool[] faceSelEdges = new bool[](mesh.edges.length);
+            bool anyFaceSel = false;
+            foreach (s; selectedFaces) if (s) { anyFaceSel = true; break; }
+            if (anyFaceSel) {
+                bool[ulong] edgeSet;
+                foreach (fi, face; mesh.faces) {
+                    if (fi >= selectedFaces.length || !selectedFaces[fi]) continue;
+                    for (size_t j = 0; j < face.length; j++) {
+                        uint a = face[j], b = face[(j + 1) % face.length];
+                        uint lo = a < b ? a : b, hi = a < b ? b : a;
+                        edgeSet[(cast(ulong)lo << 32) | hi] = true;
+                    }
+                }
+                foreach (ei, edge; mesh.edges) {
+                    uint lo = edge[0] < edge[1] ? edge[0] : edge[1];
+                    uint hi = edge[0] < edge[1] ? edge[1] : edge[0];
+                    if (((cast(ulong)lo << 32) | hi) in edgeSet)
+                        faceSelEdges[ei] = true;
+                }
+            }
+            gpu.drawEdges(locColor, -1, faceSelEdges);
+        } else {
             gpu.drawEdges(locColor, -1, []);
+        }
 
         // ---- Vertex dots (EditMode.Vertices only) ----
         if (editMode == EditMode.Vertices)

@@ -307,24 +307,32 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
-    // Draw faces with per-face hover/selection highlights (Polygons mode).
+    // Draw faces with per-face hover highlights (Polygons mode).
+    // Selected faces are drawn in default grey — checkerboard overlay is a separate pass.
     void drawFacesHighlighted(GLuint program, GLint locColor,
                                int hoveredFace, const bool[] selectedFaces) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
         foreach (i; 0 .. cast(int)faceTriStart.length) {
-            bool sel = i < cast(int)selectedFaces.length && selectedFaces[i];
             bool hov = (i == hoveredFace);
             if (hov)
                 glUniform3f(locColor, 0.5f, 0.71f, 0.79f);
-            else if (sel)
-                glUniform3f(locColor, 1.0f, 0.64f, 0.0f);     // orange
             else
-                glUniform3f(locColor, 0.8f, 0.8f, 0.8f);  // default grey
+                glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
             glDrawArrays(GL_TRIANGLES, faceTriStart[i], faceTriCount[i]);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
+        glBindVertexArray(0);
+    }
+
+    // Draw only the selected faces geometry (no color set — caller sets up shader).
+    void drawSelectedFacesOverlay(const bool[] selectedFaces) {
+        glBindVertexArray(faceVao);
+        foreach (i; 0 .. cast(int)faceTriStart.length) {
+            if (i >= cast(int)selectedFaces.length || !selectedFaces[i]) continue;
+            glDrawArrays(GL_TRIANGLES, faceTriStart[i], faceTriCount[i]);
+        }
         glBindVertexArray(0);
     }
 
@@ -334,7 +342,7 @@ struct GpuMesh {
         int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
 
-        // Default gray edges (skip hovered and selected)
+        // Default gray edges — with depth test (skip hovered and selected)
         glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
         foreach (i; 0 .. edgeCount) {
             if (i == hoveredEdge) continue;
@@ -342,18 +350,20 @@ struct GpuMesh {
             glDrawArrays(GL_LINES, i * 2, 2);
         }
 
-        // Selected edges — orange
+        // Selected and hovered — drawn without depth test so they show through faces.
+        glDisable(GL_DEPTH_TEST);
+
         glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
         foreach (i; 0 .. cast(int)selectedEdges.length)
             if (selectedEdges[i] && i != hoveredEdge)
                 glDrawArrays(GL_LINES, i * 2, 2);
 
-        // Hovered edge — yellow (drawn last = on top)
         if (hoveredEdge >= 0 && hoveredEdge < edgeCount) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
             glDrawArrays(GL_LINES, hoveredEdge * 2, 2);
         }
 
+        glEnable(GL_DEPTH_TEST);
         glBindVertexArray(0);
     }
 
@@ -361,24 +371,25 @@ struct GpuMesh {
     void drawVertices(GLint locColor, int hovered, const bool[] selected) {
         glBindVertexArray(vertVao);
 
-        // All vertices — small gray dots
+        // All vertices — small gray dots, with depth test
         glPointSize(5.0f);
         glUniform3f(locColor, 0.6f, 0.6f, 0.6f);
         glDrawArrays(GL_POINTS, 0, vertCount);
 
-        // Selected — larger orange
+        // Selected and hovered — drawn without depth test so they show through faces.
+        glDisable(GL_DEPTH_TEST);
+
         glPointSize(10.0f);
         glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
         foreach (i; 0 .. selected.length)
             if (selected[i]) glDrawArrays(GL_POINTS, cast(int)i, 1);
 
-        // Hovered — bright yellow (drawn last = on top)
         if (hovered >= 0 && hovered < vertCount) {
-            glPointSize(10.0f);
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
             glDrawArrays(GL_POINTS, hovered, 1);
         }
 
+        glEnable(GL_DEPTH_TEST);
         glPointSize(1.0f);
         glBindVertexArray(0);
     }
