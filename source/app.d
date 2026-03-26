@@ -238,6 +238,50 @@ GLuint createProgramWithGeom(string vertSrc, string geomSrc, string fragSrc) {
 }
 
 // ---------------------------------------------------------------------------
+// Frame-to-fit helper
+// ---------------------------------------------------------------------------
+
+// Adjusts `focus` and `distance` so the bounding sphere of `verts` fills
+// 90 % of the viewport (keeping the current orbit azimuth/elevation).
+void frameToVertices(Vec3[] verts,
+                     ref Vec3  focus,
+                     ref float distance,
+                     float fovY,
+                     int vpW, int vpH,
+                     float minDist, float maxDist)
+{
+    if (verts.length == 0) return;
+
+    Vec3 mn = verts[0], mx = verts[0];
+    foreach (ref v; verts) {
+        if (v.x < mn.x) mn.x = v.x;
+        if (v.y < mn.y) mn.y = v.y;
+        if (v.z < mn.z) mn.z = v.z;
+        if (v.x > mx.x) mx.x = v.x;
+        if (v.y > mx.y) mx.y = v.y;
+        if (v.z > mx.z) mx.z = v.z;
+    }
+
+    focus = Vec3((mn.x + mx.x) * 0.5f,
+                 (mn.y + mx.y) * 0.5f,
+                 (mn.z + mx.z) * 0.5f);
+
+    float dx = mx.x - mn.x, dy = mx.y - mn.y, dz = mx.z - mn.z;
+    float radius = sqrt(dx*dx + dy*dy + dz*dz) * 0.5f;
+    if (radius < 1e-6f) radius = 1e-6f;
+
+    // Use the tighter field-of-view (Y or X) so the shape fits in both axes.
+    float aspect    = cast(float)vpW / vpH;
+    float halfTanY  = tan(fovY * 0.5f);
+    float halfTanX  = halfTanY * aspect;
+    float halfTanMin = halfTanY < halfTanX ? halfTanY : halfTanX;
+
+    distance = radius / (0.9f * halfTanMin);
+    if (distance < minDist) distance = minDist;
+    if (distance > maxDist) distance = maxDist;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -449,6 +493,11 @@ void main(string[] args) {
 
     int lastMouseX, lastMouseY;
 
+    // ---- Build matrices ----
+    enum int PANEL_W  = 150;
+    enum int STATUS_H = 38;
+
+
     bool running = true;
     SDL_Event event;
 
@@ -503,6 +552,43 @@ void main(string[] args) {
                         case SDLK_e:
                             setActiveTool(cast(RotateTool)activeTool ? null : getRotateTool());
                             break;
+                        case SDLK_a: {
+                            bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
+                            if (shift) {
+                                // Frame selected (or whole mesh if nothing selected).
+                                Vec3[] verts;
+                                if (editMode == EditMode.Vertices) {
+                                    bool any = false;
+                                    foreach (s; selected) if (s) { any = true; break; }
+                                    foreach (i; 0 .. mesh.vertices.length)
+                                        if (!any || selected[i]) verts ~= mesh.vertices[i];
+                                } else if (editMode == EditMode.Edges) {
+                                    bool any = false;
+                                    foreach (s; selectedEdges) if (s) { any = true; break; }
+                                    bool[] vis = new bool[](mesh.vertices.length);
+                                    foreach (i; 0 .. mesh.edges.length) {
+                                        if (any && !selectedEdges[i]) continue;
+                                        foreach (vi; mesh.edges[i])
+                                            if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
+                                    }
+                                } else if (editMode == EditMode.Polygons) {
+                                    bool any = false;
+                                    foreach (s; selectedFaces) if (s) { any = true; break; }
+                                    bool[] vis = new bool[](mesh.vertices.length);
+                                    foreach (i; 0 .. mesh.faces.length) {
+                                        if (any && !selectedFaces[i]) continue;
+                                        foreach (vi; mesh.faces[i])
+                                            if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
+                                    }
+                                }
+                                frameToVertices(verts, focus, distance,
+                                                45.0f * PI / 180.0f,
+                                                winW - PANEL_W, winH - STATUS_H,
+                                                minDist, maxDist);
+                            }
+                            break;
+                        }
+
                         case SDLK_d: {
                                 bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
                                 if (shift) {
@@ -603,9 +689,6 @@ void main(string[] args) {
             }
         }
 
-        // ---- Build matrices ----
-        enum int PANEL_W  = 150;
-        enum int STATUS_H = 38;
         int vp3dW = winW - PANEL_W;
         int vp3dH = winH - STATUS_H;
 
