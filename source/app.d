@@ -585,6 +585,12 @@ void main(string[] args) {
                                                 45.0f * PI / 180.0f,
                                                 winW - PANEL_W, winH - STATUS_H,
                                                 minDist, maxDist);
+                            } else {
+                                frameToVertices(mesh.vertices, focus, distance,
+                                                45.0f * PI / 180.0f,
+                                                winW - PANEL_W, winH - STATUS_H,
+                                                minDist, maxDist);
+
                             }
                             break;
                         }
