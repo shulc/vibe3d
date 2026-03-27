@@ -19,6 +19,10 @@ import tool;
 import editmode;
 import gizmo;
 
+import tools.move;
+import tools.scale;
+import tools.rotate;
+
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------

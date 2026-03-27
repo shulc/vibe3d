@@ -148,6 +148,53 @@ float closestOnSegment2D(float px, float py,
 }
 
 // ---------------------------------------------------------------------------
+// Ray helpers used by plane drag
+// ---------------------------------------------------------------------------
+
+// World-space ray direction through screen pixel (sx, sy).
+// Uses the view+proj stored in vp; accounts for viewport offset.
+Vec3 screenRay(float sx, float sy, const ref Viewport vp)
+{
+    import std.math : sqrt;
+    // NDC, Y-up
+    float nx = ((sx - vp.x) / vp.width)  * 2.0f - 1.0f;
+    float ny = 1.0f - ((sy - vp.y) / vp.height) * 2.0f;
+
+    // View-space direction: invert perspective projection.
+    // proj[0] = f/aspect, proj[5] = f  (diagonal of perspective matrix, row/col 0 and 1).
+    // Using M[row][col] = m[row + col*4]: proj[0]=m[0], proj[5]=m[5].
+    float vx = nx / vp.proj[0];
+    float vy = ny / vp.proj[5];
+    // vz = -1 (camera looks along -Z in view space)
+
+    // Rotate to world space: world = R^T * view_dir,
+    // where R rows are view[0,4,8], view[1,5,9], view[2,6,10]  (M[row][col]=m[row+col*4]).
+    // R^T col j = R row j, so world.x = R col0 · view_dir = view[0]*vx + view[1]*vy + view[2]*(-1)
+    const ref float[16] v = vp.view;
+    Vec3 d = Vec3(
+        v[0]*vx + v[1]*vy + v[2]*(-1.0f),
+        v[4]*vx + v[5]*vy + v[6]*(-1.0f),
+        v[8]*vx + v[9]*vy + v[10]*(-1.0f),
+    );
+    float len = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    return len > 1e-9f ? Vec3(d.x/len, d.y/len, d.z/len) : Vec3(0,0,-1);
+}
+
+// Intersect ray (origin + t*dir) with plane (point on plane + normal).
+// Returns false when ray is parallel to the plane.
+bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
+                               out Vec3 hit)
+{
+    import std.math : abs;
+    float denom = n.x*dir.x + n.y*dir.y + n.z*dir.z;
+    if (abs(denom) < 1e-6f) return false;
+    Vec3 d = vec3Sub(planePoint, origin);
+    float t = (n.x*d.x + n.y*d.y + n.z*d.z) / denom;
+    hit = Vec3(origin.x + t*dir.x, origin.y + t*dir.y, origin.z + t*dir.z);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
