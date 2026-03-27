@@ -338,3 +338,90 @@ unittest { // closestOnSegment2D — degenerate segment
     float d = closestOnSegment2D(3, 4, 0, 0, 0, 0, t);
     assert(isClose(t, 0.0f) && isClose(d, 5.0f));
 }
+
+// Helper: viewport with lookAt camera at Z=5 and 90° symmetric perspective
+version(unittest) private Viewport makeTestViewport() {
+    Viewport vp;
+    vp.view   = lookAt(Vec3(0,0,5), Vec3(0,0,0), Vec3(0,1,0));
+    vp.proj   = perspectiveMatrix(PI/2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+    vp.x = 0;
+    vp.y = 0;
+    return vp;
+}
+
+unittest { // screenRay: center pixel → along -Z
+    auto vp = makeTestViewport();
+    auto r = screenRay(400, 400, vp);
+    assert(isClose(r.x, 0, 1e-5f, 1e-5f));
+    assert(isClose(r.y, 0, 1e-5f, 1e-5f));
+    assert(isClose(r.z, -1.0f));
+}
+
+unittest { // screenRay: result is always unit length
+    auto vp = makeTestViewport();
+    foreach (sx; [0.0f, 400.0f, 799.0f])
+        foreach (sy; [0.0f, 400.0f, 799.0f]) {
+            auto r = screenRay(sx, sy, vp);
+            float len = sqrt(r.x*r.x + r.y*r.y + r.z*r.z);
+            assert(isClose(len, 1.0f, 1e-4f));
+        }
+}
+
+unittest { // screenRay: top-left pixel → (-1/√3, 1/√3, -1/√3) with 90° FOV aspect=1
+    // proj[0]=proj[5]=1, so nx=-1,ny=1 → view-dir (-1,1,-1) → normalized
+    auto vp = makeTestViewport();
+    auto r = screenRay(0, 0, vp);
+    float inv3 = 1.0f / sqrt(3.0f);
+    assert(isClose(r.x, -inv3, 1e-4f));
+    assert(isClose(r.y,  inv3, 1e-4f));
+    assert(isClose(r.z, -inv3, 1e-4f));
+}
+
+unittest { // screenRay: viewport offset shifts pixel-to-NDC mapping
+    auto vp = makeTestViewport();
+    vp.x = 100;
+    vp.y = 50;
+    // Center of the offset viewport is now pixel (500, 450)
+    auto r = screenRay(500, 450, vp);
+    assert(isClose(r.x, 0, 1e-5f, 1e-5f));
+    assert(isClose(r.y, 0, 1e-5f, 1e-5f));
+    assert(isClose(r.z, -1.0f));
+}
+
+unittest { // rayPlaneIntersect: ray from above hits XZ plane at origin
+    Vec3 hit;
+    bool ok = rayPlaneIntersect(Vec3(0,5,0), Vec3(0,-1,0),
+                                Vec3(0,0,0), Vec3(0,1,0), hit);
+    assert(ok);
+    assert(isClose(hit.x, 0, 1e-5f, 1e-5f));
+    assert(isClose(hit.y, 0, 1e-5f, 1e-5f));
+    assert(isClose(hit.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // rayPlaneIntersect: angled ray hits offset plane at correct point
+    // Ray from origin along (1,1,0)/√2, plane at x=3 with normal (1,0,0)
+    // t = 3/s where s=1/√2, hit = (3, 3, 0)
+    float s = 1.0f / sqrt(2.0f);
+    Vec3 hit;
+    bool ok = rayPlaneIntersect(Vec3(0,0,0), Vec3(s,s,0),
+                                Vec3(3,0,0), Vec3(1,0,0), hit);
+    assert(ok);
+    assert(isClose(hit.x, 3.0f, 1e-4f));
+    assert(isClose(hit.y, 3.0f, 1e-4f));
+    assert(isClose(hit.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // rayPlaneIntersect: ray parallel to plane returns false
+    Vec3 hit;
+    assert(!rayPlaneIntersect(Vec3(0,5,0), Vec3(1,0,0),
+                              Vec3(0,0,0), Vec3(0,1,0), hit));
+}
+
+unittest { // rayPlaneIntersect: near-parallel ray below threshold returns false
+    Vec3 hit;
+    // dot((0,1,0), (1, 5e-7, 0)) = 5e-7 < 1e-6
+    assert(!rayPlaneIntersect(Vec3(0,0,0), Vec3(1.0f, 5e-7f, 0),
+                              Vec3(0,1,0), Vec3(0,1,0), hit));
+}
