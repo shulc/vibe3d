@@ -146,3 +146,148 @@ float closestOnSegment2D(float px, float py,
     float cx = ax + t*dx, cy = ay + t*dy;
     return sqrt((px-cx)*(px-cx) + (py-cy)*(py-cy));
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+version (unittest) import std.math : isClose;
+
+unittest { // vec3Add
+    auto r = vec3Add(Vec3(1,2,3), Vec3(4,5,6));
+    assert(r.x == 5 && r.y == 7 && r.z == 9);
+}
+
+unittest { // vec3Sub
+    auto r = vec3Sub(Vec3(4,5,6), Vec3(1,2,3));
+    assert(r.x == 3 && r.y == 3 && r.z == 3);
+}
+
+unittest { // vec3Scale
+    auto r = vec3Scale(Vec3(1,2,3), 2.0f);
+    assert(r.x == 2 && r.y == 4 && r.z == 6);
+}
+
+unittest { // vec3Scale by zero
+    auto r = vec3Scale(Vec3(5,-3,7), 0.0f);
+    assert(r.x == 0 && r.y == 0 && r.z == 0);
+}
+
+unittest { // normalize axis-aligned
+    auto n = normalize(Vec3(3,0,0));
+    assert(isClose(n.x, 1.0f) && isClose(n.y, 0.0f) && isClose(n.z, 0.0f));
+}
+
+unittest { // normalize length == 1
+    auto n = normalize(Vec3(1,2,3));
+    float len = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
+    assert(isClose(len, 1.0f));
+}
+
+unittest { // dot
+    assert(isClose(dot(Vec3(1,0,0), Vec3(1,0,0)),  1.0f));
+    assert(isClose(dot(Vec3(1,0,0), Vec3(0,1,0)),  0.0f));
+    assert(isClose(dot(Vec3(1,0,0), Vec3(-1,0,0)), -1.0f));
+}
+
+unittest { // cross X×Y = Z
+    auto r = cross(Vec3(1,0,0), Vec3(0,1,0));
+    assert(isClose(r.x, 0) && isClose(r.y, 0) && isClose(r.z, 1));
+}
+
+unittest { // cross anti-commutative
+    auto a = Vec3(1,2,3), b = Vec3(4,5,6);
+    auto ab = cross(a, b), ba = cross(b, a);
+    assert(isClose(ab.x, -ba.x) && isClose(ab.y, -ba.y) && isClose(ab.z, -ba.z));
+}
+
+unittest { // cross of parallel vectors is zero
+    auto r = cross(Vec3(1,0,0), Vec3(2,0,0));
+    assert(isClose(r.x, 0) && isClose(r.y, 0) && isClose(r.z, 0));
+}
+
+unittest { // mulMV with identity
+    auto r = mulMV(identityMatrix, Vec4(1,2,3,1));
+    assert(isClose(r.x,1) && isClose(r.y,2) && isClose(r.z,3) && isClose(r.w,1));
+}
+
+unittest { // modelMatrix identity frame → identity matrix
+    auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                         Vec3(1,1,1), Vec3(0,0,0));
+    foreach (i, v; identityMatrix)
+        assert(isClose(m[i], v));
+}
+
+unittest { // modelMatrix translation stored in last column
+    auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                         Vec3(1,1,1), Vec3(5,-3,7));
+    assert(isClose(m[12], 5) && isClose(m[13], -3) && isClose(m[14], 7));
+}
+
+unittest { // modelMatrix non-uniform scale
+    auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                         Vec3(2,3,4), Vec3(0,0,0));
+    assert(isClose(m[0], 2) && isClose(m[5], 3) && isClose(m[10], 4));
+}
+
+unittest { // lookAt — origin is in front of camera
+    auto m = lookAt(Vec3(0,0,5), Vec3(0,0,0), Vec3(0,1,0));
+    Vec4 o = mulMV(m, Vec4(0,0,0,1));
+    assert(isClose(o.x, 0, 1e-4f) && isClose(o.y, 0, 1e-4f));
+    assert(o.z < 0);
+}
+
+unittest { // sphericalToCartesian az=0 el=0 → +Z
+    auto v = sphericalToCartesian(0.0f, 0.0f, 1.0f);
+    assert(isClose(v.x, 0) && isClose(v.y, 0) && isClose(v.z, 1));
+}
+
+unittest { // sphericalToCartesian el=PI/2 → straight up
+    auto v = sphericalToCartesian(0.0f, PI/2, 1.0f);
+    assert(isClose(v.y, 1.0f, 1e-5f));
+    assert(isClose(v.x, 0, 1e-5f, 1e-5f) && isClose(v.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // sphericalToCartesian dist=0 → zero vector
+    auto v = sphericalToCartesian(1.23f, 0.45f, 0.0f);
+    assert(isClose(v.x, 0) && isClose(v.y, 0) && isClose(v.z, 0));
+}
+
+unittest { // pointInPolygon2D square
+    float[] xs = [0, 4, 4, 0];
+    float[] ys = [0, 0, 4, 4];
+    assert( pointInPolygon2D(2, 2, xs, ys));
+    assert(!pointInPolygon2D(5, 2, xs, ys));
+    assert(!pointInPolygon2D(2, 5, xs, ys));
+}
+
+unittest { // pointInPolygon2D triangle
+    float[] xs = [0, 2, 4];
+    float[] ys = [0, 4, 0];
+    assert( pointInPolygon2D(2, 1.5f, xs, ys));
+    assert(!pointInPolygon2D(-1, 2,   xs, ys));
+}
+
+unittest { // closestOnSegment2D — point above midpoint
+    float t;
+    float d = closestOnSegment2D(2, 1, 0, 0, 4, 0, t);
+    assert(isClose(d, 1.0f) && isClose(t, 0.5f));
+}
+
+unittest { // closestOnSegment2D — clamp to t=1
+    float t;
+    float d = closestOnSegment2D(6, 0, 0, 0, 4, 0, t);
+    assert(isClose(t, 1.0f) && isClose(d, 2.0f));
+}
+
+unittest { // closestOnSegment2D — clamp to t=0
+    float t;
+    float d = closestOnSegment2D(-1, 0, 0, 0, 4, 0, t);
+    assert(isClose(t, 0.0f) && isClose(d, 1.0f));
+}
+
+unittest { // closestOnSegment2D — degenerate segment
+    float t;
+    float d = closestOnSegment2D(3, 4, 0, 0, 0, 0, t);
+    assert(isClose(t, 0.0f) && isClose(d, 5.0f));
+}

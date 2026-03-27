@@ -985,7 +985,7 @@ void main(string[] args) {
             }
         }
         ImGui.End();
-        ShowDemoWindow();
+        // ShowDemoWindow();
 
 
         // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
