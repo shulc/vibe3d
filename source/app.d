@@ -301,8 +301,18 @@ void main(string[] args) {
     // Parse --playback <file> flag
     string playbackFile;
     for (size_t i = 1; i < args.length; ++i) {
-        if (args[i] == "--playback" && i + 1 < args.length)
+        if (args[i] == "--playback") {
+            if (i + 1 >= args.length) {
+                writeln("Error: --playback requires a file argument");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
             playbackFile = args[++i];
+        } else {
+            writefln("Error: unknown argument '%s'", args[i]);
+            import core.stdc.stdlib : exit;
+            exit(1);
+        }
     }
     bool playbackMode = playbackFile.length > 0;
 
