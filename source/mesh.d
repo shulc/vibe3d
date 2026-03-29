@@ -26,7 +26,26 @@ struct Mesh {
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
     }
+    // Fast version using hash lookup for duplicate checking
+    void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
+        faces ~= idx.dup;
+        for (uint i = 0; i < idx.length; i++) {
+            uint a = idx[i];
+            uint b = idx[(i+1) % idx.length];
+            ulong key = edgeKey(a, b);
+            if (key !in edgeLookup) {
+                edges ~= [a, b];
+                edgeLookup[key] = cast(uint)(edges.length - 1);
+            }
+        }
+    }
     void clear() { vertices = []; edges = []; faces = []; }
+}
+
+// Canonical edge key: always (min, max) packed into a ulong.
+ulong edgeKey(uint a, uint b) {
+    return a < b ? (cast(ulong)a << 32 | cast(ulong)b)
+                 : (cast(ulong)b << 32 | cast(ulong)a);
 }
 
 Mesh makeCube() {
@@ -60,12 +79,6 @@ Mesh catmullClark(ref const Mesh m) {
     uint nV = cast(uint)m.vertices.length;
     uint nF = cast(uint)m.faces.length;
     uint nE = cast(uint)m.edges.length;
-
-    // Canonical edge key: always (min, max) packed into a ulong.
-    static ulong edgeKey(uint a, uint b) {
-        return a < b ? (cast(ulong)a << 32 | cast(ulong)b)
-                     : (cast(ulong)b << 32 | cast(ulong)a);
-    }
 
     // Map edge key → index into m.edges
     uint[ulong] edgeLookup;
@@ -182,6 +195,9 @@ Mesh catmullClark(ref const Mesh m) {
     foreach (ei; 0 .. nE)  result.vertices[nV + ei]      = edgePoints[ei];
     foreach (fi; 0 .. nF)  result.vertices[nV + nE + fi] = facePoints[fi];
 
+    // Create edge lookup for result to avoid duplicate edges
+    uint[ulong] resultEdgeLookup;
+
     // Each original n-gon → n quads.
     // For corner i of face fi with verts [..., v_{i-1}, v_i, v_{i+1}, ...]:
     //   quad = [ v_i, edge_point(v_i→v_{i+1}), face_point, edge_point(v_{i-1}→v_i) ]
@@ -194,7 +210,7 @@ Mesh catmullClark(ref const Mesh m) {
             uint vim1 = face[(i + len - 1) % len];
             uint eiFwd  = edgeLookup[edgeKey(vi0, vi1)];
             uint eiBack = edgeLookup[edgeKey(vim1, vi0)];
-            result.addFace([vi0, nV + eiFwd, fpIdx, nV + eiBack]);
+            result.addFaceFast(resultEdgeLookup, [vi0, nV + eiFwd, fpIdx, nV + eiBack]);
         }
     }
 
@@ -308,56 +324,135 @@ struct GpuMesh {
     }
 
     // Draw faces with per-face hover highlights (Polygons mode).
-    // Selected faces are drawn in default grey — checkerboard overlay is a separate pass.
+    // Optimized: minimal draw calls for large meshes.
     void drawFacesHighlighted(GLuint program, GLint locColor,
                                int hoveredFace, const bool[] selectedFaces) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
-        foreach (i; 0 .. cast(int)faceTriStart.length) {
-            bool hov = (i == hoveredFace);
-            if (hov)
+
+        // If no hovered face, draw all at once
+        if (hoveredFace < 0 || hoveredFace >= faceTriStart.length) {
+            glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
+            glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
+        } else {
+            // Draw all faces except hovered face in one batch
+            glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
+            int hoverStart = faceTriStart[hoveredFace];
+            int hoverCount = faceTriCount[hoveredFace];
+
+            // Draw faces before hovered
+            if (hoverStart > 0)
+                glDrawArrays(GL_TRIANGLES, 0, hoverStart);
+
+            // Draw faces after hovered
+            if (hoverStart + hoverCount < faceVertCount)
+                glDrawArrays(GL_TRIANGLES, hoverStart + hoverCount,
+                            faceVertCount - hoverStart - hoverCount);
+
+            // Draw hovered face with highlight
+            if (hoverCount > 0) {
                 glUniform3f(locColor, 0.5f, 0.71f, 0.79f);
-            else
-                glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
-            glDrawArrays(GL_TRIANGLES, faceTriStart[i], faceTriCount[i]);
+                glDrawArrays(GL_TRIANGLES, hoverStart, hoverCount);
+            }
         }
+
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindVertexArray(0);
     }
 
     // Draw only the selected faces geometry (no color set — caller sets up shader).
+    // Optimized: batch selected faces to minimize draw calls.
     void drawSelectedFacesOverlay(const bool[] selectedFaces) {
         glBindVertexArray(faceVao);
-        foreach (i; 0 .. cast(int)faceTriStart.length) {
-            if (i >= cast(int)selectedFaces.length || !selectedFaces[i]) continue;
-            glDrawArrays(GL_TRIANGLES, faceTriStart[i], faceTriCount[i]);
+
+        // If many selected faces, draw them in batches
+        int batchStart = -1;
+        for (int i = 0; i < cast(int)faceTriStart.length; i++) {
+            if (i >= cast(int)selectedFaces.length || !selectedFaces[i]) {
+                if (batchStart >= 0) {
+                    // Draw the current batch
+                    int batchEnd = i;
+                    int startIdx = faceTriStart[batchStart];
+                    int endIdx = (batchEnd < cast(int)faceTriStart.length)
+                                ? faceTriStart[batchEnd] : faceVertCount;
+                    glDrawArrays(GL_TRIANGLES, startIdx, endIdx - startIdx);
+                    batchStart = -1;
+                }
+            } else {
+                if (batchStart < 0) batchStart = i;
+            }
         }
+
+        // Draw final batch if exists
+        if (batchStart >= 0) {
+            int startIdx = faceTriStart[batchStart];
+            glDrawArrays(GL_TRIANGLES, startIdx, faceVertCount - startIdx);
+        }
+
         glBindVertexArray(0);
     }
 
     // Draw edges with optional hover/selection highlights.
+    // Optimized: batch rendering for large meshes.
     // hoveredEdge = -1 means no hover; selectedEdges may be shorter than edgeCount.
     void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges) {
         int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
 
         // Default gray edges — with depth test (skip hovered and selected)
+        // Batch draw all default edges
         glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
-        foreach (i; 0 .. edgeCount) {
-            if (i == hoveredEdge) continue;
-            if (i < cast(int)selectedEdges.length && selectedEdges[i]) continue;
-            glDrawArrays(GL_LINES, i * 2, 2);
+
+        if (hoveredEdge < 0 && selectedEdges.length == 0) {
+            // Simple case: draw all edges at once
+            glDrawArrays(GL_LINES, 0, edgeVertCount);
+        } else {
+            // Complex case: avoid hovered/selected edges
+            int batchStart = -1;
+            for (int i = 0; i < edgeCount; i++) {
+                bool skipThis = (i == hoveredEdge) ||
+                    (i < cast(int)selectedEdges.length && selectedEdges[i]);
+
+                if (!skipThis) {
+                    if (batchStart < 0) batchStart = i;
+                } else {
+                    if (batchStart >= 0) {
+                        glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                        batchStart = -1;
+                    }
+                }
+            }
+
+            // Draw final batch
+            if (batchStart >= 0) {
+                glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
+            }
         }
 
         // Selected and hovered — drawn without depth test so they show through faces.
         glDisable(GL_DEPTH_TEST);
 
-        glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-        foreach (i; 0 .. cast(int)selectedEdges.length)
-            if (selectedEdges[i] && i != hoveredEdge)
-                glDrawArrays(GL_LINES, i * 2, 2);
+        // Batch selected edges
+        if (selectedEdges.length > 0) {
+            glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
+            int batchStart = -1;
+            for (int i = 0; i < cast(int)selectedEdges.length; i++) {
+                if (selectedEdges[i] && i != hoveredEdge) {
+                    if (batchStart < 0) batchStart = i;
+                } else {
+                    if (batchStart >= 0) {
+                        glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                        batchStart = -1;
+                    }
+                }
+            }
+            if (batchStart >= 0) {
+                glDrawArrays(GL_LINES, batchStart * 2, (cast(int)selectedEdges.length - batchStart) * 2);
+            }
+        }
 
+        // Draw hovered edge
         if (hoveredEdge >= 0 && hoveredEdge < edgeCount) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
             glDrawArrays(GL_LINES, hoveredEdge * 2, 2);
