@@ -330,43 +330,37 @@ struct GpuMesh {
             }
         }
 
+        // Use glMapBuffer for all three VBOs: 3 driver round-trips total instead of
+        // one per updated face/edge/vertex (which could be thousands of calls).
+
         if (anyFaceUpdate) {
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-            // Reuse a scratch buffer to batch all vertices of a face into one
-            // glBufferSubData call instead of one call per vertex.
-            float[] scratch;
-            for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
-                if (!faceNeedsUpdate[fi]) continue;
-                const(uint[]) face = mesh.faces[fi];
-                if (face.length < 3) continue;
-                int start = faceTriStart[fi];
+            float* fp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            if (fp) {
+                for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
+                    if (!faceNeedsUpdate[fi]) continue;
+                    const(uint[]) face = mesh.faces[fi];
+                    if (face.length < 3) continue;
 
-                Vec3 v0 = mesh.vertices[face[0]];
-                Vec3 v1 = mesh.vertices[face[1]];
-                Vec3 v2 = mesh.vertices[face[2]];
-                Vec3 e1 = vec3Sub(v1, v0), e2 = vec3Sub(v2, v0);
-                Vec3 cr = cross(e1, e2);
-                float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-                Vec3 n = nlen > 1e-6f
-                    ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)
-                    : Vec3(0, 1, 0);
+                    Vec3 v0 = mesh.vertices[face[0]];
+                    Vec3 v1 = mesh.vertices[face[1]];
+                    Vec3 v2 = mesh.vertices[face[2]];
+                    Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+                    float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
+                    Vec3 n = nlen > 1e-6f
+                        ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)
+                        : Vec3(0, 1, 0);
 
-                // Build the entire face's triangle data, then upload in one call.
-                int triCount = cast(int)face.length - 2;
-                int floatCount = triCount * 3 * FACE_STRIDE;
-                if (scratch.length < floatCount) scratch.length = floatCount;
-
-                int k = 0;
-                for (size_t i = 1; i + 1 < face.length; i++) {
-                    foreach (idx; [face[0], face[i], face[i + 1]]) {
-                        Vec3 v = mesh.vertices[idx];
-                        scratch[k++] = v.x; scratch[k++] = v.y; scratch[k++] = v.z;
-                        scratch[k++] = n.x; scratch[k++] = n.y; scratch[k++] = n.z;
+                    int k = faceTriStart[fi] * FACE_STRIDE;
+                    for (size_t i = 1; i + 1 < face.length; i++) {
+                        foreach (idx; [face[0], face[i], face[i + 1]]) {
+                            Vec3 v = mesh.vertices[idx];
+                            fp[k++] = v.x; fp[k++] = v.y; fp[k++] = v.z;
+                            fp[k++] = n.x; fp[k++] = n.y; fp[k++] = n.z;
+                        }
                     }
                 }
-                glBufferSubData(GL_ARRAY_BUFFER,
-                                start * FACE_STRIDE * float.sizeof,
-                                k * float.sizeof, scratch.ptr);
+                glUnmapBuffer(GL_ARRAY_BUFFER);
             }
         }
 
@@ -384,21 +378,30 @@ struct GpuMesh {
 
         if (anyEdgeUpdate) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
-            foreach (ei, edge; mesh.edges) {
-                if (!edgeNeedsUpdate[ei]) continue;
-                Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
-                float[6] data = [a.x, a.y, a.z, b.x, b.y, b.z];
-                glBufferSubData(GL_ARRAY_BUFFER, ei * 6 * float.sizeof, 6 * float.sizeof, data.ptr);
+            float* ep = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            if (ep) {
+                foreach (ei, edge; mesh.edges) {
+                    if (!edgeNeedsUpdate[ei]) continue;
+                    Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
+                    int k = cast(int)ei * 6;
+                    ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
+                    ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
             }
         }
 
         // Vertex points.
         glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
-        foreach (vi, needsUpdate; toUpdate) {
-            if (!needsUpdate) continue;
-            Vec3 v = mesh.vertices[vi];
-            float[3] data = [v.x, v.y, v.z];
-            glBufferSubData(GL_ARRAY_BUFFER, vi * 3 * float.sizeof, 3 * float.sizeof, data.ptr);
+        float* vp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+        if (vp) {
+            foreach (vi, needsUpdate; toUpdate) {
+                if (!needsUpdate) continue;
+                Vec3 v = mesh.vertices[vi];
+                int k = cast(int)vi * 3;
+                vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
+            }
+            glUnmapBuffer(GL_ARRAY_BUFFER);
         }
 
         glBindVertexArray(0);
@@ -496,16 +499,20 @@ struct GpuMesh {
         // Batch draw all default edges
         glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
 
+        // Check once if all edges are selected (avoids per-edge iteration in gray pass).
+        bool allEdgesSelected = (selectedEdges.length >= edgeCount && hoveredEdge < 0);
+        if (allEdgesSelected)
+            foreach (s; selectedEdges[0 .. edgeCount]) if (!s) { allEdgesSelected = false; break; }
+
         if (hoveredEdge < 0 && selectedEdges.length == 0) {
-            // Simple case: draw all edges at once
+            // No selection: draw everything gray in one call.
             glDrawArrays(GL_LINES, 0, edgeVertCount);
-        } else {
-            // Complex case: avoid hovered/selected edges
+        } else if (!allEdgesSelected) {
+            // Partial selection: draw gray edges, skipping selected/hovered.
             int batchStart = -1;
             for (int i = 0; i < edgeCount; i++) {
                 bool skipThis = (i == hoveredEdge) ||
                     (i < cast(int)selectedEdges.length && selectedEdges[i]);
-
                 if (!skipThis) {
                     if (batchStart < 0) batchStart = i;
                 } else {
@@ -515,18 +522,19 @@ struct GpuMesh {
                     }
                 }
             }
-
-            // Draw final batch
-            if (batchStart >= 0) {
+            if (batchStart >= 0)
                 glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
-            }
         }
+        // allEdgesSelected: gray pass skipped entirely — 0 unselected edges to draw.
 
         // Selected and hovered — drawn without depth test so they show through faces.
         glDisable(GL_DEPTH_TEST);
 
-        // Batch selected edges
-        if (selectedEdges.length > 0) {
+        if (allEdgesSelected && hoveredEdge < 0) {
+            // All edges selected: one draw call.
+            glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
+            glDrawArrays(GL_LINES, 0, edgeVertCount);
+        } else if (selectedEdges.length > 0) {
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
             int batchStart = -1;
             for (int i = 0; i < cast(int)selectedEdges.length; i++) {
@@ -539,9 +547,8 @@ struct GpuMesh {
                     }
                 }
             }
-            if (batchStart >= 0) {
+            if (batchStart >= 0)
                 glDrawArrays(GL_LINES, batchStart * 2, (cast(int)selectedEdges.length - batchStart) * 2);
-            }
         }
 
         // Draw hovered edge

@@ -627,6 +627,11 @@ void main(string[] args) {
     bool[] selectedFaces;
     selectedFaces.length = mesh.faces.length;
 
+    // Cache: face→edge mask for Polygons mode edge highlighting.
+    // Rebuilt only when selectedFaces changes (comparison is a fast memcmp).
+    bool[] faceSelEdgesCache;
+    bool[] faceSelEdgesPrevSel;  // snapshot of selectedFaces at last rebuild
+
     // Camera
     float azimuth   =  0.5f;
     float elevation =  0.4f;
@@ -1605,28 +1610,41 @@ void main(string[] args) {
         if (editMode == EditMode.Edges) {
             gpu.drawEdges(locColor, hoveredEdge, selectedEdges);
         } else if (editMode == EditMode.Polygons) {
-            // Build selected-edge mask from selected faces.
-            bool[] faceSelEdges = new bool[](mesh.edges.length);
-            bool anyFaceSel = false;
-            foreach (s; selectedFaces) if (s) { anyFaceSel = true; break; }
-            if (anyFaceSel) {
-                bool[ulong] edgeSet;
-                foreach (fi, face; mesh.faces) {
-                    if (fi >= selectedFaces.length || !selectedFaces[fi]) continue;
-                    for (size_t j = 0; j < face.length; j++) {
-                        uint a = face[j], b = face[(j + 1) % face.length];
-                        uint lo = a < b ? a : b, hi = a < b ? b : a;
-                        edgeSet[(cast(ulong)lo << 32) | hi] = true;
+            // Build selected-edge mask — rebuild only when selectedFaces changes.
+            if (faceSelEdgesPrevSel != selectedFaces) {
+                faceSelEdgesPrevSel = selectedFaces.dup;
+                if (faceSelEdgesCache.length != mesh.edges.length)
+                    faceSelEdgesCache = new bool[](mesh.edges.length);
+                faceSelEdgesCache[] = false;
+
+                // Fast path: all faces selected → all edges selected.
+                bool allSel = true;
+                foreach (s; selectedFaces) if (!s) { allSel = false; break; }
+                if (allSel) {
+                    faceSelEdgesCache[] = true;
+                } else {
+                    bool anyFaceSel = false;
+                    foreach (s; selectedFaces) if (s) { anyFaceSel = true; break; }
+                    if (anyFaceSel) {
+                        bool[ulong] edgeSet;
+                        foreach (fi, face; mesh.faces) {
+                            if (fi >= selectedFaces.length || !selectedFaces[fi]) continue;
+                            for (size_t j = 0; j < face.length; j++) {
+                                uint a = face[j], b = face[(j + 1) % face.length];
+                                uint lo = a < b ? a : b, hi = a < b ? b : a;
+                                edgeSet[(cast(ulong)lo << 32) | hi] = true;
+                            }
+                        }
+                        foreach (ei, edge; mesh.edges) {
+                            uint lo = edge[0] < edge[1] ? edge[0] : edge[1];
+                            uint hi = edge[0] < edge[1] ? edge[1] : edge[0];
+                            if (((cast(ulong)lo << 32) | hi) in edgeSet)
+                                faceSelEdgesCache[ei] = true;
+                        }
                     }
                 }
-                foreach (ei, edge; mesh.edges) {
-                    uint lo = edge[0] < edge[1] ? edge[0] : edge[1];
-                    uint hi = edge[0] < edge[1] ? edge[1] : edge[0];
-                    if (((cast(ulong)lo << 32) | hi) in edgeSet)
-                        faceSelEdges[ei] = true;
-                }
             }
-            gpu.drawEdges(locColor, -1, faceSelEdges);
+            gpu.drawEdges(locColor, -1, faceSelEdgesCache);
         } else {
             gpu.drawEdges(locColor, -1, []);
         }
