@@ -6,7 +6,7 @@ on:
       tag:
         description: 'Release tag (e.g. v1.0.0)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.0.1'
 
 permissions:
   contents: write
@@ -20,7 +20,7 @@ jobs:
           - os: ubuntu-latest
             name: linux
             binary: vibe3d
-          - os: macos-13
+          - os: macos-lastest
             name: macos
             binary: vibe3d
           - os: windows-latest
