@@ -225,6 +225,8 @@ public:
         }
 
         dragAxis = -1;
+        // Force update() to recompute cachedCenter from moved vertices on next frame.
+        lastSelectionHash = 0;
         return true;
     }
 

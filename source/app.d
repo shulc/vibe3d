@@ -293,6 +293,8 @@ void frameToVertices(Vec3[] verts,
     float halfTanMin = halfTanY < halfTanX ? halfTanY : halfTanX;
 
     distance = radius / (0.9f * halfTanMin);
+    // Keep the bounding sphere fully beyond the near clip plane (0.1).
+    if (distance < radius + 0.001f) distance = radius + 0.001f;
     if (distance < minDist) distance = minDist;
     if (distance > maxDist) distance = maxDist;
 }
@@ -630,8 +632,8 @@ void main(string[] args) {
     float elevation =  0.4f;
     float distance  =  3.0f;
     Vec3  focus     = Vec3(0, 0, 0);
-    immutable float minDist = 0.5f;
-    immutable float maxDist = 50.0f;
+    immutable float minDist = 0.0001f;
+    immutable float maxDist = float.max;
     immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
 
     DragMode dragMode = DragMode.None;
@@ -788,23 +790,25 @@ void main(string[] args) {
                                     if (hoveredVertex >= 0)
                                         wasSelected[hoveredVertex] = true;
                                 }
-                                // Flood-fill via edges
+                                // Build vertex → adjacent vertices map once: O(E)
+                                int[][] vertAdj = new int[][](mesh.vertices.length);
+                                foreach (edge; mesh.edges) {
+                                    vertAdj[edge[0]] ~= cast(int)edge[1];
+                                    vertAdj[edge[1]] ~= cast(int)edge[0];
+                                }
+                                // BFS with head pointer: O(V+E) total
                                 bool[] visited = new bool[](mesh.vertices.length);
                                 int[] queue;
                                 foreach (i; 0 .. wasSelected.length)
                                     if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
-                                while (queue.length > 0) {
-                                    int vi = queue[0];
-                                    queue = queue[1..$];
+                                int head = 0;
+                                while (head < queue.length) {
+                                    int vi = queue[head++];
                                     selected[vi] = true;
-                                    // Add all edge-adjacent vertices
-                                    foreach (edge; mesh.edges) {
-                                        if (edge[0] == vi && !visited[edge[1]]) {
-                                            visited[edge[1]] = true;
-                                            queue ~= edge[1];
-                                        } else if (edge[1] == vi && !visited[edge[0]]) {
-                                            visited[edge[0]] = true;
-                                            queue ~= edge[0];
+                                    foreach (ni; vertAdj[vi]) {
+                                        if (!visited[ni]) {
+                                            visited[ni] = true;
+                                            queue ~= ni;
                                         }
                                     }
                                 }
@@ -816,23 +820,27 @@ void main(string[] args) {
                                     if (hoveredEdge >= 0)
                                         wasSelected[hoveredEdge] = true;
                                 }
-                                // Flood-fill via shared vertices
+                                // Build vertex → [edge indices] map once: O(E)
+                                int[][] vertEdges = new int[][](mesh.vertices.length);
+                                foreach (i; 0 .. mesh.edges.length) {
+                                    vertEdges[mesh.edges[i][0]] ~= cast(int)i;
+                                    vertEdges[mesh.edges[i][1]] ~= cast(int)i;
+                                }
+                                // BFS with head pointer: O(E) total instead of O(E²)
                                 bool[] visited = new bool[](mesh.edges.length);
                                 int[] queue;
                                 foreach (i; 0 .. wasSelected.length)
                                     if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
-                                while (queue.length > 0) {
-                                    int ei = queue[0];
-                                    queue = queue[1..$];
+                                int head = 0;
+                                while (head < queue.length) {
+                                    int ei = queue[head++];
                                     selectedEdges[ei] = true;
-                                    uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
-                                    // Add all edges that touch a or b
-                                    foreach (i; 0 .. mesh.edges.length) {
-                                        if (visited[i]) continue;
-                                        uint ea = mesh.edges[i][0], eb = mesh.edges[i][1];
-                                        if (ea == a || ea == b || eb == a || eb == b) {
-                                            visited[i] = true;
-                                            queue ~= cast(int)i;
+                                    foreach (vi; mesh.edges[ei]) {
+                                        foreach (ni; vertEdges[vi]) {
+                                            if (!visited[ni]) {
+                                                visited[ni] = true;
+                                                queue ~= ni;
+                                            }
                                         }
                                     }
                                 }
@@ -859,9 +867,9 @@ void main(string[] args) {
                                         edgeFaces[key] ~= cast(uint)fi;
                                     }
                                 }
-                                while (queue.length > 0) {
-                                    int fi = queue[0];
-                                    queue = queue[1..$];
+                                int head = 0;
+                                while (head < queue.length) {
+                                    int fi = queue[head++];
                                     selectedFaces[fi] = true;
                                     // Check all edges of this face
                                     uint[] face = mesh.faces[fi];
@@ -993,7 +1001,7 @@ void main(string[] args) {
         Vec3 eye    = vec3Add(focus, offset);
         auto view   = lookAt(eye, focus, Vec3(0, 1, 0));
         auto proj   = perspectiveMatrix(45.0f * PI / 180.0f,
-                                        cast(float)vp3dW / vp3dH, 0.1f, 100.0f);
+                                        cast(float)vp3dW / vp3dH, 0.001f, 100.0f);
         Viewport vp = Viewport(view, proj, vp3dW, vp3dH, PANEL_W, 0);
 
         // ---- ImGui ----
@@ -1353,8 +1361,24 @@ void main(string[] args) {
             float closest = 4.0f;  // pixel radius for edges
             float closestSq = closest * closest;
 
+            // A vertex is visible if at least one adjacent face is front-facing.
+            // Computed once here — O(faces), replaces unreliable depth-buffer test.
+            bool[] vertexVisible = new bool[](mesh.vertices.length);
+            foreach (face; mesh.faces) {
+                if (face.length < 3) continue;
+                Vec3 fv0 = mesh.vertices[face[0]];
+                Vec3 fv1 = mesh.vertices[face[1]];
+                Vec3 fv2 = mesh.vertices[face[2]];
+                Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
+                if (dot(fn, vec3Sub(fv0, eye)) >= 0) continue;  // back-facing
+                foreach (vi; face) vertexVisible[vi] = true;
+            }
+
             foreach (i; 0 .. mesh.edges.length) {
                 uint a = mesh.edges[i][0], b = mesh.edges[i][1];
+
+                // Edge is selectable only if both endpoints are visible.
+                if (!vertexVisible[a] || !vertexVisible[b]) continue;
 
                 // Use vertex cache to avoid duplicate projections
                 if (!vertexCache.valid[a] || !vertexCache.valid[b]) {
@@ -1403,24 +1427,6 @@ void main(string[] args) {
                                                       vertexCache.sx[b], vertexCache.sy[b], t);
                 if (d2 >= closestSq) continue;
 
-                // Quick occlusion check using vertex depths (cheaper than readDepth)
-                float expDepthA = vertexCache.ndcZ[a] * 0.5f + 0.5f;
-                float expDepthB = vertexCache.ndcZ[b] * 0.5f + 0.5f;
-
-                // Use the closer depth for checking
-                bool useA = expDepthA < expDepthB;
-                float expDepth = useA ? expDepthA : expDepthB;
-                float checkX = useA ? vertexCache.sx[a] : vertexCache.sx[b];
-                float checkY = useA ? vertexCache.sy[a] : vertexCache.sy[b];
-
-                // Check occlusion at both ends (strict check prevents hidden edges)
-                float bufDepthA = readDepth(winW, winH, fbW, fbH, vertexCache.sx[a], vertexCache.sy[a]);
-                float bufDepthB = readDepth(winW, winH, fbW, fbH, vertexCache.sx[b], vertexCache.sy[b]);
-
-                // Both ends must be visible for the edge to be selectable
-                if (expDepthA > bufDepthA + 0.001f || expDepthB > bufDepthB + 0.001f)
-                    continue;  // edge is occluded by faces at one or both ends
-
                 closestSq = d2;
                 hoveredEdge = cast(int)i;
             }
@@ -1455,6 +1461,16 @@ void main(string[] args) {
                 uint[] face = mesh.faces[fi];
                 if (face.length < 3) continue;
 
+                // Back-face culling: skip faces whose normal points away from camera.
+                // This is geometry-exact and independent of depth buffer precision.
+                {
+                    Vec3 v0 = mesh.vertices[face[0]];
+                    Vec3 v1 = mesh.vertices[face[1]];
+                    Vec3 v2 = mesh.vertices[face[2]];
+                    Vec3 n = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+                    if (dot(n, vec3Sub(v0, eye)) >= 0) continue;
+                }
+
                 // Quick bounds check if cached
                 if (useBoundsCache && faceCache.valid[fi]) {
                     if (mx < faceCache.minX[fi] || mx > faceCache.maxX[fi] ||
@@ -1480,9 +1496,10 @@ void main(string[] args) {
                     for (int j = 0; j < len; j++) {
                         uint vi = face[j];
                         if (!vertexCache.valid[vi]) {
-                            // Project if not cached yet
+                            // Use projectToWindowFull so off-screen vertices are still
+                            // projected; only vertices behind the camera (w<=0) are rejected.
                             float sx, sy, ndcZ;
-                            if (!projectToWindow(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
+                            if (!projectToWindowFull(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
                                 allOk = false;
                                 break;
                             }
@@ -1537,11 +1554,6 @@ void main(string[] args) {
                         cZ += vertexCache.ndcZ[vi];
                     }
                     cx /= len; cy /= len; cZ /= len;
-                    float expectedDepth = cZ * 0.5f + 0.5f;
-                    float bufDepth = readDepth(winW, winH, fbW, fbH, cx, cy);
-                    if (expectedDepth > bufDepth + 0.001f) continue;  // More strict tolerance
-
-                    // Pick face closest to camera
                     if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
                 } else {
                     // Bounds already cached, do full check
@@ -1556,7 +1568,7 @@ void main(string[] args) {
                         uint vi = face[j];
                         if (!vertexCache.valid[vi]) {
                             float sx, sy, ndcZ;
-                            if (!projectToWindow(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
+                            if (!projectToWindowFull(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
                                 allOk = false;
                                 break;
                             }
@@ -1577,11 +1589,6 @@ void main(string[] args) {
                     if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
 
                     cx /= len; cy /= len; cZ /= len;
-                    float expectedDepth = cZ * 0.5f + 0.5f;
-                    float bufDepth = readDepth(winW, winH, fbW, fbH, cx, cy);
-                    if (expectedDepth > bufDepth + 0.001f) continue;  // More strict tolerance
-
-                    // Pick face closest to camera
                     if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
                 }
             }
