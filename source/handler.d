@@ -544,7 +544,14 @@ class MoveHandler : Handler {
 
         Vec3  d    = vec3Sub(eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        float size = dist * screenFraction;
+        // Use view-space depth (projection onto camera axis) instead of Euclidean
+        // distance. NDC size = world_size / depth * proj[5], so with
+        // world_size = screenFraction * depth / proj[5] we get NDC = screenFraction —
+        // constant regardless of camera angle, FOV, or viewport dimensions.
+        float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
+                        vp.view[10]*center.z + vp.view[14]);
+        if (depth < 1e-4f) depth = 1e-4f;
+        float size = screenFraction * depth / vp.proj[5];
 
         arrowX.start = vec3Add(center, Vec3(size/6, 0     , 0));;
         arrowX.end   = vec3Add(center, Vec3(size  , 0.    , 0));
@@ -631,7 +638,10 @@ class RotateHandler : Handler {
         );
         Vec3  d    = vec3Sub(eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        size = dist * screenFraction;
+        float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
+                        vp.view[10]*center.z + vp.view[14]);
+        if (depth < 1e-4f) depth = 1e-4f;
+        size = screenFraction * depth / vp.proj[5];
 
         arcX.center = center; arcX.normal = Vec3(1,0,0); arcX.radius = size;
         arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
@@ -988,7 +998,10 @@ class ScaleHandler : Handler {
 
         Vec3  d    = vec3Sub(eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        float size = dist * screenFraction;
+        float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
+                        vp.view[10]*center.z + vp.view[14]);
+        if (depth < 1e-4f) depth = 1e-4f;
+        float size = screenFraction * depth / vp.proj[5];
 
         arrowX.start = vec3Add(center, Vec3(size/10, 0,      0     ));
         arrowX.end   = vec3Add(center, Vec3(size,    0,      0     ));

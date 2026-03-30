@@ -12,6 +12,8 @@ import math;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
+import std.math;
+
 // ---------------------------------------------------------------------------
 // MoveTool : Tool — shows MoveHandler at selection/mesh center
 // ---------------------------------------------------------------------------
@@ -299,15 +301,24 @@ public:
             Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
                       : dragAxis == 1 ? Vec3(0,1,0)
                                       : Vec3(0,0,1);
+            // Use the actual arrow end (scaled to gizmo size) instead of a unit
+            // world vector — a unit offset can fall behind the camera when dist < 1.
+            Vec3 axisEnd = dragAxis == 0 ? handler.arrowX.end
+                         : dragAxis == 1 ? handler.arrowY.end
+                                         : handler.arrowZ.end;
             float cx, cy, cndcZ, ax_, ay_, andcZ;
             if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
             { lastMX = e.x; lastMY = e.y; return true; }
-            if (!projectToWindowFull(vec3Add(center, axis), cachedVp, ax_, ay_, andcZ))
+            if (!projectToWindowFull(axisEnd, cachedVp, ax_, ay_, andcZ))
             { lastMX = e.x; lastMY = e.y; return true; }
             float sdx = ax_ - cx, sdy = ay_ - cy;
             float slen2 = sdx*sdx + sdy*sdy;
             if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
-            float d = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
+            // d is in units of |axisEnd - center| (= gizmo size), convert to world units.
+            Vec3 ae = vec3Sub(axisEnd, center);
+            float axisLen = sqrt(ae.x*ae.x + ae.y*ae.y + ae.z*ae.z);
+            if (axisLen < 1e-9f) { lastMX = e.x; lastMY = e.y; return true; }
+            float d = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2 * axisLen;
             worldDelta = vec3Scale(axis, d);
         } else {
             // ---- Plane drag: ray-plane intersection ----

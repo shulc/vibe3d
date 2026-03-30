@@ -1,0 +1,81 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            binary: vibe3d
+          - os: macos-latest
+            name: macos
+            binary: vibe3d
+          - os: windows-latest
+            name: windows
+            binary: vibe3d.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup DMD
+        uses: dlang-community/setup-dlang@v1
+        with:
+          compiler: dmd-latest
+
+      # ---- SDL2 ----
+
+      - name: Install SDL2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2
+
+      - name: Install SDL2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdlVer = "2.30.3"
+          $url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip"
+          Invoke-WebRequest $url -OutFile SDL2-devel.zip
+          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
+          $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
+          echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
+          # Copy SDL2.dll to working dir so dub can find it
+          Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
+          # Put headers and libs where dub / pkg-config can find them
+          echo "$($sdlDir.FullName)\lib\x64" >> $env:GITHUB_PATH
+
+      # ---- Build ----
+
+      - name: Build
+        run: dub build --compiler=dmd --build=release
+
+      # ---- Package artifact ----
+
+      - name: Upload artifact (Linux / macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.binary }}
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ matrix.binary }}
+            SDL2.dll

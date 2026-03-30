@@ -1309,10 +1309,23 @@ void main(string[] args) {
             queryMouse(mx, my);
             float closestSq = 9.0f;  // 3.0f^2
             int candidate = -1;
-            float bestDepth = float.max;
 
-            // Quick screen-space filtering first
+            // A vertex is visible if at least one adjacent face is front-facing.
+            // Geometry-exact: replaces unreliable depth-buffer test (near=0.001).
+            bool[] vertexVisible = new bool[](mesh.vertices.length);
+            foreach (face; mesh.faces) {
+                if (face.length < 3) continue;
+                Vec3 fv0 = mesh.vertices[face[0]];
+                Vec3 fv1 = mesh.vertices[face[1]];
+                Vec3 fv2 = mesh.vertices[face[2]];
+                Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
+                if (dot(fn, vec3Sub(fv0, eye)) >= 0) continue;  // back-facing
+                foreach (vi; face) vertexVisible[vi] = true;
+            }
+
             foreach_reverse (i; 0 .. mesh.vertices.length) {
+                if (!vertexVisible[i]) continue;
+
                 if (!vertexCache.valid[i]) {
                     if (!projectToWindow(mesh.vertices[i], vp,
                                         vertexCache.sx[i], vertexCache.sy[i], vertexCache.ndcZ[i])) {
@@ -1325,20 +1338,10 @@ void main(string[] args) {
                 float dx = vertexCache.sx[i] - mx;
                 float dy = vertexCache.sy[i] - my;
                 float d2 = dx*dx + dy*dy;
-                if (d2 >= closestSq)
-                    continue;  // too far
+                if (d2 >= closestSq) continue;
 
-                // Check depth only for promising candidates
-                float expectedDepth = vertexCache.ndcZ[i] * 0.5f + 0.5f;
-                float bufDepth = readDepth(winW, winH, fbW, fbH, vertexCache.sx[i], vertexCache.sy[i]);
-                if (expectedDepth > bufDepth + 0.001f)  // More strict tolerance
-                    continue;  // occluded (vertex behind buffer)
-
-                if (d2 < closestSq && expectedDepth < bestDepth) {
-                    closestSq = d2;
-                    candidate = cast(int)i;
-                    bestDepth = expectedDepth;
-                }
+                closestSq = d2;
+                candidate = cast(int)i;
             }
 
             if (candidate >= 0) {
