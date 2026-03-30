@@ -32,10 +32,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup DMD
+      - name: Setup DMD (Linux / Windows)
+        if: runner.os != 'macOS'
         uses: dlang-community/setup-dlang@v1
         with:
           compiler: dmd-latest
+
+      - name: Setup DMD (macOS via Homebrew)
+        if: runner.os == 'macOS'
+        run: |
+          brew install dmd
+          dmd --version
+          dub --version
 
       # ---- SDL2 ----
 
