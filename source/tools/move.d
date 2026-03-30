@@ -32,6 +32,26 @@ private:
     int      lastMX, lastMY;
     Viewport cachedVp;
     bool     centerManual;   // true = update() must not recompute handler.center
+    bool[]   toMove;         // Cache for vertices to move (avoid repeated allocation)
+    bool[]*  vertexCacheValid;  // Pointer to vertexCache.valid
+    bool[]*  edgeCacheValid;    // Pointer to edgeCache.valid
+    bool[]*  faceCacheValid;    // Pointer to faceCache.valid
+    bool     needsGpuUpdate;  // Flag to delay GPU upload until drag ends
+    uint     lastGpuUpdateTime;  // Timestamp of last GPU update for throttling
+    uint     gpuUpdateInterval = 50; // ms between GPU updates (for smooth gizmo, delayed model)
+    int[]    vertexIndicesToMove;  // Cached indices of vertices to move (avoid repeated lookup)
+    int      vertexMoveCount;      // Cached count to avoid re-iterating toMove
+
+public:
+    // When the whole mesh moves (no selection), we accumulate the delta here and
+    // apply it as a GPU-side translation uniform instead of re-uploading vertex data.
+    // Caller (app.d) reads this every frame and sets u_model accordingly.
+    // Reset to zero after final GPU upload on mouseUp.
+    Vec3 gpuOffset;
+    bool     vertexMoveCacheDirty;  // Flag to rebuild vertex cache when selection changes
+    bool     centerCacheDirty;    // Flag to recompute gizmo center
+    Vec3     cachedCenter;        // Cached gizmo center for performance
+    int      lastSelectionHash;   // Hash to detect selection changes
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -43,62 +63,134 @@ public:
         this.gpu           = gpu;
         this.editMode      = editMode;
         handler = new MoveHandler(Vec3(0, 0, 0));
+        toMove.length = mesh.vertices.length;
+        toMove[] = false;
+        vertexCacheValid = null;
+        edgeCacheValid = null;
+        faceCacheValid = null;
+        vertexMoveCacheDirty = true;
+        vertexIndicesToMove = null;
+        vertexMoveCount = 0;
+        centerCacheDirty = true;
+        cachedCenter = Vec3(0, 0, 0);
+        lastSelectionHash = 0;
     }
 
-    void destroy() { handler.destroy(); }
+    void destroy() {
+        handler.destroy();
+        toMove.length = 0;  // Clear cached array
+    }
+
+    // Set pointers to cache validity arrays for invalidation
+    void setCachePointers(bool[]* vertexValid, bool[]* edgeValid, bool[]* faceValid) {
+        vertexCacheValid = vertexValid;
+        edgeCacheValid = edgeValid;
+        faceCacheValid = faceValid;
+    }
 
     override string name() const { return "Move"; }
-    override void activate()   { active = true;              }
-    override void deactivate() { active = false; dragAxis = -1; centerManual = false; }
+    override void activate()   {
+        active = true;
+        needsGpuUpdate = false;
+        vertexMoveCacheDirty = true;
+        centerCacheDirty = true;
+        lastSelectionHash = 0;
+        gpuOffset = Vec3(0, 0, 0);
+    }
+    override void deactivate() {
+        active = false;
+        if (needsGpuUpdate || gpuOffset.x != 0 || gpuOffset.y != 0 || gpuOffset.z != 0) {
+            gpu.upload(*mesh);
+            needsGpuUpdate = false;
+            gpuOffset = Vec3(0, 0, 0);
+        }
+        dragAxis = -1;
+        centerManual = false;
+    }
 
-    // Recompute gizmo center from current selection / mesh state.
-    override void update() {
-        if (!active || centerManual) return;
-        Vec3 sum   = Vec3(0, 0, 0);
-        int  count = 0;
+    // Simple hash of selection state
+    uint computeSelectionHash() {
+        uint hash = cast(uint)(*editMode);
         if (*editMode == EditMode.Vertices) {
-            bool anySelected = false;
-            foreach (s; *selected) if (s) { anySelected = true; break; }
-            foreach (i, v; mesh.vertices) {
-                if (!anySelected || (i < (*selected).length && (*selected)[i])) {
-                    sum = vec3Add(sum, v);
-                    count++;
-                }
+            foreach (i, s; *selected) {
+                if (s) hash = hash * 31 + cast(uint)i;
             }
         } else if (*editMode == EditMode.Edges) {
-            bool anySelected = false;
-            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
-            bool[] visited = new bool[](mesh.vertices.length);
-            foreach (i, edge; mesh.edges) {
-                if (anySelected && !(i < (*selectedEdges).length && (*selectedEdges)[i]))
-                    continue;
-                foreach (vi; edge) {
-                    if (!visited[vi]) {
-                        sum = vec3Add(sum, mesh.vertices[vi]);
-                        count++;
-                        visited[vi] = true;
-                    }
-                }
+            foreach (i, s; *selectedEdges) {
+                if (s) hash = hash * 31 + cast(uint)i;
             }
         } else if (*editMode == EditMode.Polygons) {
-            bool anySelected = false;
-            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
-            bool[] visited = new bool[](mesh.vertices.length);
-            foreach (i, face; mesh.faces) {
-                if (anySelected && !(i < (*selectedFaces).length && (*selectedFaces)[i]))
-                    continue;
-                foreach (vi; face) {
-                    if (!visited[vi]) {
-                        sum = vec3Add(sum, mesh.vertices[vi]);
+            foreach (i, s; *selectedFaces) {
+                if (s) hash = hash * 31 + cast(uint)i;
+            }
+        }
+        return hash;
+    }
+
+    // Recompute gizmo center from current selection / mesh state (with caching)
+    override void update() {
+        if (!active) return;
+
+        // Skip hash computation entirely during drag — selection cannot change
+        if (dragAxis >= 0) return;
+
+        // Recalculate center when selection changes only (not during drag)
+        uint currentHash = computeSelectionHash();
+        if (currentHash != lastSelectionHash) {
+            lastSelectionHash = currentHash;
+
+            // Recompute center from mesh vertices
+            Vec3 sum = Vec3(0, 0, 0);
+            int count = 0;
+
+            if (*editMode == EditMode.Vertices) {
+                bool anySelected = false;
+                foreach (s; *selected) if (s) { anySelected = true; break; }
+                foreach (i, v; mesh.vertices) {
+                    if (!anySelected || (i < (*selected).length && (*selected)[i])) {
+                        sum = vec3Add(sum, v);
                         count++;
-                        visited[vi] = true;
+                    }
+                }
+            } else if (*editMode == EditMode.Edges) {
+                bool anySelected = false;
+                foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
+                bool[] visited = new bool[](mesh.vertices.length);
+                foreach (i, edge; mesh.edges) {
+                    if (anySelected && !(i < (*selectedEdges).length && (*selectedEdges)[i]))
+                        continue;
+                    foreach (vi; edge) {
+                        if (!visited[vi]) {
+                            sum = vec3Add(sum, mesh.vertices[vi]);
+                            count++;
+                            visited[vi] = true;
+                        }
+                    }
+                }
+            } else if (*editMode == EditMode.Polygons) {
+                bool anySelected = false;
+                foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
+                bool[] visited = new bool[](mesh.vertices.length);
+                foreach (i, face; mesh.faces) {
+                    if (anySelected && !(i < (*selectedFaces).length && (*selectedFaces)[i]))
+                        continue;
+                    foreach (vi; face) {
+                        if (!visited[vi]) {
+                            sum = vec3Add(sum, mesh.vertices[vi]);
+                            count++;
+                            visited[vi] = true;
+                        }
                     }
                 }
             }
+
+            cachedCenter = count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
         }
-        handler.setPosition(count > 0
-            ? Vec3(sum.x / count, sum.y / count, sum.z / count)
-            : Vec3(0, 0, 0));
+
+        // Only update centerPosition if not manually set and not dragging
+        if (!centerManual && dragAxis == -1) {
+            handler.setPosition(cachedCenter);
+        }
     }
 
     override void draw(GLuint program, GLint locColor, const ref Viewport vp)
@@ -125,6 +217,13 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
+
+        // Commit GPU offset (whole-mesh) or flush partial selection — one final upload.
+        if (vertexMoveCount > 0) {
+            gpu.upload(*mesh);
+            gpuOffset = Vec3(0, 0, 0);  // model matrix returns to identity
+        }
+
         dragAxis = -1;
         return true;
     }
@@ -236,7 +335,25 @@ public:
             worldDelta = vec3Sub(hitCurr, hitPrev);
         }
 
-        applyDelta(worldDelta);
+        // Update gizmo position immediately (always fast)
+        handler.setPosition(vec3Add(handler.center, worldDelta));
+
+        // Apply delta to CPU vertices (fast: simple float additions, no GPU work)
+        applyDeltaWorldOnly(worldDelta);
+
+        if (vertexMoveCount == cast(int)mesh.vertices.length) {
+            // Whole-mesh move: accumulate GPU offset so app.d can set u_model as a
+            // translation matrix. Zero GPU uploads during drag — only one on mouseUp.
+            gpuOffset = vec3Add(gpuOffset, worldDelta);
+        } else {
+            // Partial selection: throttled GPU partial upload
+            uint currentTime = SDL_GetTicks();
+            if (currentTime - lastGpuUpdateTime >= gpuUpdateInterval) {
+                flushPendingGpuUpdates();
+                lastGpuUpdateTime = currentTime;
+            }
+        }
+
         lastMX = e.x;
         lastMY = e.y;
         return true;
@@ -253,7 +370,14 @@ public:
 
 private:
     void applyDelta(Vec3 delta) {
-        bool[] toMove = new bool[](mesh.vertices.length);
+        // Resize cache if needed
+        if (toMove.length != mesh.vertices.length) {
+            toMove.length = mesh.vertices.length;
+        }
+
+        // Clear the toMove array before using it
+        toMove[] = false;
+
         if (*editMode == EditMode.Vertices) {
             bool any = false;
             foreach (s; *selected) if (s) { any = true; break; }
@@ -274,16 +398,140 @@ private:
                 if (i < (*selectedFaces).length && (*selectedFaces)[i])
                     foreach (vi; face) toMove[vi] = true;
         }
+
+        // Apply delta to vertices
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toMove[i]) continue;
             mesh.vertices[i].x += delta.x;
             mesh.vertices[i].y += delta.y;
             mesh.vertices[i].z += delta.z;
         }
-        gpu.upload(*mesh);
-        if (centerManual)
-            handler.setPosition(vec3Add(handler.center, delta));
-        else
-            update();
+
+        // Update GPU immediately
+        updateGpuForSelection();
+    }
+
+    // Apply only to memory (no GPU update) - called during drag for smooth gizmo
+    void applyDeltaWorldOnly(Vec3 delta) {
+        buildVertexCacheIfNeeded();
+        applyDeltaImmediate(delta);
+    }
+
+    // Build cache of vertex indices to move (expensive, do once per selection change)
+    void buildVertexCacheIfNeeded() {
+        if (!vertexMoveCacheDirty && vertexIndicesToMove !is null) return;
+
+        // Create or clear the indices array
+        int[] indices;
+        indices.length = 0;
+
+        if (*editMode == EditMode.Vertices) {
+            bool any = false;
+            foreach (s; *selected) if (s) { any = true; break; }
+            if (any) {
+                foreach (i, s; *selected) {
+                    if (s && i < mesh.vertices.length) indices ~= cast(int)i;
+                }
+            } else {
+                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
+            }
+        } else if (*editMode == EditMode.Edges) {
+            bool any = false;
+            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            if (any) {
+                bool[] added = new bool[](mesh.vertices.length);
+                foreach (i, edge; mesh.edges) {
+                    if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
+                        if (!added[edge[0]]) {
+                            added[edge[0]] = true;
+                            indices ~= cast(int)edge[0];
+                        }
+                        if (!added[edge[1]]) {
+                            added[edge[1]] = true;
+                            indices ~= cast(int)edge[1];
+                        }
+                    }
+                }
+            } else {
+                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
+            }
+        } else if (*editMode == EditMode.Polygons) {
+            bool any = false;
+            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            if (any) {
+                bool[] added = new bool[](mesh.vertices.length);
+                foreach (i, face; mesh.faces) {
+                    if (i < (*selectedFaces).length && (*selectedFaces)[i]) {
+                        foreach (vi; face) {
+                            if (!added[vi]) {
+                                added[vi] = true;
+                                indices ~= cast(int)vi;
+                            }
+                        }
+                    }
+                }
+            } else {
+                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
+            }
+        }
+
+        vertexIndicesToMove.length = cast(int)indices.length;
+        foreach (i, idx; indices) vertexIndicesToMove[i] = idx;
+        vertexMoveCount = cast(int)indices.length;
+        vertexMoveCacheDirty = false;
+
+        // Update toMove array for GPU functions
+        // Ensure toMove is large enough
+        if (toMove.length != mesh.vertices.length) {
+            toMove.length = mesh.vertices.length;
+        }
+        toMove[] = false;
+        foreach (vi; vertexIndicesToMove) {
+            if (vi < cast(int)mesh.vertices.length) toMove[vi] = true;
+        }
+    }
+
+    // Apply delta immediately to cached vertices (very fast)
+    void applyDeltaImmediate(Vec3 delta) {
+        foreach (vi; vertexIndicesToMove) {
+            if (vi < mesh.vertices.length) {
+                mesh.vertices[vi].x += delta.x;
+                mesh.vertices[vi].y += delta.y;
+                mesh.vertices[vi].z += delta.z;
+            }
+        }
+    }
+
+    // Update GPU for current selection (throttled during drag)
+    void updateGpuForSelection() {
+        if (vertexMoveCount <= 0) return;
+        if (vertexMoveCount < mesh.vertices.length * 0.7) {
+            gpu.uploadSelectedVertices(*mesh, toMove);
+        } else {
+            gpu.upload(*mesh);
+        }
+    }
+
+    // Flush pending GPU updates (called at throttled intervals)
+    void flushPendingGpuUpdates() {
+        if (vertexMoveCount <= 0) return;
+        if (vertexMoveCount < mesh.vertices.length * 0.8) {
+            gpu.uploadSelectedVertices(*mesh, toMove);
+        } else {
+            gpu.upload(*mesh);
+        }
+    }
+
+    // Check if mesh was modified and caches need invalidation
+    bool meshModified() {
+        // Return true if any vertices were moved in last operation
+        // Simple heuristic: if we had any vertices to move, mesh was modified
+        return toMove.length > 0 && dragAxis >= 0;
+    }
+
+    // Function to invalidate all picking caches after mesh modification
+    void invalidatePickingCaches() {
+        // This will be called to invalidate the picking caches in app.d
+        // For now, we'll signal that caches need invalidation
     }
 }

@@ -467,6 +467,7 @@ void main(string[] args) {
         bool[] valid;
         float[] centerX, centerY, centerZ;
         bool[] centerValid;
+        bool[] projected;  // whether all vertices have been projected
         size_t lastVertexCount = 0;
         float[16] lastView;
         float[16] lastProj;
@@ -482,6 +483,7 @@ void main(string[] args) {
                 centerZ.length = cast(int)faceCount;
                 valid.length = cast(int)faceCount;
                 centerValid.length = cast(int)faceCount;
+                projected.length = cast(int)faceCount;
                 lastVertexCount = vertexCount;
                 invalidate();
             }
@@ -490,6 +492,7 @@ void main(string[] args) {
         void invalidate() {
             foreach (ref v; valid) v = false;
             foreach (ref v; centerValid) v = false;
+            foreach (ref v; projected) v = false;
         }
 
         bool needsUpdate(const ref Viewport vp) {
@@ -653,8 +656,9 @@ void main(string[] args) {
     }
 
     MoveTool getMoveTool() {
-        if (!moveTool)
+        if (!moveTool) {
             moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
+        }
         return moveTool;
     }
     ScaleTool getScaleTool() {
@@ -1182,8 +1186,21 @@ void main(string[] args) {
                    cast(int)(vp3dW   * scaleX),
                    cast(int)(vp3dH   * scaleY));
 
+        // When MoveTool defers GPU uploads (whole-mesh drag), apply accumulated
+        // translation as u_model so the mesh appears at the correct position without
+        // re-uploading vertex data every frame.
+        float[16] meshModel = identityMatrix;
+        {
+            MoveTool mt = cast(MoveTool)activeTool;
+            if (mt !is null) {
+                Vec3 off = mt.gpuOffset;
+                if (off.x != 0 || off.y != 0 || off.z != 0)
+                    meshModel = translationMatrix(off);
+            }
+        }
+
         glUseProgram(program);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
 
@@ -1220,7 +1237,7 @@ void main(string[] args) {
         {
             Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
             glUseProgram(litProgram);
-            glUniformMatrix4fv(litLocModel, 1, GL_FALSE, identityMatrix.ptr);
+            glUniformMatrix4fv(litLocModel, 1, GL_FALSE, meshModel.ptr);
             glUniformMatrix4fv(litLocView,  1, GL_FALSE, view.ptr);
             glUniformMatrix4fv(litLocProj,  1, GL_FALSE, proj.ptr);
             glUniform3f(litLocLightDir, lightDir.x, lightDir.y, lightDir.z);
@@ -1240,7 +1257,7 @@ void main(string[] args) {
             foreach (s; selectedFaces) if (s) { anySelected = true; break; }
             if (anySelected) {
                 glUseProgram(checkerProgram);
-                glUniformMatrix4fv(checkerLocModel, 1, GL_FALSE, identityMatrix.ptr);
+                glUniformMatrix4fv(checkerLocModel, 1, GL_FALSE, meshModel.ptr);
                 glUniformMatrix4fv(checkerLocView,  1, GL_FALSE, view.ptr);
                 glUniformMatrix4fv(checkerLocProj,  1, GL_FALSE, proj.ptr);
                 glUniform3f(checkerLocColor, 1.0f, 0.5f, 0.1f);  // orange
@@ -1251,7 +1268,7 @@ void main(string[] args) {
         }
 
         glUseProgram(program);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
 
@@ -1259,8 +1276,13 @@ void main(string[] args) {
                                 dragMode == DragMode.Zoom  ||
                                 dragMode == DragMode.Pan);
 
-        // Check if vertex cache needs update due to camera movement
-        if (!doingCameraDrag && vertexCache.needsUpdate(vp)) {
+        // Invalidate caches when tools are active (they modify mesh)
+        if (activeTool !is null && (vertexCache.valid.length > 0)) {
+            vertexCache.invalidate();
+            edgeCache.invalidate();
+            faceCache.invalidate();
+            vertexCache.update(vp);
+        } else if (!doingCameraDrag && vertexCache.needsUpdate(vp)) {
             vertexCache.invalidate();
             vertexCache.update(vp);
         }
@@ -1329,54 +1351,77 @@ void main(string[] args) {
             int mx, my;
             queryMouse(mx, my);
             float closest = 4.0f;  // pixel radius for edges
+            float closestSq = closest * closest;
 
             foreach (i; 0 .. mesh.edges.length) {
-                if (!edgeCache.valid[i]) {
-                    uint a = mesh.edges[i][0], b = mesh.edges[i][1];
-                    float sax, say, ndcZa, sbx, sby, ndcZb;
+                uint a = mesh.edges[i][0], b = mesh.edges[i][1];
 
-                    edgeCache.bothVisible[i] = true;
-                    if (!projectToWindow(mesh.vertices[a], vp, sax, say, ndcZa)) {
-                        edgeCache.bothVisible[i] = false;
-                        edgeCache.valid[i] = false;
-                        continue;
+                // Use vertex cache to avoid duplicate projections
+                if (!vertexCache.valid[a] || !vertexCache.valid[b]) {
+                    // Project missing vertices
+                    if (!vertexCache.valid[a]) {
+                        if (!projectToWindow(mesh.vertices[a], vp,
+                                              vertexCache.sx[a], vertexCache.sy[a], vertexCache.ndcZ[a])) {
+                            vertexCache.valid[a] = false;
+                            continue;
+                        }
+                        vertexCache.valid[a] = true;
                     }
-                    if (!projectToWindow(mesh.vertices[b], vp, sbx, sby, ndcZb)) {
-                        edgeCache.bothVisible[i] = false;
-                        edgeCache.valid[i] = false;
-                        continue;
+                    if (!vertexCache.valid[b]) {
+                        if (!projectToWindow(mesh.vertices[b], vp,
+                                              vertexCache.sx[b], vertexCache.sy[b], vertexCache.ndcZ[b])) {
+                            vertexCache.valid[b] = false;
+                            continue;
+                        }
+                        vertexCache.valid[b] = true;
                     }
-
-                    edgeCache.ax_sx[i] = sax; edgeCache.ax_sy[i] = say; edgeCache.ax_ndcZ[i] = ndcZa;
-                    edgeCache.bx_sx[i] = sbx; edgeCache.bx_sy[i] = sby; edgeCache.bx_ndcZ[i] = ndcZb;
-                    edgeCache.valid[i] = true;
                 }
 
-                if (!edgeCache.bothVisible[i])
-                    continue;
+                // Quick bounding rectangle check (O(1) vs O(1) for segment distance)
+                float minX, maxX, minY, maxY;
+                if (vertexCache.sx[a] < vertexCache.sx[b]) {
+                    minX = vertexCache.sx[a]; maxX = vertexCache.sx[b];
+                } else {
+                    minX = vertexCache.sx[b]; maxX = vertexCache.sx[a];
+                }
+                if (vertexCache.sy[a] < vertexCache.sy[b]) {
+                    minY = vertexCache.sy[a]; maxY = vertexCache.sy[b];
+                } else {
+                    minY = vertexCache.sy[b]; maxY = vertexCache.sy[a];
+                }
 
+                // Expanded bounds for edge thickness
+                float boundsMargin = closest;
+                if (mx < minX - boundsMargin || mx > maxX + boundsMargin ||
+                    my < minY - boundsMargin || my > maxY + boundsMargin)
+                    continue;  // mouse far from this edge's bounding box
+
+                // Now check distance to line segment (expensive operation)
                 float t;
-                float d = closestOnSegment2D(cast(float)mx, cast(float)my,
-                                             edgeCache.ax_sx[i], edgeCache.ax_sy[i],
-                                             edgeCache.bx_sx[i], edgeCache.bx_sy[i], t);
-                if (d >= closest) continue;
+                float d2 = closestOnSegment2DSquared(cast(float)mx, cast(float)my,
+                                                      vertexCache.sx[a], vertexCache.sy[a],
+                                                      vertexCache.sx[b], vertexCache.sy[b], t);
+                if (d2 >= closestSq) continue;
 
-                // Check occlusion at both ends of the edge
-                float expDepthA = edgeCache.ax_ndcZ[i] * 0.5f + 0.5f;
-                float bufDepthA = readDepth(winW, winH, fbW, fbH, edgeCache.ax_sx[i], edgeCache.ax_sy[i]);
+                // Quick occlusion check using vertex depths (cheaper than readDepth)
+                float expDepthA = vertexCache.ndcZ[a] * 0.5f + 0.5f;
+                float expDepthB = vertexCache.ndcZ[b] * 0.5f + 0.5f;
 
-                float expDepthB = edgeCache.bx_ndcZ[i] * 0.5f + 0.5f;
-                float bufDepthB = readDepth(winW, winH, fbW, fbH, edgeCache.bx_sx[i], edgeCache.bx_sy[i]);
+                // Use the closer depth for checking
+                bool useA = expDepthA < expDepthB;
+                float expDepth = useA ? expDepthA : expDepthB;
+                float checkX = useA ? vertexCache.sx[a] : vertexCache.sx[b];
+                float checkY = useA ? vertexCache.sy[a] : vertexCache.sy[b];
+
+                // Check occlusion at both ends (strict check prevents hidden edges)
+                float bufDepthA = readDepth(winW, winH, fbW, fbH, vertexCache.sx[a], vertexCache.sy[a]);
+                float bufDepthB = readDepth(winW, winH, fbW, fbH, vertexCache.sx[b], vertexCache.sy[b]);
 
                 // Both ends must be visible for the edge to be selectable
-                bool endAOccluded = expDepthA > bufDepthA + 0.001f;  // More strict tolerance
-                bool endBOccluded = expDepthB > bufDepthB + 0.001f;
+                if (expDepthA > bufDepthA + 0.001f || expDepthB > bufDepthB + 0.001f)
+                    continue;  // edge is occluded by faces at one or both ends
 
-                // If at least one end is occluded, skip this edge
-                if (endAOccluded || endBOccluded)
-                    continue;  // edge is partially occluded
-
-                closest    = d;
+                closestSq = d2;
                 hoveredEdge = cast(int)i;
             }
 
@@ -1417,45 +1462,128 @@ void main(string[] args) {
                         continue;  // mouse far from this face
                 }
 
-                float[] sxs, sys, ndcZs;
-                bool allOk = true;
-                foreach (vi; face) {
-                    float sx, sy, ndcZ;
-                    if (!projectToWindow(mesh.vertices[vi], vp, sx, sy, ndcZ)) { allOk = false; break; }
-                    sxs ~= sx; sys ~= sy; ndcZs ~= ndcZ;
-                }
-                if (!allOk) continue;
+                // Use vertex cache for projections to avoid duplicate work
+                int len = cast(int)face.length;
 
-                // Cache the bounds for future checks
+                // Check bounds first before expensive operations
                 if (useBoundsCache && !faceCache.valid[fi]) {
-                    faceCache.minX[fi] = float.infinity;
-                    faceCache.maxX[fi] = -float.infinity;
-                    faceCache.minY[fi] = float.infinity;
-                    faceCache.maxY[fi] = -float.infinity;
-                    foreach (sx; sxs) {
-                        if (sx < faceCache.minX[fi]) faceCache.minX[fi] = sx;
-                        if (sx > faceCache.maxX[fi]) faceCache.maxX[fi] = sx;
+                    // Compute bounds and check them in one pass
+                    float localMinX = float.infinity, localMaxX = -float.infinity;
+                    float localMinY = float.infinity, localMaxY = -float.infinity;
+                    bool allOk = true;
+
+                    // Collect vertex positions and compute bounds
+                    float[] tempSx, tempSy;
+                    tempSx.length = len;
+                    tempSy.length = len;
+
+                    for (int j = 0; j < len; j++) {
+                        uint vi = face[j];
+                        if (!vertexCache.valid[vi]) {
+                            // Project if not cached yet
+                            float sx, sy, ndcZ;
+                            if (!projectToWindow(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
+                                allOk = false;
+                                break;
+                            }
+                            vertexCache.sx[vi] = sx;
+                            vertexCache.sy[vi] = sy;
+                            vertexCache.ndcZ[vi] = ndcZ;
+                            vertexCache.valid[vi] = true;
+                        }
+                        tempSx[j] = vertexCache.sx[vi];
+                        tempSy[j] = vertexCache.sy[vi];
                     }
-                    foreach (sy; sys) {
-                        if (sy < faceCache.minY[fi]) faceCache.minY[fi] = sy;
-                        if (sy > faceCache.maxY[fi]) faceCache.maxY[fi] = sy;
+
+                    if (!allOk) continue;
+
+                    // Compute bounds
+                    foreach (sx; tempSx) {
+                        if (sx < localMinX) localMinX = sx;
+                        if (sx > localMaxX) localMaxX = sx;
                     }
+                    foreach (sy; tempSy) {
+                        if (sy < localMinY) localMinY = sy;
+                        if (sy > localMaxY) localMaxY = sy;
+                    }
+
+                    // Check if mouse is in bounds
+                    if (mx < localMinX || mx > localMaxX ||
+                        my < localMinY || my > localMaxY) {
+                        faceCache.minX[fi] = localMinX;
+                        faceCache.maxX[fi] = localMaxX;
+                        faceCache.minY[fi] = localMinY;
+                        faceCache.maxY[fi] = localMaxY;
+                        faceCache.valid[fi] = true;
+                        continue;
+                    }
+
+                    // Cache computed bounds
+                    faceCache.minX[fi] = localMinX;
+                    faceCache.maxX[fi] = localMaxX;
+                    faceCache.minY[fi] = localMinY;
+                    faceCache.maxY[fi] = localMaxY;
                     faceCache.valid[fi] = true;
+
+                    // Now check polygon containment using the same coordinates
+                    if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
+
+                    // Compute centroid for occlusion check
+                    float cx = 0, cy = 0, cZ = 0;
+                    for (int j = 0; j < len; j++) {
+                        uint vi = face[j];
+                        cx += vertexCache.sx[vi];
+                        cy += vertexCache.sy[vi];
+                        cZ += vertexCache.ndcZ[vi];
+                    }
+                    cx /= len; cy /= len; cZ /= len;
+                    float expectedDepth = cZ * 0.5f + 0.5f;
+                    float bufDepth = readDepth(winW, winH, fbW, fbH, cx, cy);
+                    if (expectedDepth > bufDepth + 0.001f) continue;  // More strict tolerance
+
+                    // Pick face closest to camera
+                    if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
+                } else {
+                    // Bounds already cached, do full check
+                    float cx = 0, cy = 0, cZ = 0;
+                    bool allOk = true;
+
+                    float[] tempSx, tempSy;
+                    tempSx.length = len;
+                    tempSy.length = len;
+
+                    for (int j = 0; j < len; j++) {
+                        uint vi = face[j];
+                        if (!vertexCache.valid[vi]) {
+                            float sx, sy, ndcZ;
+                            if (!projectToWindow(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
+                                allOk = false;
+                                break;
+                            }
+                            vertexCache.sx[vi] = sx;
+                            vertexCache.sy[vi] = sy;
+                            vertexCache.ndcZ[vi] = ndcZ;
+                            vertexCache.valid[vi] = true;
+                        }
+                        tempSx[j] = vertexCache.sx[vi];
+                        tempSy[j] = vertexCache.sy[vi];
+                        cx += vertexCache.sx[vi];
+                        cy += vertexCache.sy[vi];
+                        cZ += vertexCache.ndcZ[vi];
+                    }
+
+                    if (!allOk) continue;
+
+                    if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
+
+                    cx /= len; cy /= len; cZ /= len;
+                    float expectedDepth = cZ * 0.5f + 0.5f;
+                    float bufDepth = readDepth(winW, winH, fbW, fbH, cx, cy);
+                    if (expectedDepth > bufDepth + 0.001f) continue;  // More strict tolerance
+
+                    // Pick face closest to camera
+                    if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
                 }
-
-                if (!pointInPolygon2D(cast(float)mx, cast(float)my, sxs, sys)) continue;
-
-                // Occlusion check at screen centroid
-                float cx = 0, cy = 0, cZ = 0;
-                foreach (k; 0 .. sxs.length) { cx += sxs[k]; cy += sys[k]; cZ += ndcZs[k]; }
-                int n = cast(int)sxs.length;
-                cx /= n; cy /= n; cZ /= n;
-                float expectedDepth = cZ * 0.5f + 0.5f;
-                float bufDepth = readDepth(winW, winH, fbW, fbH, cx, cy);
-                if (expectedDepth > bufDepth + 0.001f) continue;  // More strict tolerance
-
-                // Pick face closest to camera
-                if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
             }
 
             if (hoveredFace >= 0) {

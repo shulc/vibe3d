@@ -34,6 +34,11 @@ immutable float[16] identityMatrix = [
     1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1,
 ];
 
+// Pure translation matrix (column-major, OpenGL convention).
+float[16] translationMatrix(Vec3 t) {
+    return [1,0,0,0, 0,1,0,0, 0,0,1,0, t.x,t.y,t.z,1];
+}
+
 // Build a column-major model matrix from a local frame + scale + translation.
 // Columns are: right*scale.x, up*scale.y, fwd*scale.z, translation.
 float[16] modelMatrix(Vec3 right, Vec3 up, Vec3 fwd,
@@ -145,6 +150,20 @@ float closestOnSegment2D(float px, float py,
     if (t > 1.0f) t = 1.0f;
     float cx = ax + t*dx, cy = ay + t*dy;
     return sqrt((px-cx)*(px-cx) + (py-cy)*(py-cy));
+}
+
+// Optimized version that returns squared distance (avoids sqrt)
+float closestOnSegment2DSquared(float px, float py,
+                                 float ax, float ay, float bx, float by,
+                                 out float t) {
+    float dx = bx - ax, dy = by - ay;
+    float len2 = dx*dx + dy*dy;
+    if (len2 < 1e-6f) { t = 0.0f; return (px-ax)*(px-ax)+(py-ay)*(py-ay); }
+    t = ((px-ax)*dx + (py-ay)*dy) / len2;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float cx = ax + t*dx, cy = ay + t*dy;
+    return (px-cx)*(px-cx) + (py-cy)*(py-cy);
 }
 
 // ---------------------------------------------------------------------------

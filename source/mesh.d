@@ -312,6 +312,98 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
+    // Optimized: update only selected vertices on GPU (much faster for large meshes)
+    void uploadSelectedVertices(ref const Mesh mesh, const bool[] toUpdate) {
+        enum FACE_STRIDE = 6;
+
+        // O(faces × verts_per_face): for each face check if any vertex moved.
+        // Previous code was O(moved_verts × faces × verts_per_face) — n² on large meshes.
+        bool[] faceNeedsUpdate = new bool[](mesh.faces.length);
+        bool anyFaceUpdate = false;
+        for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
+            foreach (vi; mesh.faces[fi]) {
+                if (vi < toUpdate.length && toUpdate[vi]) {
+                    faceNeedsUpdate[fi] = true;
+                    anyFaceUpdate = true;
+                    break;
+                }
+            }
+        }
+
+        if (anyFaceUpdate) {
+            glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
+            // Reuse a scratch buffer to batch all vertices of a face into one
+            // glBufferSubData call instead of one call per vertex.
+            float[] scratch;
+            for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
+                if (!faceNeedsUpdate[fi]) continue;
+                const(uint[]) face = mesh.faces[fi];
+                if (face.length < 3) continue;
+                int start = faceTriStart[fi];
+
+                Vec3 v0 = mesh.vertices[face[0]];
+                Vec3 v1 = mesh.vertices[face[1]];
+                Vec3 v2 = mesh.vertices[face[2]];
+                Vec3 e1 = vec3Sub(v1, v0), e2 = vec3Sub(v2, v0);
+                Vec3 cr = cross(e1, e2);
+                float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
+                Vec3 n = nlen > 1e-6f
+                    ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)
+                    : Vec3(0, 1, 0);
+
+                // Build the entire face's triangle data, then upload in one call.
+                int triCount = cast(int)face.length - 2;
+                int floatCount = triCount * 3 * FACE_STRIDE;
+                if (scratch.length < floatCount) scratch.length = floatCount;
+
+                int k = 0;
+                for (size_t i = 1; i + 1 < face.length; i++) {
+                    foreach (idx; [face[0], face[i], face[i + 1]]) {
+                        Vec3 v = mesh.vertices[idx];
+                        scratch[k++] = v.x; scratch[k++] = v.y; scratch[k++] = v.z;
+                        scratch[k++] = n.x; scratch[k++] = n.y; scratch[k++] = n.z;
+                    }
+                }
+                glBufferSubData(GL_ARRAY_BUFFER,
+                                start * FACE_STRIDE * float.sizeof,
+                                k * float.sizeof, scratch.ptr);
+            }
+        }
+
+        // O(edges): for each edge check if either endpoint moved.
+        bool anyEdgeUpdate = false;
+        bool[] edgeNeedsUpdate = new bool[](mesh.edges.length);
+        for (int ei = 0; ei < cast(int)mesh.edges.length; ei++) {
+            uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
+            if ((a < toUpdate.length && toUpdate[a]) ||
+                (b < toUpdate.length && toUpdate[b])) {
+                edgeNeedsUpdate[ei] = true;
+                anyEdgeUpdate = true;
+            }
+        }
+
+        if (anyEdgeUpdate) {
+            glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
+            foreach (ei, edge; mesh.edges) {
+                if (!edgeNeedsUpdate[ei]) continue;
+                Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
+                float[6] data = [a.x, a.y, a.z, b.x, b.y, b.z];
+                glBufferSubData(GL_ARRAY_BUFFER, ei * 6 * float.sizeof, 6 * float.sizeof, data.ptr);
+            }
+        }
+
+        // Vertex points.
+        glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
+        foreach (vi, needsUpdate; toUpdate) {
+            if (!needsUpdate) continue;
+            Vec3 v = mesh.vertices[vi];
+            float[3] data = [v.x, v.y, v.z];
+            glBufferSubData(GL_ARRAY_BUFFER, vi * 3 * float.sizeof, 3 * float.sizeof, data.ptr);
+        }
+
+        glBindVertexArray(0);
+    }
+
     // Draw faces only (writes depth buffer)
     void drawFaces(GLuint program, GLint locColor) {
         glEnable(GL_POLYGON_OFFSET_FILL);
