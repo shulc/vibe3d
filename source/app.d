@@ -3,6 +3,10 @@ import bindbc.opengl;
 import std.string : toStringz;
 import std.stdio : writeln, writefln, File;
 import std.math : tan, sin, cos, sqrt, PI, abs;
+import std.conv;
+
+// HTTP server module
+import http_server;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -306,6 +310,9 @@ void frameToVertices(Vec3[] verts,
 void main(string[] args) {
     // Parse --playback <file> flag
     string playbackFile;
+    bool startHttpServer = true;  // Enable HTTP server by default
+    ushort httpPort = 8080;       // Default port
+
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
             if (i + 1 >= args.length) {
@@ -314,6 +321,15 @@ void main(string[] args) {
                 exit(1);
             }
             playbackFile = args[++i];
+        } else if (args[i] == "--no-http") {
+            startHttpServer = false;
+        } else if (args[i] == "--http-port") {
+            if (i + 1 >= args.length) {
+                writeln("Error: --http-port requires a port number");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            httpPort = cast(ushort)args[++i].to!int;
         } else {
             writefln("Error: unknown argument '%s'", args[i]);
             import core.stdc.stdlib : exit;
@@ -325,6 +341,19 @@ void main(string[] args) {
     if (loadSDL() != sdlSupport) { writeln("Failed to load SDL2"); return; }
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
     scope(exit) SDL_Quit();
+
+    // Initialize HTTP server
+    HttpServer httpServer;
+    if (startHttpServer) {
+        httpServer = new HttpServer(httpPort);
+        httpServer.start();
+        writeln("HTTP server starting on port ", httpPort);
+    }
+    scope(exit) {
+        if (httpServer !is null && httpServer.running) {
+            httpServer.stop();
+        }
+    }
 
     EventLogger evLog;
     if (!playbackMode) {
@@ -422,6 +451,24 @@ void main(string[] args) {
     Mesh mesh = makeCube();
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
+
+    // Set up HTTP server model data provider
+    if (httpServer !is null) {
+        // Convert mesh vertices to flat float array for HTTP server
+        float[] getMeshVertices() {
+            float[] verts = new float[](mesh.vertices.length * 3);
+            for (size_t i = 0; i < mesh.vertices.length; i++) {
+                verts[i * 3] = mesh.vertices[i].x;
+                verts[i * 3 + 1] = mesh.vertices[i].y;
+                verts[i * 3 + 2] = mesh.vertices[i].z;
+            }
+            return verts;
+        }
+
+        httpServer.setDetailedModelDataProvider((float[] vertices, uint[][] faces) {
+            return meshToJsonDetailed(mesh.vertices.length, mesh.edges.length, mesh.faces.length, vertices, faces);
+        }, getMeshVertices(), mesh.faces);
+    }
 
     // Screen space cache for vertex picking
     struct VertexCache {

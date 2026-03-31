@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-set -e
-
-dub build --compiler=ldc2
+set -xe
+ulimit -n 10240
+dub build
