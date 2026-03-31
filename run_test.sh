@@ -1,16 +1,27 @@
 #!/bin/bash
-set -e
+set -xe
 
 # Compile and run the HTTP endpoint test
 
 echo "Compiling HTTP endpoint test..."
 
-# Compile the test
-dmd -Isource tests/test_http_endpoint.d -of=test_http_endpoint
+temp_dir=$(mktemp -d)
 
+# Compile the test
+for f in tests/test_*.d; do
+    of=${f%.d}
+    of=${of#tests/}
+    dmd -Isource $f -of=$temp_dir/$of
+done
 
 ./vibe3d &
+
 sleep 1
-./test_http_endpoint
+
+for f in $(find $temp_dir -type f -perm +111); do
+    $f
+done
 
 pkill vibe3d
+
+rm -rf $temp_dir
