@@ -22,6 +22,7 @@ import handler;
 import tool;
 import editmode;
 import gizmo;
+import view;
 
 import tools.move;
 import tools.scale;
@@ -257,51 +258,7 @@ GLuint createProgramWithGeom(string vertSrc, string geomSrc, string fragSrc) {
     return prog;
 }
 
-// ---------------------------------------------------------------------------
-// Frame-to-fit helper
-// ---------------------------------------------------------------------------
 
-// Adjusts `focus` and `distance` so the bounding sphere of `verts` fills
-// 90 % of the viewport (keeping the current orbit azimuth/elevation).
-void frameToVertices(Vec3[] verts,
-                     ref Vec3  focus,
-                     ref float distance,
-                     float fovY,
-                     int vpW, int vpH,
-                     float minDist, float maxDist)
-{
-    if (verts.length == 0) return;
-
-    Vec3 mn = verts[0], mx = verts[0];
-    foreach (ref v; verts) {
-        if (v.x < mn.x) mn.x = v.x;
-        if (v.y < mn.y) mn.y = v.y;
-        if (v.z < mn.z) mn.z = v.z;
-        if (v.x > mx.x) mx.x = v.x;
-        if (v.y > mx.y) mx.y = v.y;
-        if (v.z > mx.z) mx.z = v.z;
-    }
-
-    focus = Vec3((mn.x + mx.x) * 0.5f,
-                 (mn.y + mx.y) * 0.5f,
-                 (mn.z + mx.z) * 0.5f);
-
-    float dx = mx.x - mn.x, dy = mx.y - mn.y, dz = mx.z - mn.z;
-    float radius = sqrt(dx*dx + dy*dy + dz*dz) * 0.5f;
-    if (radius < 1e-6f) radius = 1e-6f;
-
-    // Use the tighter field-of-view (Y or X) so the shape fits in both axes.
-    float aspect    = cast(float)vpW / vpH;
-    float halfTanY  = tan(fovY * 0.5f);
-    float halfTanX  = halfTanY * aspect;
-    float halfTanMin = halfTanY < halfTanX ? halfTanY : halfTanX;
-
-    distance = radius / (0.9f * halfTanMin);
-    // Keep the bounding sphere fully beyond the near clip plane (0.1).
-    if (distance < radius + 0.001f) distance = radius + 0.001f;
-    if (distance < minDist) distance = minDist;
-    if (distance > maxDist) distance = maxDist;
-}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -680,13 +637,7 @@ void main(string[] args) {
     bool[] faceSelEdgesPrevSel;  // snapshot of selectedFaces at last rebuild
 
     // Camera
-    float azimuth   =  0.5f;
-    float elevation =  0.4f;
-    float distance  =  3.0f;
-    Vec3  focus     = Vec3(0, 0, 0);
-    immutable float minDist = 0.0001f;
-    immutable float maxDist = float.max;
-    immutable float maxElev = cast(float)(89.0f * PI / 180.0f);
+    View cameraView;
 
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
@@ -731,6 +682,8 @@ void main(string[] args) {
     // ---- Build matrices ----
     enum int PANEL_W  = 150;
     enum int STATUS_H = 38;
+
+    cameraView.setPos(PANEL_W, 0);
 
 
     bool running = true;
@@ -816,16 +769,9 @@ void main(string[] args) {
                                             if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
                                     }
                                 }
-                                frameToVertices(verts, focus, distance,
-                                                45.0f * PI / 180.0f,
-                                                winW - PANEL_W, winH - STATUS_H,
-                                                minDist, maxDist);
+                                cameraView.frameToVertices(verts);
                             } else {
-                                frameToVertices(mesh.vertices, focus, distance,
-                                                45.0f * PI / 180.0f,
-                                                winW - PANEL_W, winH - STATUS_H,
-                                                minDist, maxDist);
-
+                                cameraView.frameToVertices(mesh.vertices);
                             }
                             break;
                         }
@@ -1020,22 +966,11 @@ void main(string[] args) {
                         int dy = event.motion.y - lastMouseY;
 
                         if (dragMode == DragMode.Orbit) {
-                            azimuth   -= dx * 0.005f;
-                            elevation += dy * 0.005f;
-                            if (elevation >  maxElev) elevation =  maxElev;
-                            if (elevation < -maxElev) elevation = -maxElev;
+                            cameraView.orbit(dx, dy);
                         } else if (dragMode == DragMode.Zoom) {
-                            distance -= dx * 0.01f * distance;
-                            if (distance < minDist) distance = minDist;
-                            if (distance > maxDist) distance = maxDist;
+                            cameraView.zoom(dx);
                         } else if (dragMode == DragMode.Pan) {
-                            Vec3 off     = sphericalToCartesian(azimuth, elevation, distance);
-                            Vec3 forward = normalize(Vec3(-off.x, -off.y, -off.z));
-                            Vec3 right   = normalize(cross(forward, Vec3(0, 1, 0)));
-                            Vec3 up      = cross(right, forward);
-                            float speed  = distance * 0.001f;
-                            focus = vec3Add(focus, vec3Scale(right, -dx * speed));
-                            focus = vec3Add(focus, vec3Scale(up,     dy * speed));
+                            cameraView.pan(dx, dy);
                         }
                         lastMouseX = event.motion.x;
                         lastMouseY = event.motion.y;
@@ -1046,15 +981,10 @@ void main(string[] args) {
             }
         }
 
-        int vp3dW = winW - PANEL_W;
-        int vp3dH = winH - STATUS_H;
 
-        Vec3 offset = sphericalToCartesian(azimuth, elevation, distance);
-        Vec3 eye    = vec3Add(focus, offset);
-        auto view   = lookAt(eye, focus, Vec3(0, 1, 0));
-        auto proj   = perspectiveMatrix(45.0f * PI / 180.0f,
-                                        cast(float)vp3dW / vp3dH, 0.001f, 100.0f);
-        Viewport vp = Viewport(view, proj, vp3dW, vp3dH, PANEL_W, 0);
+        cameraView.setSize(winW - PANEL_W, winH - STATUS_H);
+
+        Viewport vp = cameraView.viewport();
 
         // ---- ImGui ----
         ImGui_ImplOpenGL3_NewFrame();
@@ -1150,9 +1080,9 @@ void main(string[] args) {
 
             ImGui.Separator();
             ImGui.Text("Camera");
-            ImGui.LabelText("Dist",  "%.2f", distance);
-            ImGui.LabelText("Az",    "%.1f°", cast(double)(azimuth   * 180.0 / PI));
-            ImGui.LabelText("El",    "%.1f°", cast(double)(elevation * 180.0 / PI));
+            ImGui.LabelText("Dist",  "%.2f", cameraView.distance);
+            ImGui.LabelText("Az",    "%.1f°", cast(double)(cameraView.azimuth   * 180.0 / PI));
+            ImGui.LabelText("El",    "%.1f°", cast(double)(cameraView.elevation * 180.0 / PI));
 
             ImGui.Separator();
             ImGui.TextDisabled("Alt+drag        orbit");
@@ -1217,7 +1147,7 @@ void main(string[] args) {
 
 
         // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
-        DrawGizmo(PANEL_W + 32.0f, winH - STATUS_H - 32.0f, view);
+        DrawGizmo(PANEL_W + 32.0f, cameraView.height - STATUS_H - 32.0f, cameraView.view);
 
         // ---- Playback cursor overlay ----
         if (playbackMode) {
@@ -1243,8 +1173,8 @@ void main(string[] args) {
         float scaleY = cast(float)fbH / winH;
         glViewport(cast(int)(PANEL_W  * scaleX),
                    cast(int)(STATUS_H * scaleY),
-                   cast(int)(vp3dW   * scaleX),
-                   cast(int)(vp3dH   * scaleY));
+                   cast(int)(cameraView.width  * scaleX),
+                   cast(int)(cameraView.height * scaleY));
 
         // When MoveTool defers GPU uploads (whole-mesh drag), apply accumulated
         // translation as u_model so the mesh appears at the correct position without
@@ -1261,8 +1191,8 @@ void main(string[] args) {
 
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
-        glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
-        glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
 
         // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
         glEnable(GL_BLEND);
@@ -1271,10 +1201,10 @@ void main(string[] args) {
 
         glUseProgram(gridProgram);
         glUniformMatrix4fv(gridLocModel, 1, GL_FALSE, identityMatrix.ptr);
-        glUniformMatrix4fv(gridLocView,  1, GL_FALSE, view.ptr);
-        glUniformMatrix4fv(gridLocProj,  1, GL_FALSE, proj.ptr);
-        glUniform1f(gridLocMaxDist,    distance * 2.0f);
-        glUniform2f(gridLocScreenSize, cast(float)vp3dW * scaleX, cast(float)vp3dH * scaleY);
+        glUniformMatrix4fv(gridLocView,  1, GL_FALSE, cameraView.view.ptr);
+        glUniformMatrix4fv(gridLocProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniform1f(gridLocMaxDist,    cameraView.distance * 2.0f);
+        glUniform2f(gridLocScreenSize, cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY);
         glUniform1f(gridLocVpOriginX,  cast(float)PANEL_W  * scaleX);
         glUniform1f(gridLocVpOriginY,  cast(float)STATUS_H * scaleY);
 
@@ -1298,10 +1228,10 @@ void main(string[] args) {
             Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
             glUseProgram(litProgram);
             glUniformMatrix4fv(litLocModel, 1, GL_FALSE, meshModel.ptr);
-            glUniformMatrix4fv(litLocView,  1, GL_FALSE, view.ptr);
-            glUniformMatrix4fv(litLocProj,  1, GL_FALSE, proj.ptr);
+            glUniformMatrix4fv(litLocView,  1, GL_FALSE, cameraView.view.ptr);
+            glUniformMatrix4fv(litLocProj,  1, GL_FALSE, cameraView.proj.ptr);
             glUniform3f(litLocLightDir, lightDir.x, lightDir.y, lightDir.z);
-            glUniform3f(litLocEyePos,   eye.x, eye.y, eye.z);
+            glUniform3f(litLocEyePos,   cameraView.eye.x, cameraView.eye.y, cameraView.eye.z);
             glUniform1f(litLocAmbient,  0.20f);
             glUniform1f(litLocSpecStr,  0.25f);
             glUniform1f(litLocSpecPow,  32.0f);
@@ -1318,8 +1248,8 @@ void main(string[] args) {
             if (anySelected) {
                 glUseProgram(checkerProgram);
                 glUniformMatrix4fv(checkerLocModel, 1, GL_FALSE, meshModel.ptr);
-                glUniformMatrix4fv(checkerLocView,  1, GL_FALSE, view.ptr);
-                glUniformMatrix4fv(checkerLocProj,  1, GL_FALSE, proj.ptr);
+                glUniformMatrix4fv(checkerLocView,  1, GL_FALSE, cameraView.view.ptr);
+                glUniformMatrix4fv(checkerLocProj,  1, GL_FALSE, cameraView.proj.ptr);
                 glUniform3f(checkerLocColor, 1.0f, 0.5f, 0.1f);  // orange
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(selectedFaces);
@@ -1329,8 +1259,8 @@ void main(string[] args) {
 
         glUseProgram(program);
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
-        glUniformMatrix4fv(locView,  1, GL_FALSE, view.ptr);
-        glUniformMatrix4fv(locProj,  1, GL_FALSE, proj.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
 
         bool doingCameraDrag = (dragMode == DragMode.Orbit ||
                                 dragMode == DragMode.Zoom  ||
@@ -1366,7 +1296,7 @@ void main(string[] args) {
                 Vec3 fv1 = mesh.vertices[face[1]];
                 Vec3 fv2 = mesh.vertices[face[2]];
                 Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
-                if (dot(fn, vec3Sub(fv0, eye)) >= 0) continue;  // back-facing
+                if (dot(fn, vec3Sub(fv0, cameraView.eye)) >= 0) continue;  // back-facing
                 foreach (vi; face) vertexVisible[vi] = true;
             }
 
@@ -1425,7 +1355,7 @@ void main(string[] args) {
                 Vec3 fv1 = mesh.vertices[face[1]];
                 Vec3 fv2 = mesh.vertices[face[2]];
                 Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
-                if (dot(fn, vec3Sub(fv0, eye)) >= 0) continue;  // back-facing
+                if (dot(fn, vec3Sub(fv0, cameraView.eye)) >= 0) continue;  // back-facing
                 foreach (vi; face) vertexVisible[vi] = true;
             }
 
@@ -1523,7 +1453,7 @@ void main(string[] args) {
                     Vec3 v1 = mesh.vertices[face[1]];
                     Vec3 v2 = mesh.vertices[face[2]];
                     Vec3 n = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
-                    if (dot(n, vec3Sub(v0, eye)) >= 0) continue;
+                    if (dot(n, vec3Sub(v0, cameraView.eye)) >= 0) continue;
                 }
 
                 // Quick bounds check if cached
