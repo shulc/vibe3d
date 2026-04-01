@@ -1,7 +1,7 @@
 module eventlog;
 
 import bindbc.sdl;
-
+import std.json;
 import std.stdio : writeln, writefln, File;
 
 // ---------------------------------------------------------------------------
@@ -50,9 +50,15 @@ void queryMouse(out int mx, out int my) {
     else _getMouseState(&mx, &my);
 }
 
+// ---------------------------------------------------------------------------
+// JSON helper — safe integer read from a JSONValue object
+// ---------------------------------------------------------------------------
+private long _jsonGet(JSONValue obj, string key, long def = 0) nothrow {
+    try { return obj[key].integer; } catch (Exception) { return def; }
+}
 
 // ---------------------------------------------------------------------------
-// EventLogger — serialises SDL events to a text file with ms timestamps
+// EventLogger — serialises SDL events to a JSON Lines file (one object/line)
 // ---------------------------------------------------------------------------
 
 struct EventLogger {
@@ -66,7 +72,6 @@ struct EventLogger {
         startCounter = _perfCounter();
         freq         = _perfFreq();
         active       = true;
-        file.writefln("# SDL event log — timestamps are ms from program start");
         file.flush();
     }
 
@@ -82,11 +87,11 @@ struct EventLogger {
                  / cast(double)freq * 1000.0;
         switch (e.type) {
             case SDL_QUIT:
-                file.writefln("%.3f SDL_QUIT", t);
+                file.writefln(`{"t":%.3f,"type":"SDL_QUIT"}`, t);
                 break;
             case SDL_KEYDOWN:
             case SDL_KEYUP:
-                file.writefln("%.3f %-16s sym=%d scan=%d mod=0x%04x repeat=%d",
+                file.writefln(`{"t":%.3f,"type":"%s","sym":%d,"scan":%d,"mod":%u,"repeat":%d}`,
                     t,
                     e.type == SDL_KEYDOWN ? "SDL_KEYDOWN" : "SDL_KEYUP",
                     e.key.keysym.sym,
@@ -96,37 +101,36 @@ struct EventLogger {
                 break;
             case SDL_MOUSEBUTTONDOWN:
             case SDL_MOUSEBUTTONUP:
-                file.writefln("%.3f %-24s btn=%d x=%d y=%d clicks=%d mod=0x%04x",
+                file.writefln(`{"t":%.3f,"type":"%s","btn":%d,"x":%d,"y":%d,"clicks":%d,"mod":%u}`,
                     t,
-                    e.type == SDL_MOUSEBUTTONDOWN ? "SDL_MOUSEBUTTONDOWN"
-                                                  : "SDL_MOUSEBUTTONUP",
+                    e.type == SDL_MOUSEBUTTONDOWN ? "SDL_MOUSEBUTTONDOWN" : "SDL_MOUSEBUTTONUP",
                     e.button.button, e.button.x, e.button.y,
                     cast(int)e.button.clicks, cast(uint)SDL_GetModState());
                 break;
             case SDL_MOUSEMOTION:
-                file.writefln("%.3f SDL_MOUSEMOTION          x=%d y=%d xrel=%d yrel=%d state=0x%x mod=0x%04x",
+                file.writefln(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%u,"mod":%u}`,
                     t, e.motion.x, e.motion.y,
                     e.motion.xrel, e.motion.yrel, e.motion.state,
                     cast(uint)SDL_GetModState());
                 break;
             case SDL_MOUSEWHEEL:
-                file.writefln("%.3f SDL_MOUSEWHEEL            x=%d y=%d",
+                file.writefln(`{"t":%.3f,"type":"SDL_MOUSEWHEEL","x":%d,"y":%d}`,
                     t, e.wheel.x, e.wheel.y);
                 break;
             case SDL_WINDOWEVENT:
                 if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
-                    file.writefln("%.3f SDL_WINDOWEVENT           sub=%d w=%d h=%d",
+                    file.writefln(`{"t":%.3f,"type":"SDL_WINDOWEVENT","sub":%d,"w":%d,"h":%d}`,
                         t, cast(int)e.window.event,
                         e.window.data1, e.window.data2);
                 else
-                    file.writefln("%.3f SDL_WINDOWEVENT           sub=%d",
+                    file.writefln(`{"t":%.3f,"type":"SDL_WINDOWEVENT","sub":%d}`,
                         t, cast(int)e.window.event);
                 break;
             case SDL_TEXTINPUT:
-                file.writefln("%.3f SDL_TEXTINPUT", t);
+                file.writefln(`{"t":%.3f,"type":"SDL_TEXTINPUT"}`, t);
                 break;
             default:
-                file.writefln("%.3f SDL_EVENT                 type=0x%08x", t, e.type);
+                file.writefln(`{"t":%.3f,"type":"SDL_EVENT","sdl_type":%u}`, t, e.type);
                 break;
         }
         file.flush();
@@ -134,7 +138,7 @@ struct EventLogger {
 }
 
 // ---------------------------------------------------------------------------
-// EventPlayer — replays a recorded event log file
+// EventPlayer — replays a recorded JSON Lines event log file
 // ---------------------------------------------------------------------------
 
 struct EventPlayer {
@@ -147,50 +151,34 @@ struct EventPlayer {
     int     mouseX, mouseY;   // current replayed cursor position
     bool    mouseDown;        // left button state (for visual feedback)
 
-    // Load and parse a log file written by EventLogger.
+    // Load and parse a JSON Lines log file written by EventLogger.
     // Returns true on success.
     bool open(string path) {
-        import std.stdio   : File;
-        import std.string  : startsWith, stripLeft, stripRight;
-        import std.conv    : to, ConvException;
-        import std.array   : split;
-        import std.algorithm : startsWith;
-
-        File f;
-        try { f = File(path, "r"); }
+        import std.file;
+        try { return load(readText(path)); }
         catch (Exception) { writefln("EventPlayer: cannot open '%s'", path); return false; }
 
-        foreach (raw; f.byLine()) {
+    }
+
+    bool load(string data) {
+        import std.string : splitLines;
+        entries.length = 0;
+
+        foreach (raw; data.splitLines()) {
             string line = cast(string)raw.idup;
-            // Strip trailing whitespace
             while (line.length && (line[$-1] == '\r' || line[$-1] == '\n' || line[$-1] == ' '))
                 line = line[0..$-1];
-            if (line.length == 0 || line[0] == '#') continue;
+            if (line.length == 0) continue;
 
-            // First token: timestamp
-            auto parts = line.split(" ");
-            if (parts.length < 2) continue;
+            JSONValue obj;
+            try { obj = parseJSON(line); }
+            catch (JSONException) { continue; }
+
             double t;
-            try { t = to!double(parts[0]); } catch (ConvException) { continue; }
+            try { t = obj["t"].floating; } catch (Exception) { continue; }
 
-            // Second token: event type name (may have trailing spaces in log)
-            string typeName = parts[1];
-
-            // Remaining tokens: key=value pairs
-            import std.string : indexOf;
-            int[string] kv;
-            foreach (p; parts[2..$]) {
-                auto eq = p.indexOf('=');
-                if (eq < 0) continue;
-                string key = p[0..eq];
-                string val = p[eq+1..$];
-                try {
-                    if (val.length > 2 && val[0..2] == "0x")
-                        kv[key] = cast(int)to!uint(val[2..$], 16);
-                    else
-                        kv[key] = to!int(val);
-                } catch (ConvException) {}
-            }
+            string typeName;
+            try { typeName = obj["type"].str; } catch (Exception) { continue; }
 
             SDL_Event e;
             switch (typeName) {
@@ -199,48 +187,48 @@ struct EventPlayer {
                     break;
                 case "SDL_KEYDOWN", "SDL_KEYUP":
                     e.type = typeName == "SDL_KEYDOWN" ? SDL_KEYDOWN : SDL_KEYUP;
-                    e.key.keysym.sym      = cast(SDL_Keycode)(kv.get("sym",  0));
-                    e.key.keysym.scancode = cast(SDL_Scancode)(kv.get("scan", 0));
-                    e.key.keysym.mod      = cast(SDL_Keymod)(kv.get("mod",  0));
-                    e.key.repeat          = cast(ubyte)(kv.get("repeat", 0));
+                    e.key.keysym.sym      = cast(SDL_Keycode)(_jsonGet(obj, "sym"));
+                    e.key.keysym.scancode = cast(SDL_Scancode)(_jsonGet(obj, "scan"));
+                    e.key.keysym.mod      = cast(SDL_Keymod)(_jsonGet(obj, "mod"));
+                    e.key.repeat          = cast(ubyte)(_jsonGet(obj, "repeat"));
                     break;
                 case "SDL_MOUSEBUTTONDOWN", "SDL_MOUSEBUTTONUP":
-                    e.type        = typeName == "SDL_MOUSEBUTTONDOWN"
-                                  ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-                    e.button.button = cast(ubyte)(kv.get("btn",    1));
-                    e.button.x      = cast(int)  (kv.get("x",      0));
-                    e.button.y      = cast(int)  (kv.get("y",      0));
-                    e.button.clicks = cast(ubyte)(kv.get("clicks", 1));
+                    e.type          = typeName == "SDL_MOUSEBUTTONDOWN"
+                                    ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+                    e.button.button = cast(ubyte)(_jsonGet(obj, "btn",    1));
+                    e.button.x      = cast(int)  (_jsonGet(obj, "x"));
+                    e.button.y      = cast(int)  (_jsonGet(obj, "y"));
+                    e.button.clicks = cast(ubyte)(_jsonGet(obj, "clicks", 1));
                     e.button.state  = e.type == SDL_MOUSEBUTTONDOWN
                                     ? SDL_PRESSED : SDL_RELEASED;
-                    entries ~= Entry(t, e, cast(SDL_Keymod)(kv.get("mod", 0)));
+                    entries ~= Entry(t, e, cast(SDL_Keymod)(_jsonGet(obj, "mod")));
                     continue;
                 case "SDL_MOUSEMOTION":
-                    e.type        = SDL_MOUSEMOTION;
-                    e.motion.x    = kv.get("x",    0);
-                    e.motion.y    = kv.get("y",    0);
-                    e.motion.xrel = kv.get("xrel", 0);
-                    e.motion.yrel = kv.get("yrel", 0);
-                    e.motion.state= cast(uint)(kv.get("state", 0));
-                    entries ~= Entry(t, e, cast(SDL_Keymod)(kv.get("mod", 0)));
+                    e.type         = SDL_MOUSEMOTION;
+                    e.motion.x     = cast(int)(_jsonGet(obj, "x"));
+                    e.motion.y     = cast(int)(_jsonGet(obj, "y"));
+                    e.motion.xrel  = cast(int)(_jsonGet(obj, "xrel"));
+                    e.motion.yrel  = cast(int)(_jsonGet(obj, "yrel"));
+                    e.motion.state = cast(uint)(_jsonGet(obj, "state"));
+                    entries ~= Entry(t, e, cast(SDL_Keymod)(_jsonGet(obj, "mod")));
                     continue;
                 case "SDL_MOUSEWHEEL":
                     e.type    = SDL_MOUSEWHEEL;
-                    e.wheel.x = kv.get("x", 0);
-                    e.wheel.y = kv.get("y", 0);
+                    e.wheel.x = cast(int)(_jsonGet(obj, "x"));
+                    e.wheel.y = cast(int)(_jsonGet(obj, "y"));
                     break;
                 case "SDL_WINDOWEVENT":
                     e.type         = SDL_WINDOWEVENT;
-                    e.window.event = cast(ubyte)(kv.get("sub", 0));
-                    e.window.data1 = kv.get("w", 0);
-                    e.window.data2 = kv.get("h", 0);
+                    e.window.event = cast(ubyte)(_jsonGet(obj, "sub"));
+                    e.window.data1 = cast(int)  (_jsonGet(obj, "w"));
+                    e.window.data2 = cast(int)  (_jsonGet(obj, "h"));
                     break;
                 case "SDL_TEXTINPUT":
                     e.type = SDL_TEXTINPUT;
                     break;
                 default:
                     if (typeName == "SDL_EVENT") {
-                        e.type = cast(uint)(kv.get("type", 0));
+                        e.type = cast(uint)(_jsonGet(obj, "sdl_type"));
                     } else {
                         continue; // unknown — skip
                     }
@@ -249,13 +237,12 @@ struct EventPlayer {
 
             entries ~= Entry(t, e);
         }
-        f.close();
 
         startCounter = _perfCounter();
         freq         = _perfFreq();
         active       = entries.length > 0;
         idx          = 0;
-        writefln("EventPlayer: loaded %d events from '%s'", entries.length, path);
+        writefln("EventPlayer: loaded %d events", entries.length);
         return true;
     }
 
@@ -354,7 +341,7 @@ unittest { // EventLogger: open sets up state, close marks inactive
     assert(exists(path));
 }
 
-unittest { // EventLogger.log: SDL_QUIT writes timestamped line
+unittest { // EventLogger.log: SDL_QUIT writes JSON line with timestamp
     import std.file   : remove, exists, readText, tempDir;
     import std.path   : buildPath;
     import std.string : stripRight;
@@ -376,10 +363,10 @@ unittest { // EventLogger.log: SDL_QUIT writes timestamped line
     logger.log(e);
     logger.close();
 
-    assert(readText(path).stripRight() == "100.000 SDL_QUIT");
+    assert(readText(path).stripRight() == `{"t":100.000,"type":"SDL_QUIT"}`);
 }
 
-unittest { // EventLogger.log: SDL_KEYDOWN writes sym/scan/mod/repeat fields
+unittest { // EventLogger.log: SDL_KEYDOWN writes JSON with sym/scan/mod/repeat
     import std.file      : remove, exists, readText, tempDir;
     import std.path      : buildPath;
     import std.string    : stripRight;
@@ -407,9 +394,9 @@ unittest { // EventLogger.log: SDL_KEYDOWN writes sym/scan/mod/repeat fields
     logger.close();
 
     string line = readText(path).stripRight();
-    assert(line.canFind("SDL_KEYDOWN"), line);
-    assert(line.canFind("sym=97"),      line);
-    assert(line.canFind("scan=4"),      line);
+    assert(line.canFind("SDL_KEYDOWN"),  line);
+    assert(line.canFind(`"sym":97`),     line);
+    assert(line.canFind(`"scan":4`),     line);
 }
 
 unittest { // EventPlayer.tick() returns false immediately when inactive
@@ -423,7 +410,7 @@ unittest { // EventPlayer.open: non-existent file returns false
     assert(!p.open("/nonexistent_path_for_unittest/file.txt"));
 }
 
-unittest { // EventPlayer.open: parse multiple event types from temp file
+unittest { // EventPlayer.open: parse multiple event types from JSON Lines file
     import std.file : write, remove, tempDir;
     import std.path : buildPath;
 
@@ -435,14 +422,13 @@ unittest { // EventPlayer.open: parse multiple event types from temp file
     scope(exit) remove(path);
 
     write(path,
-        "# comment\n" ~
-        "0.000 SDL_QUIT\n" ~
-        "1.000 SDL_KEYDOWN sym=97 scan=4 mod=0x0000 repeat=0\n" ~
-        "2.000 SDL_KEYUP sym=65 scan=4 mod=0x0000 repeat=0\n" ~
-        "3.000 SDL_MOUSEBUTTONDOWN btn=1 x=100 y=200 clicks=1 mod=0x0000\n" ~
-        "4.000 SDL_MOUSEMOTION x=110 y=210 xrel=10 yrel=10 state=0x0 mod=0x0000\n" ~
-        "5.000 SDL_MOUSEWHEEL x=0 y=-1\n" ~
-        "6.000 SDL_WINDOWEVENT sub=5 w=1280 h=720\n"
+        `{"t":0.000,"type":"SDL_QUIT"}` ~ "\n" ~
+        `{"t":1.000,"type":"SDL_KEYDOWN","sym":97,"scan":4,"mod":0,"repeat":0}` ~ "\n" ~
+        `{"t":2.000,"type":"SDL_KEYUP","sym":65,"scan":4,"mod":0,"repeat":0}` ~ "\n" ~
+        `{"t":3.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":100,"y":200,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":4.000,"type":"SDL_MOUSEMOTION","x":110,"y":210,"xrel":10,"yrel":10,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":5.000,"type":"SDL_MOUSEWHEEL","x":0,"y":-1}` ~ "\n" ~
+        `{"t":6.000,"type":"SDL_WINDOWEVENT","sub":5,"w":1280,"h":720}` ~ "\n"
     );
 
     EventPlayer p;

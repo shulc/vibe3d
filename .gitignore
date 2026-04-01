@@ -6,3 +6,4 @@ imgui.ini
 vibe3d
 vibe3d-test-library
 *.o
+run.log
