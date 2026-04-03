@@ -8,6 +8,8 @@ import handler;
 import mesh;
 import editmode;
 import math;
+import shader;
+
 import std.math;
 
 import ImGui = d_imgui;
@@ -89,7 +91,7 @@ public:
             : Vec3(0, 0, 0));
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!active) return;
         cachedVp = vp;
@@ -103,7 +105,7 @@ public:
             anyHovered |= arc.isHovered();
         }
 
-        handler.draw(program, locColor, vp);
+        handler.draw(shader, vp);
         cachedSize = handler.size;
 
         if (dragAxis >= 0 && (dragStartDir.x != 0 || dragStartDir.y != 0 || dragStartDir.z != 0))

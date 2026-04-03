@@ -4,6 +4,7 @@ import bindbc.sdl;
 import bindbc.opengl;
 
 import math;
+import shader;
 
 // ---------------------------------------------------------------------------
 // Tool — base class for all editing tools
@@ -32,7 +33,7 @@ class Tool {
 
     // Called once per frame after the 3-D geometry has been drawn.
     // Override to render tool-specific overlays (gizmos, highlights, etc.).
-    void draw(GLuint program, GLint locColor, const ref Viewport vp) {}
+    void draw(const ref Shader shader, const ref Viewport vp) {}
 
     // Called once per frame inside the ImGui window to append tool UI.
     // Returns true if the user clicked the activation button.

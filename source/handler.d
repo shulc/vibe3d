@@ -6,6 +6,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 
 import math;
 import eventlog;
+import shader;
 
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
@@ -64,7 +65,7 @@ private:
 
 public:
     // Called once per frame to render the overlay into the 3-D view.
-    void draw(GLuint program, GLint locColor, const ref Viewport vp) {}
+    void draw(const ref Shader shader, const ref Viewport vp) {}
 
     // Mouse events — return true to consume (stops further processing).
     bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) { return false; }
@@ -148,7 +149,7 @@ public:
         glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 dir = vec3Sub(end, start);
@@ -169,28 +170,27 @@ public:
         updateHover(vp);
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
-        GLint locModel = glGetUniformLocation(program, "u_model");
-        glUniform3f(locColor, c.x, c.y, c.z);
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         glDisable(GL_DEPTH_TEST);
 
         // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
                                       Vec3(1, 1, shaftLen), start);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, program);
-        glUniform3f(locColor, c.x, c.y, c.z);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         // ---- Draw cone head ----
         auto headModel = modelMatrix(right, up, fwd,
                                      Vec3(coneRadius, coneRadius, coneLen), coneBase);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, headModel.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
         // Restore identity so subsequent draws are unaffected
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
 private:
@@ -282,7 +282,7 @@ public:
         glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
         Vec3 dir = vec3Sub(end, start);
@@ -301,28 +301,27 @@ public:
         updateHover(vp);
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
-        GLint locModel = glGetUniformLocation(program, "u_model");
-        glUniform3f(locColor, c.x, c.y, c.z);
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         glDisable(GL_DEPTH_TEST);
 
         // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
                                       Vec3(1, 1, shaftLen), start);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, program);
-        glUniform3f(locColor, c.x, c.y, c.z);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         // ---- Draw cube head ----
         // Scale unit cube (half-extent 1) to cubeHalf, translate to cubeCenter
         auto headModel = modelMatrix(right, up, fwd,
                                      Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, headModel.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
 private:
@@ -394,7 +393,7 @@ public:
         glDeleteBuffers(1, &arcVbo);
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         Vec3 fwd = normalize(normal);
         Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
@@ -407,8 +406,7 @@ public:
                : selected ? Vec3(1.0f, 0.64f, 0.0f)    // orange
                :            color;
 
-        GLint locModel = glGetUniformLocation(program, "u_model");
-        glUniform3f(locColor, c.x, c.y, c.z);
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         glDisable(GL_DEPTH_TEST);
 
@@ -417,11 +415,11 @@ public:
         Vec3 ru = Vec3(-right.x*sa + up.x*ca, -right.y*sa + up.y*ca, -right.z*sa + up.z*ca);
         auto model = modelMatrix(rr, ru, fwd,
                                  Vec3(radius, radius, radius), center);
-        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, program);
+        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, shader.program);
 
         glEnable(GL_DEPTH_TEST);
         // Restore main program's u_model to identity
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -532,7 +530,7 @@ class MoveHandler : Handler {
         center = pos;
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         // Extract eye position from view matrix (view = R*T, eye = -R^T * t).
         const ref float[16] view = vp.view;
@@ -580,13 +578,13 @@ class MoveHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
-        circleXY.draw(program, locColor, vp);
-        circleYZ.draw(program, locColor, vp);
-        circleXZ.draw(program, locColor, vp);
-        centerBox.draw(program, locColor, vp);
-        arrowX.draw(program, locColor, vp);
-        arrowY.draw(program, locColor, vp);
-        arrowZ.draw(program, locColor, vp);
+        circleXY.draw(shader, vp);
+        circleYZ.draw(shader, vp);
+        circleXZ.draw(shader, vp);
+        centerBox.draw(shader, vp);
+        arrowX.draw(shader, vp);
+        arrowY.draw(shader, vp);
+        arrowZ.draw(shader, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -628,7 +626,7 @@ class RotateHandler : Handler {
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); }
     void setPosition(Vec3 pos) { center = pos; }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
@@ -674,9 +672,9 @@ class RotateHandler : Handler {
         applyStart(arcY, Vec3(0,1,0));
         applyStart(arcZ, Vec3(0,0,1));
 
-        arcX.draw(program, locColor, vp);
-        arcY.draw(program, locColor, vp);
-        arcZ.draw(program, locColor, vp);
+        arcX.draw(shader, vp);
+        arcY.draw(shader, vp);
+        arcZ.draw(shader, vp);
     }
 }
 
@@ -733,7 +731,7 @@ public:
         glDeleteBuffers(1, &vbo);
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         updateHover(vp);
 
@@ -741,19 +739,18 @@ public:
                : selected ? Vec3(1.0f, 0.64f, 0.0f)
                :            color;
 
-        GLint locModel = glGetUniformLocation(program, "u_model");
-        glUniform3f(locColor, c.x, c.y, c.z);
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
 
         auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
                              Vec3(size, size, size), pos);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, m.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, m.ptr);
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, vertCount);
         glBindVertexArray(0);
 
         glEnable(GL_DEPTH_TEST);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -886,7 +883,7 @@ public:
         return doHitTest(mx, my, vp);
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         Vec3 fwd = normalize(normal);
         Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
@@ -904,21 +901,20 @@ public:
 
         auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
 
-        GLint locModel = glGetUniformLocation(program, "u_model");
         glDisable(GL_DEPTH_TEST);
 
         // ---- Fill ----
-        glUniform3f(locColor, fc.x, fc.y, fc.z);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, m.ptr);
+        glUniform3f(shader.locColor, fc.x, fc.y, fc.z);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, m.ptr);
         glBindVertexArray(fillVao);
         glDrawArrays(GL_TRIANGLES, 0, fillVertCount);
 
         // ---- Outline ----
-        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth, program);
+        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth, shader.program);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, identityMatrix.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -987,7 +983,7 @@ class ScaleHandler : Handler {
         center = pos;
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
@@ -1018,9 +1014,9 @@ class ScaleHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
-        arrowX.draw(program, locColor, vp);
-        arrowY.draw(program, locColor, vp);
-        arrowZ.draw(program, locColor, vp);
+        arrowX.draw(shader, vp);
+        arrowY.draw(shader, vp);
+        arrowZ.draw(shader, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {

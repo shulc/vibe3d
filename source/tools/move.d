@@ -8,6 +8,7 @@ import handler;
 import mesh;
 import editmode;
 import math;
+import shader;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -195,7 +196,7 @@ public:
         }
     }
 
-    override void draw(GLuint program, GLint locColor, const ref Viewport vp)
+    override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!active) return;
         cachedVp = vp;
@@ -214,7 +215,7 @@ public:
             isHovered |= h.isHovered();
         }
 
-        handler.draw(program, locColor, vp);
+        handler.draw(shader, vp);
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
