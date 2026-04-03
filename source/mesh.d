@@ -3,6 +3,7 @@ module mesh;
 import bindbc.opengl;
 import std.math : sqrt;
 import math;
+import shader;
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -408,10 +409,10 @@ struct GpuMesh {
     }
 
     // Draw faces only (writes depth buffer)
-    void drawFaces(GLuint program, GLint locColor) {
+    void drawFaces(const ref LitShader shader) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
-        glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
+        glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
         glBindVertexArray(faceVao);
         glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -420,7 +421,7 @@ struct GpuMesh {
 
     // Draw faces with per-face hover highlights (Polygons mode).
     // Optimized: minimal draw calls for large meshes.
-    void drawFacesHighlighted(GLuint program, GLint locColor,
+    void drawFacesHighlighted(const ref LitShader shader,
                                int hoveredFace, const bool[] selectedFaces) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
@@ -428,11 +429,11 @@ struct GpuMesh {
 
         // If no hovered face, draw all at once
         if (hoveredFace < 0 || hoveredFace >= faceTriStart.length) {
-            glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
+            glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
             glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
         } else {
             // Draw all faces except hovered face in one batch
-            glUniform3f(locColor, 0.8f, 0.8f, 0.8f);
+            glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
             int hoverStart = faceTriStart[hoveredFace];
             int hoverCount = faceTriCount[hoveredFace];
 
@@ -447,7 +448,7 @@ struct GpuMesh {
 
             // Draw hovered face with highlight
             if (hoverCount > 0) {
-                glUniform3f(locColor, 0.5f, 0.71f, 0.79f);
+                glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
                 glDrawArrays(GL_TRIANGLES, hoverStart, hoverCount);
             }
         }

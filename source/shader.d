@@ -5,6 +5,7 @@ import std.string : toStringz;
 
 
 import view;
+import math;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -237,5 +238,48 @@ class Shader {
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+    }
+};
+
+class LitShader {
+    GLuint program;
+    GLint locModel;
+    GLint locView;
+    GLint locProj;
+    GLint locColor;
+    GLint locLightDir;
+    GLint locEyePos;
+    GLint locAmbient;
+    GLint locSpecStr;
+    GLint locSpecPow;
+
+    this() {
+        program     = createProgram(litVertSrc, litFragSrc);
+        locModel    = glGetUniformLocation(program, "u_model");
+        locView     = glGetUniformLocation(program, "u_view");
+        locProj     = glGetUniformLocation(program, "u_proj");
+        locColor    = glGetUniformLocation(program, "u_color");
+        locLightDir = glGetUniformLocation(program, "u_lightDir");
+        locEyePos   = glGetUniformLocation(program, "u_eyePos");
+        locAmbient  = glGetUniformLocation(program, "u_ambient");
+        locSpecStr  = glGetUniformLocation(program, "u_specStr");
+        locSpecPow  = glGetUniformLocation(program, "u_specPow");
+    }
+
+    ~this() {
+        glDeleteProgram(program);
+    }
+
+    void useProgram(const ref float[16] meshModel, const ref View cameraView) {
+        Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+        glUseProgram(program);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniform3f(locLightDir, lightDir.x, lightDir.y, lightDir.z);
+        glUniform3f(locEyePos,   cameraView.eye.x, cameraView.eye.y, cameraView.eye.z);
+        glUniform1f(locAmbient,  0.20f);
+        glUniform1f(locSpecStr,  0.25f);
+        glUniform1f(locSpecPow,  32.0f);
     }
 };

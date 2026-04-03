@@ -153,18 +153,7 @@ void main(string[] args) {
     }
 
     Shader shader = new Shader();
-
-    GLuint litProgram = createProgram(litVertSrc, litFragSrc);
-    scope(exit) glDeleteProgram(litProgram);
-    GLint litLocModel    = glGetUniformLocation(litProgram, "u_model");
-    GLint litLocView     = glGetUniformLocation(litProgram, "u_view");
-    GLint litLocProj     = glGetUniformLocation(litProgram, "u_proj");
-    GLint litLocColor    = glGetUniformLocation(litProgram, "u_color");
-    GLint litLocLightDir = glGetUniformLocation(litProgram, "u_lightDir");
-    GLint litLocEyePos   = glGetUniformLocation(litProgram, "u_eyePos");
-    GLint litLocAmbient  = glGetUniformLocation(litProgram, "u_ambient");
-    GLint litLocSpecStr  = glGetUniformLocation(litProgram, "u_specStr");
-    GLint litLocSpecPow  = glGetUniformLocation(litProgram, "u_specPow");
+    LitShader litShader = new LitShader();
 
     GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, fragmentShaderSrc);
     scope(exit) glDeleteProgram(thickLineProgram);
@@ -1005,20 +994,11 @@ void main(string[] args) {
 
         // Draw faces with Blinn-Phong lighting
         {
-            Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
-            glUseProgram(litProgram);
-            glUniformMatrix4fv(litLocModel, 1, GL_FALSE, meshModel.ptr);
-            glUniformMatrix4fv(litLocView,  1, GL_FALSE, cameraView.view.ptr);
-            glUniformMatrix4fv(litLocProj,  1, GL_FALSE, cameraView.proj.ptr);
-            glUniform3f(litLocLightDir, lightDir.x, lightDir.y, lightDir.z);
-            glUniform3f(litLocEyePos,   cameraView.eye.x, cameraView.eye.y, cameraView.eye.z);
-            glUniform1f(litLocAmbient,  0.20f);
-            glUniform1f(litLocSpecStr,  0.25f);
-            glUniform1f(litLocSpecPow,  32.0f);
+            litShader.useProgram(meshModel, cameraView);
             if (editMode == EditMode.Polygons)
-                gpu.drawFacesHighlighted(litProgram, litLocColor, hoveredFace, selectedFaces);
+                gpu.drawFacesHighlighted(litShader, hoveredFace, selectedFaces);
             else
-                gpu.drawFaces(litProgram, litLocColor);
+                gpu.drawFaces(litShader);
         }
 
         // Checkerboard overlay for selected faces (Polygons mode).
