@@ -31,7 +31,7 @@ immutable string fragmentShaderSrc = q{
 };
 
 // Lit shaders — Blinn-Phong with flat per-face normals.
-immutable string litVertSrc = q{
+private immutable string litVertSrc = q{
     #version 330 core
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec3 aNormal;
@@ -48,7 +48,7 @@ immutable string litVertSrc = q{
     }
 };
 
-immutable string litFragSrc = q{
+private immutable string litFragSrc = q{
     #version 330 core
     in  vec3 vNormal;
     in  vec3 vWorldPos;
@@ -74,7 +74,7 @@ immutable string litFragSrc = q{
 
 // Checkerboard overlay shader — every other screen pixel is discarded,
 // the rest are filled with u_color.  Used to highlight selected faces.
-immutable string checkerFragSrc = q{
+private immutable string checkerFragSrc = q{
     #version 330 core
     uniform vec3 u_color;
     out vec4 fragColor;
@@ -85,7 +85,7 @@ immutable string checkerFragSrc = q{
 };
 
 // Grid shaders — vertex passes world pos, fragment computes fade alpha.
-immutable string gridVertSrc = q{
+private immutable string gridVertSrc = q{
     #version 330 core
     layout(location = 0) in vec3 aPos;
     uniform mat4 u_model;
@@ -98,7 +98,7 @@ immutable string gridVertSrc = q{
     }
 };
 
-immutable string gridFragSrc = q{
+private immutable string gridFragSrc = q{
     #version 330 core
     uniform vec3  u_color;
     uniform float u_maxDist;     // world-space fade radius
@@ -241,6 +241,32 @@ class Shader {
     }
 };
 
+class CheckerShader {
+    GLuint program;
+    GLint locModel;
+    GLint locView;
+    GLint locProj;
+    GLint locColor;
+
+    this() {
+        program  = createProgram(vertexShaderSrc, checkerFragSrc);
+        locModel = glGetUniformLocation(program, "u_model");
+        locView  = glGetUniformLocation(program, "u_view");
+        locProj  = glGetUniformLocation(program, "u_proj");
+        locColor = glGetUniformLocation(program, "u_color");
+    }
+
+    ~this() { glDeleteProgram(program); }
+
+    void useProgram(const ref float[16] meshModel, const ref View cameraView, float r, float g, float b) {
+        glUseProgram(program);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniform3f(locColor, r, g, b);
+    }
+}
+
 class LitShader {
     GLuint program;
     GLint locModel;
@@ -282,4 +308,43 @@ class LitShader {
         glUniform1f(locSpecStr,  0.25f);
         glUniform1f(locSpecPow,  32.0f);
     }
-};
+}
+
+class GridShader {
+    GLuint program;
+    GLint locModel;
+    GLint locView;
+    GLint locProj;
+    GLint locColor;
+    GLint locMaxDist;
+    GLint locScreenSize;
+    GLint locVpOriginX;
+    GLint locVpOriginY;
+
+    this() {
+        program       = createProgram(gridVertSrc, gridFragSrc);
+        locModel      = glGetUniformLocation(program, "u_model");
+        locView       = glGetUniformLocation(program, "u_view");
+        locProj       = glGetUniformLocation(program, "u_proj");
+        locColor      = glGetUniformLocation(program, "u_color");
+        locMaxDist    = glGetUniformLocation(program, "u_maxDist");
+        locScreenSize = glGetUniformLocation(program, "u_screenSize");
+        locVpOriginX  = glGetUniformLocation(program, "u_vpOriginX");
+        locVpOriginY  = glGetUniformLocation(program, "u_vpOriginY");
+    }
+
+    ~this() { glDeleteProgram(program); }
+
+    void useProgram(const ref float[16] model, const ref View cameraView,
+                    float maxDist, float screenW, float screenH,
+                    float vpOriginX, float vpOriginY) {
+        glUseProgram(program);
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, model.ptr);
+        glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
+        glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        glUniform1f(locMaxDist,    maxDist);
+        glUniform2f(locScreenSize, screenW, screenH);
+        glUniform1f(locVpOriginX,  vpOriginX);
+        glUniform1f(locVpOriginY,  vpOriginY);
+    }
+}

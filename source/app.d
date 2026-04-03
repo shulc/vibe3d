@@ -160,23 +160,8 @@ void main(string[] args) {
     scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, fbW, fbH);
 
-    GLuint checkerProgram = createProgram(vertexShaderSrc, checkerFragSrc);
-    scope(exit) glDeleteProgram(checkerProgram);
-    GLint checkerLocModel = glGetUniformLocation(checkerProgram, "u_model");
-    GLint checkerLocView  = glGetUniformLocation(checkerProgram, "u_view");
-    GLint checkerLocProj  = glGetUniformLocation(checkerProgram, "u_proj");
-    GLint checkerLocColor = glGetUniformLocation(checkerProgram, "u_color");
-
-    GLuint gridProgram = createProgram(gridVertSrc, gridFragSrc);
-    scope(exit) glDeleteProgram(gridProgram);
-    GLint gridLocModel      = glGetUniformLocation(gridProgram, "u_model");
-    GLint gridLocView       = glGetUniformLocation(gridProgram, "u_view");
-    GLint gridLocProj       = glGetUniformLocation(gridProgram, "u_proj");
-    GLint gridLocColor      = glGetUniformLocation(gridProgram, "u_color");
-    GLint gridLocMaxDist    = glGetUniformLocation(gridProgram, "u_maxDist");
-    GLint gridLocScreenSize  = glGetUniformLocation(gridProgram, "u_screenSize");
-    GLint gridLocVpOriginX   = glGetUniformLocation(gridProgram, "u_vpOriginX");
-    GLint gridLocVpOriginY   = glGetUniformLocation(gridProgram, "u_vpOriginY");
+    CheckerShader checkerShader = new CheckerShader();
+    GridShader gridShader = new GridShader();
 
     Mesh mesh = makeCube();
     writefln("Mesh: %d verts, %d edges, %d faces",
@@ -831,24 +816,20 @@ void main(string[] args) {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         // glDepthMask(GL_FALSE);
 
-        glUseProgram(gridProgram);
-        glUniformMatrix4fv(gridLocModel, 1, GL_FALSE, identityMatrix.ptr);
-        glUniformMatrix4fv(gridLocView,  1, GL_FALSE, cameraView.view.ptr);
-        glUniformMatrix4fv(gridLocProj,  1, GL_FALSE, cameraView.proj.ptr);
-        glUniform1f(gridLocMaxDist,    cameraView.distance * 2.0f);
-        glUniform2f(gridLocScreenSize, cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY);
-        glUniform1f(gridLocVpOriginX,  cast(float)PANEL_W  * scaleX);
-        glUniform1f(gridLocVpOriginY,  cast(float)STATUS_H * scaleY);
+        gridShader.useProgram(identityMatrix, cameraView,
+            cameraView.distance * 2.0f,
+            cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY,
+            cast(float)PANEL_W  * scaleX, cast(float)STATUS_H * scaleY);
 
         glBindVertexArray(gridVao);
         // Grid lines — gray
-        glUniform3f(gridLocColor, 0.5f, 0.5f, 0.5f);
+        glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
         glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
         // X axis — pale red
-        glUniform3f(gridLocColor, 0.5f, 0.15f, 0.15f);
+        glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
         glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
         // Z axis — pale blue
-        glUniform3f(gridLocColor, 0.15f, 0.15f, 0.5f);
+        glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
         glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
         glBindVertexArray(0);
 
@@ -869,11 +850,7 @@ void main(string[] args) {
             bool anySelected = false;
             foreach (s; selectedFaces) if (s) { anySelected = true; break; }
             if (anySelected) {
-                glUseProgram(checkerProgram);
-                glUniformMatrix4fv(checkerLocModel, 1, GL_FALSE, meshModel.ptr);
-                glUniformMatrix4fv(checkerLocView,  1, GL_FALSE, cameraView.view.ptr);
-                glUniformMatrix4fv(checkerLocProj,  1, GL_FALSE, cameraView.proj.ptr);
-                glUniform3f(checkerLocColor, 1.0f, 0.5f, 0.1f);  // orange
+                checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);  // orange
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(selectedFaces);
                 glEnable(GL_DEPTH_TEST);
