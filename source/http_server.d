@@ -30,6 +30,12 @@ class HttpServer {
     private bool useDetailedProvider = false;
     private float[] meshVertices;
     private uint[][] meshFaces;
+    private alias CameraDataProvider = string delegate();
+    private CameraDataProvider cameraDataProvider;
+    private alias ResetHandler = void delegate();
+    private ResetHandler resetHandler;
+    private shared bool resetPending = false;
+    private bool testMode = false;
 
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
@@ -57,6 +63,27 @@ class HttpServer {
         this.meshVertices = vertices;
         this.meshFaces = faces;
         this.useDetailedProvider = true;
+    }
+
+    /**
+     * Set the camera data provider callback
+     */
+    public void setCameraDataProvider(CameraDataProvider provider) {
+        this.cameraDataProvider = provider;
+    }
+
+    public void setTestMode(bool enabled) { testMode = enabled; }
+
+    public int  playerMouseX()    const { return eventPlayer.mouseX; }
+    public int  playerMouseY()    const { return eventPlayer.mouseY; }
+    public bool playerMouseDown() const { return eventPlayer.mouseDown; }
+    public bool playerFinished()  const { return !eventPlayer.active; }
+
+    /**
+     * Set the reset handler callback
+     */
+    public void setResetHandler(ResetHandler handler) {
+        this.resetHandler = handler;
     }
 
     /**
@@ -122,21 +149,53 @@ class HttpServer {
      */
     private void handleClient(Socket client) {
         try {
-            char[4096] buffer;
-            size_t received = client.receive(buffer[]);
-
-            if (received > 0) {
-                string request = buffer[0 .. received].idup;
-                stderr.writeln("Received request: ", request.split("\n")[0]);
-
-                // Parse the HTTP request
-                HttpRequest httpRequest = parseRequest(request);
-                HttpResponse response = handleRequest(httpRequest);
-
-                // Send the response
-                string responseStr = formatResponse(response);
-                client.send(responseStr);
+            // Read until we have the full header block (ends with \r\n\r\n)
+            ubyte[] raw;
+            ubyte[4096] chunk;
+            ptrdiff_t n;
+            size_t headerEnd;
+            while (true) {
+                n = client.receive(chunk[]);
+                if (n <= 0) break;
+                raw ~= chunk[0 .. n];
+                // Search entire buffer for end-of-headers marker
+                size_t searchFrom = raw.length > n + 3 ? raw.length - n - 3 : 0;
+                for (size_t i = searchFrom; i + 3 < raw.length; ++i) {
+                    if (raw[i] == '\r' && raw[i+1] == '\n' && raw[i+2] == '\r' && raw[i+3] == '\n') {
+                        headerEnd = i + 4;
+                        break;
+                    }
+                }
+                if (headerEnd > 0) break;
             }
+
+            if (raw.length == 0) return;
+
+            string headerPart = cast(string)raw[0 .. headerEnd].idup;
+            stderr.writeln("Received request: ", headerPart.split("\n")[0]);
+
+            // Parse Content-Length from headers
+            size_t contentLength = 0;
+            foreach (line; headerPart.split("\n")) {
+                string s = line.strip();
+                if (s.length > 16 && s[0..16].toLower() == "content-length: ") {
+                    try { contentLength = to!size_t(s[16..$].strip()); } catch (Exception) {}
+                    break;
+                }
+            }
+            // Read remaining body bytes
+            ubyte[] bodyRaw = raw[headerEnd .. $];
+            while (bodyRaw.length < contentLength) {
+                n = client.receive(chunk[]);
+                if (n <= 0) break;
+                bodyRaw ~= chunk[0 .. n];
+            }
+
+            HttpRequest httpRequest = parseRequest(headerPart, cast(string)bodyRaw.idup);
+            HttpResponse response = handleRequest(httpRequest);
+
+            string responseStr = formatResponse(response);
+            client.send(responseStr);
         } catch (Exception e) {
             stderr.writeln("Error handling client: ", e.msg);
         } finally {
@@ -145,64 +204,29 @@ class HttpServer {
     }
 
     /**
-     * Parse an HTTP request
+     * Parse an HTTP request from separate header and body strings.
      */
-    private HttpRequest parseRequest(string request) {
-        auto lines = request.split("\n");
-        if (lines.length == 0) {
+    private HttpRequest parseRequest(string headers, string body) {
+        auto lines = headers.split("\n");
+        if (lines.length == 0)
             return new HttpRequest("GET", "/", "HTTP/1.1");
-        }
 
-        auto requestLine = lines[0].strip();
-        auto parts = requestLine.split(' ');
-
-        string method = "GET";
-        string path = "/";
-        string httpVersion = "HTTP/1.1";
-
-        if (parts.length >= 1) method = parts[0];
-        if (parts.length >= 2) path = parts[1];
-        if (parts.length >= 3) httpVersion = parts[2];
+        auto parts = lines[0].strip().split(' ');
+        string method      = parts.length >= 1 ? parts[0] : "GET";
+        string path        = parts.length >= 2 ? parts[1] : "/";
+        string httpVersion = parts.length >= 3 ? parts[2] : "HTTP/1.1";
 
         auto httpRequest = new HttpRequest(method, path, httpVersion);
 
-        // Parse headers and body
-        bool headersDone = false;
-        string[] headerLines;
-        string body;
-
-        foreach (i, line; lines) {
-            if (i == 0) continue; // Skip request line
-
-            string strippedLine = line.strip();
-            if (strippedLine.length == 0) {
-                headersDone = true;
-                continue;
-            }
-
-            if (!headersDone) {
-                headerLines ~= strippedLine;
-            } else {
-                body ~= strippedLine ~ "\n";
-            }
-        }
-
-        // Parse headers
-        foreach (headerLine; headerLines) {
-            auto colonPos = headerLine.indexOf(":");
+        foreach (line; lines[1 .. $]) {
+            string s = line.strip();
+            auto colonPos = s.indexOf(":");
             if (colonPos > 0) {
-                string key = headerLine[0 .. colonPos].strip();
-                string value = headerLine[colonPos + 1 .. $].strip();
-                httpRequest.headers[key] = value;
+                httpRequest.headers[s[0 .. colonPos].strip()] = s[colonPos + 1 .. $].strip();
             }
         }
 
-        // Set body (remove trailing newline if present)
-        if (body.length > 0 && body[$-1] == '\n') {
-            body = body[0 .. $-1];
-        }
         httpRequest.body = body;
-
         return httpRequest;
     }
 
@@ -260,18 +284,56 @@ class HttpServer {
                 response.body = "{\"error\": \"Model data provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/play-events" && request.method == "POST") {
-            if (eventPlayer.load(request.body) && eventPlayer.entries.length > 0) {
-                // Set startCounter to 0 so all events appear elapsed (immediate playback)
-                eventPlayer.startCounter = 0;
-                eventPlayer.tick();
+        } else if (request.path == "/api/camera") {
+            if (cameraDataProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = cameraDataProvider();
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve camera data\", \"message\": \"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Camera data provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/reset" && request.method == "POST") {
+            if (resetHandler !is null) {
+                atomicStore(resetPending, true);
                 response.statusCode = 200;
-                response.body = `{"status": "success", "message": "Events played successfully"}`;
+                response.body = `{"status":"ok"}`;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"Reset handler not set"}`;
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/play-events/status" && request.method == "GET") {
+            import std.format : format;
+            bool done = !eventPlayer.active;
+            response.statusCode = 200;
+            response.body = format(`{"finished":%s,"total":%d,"remaining":%d}`,
+                done ? "true" : "false",
+                eventPlayer.entries.length,
+                done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/play-events" && request.method == "POST") {
+            if (!testMode) {
+                response.statusCode = 403;
+                response.body = `{"error":"play-events is only available in --test mode"}`;
+                response.headers["Content-Type"] = "application/json";
+            } else if (eventPlayer.load(request.body) && eventPlayer.entries.length > 0) {
+                response.statusCode = 200;
+                response.body = `{"status": "success", "message": "Events loaded successfully"}`;
+                response.headers["Content-Type"] = "application/json";
             } else {
                 response.statusCode = 400;
                 response.body = `{"status": "error", "message": "Failed to parse events"}`;
+                response.headers["Content-Type"] = "application/json";
             }
-            response.headers["Content-Type"] = "application/json";
         } else {
             response.statusCode = 404;
             response.body = "<html><body><h1>404 Not Found</h1><p>The requested resource was not found.</p></body></html>";
@@ -310,6 +372,18 @@ class HttpServer {
      */
     public bool tickEventPlayer() {
         return eventPlayer.tick();
+    }
+
+    /**
+     * Tick reset — call once per frame from the main loop.
+     * Executes the reset handler on the main thread if /api/reset was requested.
+     */
+    public void tickReset() {
+        if (atomicLoad(resetPending)) {
+            atomicStore(resetPending, false);
+            if (resetHandler !is null)
+                resetHandler();
+        }
     }
 
     /**

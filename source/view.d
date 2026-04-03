@@ -66,6 +66,19 @@ struct View {
 
     // Adjusts `focus` and `distance` so the bounding sphere of `verts` fills
     // 90 % of the viewport (keeping the current orbit azimuth/elevation).
+    string toJson() const {
+        import std.format : format;
+        return format(
+            `{"azimuth":%f,"elevation":%f,"distance":%f,` ~
+            `"focus":{"x":%f,"y":%f,"z":%f},` ~
+            `"eye":{"x":%f,"y":%f,"z":%f},` ~
+            `"width":%d,"height":%d}`,
+            azimuth, elevation, distance,
+            focus.x, focus.y, focus.z,
+            eye.x, eye.y, eye.z,
+            width, height);
+    }
+
     void frameToVertices(Vec3[] verts)
     {
         if (verts.length == 0) return;

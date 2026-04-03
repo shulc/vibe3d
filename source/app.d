@@ -57,6 +57,7 @@ void main(string[] args) {
     // Parse --playback <file> flag
     string playbackFile;
     bool startHttpServer = true;  // Enable HTTP server by default
+    bool testMode = false;
     ushort httpPort = 8080;       // Default port
 
     for (size_t i = 1; i < args.length; ++i) {
@@ -67,6 +68,8 @@ void main(string[] args) {
                 exit(1);
             }
             playbackFile = args[++i];
+        } else if (args[i] == "--test") {
+            testMode = true;
         } else if (args[i] == "--no-http") {
             startHttpServer = false;
         } else if (args[i] == "--http-port") {
@@ -92,6 +95,10 @@ void main(string[] args) {
     HttpServer httpServer;
     if (startHttpServer) {
         httpServer = new HttpServer(httpPort);
+        if (testMode) {
+            httpServer.setTestMode(true);
+            mouseOverride();
+        }
         httpServer.start();
         writeln("HTTP server starting on port ", httpPort);
     }
@@ -167,23 +174,8 @@ void main(string[] args) {
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
-    // Set up HTTP server model data provider
-    if (httpServer !is null) {
-        // Convert mesh vertices to flat float array for HTTP server
-        float[] getMeshVertices() {
-            float[] verts = new float[](mesh.vertices.length * 3);
-            for (size_t i = 0; i < mesh.vertices.length; i++) {
-                verts[i * 3] = mesh.vertices[i].x;
-                verts[i * 3 + 1] = mesh.vertices[i].y;
-                verts[i * 3 + 2] = mesh.vertices[i].z;
-            }
-            return verts;
-        }
-
-        httpServer.setDetailedModelDataProvider((float[] vertices, uint[][] faces) {
-            return meshToJsonDetailed(mesh.vertices.length, mesh.edges.length, mesh.faces.length, vertices, faces);
-        }, getMeshVertices(), mesh.faces);
-    }
+    // Camera
+    View cameraView;
 
     VertexCache vertexCache;
     vertexCache.resize(mesh.vertices.length);
@@ -256,8 +248,38 @@ void main(string[] args) {
     bool[] faceSelEdgesCache;
     bool[] faceSelEdgesPrevSel;  // snapshot of selectedFaces at last rebuild
 
-    // Camera
-    View cameraView;
+    // Set up HTTP server model data provider
+    if (httpServer !is null) {
+        // Convert mesh vertices to flat float array for HTTP server
+        float[] getMeshVertices() {
+            float[] verts = new float[](mesh.vertices.length * 3);
+            for (size_t i = 0; i < mesh.vertices.length; i++) {
+                verts[i * 3] = mesh.vertices[i].x;
+                verts[i * 3 + 1] = mesh.vertices[i].y;
+                verts[i * 3 + 2] = mesh.vertices[i].z;
+            }
+            return verts;
+        }
+
+        httpServer.setDetailedModelDataProvider((float[] vertices, uint[][] faces) {
+            return meshToJsonDetailed(mesh.vertices.length, mesh.edges.length, mesh.faces.length, vertices, faces);
+        }, getMeshVertices(), mesh.faces);
+        httpServer.setCameraDataProvider(() => cameraView.toJson());
+        httpServer.setResetHandler(() {
+            mesh = makeCube();
+            cameraView.reset();
+            selected.length      = mesh.vertices.length; selected[]      = false;
+            selectedEdges.length = mesh.edges.length;    selectedEdges[] = false;
+            selectedFaces.length = mesh.faces.length;    selectedFaces[] = false;
+            gpu.upload(mesh);
+            vertexCache.resize(mesh.vertices.length);
+            vertexCache.invalidate();
+            faceCache.resize(mesh.vertices.length, mesh.faces.length);
+            faceCache.invalidate();
+            edgeCache.resize(mesh.edges.length);
+            edgeCache.invalidate();
+        });
+    }
 
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
@@ -312,6 +334,10 @@ void main(string[] args) {
     while (running) {
         // ---- Playback: push due events before polling ----
         if (playbackMode) evPlay.tick();
+        if (httpServer !is null) {
+            httpServer.tickEventPlayer();
+            httpServer.tickReset();
+        }
 
         // ---- Events ----
         while (SDL_PollEvent(&event)) {
@@ -770,16 +796,29 @@ void main(string[] args) {
         DrawGizmo(PANEL_W + 32.0f, cameraView.height - STATUS_H - 32.0f, cameraView.view);
 
         // ---- Playback cursor overlay ----
-        if (playbackMode) {
-            ImDrawList* dl = ImGui.GetForegroundDrawList();
-            ImVec2 pos = ImVec2(cast(float)evPlay.mouseX, cast(float)evPlay.mouseY);
-            // Outer ring
-            dl.AddCircle(pos, 12.0f, IM_COL32(255, 220, 0, 220), 24, 2.0f);
-            // Inner dot — filled red when button is pressed, white otherwise
-            uint dotColor = evPlay.mouseDown
-                ? IM_COL32(255, 80, 80, 255)
-                : IM_COL32(255, 255, 255, 200);
-            dl.AddCircleFilled(pos, 3.0f, dotColor, 12);
+        {
+            int cursorX, cursorY;
+            bool cursorDown;
+            bool showCursor = false;
+            if (playbackMode) {
+                cursorX = evPlay.mouseX; cursorY = evPlay.mouseY;
+                cursorDown = evPlay.mouseDown;
+                showCursor = true;
+            } else if (testMode && httpServer !is null) {
+                cursorX = httpServer.playerMouseX();
+                cursorY = httpServer.playerMouseY();
+                cursorDown = httpServer.playerMouseDown();
+                showCursor = true;
+            }
+            if (showCursor) {
+                ImDrawList* dl = ImGui.GetForegroundDrawList();
+                ImVec2 pos = ImVec2(cast(float)cursorX, cast(float)cursorY);
+                dl.AddCircle(pos, 12.0f, IM_COL32(255, 220, 0, 220), 24, 2.0f);
+                uint dotColor = cursorDown
+                    ? IM_COL32(255, 80, 80, 255)
+                    : IM_COL32(255, 255, 255, 200);
+                dl.AddCircleFilled(pos, 3.0f, dotColor, 12);
+            }
         }
 
         ImGui.Render();

@@ -16,7 +16,7 @@ for f in tests/test_*.d; do
 done
 
 dub build
-./vibe3d 2>run.log &
+./vibe3d --test 2>run.log &
 
 while true; do
     if grep "HTTP server started on port 8080" -q run.log; then
