@@ -32,6 +32,8 @@ class HttpServer {
     private uint[][] meshFaces;
     private alias CameraDataProvider = string delegate();
     private CameraDataProvider cameraDataProvider;
+    private alias SelectionDataProvider = string delegate();
+    private SelectionDataProvider selectionDataProvider;
     private alias ResetHandler = void delegate();
     private ResetHandler resetHandler;
     private shared bool resetPending = false;
@@ -70,6 +72,10 @@ class HttpServer {
      */
     public void setCameraDataProvider(CameraDataProvider provider) {
         this.cameraDataProvider = provider;
+    }
+
+    public void setSelectionDataProvider(SelectionDataProvider provider) {
+        this.selectionDataProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -282,6 +288,23 @@ class HttpServer {
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Model data provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/selection") {
+            if (selectionDataProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = selectionDataProvider();
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve selection data\", \"message\": \"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Selection data provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/camera") {

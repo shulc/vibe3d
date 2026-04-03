@@ -248,6 +248,9 @@ void main(string[] args) {
     bool[] faceSelEdgesCache;
     bool[] faceSelEdgesPrevSel;  // snapshot of selectedFaces at last rebuild
 
+    DragMode dragMode = DragMode.None;
+    EditMode editMode = EditMode.Vertices;
+
     // Set up HTTP server model data provider
     if (httpServer !is null) {
         // Convert mesh vertices to flat float array for HTTP server
@@ -265,6 +268,43 @@ void main(string[] args) {
             return meshToJsonDetailed(mesh.vertices.length, mesh.edges.length, mesh.faces.length, vertices, faces);
         }, getMeshVertices(), mesh.faces);
         httpServer.setCameraDataProvider(() => cameraView.toJson());
+        httpServer.setSelectionDataProvider(() {
+            import std.array : appender;
+            import std.format : format;
+            string modeName;
+            final switch (editMode) {
+                case EditMode.Vertices: modeName = "vertices"; break;
+                case EditMode.Edges:    modeName = "edges";    break;
+                case EditMode.Polygons: modeName = "polygons"; break;
+            }
+            auto buf = appender!string();
+            buf ~= format(`{"mode":"%s","selectedVertices":[`, modeName);
+            bool first = true;
+            foreach (i, s; selected) {
+                if (!s) continue;
+                if (!first) buf ~= ",";
+                buf ~= format("%d", i);
+                first = false;
+            }
+            buf ~= `],"selectedEdges":[`;
+            first = true;
+            foreach (i, s; selectedEdges) {
+                if (!s) continue;
+                if (!first) buf ~= ",";
+                buf ~= format("%d", i);
+                first = false;
+            }
+            buf ~= `],"selectedFaces":[`;
+            first = true;
+            foreach (i, s; selectedFaces) {
+                if (!s) continue;
+                if (!first) buf ~= ",";
+                buf ~= format("%d", i);
+                first = false;
+            }
+            buf ~= "]}";
+            return buf.data;
+        });
         httpServer.setResetHandler(() {
             mesh = makeCube();
             cameraView.reset();
@@ -281,8 +321,6 @@ void main(string[] args) {
         });
     }
 
-    DragMode dragMode = DragMode.None;
-    EditMode editMode = EditMode.Vertices;
 
     // Tools are created lazily on first activation and kept alive until exit.
     MoveTool   moveTool   = null;
