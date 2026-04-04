@@ -38,4 +38,8 @@ class Tool {
     // Called once per frame inside the ImGui window to append tool UI.
     // Returns true if the user clicked the activation button.
     bool drawImGui() { return false; }
+
+    // Called inside the floating "Tool Properties" ImGui window.
+    // Override to show/edit tool-specific properties.
+    void drawProperties() {}
 }

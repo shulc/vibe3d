@@ -411,9 +411,9 @@ void main(string[] args) {
                             stderr.writeln("[REC] stopped");
                             break;
                         case SDLK_ESCAPE: running = false;              break;
-                        case SDLK_1:      editMode = EditMode.Vertices;  break;
-                        case SDLK_2:      editMode = EditMode.Edges;     break;
-                        case SDLK_3:      editMode = EditMode.Polygons;  break;
+                        case SDLK_1:      setActiveTool(null); editMode = EditMode.Vertices;  break;
+                        case SDLK_2:      setActiveTool(null); editMode = EditMode.Edges;     break;
+                        case SDLK_3:      setActiveTool(null); editMode = EditMode.Polygons;  break;
                         case SDLK_SPACE:
                             if (activeTool) setActiveTool(null);
                             else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
@@ -828,7 +828,7 @@ void main(string[] args) {
                 }
                 bool clicked = ImGui.Button("Vertices  1");
                 if (clicked)
-                    editMode = EditMode.Vertices;
+                    { setActiveTool(null); editMode = EditMode.Vertices; }
                 if (active)
                     ImGui.PopStyleColor();
                 ImGui.SameLine();
@@ -841,7 +841,7 @@ void main(string[] args) {
                 }
                 bool clicked = ImGui.Button("Edges     2");
                 if (clicked)
-                    editMode = EditMode.Edges;
+                    { setActiveTool(null); editMode = EditMode.Edges; }
                 if (active)
                     ImGui.PopStyleColor();
                 ImGui.SameLine();
@@ -854,7 +854,7 @@ void main(string[] args) {
                 }
                 bool clicked = ImGui.Button("Polygons  3");
                 if (clicked)
-                    editMode = EditMode.Polygons;
+                    { setActiveTool(null); editMode = EditMode.Polygons; }
                 if (active)
                     ImGui.PopStyleColor();
                 ImGui.SameLine();
