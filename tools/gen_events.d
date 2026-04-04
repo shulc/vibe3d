@@ -125,6 +125,23 @@ immutable Vec3[8] CUBE_VERTS = [
     Vec3(-0.5f,  0.5f,  0.5f), // 7
 ];
 
+// Cube edges (from mesh.d makeCube())
+immutable uint[2][12] CUBE_EDGES = [
+    [0,3],[3,2],[2,1],[1,0],   // 0-3: back face
+    [4,5],[5,6],[6,7],[7,4],   // 4-7: front face
+    [0,4],[7,3],[2,6],[5,1],   // 8-11: connecting
+];
+
+// Cube faces (from mesh.d makeCube(), same order)
+immutable uint[][] CUBE_FACES = [
+    [0,3,2,1],   // 0: back   (z=-0.5)
+    [4,5,6,7],   // 1: front  (z=+0.5)
+    [0,4,7,3],   // 2: left   (x=-0.5)
+    [1,2,6,5],   // 3: right  (x=+0.5)
+    [3,7,6,2],   // 4: top    (y=+0.5)
+    [0,1,5,4],   // 5: bottom (y=-0.5)
+];
+
 // ---------------------------------------------------------------------------
 // Camera state
 // ---------------------------------------------------------------------------
@@ -414,6 +431,7 @@ struct EventGen {
             }
         }
 
+        advance(100); // ensure render loop sees dragMode=Select before button release
         emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}`,
             t, mouseX, mouseY));
         advance(32);
@@ -473,6 +491,7 @@ struct EventGen {
             }
         }
 
+        advance(100); // ensure render loop sees dragMode=SelectAdd before button release
         emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":1}`,
             t, mouseX, mouseY));
         advance();
@@ -532,6 +551,390 @@ struct EventGen {
             }
         }
 
+        advance(100); // ensure render loop sees dragMode=SelectRemove before button release
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":64}`,
+            t, mouseX, mouseY));
+        advance();
+        emit(format(`{"t":%.3f,"type":"SDL_KEYUP","sym":1073742048,"scan":224,"mod":0}`, t));
+        advance(32);
+    }
+
+    // --- Select polygons by index (LMB drag through face centroids) ---
+    // Clears existing selection, then selects specified faces.
+    void selectPolygons(size_t[] indices) {
+        if (indices.length == 0) return;
+
+        float[16] viewMat = cam.viewMatrix();
+        float[16] projMat = cam.projMatrix();
+
+        int[] screenX, screenY;
+        foreach (idx; indices) {
+            if (idx >= CUBE_FACES.length) {
+                stderr.writefln("Warning: face index %d out of range (cube has %d faces)", idx, CUBE_FACES.length);
+                continue;
+            }
+            // Compute 3D centroid of the face
+            Vec3 cen = Vec3(0, 0, 0);
+            foreach (vi; CUBE_FACES[idx]) {
+                cen.x += CUBE_VERTS[vi].x;
+                cen.y += CUBE_VERTS[vi].y;
+                cen.z += CUBE_VERTS[vi].z;
+            }
+            float n = cast(float)CUBE_FACES[idx].length;
+            cen = Vec3(cen.x/n, cen.y/n, cen.z/n);
+            float px, py;
+            if (!project(cen, viewMat, projMat, VP_X, VP_Y, VP_W, VP_H, px, py)) {
+                stderr.writefln("Warning: face %d centroid is behind camera, skipping", idx);
+                continue;
+            }
+            screenX ~= cast(int)round(px);
+            screenY ~= cast(int)round(py);
+        }
+        if (screenX.length == 0) return;
+
+        moveCursorTo(screenX[0], screenY[0]);
+
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+            t, mouseX, mouseY));
+        advance();
+
+        foreach (i; 1 .. screenX.length) {
+            int dx = screenX[i] - mouseX;
+            int dy = screenY[i] - mouseY;
+            int steps = max(1, (abs(dx) + abs(dy)) / 20);
+            int doneX = 0, doneY = 0;
+            foreach (step; 1 .. steps + 1) {
+                int tdx = cast(int)round(cast(float)dx * step / steps);
+                int tdy = cast(int)round(cast(float)dy * step / steps);
+                int xrel = tdx - doneX, yrel = tdy - doneY;
+                doneX = tdx; doneY = tdy;
+                if (xrel == 0 && yrel == 0) continue;
+                mouseX += xrel; mouseY += yrel;
+                emit(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}`,
+                    t, mouseX, mouseY, xrel, yrel));
+                advance();
+            }
+        }
+
+        advance(100); // ensure render loop sees dragMode=Select before button release
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}`,
+            t, mouseX, mouseY));
+        advance(32);
+    }
+
+    // --- Add polygons to selection (Shift+LMB drag through face centroids) ---
+    void selectAddPolygons(size_t[] indices) {
+        if (indices.length == 0) return;
+
+        float[16] viewMat = cam.viewMatrix();
+        float[16] projMat = cam.projMatrix();
+
+        int[] screenX, screenY;
+        foreach (idx; indices) {
+            if (idx >= CUBE_FACES.length) {
+                stderr.writefln("Warning: face index %d out of range", idx);
+                continue;
+            }
+            Vec3 cen = Vec3(0, 0, 0);
+            foreach (vi; CUBE_FACES[idx]) {
+                cen.x += CUBE_VERTS[vi].x;
+                cen.y += CUBE_VERTS[vi].y;
+                cen.z += CUBE_VERTS[vi].z;
+            }
+            float n = cast(float)CUBE_FACES[idx].length;
+            cen = Vec3(cen.x/n, cen.y/n, cen.z/n);
+            float px, py;
+            if (!project(cen, viewMat, projMat, VP_X, VP_Y, VP_W, VP_H, px, py)) {
+                stderr.writefln("Warning: face %d centroid is behind camera, skipping", idx);
+                continue;
+            }
+            screenX ~= cast(int)round(px);
+            screenY ~= cast(int)round(py);
+        }
+        if (screenX.length == 0) return;
+
+        emit(format(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":1073742049,"scan":225,"mod":1,"repeat":0}`, t));
+        advance();
+        moveCursorTo(screenX[0], screenY[0], 1);
+
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":1}`,
+            t, mouseX, mouseY));
+        advance();
+
+        foreach (i; 1 .. screenX.length) {
+            int dx = screenX[i] - mouseX;
+            int dy = screenY[i] - mouseY;
+            int steps = max(1, (abs(dx) + abs(dy)) / 20);
+            int doneX = 0, doneY = 0;
+            foreach (step; 1 .. steps + 1) {
+                int tdx = cast(int)round(cast(float)dx * step / steps);
+                int tdy = cast(int)round(cast(float)dy * step / steps);
+                int xrel = tdx - doneX, yrel = tdy - doneY;
+                doneX = tdx; doneY = tdy;
+                if (xrel == 0 && yrel == 0) continue;
+                mouseX += xrel; mouseY += yrel;
+                emit(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":1}`,
+                    t, mouseX, mouseY, xrel, yrel));
+                advance();
+            }
+        }
+
+        advance(100); // ensure render loop sees dragMode=SelectAdd before button release
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":1}`,
+            t, mouseX, mouseY));
+        advance();
+        emit(format(`{"t":%.3f,"type":"SDL_KEYUP","sym":1073742049,"scan":225,"mod":0}`, t));
+        advance(32);
+    }
+
+    // --- Remove polygons from selection (Ctrl+LMB drag through face centroids) ---
+    void selectRemovePolygons(size_t[] indices) {
+        if (indices.length == 0) return;
+
+        float[16] viewMat = cam.viewMatrix();
+        float[16] projMat = cam.projMatrix();
+
+        int[] screenX, screenY;
+        foreach (idx; indices) {
+            if (idx >= CUBE_FACES.length) {
+                stderr.writefln("Warning: face index %d out of range", idx);
+                continue;
+            }
+            Vec3 cen = Vec3(0, 0, 0);
+            foreach (vi; CUBE_FACES[idx]) {
+                cen.x += CUBE_VERTS[vi].x;
+                cen.y += CUBE_VERTS[vi].y;
+                cen.z += CUBE_VERTS[vi].z;
+            }
+            float n = cast(float)CUBE_FACES[idx].length;
+            cen = Vec3(cen.x/n, cen.y/n, cen.z/n);
+            float px, py;
+            if (!project(cen, viewMat, projMat, VP_X, VP_Y, VP_W, VP_H, px, py)) {
+                stderr.writefln("Warning: face %d centroid is behind camera, skipping", idx);
+                continue;
+            }
+            screenX ~= cast(int)round(px);
+            screenY ~= cast(int)round(py);
+        }
+        if (screenX.length == 0) return;
+
+        emit(format(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":1073742048,"scan":224,"mod":64,"repeat":0}`, t));
+        advance();
+        moveCursorTo(screenX[0], screenY[0], 64);
+
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":64}`,
+            t, mouseX, mouseY));
+        advance();
+
+        foreach (i; 1 .. screenX.length) {
+            int dx = screenX[i] - mouseX;
+            int dy = screenY[i] - mouseY;
+            int steps = max(1, (abs(dx) + abs(dy)) / 20);
+            int doneX = 0, doneY = 0;
+            foreach (step; 1 .. steps + 1) {
+                int tdx = cast(int)round(cast(float)dx * step / steps);
+                int tdy = cast(int)round(cast(float)dy * step / steps);
+                int xrel = tdx - doneX, yrel = tdy - doneY;
+                doneX = tdx; doneY = tdy;
+                if (xrel == 0 && yrel == 0) continue;
+                mouseX += xrel; mouseY += yrel;
+                emit(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":64}`,
+                    t, mouseX, mouseY, xrel, yrel));
+                advance();
+            }
+        }
+
+        advance(100); // ensure render loop sees dragMode=SelectRemove before button release
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":64}`,
+            t, mouseX, mouseY));
+        advance();
+        emit(format(`{"t":%.3f,"type":"SDL_KEYUP","sym":1073742048,"scan":224,"mod":0}`, t));
+        advance(32);
+    }
+
+    // --- Switch edit mode (vertices/edges/polygons) ---
+    // Emits KEYDOWN+KEYUP for key 1/2/3.
+    void setMode(string mode) {
+        uint sym, scan;
+        if (mode == "edges")    { sym = 50; scan = 31; }
+        else if (mode == "polygons") { sym = 51; scan = 32; }
+        else                    { sym = 49; scan = 30; } // vertices
+        emit(format(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":0,"repeat":0}`, t, sym, scan));
+        advance();
+        emit(format(`{"t":%.3f,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":0}`, t, sym, scan));
+        advance(16);
+    }
+
+    // --- Select edges by index (LMB drag through edge midpoints) ---
+    // Clears existing selection, then selects specified edges.
+    void selectEdges(size_t[] indices) {
+        if (indices.length == 0) return;
+
+        float[16] viewMat = cam.viewMatrix();
+        float[16] projMat = cam.projMatrix();
+
+        int[] screenX, screenY;
+        foreach (idx; indices) {
+            if (idx >= CUBE_EDGES.length) {
+                stderr.writefln("Warning: edge index %d out of range (cube has %d edges)", idx, CUBE_EDGES.length);
+                continue;
+            }
+            Vec3 a = CUBE_VERTS[CUBE_EDGES[idx][0]];
+            Vec3 b = CUBE_VERTS[CUBE_EDGES[idx][1]];
+            Vec3 mid = Vec3((a.x+b.x)*0.5f, (a.y+b.y)*0.5f, (a.z+b.z)*0.5f);
+            float px, py;
+            if (!project(mid, viewMat, projMat, VP_X, VP_Y, VP_W, VP_H, px, py)) {
+                stderr.writefln("Warning: edge %d midpoint is behind camera, skipping", idx);
+                continue;
+            }
+            screenX ~= cast(int)round(px);
+            screenY ~= cast(int)round(py);
+        }
+        if (screenX.length == 0) return;
+
+        moveCursorTo(screenX[0], screenY[0]);
+
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+            t, mouseX, mouseY));
+        advance();
+
+        foreach (i; 1 .. screenX.length) {
+            int dx = screenX[i] - mouseX;
+            int dy = screenY[i] - mouseY;
+            int steps = max(1, (abs(dx) + abs(dy)) / 20);
+            int doneX = 0, doneY = 0;
+            foreach (step; 1 .. steps + 1) {
+                int tdx = cast(int)round(cast(float)dx * step / steps);
+                int tdy = cast(int)round(cast(float)dy * step / steps);
+                int xrel = tdx - doneX, yrel = tdy - doneY;
+                doneX = tdx; doneY = tdy;
+                if (xrel == 0 && yrel == 0) continue;
+                mouseX += xrel; mouseY += yrel;
+                emit(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}`,
+                    t, mouseX, mouseY, xrel, yrel));
+                advance();
+            }
+        }
+
+        advance(100); // ensure render loop sees dragMode=Select before button release
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}`,
+            t, mouseX, mouseY));
+        advance(32);
+    }
+
+    // --- Add edges to selection (Shift+LMB drag through edge midpoints) ---
+    void selectAddEdges(size_t[] indices) {
+        if (indices.length == 0) return;
+
+        float[16] viewMat = cam.viewMatrix();
+        float[16] projMat = cam.projMatrix();
+
+        int[] screenX, screenY;
+        foreach (idx; indices) {
+            if (idx >= CUBE_EDGES.length) {
+                stderr.writefln("Warning: edge index %d out of range", idx);
+                continue;
+            }
+            Vec3 a = CUBE_VERTS[CUBE_EDGES[idx][0]];
+            Vec3 b = CUBE_VERTS[CUBE_EDGES[idx][1]];
+            Vec3 mid = Vec3((a.x+b.x)*0.5f, (a.y+b.y)*0.5f, (a.z+b.z)*0.5f);
+            float px, py;
+            if (!project(mid, viewMat, projMat, VP_X, VP_Y, VP_W, VP_H, px, py)) {
+                stderr.writefln("Warning: edge %d midpoint is behind camera, skipping", idx);
+                continue;
+            }
+            screenX ~= cast(int)round(px);
+            screenY ~= cast(int)round(py);
+        }
+        if (screenX.length == 0) return;
+
+        emit(format(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":1073742049,"scan":225,"mod":1,"repeat":0}`, t));
+        advance();
+        moveCursorTo(screenX[0], screenY[0], 1);
+
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":1}`,
+            t, mouseX, mouseY));
+        advance();
+
+        foreach (i; 1 .. screenX.length) {
+            int dx = screenX[i] - mouseX;
+            int dy = screenY[i] - mouseY;
+            int steps = max(1, (abs(dx) + abs(dy)) / 20);
+            int doneX = 0, doneY = 0;
+            foreach (step; 1 .. steps + 1) {
+                int tdx = cast(int)round(cast(float)dx * step / steps);
+                int tdy = cast(int)round(cast(float)dy * step / steps);
+                int xrel = tdx - doneX, yrel = tdy - doneY;
+                doneX = tdx; doneY = tdy;
+                if (xrel == 0 && yrel == 0) continue;
+                mouseX += xrel; mouseY += yrel;
+                emit(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":1}`,
+                    t, mouseX, mouseY, xrel, yrel));
+                advance();
+            }
+        }
+
+        advance(100); // ensure render loop sees dragMode=SelectAdd before button release
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":1}`,
+            t, mouseX, mouseY));
+        advance();
+        emit(format(`{"t":%.3f,"type":"SDL_KEYUP","sym":1073742049,"scan":225,"mod":0}`, t));
+        advance(32);
+    }
+
+    // --- Remove edges from selection (Ctrl+LMB drag through edge midpoints) ---
+    void selectRemoveEdges(size_t[] indices) {
+        if (indices.length == 0) return;
+
+        float[16] viewMat = cam.viewMatrix();
+        float[16] projMat = cam.projMatrix();
+
+        int[] screenX, screenY;
+        foreach (idx; indices) {
+            if (idx >= CUBE_EDGES.length) {
+                stderr.writefln("Warning: edge index %d out of range", idx);
+                continue;
+            }
+            Vec3 a = CUBE_VERTS[CUBE_EDGES[idx][0]];
+            Vec3 b = CUBE_VERTS[CUBE_EDGES[idx][1]];
+            Vec3 mid = Vec3((a.x+b.x)*0.5f, (a.y+b.y)*0.5f, (a.z+b.z)*0.5f);
+            float px, py;
+            if (!project(mid, viewMat, projMat, VP_X, VP_Y, VP_W, VP_H, px, py)) {
+                stderr.writefln("Warning: edge %d midpoint is behind camera, skipping", idx);
+                continue;
+            }
+            screenX ~= cast(int)round(px);
+            screenY ~= cast(int)round(py);
+        }
+        if (screenX.length == 0) return;
+
+        emit(format(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":1073742048,"scan":224,"mod":64,"repeat":0}`, t));
+        advance();
+        moveCursorTo(screenX[0], screenY[0], 64);
+
+        emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":64}`,
+            t, mouseX, mouseY));
+        advance();
+
+        foreach (i; 1 .. screenX.length) {
+            int dx = screenX[i] - mouseX;
+            int dy = screenY[i] - mouseY;
+            int steps = max(1, (abs(dx) + abs(dy)) / 20);
+            int doneX = 0, doneY = 0;
+            foreach (step; 1 .. steps + 1) {
+                int tdx = cast(int)round(cast(float)dx * step / steps);
+                int tdy = cast(int)round(cast(float)dy * step / steps);
+                int xrel = tdx - doneX, yrel = tdy - doneY;
+                doneX = tdx; doneY = tdy;
+                if (xrel == 0 && yrel == 0) continue;
+                mouseX += xrel; mouseY += yrel;
+                emit(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":64}`,
+                    t, mouseX, mouseY, xrel, yrel));
+                advance();
+            }
+        }
+
+        advance(100); // ensure render loop sees dragMode=SelectRemove before button release
         emit(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":64}`,
             t, mouseX, mouseY));
         advance();
@@ -564,7 +967,10 @@ struct EventGen {
 
 immutable string[] ALL_OPS = [
     "orbit", "zoom", "pan",
-    "select-vertices", "select-add-vertices", "select-remove-vertices", "click",
+    "select-vertices", "select-add-vertices", "select-remove-vertices",
+    "select-edges", "select-add-edges", "select-remove-edges",
+    "select-polygons", "select-add-polygons", "select-remove-polygons",
+    "set-mode", "click",
 ];
 
 bool isOp(string s) {
@@ -644,6 +1050,65 @@ int main(string[] args) {
                     indices ~= args[i++].to!size_t;
                 if (indices.length == 0) { stderr.writeln("select-remove-vertices requires at least one index"); return 1; }
                 gen.selectRemoveVertices(indices);
+                break;
+            }
+
+            case "select-polygons": {
+                size_t[] indices;
+                while (i < args.length && !isOp(args[i]))
+                    indices ~= args[i++].to!size_t;
+                if (indices.length == 0) { stderr.writeln("select-polygons requires at least one index"); return 1; }
+                gen.selectPolygons(indices);
+                break;
+            }
+
+            case "select-add-polygons": {
+                size_t[] indices;
+                while (i < args.length && !isOp(args[i]))
+                    indices ~= args[i++].to!size_t;
+                if (indices.length == 0) { stderr.writeln("select-add-polygons requires at least one index"); return 1; }
+                gen.selectAddPolygons(indices);
+                break;
+            }
+
+            case "select-remove-polygons": {
+                size_t[] indices;
+                while (i < args.length && !isOp(args[i]))
+                    indices ~= args[i++].to!size_t;
+                if (indices.length == 0) { stderr.writeln("select-remove-polygons requires at least one index"); return 1; }
+                gen.selectRemovePolygons(indices);
+                break;
+            }
+
+            case "set-mode":
+                if (i + 1 > args.length) { stderr.writeln("set-mode requires: <vertices|edges|polygons>"); return 1; }
+                gen.setMode(args[i++]);
+                break;
+
+            case "select-edges": {
+                size_t[] indices;
+                while (i < args.length && !isOp(args[i]))
+                    indices ~= args[i++].to!size_t;
+                if (indices.length == 0) { stderr.writeln("select-edges requires at least one index"); return 1; }
+                gen.selectEdges(indices);
+                break;
+            }
+
+            case "select-add-edges": {
+                size_t[] indices;
+                while (i < args.length && !isOp(args[i]))
+                    indices ~= args[i++].to!size_t;
+                if (indices.length == 0) { stderr.writeln("select-add-edges requires at least one index"); return 1; }
+                gen.selectAddEdges(indices);
+                break;
+            }
+
+            case "select-remove-edges": {
+                size_t[] indices;
+                while (i < args.length && !isOp(args[i]))
+                    indices ~= args[i++].to!size_t;
+                if (indices.length == 0) { stderr.writeln("select-remove-edges requires at least one index"); return 1; }
+                gen.selectRemoveEdges(indices);
                 break;
             }
 
