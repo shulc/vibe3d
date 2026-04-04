@@ -335,39 +335,16 @@ void main(string[] args) {
     }
 
 
-    // Tools are created lazily on first activation and kept alive until exit.
-    MoveTool   moveTool   = null;
-    ScaleTool  scaleTool  = null;
-    RotateTool rotateTool = null;
-    Tool       activeTool = null;
+    Tool activeTool = null;
 
     scope(exit) {
-        if (moveTool)   moveTool.destroy();
-        if (scaleTool)  scaleTool.destroy();
-        if (rotateTool) rotateTool.destroy();
+        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
     }
 
     void setActiveTool(Tool t) {
-        if (activeTool) activeTool.deactivate();
+        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
         activeTool = t;
         if (activeTool) activeTool.activate();
-    }
-
-    MoveTool getMoveTool() {
-        if (!moveTool) {
-            moveTool = new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
-        }
-        return moveTool;
-    }
-    ScaleTool getScaleTool() {
-        if (!scaleTool)
-            scaleTool = new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
-        return scaleTool;
-    }
-    RotateTool getRotateTool() {
-        if (!rotateTool)
-            rotateTool = new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode);
-        return rotateTool;
     }
 
     int lastMouseX, lastMouseY;
@@ -442,13 +419,16 @@ void main(string[] args) {
                             else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
                             break;
                         case SDLK_w:
-                            setActiveTool(cast(MoveTool)activeTool ? null : getMoveTool());
+                            setActiveTool(cast(MoveTool)activeTool ? null
+                                : new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
                             break;
                         case SDLK_r:
-                            setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
+                            setActiveTool(cast(ScaleTool)activeTool ? null
+                                : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
                             break;
                         case SDLK_e:
-                            setActiveTool(cast(RotateTool)activeTool ? null : getRotateTool());
+                            setActiveTool(cast(RotateTool)activeTool ? null
+                                : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
                             break;
                         case SDLK_a: {
                             bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
@@ -735,12 +715,27 @@ void main(string[] args) {
 
             ImGui.Separator();
             ImGui.Text("Tools");
-            if (getMoveTool().drawImGui())
-                setActiveTool(cast(MoveTool)activeTool ? null : getMoveTool());
-            if (getRotateTool().drawImGui())
-                setActiveTool(cast(RotateTool)activeTool ? null : getRotateTool());
-            if (getScaleTool().drawImGui())
-                setActiveTool(cast(ScaleTool)activeTool ? null : getScaleTool());
+            {
+                bool on = cast(MoveTool)activeTool !is null;
+                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Move             W"))
+                    setActiveTool(on ? null : new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                if (on) ImGui.PopStyleColor();
+            }
+            {
+                bool on = cast(RotateTool)activeTool !is null;
+                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Rotate           E"))
+                    setActiveTool(on ? null : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                if (on) ImGui.PopStyleColor();
+            }
+            {
+                bool on = cast(ScaleTool)activeTool !is null;
+                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Scale            R"))
+                    setActiveTool(on ? null : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                if (on) ImGui.PopStyleColor();
+            }
 
             ImGui.Separator();
             ImGui.Text("Selection");

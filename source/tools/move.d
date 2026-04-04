@@ -76,7 +76,7 @@ public:
         vertexMoveCount = 0;
         centerCacheDirty = true;
         cachedCenter = Vec3(0, 0, 0);
-        lastSelectionHash = 0;
+        lastSelectionHash = uint.max;  // sentinel: force recompute on first update()
     }
 
     void destroy() {
@@ -97,7 +97,7 @@ public:
         needsGpuUpdate = false;
         vertexMoveCacheDirty = true;
         centerCacheDirty = true;
-        lastSelectionHash = 0;
+        lastSelectionHash = uint.max;  // sentinel: force recompute on first update()
         gpuOffset = Vec3(0, 0, 0);
     }
     override void deactivate() {
