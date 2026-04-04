@@ -7,3 +7,7 @@ vibe3d
 vibe3d-test-library
 *.o
 run.log
+vibe3d.pdb
+vibe3d.exe
+.dub/version.json
+install.cmd

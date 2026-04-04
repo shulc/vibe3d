@@ -383,6 +383,10 @@ void main(string[] args) {
                  event.type == SDL_MOUSEWHEEL))
                 continue;
 
+            if (io.WantTextInput &&
+                (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP))
+                continue;
+
             switch (event.type) {
                 case SDL_QUIT:
                     running = false;
@@ -861,6 +865,16 @@ void main(string[] args) {
             }
         }
         ImGui.End();
+
+        // ---- Tool Properties (floating) ----
+        if (activeTool !is null) {
+            ImGui.SetNextWindowPos(ImVec2(PANEL_W + 10, 10), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
+            if (ImGui.Begin("Tool Properties"))
+                activeTool.drawProperties();
+            ImGui.End();
+        }
+
         // ShowDemoWindow();
 
 

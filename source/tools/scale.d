@@ -33,6 +33,8 @@ private:
     int      dragAxis = -1;
     int      lastMX, lastMY;
     Viewport cachedVp;
+    Vec3     scaleAccum = Vec3(1, 1, 1);  // cumulative scale factor per axis since tool activated
+    Vec3     propScale = Vec3(1, 1, 1);  // persistent value shown in Tool Properties
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -49,7 +51,7 @@ public:
     void destroy() { handler.destroy(); }
 
     override string name() const { return "Scale"; }
-    override void activate()   { active = true;               }
+    override void activate()   { active = true; scaleAccum = Vec3(1, 1, 1); propScale = Vec3(1, 1, 1); }
     override void deactivate() { active = false; dragAxis = -1; }
 
     override void update() {
@@ -117,6 +119,7 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
         dragAxis = -1;
+        propScale = scaleAccum;
         return true;
     }
 
@@ -143,41 +146,11 @@ public:
         // Mouse delta projected onto screen-space axis → scale factor
         float delta      = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
         float scaleFactor = 1.0f + delta;
+        if (dragAxis == 0) scaleAccum.x *= scaleFactor;
+        else if (dragAxis == 1) scaleAccum.y *= scaleFactor;
+        else if (dragAxis == 2) scaleAccum.z *= scaleFactor;
 
-        // Collect vertices to scale
-        bool[] toScale = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool anySelected = false;
-            foreach (s; *selected) if (s) { anySelected = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toScale[i] = !anySelected || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool anySelected = false;
-            foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
-            if (!anySelected) { toScale[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
-                    toScale[edge[0]] = true; toScale[edge[1]] = true;
-                }
-        } else if (*editMode == EditMode.Polygons) {
-            bool anySelected = false;
-            foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
-            if (!anySelected) { toScale[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toScale[vi] = true;
-        }
-
-        // Scale each vertex along the axis relative to the gizmo center
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!toScale[i]) continue;
-            mesh.vertices[i].x += axis.x * (mesh.vertices[i].x - center.x) * (scaleFactor - 1.0f);
-            mesh.vertices[i].y += axis.y * (mesh.vertices[i].y - center.y) * (scaleFactor - 1.0f);
-            mesh.vertices[i].z += axis.z * (mesh.vertices[i].z - center.z) * (scaleFactor - 1.0f);
-        }
-
-        gpu.upload(*mesh);
-        update();
+        applyScale(dragAxis, scaleFactor);
 
         lastMX = e.x; lastMY = e.y;
         return true;
@@ -192,7 +165,60 @@ public:
         return clicked;
     }
 
+    override void drawProperties() {
+        float x = scaleAccum.x, y = scaleAccum.y, z = scaleAccum.z;
+        if (dragAxis >= 0) propScale = scaleAccum;
+        ImGui.DragFloat("X", &propScale.x, 0.01f, 0, 0, "%.4f");
+        if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+            if (scaleAccum.x != 0 && propScale.x != scaleAccum.x) { applyScale(0, propScale.x / scaleAccum.x); scaleAccum.x = propScale.x; }
+        }
+        ImGui.DragFloat("Y", &propScale.y, 0.01f, 0, 0, "%.4f");
+        if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+            if (scaleAccum.y != 0 && propScale.y != scaleAccum.y) { applyScale(1, propScale.y / scaleAccum.y); scaleAccum.y = propScale.y; }
+        }
+        ImGui.DragFloat("Z", &propScale.z, 0.01f, 0, 0, "%.4f");
+        if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+            if (scaleAccum.z != 0 && propScale.z != scaleAccum.z) { applyScale(2, propScale.z / scaleAccum.z); scaleAccum.z = propScale.z; }
+        }
+    }
+
 private:
+    void applyScale(int axisIdx, float factor) {
+        Vec3 axis = axisIdx == 0 ? Vec3(1,0,0)
+                  : axisIdx == 1 ? Vec3(0,1,0)
+                                 : Vec3(0,0,1);
+        Vec3 center = handler.center;
+        bool[] toScale = new bool[](mesh.vertices.length);
+        if (*editMode == EditMode.Vertices) {
+            bool any = false;
+            foreach (s; *selected) if (s) { any = true; break; }
+            foreach (i; 0 .. mesh.vertices.length)
+                toScale[i] = !any || (i < (*selected).length && (*selected)[i]);
+        } else if (*editMode == EditMode.Edges) {
+            bool any = false;
+            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            if (!any) { toScale[] = true; }
+            else foreach (i, edge; mesh.edges)
+                if (i < (*selectedEdges).length && (*selectedEdges)[i])
+                    { toScale[edge[0]] = true; toScale[edge[1]] = true; }
+        } else if (*editMode == EditMode.Polygons) {
+            bool any = false;
+            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            if (!any) { toScale[] = true; }
+            else foreach (i, face; mesh.faces)
+                if (i < (*selectedFaces).length && (*selectedFaces)[i])
+                    foreach (vi; face) toScale[vi] = true;
+        }
+        foreach (i; 0 .. mesh.vertices.length) {
+            if (!toScale[i]) continue;
+            mesh.vertices[i].x += axis.x * (mesh.vertices[i].x - center.x) * (factor - 1.0f);
+            mesh.vertices[i].y += axis.y * (mesh.vertices[i].y - center.y) * (factor - 1.0f);
+            mesh.vertices[i].z += axis.z * (mesh.vertices[i].z - center.z) * (factor - 1.0f);
+        }
+        gpu.upload(*mesh);
+        update();
+    }
+
     private int hitTestAxes(int mx, int my) {
         CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {

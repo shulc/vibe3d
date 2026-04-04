@@ -34,6 +34,8 @@ private:
     int      dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
     int      lastMX, lastMY;
     Viewport cachedVp;
+    Vec3     dragDelta;       // accumulated world-space offset since drag start
+    Vec3     propInput;       // value shown in Tool Properties (persisted for ImGui)
     bool     centerManual;   // true = update() must not recompute handler.center
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
@@ -99,6 +101,8 @@ public:
         centerCacheDirty = true;
         lastSelectionHash = uint.max;  // sentinel: force recompute on first update()
         gpuOffset = Vec3(0, 0, 0);
+        dragDelta = Vec3(0, 0, 0);
+        propInput = Vec3(0, 0, 0);
     }
     override void deactivate() {
         active = false;
@@ -188,6 +192,8 @@ public:
             }
 
             cachedCenter = count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+            dragDelta = Vec3(0, 0, 0);
+            propInput = Vec3(0, 0, 0);
         }
 
         // Only update centerPosition if not manually set and not dragging
@@ -236,6 +242,7 @@ public:
         }
 
         dragAxis = -1;
+        propInput = dragDelta;
         // Sync cachedCenter to the actual post-move gizmo position so update()
         // does not snap it back to the pre-move centroid on the next frame.
         cachedCenter = handler.center;
@@ -411,6 +418,7 @@ public:
         }
 
         // Update gizmo position immediately (always fast)
+        dragDelta = vec3Add(dragDelta, worldDelta);
         handler.setPosition(vec3Add(handler.center, worldDelta));
 
         // Apply delta to CPU vertices (fast: simple float additions, no GPU work)
@@ -437,6 +445,42 @@ public:
         if (active)
             ImGui.PopStyleColor();
         return clicked;
+    }
+
+    override void drawProperties() {
+        if (dragAxis >= 0) propInput = dragDelta;
+
+        ImGui.DragFloat("X", &propInput.x, 0.01f, 0, 0, "%.4f");
+        bool xActive = ImGui.IsItemActive();
+        bool xDone   = ImGui.IsItemDeactivatedAfterEdit();
+        ImGui.DragFloat("Y", &propInput.y, 0.01f, 0, 0, "%.4f");
+        bool yActive = ImGui.IsItemActive();
+        bool yDone   = ImGui.IsItemDeactivatedAfterEdit();
+        ImGui.DragFloat("Z", &propInput.z, 0.01f, 0, 0, "%.4f");
+        bool zActive = ImGui.IsItemActive();
+        bool zDone   = ImGui.IsItemDeactivatedAfterEdit();
+
+        if (xActive || yActive || zActive) {
+            Vec3 delta = Vec3(propInput.x - dragDelta.x,
+                              propInput.y - dragDelta.y,
+                              propInput.z - dragDelta.z);
+            if (delta.x != 0 || delta.y != 0 || delta.z != 0) {
+                dragDelta = vec3Add(dragDelta, delta);
+                buildVertexCacheIfNeeded();
+                applyDeltaImmediate(delta);
+                handler.setPosition(vec3Add(handler.center, delta));
+                cachedCenter = handler.center;
+                if (vertexMoveCount == cast(int)mesh.vertices.length)
+                    gpuOffset = vec3Add(gpuOffset, delta);
+                else
+                    needsGpuUpdate = true;
+            }
+        }
+
+        if (xDone || yDone || zDone) {
+            gpu.upload(*mesh);
+            gpuOffset = Vec3(0, 0, 0);
+        }
     }
 
 private:

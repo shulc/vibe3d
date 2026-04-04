@@ -38,6 +38,8 @@ private:
     float    cachedSize;      // gizmo radius in world units (from last draw)
     Vec3     dragStartDir;    // direction from center to click point in arc plane
     float    totalAngle = 0;  // accumulated rotation angle during drag (radians)
+    Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
+    Vec3     propDeg = Vec3(0, 0, 0);   // persistent value shown in Tool Properties (degrees)
 
 public:
     this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
@@ -54,7 +56,7 @@ public:
     void destroy() { handler.destroy(); }
 
     override string name() const { return "Rotate"; }
-    override void activate()   { active = true; }
+    override void activate()   { active = true; angleAccum = Vec3(0, 0, 0); propDeg = Vec3(0, 0, 0); }
     override void deactivate() { active = false; dragAxis = -1; }
 
     override void update() {
@@ -143,8 +145,15 @@ public:
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
-        dragAxis = -1;
+        if (dragAxis == 0) angleAccum.x += totalAngle;
+        else if (dragAxis == 1) angleAccum.y += totalAngle;
+        else if (dragAxis == 2) angleAccum.z += totalAngle;
+        dragAxis   = -1;
         totalAngle = 0;
+        import std.math : PI;
+        propDeg = Vec3(angleAccum.x * 180.0f / PI,
+                       angleAccum.y * 180.0f / PI,
+                       angleAccum.z * 180.0f / PI);
         return true;
     }
 
@@ -180,8 +189,52 @@ public:
         Vec3  cr    = cross(d1, d2);
         float angle = atan2(dot(cr, axisVec), dot(d1, d2));
         totalAngle += angle;
+        applyRotation(dragAxis, angle);
 
-        // Collect vertices to rotate.
+        lastMX = e.x; lastMY = e.y;
+        return true;
+    }
+
+    override bool drawImGui() {
+        if (active)
+            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+        bool clicked = ImGui.Button("Rotate           E");
+        if (active)
+            ImGui.PopStyleColor();
+        return clicked;
+    }
+
+    override void drawProperties() {
+        import std.math : PI;
+        if (dragAxis >= 0) {
+            propDeg.x = (angleAccum.x + (dragAxis == 0 ? totalAngle : 0)) * 180.0f / PI;
+            propDeg.y = (angleAccum.y + (dragAxis == 1 ? totalAngle : 0)) * 180.0f / PI;
+            propDeg.z = (angleAccum.z + (dragAxis == 2 ? totalAngle : 0)) * 180.0f / PI;
+        }
+        ImGui.DragFloat("X", &propDeg.x, 0.1f, 0, 0, "%.2f");
+        if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+            float d = propDeg.x * PI / 180.0f - angleAccum.x;
+            if (d != 0) { angleAccum.x = propDeg.x * PI / 180.0f; applyRotation(0, d); }
+        }
+        ImGui.DragFloat("Y", &propDeg.y, 0.1f, 0, 0, "%.2f");
+        if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+            float d = propDeg.y * PI / 180.0f - angleAccum.y;
+            if (d != 0) { angleAccum.y = propDeg.y * PI / 180.0f; applyRotation(1, d); }
+        }
+        ImGui.DragFloat("Z", &propDeg.z, 0.1f, 0, 0, "%.2f");
+        if (ImGui.IsItemActive() || ImGui.IsItemDeactivatedAfterEdit()) {
+            float d = propDeg.z * PI / 180.0f - angleAccum.z;
+            if (d != 0) { angleAccum.z = propDeg.z * PI / 180.0f; applyRotation(2, d); }
+        }
+    }
+
+private:
+    void applyRotation(int axisIdx, float angle) {
+        import std.math : cos, sin;
+        Vec3 axisVec = axisIdx == 0 ? Vec3(1,0,0)
+                     : axisIdx == 1 ? Vec3(0,1,0)
+                                    : Vec3(0,0,1);
+        Vec3 pivot = handler.center;
         bool[] toRotate = new bool[](mesh.vertices.length);
         if (*editMode == EditMode.Vertices) {
             bool any = false;
@@ -203,40 +256,22 @@ public:
                 if (i < (*selectedFaces).length && (*selectedFaces)[i])
                     foreach (vi; face) toRotate[vi] = true;
         }
-
-        // Rodrigues rotation around axisVec through center.
-        import std.math : cos, sin;
         float c = cos(angle), s = sin(angle);
-        Vec3  pivot = center;
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toRotate[i]) continue;
             Vec3 p = vec3Sub(mesh.vertices[i], pivot);
-            float d = p.x*axisVec.x + p.y*axisVec.y + p.z*axisVec.z;
-            Vec3  pcr = cross(axisVec, p);
+            float dd = p.x*axisVec.x + p.y*axisVec.y + p.z*axisVec.z;
+            Vec3 pcr = cross(axisVec, p);
             mesh.vertices[i] = vec3Add(pivot, Vec3(
-                p.x*c + pcr.x*s + axisVec.x*d*(1.0f - c),
-                p.y*c + pcr.y*s + axisVec.y*d*(1.0f - c),
-                p.z*c + pcr.z*s + axisVec.z*d*(1.0f - c),
+                p.x*c + pcr.x*s + axisVec.x*dd*(1.0f - c),
+                p.y*c + pcr.y*s + axisVec.y*dd*(1.0f - c),
+                p.z*c + pcr.z*s + axisVec.z*dd*(1.0f - c),
             ));
         }
-
         gpu.upload(*mesh);
         update();
-
-        lastMX = e.x; lastMY = e.y;
-        return true;
     }
 
-    override bool drawImGui() {
-        if (active)
-            ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-        bool clicked = ImGui.Button("Rotate           E");
-        if (active)
-            ImGui.PopStyleColor();
-        return clicked;
-    }
-
-private:
     void drawRotationSector(const ref Viewport vp) {
         import std.math : cos, sin, sqrt, abs, PI;
 

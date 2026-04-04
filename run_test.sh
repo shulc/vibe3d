@@ -25,10 +25,17 @@ while true; do
     sleep 1
 done
 
-for f in $(find $temp_dir -type f -perm +111); do
+# Run all compiled test binaries (skip .obj files produced on Windows)
+for f in $temp_dir/test_*; do
+    case "$f" in *.obj) continue;; esac
     $f
 done
 
-pkill vibe3d
+# Kill vibe3d cross-platform (pkill on macOS/Linux, taskkill on Windows)
+if command -v pkill &>/dev/null; then
+    pkill vibe3d
+else
+    cmd /c "taskkill /IM vibe3d.exe /F"
+fi
 
 rm -rf $temp_dir
