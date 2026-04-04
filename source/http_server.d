@@ -34,6 +34,8 @@ class HttpServer {
     private CameraDataProvider cameraDataProvider;
     private alias SelectionDataProvider = string delegate();
     private SelectionDataProvider selectionDataProvider;
+    private alias RecordedEventsProvider = string delegate();
+    private RecordedEventsProvider recordedEventsProvider;
     private alias ResetHandler = void delegate();
     private ResetHandler resetHandler;
     private shared bool resetPending = false;
@@ -76,6 +78,10 @@ class HttpServer {
 
     public void setSelectionDataProvider(SelectionDataProvider provider) {
         this.selectionDataProvider = provider;
+    }
+
+    public void setRecordedEventsProvider(RecordedEventsProvider provider) {
+        this.recordedEventsProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -322,6 +328,22 @@ class HttpServer {
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Camera data provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/recorded-events" && request.method == "GET") {
+            if (recordedEventsProvider !is null) {
+                string data = recordedEventsProvider();
+                if (data is null) {
+                    response.statusCode = 404;
+                    response.body = `{"error":"no recording available — press F1 to start, F2 to stop"}`;
+                } else {
+                    response.statusCode = 200;
+                    response.body = data;
+                    response.headers["Content-Type"] = "text/plain";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"recorded events provider not set"}`;
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/reset" && request.method == "POST") {

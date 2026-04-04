@@ -42,8 +42,6 @@ private:
     bool[]*  edgeCacheValid;    // Pointer to edgeCache.valid
     bool[]*  faceCacheValid;    // Pointer to faceCache.valid
     bool     needsGpuUpdate;  // Flag to delay GPU upload until drag ends
-    uint     lastGpuUpdateTime;  // Timestamp of last GPU update for throttling
-    uint     gpuUpdateInterval = 50; // ms between GPU updates (for smooth gizmo, delayed model)
     int[]    vertexIndicesToMove;  // Cached indices of vertices to move (avoid repeated lookup)
     int      vertexMoveCount;      // Cached count to avoid re-iterating toMove
 
@@ -203,6 +201,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
+        // Flush pending GPU upload once per frame (partial selection during drag).
+        if (needsGpuUpdate) {
+            flushPendingGpuUpdates();
+            needsGpuUpdate = false;
+        }
+
         // During drag: keep active handler yellow, block hover on others.
         // Indices: 0=arrowX 1=arrowY 2=arrowZ 3=centerBox 4=circleXY 5=circleYZ 6=circleXZ
         Handler[7] handlers = [
@@ -232,8 +236,10 @@ public:
         }
 
         dragAxis = -1;
-        // Force update() to recompute cachedCenter from moved vertices on next frame.
-        lastSelectionHash = 0;
+        // Sync cachedCenter to the actual post-move gizmo position so update()
+        // does not snap it back to the pre-move centroid on the next frame.
+        cachedCenter = handler.center;
+        lastSelectionHash = computeSelectionHash();
         return true;
     }
 
@@ -415,12 +421,8 @@ public:
             // translation matrix. Zero GPU uploads during drag — only one on mouseUp.
             gpuOffset = vec3Add(gpuOffset, worldDelta);
         } else {
-            // Partial selection: throttled GPU partial upload
-            uint currentTime = SDL_GetTicks();
-            if (currentTime - lastGpuUpdateTime >= gpuUpdateInterval) {
-                flushPendingGpuUpdates();
-                lastGpuUpdateTime = currentTime;
-            }
+            // Partial selection: defer GPU upload to draw() — once per frame.
+            needsGpuUpdate = true;
         }
 
         lastMX = e.x;

@@ -1,7 +1,7 @@
 import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz;
-import std.stdio : writeln, writefln, File;
+import std.stdio : writeln, writefln, File, stderr;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 
@@ -113,6 +113,9 @@ void main(string[] args) {
         evLog.open("events.log");
     }
     scope(exit) evLog.close();
+
+    EventLogger recLog;   // F1/F2 recording for MCP tests
+    scope(exit) recLog.close();
 
     EventPlayer evPlay;
     if (playbackMode && !evPlay.open(playbackFile)) return;
@@ -251,6 +254,11 @@ void main(string[] args) {
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
 
+    // Gizmo size: 9 levels linearly spaced from 0.1 to 1.0; default = middle (index 4).
+    enum float[9] gizmoLevels = [0.10f, 0.2125f, 0.325f, 0.4375f, 0.55f,
+                                  0.6625f, 0.775f, 0.8875f, 1.0f];
+    int gizmoLevelIdx = 4;  // middle
+
     // Set up HTTP server model data provider
     if (httpServer !is null) {
         // Convert mesh vertices to flat float array for HTTP server
@@ -304,6 +312,11 @@ void main(string[] args) {
             }
             buf ~= "]}";
             return buf.data;
+        });
+        httpServer.setRecordedEventsProvider(() {
+            import std.file : exists, readText;
+            if (!exists("recording.jsonl")) return null;
+            return readText("recording.jsonl");
         });
         httpServer.setResetHandler(() {
             mesh = makeCube();
@@ -379,7 +392,11 @@ void main(string[] args) {
 
         // ---- Events ----
         while (SDL_PollEvent(&event)) {
+            // Log to always-on log; log to recording only when active and not F1/F2.
             evLog.log(event);
+            bool isF1orF2 = event.type == SDL_KEYDOWN &&
+                (event.key.keysym.sym == SDLK_F1 || event.key.keysym.sym == SDLK_F2);
+            if (!isF1orF2) recLog.log(event);
             ImGui_ImplSDL2_ProcessEvent(&event);
 
             if (io.WantCaptureMouse &&
@@ -407,6 +424,15 @@ void main(string[] args) {
 
                 case SDL_KEYDOWN:
                     switch (event.key.keysym.sym) {
+                        case SDLK_F1:
+                            recLog.close();
+                            recLog.open("recording.jsonl");
+                            stderr.writeln("[REC] started → recording.jsonl");
+                            break;
+                        case SDLK_F2:
+                            recLog.close();
+                            stderr.writeln("[REC] stopped");
+                            break;
                         case SDLK_ESCAPE: running = false;              break;
                         case SDLK_1:      editMode = EditMode.Vertices;  break;
                         case SDLK_2:      editMode = EditMode.Edges;     break;
@@ -586,6 +612,19 @@ void main(string[] args) {
                                     edgeCache.resize(mesh.edges.length);
                                     edgeCache.invalidate();
                                 }
+                            }
+                            break;
+
+                        case SDLK_MINUS:
+                            if (gizmoLevelIdx > 0) {
+                                --gizmoLevelIdx;
+                                setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
+                            }
+                            break;
+                        case SDLK_EQUALS:
+                            if (gizmoLevelIdx < cast(int)gizmoLevels.length - 1) {
+                                ++gizmoLevelIdx;
+                                setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
                             }
                             break;
 

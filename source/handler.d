@@ -20,6 +20,16 @@ private struct ThickLineState {
 }
 private ThickLineState g_thickLine;
 
+// ---------------------------------------------------------------------------
+// Global gizmo scale — shared by MoveHandler, RotateHandler, ScaleHandler.
+// Change via setGizmoScreenFraction() at runtime.
+// ---------------------------------------------------------------------------
+
+private float g_gizmoScreenFraction = 0.55f;  // index 4 of 9 levels [0.1..1.0]
+
+void setGizmoScreenFraction(float f) { g_gizmoScreenFraction = f; }
+float getGizmoScreenFraction()       { return g_gizmoScreenFraction; }
+
 void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.prog      = prog;
     g_thickLine.locModel  = glGetUniformLocation(prog, "u_model");
@@ -493,7 +503,6 @@ private:
 
 class MoveHandler : Handler {
     Vec3  center;
-    float screenFraction = 0.15f;  // gizmo size as fraction of eye-to-center distance
     Arrow         arrowX, arrowY, arrowZ;
     BoxHandler    centerBox;
     CircleHandler circleXY, circleYZ, circleXZ;
@@ -541,7 +550,7 @@ class MoveHandler : Handler {
         float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
                         vp.view[10]*center.z + vp.view[14]);
         if (depth < 1e-4f) depth = 1e-4f;
-        float size = screenFraction * depth / vp.proj[5];
+        float size = g_gizmoScreenFraction * depth / vp.proj[5];
 
         arrowX.start = vec3Add(center, Vec3(size/6, 0     , 0));;
         arrowX.end   = vec3Add(center, Vec3(size  , 0.    , 0));
@@ -604,7 +613,6 @@ class MoveHandler : Handler {
 
 class RotateHandler : Handler {
     Vec3  center;
-    float screenFraction = 0.15f;
     float size;              // world-space radius, updated each frame in draw()
     SemicircleHandler arcX, arcY, arcZ;
 
@@ -625,7 +633,7 @@ class RotateHandler : Handler {
         float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
                         vp.view[10]*center.z + vp.view[14]);
         if (depth < 1e-4f) depth = 1e-4f;
-        size = screenFraction * depth / vp.proj[5];
+        size = g_gizmoScreenFraction * depth / vp.proj[5];
 
         arcX.center = center; arcX.normal = Vec3(1,0,0); arcX.radius = size;
         arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
@@ -948,7 +956,6 @@ private:
 
 class ScaleHandler : Handler {
     Vec3  center;
-    float screenFraction = 0.15f;
     CubicArrow arrowX, arrowY, arrowZ;
     Vec3 viewDir;
 
@@ -976,7 +983,7 @@ class ScaleHandler : Handler {
         float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
                         vp.view[10]*center.z + vp.view[14]);
         if (depth < 1e-4f) depth = 1e-4f;
-        float size = screenFraction * depth / vp.proj[5];
+        float size = g_gizmoScreenFraction * depth / vp.proj[5];
 
         arrowX.start = vec3Add(center, Vec3(size/10, 0,      0     ));
         arrowX.end   = vec3Add(center, Vec3(size,    0,      0     ));
