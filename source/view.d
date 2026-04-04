@@ -57,7 +57,7 @@ struct View {
         view   = lookAt(eye, focus, Vec3(0, 1, 0));
         proj   = perspectiveMatrix(45.0f * PI / 180.0f,
                                         cast(float)width / height, 0.001f, 100.0f);
-        return Viewport(view, proj, width, height, x, y);
+        return Viewport(view, proj, width, height, x, y, eye);
     }
 
     // ---------------------------------------------------------------------------

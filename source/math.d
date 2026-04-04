@@ -15,6 +15,7 @@ struct Viewport {
     int height;
     int x = 0;   // window-space left edge
     int y = 0;   // window-space top edge
+    Vec3 eye;
 }
 
 Vec3 vec3Add  (Vec3 a, Vec3 b)  { return Vec3(a.x+b.x, a.y+b.y, a.z+b.z); }

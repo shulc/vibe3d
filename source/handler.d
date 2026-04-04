@@ -532,15 +532,7 @@ class MoveHandler : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        // Extract eye position from view matrix (view = R*T, eye = -R^T * t).
-        const ref float[16] view = vp.view;
-        Vec3 eye = Vec3(
-            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
-            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
-            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
-        );
-
-        Vec3  d    = vec3Sub(eye, center);
+        Vec3  d    = vec3Sub(vp.eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         // Use view-space depth (projection onto camera axis) instead of Euclidean
         // distance. NDC size = world_size / depth * proj[5], so with
@@ -628,13 +620,7 @@ class RotateHandler : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        const ref float[16] view = vp.view;
-        Vec3 eye = Vec3(
-            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
-            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
-            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
-        );
-        Vec3  d    = vec3Sub(eye, center);
+        Vec3  d    = vec3Sub(vp.eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
                         vp.view[10]*center.z + vp.view[14]);
@@ -646,7 +632,7 @@ class RotateHandler : Handler {
         arcZ.center = center; arcZ.normal = Vec3(0,0,1); arcZ.radius = size;
 
         // Camera forward vector (world space): f = (-view[2], -view[6], -view[10])
-        Vec3 camFwd = Vec3(-view[2], -view[6], -view[10]);
+        Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
 
         // For each arc, the start direction is the intersection of the arc plane
         // and the viewport plane: cross(arcNormal, camFwd).
@@ -985,14 +971,7 @@ class ScaleHandler : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        const ref float[16] view = vp.view;
-        Vec3 eye = Vec3(
-            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
-            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
-            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
-        );
-
-        Vec3  d    = vec3Sub(eye, center);
+        Vec3  d    = vec3Sub(vp.eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
                         vp.view[10]*center.z + vp.view[14]);
