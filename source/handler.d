@@ -498,6 +498,119 @@ private:
 }
 
 // ---------------------------------------------------------------------------
+// FullCircleHandler : Handler — full 360° circle in an arbitrary plane.
+// Used for the camera-view-plane rotation ring on the RotateHandler.
+// ---------------------------------------------------------------------------
+
+class FullCircleHandler : Handler {
+    Vec3  center;
+    Vec3  normal;   // axis perpendicular to the circle plane (camera forward)
+    float radius;
+    Vec3  color;
+    float lineWidth = 3.0f;
+
+private:
+    GLuint arcVao, arcVbo;
+    enum SEGS = 64;
+
+public:
+    this(Vec3 center, Vec3 normal, float radius, Vec3 color) {
+        this.center = center;
+        this.normal = normal;
+        this.radius = radius;
+        this.color  = color;
+
+        // Unit full circle in XY plane: (cos a, sin a, 0) for a ∈ [0, 2π]
+        float[] arcData;
+        foreach (i; 0 .. SEGS + 1) {
+            float a = cast(float)i * 2.0f * PI / SEGS;
+            arcData ~= [cos(a), sin(a), 0.0f];
+        }
+
+        glGenVertexArrays(1, &arcVao); glGenBuffers(1, &arcVbo);
+        glBindVertexArray(arcVao);
+        glBindBuffer(GL_ARRAY_BUFFER, arcVbo);
+        glBufferData(GL_ARRAY_BUFFER, arcData.length * float.sizeof,
+                     arcData.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+    }
+
+    void destroy() {
+        glDeleteVertexArrays(1, &arcVao);
+        glDeleteBuffers(1, &arcVbo);
+    }
+
+    override void draw(const ref Shader shader, const ref Viewport vp)
+    {
+        if (!visible) return;
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        updateHover(vp, right, up);
+
+        Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
+
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
+        glDisable(GL_DEPTH_TEST);
+
+        auto model = modelMatrix(right, up, fwd,
+                                 Vec3(radius, radius, radius), center);
+        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, shader.program);
+
+        glEnable(GL_DEPTH_TEST);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
+
+    // Fresh hit test — does not rely on cached hover state.
+    bool hitTest(int mx, int my, const ref Viewport vp)
+    {
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+        return circleHitCheck(mx, my, vp, right, up);
+    }
+
+private:
+    bool circleHitCheck(int mx, int my, const ref Viewport vp, Vec3 right, Vec3 up)
+    {
+        float[2][SEGS + 1] pts;
+        bool[SEGS + 1]     valid;
+        foreach (i; 0 .. SEGS + 1) {
+            float a = cast(float)i * 2.0f * PI / SEGS;
+            Vec3 w = vec3Add(center,
+                        vec3Add(vec3Scale(right, cos(a) * radius),
+                                vec3Scale(up,    sin(a) * radius)));
+            float sx, sy, ndcZ;
+            valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
+            pts[i]   = [sx, sy];
+        }
+        foreach (i; 0 .. SEGS) {
+            if (!valid[i] || !valid[i + 1]) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   pts[i][0], pts[i][1],
+                                   pts[i+1][0], pts[i+1][1], t) < 8.0f)
+                return true;
+        }
+        return false;
+    }
+
+    void updateHover(const ref Viewport vp, Vec3 right, Vec3 up)
+    {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        hovered = circleHitCheck(mx, my, vp, right, up);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MoveHandler : Handler — three axis arrows (X=red, Y=green, Z=blue)
 // ---------------------------------------------------------------------------
 
@@ -615,15 +728,25 @@ class RotateHandler : Handler {
     Vec3  center;
     float size;              // world-space radius, updated each frame in draw()
     SemicircleHandler arcX, arcY, arcZ;
+    FullCircleHandler arcView;   // camera-view-plane ring (gray, interactive)
+    FullCircleHandler bgCircle;  // camera-view-plane ring (black 1px, decorative)
 
     this(Vec3 center) {
         this.center = center;
-        arcX = new SemicircleHandler(center, Vec3(1,0,0), 1.0f, Vec3(0.9f, 0.2f, 0.2f));
-        arcY = new SemicircleHandler(center, Vec3(0,1,0), 1.0f, Vec3(0.2f, 0.9f, 0.2f));
-        arcZ = new SemicircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.2f, 0.2f, 0.9f));
+        arcX     = new SemicircleHandler(center, Vec3(1,0,0), 1.0f, Vec3(0.9f, 0.2f, 0.2f));
+        arcY     = new SemicircleHandler(center, Vec3(0,1,0), 1.0f, Vec3(0.2f, 0.9f, 0.2f));
+        arcZ     = new SemicircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.2f, 0.2f, 0.9f));
+        arcView  = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.6f, 0.6f, 0.6f));
+        arcX.lineWidth    += 1.0f;
+        arcY.lineWidth    += 1.0f;
+        arcZ.lineWidth    += 1.0f;
+        arcView.lineWidth += 1.0f;
+        bgCircle = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.0f, 0.0f, 0.0f));
+        bgCircle.lineWidth = 2.0f;
+        bgCircle.setHoverBlocked(true);
     }
 
-    void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); }
+    void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); arcView.destroy(); bgCircle.destroy(); }
     void setPosition(Vec3 pos) { center = pos; }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -641,6 +764,16 @@ class RotateHandler : Handler {
 
         // Camera forward vector (world space): f = (-view[2], -view[6], -view[10])
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+
+        // Decorative black ring: same plane and radius as X/Y/Z arcs, drawn first (behind)
+        bgCircle.center = center;
+        bgCircle.normal = camFwd;
+        bgCircle.radius = size;
+
+        // View-plane ring: normal = camera forward, radius slightly larger than axis arcs
+        arcView.center = center;
+        arcView.normal = camFwd;
+        arcView.radius = size * 1.1f;
 
         // For each arc, the start direction is the intersection of the arc plane
         // and the viewport plane: cross(arcNormal, camFwd).
@@ -666,9 +799,11 @@ class RotateHandler : Handler {
         applyStart(arcY, Vec3(0,1,0));
         applyStart(arcZ, Vec3(0,0,1));
 
+        bgCircle.draw(shader, vp);
         arcX.draw(shader, vp);
         arcY.draw(shader, vp);
         arcZ.draw(shader, vp);
+        arcView.draw(shader, vp);
     }
 }
 
