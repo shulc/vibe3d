@@ -535,9 +535,9 @@ class MoveHandler : Handler {
         // Extract eye position from view matrix (view = R*T, eye = -R^T * t).
         const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
-            -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
-            -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
-            -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]),
+            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
+            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
+            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
         );
 
         Vec3  d    = vec3Sub(eye, center);
@@ -630,9 +630,9 @@ class RotateHandler : Handler {
     {
         const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
-            -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
-            -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
-            -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]),
+            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
+            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
+            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
         );
         Vec3  d    = vec3Sub(eye, center);
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
@@ -987,9 +987,9 @@ class ScaleHandler : Handler {
     {
         const ref float[16] view = vp.view;
         Vec3 eye = Vec3(
-            -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]),
-            -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]),
-            -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]),
+            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
+            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
+            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
         );
 
         Vec3  d    = vec3Sub(eye, center);

@@ -35,6 +35,8 @@ private:
     int      lastMX, lastMY;
     Viewport cachedVp;
     bool     centerManual;   // true = update() must not recompute handler.center
+    bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
+    int      constrainStartMX, constrainStartMY;
     bool[]   toMove;         // Cache for vertices to move (avoid repeated allocation)
     bool[]*  vertexCacheValid;  // Pointer to vertexCache.valid
     bool[]*  edgeCacheValid;    // Pointer to edgeCache.valid
@@ -221,6 +223,8 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
+        ctrlConstrain = false;
+
         // Commit GPU offset (whole-mesh) or flush partial selection — one final upload.
         if (vertexMoveCount > 0) {
             gpu.upload(*mesh);
@@ -260,9 +264,17 @@ public:
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         // Don't interfere with pan/rotate/zoom modifier combos.
         SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) return false;
+        bool ctrl = (mods & KMOD_CTRL) != 0;
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+
+        ctrlConstrain = false;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
+            // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
+            if (ctrl && dragAxis == 3) {
+                ctrlConstrain = true;
+                constrainStartMX = e.x; constrainStartMY = e.y;
+            }
             lastMX = e.x; lastMY = e.y;
             return true;
         }
@@ -288,11 +300,54 @@ public:
         centerManual = true;
         dragAxis = 3;
         lastMX = e.x; lastMY = e.y;
+        if (ctrl) {
+            ctrlConstrain = true;
+            constrainStartMX = e.x; constrainStartMY = e.y;
+        }
         return true;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active || dragAxis == -1) return false;
+
+        // Ctrl-constrain: wait for initial movement to determine which of the two
+        // in-plane axes to lock to, then switch dragAxis to that axis (0/1/2).
+        if (ctrlConstrain) {
+            int tdx = e.x - constrainStartMX;
+            int tdy = e.y - constrainStartMY;
+            if (tdx*tdx + tdy*tdy < 25) { lastMX = e.x; lastMY = e.y; return true; }
+
+            // Identify the two axes that lie in the most-facing plane.
+            import std.math : abs;
+            const ref float[16] vv = cachedVp.view;
+            float avx = abs(vv[2]), avy = abs(vv[6]), avz = abs(vv[10]);
+            int ax1, ax2;
+            if      (avx >= avy && avx >= avz) { ax1 = 1; ax2 = 2; } // normal X → Y,Z
+            else if (avy >= avx && avy >= avz) { ax1 = 0; ax2 = 2; } // normal Y → X,Z
+            else                               { ax1 = 0; ax2 = 1; } // normal Z → X,Y
+
+            // Project each candidate axis onto screen; pick best alignment.
+            float cx, cy, dummy;
+            float dmag = sqrt(cast(float)(tdx*tdx + tdy*tdy));
+            float ndx = tdx / dmag, ndy = tdy / dmag;
+            Vec3[3] axisEnds = [handler.arrowX.end, handler.arrowY.end, handler.arrowZ.end];
+            dragAxis = ax1; // fallback
+            if (projectToWindowFull(handler.center, cachedVp, cx, cy, dummy)) {
+                float bestDot = -1.0f;
+                foreach (a; [ax1, ax2]) {
+                    float ax, ay, andcZ;
+                    if (!projectToWindowFull(axisEnds[a], cachedVp, ax, ay, andcZ)) continue;
+                    float sdx = ax - cx, sdy = ay - cy;
+                    float slen = sqrt(sdx*sdx + sdy*sdy);
+                    if (slen < 1.0f) continue;
+                    float dot = abs(ndx * sdx/slen + ndy * sdy/slen);
+                    if (dot > bestDot) { bestDot = dot; dragAxis = a; }
+                }
+            }
+            ctrlConstrain = false;
+            lastMX = e.x; lastMY = e.y;
+            return true; // axis locked — movement starts on the next motion event
+        }
 
         Vec3 center = handler.center;
         Vec3 worldDelta = Vec3(0, 0, 0);
