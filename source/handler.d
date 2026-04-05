@@ -8,6 +8,9 @@ import math;
 import eventlog;
 import shader;
 
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
 // All handlers use this program to draw line geometry.
@@ -234,7 +237,9 @@ class CubicArrow : Handler {
     Vec3  start;
     Vec3  end;
     Vec3  color;
-    float lineWidth = 5.0f;
+    float lineWidth     = 5.0f;
+    float fixedCubeHalf = 0.0f;  // if > 0, overrides len*0.06 for the cube head
+    Vec3  fixedDir      = Vec3(0,0,0);  // if non-zero, use this direction instead of end-start
 
 private:
     GLuint shaftVao, shaftVbo;
@@ -298,15 +303,29 @@ public:
         Vec3 dir = vec3Sub(end, start);
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
         if (len < 1e-6f) return;
-        Vec3 fwd = Vec3(dir.x/len, dir.y/len, dir.z/len);
+        Vec3 fwd = (fixedDir.x != 0.0f || fixedDir.y != 0.0f || fixedDir.z != 0.0f)
+            ? fixedDir
+            : Vec3(dir.x/len, dir.y/len, dir.z/len);
 
         Vec3 tmp   = (abs(fwd.x) < 0.9f) ? Vec3(1,0,0) : Vec3(0,1,0);
         Vec3 right = normalize(cross(fwd, tmp));
         Vec3 up    = cross(right, fwd);
 
-        float cubeHalf  = len * 0.06f;       // half-extent of the cube
-        float shaftLen  = len - cubeHalf * 2;
+        float cubeHalf  = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
         Vec3  cubeCenter = vec3Sub(end, vec3Scale(fwd, cubeHalf));
+
+        // When end is behind start (dot < 0), shaft goes from cube's back face to start.
+        float dotFwd    = dir.x*fwd.x + dir.y*fwd.y + dir.z*fwd.z;
+        Vec3  shaftOrigin;
+        float shaftLen;
+        if (dotFwd >= 0.0f) {
+            shaftOrigin = start;
+            shaftLen    = len - cubeHalf * 2;
+        } else {
+            shaftOrigin = vec3Add(end, vec3Scale(fwd, cubeHalf));
+            shaftLen    = len - cubeHalf;
+        }
+        if (shaftLen < 0.0f) shaftLen = 0.0f;
 
         updateHover(vp);
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
@@ -317,7 +336,7 @@ public:
 
         // ---- Draw shaft (thick line) ----
         auto shaftModel = modelMatrix(right, up, fwd,
-                                      Vec3(1, 1, shaftLen), start);
+                                      Vec3(1, 1, shaftLen), shaftOrigin);
         drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
@@ -1086,25 +1105,127 @@ private:
 }
 
 // ---------------------------------------------------------------------------
+// CenterDiskGizmo : Handler — filled disc in the camera plane.
+// No OpenGL draw — rendered via ImGui overlay in ScaleTool.
+// Tracks hover (point-inside-disc hit test) and hover-blocked/forced state.
+// ---------------------------------------------------------------------------
+
+class CenterDiskGizmo : Handler {
+    Vec3  center;
+    Vec3  normal;  // camera forward, updated each frame
+    float radius;
+
+    override void draw(const ref Shader shader, const ref Viewport vp) {
+        if (!visible) return;
+        updateHover(vp);
+
+        enum SEGS = 32;
+        Vec3 fwd   = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 up    = cross(right, fwd);
+
+        ImVec2[SEGS] pts;
+        bool allValid = true;
+        foreach (i; 0 .. SEGS) {
+            float a = 2.0f * PI * i / SEGS;
+            Vec3 w = vec3Add(center,
+                        vec3Add(vec3Scale(right, cos(a) * radius),
+                                vec3Scale(up,    sin(a) * radius)));
+            float sx, sy, ndcZ;
+            if (!projectToWindowFull(w, vp, sx, sy, ndcZ)) { allValid = false; break; }
+            pts[i] = ImVec2(sx, sy);
+        }
+        if (!allValid) return;
+
+        uint fillCol    = hovered ? IM_COL32(255, 242,  38, 120) : IM_COL32(  0, 220, 220,  80);
+        uint outlineCol = hovered ? IM_COL32(255, 242,  38, 230) : IM_COL32(  0, 220, 220, 200);
+
+        ImDrawList* dl = ImGui.GetForegroundDrawList();
+        dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
+        dl.AddPolyline(pts.ptr, SEGS, outlineCol, ImDrawFlags.Closed, 1.5f);
+    }
+
+    bool hitTest(int mx, int my, const ref Viewport vp) {
+        return diskHitCheck(mx, my, vp);
+    }
+
+private:
+    bool diskHitCheck(int mx, int my, const ref Viewport vp) {
+        float cx, cy, ndcZ;
+        if (!projectToWindowFull(center, vp, cx, cy, ndcZ)) return false;
+        // Project one rim point to get screen-space radius.
+        Vec3 fwd = normalize(normal);
+        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+        Vec3 right = normalize(cross(fwd, tmp));
+        Vec3 rim   = vec3Add(center, vec3Scale(right, radius));
+        float rx, ry, rndcZ;
+        if (!projectToWindowFull(rim, vp, rx, ry, rndcZ)) return false;
+        float screenR = sqrt((rx - cx)*(rx - cx) + (ry - cy)*(ry - cy));
+        float dx = mx - cx, dy = my - cy;
+        return sqrt(dx*dx + dy*dy) <= screenR;
+    }
+
+    void updateHover(const ref Viewport vp) {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        hovered = diskHitCheck(mx, my, vp);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ScaleHandler : Handler — three axis CubicArrows (X=red, Y=green, Z=blue)
 // ---------------------------------------------------------------------------
 
 class ScaleHandler : Handler {
     Vec3  center;
-    CubicArrow arrowX, arrowY, arrowZ;
+    float size;   // world-space gizmo length, updated each frame in draw()
+    CubicArrow      arrowX, arrowY, arrowZ;
+    CubicArrow      scaleArrowX, scaleArrowY, scaleArrowZ;
+    CenterDiskGizmo centerDisk;
+    CircleHandler   circleXY, circleYZ, circleXZ;
     Vec3 viewDir;
+    private Vec3 scaleAccum = Vec3(1, 1, 1);
 
     this(Vec3 center) {
         this.center = center;
-        arrowX = new CubicArrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY = new CubicArrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ = new CubicArrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+        arrowX      = new CubicArrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY      = new CubicArrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ      = new CubicArrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+        scaleArrowX = new CubicArrow(center, vec3Add(center, Vec3(1,0,0)), Vec3(1.0f, 1.0f, 0.0f));
+        scaleArrowY = new CubicArrow(center, vec3Add(center, Vec3(0,1,0)), Vec3(1.0f, 1.0f, 0.0f));
+        scaleArrowZ = new CubicArrow(center, vec3Add(center, Vec3(0,0,1)), Vec3(1.0f, 1.0f, 0.0f));
+        scaleArrowX.fixedDir = Vec3(1, 0, 0);
+        scaleArrowY.fixedDir = Vec3(0, 1, 0);
+        scaleArrowZ.fixedDir = Vec3(0, 0, 1);
+        centerDisk  = new CenterDiskGizmo();
+        // XY plane (Z normal) — blue tint
+        circleXY = new CircleHandler(center, Vec3(0,0,1), 1.0f,
+                        Vec3(0.2f, 0.2f, 0.9f), Vec3(0.1f, 0.1f, 0.4f));
+        // YZ plane (X normal) — red tint
+        circleYZ = new CircleHandler(center, Vec3(1,0,0), 1.0f,
+                        Vec3(0.9f, 0.2f, 0.2f), Vec3(0.4f, 0.1f, 0.1f));
+        // XZ plane (Y normal) — green tint
+        circleXZ = new CircleHandler(center, Vec3(0,1,0), 1.0f,
+                        Vec3(0.2f, 0.9f, 0.2f), Vec3(0.1f, 0.4f, 0.1f));
     }
+
+    void setScaleAccum(Vec3 s) { scaleAccum = s; }
+
+    int activeDragAxis = -1;  // -1 = none, 0/1/2 = axis, 3 = uniform
 
     void destroy() {
         arrowX.destroy();
         arrowY.destroy();
         arrowZ.destroy();
+        scaleArrowX.destroy();
+        scaleArrowY.destroy();
+        scaleArrowZ.destroy();
+        circleXY.destroy();
+        circleYZ.destroy();
+        circleXZ.destroy();
     }
 
     void setPosition(Vec3 pos) {
@@ -1118,14 +1239,28 @@ class ScaleHandler : Handler {
         float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
                         vp.view[10]*center.z + vp.view[14]);
         if (depth < 1e-4f) depth = 1e-4f;
-        float size = g_gizmoScreenFraction * depth / vp.proj[5];
+        size = g_gizmoScreenFraction * depth / vp.proj[5];
 
-        arrowX.start = vec3Add(center, Vec3(size/10, 0,      0     ));
+        arrowX.start = vec3Add(center, Vec3(size/7, 0,      0     ));
         arrowX.end   = vec3Add(center, Vec3(size,    0,      0     ));
-        arrowY.start = vec3Add(center, Vec3(0,       size/10, 0    ));
+        arrowY.start = vec3Add(center, Vec3(0,       size/7, 0    ));
         arrowY.end   = vec3Add(center, Vec3(0,       size,    0    ));
-        arrowZ.start = vec3Add(center, Vec3(0,       0,      size/10));
+        arrowZ.start = vec3Add(center, Vec3(0,       0,      size/7));
         arrowZ.end   = vec3Add(center, Vec3(0,       0,      size  ));
+
+        float cubeFixed = size * 0.03f;
+        // Start matches the regular arrows (size/8 offset); frozen during drag.
+        if (activeDragAxis < 0) {
+            scaleArrowX.start = arrowX.start;
+            scaleArrowY.start = arrowY.start;
+            scaleArrowZ.start = arrowZ.start;
+        }
+        scaleArrowX.end           = vec3Add(center, Vec3(size * scaleAccum.x, 0, 0));
+        scaleArrowX.fixedCubeHalf = cubeFixed;
+        scaleArrowY.end           = vec3Add(center, Vec3(0, size * scaleAccum.y, 0));
+        scaleArrowY.fixedCubeHalf = cubeFixed;
+        scaleArrowZ.end           = vec3Add(center, Vec3(0, 0, size * scaleAccum.z));
+        scaleArrowZ.fixedCubeHalf = cubeFixed;
 
         viewDir = dist > 1e-6f
             ? Vec3(d.x / dist, d.y / dist, d.z / dist)
@@ -1135,9 +1270,27 @@ class ScaleHandler : Handler {
         arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
 
+        Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+        centerDisk.center = center;
+        centerDisk.normal = camFwd;
+        centerDisk.radius = size * 0.08f;
+
+        float circR      = size * 0.07f;
+        float cirOffset  = size * 0.75f;
+        circleXY.center = vec3Add(center, Vec3(cirOffset, cirOffset, 0));        circleXY.radius = circR;
+        circleYZ.center = vec3Add(center, Vec3(0,         cirOffset, cirOffset)); circleYZ.radius = circR;
+        circleXZ.center = vec3Add(center, Vec3(cirOffset, 0,         cirOffset)); circleXZ.radius = circR;
+
+        circleXY.draw(shader, vp);
+        circleYZ.draw(shader, vp);
+        circleXZ.draw(shader, vp);
         arrowX.draw(shader, vp);
         arrowY.draw(shader, vp);
         arrowZ.draw(shader, vp);
+        centerDisk.draw(shader, vp);
+        if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.draw(shader, vp);
+        if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.draw(shader, vp);
+        if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.draw(shader, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
