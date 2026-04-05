@@ -437,7 +437,7 @@ void main(string[] args) {
                             break;
                         case SDLK_b:
                             setActiveTool(cast(BoxTool)activeTool ? null
-                                : new BoxTool(&mesh, &gpu));
+                                : new BoxTool(&mesh, &gpu, litShader));
                             break;
                         case SDLK_a: {
                             bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
@@ -765,7 +765,7 @@ void main(string[] args) {
                 bool on = cast(BoxTool)activeTool !is null;
                 if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 if (ImGui.Button("Box              B"))
-                    setActiveTool(on ? null : new BoxTool(&mesh, &gpu));
+                    setActiveTool(on ? null : new BoxTool(&mesh, &gpu, litShader));
                 if (on) ImGui.PopStyleColor();
             }
 
