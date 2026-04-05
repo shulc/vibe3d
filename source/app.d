@@ -29,6 +29,7 @@ import viewcache;
 import tools.move;
 import tools.scale;
 import tools.rotate;
+import tools.box;
 
 
 // Read depth buffer at window position (px, py),
@@ -434,6 +435,10 @@ void main(string[] args) {
                             setActiveTool(cast(RotateTool)activeTool ? null
                                 : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
                             break;
+                        case SDLK_b:
+                            setActiveTool(cast(BoxTool)activeTool ? null
+                                : new BoxTool(&mesh, &gpu));
+                            break;
                         case SDLK_a: {
                             bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
                             if (shift) {
@@ -647,6 +652,22 @@ void main(string[] args) {
 
                 case SDL_MOUSEBUTTONUP:
                     if (activeTool) activeTool.onMouseButtonUp(event.button);
+                    // When BoxTool commits a new face, resize selection + caches.
+                    {
+                        BoxTool bt = cast(BoxTool)activeTool;
+                        if (bt !is null && bt.meshChanged) {
+                            bt.meshChanged = false;
+                            selected.length      = mesh.vertices.length;
+                            selectedEdges.length = mesh.edges.length;
+                            selectedFaces.length = mesh.faces.length;
+                            vertexCache.resize(mesh.vertices.length);
+                            vertexCache.invalidate();
+                            faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                            faceCache.invalidate();
+                            edgeCache.resize(mesh.edges.length);
+                            edgeCache.invalidate();
+                        }
+                    }
                     if (event.button.button == SDL_BUTTON_LEFT)
                         dragMode = DragMode.None;
                     break;
@@ -738,6 +759,13 @@ void main(string[] args) {
                 if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 if (ImGui.Button("Scale            R"))
                     setActiveTool(on ? null : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                if (on) ImGui.PopStyleColor();
+            }
+            {
+                bool on = cast(BoxTool)activeTool !is null;
+                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Box              B"))
+                    setActiveTool(on ? null : new BoxTool(&mesh, &gpu));
                 if (on) ImGui.PopStyleColor();
             }
 
