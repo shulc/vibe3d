@@ -67,7 +67,7 @@ private:
     int           edgeLastMX, edgeLastMY;
 
     BoxHandler[2] heightH;           // [0] = bottom face, [1] = top face
-    bool          heightHDragging = false;
+    int           heightHDragIdx  = -1;  // -1 = none, 0/1 = which handle is dragging
     bool          heightHHovered  = false;
 
 public:
@@ -100,8 +100,9 @@ public:
         meshChanged     = false;
         moverDragAxis   = -1;
         edgeDragIdx     = -1;
-        heightHDragging = false;
+        heightHDragIdx  = -1;
         heightHHovered  = false;
+        height          = 0.0f;
         previewGpu.init();
     }
 
@@ -138,18 +139,26 @@ public:
 
         // Height handles (BaseSet / HeightSet) — priority over mover centerBox
         // BaseSet: only bottom [0]; HeightSet: both [0] and [1]
-        bool heightHit = heightH[0].hitTest(e.x, e.y, cachedVp) ||
-                         (state == BoxState.HeightSet && heightH[1].hitTest(e.x, e.y, cachedVp));
-        if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHit) {
-            heightHDragging = true;
+        int heightHHitIdx = -1;
+        if (heightH[0].hitTest(e.x, e.y, cachedVp))
+            heightHHitIdx = 0;
+        else if (state == BoxState.HeightSet && heightH[1].hitTest(e.x, e.y, cachedVp))
+            heightHHitIdx = 1;
+        if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHHitIdx >= 0) {
+            heightHDragIdx = heightHHitIdx;
             setupHeightPlane();
             Vec3 hhit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
-                                  hpOrigin, hpn, hhit))
-                // Set heightDragStart so current height is preserved on drag start
-                heightDragStart = vec3Sub(hhit, vec3Scale(planeNormal, height));
-            else
-                heightDragStart = hpOrigin;
+            bool hhitOk = rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+                                            hpOrigin, hpn, hhit);
+            if (heightHHitIdx == 1) {
+                // Top handle: non-incremental drag; anchor so current height is preserved.
+                heightDragStart = hhitOk
+                    ? vec3Sub(hhit, vec3Scale(planeNormal, height))
+                    : hpOrigin;
+            } else {
+                // Bottom handle: incremental drag; anchor at the current hit point.
+                heightDragStart = hhitOk ? hhit : hpOrigin;
+            }
             if (state == BoxState.BaseSet) {
                 height = 0.0f;
                 state  = BoxState.DrawingHeight;
@@ -205,12 +214,15 @@ public:
 
         if (edgeDragIdx >= 0) { edgeDragIdx = -1; return true; }
         if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
-        if (heightHDragging && state == BoxState.HeightSet) { heightHDragging = false; return true; }
+        if (heightHDragIdx >= 0 && state == BoxState.HeightSet) { heightHDragIdx = -1; return true; }
 
         if (state == BoxState.DrawingBase) {
             computeBaseCorners();
             Vec3 d = vec3Sub(currentPoint, startPoint);
-            if (abs(dot(d, planeAxis1)) < 1e-5f || abs(dot(d, planeAxis2)) < 1e-5f) {
+            float dd1 = dot(d, planeAxis1);
+            float dd2 = dot(d, planeAxis2);
+            // Also rejects NaN (NaN comparisons are false, so !(dd1 > 1e-5f) catches NaN).
+            if (!(abs(dd1) > 1e-5f) || !(abs(dd2) > 1e-5f)) {
                 state = BoxState.Idle;
                 return true;
             }
@@ -221,7 +233,7 @@ public:
 
         if (state == BoxState.DrawingHeight) {
             state = BoxState.HeightSet;
-            heightHDragging = false;
+            heightHDragIdx = -1;
             return true;
         }
 
@@ -254,12 +266,26 @@ public:
         }
 
         // heightH drag in HeightSet (re-drag without changing state)
-        if (heightHDragging && state == BoxState.HeightSet) {
+        if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
             Vec3 hit;
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
             {
-                height = dot(vec3Sub(hit, heightDragStart), planeNormal);
+                if (heightHDragIdx == 1) {
+                    // Top handle: move top face, base stays.
+                    height = dot(vec3Sub(hit, heightDragStart), planeNormal);
+                } else {
+                    // Bottom handle: move base, top face stays.
+                    // Incremental delta so the top face world position is preserved.
+                    float delta = dot(vec3Sub(hit, heightDragStart), planeNormal);
+                    Vec3  d     = vec3Scale(planeNormal, delta);
+                    startPoint   = vec3Add(startPoint,   d);
+                    currentPoint = vec3Add(currentPoint, d);
+                    hpOrigin     = vec3Add(hpOrigin,     d);
+                    foreach (ref c; baseCorners) c = vec3Add(c, d);
+                    height      -= delta;
+                    heightDragStart = hit; // incremental: advance anchor each frame
+                }
                 uploadCuboid();
             }
             return true;
@@ -338,19 +364,25 @@ public:
             state == BoxState.HeightSet) {
             updateEdgeHandlers(vp);
             updateHeightHandler(vp);
+            bool moverBusy  = moverDragAxis >= 0;
             bool anyEdgeBusy = edgeDragIdx >= 0;
             foreach (i, h; edgeH) {
                 h.setForceHovered(edgeDragIdx == cast(int)i);
-                h.setHoverBlocked(anyEdgeBusy && edgeDragIdx != cast(int)i);
+                h.setHoverBlocked(moverBusy || (anyEdgeBusy && edgeDragIdx != cast(int)i));
                 h.draw(shader, vp);
             }
-            bool heightBlocked = anyEdgeBusy || edgeHoveredIdx >= 0;
-            heightH[0].setForceHovered(false);
-            heightH[0].setHoverBlocked(heightBlocked);
+            bool heightBlocked  = moverBusy || anyEdgeBusy || edgeHoveredIdx >= 0;
+            bool anyHeightBusy  = heightHDragIdx >= 0 || state == BoxState.DrawingHeight;
+            // In DrawingHeight the top face moves with the mouse — heightH[1] is active.
+            // In HeightSet it depends on which handle was grabbed.
+            bool h0Force = (state == BoxState.HeightSet) && (heightHDragIdx == 0);
+            bool h1Force = (state == BoxState.DrawingHeight) || ((state == BoxState.HeightSet) && (heightHDragIdx == 1));
+            heightH[0].setForceHovered(h0Force);
+            heightH[0].setHoverBlocked(heightBlocked || (anyHeightBusy && !h0Force));
             heightH[0].draw(shader, vp);
             if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) {
-                heightH[1].setForceHovered(false);
-                heightH[1].setHoverBlocked(heightBlocked);
+                heightH[1].setForceHovered(h1Force);
+                heightH[1].setHoverBlocked(heightBlocked || (anyHeightBusy && !h1Force));
                 heightH[1].draw(shader, vp);
             }
         }
@@ -363,7 +395,7 @@ public:
             mover.arrowY.setForceHovered(moverDragAxis == 1);
             mover.arrowZ.setForceHovered(moverDragAxis == 2);
             mover.centerBox.setForceHovered(moverDragAxis == 3);
-            bool edgePriority = edgeDragIdx >= 0 || edgeHoveredIdx >= 0 || heightHHovered;
+            bool edgePriority = edgeDragIdx >= 0 || edgeHoveredIdx >= 0 || heightHHovered || heightHDragIdx >= 0;
             mover.arrowX.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 0));
             mover.arrowY.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 1));
             mover.arrowZ.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 2));

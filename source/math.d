@@ -99,7 +99,7 @@ bool projectToWindow(Vec3 world, const ref Viewport vp,
                      out float px, out float py, out float ndcZ) {
     Vec4 v = mulMV(vp.view, Vec4(world.x, world.y, world.z, 1.0f));
     Vec4 c = mulMV(vp.proj, v);
-    if (c.w <= 0.0f) return false;
+    if (!(c.w > 0.0f)) return false; // rejects NaN and non-positive
     float nx = c.x / c.w;
     float ny = c.y / c.w;
     ndcZ     = c.z / c.w;
@@ -117,7 +117,7 @@ bool projectToWindowFull(Vec3 world, const ref Viewport vp,
                          out float px, out float py, out float ndcZ) {
     Vec4 v = mulMV(vp.view, Vec4(world.x, world.y, world.z, 1.0f));
     Vec4 c = mulMV(vp.proj, v);
-    if (c.w <= 0.0f) return false;
+    if (!(c.w > 0.0f)) return false; // rejects NaN and non-positive
     float nx = c.x / c.w;
     float ny = c.y / c.w;
     ndcZ = c.z / c.w;
