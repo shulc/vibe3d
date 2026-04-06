@@ -33,6 +33,15 @@ private float g_gizmoScreenFraction = 0.55f;  // index 4 of 9 levels [0.1..1.0]
 void setGizmoScreenFraction(float f) { g_gizmoScreenFraction = f; }
 float getGizmoScreenFraction()       { return g_gizmoScreenFraction; }
 
+// World-space size for a gizmo element at `pos` so that it occupies a constant
+// fraction of the screen height regardless of FOV or camera distance.
+// `scale` lets callers produce smaller/larger variants (e.g. 0.04 for box handles).
+float gizmoSize(Vec3 pos, const ref Viewport vp, float scale = 1.0f) {
+    float depth = -(vp.view[2]*pos.x + vp.view[6]*pos.y + vp.view[10]*pos.z + vp.view[14]);
+    if (depth < 1e-4f) depth = 1e-4f;
+    return g_gizmoScreenFraction * scale * depth / vp.proj[5];
+}
+
 void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.prog      = prog;
     g_thickLine.locModel  = glGetUniformLocation(prog, "u_model");
@@ -674,16 +683,7 @@ class MoveHandler : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        Vec3  d    = vec3Sub(vp.eye, center);
-        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        // Use view-space depth (projection onto camera axis) instead of Euclidean
-        // distance. NDC size = world_size / depth * proj[5], so with
-        // world_size = screenFraction * depth / proj[5] we get NDC = screenFraction —
-        // constant regardless of camera angle, FOV, or viewport dimensions.
-        float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
-                        vp.view[10]*center.z + vp.view[14]);
-        if (depth < 1e-4f) depth = 1e-4f;
-        float size = g_gizmoScreenFraction * depth / vp.proj[5];
+        float size = gizmoSize(center, vp);
 
         arrowX.start = vec3Add(center, Vec3(size/6, 0     , 0));;
         arrowX.end   = vec3Add(center, Vec3(size  , 0.    , 0));
@@ -703,6 +703,8 @@ class MoveHandler : Handler {
 
         // Hide arrows that point too directly toward/away from the camera.
         // viewDir is the normalised vector from eye to center.
+        Vec3  d    = vec3Sub(vp.eye, center);
+        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
             ? Vec3(d.x / dist, d.y / dist, d.z / dist)  // eye→center direction (d = eye-center, flip)
             : Vec3(0,0,1);
@@ -771,12 +773,7 @@ class RotateHandler : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        Vec3  d    = vec3Sub(vp.eye, center);
-        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
-                        vp.view[10]*center.z + vp.view[14]);
-        if (depth < 1e-4f) depth = 1e-4f;
-        size = g_gizmoScreenFraction * depth / vp.proj[5];
+        size = gizmoSize(center, vp);
 
         arcX.center = center; arcX.normal = Vec3(1,0,0); arcX.radius = size;
         arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
@@ -1236,12 +1233,7 @@ class ScaleHandler : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        Vec3  d    = vec3Sub(vp.eye, center);
-        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-        float depth = -(vp.view[2]*center.x + vp.view[6]*center.y +
-                        vp.view[10]*center.z + vp.view[14]);
-        if (depth < 1e-4f) depth = 1e-4f;
-        size = g_gizmoScreenFraction * depth / vp.proj[5];
+        size = gizmoSize(center, vp);
 
         arrowX.start = vec3Add(center, Vec3(size/7, 0,      0     ));
         arrowX.end   = vec3Add(center, Vec3(size,    0,      0     ));
@@ -1264,6 +1256,8 @@ class ScaleHandler : Handler {
         scaleArrowZ.end           = vec3Add(center, Vec3(0, 0, size * scaleAccum.z));
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
+        Vec3  d    = vec3Sub(vp.eye, center);
+        float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
             ? Vec3(d.x / dist, d.y / dist, d.z / dist)
             : Vec3(0,0,1);

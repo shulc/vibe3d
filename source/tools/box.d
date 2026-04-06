@@ -6,7 +6,7 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
-import handler : MoveHandler, BoxHandler, getGizmoScreenFraction;
+import handler : MoveHandler, BoxHandler, getGizmoScreenFraction, gizmoSize;
 import drag;
 import shader : Shader, LitShader;
 
@@ -109,7 +109,7 @@ public:
     override void deactivate() {
         if (state == BoxState.BaseSet)
             commitBase();
-        else if ((state == BoxState.DrawingHeight || state == BoxState.HeightSet) && abs(height) > 1e-5f)
+        else if (state >= BoxState.DrawingHeight && abs(height) > 1e-5f)
             commitCuboid();
         state = BoxState.Idle;
         previewGpu.destroy();
@@ -168,8 +168,7 @@ public:
         }
 
         // Move gizmo hit-test only once the base is finalized
-        if (state == BoxState.BaseSet || state == BoxState.DrawingHeight ||
-            state == BoxState.HeightSet) {
+        if (state >= BoxState.BaseSet) {
             int hit = moverHitTest(e.x, e.y);
             if (hit >= 0) {
                 moverDragAxis  = hit;
@@ -360,8 +359,7 @@ public:
         previewGpu.drawEdges(shader.locColor, -1, []);
 
         // Draw edge and height handles (BaseSet and above)
-        if (state == BoxState.BaseSet || state == BoxState.DrawingHeight ||
-            state == BoxState.HeightSet) {
+        if (state >= BoxState.BaseSet) {
             updateEdgeHandlers(vp);
             updateHeightHandler(vp);
             bool moverBusy  = moverDragAxis >= 0;
@@ -380,7 +378,7 @@ public:
             heightH[0].setForceHovered(h0Force);
             heightH[0].setHoverBlocked(heightBlocked || (anyHeightBusy && !h0Force));
             heightH[0].draw(shader, vp);
-            if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) {
+            if (state >= BoxState.DrawingHeight) {
                 heightH[1].setForceHovered(h1Force);
                 heightH[1].setHoverBlocked(heightBlocked || (anyHeightBusy && !h1Force));
                 heightH[1].draw(shader, vp);
@@ -388,8 +386,7 @@ public:
         }
 
         // Draw move gizmo only once the base is finalized
-        if (state == BoxState.BaseSet || state == BoxState.DrawingHeight ||
-            state == BoxState.HeightSet) {
+        if (state >= BoxState.BaseSet) {
             mover.setPosition(boxCenter());
             mover.arrowX.setForceHovered(moverDragAxis == 0);
             mover.arrowY.setForceHovered(moverDragAxis == 1);
@@ -419,7 +416,7 @@ public:
         // World-space size: axis1/axis2 cover the base; planeNormal covers height.
         Vec3 sizeVec = vec3Add(vec3Scale(planeAxis1, abs(d1)),
                                vec3Scale(planeAxis2, abs(d2)));
-        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+        if (state >= BoxState.DrawingHeight)
             sizeVec = vec3Add(sizeVec, vec3Scale(planeNormal, abs(height)));
 
         // ---- Center ----
@@ -433,8 +430,7 @@ public:
             Vec3 delta  = Vec3(cx - cen.x, cy - cen.y, cz - cen.z);
             startPoint   = vec3Add(startPoint,   delta);
             currentPoint = vec3Add(currentPoint, delta);
-            if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) uploadCuboid();
-            else                                                                uploadBase();
+            uploadPreview();
         }
 
         // ---- Size ----
@@ -467,8 +463,7 @@ public:
                                                vec3Scale(planeAxis2, d2 * 0.5f));
             currentPoint = vec3Add(vec3Add(cen, vec3Scale(planeAxis1, d1 * 0.5f)),
                                                vec3Scale(planeAxis2, d2 * 0.5f));
-            if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) uploadCuboid();
-            else                                                                uploadBase();
+            uploadPreview();
         }
     }
 
@@ -476,7 +471,7 @@ private:
     // Center of the current box shape (base centroid shifted by half height).
     Vec3 boxCenter() const {
         Vec3 c = baseCentroid();
-        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+        if (state >= BoxState.DrawingHeight)
             c = vec3Add(c, vec3Scale(planeNormal, height * 0.5f));
         return c;
     }
@@ -506,10 +501,7 @@ private:
         hpOrigin     = vec3Add(hpOrigin,     d);
         heightDragStart = vec3Add(heightDragStart, d);
         foreach (ref c; baseCorners) c = vec3Add(c, d);
-        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
-            uploadCuboid();
-        else
-            uploadBase();
+        uploadPreview();
     }
 
     // Color by world axis direction.
@@ -527,12 +519,8 @@ private:
         Vec3 top = vec3Add(bot, vec3Scale(planeNormal, height));
         Vec3[2] pts = [bot, top];
         foreach (i; 0 .. 2) {
-            Vec3 p = pts[i];
-            float depth = -(vp.view[2]*p.x + vp.view[6]*p.y + vp.view[10]*p.z + vp.view[14]);
-            if (depth < 1e-4f) depth = 1e-4f;
-            float s = getGizmoScreenFraction() * 0.04f * depth / vp.proj[5];
-            heightH[i].pos   = p;
-            heightH[i].size  = s;
+            heightH[i].pos   = pts[i];
+            heightH[i].size  = gizmoSize(pts[i], vp, 0.04f);
             heightH[i].color = axisColor(planeNormal);
         }
     }
@@ -541,36 +529,21 @@ private:
     // BaseSet            → midpoints of base edges.
     // DrawingHeight/HeightSet → centers of the 4 side faces (edge midpoints + half height).
     void updateEdgeHandlers(const ref Viewport vp) {
-        Vec3 halfH = (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+        Vec3 halfH = (state >= BoxState.DrawingHeight)
             ? vec3Scale(planeNormal, height * 0.5f)
             : Vec3(0, 0, 0);
 
-        Vec3[4] mids = [
-            vec3Add(Vec3((baseCorners[0].x + baseCorners[1].x) * 0.5f,
-                         (baseCorners[0].y + baseCorners[1].y) * 0.5f,
-                         (baseCorners[0].z + baseCorners[1].z) * 0.5f), halfH),
-            vec3Add(Vec3((baseCorners[1].x + baseCorners[2].x) * 0.5f,
-                         (baseCorners[1].y + baseCorners[2].y) * 0.5f,
-                         (baseCorners[1].z + baseCorners[2].z) * 0.5f), halfH),
-            vec3Add(Vec3((baseCorners[2].x + baseCorners[3].x) * 0.5f,
-                         (baseCorners[2].y + baseCorners[3].y) * 0.5f,
-                         (baseCorners[2].z + baseCorners[3].z) * 0.5f), halfH),
-            vec3Add(Vec3((baseCorners[3].x + baseCorners[0].x) * 0.5f,
-                         (baseCorners[3].y + baseCorners[0].y) * 0.5f,
-                         (baseCorners[3].z + baseCorners[0].z) * 0.5f), halfH),
-        ];
+        static immutable int[4][4] edgePairs = [[0,1],[1,2],[2,3],[3,0]];
+        Vec3[4] mids;
+        foreach (i, pair; edgePairs)
+            mids[i] = vec3Add(vec3Scale(vec3Add(baseCorners[pair[0]], baseCorners[pair[1]]), 0.5f), halfH);
 
         Vec3[4] colors = [axisColor(planeAxis2), axisColor(planeAxis1),
                           axisColor(planeAxis2), axisColor(planeAxis1)];
 
         foreach (i; 0 .. 4) {
-            Vec3 p = mids[i];
-            float depth = -(vp.view[2]*p.x + vp.view[6]*p.y +
-                            vp.view[10]*p.z + vp.view[14]);
-            if (depth < 1e-4f) depth = 1e-4f;
-            float s = getGizmoScreenFraction() * 0.04f * depth / vp.proj[5];
-            edgeH[i].pos   = p;
-            edgeH[i].size  = s;
+            edgeH[i].pos   = mids[i];
+            edgeH[i].size  = gizmoSize(mids[i], vp, 0.04f);
             edgeH[i].color = colors[i];
         }
     }
@@ -588,10 +561,7 @@ private:
             case 3: startPoint   = vec3Add(startPoint,   vec3Scale(planeAxis1, dot(delta, planeAxis1))); break;
             default: break;
         }
-        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
-            uploadCuboid();
-        else
-            uploadBase();
+        uploadPreview();
     }
 
     void choosePlane(const ref Viewport vp) {
@@ -623,18 +593,36 @@ private:
         baseCorners[3] = vec3Add(startPoint,     vec3Scale(planeAxis2, d2));
     }
 
-    void uploadBase() {
+    void buildBase(Mesh* m) {
         computeBaseCorners();
-        previewMesh.clear();
-        foreach (c; baseCorners) previewMesh.addVertex(c);
+        foreach (c; baseCorners) m.addVertex(c);
         Vec3 n     = cross(vec3Sub(baseCorners[1], baseCorners[0]),
                            vec3Sub(baseCorners[2], baseCorners[0]));
         Vec3 toEye = vec3Sub(cachedVp.eye, baseCentroid());
         if (dot(n, toEye) >= 0)
-            previewMesh.addFace([0u, 1u, 2u, 3u]);
+            m.addFace([0u, 1u, 2u, 3u]);
         else
-            previewMesh.addFace([0u, 3u, 2u, 1u]);
+            m.addFace([0u, 3u, 2u, 1u]);
+    }
+
+    void uploadBase() {
+        previewMesh.clear();
+        buildBase(&previewMesh);
         previewGpu.upload(previewMesh);
+    }
+
+    // Upload whichever preview is appropriate for the current state.
+    void uploadPreview() {
+        if (state >= BoxState.DrawingHeight)
+            uploadCuboid();
+        else
+            uploadBase();
+    }
+
+    void commitBase() {
+        buildBase(mesh);
+        gpu.upload(*mesh);
+        meshChanged = true;
     }
 
     Vec3 baseCentroid() const {
@@ -655,7 +643,7 @@ private:
             : planeAxis1;
     }
 
-    void uploadCuboid() {
+    void buildCuboid(Mesh* m) {
         Vec3 H = vec3Scale(planeNormal, height);
         Vec3[8] pts = [
             baseCorners[0], baseCorners[1], baseCorners[2], baseCorners[3],
@@ -674,9 +662,8 @@ private:
             3,7,4,0,   // side 3-0
         ];
 
-        previewMesh.clear();
         uint[8] vi;
-        foreach (i; 0..8) vi[i] = previewMesh.addVertex(pts[i]);
+        foreach (i; 0..8) vi[i] = m.addVertex(pts[i]);
 
         for (int fi = 0; fi < 6; fi++) {
             int b  = fi * 4;
@@ -687,64 +674,20 @@ private:
                 vec3Add(vec3Add(pts[i0], pts[i1]), vec3Add(pts[i2], pts[i3])),
                 0.25f);
             if (dot(n, vec3Sub(fc, cen)) > 0)
-                previewMesh.addFace([vi[i0], vi[i1], vi[i2], vi[i3]]);
+                m.addFace([vi[i0], vi[i1], vi[i2], vi[i3]]);
             else
-                previewMesh.addFace([vi[i0], vi[i3], vi[i2], vi[i1]]);
+                m.addFace([vi[i0], vi[i3], vi[i2], vi[i1]]);
         }
+    }
+
+    void uploadCuboid() {
+        previewMesh.clear();
+        buildCuboid(&previewMesh);
         previewGpu.upload(previewMesh);
     }
 
-    void commitBase() {
-        computeBaseCorners();
-        uint[4] vi;
-        foreach (i; 0 .. 4) vi[i] = mesh.addVertex(baseCorners[i]);
-        Vec3 n     = cross(vec3Sub(baseCorners[1], baseCorners[0]),
-                           vec3Sub(baseCorners[2], baseCorners[0]));
-        Vec3 toEye = vec3Sub(cachedVp.eye, baseCentroid());
-        if (dot(n, toEye) >= 0)
-            mesh.addFace([vi[0], vi[1], vi[2], vi[3]]);
-        else
-            mesh.addFace([vi[0], vi[3], vi[2], vi[1]]);
-        gpu.upload(*mesh);
-        meshChanged = true;
-    }
-
     void commitCuboid() {
-        Vec3 H = vec3Scale(planeNormal, height);
-        Vec3[8] pts = [
-            baseCorners[0], baseCorners[1], baseCorners[2], baseCorners[3],
-            vec3Add(baseCorners[0], H), vec3Add(baseCorners[1], H),
-            vec3Add(baseCorners[2], H), vec3Add(baseCorners[3], H),
-        ];
-        Vec3 cen = Vec3(0,0,0);
-        foreach (p; pts) cen = vec3Add(cen, vec3Scale(p, 0.125f));
-
-        static immutable int[24] faceIdx = [
-            0,1,2,3,   // bottom
-            4,7,6,5,   // top
-            0,4,5,1,   // side 0-1
-            1,5,6,2,   // side 1-2
-            2,6,7,3,   // side 2-3
-            3,7,4,0,   // side 3-0
-        ];
-
-        uint[8] vi;
-        foreach (i; 0..8) vi[i] = mesh.addVertex(pts[i]);
-
-        for (int fi = 0; fi < 6; fi++) {
-            int b  = fi * 4;
-            int i0 = faceIdx[b], i1 = faceIdx[b+1],
-                i2 = faceIdx[b+2], i3 = faceIdx[b+3];
-            Vec3 n  = cross(vec3Sub(pts[i1], pts[i0]), vec3Sub(pts[i2], pts[i0]));
-            Vec3 fc = vec3Scale(
-                vec3Add(vec3Add(pts[i0], pts[i1]), vec3Add(pts[i2], pts[i3])),
-                0.25f);
-            if (dot(n, vec3Sub(fc, cen)) > 0)
-                mesh.addFace([vi[i0], vi[i1], vi[i2], vi[i3]]);
-            else
-                mesh.addFace([vi[i0], vi[i3], vi[i2], vi[i1]]);
-        }
-
+        buildCuboid(mesh);
         gpu.upload(*mesh);
         meshChanged = true;
     }
