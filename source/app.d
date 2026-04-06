@@ -346,6 +346,23 @@ void main(string[] args) {
         if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
         activeTool = t;
         if (activeTool) activeTool.activate();
+        // deactivate() may have added geometry — sync selection arrays and caches.
+        if (selected.length < mesh.vertices.length)
+            selected.length = mesh.vertices.length;
+        if (selectedEdges.length < mesh.edges.length)
+            selectedEdges.length = mesh.edges.length;
+        if (selectedFaces.length < mesh.faces.length)
+            selectedFaces.length = mesh.faces.length;
+        if (vertexCache.valid.length != mesh.vertices.length) {
+            vertexCache.resize(mesh.vertices.length);
+            vertexCache.invalidate();
+            faceCache.resize(mesh.vertices.length, mesh.faces.length);
+            faceCache.invalidate();
+        }
+        if (edgeCache.valid.length != mesh.edges.length) {
+            edgeCache.resize(mesh.edges.length);
+            edgeCache.invalidate();
+        }
     }
 
     int lastMouseX, lastMouseY;

@@ -21,7 +21,7 @@ import std.math : abs, sqrt;
 //   RMB / deactivate                 : cancel current operation
 // ---------------------------------------------------------------------------
 
-private enum BoxState { Idle, DrawingBase, BaseSet, DrawingHeight }
+private enum BoxState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSet }
 
 class BoxTool : Tool {
 private:
@@ -70,6 +70,10 @@ public:
     }
 
     override void deactivate() {
+        if (state == BoxState.BaseSet)
+            commitBase();
+        else if ((state == BoxState.DrawingHeight || state == BoxState.HeightSet) && abs(height) > 1e-5f)
+            commitCuboid();
         state = BoxState.Idle;
         previewGpu.destroy();
     }
@@ -130,9 +134,7 @@ public:
         }
 
         if (state == BoxState.DrawingHeight) {
-            if (abs(height) > 1e-5f)
-                commitCuboid();
-            state = BoxState.Idle;
+            state = BoxState.HeightSet;
             return true;
         }
 
@@ -196,6 +198,72 @@ public:
 
     override bool drawImGui() { return false; }
 
+    override void drawProperties() {
+        if (state == BoxState.Idle) {
+            ImGui.TextDisabled("No active shape");
+            return;
+        }
+        computeBaseCorners();
+        Vec3  cen = baseCentroid();
+        float d1  = dot(vec3Sub(currentPoint, startPoint), planeAxis1);
+        float d2  = dot(vec3Sub(currentPoint, startPoint), planeAxis2);
+
+        // World-space size: axis1/axis2 cover the base; planeNormal covers height.
+        Vec3 sizeVec = vec3Add(vec3Scale(planeAxis1, abs(d1)),
+                               vec3Scale(planeAxis2, abs(d2)));
+        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+            sizeVec = vec3Add(sizeVec, vec3Scale(planeNormal, abs(height)));
+
+        // ---- Center ----
+        float cx = cen.x, cy = cen.y, cz = cen.z;
+        ImGui.Text("Center");
+        bool cChanged = false;
+        cChanged |= ImGui.DragFloat("X##cenX", &cx, 0.01f, 0, 0, "%.3f");
+        cChanged |= ImGui.DragFloat("Y##cenY", &cy, 0.01f, 0, 0, "%.3f");
+        cChanged |= ImGui.DragFloat("Z##cenZ", &cz, 0.01f, 0, 0, "%.3f");
+        if (cChanged) {
+            Vec3 delta  = Vec3(cx - cen.x, cy - cen.y, cz - cen.z);
+            startPoint   = vec3Add(startPoint,   delta);
+            currentPoint = vec3Add(currentPoint, delta);
+            if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) uploadCuboid();
+            else                                                                uploadBase();
+        }
+
+        // ---- Size ----
+        float sx = sizeVec.x, sy = sizeVec.y, sz = sizeVec.z;
+        ImGui.Text("Size");
+        bool sxC = ImGui.DragFloat("X##szX", &sx, 0.01f, 0.001f, float.max, "%.3f");
+        bool syC = ImGui.DragFloat("Y##szY", &sy, 0.01f, 0.001f, float.max, "%.3f");
+        bool szC = ImGui.DragFloat("Z##szZ", &sz, 0.01f, 0.001f, float.max, "%.3f");
+        if (sxC || syC || szC) {
+            float sign1 = d1 < 0 ? -1.0f : 1.0f;
+            float sign2 = d2 < 0 ? -1.0f : 1.0f;
+            float signH = height < 0 ? -1.0f : 1.0f;
+            if (sxC) {
+                if      (abs(planeAxis1.x)  > 0.5f) d1     = sx * sign1;
+                else if (abs(planeAxis2.x)  > 0.5f) d2     = sx * sign2;
+                else if (abs(planeNormal.x) > 0.5f) height = sx * signH;
+            }
+            if (syC) {
+                if      (abs(planeAxis1.y)  > 0.5f) d1     = sy * sign1;
+                else if (abs(planeAxis2.y)  > 0.5f) d2     = sy * sign2;
+                else if (abs(planeNormal.y) > 0.5f) height = sy * signH;
+            }
+            if (szC) {
+                if      (abs(planeAxis1.z)  > 0.5f) d1     = sz * sign1;
+                else if (abs(planeAxis2.z)  > 0.5f) d2     = sz * sign2;
+                else if (abs(planeNormal.z) > 0.5f) height = sz * signH;
+            }
+            // Reconstruct startPoint/currentPoint from center + new d1/d2.
+            startPoint   = vec3Sub(vec3Sub(cen, vec3Scale(planeAxis1, d1 * 0.5f)),
+                                               vec3Scale(planeAxis2, d2 * 0.5f));
+            currentPoint = vec3Add(vec3Add(cen, vec3Scale(planeAxis1, d1 * 0.5f)),
+                                               vec3Scale(planeAxis2, d2 * 0.5f));
+            if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) uploadCuboid();
+            else                                                                uploadBase();
+        }
+    }
+
 private:
     void choosePlane(const ref Viewport vp) {
         float avx = abs(vp.view[2]);
@@ -230,7 +298,13 @@ private:
         computeBaseCorners();
         previewMesh.clear();
         foreach (c; baseCorners) previewMesh.addVertex(c);
-        previewMesh.addFace([0u, 1u, 2u, 3u]);
+        Vec3 n     = cross(vec3Sub(baseCorners[1], baseCorners[0]),
+                           vec3Sub(baseCorners[2], baseCorners[0]));
+        Vec3 toEye = vec3Sub(cachedVp.eye, baseCentroid());
+        if (dot(n, toEye) >= 0)
+            previewMesh.addFace([0u, 1u, 2u, 3u]);
+        else
+            previewMesh.addFace([0u, 3u, 2u, 1u]);
         previewGpu.upload(previewMesh);
     }
 
@@ -289,6 +363,21 @@ private:
                 previewMesh.addFace([vi[i0], vi[i3], vi[i2], vi[i1]]);
         }
         previewGpu.upload(previewMesh);
+    }
+
+    void commitBase() {
+        computeBaseCorners();
+        uint[4] vi;
+        foreach (i; 0 .. 4) vi[i] = mesh.addVertex(baseCorners[i]);
+        Vec3 n     = cross(vec3Sub(baseCorners[1], baseCorners[0]),
+                           vec3Sub(baseCorners[2], baseCorners[0]));
+        Vec3 toEye = vec3Sub(cachedVp.eye, baseCentroid());
+        if (dot(n, toEye) >= 0)
+            mesh.addFace([vi[0], vi[1], vi[2], vi[3]]);
+        else
+            mesh.addFace([vi[0], vi[3], vi[2], vi[1]]);
+        gpu.upload(*mesh);
+        meshChanged = true;
     }
 
     void commitCuboid() {
