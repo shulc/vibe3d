@@ -429,301 +429,451 @@ void main(string[] args) {
 
     cameraView.setPos(PANEL_W, 0);
 
-
     bool running = true;
     SDL_Event event;
 
-    while (running) {
-        // ---- Playback: push due events before polling ----
-        if (playbackMode) evPlay.tick();
-        if (httpServer !is null) {
-            httpServer.tickEventPlayer();
-            httpServer.tickReset();
+    // -------------------------------------------------------------------------
+    // Nested helpers — closures over main's locals
+    // -------------------------------------------------------------------------
+
+    void handleWindowEvent(ref SDL_WindowEvent we) {
+        if (we.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+            if (playbackMode)
+                SDL_SetWindowSize(window, we.data1, we.data2);
+            SDL_GetWindowSize(window, &winW, &winH);
+            SDL_GL_GetDrawableSize(window, &fbW, &fbH);
+            glViewport(0, 0, fbW, fbH);
+            initThickLineProgram(thickLineProgram, fbW, fbH);
         }
+    }
 
-        // ---- Events ----
-        while (SDL_PollEvent(&event)) {
-            // Log to always-on log; log to recording only when active and not F1/F2.
-            evLog.log(event);
-            bool isF1orF2 = event.type == SDL_KEYDOWN &&
-                (event.key.keysym.sym == SDLK_F1 || event.key.keysym.sym == SDLK_F2);
-            if (!isF1orF2) recLog.log(event);
-            ImGui_ImplSDL2_ProcessEvent(&event);
-
-            if (io.WantCaptureMouse &&
-                (event.type == SDL_MOUSEBUTTONDOWN ||
-                 event.type == SDL_MOUSEBUTTONUP   ||
-                 event.type == SDL_MOUSEMOTION      ||
-                 event.type == SDL_MOUSEWHEEL))
-                continue;
-
-            if (io.WantTextInput &&
-                (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP))
-                continue;
-
-            switch (event.type) {
-                case SDL_QUIT:
-                    running = false;
-                    break;
-
-                case SDL_WINDOWEVENT:
-                    if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                        if (playbackMode)
-                            SDL_SetWindowSize(window, event.window.data1, event.window.data2);
-                        SDL_GetWindowSize(window, &winW, &winH);
-                        SDL_GL_GetDrawableSize(window, &fbW, &fbH);
-                        glViewport(0, 0, fbW, fbH);
-                        initThickLineProgram(thickLineProgram, fbW, fbH);
-                    }
-                    break;
-
-                case SDL_KEYDOWN:
-                    switch (event.key.keysym.sym) {
-                        case SDLK_F1:
-                            recLog.close();
-                            recLog.open("recording.jsonl");
-                            stderr.writeln("[REC] started → recording.jsonl");
-                            break;
-                        case SDLK_F2:
-                            recLog.close();
-                            stderr.writeln("[REC] stopped");
-                            break;
-                        case SDLK_ESCAPE: running = false;              break;
-                        case SDLK_1:      setActiveTool(null); editMode = EditMode.Vertices;  break;
-                        case SDLK_2:      setActiveTool(null); editMode = EditMode.Edges;     break;
-                        case SDLK_3:      setActiveTool(null); editMode = EditMode.Polygons;  break;
-                        case SDLK_SPACE:
-                            if (activeTool) setActiveTool(null);
-                            else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
-                            break;
-                        case SDLK_w:
-                            setActiveTool(cast(MoveTool)activeTool ? null
-                                : new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
-                            break;
-                        case SDLK_r:
-                            setActiveTool(cast(ScaleTool)activeTool ? null
-                                : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
-                            break;
-                        case SDLK_e:
-                            setActiveTool(cast(RotateTool)activeTool ? null
-                                : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
-                            break;
-                        case SDLK_b:
-                            setActiveTool(cast(BoxTool)activeTool ? null
-                                : new BoxTool(&mesh, &gpu, litShader));
-                            break;
-                        case SDLK_a: {
-                            bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
-                            if (shift) {
-                                // Frame selected (or whole mesh if nothing selected).
-                                Vec3[] verts;
-                                if (editMode == EditMode.Vertices) {
-                                    bool any = hasAnySelected(selected);
-                                    foreach (i; 0 .. mesh.vertices.length)
-                                        if (!any || selected[i]) verts ~= mesh.vertices[i];
-                                } else if (editMode == EditMode.Edges) {
-                                    bool any = hasAnySelected(selectedEdges);
-                                    bool[] vis = new bool[](mesh.vertices.length);
-                                    foreach (i; 0 .. mesh.edges.length) {
-                                        if (any && !selectedEdges[i]) continue;
-                                        foreach (vi; mesh.edges[i])
-                                            if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
-                                    }
-                                } else if (editMode == EditMode.Polygons) {
-                                    bool any = hasAnySelected(selectedFaces);
-                                    bool[] vis = new bool[](mesh.vertices.length);
-                                    foreach (i; 0 .. mesh.faces.length) {
-                                        if (any && !selectedFaces[i]) continue;
-                                        foreach (vi; mesh.faces[i])
-                                            if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
-                                    }
-                                }
-                                cameraView.frameToVertices(verts);
-                            } else {
-                                cameraView.frameToVertices(mesh.vertices);
-                            }
-                            break;
+    void handleKeyDown(ref SDL_KeyboardEvent kev) {
+        bool shift = (kev.keysym.mod & KMOD_SHIFT) != 0;
+        switch (kev.keysym.sym) {
+            case SDLK_F1:
+                recLog.close();
+                recLog.open("recording.jsonl");
+                stderr.writeln("[REC] started → recording.jsonl");
+                break;
+            case SDLK_F2:
+                recLog.close();
+                stderr.writeln("[REC] stopped");
+                break;
+            case SDLK_ESCAPE: running = false;                             break;
+            case SDLK_1:      setActiveTool(null); editMode = EditMode.Vertices; break;
+            case SDLK_2:      setActiveTool(null); editMode = EditMode.Edges;    break;
+            case SDLK_3:      setActiveTool(null); editMode = EditMode.Polygons; break;
+            case SDLK_SPACE:
+                if (activeTool) setActiveTool(null);
+                else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
+                break;
+            case SDLK_w:
+                setActiveTool(cast(MoveTool)activeTool ? null
+                    : new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                break;
+            case SDLK_r:
+                setActiveTool(cast(ScaleTool)activeTool ? null
+                    : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                break;
+            case SDLK_e:
+                setActiveTool(cast(RotateTool)activeTool ? null
+                    : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                break;
+            case SDLK_b:
+                setActiveTool(cast(BoxTool)activeTool ? null
+                    : new BoxTool(&mesh, &gpu, litShader));
+                break;
+            case SDLK_a: {
+                if (shift) {
+                    // Frame selected (or whole mesh if nothing selected).
+                    Vec3[] verts;
+                    if (editMode == EditMode.Vertices) {
+                        bool any = hasAnySelected(selected);
+                        foreach (i; 0 .. mesh.vertices.length)
+                            if (!any || selected[i]) verts ~= mesh.vertices[i];
+                    } else if (editMode == EditMode.Edges) {
+                        bool any = hasAnySelected(selectedEdges);
+                        bool[] vis = new bool[](mesh.vertices.length);
+                        foreach (i; 0 .. mesh.edges.length) {
+                            if (any && !selectedEdges[i]) continue;
+                            foreach (vi; mesh.edges[i])
+                                if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
                         }
-
-                        case SDLK_RIGHTBRACKET: {
-                            // Connected selection — add all vertices/edges/faces
-                            // adjacent to the current selection.
-                            if (editMode == EditMode.Vertices) {
-                                int[][] vertAdj = new int[][](mesh.vertices.length);
-                                foreach (edge; mesh.edges) {
-                                    vertAdj[edge[0]] ~= cast(int)edge[1];
-                                    vertAdj[edge[1]] ~= cast(int)edge[0];
-                                }
-                                bfsSelect(selected, vertAdj, hoveredVertex);
-                            } else if (editMode == EditMode.Edges) {
-                                // Build edge → adjacent edges map via shared vertices
-                                int[][] edgeAdj = new int[][](mesh.edges.length);
-                                int[][] vertEdges = new int[][](mesh.vertices.length);
-                                foreach (i; 0 .. mesh.edges.length) {
-                                    vertEdges[mesh.edges[i][0]] ~= cast(int)i;
-                                    vertEdges[mesh.edges[i][1]] ~= cast(int)i;
-                                }
-                                foreach (i; 0 .. mesh.edges.length) {
-                                    foreach (vi; mesh.edges[i])
-                                        foreach (ni; vertEdges[vi])
-                                            if (ni != cast(int)i) edgeAdj[i] ~= ni;
-                                }
-                                bfsSelect(selectedEdges, edgeAdj, hoveredEdge);
-                            } else if (editMode == EditMode.Polygons) {
-                                // Build face → adjacent faces map via shared edges
-                                uint[][ulong] edgeFaces;
-                                foreach (fi, face; mesh.faces) {
-                                    for (size_t j = 0; j < face.length; j++) {
-                                        uint a = face[j], b = face[(j + 1) % face.length];
-                                        edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
-                                    }
-                                }
-                                int[][] faceAdj = new int[][](mesh.faces.length);
-                                foreach (fi, face; mesh.faces) {
-                                    for (size_t j = 0; j < face.length; j++) {
-                                        uint a = face[j], b = face[(j + 1) % face.length];
-                                        foreach (adjFi; edgeFaces[edgeKey(a, b)]) {
-                                            if (adjFi != cast(uint)fi) faceAdj[fi] ~= cast(int)adjFi;
-                                        }
-                                    }
-                                }
-                                bfsSelect(selectedFaces, faceAdj, hoveredFace);
-                            }
-                            break;
-                        }
-
-                        case SDLK_d: {
-                                bool shift = (event.key.keysym.mod & KMOD_SHIFT) != 0;
-                                if (shift) {
-                                    setActiveTool(null);
-                                    mesh = catmullClark(mesh);
-                                    resetSelections(selected, selectedEdges, selectedFaces, mesh);
-                                    gpu.upload(mesh);
-                                    vertexCache.resize(mesh.vertices.length);
-                                    vertexCache.invalidate();
-                                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                                    faceCache.invalidate();
-                                    edgeCache.resize(mesh.edges.length);
-                                    edgeCache.invalidate();
-                                }
-                            }
-                            break;
-
-                        case SDLK_MINUS:
-                            if (gizmoLevelIdx > 0) {
-                                --gizmoLevelIdx;
-                                setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
-                            }
-                            break;
-                        case SDLK_EQUALS:
-                            if (gizmoLevelIdx < cast(int)gizmoLevels.length - 1) {
-                                ++gizmoLevelIdx;
-                                setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
-                            }
-                            break;
-
-                        default: break;
-                    }
-                    break;
-
-                case SDL_MOUSEBUTTONDOWN:
-                    if (activeTool && activeTool.onMouseButtonDown(event.button)) break;
-                    if (event.button.button == SDL_BUTTON_LEFT) {
-                        SDL_Keymod mods = SDL_GetModState();
-                        bool ctrl  = (mods & KMOD_CTRL)  != 0;
-                        bool alt   = (mods & KMOD_ALT)   != 0;
-                        bool shift = (mods & KMOD_SHIFT)  != 0;
-                        bool anyToolActive = activeTool !is null;
-
-                        if      (ctrl && alt)  dragMode = DragMode.Zoom;
-                        else if (alt && shift) dragMode = DragMode.Pan;
-                        else if (alt)          dragMode = DragMode.Orbit;
-                        else if (ctrl && !anyToolActive)  dragMode = DragMode.SelectRemove;
-                        else if (shift && !anyToolActive) dragMode = DragMode.SelectAdd;
-                        else if (!anyToolActive) {
-                            // No modifiers: clear selection for current mode
-                            if (editMode == EditMode.Vertices)
-                                selected[] = false;
-                            else if (editMode == EditMode.Edges)
-                                selectedEdges[] = false;
-                            else if (editMode == EditMode.Polygons)
-                                selectedFaces[] = false;
-                            dragMode = DragMode.Select;
-                        }
-                        lastMouseX = event.button.x;
-                        lastMouseY = event.button.y;
-                    }
-                    break;
-
-                case SDL_MOUSEBUTTONUP:
-                    if (activeTool) activeTool.onMouseButtonUp(event.button);
-                    // When BoxTool commits a new face, resize selection + caches.
-                    {
-                        BoxTool bt = cast(BoxTool)activeTool;
-                        if (bt !is null && bt.meshChanged) {
-                            bt.meshChanged = false;
-                            selected.length      = mesh.vertices.length;
-                            selectedEdges.length = mesh.edges.length;
-                            selectedFaces.length = mesh.faces.length;
-                            vertexCache.resize(mesh.vertices.length);
-                            vertexCache.invalidate();
-                            faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                            faceCache.invalidate();
-                            edgeCache.resize(mesh.edges.length);
-                            edgeCache.invalidate();
+                    } else if (editMode == EditMode.Polygons) {
+                        bool any = hasAnySelected(selectedFaces);
+                        bool[] vis = new bool[](mesh.vertices.length);
+                        foreach (i; 0 .. mesh.faces.length) {
+                            if (any && !selectedFaces[i]) continue;
+                            foreach (vi; mesh.faces[i])
+                                if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
                         }
                     }
-                    if (event.button.button == SDL_BUTTON_LEFT)
-                        dragMode = DragMode.None;
-                    break;
-
-                case SDL_MOUSEMOTION:
-                    if (activeTool && activeTool.onMouseMotion(event.motion)) break;
-                    if (dragMode == DragMode.None) break;
-                    {
-                        SDL_Keymod mods = SDL_GetModState();
-                        bool ctrl  = (mods & KMOD_CTRL)  != 0;
-                        bool alt   = (mods & KMOD_ALT)   != 0;
-                        bool shift = (mods & KMOD_SHIFT)  != 0;
-
-                        bool modOk = (dragMode == DragMode.Zoom)      ? (ctrl && alt)
-                                   : (dragMode == DragMode.Pan)       ? (alt && shift)
-                                   : (dragMode == DragMode.Orbit)     ? (alt && !shift)
-                                   : (dragMode == DragMode.Select    ||
-                                      dragMode == DragMode.SelectAdd  ||
-                                      dragMode == DragMode.SelectRemove) ? true
-                                   : false;
-                        if (!modOk) { dragMode = DragMode.None; break; }
-
-                        int dx = event.motion.x - lastMouseX;
-                        int dy = event.motion.y - lastMouseY;
-
-                        if (dragMode == DragMode.Orbit) {
-                            cameraView.orbit(dx, dy);
-                        } else if (dragMode == DragMode.Zoom) {
-                            cameraView.zoom(dx);
-                        } else if (dragMode == DragMode.Pan) {
-                            cameraView.pan(dx, dy);
-                        }
-                        lastMouseX = event.motion.x;
-                        lastMouseY = event.motion.y;
+                    cameraView.frameToVertices(verts);
+                } else {
+                    cameraView.frameToVertices(mesh.vertices);
+                }
+                break;
+            }
+            case SDLK_RIGHTBRACKET: {
+                // Connected selection — flood-fill from current selection / hovered element.
+                if (editMode == EditMode.Vertices) {
+                    int[][] vertAdj = new int[][](mesh.vertices.length);
+                    foreach (edge; mesh.edges) {
+                        vertAdj[edge[0]] ~= cast(int)edge[1];
+                        vertAdj[edge[1]] ~= cast(int)edge[0];
                     }
-                    break;
+                    bfsSelect(selected, vertAdj, hoveredVertex);
+                } else if (editMode == EditMode.Edges) {
+                    // Build edge → adjacent edges map via shared vertices
+                    int[][] edgeAdj = new int[][](mesh.edges.length);
+                    int[][] vertEdges = new int[][](mesh.vertices.length);
+                    foreach (i; 0 .. mesh.edges.length) {
+                        vertEdges[mesh.edges[i][0]] ~= cast(int)i;
+                        vertEdges[mesh.edges[i][1]] ~= cast(int)i;
+                    }
+                    foreach (i; 0 .. mesh.edges.length) {
+                        foreach (vi; mesh.edges[i])
+                            foreach (ni; vertEdges[vi])
+                                if (ni != cast(int)i) edgeAdj[i] ~= ni;
+                    }
+                    bfsSelect(selectedEdges, edgeAdj, hoveredEdge);
+                } else if (editMode == EditMode.Polygons) {
+                    // Build face → adjacent faces map via shared edges
+                    uint[][ulong] edgeFaces;
+                    foreach (fi, face; mesh.faces) {
+                        for (size_t j = 0; j < face.length; j++) {
+                            uint a = face[j], b = face[(j + 1) % face.length];
+                            edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
+                        }
+                    }
+                    int[][] faceAdj = new int[][](mesh.faces.length);
+                    foreach (fi, face; mesh.faces) {
+                        for (size_t j = 0; j < face.length; j++) {
+                            uint a = face[j], b = face[(j + 1) % face.length];
+                            foreach (adjFi; edgeFaces[edgeKey(a, b)]) {
+                                if (adjFi != cast(uint)fi) faceAdj[fi] ~= cast(int)adjFi;
+                            }
+                        }
+                    }
+                    bfsSelect(selectedFaces, faceAdj, hoveredFace);
+                }
+                break;
+            }
+            case SDLK_d: {
+                if (shift) {
+                    setActiveTool(null);
+                    mesh = catmullClark(mesh);
+                    resetSelections(selected, selectedEdges, selectedFaces, mesh);
+                    gpu.upload(mesh);
+                    vertexCache.resize(mesh.vertices.length);
+                    vertexCache.invalidate();
+                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                    faceCache.invalidate();
+                    edgeCache.resize(mesh.edges.length);
+                    edgeCache.invalidate();
+                }
+                break;
+            }
+            case SDLK_MINUS:
+                if (gizmoLevelIdx > 0) {
+                    --gizmoLevelIdx;
+                    setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
+                }
+                break;
+            case SDLK_EQUALS:
+                if (gizmoLevelIdx < cast(int)gizmoLevels.length - 1) {
+                    ++gizmoLevelIdx;
+                    setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
+                }
+                break;
+            default: break;
+        }
+    }
 
-                default: break;
+    void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
+        if (activeTool && activeTool.onMouseButtonDown(btn)) return;
+        if (btn.button == SDL_BUTTON_LEFT) {
+            SDL_Keymod mods = SDL_GetModState();
+            bool ctrl  = (mods & KMOD_CTRL)  != 0;
+            bool alt   = (mods & KMOD_ALT)   != 0;
+            bool shift = (mods & KMOD_SHIFT)  != 0;
+            bool anyToolActive = activeTool !is null;
+
+            if      (ctrl && alt)  dragMode = DragMode.Zoom;
+            else if (alt && shift) dragMode = DragMode.Pan;
+            else if (alt)          dragMode = DragMode.Orbit;
+            else if (ctrl && !anyToolActive)  dragMode = DragMode.SelectRemove;
+            else if (shift && !anyToolActive) dragMode = DragMode.SelectAdd;
+            else if (!anyToolActive) {
+                // No modifiers: clear selection for current mode
+                if (editMode == EditMode.Vertices)
+                    selected[] = false;
+                else if (editMode == EditMode.Edges)
+                    selectedEdges[] = false;
+                else if (editMode == EditMode.Polygons)
+                    selectedFaces[] = false;
+                dragMode = DragMode.Select;
+            }
+            lastMouseX = btn.x;
+            lastMouseY = btn.y;
+        }
+    }
+
+    void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
+        if (activeTool) activeTool.onMouseButtonUp(btn);
+        // When BoxTool commits a new face, resize selection + caches.
+        {
+            BoxTool bt = cast(BoxTool)activeTool;
+            if (bt !is null && bt.meshChanged) {
+                bt.meshChanged = false;
+                selected.length      = mesh.vertices.length;
+                selectedEdges.length = mesh.edges.length;
+                selectedFaces.length = mesh.faces.length;
+                vertexCache.resize(mesh.vertices.length);
+                vertexCache.invalidate();
+                faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                faceCache.invalidate();
+                edgeCache.resize(mesh.edges.length);
+                edgeCache.invalidate();
             }
         }
+        if (btn.button == SDL_BUTTON_LEFT)
+            dragMode = DragMode.None;
+    }
 
+    void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
+        if (activeTool && activeTool.onMouseMotion(mot)) return;
+        if (dragMode == DragMode.None) return;
 
-        cameraView.setSize(winW - PANEL_W, winH - STATUS_H);
+        SDL_Keymod mods = SDL_GetModState();
+        bool ctrl  = (mods & KMOD_CTRL)  != 0;
+        bool alt   = (mods & KMOD_ALT)   != 0;
+        bool shift = (mods & KMOD_SHIFT)  != 0;
 
-        Viewport vp = cameraView.viewport();
+        bool modOk = (dragMode == DragMode.Zoom)      ? (ctrl && alt)
+                   : (dragMode == DragMode.Pan)       ? (alt && shift)
+                   : (dragMode == DragMode.Orbit)     ? (alt && !shift)
+                   : (dragMode == DragMode.Select    ||
+                      dragMode == DragMode.SelectAdd  ||
+                      dragMode == DragMode.SelectRemove) ? true
+                   : false;
+        if (!modOk) { dragMode = DragMode.None; return; }
 
-        // ---- ImGui ----
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
-        ImGui.NewFrame();
+        int dx = mot.x - lastMouseX;
+        int dy = mot.y - lastMouseY;
 
+        if      (dragMode == DragMode.Orbit) cameraView.orbit(dx, dy);
+        else if (dragMode == DragMode.Zoom)  cameraView.zoom(dx);
+        else if (dragMode == DragMode.Pan)   cameraView.pan(dx, dy);
+
+        lastMouseX = mot.x;
+        lastMouseY = mot.y;
+    }
+
+    void pickVertices(ref Viewport vp, bool doingCameraDrag) {
+        hoveredVertex = -1;
+        if (io.WantCaptureMouse || doingCameraDrag ||
+            editMode != EditMode.Vertices || activeTool !is null)
+            return;
+
+        int mx, my;
+        queryMouse(mx, my);
+        float closestSq = 9.0f;  // 3.0f^2
+        int candidate = -1;
+
+        // A vertex is visible if at least one adjacent face is front-facing.
+        // Geometry-exact: replaces unreliable depth-buffer test (near=0.001).
+        bool[] vertexVisible = computeVisibleVertices(mesh, cameraView);
+
+        foreach_reverse (i; 0 .. mesh.vertices.length) {
+            if (!vertexVisible[i]) continue;
+
+            if (!vertexCache.valid[i]) {
+                if (!projectToWindow(mesh.vertices[i], vp,
+                                    vertexCache.sx[i], vertexCache.sy[i], vertexCache.ndcZ[i])) {
+                    vertexCache.valid[i] = false;
+                    continue;
+                }
+                vertexCache.valid[i] = true;
+            }
+
+            float dx = vertexCache.sx[i] - mx;
+            float dy = vertexCache.sy[i] - my;
+            float d2 = dx*dx + dy*dy;
+            if (d2 >= closestSq) continue;
+
+            closestSq = d2;
+            candidate = cast(int)i;
+        }
+
+        if (candidate >= 0) {
+            hoveredVertex = candidate;
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                selected[hoveredVertex] = true;
+            else if (dragMode == DragMode.SelectRemove)
+                selected[hoveredVertex] = false;
+        }
+    }
+
+    void pickEdges(ref Viewport vp, bool doingCameraDrag) {
+        hoveredEdge = -1;
+        if (io.WantCaptureMouse || doingCameraDrag ||
+            editMode != EditMode.Edges || activeTool !is null)
+            return;
+
+        int mx, my;
+        queryMouse(mx, my);
+        float closest = 4.0f;  // pixel radius for edges
+        float closestSq = closest * closest;
+
+        // A vertex is visible if at least one adjacent face is front-facing.
+        // Computed once here — O(faces), replaces unreliable depth-buffer test.
+        bool[] vertexVisible = computeVisibleVertices(mesh, cameraView);
+
+        foreach (i; 0 .. mesh.edges.length) {
+            uint a = mesh.edges[i][0], b = mesh.edges[i][1];
+
+            // Edge is selectable only if both endpoints are visible.
+            if (!vertexVisible[a] || !vertexVisible[b]) continue;
+
+            // Use vertex cache to avoid duplicate projections
+            if (!vertexCache.valid[a]) {
+                if (!projectToWindow(mesh.vertices[a], vp,
+                                      vertexCache.sx[a], vertexCache.sy[a], vertexCache.ndcZ[a])) {
+                    vertexCache.valid[a] = false;
+                    continue;
+                }
+                vertexCache.valid[a] = true;
+            }
+            if (!vertexCache.valid[b]) {
+                if (!projectToWindow(mesh.vertices[b], vp,
+                                      vertexCache.sx[b], vertexCache.sy[b], vertexCache.ndcZ[b])) {
+                    vertexCache.valid[b] = false;
+                    continue;
+                }
+                vertexCache.valid[b] = true;
+            }
+
+            // Quick bounding rectangle check (O(1) vs O(1) for segment distance)
+            float minX, maxX, minY, maxY;
+            if (vertexCache.sx[a] < vertexCache.sx[b]) { minX = vertexCache.sx[a]; maxX = vertexCache.sx[b]; }
+            else                                        { minX = vertexCache.sx[b]; maxX = vertexCache.sx[a]; }
+            if (vertexCache.sy[a] < vertexCache.sy[b]) { minY = vertexCache.sy[a]; maxY = vertexCache.sy[b]; }
+            else                                        { minY = vertexCache.sy[b]; maxY = vertexCache.sy[a]; }
+
+            float boundsMargin = closest;
+            if (mx < minX - boundsMargin || mx > maxX + boundsMargin ||
+                my < minY - boundsMargin || my > maxY + boundsMargin)
+                continue;  // mouse far from this edge's bounding box
+
+            // Now check distance to line segment (expensive operation)
+            float t;
+            float d2 = closestOnSegment2DSquared(cast(float)mx, cast(float)my,
+                                                  vertexCache.sx[a], vertexCache.sy[a],
+                                                  vertexCache.sx[b], vertexCache.sy[b], t);
+            if (d2 >= closestSq) continue;
+
+            closestSq = d2;
+            hoveredEdge = cast(int)i;
+        }
+
+        if (hoveredEdge >= 0) {
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                selectedEdges[hoveredEdge] = true;
+            else if (dragMode == DragMode.SelectRemove)
+                selectedEdges[hoveredEdge] = false;
+        }
+    }
+
+    void pickFaces(ref Viewport vp, bool doingCameraDrag) {
+        hoveredFace = -1;
+        if (io.WantCaptureMouse || doingCameraDrag ||
+            editMode != EditMode.Polygons || activeTool !is null)
+            return;
+
+        int mx, my;
+        queryMouse(mx, my);
+        float bestZ = float.infinity;
+
+        // Quick screen-space bounds check first (if cache available)
+        bool useBoundsCache = faceCache.minX.length >= mesh.faces.length;
+
+        foreach (fi; 0 .. mesh.faces.length) {
+            uint[] face = mesh.faces[fi];
+            if (face.length < 3) continue;
+
+            // Back-face culling: skip faces whose normal points away from camera.
+            {
+                Vec3 v0 = mesh.vertices[face[0]];
+                Vec3 v1 = mesh.vertices[face[1]];
+                Vec3 v2 = mesh.vertices[face[2]];
+                Vec3 n = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+                if (dot(n, vec3Sub(v0, cameraView.eye)) >= 0) continue;
+            }
+
+            // Quick bounds check if cached — avoids expensive projection.
+            if (useBoundsCache && faceCache.valid[fi]) {
+                if (mx < faceCache.minX[fi] || mx > faceCache.maxX[fi] ||
+                    my < faceCache.minY[fi] || my > faceCache.maxY[fi])
+                    continue;
+            }
+
+            // Project all vertices of this face (reuse vertex cache).
+            int len = cast(int)face.length;
+            float[] tempSx = new float[](len);
+            float[] tempSy = new float[](len);
+            bool allOk = true;
+            for (int j = 0; j < len; j++) {
+                uint vi = face[j];
+                if (!vertexCache.valid[vi]) {
+                    // Use projectToWindowFull so off-screen vertices are still
+                    // projected; only vertices behind the camera (w<=0) are rejected.
+                    float sx, sy, ndcZ;
+                    if (!projectToWindowFull(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
+                        allOk = false;
+                        break;
+                    }
+                    vertexCache.sx[vi] = sx;
+                    vertexCache.sy[vi] = sy;
+                    vertexCache.ndcZ[vi] = ndcZ;
+                    vertexCache.valid[vi] = true;
+                }
+                tempSx[j] = vertexCache.sx[vi];
+                tempSy[j] = vertexCache.sy[vi];
+            }
+            if (!allOk) continue;
+
+            // Compute and cache bounds if not yet cached; re-check bounds.
+            if (useBoundsCache && !faceCache.valid[fi]) {
+                float localMinX = float.infinity, localMaxX = -float.infinity;
+                float localMinY = float.infinity, localMaxY = -float.infinity;
+                foreach (sx; tempSx) { if (sx < localMinX) localMinX = sx; if (sx > localMaxX) localMaxX = sx; }
+                foreach (sy; tempSy) { if (sy < localMinY) localMinY = sy; if (sy > localMaxY) localMaxY = sy; }
+                faceCache.minX[fi] = localMinX; faceCache.maxX[fi] = localMaxX;
+                faceCache.minY[fi] = localMinY; faceCache.maxY[fi] = localMaxY;
+                faceCache.valid[fi] = true;
+                if (mx < localMinX || mx > localMaxX || my < localMinY || my > localMaxY)
+                    continue;
+            }
+
+            if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
+
+            // Use centroid NDC-Z for occlusion ordering.
+            float cZ = 0;
+            for (int j = 0; j < len; j++) cZ += vertexCache.ndcZ[face[j]];
+            cZ /= len;
+            if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
+        }
+
+        if (hoveredFace >= 0) {
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                selectedFaces[hoveredFace] = true;
+            else if (dragMode == DragMode.SelectRemove)
+                selectedFaces[hoveredFace] = false;
+        }
+    }
+
+    void drawSidePanel() {
         int selCount     = countSelected(selected);
         int selEdgeCount = countSelected(selectedEdges);
         int selFaceCount = countSelected(selectedFaces);
@@ -845,7 +995,9 @@ void main(string[] args) {
             ImGui.TextDisabled("Ctrl+LMB/drag    remove from select");
         }
         ImGui.End();
+    }
 
+    void drawStatusBar() {
         ImGui.SetNextWindowPos(ImVec2(PANEL_W, winH - STATUS_H), ImGuiCond.Always);
         ImGui.SetNextWindowSize(ImVec2(winW - PANEL_W, STATUS_H), ImGuiCond.Always);
         if (ImGui.Begin("Status line", null,
@@ -855,46 +1007,88 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoCollapse))
         {
             {
-                bool active = false;
-                if (editMode == EditMode.Vertices) {
-                    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    active = true;
-                }
-                bool clicked = ImGui.Button("Vertices  1");
-                if (clicked)
+                bool active = (editMode == EditMode.Vertices);
+                if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Vertices  1"))
                     { setActiveTool(null); editMode = EditMode.Vertices; }
-                if (active)
-                    ImGui.PopStyleColor();
+                if (active) ImGui.PopStyleColor();
                 ImGui.SameLine();
             }
             {
-                bool active = false;
-                if (editMode == EditMode.Edges) {
-                    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    active = true;
-                }
-                bool clicked = ImGui.Button("Edges     2");
-                if (clicked)
+                bool active = (editMode == EditMode.Edges);
+                if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Edges     2"))
                     { setActiveTool(null); editMode = EditMode.Edges; }
-                if (active)
-                    ImGui.PopStyleColor();
+                if (active) ImGui.PopStyleColor();
                 ImGui.SameLine();
             }
             {
-                bool active = false;
-                if (editMode == EditMode.Polygons) {
-                    ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    active = true;
-                }
-                bool clicked = ImGui.Button("Polygons  3");
-                if (clicked)
+                bool active = (editMode == EditMode.Polygons);
+                if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                if (ImGui.Button("Polygons  3"))
                     { setActiveTool(null); editMode = EditMode.Polygons; }
-                if (active)
-                    ImGui.PopStyleColor();
+                if (active) ImGui.PopStyleColor();
                 ImGui.SameLine();
             }
         }
         ImGui.End();
+    }
+
+    // -------------------------------------------------------------------------
+    // Main loop
+    // -------------------------------------------------------------------------
+
+    while (running) {
+        // ---- Playback: push due events before polling ----
+        if (playbackMode) evPlay.tick();
+        if (httpServer !is null) {
+            httpServer.tickEventPlayer();
+            httpServer.tickReset();
+        }
+
+        // ---- Events ----
+        while (SDL_PollEvent(&event)) {
+            // Log to always-on log; log to recording only when active and not F1/F2.
+            evLog.log(event);
+            bool isF1orF2 = event.type == SDL_KEYDOWN &&
+                (event.key.keysym.sym == SDLK_F1 || event.key.keysym.sym == SDLK_F2);
+            if (!isF1orF2) recLog.log(event);
+            ImGui_ImplSDL2_ProcessEvent(&event);
+
+            if (io.WantCaptureMouse &&
+                (event.type == SDL_MOUSEBUTTONDOWN ||
+                 event.type == SDL_MOUSEBUTTONUP   ||
+                 event.type == SDL_MOUSEMOTION      ||
+                 event.type == SDL_MOUSEWHEEL))
+                continue;
+
+            if (io.WantTextInput &&
+                (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP))
+                continue;
+
+            switch (event.type) {
+                case SDL_QUIT:            running = false;                      break;
+                case SDL_WINDOWEVENT:     handleWindowEvent(event.window);      break;
+                case SDL_KEYDOWN:         handleKeyDown(event.key);             break;
+                case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(event.button);  break;
+                case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(event.button);    break;
+                case SDL_MOUSEMOTION:     handleMouseMotion(event.motion);      break;
+                default: break;
+            }
+        }
+
+
+        cameraView.setSize(winW - PANEL_W, winH - STATUS_H);
+
+        Viewport vp = cameraView.viewport();
+
+        // ---- ImGui ----
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui.NewFrame();
+
+        drawSidePanel();
+        drawStatusBar();
 
         // ---- Tool Properties (floating) ----
         if (activeTool !is null) {
@@ -1027,58 +1221,7 @@ void main(string[] args) {
             vertexCache.update(vp);
         }
 
-        // ---- Vertex picking (EditMode.Vertices only) ----
-        hoveredVertex = -1;
-        if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Vertices && activeTool is null)
-        {
-            int mx, my;
-            queryMouse(mx, my);
-            float closestSq = 9.0f;  // 3.0f^2
-            int candidate = -1;
-
-            // A vertex is visible if at least one adjacent face is front-facing.
-            // Geometry-exact: replaces unreliable depth-buffer test (near=0.001).
-            bool[] vertexVisible = new bool[](mesh.vertices.length);
-            foreach (face; mesh.faces) {
-                if (face.length < 3) continue;
-                Vec3 fv0 = mesh.vertices[face[0]];
-                Vec3 fv1 = mesh.vertices[face[1]];
-                Vec3 fv2 = mesh.vertices[face[2]];
-                Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
-                if (dot(fn, vec3Sub(fv0, cameraView.eye)) >= 0) continue;  // back-facing
-                foreach (vi; face) vertexVisible[vi] = true;
-            }
-
-            foreach_reverse (i; 0 .. mesh.vertices.length) {
-                if (!vertexVisible[i]) continue;
-
-                if (!vertexCache.valid[i]) {
-                    if (!projectToWindow(mesh.vertices[i], vp,
-                                        vertexCache.sx[i], vertexCache.sy[i], vertexCache.ndcZ[i])) {
-                        vertexCache.valid[i] = false;
-                        continue;
-                    }
-                    vertexCache.valid[i] = true;
-                }
-
-                float dx = vertexCache.sx[i] - mx;
-                float dy = vertexCache.sy[i] - my;
-                float d2 = dx*dx + dy*dy;
-                if (d2 >= closestSq) continue;
-
-                closestSq = d2;
-                candidate = cast(int)i;
-            }
-
-            if (candidate >= 0) {
-                hoveredVertex = candidate;
-                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    selected[hoveredVertex] = true;
-                else if (dragMode == DragMode.SelectRemove)
-                    selected[hoveredVertex] = false;
-            }
-        }
+        pickVertices(vp, doingCameraDrag);
 
         // Check if edge cache needs update due to camera movement
         if (!doingCameraDrag && edgeCache.needsUpdate(vp)) {
@@ -1086,93 +1229,7 @@ void main(string[] args) {
             edgeCache.update(vp);
         }
 
-        // ---- Edge picking (EditMode.Edges only) ----
-        hoveredEdge = -1;
-        if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Edges && activeTool is null)
-        {
-            int mx, my;
-            queryMouse(mx, my);
-            float closest = 4.0f;  // pixel radius for edges
-            float closestSq = closest * closest;
-
-            // A vertex is visible if at least one adjacent face is front-facing.
-            // Computed once here — O(faces), replaces unreliable depth-buffer test.
-            bool[] vertexVisible = new bool[](mesh.vertices.length);
-            foreach (face; mesh.faces) {
-                if (face.length < 3) continue;
-                Vec3 fv0 = mesh.vertices[face[0]];
-                Vec3 fv1 = mesh.vertices[face[1]];
-                Vec3 fv2 = mesh.vertices[face[2]];
-                Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
-                if (dot(fn, vec3Sub(fv0, cameraView.eye)) >= 0) continue;  // back-facing
-                foreach (vi; face) vertexVisible[vi] = true;
-            }
-
-            foreach (i; 0 .. mesh.edges.length) {
-                uint a = mesh.edges[i][0], b = mesh.edges[i][1];
-
-                // Edge is selectable only if both endpoints are visible.
-                if (!vertexVisible[a] || !vertexVisible[b]) continue;
-
-                // Use vertex cache to avoid duplicate projections
-                if (!vertexCache.valid[a] || !vertexCache.valid[b]) {
-                    // Project missing vertices
-                    if (!vertexCache.valid[a]) {
-                        if (!projectToWindow(mesh.vertices[a], vp,
-                                              vertexCache.sx[a], vertexCache.sy[a], vertexCache.ndcZ[a])) {
-                            vertexCache.valid[a] = false;
-                            continue;
-                        }
-                        vertexCache.valid[a] = true;
-                    }
-                    if (!vertexCache.valid[b]) {
-                        if (!projectToWindow(mesh.vertices[b], vp,
-                                              vertexCache.sx[b], vertexCache.sy[b], vertexCache.ndcZ[b])) {
-                            vertexCache.valid[b] = false;
-                            continue;
-                        }
-                        vertexCache.valid[b] = true;
-                    }
-                }
-
-                // Quick bounding rectangle check (O(1) vs O(1) for segment distance)
-                float minX, maxX, minY, maxY;
-                if (vertexCache.sx[a] < vertexCache.sx[b]) {
-                    minX = vertexCache.sx[a]; maxX = vertexCache.sx[b];
-                } else {
-                    minX = vertexCache.sx[b]; maxX = vertexCache.sx[a];
-                }
-                if (vertexCache.sy[a] < vertexCache.sy[b]) {
-                    minY = vertexCache.sy[a]; maxY = vertexCache.sy[b];
-                } else {
-                    minY = vertexCache.sy[b]; maxY = vertexCache.sy[a];
-                }
-
-                // Expanded bounds for edge thickness
-                float boundsMargin = closest;
-                if (mx < minX - boundsMargin || mx > maxX + boundsMargin ||
-                    my < minY - boundsMargin || my > maxY + boundsMargin)
-                    continue;  // mouse far from this edge's bounding box
-
-                // Now check distance to line segment (expensive operation)
-                float t;
-                float d2 = closestOnSegment2DSquared(cast(float)mx, cast(float)my,
-                                                      vertexCache.sx[a], vertexCache.sy[a],
-                                                      vertexCache.sx[b], vertexCache.sy[b], t);
-                if (d2 >= closestSq) continue;
-
-                closestSq = d2;
-                hoveredEdge = cast(int)i;
-            }
-
-            if (hoveredEdge >= 0) {
-                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    selectedEdges[hoveredEdge] = true;
-                else if (dragMode == DragMode.SelectRemove)
-                    selectedEdges[hoveredEdge] = false;
-            }
-        }
+        pickEdges(vp, doingCameraDrag);
 
         // Check if face cache needs update due to camera movement
         if (!doingCameraDrag && faceCache.needsUpdate(vp)) {
@@ -1180,161 +1237,7 @@ void main(string[] args) {
             faceCache.update(vp);
         }
 
-        // ---- Face picking (EditMode.Polygons only) ----
-        hoveredFace = -1;
-        if (!io.WantCaptureMouse && !doingCameraDrag &&
-            editMode == EditMode.Polygons && activeTool is null)
-        {
-            int mx, my;
-            queryMouse(mx, my);
-            float bestZ = float.infinity;
-
-            // Quick screen-space bounds check first (if cache available)
-            bool useBoundsCache = faceCache.minX.length >= mesh.faces.length;
-
-            foreach (fi; 0 .. mesh.faces.length) {
-                uint[] face = mesh.faces[fi];
-                if (face.length < 3) continue;
-
-                // Back-face culling: skip faces whose normal points away from camera.
-                // This is geometry-exact and independent of depth buffer precision.
-                {
-                    Vec3 v0 = mesh.vertices[face[0]];
-                    Vec3 v1 = mesh.vertices[face[1]];
-                    Vec3 v2 = mesh.vertices[face[2]];
-                    Vec3 n = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
-                    if (dot(n, vec3Sub(v0, cameraView.eye)) >= 0) continue;
-                }
-
-                // Quick bounds check if cached
-                if (useBoundsCache && faceCache.valid[fi]) {
-                    if (mx < faceCache.minX[fi] || mx > faceCache.maxX[fi] ||
-                        my < faceCache.minY[fi] || my > faceCache.maxY[fi])
-                        continue;  // mouse far from this face
-                }
-
-                // Use vertex cache for projections to avoid duplicate work
-                int len = cast(int)face.length;
-
-                // Check bounds first before expensive operations
-                if (useBoundsCache && !faceCache.valid[fi]) {
-                    // Compute bounds and check them in one pass
-                    float localMinX = float.infinity, localMaxX = -float.infinity;
-                    float localMinY = float.infinity, localMaxY = -float.infinity;
-                    bool allOk = true;
-
-                    // Collect vertex positions and compute bounds
-                    float[] tempSx, tempSy;
-                    tempSx.length = len;
-                    tempSy.length = len;
-
-                    for (int j = 0; j < len; j++) {
-                        uint vi = face[j];
-                        if (!vertexCache.valid[vi]) {
-                            // Use projectToWindowFull so off-screen vertices are still
-                            // projected; only vertices behind the camera (w<=0) are rejected.
-                            float sx, sy, ndcZ;
-                            if (!projectToWindowFull(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
-                                allOk = false;
-                                break;
-                            }
-                            vertexCache.sx[vi] = sx;
-                            vertexCache.sy[vi] = sy;
-                            vertexCache.ndcZ[vi] = ndcZ;
-                            vertexCache.valid[vi] = true;
-                        }
-                        tempSx[j] = vertexCache.sx[vi];
-                        tempSy[j] = vertexCache.sy[vi];
-                    }
-
-                    if (!allOk) continue;
-
-                    // Compute bounds
-                    foreach (sx; tempSx) {
-                        if (sx < localMinX) localMinX = sx;
-                        if (sx > localMaxX) localMaxX = sx;
-                    }
-                    foreach (sy; tempSy) {
-                        if (sy < localMinY) localMinY = sy;
-                        if (sy > localMaxY) localMaxY = sy;
-                    }
-
-                    // Check if mouse is in bounds
-                    if (mx < localMinX || mx > localMaxX ||
-                        my < localMinY || my > localMaxY) {
-                        faceCache.minX[fi] = localMinX;
-                        faceCache.maxX[fi] = localMaxX;
-                        faceCache.minY[fi] = localMinY;
-                        faceCache.maxY[fi] = localMaxY;
-                        faceCache.valid[fi] = true;
-                        continue;
-                    }
-
-                    // Cache computed bounds
-                    faceCache.minX[fi] = localMinX;
-                    faceCache.maxX[fi] = localMaxX;
-                    faceCache.minY[fi] = localMinY;
-                    faceCache.maxY[fi] = localMaxY;
-                    faceCache.valid[fi] = true;
-
-                    // Now check polygon containment using the same coordinates
-                    if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
-
-                    // Compute centroid for occlusion check
-                    float cx = 0, cy = 0, cZ = 0;
-                    for (int j = 0; j < len; j++) {
-                        uint vi = face[j];
-                        cx += vertexCache.sx[vi];
-                        cy += vertexCache.sy[vi];
-                        cZ += vertexCache.ndcZ[vi];
-                    }
-                    cx /= len; cy /= len; cZ /= len;
-                    if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
-                } else {
-                    // Bounds already cached, do full check
-                    float cx = 0, cy = 0, cZ = 0;
-                    bool allOk = true;
-
-                    float[] tempSx, tempSy;
-                    tempSx.length = len;
-                    tempSy.length = len;
-
-                    for (int j = 0; j < len; j++) {
-                        uint vi = face[j];
-                        if (!vertexCache.valid[vi]) {
-                            float sx, sy, ndcZ;
-                            if (!projectToWindowFull(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
-                                allOk = false;
-                                break;
-                            }
-                            vertexCache.sx[vi] = sx;
-                            vertexCache.sy[vi] = sy;
-                            vertexCache.ndcZ[vi] = ndcZ;
-                            vertexCache.valid[vi] = true;
-                        }
-                        tempSx[j] = vertexCache.sx[vi];
-                        tempSy[j] = vertexCache.sy[vi];
-                        cx += vertexCache.sx[vi];
-                        cy += vertexCache.sy[vi];
-                        cZ += vertexCache.ndcZ[vi];
-                    }
-
-                    if (!allOk) continue;
-
-                    if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
-
-                    cx /= len; cy /= len; cZ /= len;
-                    if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
-                }
-            }
-
-            if (hoveredFace >= 0) {
-                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    selectedFaces[hoveredFace] = true;
-                else if (dragMode == DragMode.SelectRemove)
-                    selectedFaces[hoveredFace] = false;
-            }
-        }
+        pickFaces(vp, doingCameraDrag);
 
         // ---- Draw edges (with highlights in Edges / Polygons mode) ----
         if (editMode == EditMode.Edges) {
