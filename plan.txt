@@ -2,7 +2,7 @@
 добавить инструменты:
 [+] - scale
 [+] - rotate
- - box
+[+] - box
  - bevel для полигонов
  - bevel для edges.
  - bevel для points

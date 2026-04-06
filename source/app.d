@@ -51,6 +51,92 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
 enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 
 // ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+private ulong edgeKey(uint a, uint b) {
+    uint lo = a < b ? a : b, hi = a < b ? b : a;
+    return (cast(ulong)lo << 32) | hi;
+}
+
+private bool hasAnySelected(bool[] sel) {
+    foreach (s; sel) if (s) return true;
+    return false;
+}
+
+private int countSelected(bool[] sel) {
+    int n = 0;
+    foreach (s; sel) if (s) n++;
+    return n;
+}
+
+private void resetSelections(ref bool[] sel, ref bool[] selEdges, ref bool[] selFaces,
+                              ref Mesh mesh) {
+    sel.length      = mesh.vertices.length; sel[]      = false;
+    selEdges.length = mesh.edges.length;    selEdges[] = false;
+    selFaces.length = mesh.faces.length;    selFaces[] = false;
+}
+
+private void syncSelectionsToMesh(ref bool[] sel, ref bool[] selEdges, ref bool[] selFaces,
+                                   ref Mesh mesh) {
+    if (sel.length < mesh.vertices.length)    sel.length    = mesh.vertices.length;
+    if (selEdges.length < mesh.edges.length)  selEdges.length = mesh.edges.length;
+    if (selFaces.length < mesh.faces.length)  selFaces.length = mesh.faces.length;
+}
+
+private string buildJsonArray(bool[] sel) {
+    import std.array : appender;
+    import std.format : format;
+    auto buf = appender!string();
+    buf ~= "[";
+    bool first = true;
+    foreach (i, s; sel) {
+        if (!s) continue;
+        if (!first) buf ~= ",";
+        buf ~= format("%d", i);
+        first = false;
+    }
+    buf ~= "]";
+    return buf.data;
+}
+
+private bool[] computeVisibleVertices(ref Mesh mesh, ref View cameraView) {
+    bool[] vertexVisible = new bool[](mesh.vertices.length);
+    foreach (face; mesh.faces) {
+        if (face.length < 3) continue;
+        Vec3 fv0 = mesh.vertices[face[0]];
+        Vec3 fv1 = mesh.vertices[face[1]];
+        Vec3 fv2 = mesh.vertices[face[2]];
+        Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
+        if (dot(fn, vec3Sub(fv0, cameraView.eye)) >= 0) continue;
+        foreach (vi; face) vertexVisible[vi] = true;
+    }
+    return vertexVisible;
+}
+
+private void bfsSelect(bool[] selection, int[][] adj, int seed) {
+    bool[] visited = new bool[](selection.length);
+    int[] queue;
+    foreach (i; 0 .. selection.length)
+        if (selection[i]) { queue ~= cast(int)i; visited[i] = true; }
+    if (seed >= 0 && !visited[seed]) {
+        queue ~= seed;
+        visited[seed] = true;
+    }
+    int head = 0;
+    while (head < queue.length) {
+        int cur = queue[head++];
+        selection[cur] = true;
+        foreach (ni; adj[cur]) {
+            if (!visited[ni]) {
+                visited[ni] = true;
+                queue ~= ni;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -278,7 +364,6 @@ void main(string[] args) {
         }, getMeshVertices(), mesh.faces);
         httpServer.setCameraDataProvider(() => cameraView.toJson());
         httpServer.setSelectionDataProvider(() {
-            import std.array : appender;
             import std.format : format;
             string modeName;
             final switch (editMode) {
@@ -286,33 +371,11 @@ void main(string[] args) {
                 case EditMode.Edges:    modeName = "edges";    break;
                 case EditMode.Polygons: modeName = "polygons"; break;
             }
-            auto buf = appender!string();
-            buf ~= format(`{"mode":"%s","selectedVertices":[`, modeName);
-            bool first = true;
-            foreach (i, s; selected) {
-                if (!s) continue;
-                if (!first) buf ~= ",";
-                buf ~= format("%d", i);
-                first = false;
-            }
-            buf ~= `],"selectedEdges":[`;
-            first = true;
-            foreach (i, s; selectedEdges) {
-                if (!s) continue;
-                if (!first) buf ~= ",";
-                buf ~= format("%d", i);
-                first = false;
-            }
-            buf ~= `],"selectedFaces":[`;
-            first = true;
-            foreach (i, s; selectedFaces) {
-                if (!s) continue;
-                if (!first) buf ~= ",";
-                buf ~= format("%d", i);
-                first = false;
-            }
-            buf ~= "]}";
-            return buf.data;
+            return format(`{"mode":"%s","selectedVertices":%s,"selectedEdges":%s,"selectedFaces":%s}`,
+                modeName,
+                buildJsonArray(selected),
+                buildJsonArray(selectedEdges),
+                buildJsonArray(selectedFaces));
         });
         httpServer.setRecordedEventsProvider(() {
             import std.file : exists, readText;
@@ -322,9 +385,7 @@ void main(string[] args) {
         httpServer.setResetHandler(() {
             mesh = makeCube();
             cameraView.reset();
-            selected.length      = mesh.vertices.length; selected[]      = false;
-            selectedEdges.length = mesh.edges.length;    selectedEdges[] = false;
-            selectedFaces.length = mesh.faces.length;    selectedFaces[] = false;
+            resetSelections(selected, selectedEdges, selectedFaces, mesh);
             gpu.upload(mesh);
             vertexCache.resize(mesh.vertices.length);
             vertexCache.invalidate();
@@ -347,12 +408,7 @@ void main(string[] args) {
         activeTool = t;
         if (activeTool) activeTool.activate();
         // deactivate() may have added geometry — sync selection arrays and caches.
-        if (selected.length < mesh.vertices.length)
-            selected.length = mesh.vertices.length;
-        if (selectedEdges.length < mesh.edges.length)
-            selectedEdges.length = mesh.edges.length;
-        if (selectedFaces.length < mesh.faces.length)
-            selectedFaces.length = mesh.faces.length;
+        syncSelectionsToMesh(selected, selectedEdges, selectedFaces, mesh);
         if (vertexCache.valid.length != mesh.vertices.length) {
             vertexCache.resize(mesh.vertices.length);
             vertexCache.invalidate();
@@ -462,13 +518,11 @@ void main(string[] args) {
                                 // Frame selected (or whole mesh if nothing selected).
                                 Vec3[] verts;
                                 if (editMode == EditMode.Vertices) {
-                                    bool any = false;
-                                    foreach (s; selected) if (s) { any = true; break; }
+                                    bool any = hasAnySelected(selected);
                                     foreach (i; 0 .. mesh.vertices.length)
                                         if (!any || selected[i]) verts ~= mesh.vertices[i];
                                 } else if (editMode == EditMode.Edges) {
-                                    bool any = false;
-                                    foreach (s; selectedEdges) if (s) { any = true; break; }
+                                    bool any = hasAnySelected(selectedEdges);
                                     bool[] vis = new bool[](mesh.vertices.length);
                                     foreach (i; 0 .. mesh.edges.length) {
                                         if (any && !selectedEdges[i]) continue;
@@ -476,8 +530,7 @@ void main(string[] args) {
                                             if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
                                     }
                                 } else if (editMode == EditMode.Polygons) {
-                                    bool any = false;
-                                    foreach (s; selectedFaces) if (s) { any = true; break; }
+                                    bool any = hasAnySelected(selectedFaces);
                                     bool[] vis = new bool[](mesh.vertices.length);
                                     foreach (i; 0 .. mesh.faces.length) {
                                         if (any && !selectedFaces[i]) continue;
@@ -496,108 +549,45 @@ void main(string[] args) {
                             // Connected selection — add all vertices/edges/faces
                             // adjacent to the current selection.
                             if (editMode == EditMode.Vertices) {
-                                bool[] wasSelected = selected.dup;
-                                bool any = false;
-                                foreach (s; wasSelected) if (s) { any = true; break; }
-                                if (!any) {
-                                    // If nothing selected, pick hovered (if any)
-                                    if (hoveredVertex >= 0)
-                                        wasSelected[hoveredVertex] = true;
-                                }
-                                // Build vertex → adjacent vertices map once: O(E)
                                 int[][] vertAdj = new int[][](mesh.vertices.length);
                                 foreach (edge; mesh.edges) {
                                     vertAdj[edge[0]] ~= cast(int)edge[1];
                                     vertAdj[edge[1]] ~= cast(int)edge[0];
                                 }
-                                // BFS with head pointer: O(V+E) total
-                                bool[] visited = new bool[](mesh.vertices.length);
-                                int[] queue;
-                                foreach (i; 0 .. wasSelected.length)
-                                    if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
-                                int head = 0;
-                                while (head < queue.length) {
-                                    int vi = queue[head++];
-                                    selected[vi] = true;
-                                    foreach (ni; vertAdj[vi]) {
-                                        if (!visited[ni]) {
-                                            visited[ni] = true;
-                                            queue ~= ni;
-                                        }
-                                    }
-                                }
+                                bfsSelect(selected, vertAdj, hoveredVertex);
                             } else if (editMode == EditMode.Edges) {
-                                bool[] wasSelected = selectedEdges.dup;
-                                bool any = false;
-                                foreach (s; wasSelected) if (s) { any = true; break; }
-                                if (!any) {
-                                    if (hoveredEdge >= 0)
-                                        wasSelected[hoveredEdge] = true;
-                                }
-                                // Build vertex → [edge indices] map once: O(E)
+                                // Build edge → adjacent edges map via shared vertices
+                                int[][] edgeAdj = new int[][](mesh.edges.length);
                                 int[][] vertEdges = new int[][](mesh.vertices.length);
                                 foreach (i; 0 .. mesh.edges.length) {
                                     vertEdges[mesh.edges[i][0]] ~= cast(int)i;
                                     vertEdges[mesh.edges[i][1]] ~= cast(int)i;
                                 }
-                                // BFS with head pointer: O(E) total instead of O(E²)
-                                bool[] visited = new bool[](mesh.edges.length);
-                                int[] queue;
-                                foreach (i; 0 .. wasSelected.length)
-                                    if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
-                                int head = 0;
-                                while (head < queue.length) {
-                                    int ei = queue[head++];
-                                    selectedEdges[ei] = true;
-                                    foreach (vi; mesh.edges[ei]) {
-                                        foreach (ni; vertEdges[vi]) {
-                                            if (!visited[ni]) {
-                                                visited[ni] = true;
-                                                queue ~= ni;
-                                            }
-                                        }
-                                    }
+                                foreach (i; 0 .. mesh.edges.length) {
+                                    foreach (vi; mesh.edges[i])
+                                        foreach (ni; vertEdges[vi])
+                                            if (ni != cast(int)i) edgeAdj[i] ~= ni;
                                 }
+                                bfsSelect(selectedEdges, edgeAdj, hoveredEdge);
                             } else if (editMode == EditMode.Polygons) {
-                                bool[] wasSelected = selectedFaces.dup;
-                                bool any = false;
-                                foreach (s; wasSelected) if (s) { any = true; break; }
-                                if (!any) {
-                                    if (hoveredFace >= 0)
-                                        wasSelected[hoveredFace] = true;
-                                }
-                                // Flood-fill via shared edges
-                                bool[] visited = new bool[](mesh.faces.length);
-                                int[] queue;
-                                foreach (i; 0 .. wasSelected.length)
-                                    if (wasSelected[i]) { queue ~= cast(int)i; visited[i] = true; }
-                                // Build edge → adjacent face list
+                                // Build face → adjacent faces map via shared edges
                                 uint[][ulong] edgeFaces;
                                 foreach (fi, face; mesh.faces) {
                                     for (size_t j = 0; j < face.length; j++) {
                                         uint a = face[j], b = face[(j + 1) % face.length];
-                                        uint lo = a < b ? a : b, hi = a < b ? b : a;
-                                        ulong key = (cast(ulong)lo << 32) | hi;
-                                        edgeFaces[key] ~= cast(uint)fi;
+                                        edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
                                     }
                                 }
-                                int head = 0;
-                                while (head < queue.length) {
-                                    int fi = queue[head++];
-                                    selectedFaces[fi] = true;
-                                    // Check all edges of this face
-                                    uint[] face = mesh.faces[fi];
+                                int[][] faceAdj = new int[][](mesh.faces.length);
+                                foreach (fi, face; mesh.faces) {
                                     for (size_t j = 0; j < face.length; j++) {
                                         uint a = face[j], b = face[(j + 1) % face.length];
-                                        uint lo = a < b ? a : b, hi = a < b ? b : a;
-                                        ulong key = (cast(ulong)lo << 32) | hi;
-                                        foreach (adjFi; edgeFaces[key]) {
-                                            if (adjFi == fi || visited[adjFi]) continue;
-                                            visited[adjFi] = true;
-                                            queue ~= adjFi;
+                                        foreach (adjFi; edgeFaces[edgeKey(a, b)]) {
+                                            if (adjFi != cast(uint)fi) faceAdj[fi] ~= cast(int)adjFi;
                                         }
                                     }
                                 }
+                                bfsSelect(selectedFaces, faceAdj, hoveredFace);
                             }
                             break;
                         }
@@ -607,9 +597,7 @@ void main(string[] args) {
                                 if (shift) {
                                     setActiveTool(null);
                                     mesh = catmullClark(mesh);
-                                    selected.length      = mesh.vertices.length; selected[]      = false;
-                                    selectedEdges.length = mesh.edges.length;    selectedEdges[] = false;
-                                    selectedFaces.length = mesh.faces.length;    selectedFaces[] = false;
+                                    resetSelections(selected, selectedEdges, selectedFaces, mesh);
                                     gpu.upload(mesh);
                                     vertexCache.resize(mesh.vertices.length);
                                     vertexCache.invalidate();
@@ -736,12 +724,9 @@ void main(string[] args) {
         ImGui_ImplSDL2_NewFrame();
         ImGui.NewFrame();
 
-        int selCount;
-        foreach (s; selected) if (s) selCount++;
-        int selEdgeCount;
-        foreach (s; selectedEdges) if (s) selEdgeCount++;
-        int selFaceCount;
-        foreach (s; selectedFaces) if (s) selFaceCount++;
+        int selCount     = countSelected(selected);
+        int selEdgeCount = countSelected(selectedEdges);
+        int selFaceCount = countSelected(selectedFaces);
 
         ImGui.SetNextWindowPos(ImVec2(0, 0), ImGuiCond.Always);
         ImGui.SetNextWindowSize(ImVec2(PANEL_W, winH), ImGuiCond.Always);
@@ -1017,9 +1002,7 @@ void main(string[] args) {
 
         // Checkerboard overlay for selected faces (Polygons mode).
         if (editMode == EditMode.Polygons) {
-            bool anySelected = false;
-            foreach (s; selectedFaces) if (s) { anySelected = true; break; }
-            if (anySelected) {
+            if (hasAnySelected(selectedFaces)) {
                 checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);  // orange
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(selectedFaces);
@@ -1365,27 +1348,21 @@ void main(string[] args) {
                 faceSelEdgesCache[] = false;
 
                 // Fast path: all faces selected → all edges selected.
-                bool allSel = true;
-                foreach (s; selectedFaces) if (!s) { allSel = false; break; }
+                bool allSel = (countSelected(selectedFaces) == cast(int)selectedFaces.length);
                 if (allSel) {
                     faceSelEdgesCache[] = true;
                 } else {
-                    bool anyFaceSel = false;
-                    foreach (s; selectedFaces) if (s) { anyFaceSel = true; break; }
-                    if (anyFaceSel) {
+                    if (hasAnySelected(selectedFaces)) {
                         bool[ulong] edgeSet;
                         foreach (fi, face; mesh.faces) {
                             if (fi >= selectedFaces.length || !selectedFaces[fi]) continue;
                             for (size_t j = 0; j < face.length; j++) {
                                 uint a = face[j], b = face[(j + 1) % face.length];
-                                uint lo = a < b ? a : b, hi = a < b ? b : a;
-                                edgeSet[(cast(ulong)lo << 32) | hi] = true;
+                                edgeSet[edgeKey(a, b)] = true;
                             }
                         }
                         foreach (ei, edge; mesh.edges) {
-                            uint lo = edge[0] < edge[1] ? edge[0] : edge[1];
-                            uint hi = edge[0] < edge[1] ? edge[1] : edge[0];
-                            if (((cast(ulong)lo << 32) | hi) in edgeSet)
+                            if (edgeKey(edge[0], edge[1]) in edgeSet)
                                 faceSelEdgesCache[ei] = true;
                         }
                     }
