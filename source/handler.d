@@ -424,6 +424,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
+        if (!visible) return;
         Vec3 fwd = normalize(normal);
         Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
         Vec3 right = normalize(cross(fwd, tmp));
@@ -1033,6 +1034,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
+        if (!visible) return;
         Vec3 fwd = normalize(normal);
         Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
         Vec3 right = normalize(cross(fwd, tmp));

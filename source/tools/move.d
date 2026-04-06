@@ -14,6 +14,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import std.math;
+import drag;
 
 // ---------------------------------------------------------------------------
 // MoveTool : Tool — shows MoveHandler at selection/mesh center
@@ -362,60 +363,15 @@ public:
             return true; // axis locked — movement starts on the next motion event
         }
 
-        Vec3 center = handler.center;
-        Vec3 worldDelta = Vec3(0, 0, 0);
-
-        if (dragAxis <= 2) {
-            // ---- Single-axis drag ----
-            Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
-                      : dragAxis == 1 ? Vec3(0,1,0)
-                                      : Vec3(0,0,1);
-            // Use the actual arrow end (scaled to gizmo size) instead of a unit
-            // world vector — a unit offset can fall behind the camera when dist < 1.
-            Vec3 axisEnd = dragAxis == 0 ? handler.arrowX.end
-                         : dragAxis == 1 ? handler.arrowY.end
-                                         : handler.arrowZ.end;
-            float cx, cy, cndcZ, ax_, ay_, andcZ;
-            if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            if (!projectToWindowFull(axisEnd, cachedVp, ax_, ay_, andcZ))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            float sdx = ax_ - cx, sdy = ay_ - cy;
-            float slen2 = sdx*sdx + sdy*sdy;
-            if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
-            // d is in units of |axisEnd - center| (= gizmo size), convert to world units.
-            Vec3 ae = vec3Sub(axisEnd, center);
-            float axisLen = sqrt(ae.x*ae.x + ae.y*ae.y + ae.z*ae.z);
-            if (axisLen < 1e-9f) { lastMX = e.x; lastMY = e.y; return true; }
-            float d = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2 * axisLen;
-            worldDelta = vec3Scale(axis, d);
-        } else {
-            // ---- Plane drag: ray-plane intersection ----
-            // dragAxis 3 = most-facing plane; 4=XY(Z) 5=YZ(X) 6=XZ(Y)
-            Vec3 n;
-            if      (dragAxis == 4) n = Vec3(0,0,1);
-            else if (dragAxis == 5) n = Vec3(1,0,0);
-            else if (dragAxis == 6) n = Vec3(0,1,0);
-            else {
-                import std.math : abs;
-                const ref float[16] v2 = cachedVp.view;
-                float avx = abs(v2[2]), avy = abs(v2[6]), avz = abs(v2[10]);
-                n = avx >= avy && avx >= avz ? Vec3(1,0,0)
-                  : avy >= avx && avy >= avz ? Vec3(0,1,0)
-                                            : Vec3(0,0,1);
-            }
-            const ref float[16] v = cachedVp.view;
-            Vec3 camOrigin = Vec3(
-                -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-                -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-                -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-            );
-            Vec3 hitCurr, hitPrev;
-            if (!rayPlaneIntersect(camOrigin, screenRay(e.x,    e.y,    cachedVp), center, n, hitCurr) ||
-                !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, cachedVp), center, n, hitPrev))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            worldDelta = vec3Sub(hitCurr, hitPrev);
-        }
+        Vec3 worldDelta;
+        bool skip;
+        if (dragAxis <= 2)
+            worldDelta = axisDragDelta(e.x, e.y, lastMX, lastMY,
+                                       dragAxis, handler, cachedVp, skip);
+        else
+            worldDelta = planeDragDelta(e.x, e.y, lastMX, lastMY,
+                                        dragAxis, handler.center, cachedVp, skip);
+        if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
         // Update gizmo position immediately (always fast)
         dragDelta = vec3Add(dragDelta, worldDelta);

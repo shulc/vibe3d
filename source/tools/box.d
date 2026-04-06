@@ -6,6 +6,8 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
+import handler : MoveHandler, BoxHandler, getGizmoScreenFraction;
+import drag;
 import shader : Shader, LitShader;
 
 import ImGui = d_imgui;
@@ -52,6 +54,22 @@ private:
 
     Viewport cachedVp;
 
+    // Move gizmo (axis-only, no plane circles)
+    MoveHandler mover;
+    int         moverDragAxis = -1;   // 0/1/2 = X/Y/Z, -1 = none
+    int         moverLastMX, moverLastMY;
+
+    // Edge midpoint handles (BaseSet only)
+    // 0 = edge 0-1, 1 = edge 1-2, 2 = edge 2-3, 3 = edge 3-0
+    BoxHandler[4] edgeH;
+    int           edgeDragIdx    = -1;
+    int           edgeHoveredIdx = -1;
+    int           edgeLastMX, edgeLastMY;
+
+    BoxHandler[2] heightH;           // [0] = bottom face, [1] = top face
+    bool          heightHDragging = false;
+    bool          heightHHovered  = false;
+
 public:
     bool meshChanged;
 
@@ -59,13 +77,31 @@ public:
         this.mesh      = mesh;
         this.gpu       = gpu;
         this.litShader = litShader;
+        mover = new MoveHandler(Vec3(0,0,0));
+        mover.circleXY.setVisible(false);
+        mover.circleYZ.setVisible(false);
+        mover.circleXZ.setVisible(false);
+        foreach (i; 0 .. 4)
+            edgeH[i] = new BoxHandler(Vec3(0,0,0), Vec3(0.9f, 0.2f, 0.2f));
+        foreach (i; 0 .. 2)
+            heightH[i] = new BoxHandler(Vec3(0,0,0), Vec3(0.9f, 0.9f, 0.2f));
+    }
+
+    void destroy() {
+        mover.destroy();
+        foreach (h; edgeH) h.destroy();
+        foreach (h; heightH) h.destroy();
     }
 
     override string name() const { return "Box"; }
 
     override void activate() {
-        state       = BoxState.Idle;
-        meshChanged = false;
+        state           = BoxState.Idle;
+        meshChanged     = false;
+        moverDragAxis   = -1;
+        edgeDragIdx     = -1;
+        heightHDragging = false;
+        heightHHovered  = false;
         previewGpu.init();
     }
 
@@ -87,6 +123,52 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;
+
+        // Edge handle hit-test (BaseSet / HeightSet)
+        if (state == BoxState.BaseSet || state == BoxState.HeightSet) {
+            foreach (i, h; edgeH) {
+                if (h.hitTest(e.x, e.y, cachedVp)) {
+                    edgeDragIdx = cast(int)i;
+                    edgeLastMX  = e.x;
+                    edgeLastMY  = e.y;
+                    return true;
+                }
+            }
+        }
+
+        // Height handles (BaseSet / HeightSet) — priority over mover centerBox
+        // BaseSet: only bottom [0]; HeightSet: both [0] and [1]
+        bool heightHit = heightH[0].hitTest(e.x, e.y, cachedVp) ||
+                         (state == BoxState.HeightSet && heightH[1].hitTest(e.x, e.y, cachedVp));
+        if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHit) {
+            heightHDragging = true;
+            setupHeightPlane();
+            Vec3 hhit;
+            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+                                  hpOrigin, hpn, hhit))
+                // Set heightDragStart so current height is preserved on drag start
+                heightDragStart = vec3Sub(hhit, vec3Scale(planeNormal, height));
+            else
+                heightDragStart = hpOrigin;
+            if (state == BoxState.BaseSet) {
+                height = 0.0f;
+                state  = BoxState.DrawingHeight;
+            }
+            uploadCuboid();
+            return true;
+        }
+
+        // Move gizmo hit-test only once the base is finalized
+        if (state == BoxState.BaseSet || state == BoxState.DrawingHeight ||
+            state == BoxState.HeightSet) {
+            int hit = moverHitTest(e.x, e.y);
+            if (hit >= 0) {
+                moverDragAxis  = hit;
+                moverLastMX    = e.x;
+                moverLastMY    = e.y;
+                return true;
+            }
+        }
 
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
@@ -121,6 +203,10 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
+        if (edgeDragIdx >= 0) { edgeDragIdx = -1; return true; }
+        if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
+        if (heightHDragging && state == BoxState.HeightSet) { heightHDragging = false; return true; }
+
         if (state == BoxState.DrawingBase) {
             computeBaseCorners();
             Vec3 d = vec3Sub(currentPoint, startPoint);
@@ -135,6 +221,7 @@ public:
 
         if (state == BoxState.DrawingHeight) {
             state = BoxState.HeightSet;
+            heightHDragging = false;
             return true;
         }
 
@@ -142,6 +229,57 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        if (edgeDragIdx >= 0) {
+            Vec3 moveAxis = (edgeDragIdx == 0 || edgeDragIdx == 2) ? planeAxis2 : planeAxis1;
+            bool skip;
+            Vec3 delta = screenAxisDelta(e.x, e.y, edgeLastMX, edgeLastMY,
+                                         edgeH[edgeDragIdx].pos, moveAxis, cachedVp, skip);
+            if (!skip) applyEdgeDelta(edgeDragIdx, delta);
+            edgeLastMX = e.x;
+            edgeLastMY = e.y;
+            return true;
+        }
+
+        if (moverDragAxis >= 0) {
+            bool skip;
+            Vec3 delta = moverDragAxis <= 2
+                ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
+                                 moverDragAxis, mover, cachedVp, skip)
+                : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
+                                 moverDragAxis, mover.center, cachedVp, skip);
+            if (!skip) applyMoverDelta(delta);
+            moverLastMX = e.x;
+            moverLastMY = e.y;
+            return true;
+        }
+
+        // heightH drag in HeightSet (re-drag without changing state)
+        if (heightHDragging && state == BoxState.HeightSet) {
+            Vec3 hit;
+            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+                                  hpOrigin, hpn, hit))
+            {
+                height = dot(vec3Sub(hit, heightDragStart), planeNormal);
+                uploadCuboid();
+            }
+            return true;
+        }
+
+        // Track hover over edge/height handles when nothing is being dragged
+        if (state == BoxState.BaseSet || state == BoxState.HeightSet) {
+            edgeHoveredIdx = -1;
+            heightHHovered = false;
+            foreach (i, h; edgeH)
+                if (h.hitTest(e.x, e.y, cachedVp)) { edgeHoveredIdx = cast(int)i; break; }
+            if (edgeHoveredIdx < 0) {
+                heightHHovered = heightH[0].hitTest(e.x, e.y, cachedVp) ||
+                                 (state == BoxState.HeightSet && heightH[1].hitTest(e.x, e.y, cachedVp));
+            }
+        } else {
+            edgeHoveredIdx = -1;
+            heightHHovered = false;
+        }
+
         if (state == BoxState.DrawingBase) {
             Vec3 hit;
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
@@ -194,6 +332,44 @@ public:
         glUniformMatrix4fv(shader.locProj,  1, GL_FALSE, vp.proj.ptr);
 
         previewGpu.drawEdges(shader.locColor, -1, []);
+
+        // Draw edge and height handles (BaseSet and above)
+        if (state == BoxState.BaseSet || state == BoxState.DrawingHeight ||
+            state == BoxState.HeightSet) {
+            updateEdgeHandlers(vp);
+            updateHeightHandler(vp);
+            bool anyEdgeBusy = edgeDragIdx >= 0;
+            foreach (i, h; edgeH) {
+                h.setForceHovered(edgeDragIdx == cast(int)i);
+                h.setHoverBlocked(anyEdgeBusy && edgeDragIdx != cast(int)i);
+                h.draw(shader, vp);
+            }
+            bool heightBlocked = anyEdgeBusy || edgeHoveredIdx >= 0;
+            heightH[0].setForceHovered(false);
+            heightH[0].setHoverBlocked(heightBlocked);
+            heightH[0].draw(shader, vp);
+            if (state == BoxState.DrawingHeight || state == BoxState.HeightSet) {
+                heightH[1].setForceHovered(false);
+                heightH[1].setHoverBlocked(heightBlocked);
+                heightH[1].draw(shader, vp);
+            }
+        }
+
+        // Draw move gizmo only once the base is finalized
+        if (state == BoxState.BaseSet || state == BoxState.DrawingHeight ||
+            state == BoxState.HeightSet) {
+            mover.setPosition(boxCenter());
+            mover.arrowX.setForceHovered(moverDragAxis == 0);
+            mover.arrowY.setForceHovered(moverDragAxis == 1);
+            mover.arrowZ.setForceHovered(moverDragAxis == 2);
+            mover.centerBox.setForceHovered(moverDragAxis == 3);
+            bool edgePriority = edgeDragIdx >= 0 || edgeHoveredIdx >= 0 || heightHHovered;
+            mover.arrowX.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 0));
+            mover.arrowY.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 1));
+            mover.arrowZ.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 2));
+            mover.centerBox.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 3));
+            mover.draw(shader, vp);
+        }
     }
 
     override bool drawImGui() { return false; }
@@ -265,6 +441,127 @@ public:
     }
 
 private:
+    // Center of the current box shape (base centroid shifted by half height).
+    Vec3 boxCenter() const {
+        Vec3 c = baseCentroid();
+        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+            c = vec3Add(c, vec3Scale(planeNormal, height * 0.5f));
+        return c;
+    }
+
+    // Hit-test axis arrows (0/1/2) and centerBox (3).
+    int moverHitTest(int mx, int my) {
+        import handler : Arrow;
+        if (mover.centerBox.hitTest(mx, my, cachedVp)) return 3;
+        Arrow[3] arrows = [mover.arrowX, mover.arrowY, mover.arrowZ];
+        foreach (i, arrow; arrows) {
+            if (!arrow.isVisible()) continue;
+            float sax, say, ndcZa, sbx, sby, ndcZb;
+            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   sax, say, sbx, sby, t) < 8.0f)
+                return cast(int)i;
+        }
+        return -1;
+    }
+
+    // Apply world-space delta to all box geometry.
+    void applyMoverDelta(Vec3 d) {
+        startPoint   = vec3Add(startPoint,   d);
+        currentPoint = vec3Add(currentPoint, d);
+        hpOrigin     = vec3Add(hpOrigin,     d);
+        heightDragStart = vec3Add(heightDragStart, d);
+        foreach (ref c; baseCorners) c = vec3Add(c, d);
+        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+            uploadCuboid();
+        else
+            uploadBase();
+    }
+
+    // Color by world axis direction.
+    static Vec3 axisColor(Vec3 axis) {
+        if (abs(axis.x) > 0.5f) return Vec3(0.9f, 0.2f, 0.2f);
+        if (abs(axis.y) > 0.5f) return Vec3(0.2f, 0.9f, 0.2f);
+        return Vec3(0.2f, 0.2f, 0.9f);
+    }
+
+    // Update height handles.
+    // [0] = bottom face center (baseCentroid), always.
+    // [1] = top face center (baseCentroid + height), DrawingHeight/HeightSet only.
+    void updateHeightHandler(const ref Viewport vp) {
+        Vec3 bot = baseCentroid();
+        Vec3 top = vec3Add(bot, vec3Scale(planeNormal, height));
+        Vec3[2] pts = [bot, top];
+        foreach (i; 0 .. 2) {
+            Vec3 p = pts[i];
+            float depth = -(vp.view[2]*p.x + vp.view[6]*p.y + vp.view[10]*p.z + vp.view[14]);
+            if (depth < 1e-4f) depth = 1e-4f;
+            float s = getGizmoScreenFraction() * 0.04f * depth / vp.proj[5];
+            heightH[i].pos   = p;
+            heightH[i].size  = s;
+            heightH[i].color = axisColor(planeNormal);
+        }
+    }
+
+    // Update edge handler positions, sizes and colors.
+    // BaseSet            → midpoints of base edges.
+    // DrawingHeight/HeightSet → centers of the 4 side faces (edge midpoints + half height).
+    void updateEdgeHandlers(const ref Viewport vp) {
+        Vec3 halfH = (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+            ? vec3Scale(planeNormal, height * 0.5f)
+            : Vec3(0, 0, 0);
+
+        Vec3[4] mids = [
+            vec3Add(Vec3((baseCorners[0].x + baseCorners[1].x) * 0.5f,
+                         (baseCorners[0].y + baseCorners[1].y) * 0.5f,
+                         (baseCorners[0].z + baseCorners[1].z) * 0.5f), halfH),
+            vec3Add(Vec3((baseCorners[1].x + baseCorners[2].x) * 0.5f,
+                         (baseCorners[1].y + baseCorners[2].y) * 0.5f,
+                         (baseCorners[1].z + baseCorners[2].z) * 0.5f), halfH),
+            vec3Add(Vec3((baseCorners[2].x + baseCorners[3].x) * 0.5f,
+                         (baseCorners[2].y + baseCorners[3].y) * 0.5f,
+                         (baseCorners[2].z + baseCorners[3].z) * 0.5f), halfH),
+            vec3Add(Vec3((baseCorners[3].x + baseCorners[0].x) * 0.5f,
+                         (baseCorners[3].y + baseCorners[0].y) * 0.5f,
+                         (baseCorners[3].z + baseCorners[0].z) * 0.5f), halfH),
+        ];
+
+        Vec3[4] colors = [axisColor(planeAxis2), axisColor(planeAxis1),
+                          axisColor(planeAxis2), axisColor(planeAxis1)];
+
+        foreach (i; 0 .. 4) {
+            Vec3 p = mids[i];
+            float depth = -(vp.view[2]*p.x + vp.view[6]*p.y +
+                            vp.view[10]*p.z + vp.view[14]);
+            if (depth < 1e-4f) depth = 1e-4f;
+            float s = getGizmoScreenFraction() * 0.04f * depth / vp.proj[5];
+            edgeH[i].pos   = p;
+            edgeH[i].size  = s;
+            edgeH[i].color = colors[i];
+        }
+    }
+
+    // Move one edge of the base rectangle along its perpendicular axis.
+    // Edge 0 (corners 0,1): shift startPoint along axis2
+    // Edge 1 (corners 1,2): extend currentPoint along axis1
+    // Edge 2 (corners 2,3): extend currentPoint along axis2
+    // Edge 3 (corners 3,0): shift startPoint along axis1
+    void applyEdgeDelta(int idx, Vec3 delta) {
+        switch (idx) {
+            case 0: startPoint   = vec3Add(startPoint,   vec3Scale(planeAxis2, dot(delta, planeAxis2))); break;
+            case 1: currentPoint = vec3Add(currentPoint, vec3Scale(planeAxis1, dot(delta, planeAxis1))); break;
+            case 2: currentPoint = vec3Add(currentPoint, vec3Scale(planeAxis2, dot(delta, planeAxis2))); break;
+            case 3: startPoint   = vec3Add(startPoint,   vec3Scale(planeAxis1, dot(delta, planeAxis1))); break;
+            default: break;
+        }
+        if (state == BoxState.DrawingHeight || state == BoxState.HeightSet)
+            uploadCuboid();
+        else
+            uploadBase();
+    }
+
     void choosePlane(const ref Viewport vp) {
         float avx = abs(vp.view[2]);
         float avy = abs(vp.view[6]);
