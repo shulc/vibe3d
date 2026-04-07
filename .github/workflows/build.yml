@@ -67,12 +67,19 @@ jobs:
 
       # ---- nfde: Windows needs MSVC (not MinGW) to produce nfd.lib ----
 
-      - name: Remove MinGW from PATH (Windows)
+      - name: Remove MinGW / Strawberry Perl / LLVM from PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $filtered = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'mingw|Strawberry' }) -join ';'
+          $filtered = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'mingw|Strawberry|LLVM' }) -join ';'
           echo "PATH=$filtered" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Define NDEBUG for nfde C/C++ build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "CFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
+          echo "CXXFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
 
       # ---- nfde submodule (Linux only) ----
 
