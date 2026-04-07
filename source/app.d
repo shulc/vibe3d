@@ -891,27 +891,31 @@ void main(string[] args) {
             ImGui.LabelText("Edges",    "%d", cast(int)mesh.edges.length);
             ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
             ImGui.Separator();
-            ImGui.Text("File");            
+            ImGui.Text("File");
             if (ImGui.Button("Load              ")) {
                 string path;
-                auto result = openDialog(path, []);
+                auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
                 assert(result != Result.error, getError());
-                mesh = importLWO(path);
-                resetSelections(selected, selectedEdges, selectedFaces, mesh);
-                gpu.upload(mesh);
-                vertexCache.resize(mesh.vertices.length);
-                vertexCache.invalidate();
-                faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                faceCache.invalidate();
-                edgeCache.resize(mesh.edges.length);
-                edgeCache.invalidate();
+                if (path !is null) {
+                    mesh = importLWO(path);
+                    resetSelections(selected, selectedEdges, selectedFaces, mesh);
+                    gpu.upload(mesh);
+                    vertexCache.resize(mesh.vertices.length);
+                    vertexCache.invalidate();
+                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                    faceCache.invalidate();
+                    edgeCache.resize(mesh.edges.length);
+                    edgeCache.invalidate();
+                }
             }
-            
+
             if (ImGui.Button("Save              ")) {
                 string path;
-                auto result = saveDialog(path, [], "Untitled.lwo");
+                auto result = saveDialog(path, [FilterItem("LWO", "lwo")], "Untitled.lwo");
                 assert(result != Result.error, getError());
-                exportLWO(mesh, path);
+                if (path !is null) {
+                    exportLWO(mesh, path);
+                }
             }
 
             ImGui.Separator();
