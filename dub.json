@@ -18,6 +18,6 @@
     "sourcePaths": ["source"],
     "mainSourceFile": "source/app.d",
     "libs-windows": ["Imm32", "User32"],
-    "libs-linux": ["pthread", "gdk-3"],
+    "libs-linux": ["pthread", "gdk-3", "gobject-2.0"],
     "libs-osx": ["pthread"]
 }
