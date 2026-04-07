@@ -13,7 +13,7 @@ import d_imgui.imgui_h;
 import d_imgui.imgui_demo;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
-
+import nfde;
 
 import math;
 import mesh;
@@ -25,6 +25,7 @@ import gizmo;
 import view;
 import shader;
 import viewcache;
+import lwo;
 
 import tools.move;
 import tools.scale;
@@ -889,6 +890,22 @@ void main(string[] args) {
             ImGui.LabelText("Vertices", "%d", cast(int)mesh.vertices.length);
             ImGui.LabelText("Edges",    "%d", cast(int)mesh.edges.length);
             ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
+            ImGui.Separator();
+            ImGui.Text("File");            
+            if (ImGui.Button("Load              ")) {
+                string path;
+                auto result = openDialog(path, []);
+                assert(result != Result.error, getError());
+                mesh = importLWO(path);
+                gpu.upload(mesh);
+            }
+            
+            if (ImGui.Button("Save              ")) {
+                string path;
+                auto result = saveDialog(path, [], "Untitled.lwo");
+                assert(result != Result.error, getError());
+                exportLWO(mesh, path);
+            }
 
             ImGui.Separator();
             ImGui.Text("Tools");

@@ -11,7 +11,8 @@
         "d_imgui": {
             "repository": "git+https://github.com/shulc/imgui.git",
             "version": "b67c6bf0b3f9474d3a783051ced6ff9acdd620bf"
-        }
+        },
+        "nfde": "~>0.1.3"
     },
     "versions": ["SDL_2020", "GL_33", "IMGUI_OPENGL3", "IMGUI_SDL2"],
     "sourcePaths": ["source"],
