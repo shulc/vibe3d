@@ -30,9 +30,6 @@ class MoveTool : Tool {
 
 private:
     Mesh*     mesh;
-    bool[]*   selected;
-    bool[]*   selectedEdges;
-    bool[]*   selectedFaces;
     GpuMesh*  gpu;
     EditMode* editMode;
 
@@ -53,14 +50,10 @@ private:
     int      lastSelectionHash;
 
 public:
-    this(Mesh* mesh, bool[]* selected, bool[]* selectedEdges, bool[]* selectedFaces,
-         GpuMesh* gpu, EditMode* editMode) {
-        this.mesh          = mesh;
-        this.selected      = selected;
-        this.selectedEdges = selectedEdges;
-        this.selectedFaces = selectedFaces;
-        this.gpu           = gpu;
-        this.editMode      = editMode;
+    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
+        this.mesh     = mesh;
+        this.gpu      = gpu;
+        this.editMode = editMode;
         handler = new MoveHandler(Vec3(0, 0, 0));
         toMove.length = mesh.vertices.length;
         toMove[] = false;
@@ -103,15 +96,15 @@ public:
     private uint computeSelectionHash() {
         uint hash = cast(uint)(*editMode);
         if (*editMode == EditMode.Vertices) {
-            foreach (i, s; *selected) {
+            foreach (i, s; mesh.selectedVertices) {
                 if (s) hash = hash * 31 + cast(uint)i;
             }
         } else if (*editMode == EditMode.Edges) {
-            foreach (i, s; *selectedEdges) {
+            foreach (i, s; mesh.selectedEdges) {
                 if (s) hash = hash * 31 + cast(uint)i;
             }
         } else if (*editMode == EditMode.Polygons) {
-            foreach (i, s; *selectedFaces) {
+            foreach (i, s; mesh.selectedFaces) {
                 if (s) hash = hash * 31 + cast(uint)i;
             }
         }
@@ -135,19 +128,19 @@ public:
 
             if (*editMode == EditMode.Vertices) {
                 bool anySelected = false;
-                foreach (s; *selected) if (s) { anySelected = true; break; }
+                foreach (s; mesh.selectedVertices) if (s) { anySelected = true; break; }
                 foreach (i, v; mesh.vertices) {
-                    if (!anySelected || (i < (*selected).length && (*selected)[i])) {
+                    if (!anySelected || (i < mesh.selectedVertices.length && mesh.selectedVertices[i])) {
                         sum = vec3Add(sum, v);
                         count++;
                     }
                 }
             } else if (*editMode == EditMode.Edges) {
                 bool anySelected = false;
-                foreach (s; *selectedEdges) if (s) { anySelected = true; break; }
+                foreach (s; mesh.selectedEdges) if (s) { anySelected = true; break; }
                 bool[] visited = new bool[](mesh.vertices.length);
                 foreach (i, edge; mesh.edges) {
-                    if (anySelected && !(i < (*selectedEdges).length && (*selectedEdges)[i]))
+                    if (anySelected && !(i < mesh.selectedEdges.length && mesh.selectedEdges[i]))
                         continue;
                     foreach (vi; edge) {
                         if (!visited[vi]) {
@@ -159,10 +152,10 @@ public:
                 }
             } else if (*editMode == EditMode.Polygons) {
                 bool anySelected = false;
-                foreach (s; *selectedFaces) if (s) { anySelected = true; break; }
+                foreach (s; mesh.selectedFaces) if (s) { anySelected = true; break; }
                 bool[] visited = new bool[](mesh.vertices.length);
                 foreach (i, face; mesh.faces) {
-                    if (anySelected && !(i < (*selectedFaces).length && (*selectedFaces)[i]))
+                    if (anySelected && !(i < mesh.selectedFaces.length && mesh.selectedFaces[i]))
                         continue;
                     foreach (vi; face) {
                         if (!visited[vi]) {
@@ -425,20 +418,20 @@ private:
 
         if (*editMode == EditMode.Vertices) {
             bool any = false;
-            foreach (s; *selected) if (s) { any = true; break; }
+            foreach (s; mesh.selectedVertices) if (s) { any = true; break; }
             if (any) {
-                foreach (i, s; *selected)
+                foreach (i, s; mesh.selectedVertices)
                     if (s && i < mesh.vertices.length) indices ~= cast(int)i;
             } else {
                 foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
             }
         } else if (*editMode == EditMode.Edges) {
             bool any = false;
-            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            foreach (s; mesh.selectedEdges) if (s) { any = true; break; }
             if (any) {
                 bool[] added = new bool[](mesh.vertices.length);
                 foreach (i, edge; mesh.edges) {
-                    if (i < (*selectedEdges).length && (*selectedEdges)[i]) {
+                    if (i < mesh.selectedEdges.length && mesh.selectedEdges[i]) {
                         if (!added[edge[0]]) { added[edge[0]] = true; indices ~= cast(int)edge[0]; }
                         if (!added[edge[1]]) { added[edge[1]] = true; indices ~= cast(int)edge[1]; }
                     }
@@ -448,11 +441,11 @@ private:
             }
         } else if (*editMode == EditMode.Polygons) {
             bool any = false;
-            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            foreach (s; mesh.selectedFaces) if (s) { any = true; break; }
             if (any) {
                 bool[] added = new bool[](mesh.vertices.length);
                 foreach (i, face; mesh.faces) {
-                    if (i < (*selectedFaces).length && (*selectedFaces)[i]) {
+                    if (i < mesh.selectedFaces.length && mesh.selectedFaces[i]) {
                         foreach (vi; face)
                             if (!added[vi]) { added[vi] = true; indices ~= cast(int)vi; }
                     }

@@ -12,6 +12,25 @@ struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
     uint[][]  faces;
+    bool[]    selectedVertices;
+    bool[]    selectedEdges;
+    bool[]    selectedFaces;
+
+    // Resize selection arrays to match geometry and clear them.
+    // Call after catmullClark / importLWO / reset.
+    void resetSelection() {
+        selectedVertices.length = vertices.length; selectedVertices[] = false;
+        selectedEdges.length    = edges.length;    selectedEdges[]    = false;
+        selectedFaces.length    = faces.length;    selectedFaces[]    = false;
+    }
+
+    // Grow selection arrays to match geometry without clearing.
+    // Call after BoxTool or any in-place geometry growth.
+    void syncSelection() {
+        if (selectedVertices.length < vertices.length) selectedVertices.length = vertices.length;
+        if (selectedEdges.length    < edges.length)    selectedEdges.length    = edges.length;
+        if (selectedFaces.length    < faces.length)    selectedFaces.length    = faces.length;
+    }
 
     uint addVertex(Vec3 v) {
         vertices ~= v;

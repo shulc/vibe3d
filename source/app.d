@@ -32,6 +32,8 @@ import tools.scale;
 import tools.rotate;
 import tools.box;
 
+import commands.select.connect;
+
 
 // Read depth buffer at window position (px, py),
 // accounting for HiDPI framebuffer scale.
@@ -71,19 +73,6 @@ private int countSelected(bool[] sel) {
     return n;
 }
 
-private void resetSelections(ref bool[] sel, ref bool[] selEdges, ref bool[] selFaces,
-                              ref Mesh mesh) {
-    sel.length      = mesh.vertices.length; sel[]      = false;
-    selEdges.length = mesh.edges.length;    selEdges[] = false;
-    selFaces.length = mesh.faces.length;    selFaces[] = false;
-}
-
-private void syncSelectionsToMesh(ref bool[] sel, ref bool[] selEdges, ref bool[] selFaces,
-                                   ref Mesh mesh) {
-    if (sel.length < mesh.vertices.length)    sel.length    = mesh.vertices.length;
-    if (selEdges.length < mesh.edges.length)  selEdges.length = mesh.edges.length;
-    if (selFaces.length < mesh.faces.length)  selFaces.length = mesh.faces.length;
-}
 
 private string buildJsonArray(bool[] sel) {
     import std.array : appender;
@@ -115,27 +104,6 @@ private bool[] computeVisibleVertices(ref Mesh mesh, ref View cameraView) {
     return vertexVisible;
 }
 
-private void bfsSelect(bool[] selection, int[][] adj, int seed) {
-    bool[] visited = new bool[](selection.length);
-    int[] queue;
-    foreach (i; 0 .. selection.length)
-        if (selection[i]) { queue ~= cast(int)i; visited[i] = true; }
-    if (seed >= 0 && !visited[seed]) {
-        queue ~= seed;
-        visited[seed] = true;
-    }
-    int head = 0;
-    while (head < queue.length) {
-        int cur = queue[head++];
-        selection[cur] = true;
-        foreach (ni; adj[cur]) {
-            if (!visited[ni]) {
-                visited[ni] = true;
-                queue ~= ni;
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -319,20 +287,11 @@ void main(string[] args) {
         glBindVertexArray(0);
     }
 
-    // Selection state — vertices
-    int    hoveredVertex = -1;
-    bool[] selected;
-    selected.length = mesh.vertices.length;
-
-    // Selection state — edges
-    int    hoveredEdge = -1;
-    bool[] selectedEdges;
-    selectedEdges.length = mesh.edges.length;
-
-    // Selection state — faces
-    int    hoveredFace = -1;
-    bool[] selectedFaces;
-    selectedFaces.length = mesh.faces.length;
+    // Selection state
+    int hoveredVertex = -1;
+    int hoveredEdge   = -1;
+    int hoveredFace   = -1;
+    mesh.resetSelection();
 
     // Cache: face→edge mask for Polygons mode edge highlighting.
     // Rebuilt only when selectedFaces changes (comparison is a fast memcmp).
@@ -374,9 +333,9 @@ void main(string[] args) {
             }
             return format(`{"mode":"%s","selectedVertices":%s,"selectedEdges":%s,"selectedFaces":%s}`,
                 modeName,
-                buildJsonArray(selected),
-                buildJsonArray(selectedEdges),
-                buildJsonArray(selectedFaces));
+                buildJsonArray(mesh.selectedVertices),
+                buildJsonArray(mesh.selectedEdges),
+                buildJsonArray(mesh.selectedFaces));
         });
         httpServer.setRecordedEventsProvider(() {
             import std.file : exists, readText;
@@ -386,7 +345,7 @@ void main(string[] args) {
         httpServer.setResetHandler(() {
             mesh = makeCube();
             cameraView.reset();
-            resetSelections(selected, selectedEdges, selectedFaces, mesh);
+            mesh.resetSelection();
             gpu.upload(mesh);
             vertexCache.resize(mesh.vertices.length);
             vertexCache.invalidate();
@@ -409,7 +368,7 @@ void main(string[] args) {
         activeTool = t;
         if (activeTool) activeTool.activate();
         // deactivate() may have added geometry — sync selection arrays and caches.
-        syncSelectionsToMesh(selected, selectedEdges, selectedFaces, mesh);
+        mesh.syncSelection();
         if (vertexCache.valid.length != mesh.vertices.length) {
             vertexCache.resize(mesh.vertices.length);
             vertexCache.invalidate();
@@ -470,15 +429,15 @@ void main(string[] args) {
                 break;
             case SDLK_w:
                 setActiveTool(cast(MoveTool)activeTool ? null
-                    : new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                    : new MoveTool(&mesh, &gpu, &editMode));
                 break;
             case SDLK_r:
                 setActiveTool(cast(ScaleTool)activeTool ? null
-                    : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                    : new ScaleTool(&mesh, &gpu, &editMode));
                 break;
             case SDLK_e:
                 setActiveTool(cast(RotateTool)activeTool ? null
-                    : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                    : new RotateTool(&mesh, &gpu, &editMode));
                 break;
             case SDLK_b:
                 setActiveTool(cast(BoxTool)activeTool ? null
@@ -489,22 +448,22 @@ void main(string[] args) {
                     // Frame selected (or whole mesh if nothing selected).
                     Vec3[] verts;
                     if (editMode == EditMode.Vertices) {
-                        bool any = hasAnySelected(selected);
+                        bool any = hasAnySelected(mesh.selectedVertices);
                         foreach (i; 0 .. mesh.vertices.length)
-                            if (!any || selected[i]) verts ~= mesh.vertices[i];
+                            if (!any || mesh.selectedVertices[i]) verts ~= mesh.vertices[i];
                     } else if (editMode == EditMode.Edges) {
-                        bool any = hasAnySelected(selectedEdges);
+                        bool any = hasAnySelected(mesh.selectedEdges);
                         bool[] vis = new bool[](mesh.vertices.length);
                         foreach (i; 0 .. mesh.edges.length) {
-                            if (any && !selectedEdges[i]) continue;
+                            if (any && !mesh.selectedEdges[i]) continue;
                             foreach (vi; mesh.edges[i])
                                 if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
                         }
                     } else if (editMode == EditMode.Polygons) {
-                        bool any = hasAnySelected(selectedFaces);
+                        bool any = hasAnySelected(mesh.selectedFaces);
                         bool[] vis = new bool[](mesh.vertices.length);
                         foreach (i; 0 .. mesh.faces.length) {
-                            if (any && !selectedFaces[i]) continue;
+                            if (any && !mesh.selectedFaces[i]) continue;
                             foreach (vi; mesh.faces[i])
                                 if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
                         }
@@ -516,55 +475,15 @@ void main(string[] args) {
                 break;
             }
             case SDLK_RIGHTBRACKET: {
-                // Connected selection — flood-fill from current selection / hovered element.
-                if (editMode == EditMode.Vertices) {
-                    int[][] vertAdj = new int[][](mesh.vertices.length);
-                    foreach (edge; mesh.edges) {
-                        vertAdj[edge[0]] ~= cast(int)edge[1];
-                        vertAdj[edge[1]] ~= cast(int)edge[0];
-                    }
-                    bfsSelect(selected, vertAdj, hoveredVertex);
-                } else if (editMode == EditMode.Edges) {
-                    // Build edge → adjacent edges map via shared vertices
-                    int[][] edgeAdj = new int[][](mesh.edges.length);
-                    int[][] vertEdges = new int[][](mesh.vertices.length);
-                    foreach (i; 0 .. mesh.edges.length) {
-                        vertEdges[mesh.edges[i][0]] ~= cast(int)i;
-                        vertEdges[mesh.edges[i][1]] ~= cast(int)i;
-                    }
-                    foreach (i; 0 .. mesh.edges.length) {
-                        foreach (vi; mesh.edges[i])
-                            foreach (ni; vertEdges[vi])
-                                if (ni != cast(int)i) edgeAdj[i] ~= ni;
-                    }
-                    bfsSelect(selectedEdges, edgeAdj, hoveredEdge);
-                } else if (editMode == EditMode.Polygons) {
-                    // Build face → adjacent faces map via shared edges
-                    uint[][ulong] edgeFaces;
-                    foreach (fi, face; mesh.faces) {
-                        for (size_t j = 0; j < face.length; j++) {
-                            uint a = face[j], b = face[(j + 1) % face.length];
-                            edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
-                        }
-                    }
-                    int[][] faceAdj = new int[][](mesh.faces.length);
-                    foreach (fi, face; mesh.faces) {
-                        for (size_t j = 0; j < face.length; j++) {
-                            uint a = face[j], b = face[(j + 1) % face.length];
-                            foreach (adjFi; edgeFaces[edgeKey(a, b)]) {
-                                if (adjFi != cast(uint)fi) faceAdj[fi] ~= cast(int)adjFi;
-                            }
-                        }
-                    }
-                    bfsSelect(selectedFaces, faceAdj, hoveredFace);
-                }
+                new SelectConnect(mesh, editMode).apply();
+                // run command: select.connect
                 break;
             }
             case SDLK_d: {
                 if (shift) {
                     setActiveTool(null);
                     mesh = catmullClark(mesh);
-                    resetSelections(selected, selectedEdges, selectedFaces, mesh);
+                    mesh.resetSelection();
                     gpu.upload(mesh);
                     vertexCache.resize(mesh.vertices.length);
                     vertexCache.invalidate();
@@ -608,11 +527,11 @@ void main(string[] args) {
             else if (!anyToolActive) {
                 // No modifiers: clear selection for current mode
                 if (editMode == EditMode.Vertices)
-                    selected[] = false;
+                    mesh.selectedVertices[] = false;
                 else if (editMode == EditMode.Edges)
-                    selectedEdges[] = false;
+                    mesh.selectedEdges[] = false;
                 else if (editMode == EditMode.Polygons)
-                    selectedFaces[] = false;
+                    mesh.selectedFaces[] = false;
                 dragMode = DragMode.Select;
             }
             lastMouseX = btn.x;
@@ -627,9 +546,7 @@ void main(string[] args) {
             BoxTool bt = cast(BoxTool)activeTool;
             if (bt !is null && bt.meshChanged) {
                 bt.meshChanged = false;
-                selected.length      = mesh.vertices.length;
-                selectedEdges.length = mesh.edges.length;
-                selectedFaces.length = mesh.faces.length;
+                mesh.syncSelection();
                 vertexCache.resize(mesh.vertices.length);
                 vertexCache.invalidate();
                 faceCache.resize(mesh.vertices.length, mesh.faces.length);
@@ -710,9 +627,9 @@ void main(string[] args) {
         if (candidate >= 0) {
             hoveredVertex = candidate;
             if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                selected[hoveredVertex] = true;
+                mesh.selectedVertices[hoveredVertex] = true;
             else if (dragMode == DragMode.SelectRemove)
-                selected[hoveredVertex] = false;
+                mesh.selectedVertices[hoveredVertex] = false;
         }
     }
 
@@ -780,9 +697,9 @@ void main(string[] args) {
 
         if (hoveredEdge >= 0) {
             if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                selectedEdges[hoveredEdge] = true;
+                mesh.selectedEdges[hoveredEdge] = true;
             else if (dragMode == DragMode.SelectRemove)
-                selectedEdges[hoveredEdge] = false;
+                mesh.selectedEdges[hoveredEdge] = false;
         }
     }
 
@@ -868,16 +785,16 @@ void main(string[] args) {
 
         if (hoveredFace >= 0) {
             if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                selectedFaces[hoveredFace] = true;
+                mesh.selectedFaces[hoveredFace] = true;
             else if (dragMode == DragMode.SelectRemove)
-                selectedFaces[hoveredFace] = false;
+                mesh.selectedFaces[hoveredFace] = false;
         }
     }
 
     void drawSidePanel() {
-        int selCount     = countSelected(selected);
-        int selEdgeCount = countSelected(selectedEdges);
-        int selFaceCount = countSelected(selectedFaces);
+        int selCount     = countSelected(mesh.selectedVertices);
+        int selEdgeCount = countSelected(mesh.selectedEdges);
+        int selFaceCount = countSelected(mesh.selectedFaces);
 
         ImGui.SetNextWindowPos(ImVec2(0, 0), ImGuiCond.Always);
         ImGui.SetNextWindowSize(ImVec2(PANEL_W, winH), ImGuiCond.Always);
@@ -901,7 +818,7 @@ void main(string[] args) {
                 assert(result != Result.error, getError());
                 if (path !is null) {
                     mesh = importLWO(path);
-                    resetSelections(selected, selectedEdges, selectedFaces, mesh);
+                    mesh.resetSelection();
                     gpu.upload(mesh);
                     vertexCache.resize(mesh.vertices.length);
                     vertexCache.invalidate();
@@ -930,21 +847,21 @@ void main(string[] args) {
                 bool on = cast(MoveTool)activeTool !is null;
                 if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 if (ImGui.Button("Move             W"))
-                    setActiveTool(on ? null : new MoveTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                    setActiveTool(on ? null : new MoveTool(&mesh, &gpu, &editMode));
                 if (on) ImGui.PopStyleColor();
             }
             {
                 bool on = cast(RotateTool)activeTool !is null;
                 if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 if (ImGui.Button("Rotate           E"))
-                    setActiveTool(on ? null : new RotateTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                    setActiveTool(on ? null : new RotateTool(&mesh, &gpu, &editMode));
                 if (on) ImGui.PopStyleColor();
             }
             {
                 bool on = cast(ScaleTool)activeTool !is null;
                 if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 if (ImGui.Button("Scale            R"))
-                    setActiveTool(on ? null : new ScaleTool(&mesh, &selected, &selectedEdges, &selectedFaces, &gpu, &editMode));
+                    setActiveTool(on ? null : new ScaleTool(&mesh, &gpu, &editMode));
                 if (on) ImGui.PopStyleColor();
             }
             {
@@ -969,8 +886,8 @@ void main(string[] args) {
                     ImGui.LabelText("Hover", "—");
                 ImGui.LabelText("Selected", "%d", selCount);
                 if (selCount > 0) {
-                    foreach (i; 0 .. selected.length) {
-                        if (!selected[i]) continue;
+                    foreach (i; 0 .. mesh.selectedVertices.length) {
+                        if (!mesh.selectedVertices[i]) continue;
                         ImGui.Text("  v%d  (%.2f, %.2f, %.2f)",
                             cast(int)i,
                             cast(double)mesh.vertices[i].x,
@@ -988,8 +905,8 @@ void main(string[] args) {
                     ImGui.LabelText("Hover", "—");
                 ImGui.LabelText("Selected", "%d", selEdgeCount);
                 if (selEdgeCount > 0) {
-                    foreach (i; 0 .. selectedEdges.length) {
-                        if (!selectedEdges[i]) continue;
+                    foreach (i; 0 .. mesh.selectedEdges.length) {
+                        if (!mesh.selectedEdges[i]) continue;
                         ImGui.Text("  e%d  v%d-v%d",
                             cast(int)i,
                             cast(int)mesh.edges[i][0],
@@ -1005,8 +922,8 @@ void main(string[] args) {
                     ImGui.LabelText("Hover", "—");
                 ImGui.LabelText("Selected", "%d", selFaceCount);
                 if (selFaceCount > 0) {
-                    foreach (i; 0 .. selectedFaces.length) {
-                        if (!selectedFaces[i]) continue;
+                    foreach (i; 0 .. mesh.selectedFaces.length) {
+                        if (!mesh.selectedFaces[i]) continue;
                         ImGui.Text("  f%d  (%d verts)",
                             cast(int)i,
                             cast(int)mesh.faces[i].length);
@@ -1232,17 +1149,17 @@ void main(string[] args) {
         {
             litShader.useProgram(meshModel, cameraView);
             if (editMode == EditMode.Polygons)
-                gpu.drawFacesHighlighted(litShader, hoveredFace, selectedFaces);
+                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
             else
                 gpu.drawFaces(litShader);
         }
 
         // Checkerboard overlay for selected faces (Polygons mode).
         if (editMode == EditMode.Polygons) {
-            if (hasAnySelected(selectedFaces)) {
+            if (hasAnySelected(mesh.selectedFaces)) {
                 checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);  // orange
                 glDisable(GL_DEPTH_TEST);
-                gpu.drawSelectedFacesOverlay(selectedFaces);
+                gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
                 glEnable(GL_DEPTH_TEST);
             }
         }
@@ -1284,24 +1201,24 @@ void main(string[] args) {
 
         // ---- Draw edges (with highlights in Edges / Polygons mode) ----
         if (editMode == EditMode.Edges) {
-            gpu.drawEdges(shader.locColor, hoveredEdge, selectedEdges);
+            gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
         } else if (editMode == EditMode.Polygons) {
             // Build selected-edge mask — rebuild only when selectedFaces changes.
-            if (faceSelEdgesPrevSel != selectedFaces) {
-                faceSelEdgesPrevSel = selectedFaces.dup;
+            if (faceSelEdgesPrevSel != mesh.selectedFaces) {
+                faceSelEdgesPrevSel = mesh.selectedFaces.dup;
                 if (faceSelEdgesCache.length != mesh.edges.length)
                     faceSelEdgesCache = new bool[](mesh.edges.length);
                 faceSelEdgesCache[] = false;
 
                 // Fast path: all faces selected → all edges selected.
-                bool allSel = (countSelected(selectedFaces) == cast(int)selectedFaces.length);
+                bool allSel = (countSelected(mesh.selectedFaces) == cast(int)mesh.selectedFaces.length);
                 if (allSel) {
                     faceSelEdgesCache[] = true;
                 } else {
-                    if (hasAnySelected(selectedFaces)) {
+                    if (hasAnySelected(mesh.selectedFaces)) {
                         bool[ulong] edgeSet;
                         foreach (fi, face; mesh.faces) {
-                            if (fi >= selectedFaces.length || !selectedFaces[fi]) continue;
+                            if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
                             for (size_t j = 0; j < face.length; j++) {
                                 uint a = face[j], b = face[(j + 1) % face.length];
                                 edgeSet[edgeKey(a, b)] = true;
@@ -1321,7 +1238,7 @@ void main(string[] args) {
 
         // ---- Vertex dots (EditMode.Vertices only) ----
         if (editMode == EditMode.Vertices)
-            gpu.drawVertices(shader.locColor, hoveredVertex, selected);
+            gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
 
         // ---- Active tool ----
         if (activeTool) {
