@@ -894,7 +894,10 @@ void main(string[] args) {
             ImGui.Text("File");
             if (ImGui.Button("Load              ")) {
                 string path;
-                auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
+                version (Windows)
+                    auto result = openDialog(path, [FilterItem("LWO"w.ptr, "lwo"w.ptr)]);
+                else
+                    auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
                 assert(result != Result.error, getError());
                 if (path !is null) {
                     mesh = importLWO(path);
@@ -911,7 +914,10 @@ void main(string[] args) {
 
             if (ImGui.Button("Save              ")) {
                 string path;
-                auto result = saveDialog(path, [FilterItem("LWO", "lwo")], "Untitled.lwo");
+                version (Windows)
+                    auto result = saveDialog(path, [FilterItem("LWO"w.ptr, "lwo"w.ptr)], "Untitled.lwo");
+                else
+                    auto result = saveDialog(path, [FilterItem("LWO", "lwo")], "Untitled.lwo");
                 assert(result != Result.error, getError());
                 if (path !is null) {
                     exportLWO(mesh, path);
