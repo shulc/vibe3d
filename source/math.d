@@ -40,6 +40,47 @@ float[16] translationMatrix(Vec3 t) {
     return [1,0,0,0, 0,1,0,0, 0,0,1,0, t.x,t.y,t.z,1];
 }
 
+// Rodrigues rotation around an arbitrary axis through a pivot point (column-major).
+// The axis must already be normalised.
+float[16] pivotRotationMatrix(Vec3 pivot, Vec3 axis, float angle) {
+    float c = cos(angle), s = sin(angle), t = 1.0f - c;
+    float ax = axis.x, ay = axis.y, az = axis.z;
+    // Row-indexed rotation entries R[row][col]
+    float r00 = c + ax*ax*t,      r01 = ax*ay*t - az*s, r02 = ax*az*t + ay*s;
+    float r10 = ax*ay*t + az*s,   r11 = c + ay*ay*t,    r12 = ay*az*t - ax*s;
+    float r20 = ax*az*t - ay*s,   r21 = ay*az*t + ax*s, r22 = c + az*az*t;
+    // Translation: pivot - R * pivot
+    float tx = pivot.x - (r00*pivot.x + r01*pivot.y + r02*pivot.z);
+    float ty = pivot.y - (r10*pivot.x + r11*pivot.y + r12*pivot.z);
+    float tz = pivot.z - (r20*pivot.x + r21*pivot.y + r22*pivot.z);
+    // Column-major storage: m[row + col*4]
+    return [r00, r10, r20, 0,
+            r01, r11, r21, 0,
+            r02, r12, r22, 0,
+            tx,  ty,  tz,  1];
+}
+
+// Non-uniform scale around a pivot point (column-major).
+float[16] pivotScaleMatrix(Vec3 pivot, float sx, float sy, float sz) {
+    return [sx, 0,  0,  0,
+            0,  sy, 0,  0,
+            0,  0,  sz, 0,
+            pivot.x*(1.0f-sx), pivot.y*(1.0f-sy), pivot.z*(1.0f-sz), 1];
+}
+
+// Column-major 4x4 matrix multiplication: C = A * B
+float[16] matMul4(float[16] a, float[16] b) {
+    float[16] c;
+    for (int col = 0; col < 4; col++)
+        for (int row = 0; row < 4; row++) {
+            float s = 0;
+            for (int k = 0; k < 4; k++)
+                s += a[row + k*4] * b[k + col*4];
+            c[row + col*4] = s;
+        }
+    return c;
+}
+
 // Build a column-major model matrix from a local frame + scale + translation.
 // Columns are: right*scale.x, up*scale.y, fwd*scale.z, translation.
 float[16] modelMatrix(Vec3 right, Vec3 up, Vec3 fwd,

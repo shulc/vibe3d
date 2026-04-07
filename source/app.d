@@ -1173,9 +1173,9 @@ void main(string[] args) {
                    cast(int)(cameraView.width  * scaleX),
                    cast(int)(cameraView.height * scaleY));
 
-        // When MoveTool defers GPU uploads (whole-mesh drag), apply accumulated
-        // translation as u_model so the mesh appears at the correct position without
-        // re-uploading vertex data every frame.
+        // When a tool defers GPU uploads (whole-mesh drag), apply the accumulated
+        // transform as u_model so the mesh appears correctly without re-uploading
+        // vertex data every frame.
         float[16] meshModel = identityMatrix;
         {
             MoveTool mt = cast(MoveTool)activeTool;
@@ -1183,6 +1183,15 @@ void main(string[] args) {
                 Vec3 off = mt.gpuOffset;
                 if (off.x != 0 || off.y != 0 || off.z != 0)
                     meshModel = translationMatrix(off);
+            } else {
+                RotateTool rt = cast(RotateTool)activeTool;
+                if (rt !is null) {
+                    meshModel = rt.gpuMatrix;
+                } else {
+                    ScaleTool st = cast(ScaleTool)activeTool;
+                    if (st !is null)
+                        meshModel = st.gpuMatrix;
+                }
             }
         }
 
