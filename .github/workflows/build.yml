@@ -20,9 +20,6 @@ jobs:
           - os: ubuntu-latest
             name: linux
             binary: vibe3d
-          - os: macos-lastest
-            name: macos
-            binary: vibe3d
           - os: windows-latest
             name: windows
             binary: vibe3d.exe
@@ -127,5 +124,4 @@ jobs:
             --title "vibe3d ${{ inputs.tag }}" \
             --generate-notes \
             vibe3d-linux.zip \
-            vibe3d-macos.zip \
             vibe3d-windows.zip
