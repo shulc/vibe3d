@@ -28,6 +28,7 @@ done
 # Run all compiled test binaries (skip .obj files produced on Windows)
 for f in $temp_dir/test_*; do
     case "$f" in *.obj) continue;; esac
+    case "$f" in *.o) continue;; esac
     $f
 done
 
