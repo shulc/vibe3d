@@ -65,6 +65,15 @@ jobs:
           Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
           echo "$($sdlDir.FullName)\lib\x64" >> $env:GITHUB_PATH
 
+      # ---- nfde: Windows needs MSVC (not MinGW) to produce nfd.lib ----
+
+      - name: Remove MinGW from PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $filtered = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'mingw' }) -join ';'
+          echo "PATH=$filtered" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       # ---- nfde submodule (Linux only) ----
 
       - name: First-pass build (fetches nfde and clones NFD repo, expected to fail)
