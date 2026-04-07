@@ -897,7 +897,14 @@ void main(string[] args) {
                 auto result = openDialog(path, []);
                 assert(result != Result.error, getError());
                 mesh = importLWO(path);
+                resetSelections(selected, selectedEdges, selectedFaces, mesh);
                 gpu.upload(mesh);
+                vertexCache.resize(mesh.vertices.length);
+                vertexCache.invalidate();
+                faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                faceCache.invalidate();
+                edgeCache.resize(mesh.edges.length);
+                edgeCache.invalidate();
             }
             
             if (ImGui.Button("Save              ")) {
