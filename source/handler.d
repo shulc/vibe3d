@@ -54,6 +54,50 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.screenH   = cast(float)screenH;
 }
 
+// Upload a float[] (XYZ triples) to a fresh VAO with a single vec3 attribute at location 0.
+// Fills *vbo with the created buffer object and returns the VAO.
+private GLuint buildVao3f(float[] data, out GLuint vbo) {
+    GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, data.length * float.sizeof, data.ptr, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    return vao;
+}
+
+// Compute a right-handed local frame from a normal/forward vector.
+// right and up are perpendicular to normal and to each other.
+private void localFrame(Vec3 normal, out Vec3 right, out Vec3 up) {
+    Vec3 fwd = normalize(normal);
+    Vec3 tmp  = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
+    right = normalize(cross(fwd, tmp));
+    up    = cross(right, fwd);
+}
+
+// Build unit-cube triangle data (half-extent 1, 6 faces × 2 tris × 3 verts)
+// into an existing float array.  CubicArrow and BoxHandler share this geometry.
+private void buildUnitCubeData(ref float[] data) {
+    immutable float[3][8] v = [
+        [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],  // back
+        [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],  // front
+    ];
+    immutable int[6][6] faces = [
+        [0,1,2, 2,3,0], // -Z
+        [4,6,5, 6,4,7], // +Z
+        [0,4,5, 5,1,0], // -Y
+        [2,6,7, 7,3,2], // +Y
+        [0,3,7, 7,4,0], // -X
+        [1,5,6, 6,2,1], // +X
+    ];
+    foreach (ref f; faces)
+        foreach (idx; f)
+            data ~= v[idx][];
+}
+
 // Draw VAO with GL_LINES/GL_LINE_STRIP using the thick-line program,
 // then restore the caller's program.
 private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
@@ -104,71 +148,80 @@ public:
     void setHoverBlocked(bool v) { hoverBlocked  = v; }
     void setVisible(bool v)      { visible = v; if (!v) hovered = false; }
     bool isVisible() const       { return visible; }
+
+    // Override in subclasses to define the hover hit area.
+    protected bool hitTest(int mx, int my, const ref Viewport vp) { return false; }
+
+    // Updates `hovered` from the current mouse position; respects blocked/forced flags.
+    protected void updateHover(const ref Viewport vp) {
+        if (hoverBlocked) { hovered = false; return; }
+        if (forceHovered) { hovered = true;  return; }
+        int mx, my;
+        queryMouse(mx, my);
+        hovered = hitTest(mx, my, vp);
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Arrow : Handler
-// Unit shaft  — line  (0,0,0)→(0,0,1)  along +Z
-// Unit cone   — tip at Z=1, base at Z=0, radius=1
-// Both are created once; draw() transforms them via u_model.
+// ShaftedArrow : Handler — common base for Arrow and CubicArrow.
+// Holds start/end/color, the shared shaft VAO, head VAO, destroy(), hitTest().
 // ---------------------------------------------------------------------------
 
-class Arrow : Handler {
+class ShaftedArrow : Handler {
     Vec3  start;
     Vec3  end;
     Vec3  color;
     float lineWidth = 5.0f;
 
-private:
+protected:
     GLuint shaftVao, shaftVbo;
     GLuint headVao,  headVbo;
     int    headVertCount;
 
+public:
+    void destroy() {
+        glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
+        glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
+    }
+
+    override bool hitTest(int mx, int my, const ref Viewport vp)
+    {
+        float sax, say, ndcZa, sbx, sby, ndcZb;
+        if (!projectToWindowFull(start, vp, sax, say, ndcZa) ||
+            !projectToWindowFull(end,   vp, sbx, sby, ndcZb))
+            return false;
+        float t;
+        return closestOnSegment2D(cast(float)mx, cast(float)my,
+                                  sax, say, sbx, sby, t) < 8.0f;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Arrow : ShaftedArrow — cone head.
+// Unit shaft (0,0,0)→(0,0,1); unit cone tip at Z=1, base at Z=0 radius=1.
+// ---------------------------------------------------------------------------
+
+class Arrow : ShaftedArrow {
     enum CONE_SEGS = 16;
 
-public:
     this(Vec3 start, Vec3 end, Vec3 color) {
         this.start = start;
         this.end   = end;
         this.color = color;
 
-        // ---- Unit shaft: (0,0,0) → (0,0,1) ----
-        float[6] shaftData = [0,0,0,  0,0,1];
-        glGenVertexArrays(1, &shaftVao); glGenBuffers(1, &shaftVbo);
-        glBindVertexArray(shaftVao);
-        glBindBuffer(GL_ARRAY_BUFFER, shaftVbo);
-        glBufferData(GL_ARRAY_BUFFER, shaftData.sizeof, shaftData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
+        shaftVao = buildVao3f([0f,0f,0f,  0f,0f,1f], shaftVbo);
 
-        // ---- Unit cone: tip (0,0,1), base circle at Z=0, radius=1 ----
         float[] coneData;
         foreach (i; 0 .. CONE_SEGS) {
             float a0 = 2*PI *  i      / CONE_SEGS;
             float a1 = 2*PI * (i + 1) / CONE_SEGS;
             float c0 = cos(a0), s0 = sin(a0);
             float c1 = cos(a1), s1 = sin(a1);
-            // Side face
-            coneData ~= [0f,0f,1f,  c0,s0,0f,  c1,s1,0f];
-            // Base cap (inward winding)
-            coneData ~= [0f,0f,0f,  c1,s1,0f,  c0,s0,0f];
+            coneData ~= [0f,0f,1f,  c0,s0,0f,  c1,s1,0f];  // side face
+            coneData ~= [0f,0f,0f,  c1,s1,0f,  c0,s0,0f];  // base cap (inward)
         }
         headVertCount = cast(int)(coneData.length / 3);
-
-        glGenVertexArrays(1, &headVao); glGenBuffers(1, &headVbo);
-        glBindVertexArray(headVao);
-        glBindBuffer(GL_ARRAY_BUFFER, headVbo);
-        glBufferData(GL_ARRAY_BUFFER, coneData.length * float.sizeof,
-                     coneData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindVertexArray(0);
-    }
-
-    void destroy() {
-        glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
-        glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
+        headVao = buildVao3f(coneData, headVbo);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -178,11 +231,8 @@ public:
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
         if (len < 1e-6f) return;
         Vec3 fwd = Vec3(dir.x/len, dir.y/len, dir.z/len);
-
-        // Local frame (right, up perpendicular to fwd)
-        Vec3 tmp   = (abs(fwd.x) < 0.9f) ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(fwd, right, up);
 
         float coneLen    = len * 0.25f;
         float coneRadius = len * 0.05f;
@@ -193,117 +243,43 @@ public:
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
-
         glDisable(GL_DEPTH_TEST);
 
-        // ---- Draw shaft (thick line) ----
-        auto shaftModel = modelMatrix(right, up, fwd,
-                                      Vec3(1, 1, shaftLen), start);
+        auto shaftModel = modelMatrix(right, up, fwd, Vec3(1, 1, shaftLen), start);
         drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
-        // ---- Draw cone head ----
-        auto headModel = modelMatrix(right, up, fwd,
-                                     Vec3(coneRadius, coneRadius, coneLen), coneBase);
+        auto headModel = modelMatrix(right, up, fwd, Vec3(coneRadius, coneRadius, coneLen), coneBase);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
-        // Restore identity so subsequent draws are unaffected
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
-    }
-
-private:
-    void updateHover(const ref Viewport vp)
-    {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        float sax, say, ndcZa, sbx, sby, ndcZb;
-        if (!projectToWindowFull(start, vp, sax, say, ndcZa) ||
-            !projectToWindowFull(end,   vp, sbx, sby, ndcZb))
-        {
-            hovered = false;
-            return;
-        }
-        float t;
-        hovered = closestOnSegment2D(cast(float)mx, cast(float)my,
-                                     sax, say, sbx, sby, t) < 8.0f;
     }
 }
 
 // ---------------------------------------------------------------------------
-// CubicArrow : Handler
+// CubicArrow : ShaftedArrow — cube head.
 // Like Arrow but with a small cube at the tip instead of a cone.
-// Unit shaft  — line  (0,0,0)→(0,0,1)  along +Z
-// Unit cube   — centred at origin, half-extent 1  (placed at tip via model matrix)
 // ---------------------------------------------------------------------------
 
-class CubicArrow : Handler {
-    Vec3  start;
-    Vec3  end;
-    Vec3  color;
-    float lineWidth     = 5.0f;
-    float fixedCubeHalf = 0.0f;  // if > 0, overrides len*0.06 for the cube head
+class CubicArrow : ShaftedArrow {
+    float fixedCubeHalf = 0.0f;  // if > 0, overrides len*0.03 for the cube head
     Vec3  fixedDir      = Vec3(0,0,0);  // if non-zero, use this direction instead of end-start
 
-private:
-    GLuint shaftVao, shaftVbo;
-    GLuint headVao,  headVbo;
-    int    headVertCount;
-
-public:
     this(Vec3 start, Vec3 end, Vec3 color) {
         this.start = start;
         this.end   = end;
         this.color = color;
 
-        // ---- Unit shaft: (0,0,0) → (0,0,1) ----
-        float[6] shaftData = [0,0,0,  0,0,1];
-        glGenVertexArrays(1, &shaftVao); glGenBuffers(1, &shaftVbo);
-        glBindVertexArray(shaftVao);
-        glBindBuffer(GL_ARRAY_BUFFER, shaftVbo);
-        glBufferData(GL_ARRAY_BUFFER, shaftData.sizeof, shaftData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
+        shaftVao = buildVao3f([0f,0f,0f,  0f,0f,1f], shaftVbo);
 
-        // ---- Unit cube: centred at origin, half-extent 1 ----
-        // 6 faces × 2 triangles × 3 vertices
-        immutable float[3][8] v = [
-            [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],  // back
-            [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],  // front
-        ];
-        immutable int[6][6] faces = [
-            [0,1,2, 2,3,0], // -Z
-            [4,6,5, 6,4,7], // +Z
-            [0,4,5, 5,1,0], // -Y
-            [2,6,7, 7,3,2], // +Y
-            [0,3,7, 7,4,0], // -X
-            [1,5,6, 6,2,1], // +X
-        ];
         float[] cubeData;
-        foreach (ref f; faces)
-            foreach (idx; f)
-                cubeData ~= v[idx];
+        buildUnitCubeData(cubeData);
         headVertCount = cast(int)(cubeData.length / 3);
-
-        glGenVertexArrays(1, &headVao); glGenBuffers(1, &headVbo);
-        glBindVertexArray(headVao);
-        glBindBuffer(GL_ARRAY_BUFFER, headVbo);
-        glBufferData(GL_ARRAY_BUFFER, cubeData.length * float.sizeof,
-                     cubeData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindVertexArray(0);
-    }
-
-    void destroy() {
-        glDeleteVertexArrays(1, &shaftVao); glDeleteBuffers(1, &shaftVbo);
-        glDeleteVertexArrays(1, &headVao);  glDeleteBuffers(1, &headVbo);
+        headVao = buildVao3f(cubeData, headVbo);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -315,16 +291,14 @@ public:
         Vec3 fwd = (fixedDir.x != 0.0f || fixedDir.y != 0.0f || fixedDir.z != 0.0f)
             ? fixedDir
             : Vec3(dir.x/len, dir.y/len, dir.z/len);
+        Vec3 right, up;
+        localFrame(fwd, right, up);
 
-        Vec3 tmp   = (abs(fwd.x) < 0.9f) ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
-
-        float cubeHalf  = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
+        float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
         Vec3  cubeCenter = vec3Sub(end, vec3Scale(fwd, cubeHalf));
 
         // When end is behind start (dot < 0), shaft goes from cube's back face to start.
-        float dotFwd    = dir.x*fwd.x + dir.y*fwd.y + dir.z*fwd.z;
+        float dotFwd = dir.x*fwd.x + dir.y*fwd.y + dir.z*fwd.z;
         Vec3  shaftOrigin;
         float shaftLen;
         if (dotFwd >= 0.0f) {
@@ -340,19 +314,13 @@ public:
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
-
         glDisable(GL_DEPTH_TEST);
 
-        // ---- Draw shaft (thick line) ----
-        auto shaftModel = modelMatrix(right, up, fwd,
-                                      Vec3(1, 1, shaftLen), shaftOrigin);
+        auto shaftModel = modelMatrix(right, up, fwd, Vec3(1, 1, shaftLen), shaftOrigin);
         drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
-        // ---- Draw cube head ----
-        // Scale unit cube (half-extent 1) to cubeHalf, translate to cubeCenter
-        auto headModel = modelMatrix(right, up, fwd,
-                                     Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
+        auto headModel = modelMatrix(right, up, fwd, Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
@@ -360,25 +328,6 @@ public:
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
-    }
-
-private:
-    void updateHover(const ref Viewport vp)
-    {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        float sax, say, ndcZa, sbx, sby, ndcZb;
-        if (!projectToWindowFull(start, vp, sax, say, ndcZa) ||
-            !projectToWindowFull(end,   vp, sbx, sby, ndcZb))
-        {
-            hovered = false;
-            return;
-        }
-        float t;
-        hovered = closestOnSegment2D(cast(float)mx, cast(float)my,
-                                     sax, say, sbx, sby, t) < 8.0f;
     }
 }
 
@@ -415,15 +364,7 @@ public:
             float a = cast(float)i * PI / SEGS;
             arcData ~= [cos(a), sin(a), 0.0f];
         }
-
-        glGenVertexArrays(1, &arcVao); glGenBuffers(1, &arcVbo);
-        glBindVertexArray(arcVao);
-        glBindBuffer(GL_ARRAY_BUFFER, arcVbo);
-        glBufferData(GL_ARRAY_BUFFER, arcData.length * float.sizeof,
-                     arcData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
+        arcVao = buildVao3f(arcData, arcVbo);
     }
 
     void destroy() {
@@ -435,11 +376,10 @@ public:
     {
         if (!visible) return;
         Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(normal, right, up);
 
-        updateHover(vp, right, up);
+        updateHover(vp);
 
         Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
                : selected ? Vec3(1.0f, 0.64f, 0.0f)    // orange
@@ -470,30 +410,19 @@ public:
     // Set startAngle so the arc begins at the direction of `dir` in the arc plane.
     // `dir` is projected onto the local right/up frame; its angle becomes startAngle.
     void setStartDirection(Vec3 dir) {
-        Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(normal, right, up);
         float dx = dot(dir, right);
         float dy = dot(dir, up);
         import std.math : atan2;
         startAngle = atan2(dy, dx);
     }
 
-    // Fresh hit test — does not rely on cached hover state.
-    bool hitTest(int mx, int my, const ref Viewport vp)
+    // Fresh hit test — does not rely on cached hover state; also used by Handler.updateHover.
+    override bool hitTest(int mx, int my, const ref Viewport vp)
     {
-        Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
-        return arcHitCheck(mx, my, vp, right, up);
-    }
-
-private:
-    // Returns true if (mx,my) is within 8 px of the projected arc.
-    bool arcHitCheck(int mx, int my, const ref Viewport vp, Vec3 right, Vec3 up)
-    {
+        Vec3 right, up;
+        localFrame(normal, right, up);
         float[2][SEGS + 1] pts;
         bool[SEGS + 1]     valid;
         foreach (i; 0 .. SEGS + 1) {
@@ -514,15 +443,6 @@ private:
                 return true;
         }
         return false;
-    }
-
-    void updateHover(const ref Viewport vp, Vec3 right, Vec3 up)
-    {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        hovered = arcHitCheck(mx, my, vp, right, up);
     }
 }
 
@@ -555,15 +475,7 @@ public:
             float a = cast(float)i * 2.0f * PI / SEGS;
             arcData ~= [cos(a), sin(a), 0.0f];
         }
-
-        glGenVertexArrays(1, &arcVao); glGenBuffers(1, &arcVbo);
-        glBindVertexArray(arcVao);
-        glBindBuffer(GL_ARRAY_BUFFER, arcVbo);
-        glBufferData(GL_ARRAY_BUFFER, arcData.length * float.sizeof,
-                     arcData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
+        arcVao = buildVao3f(arcData, arcVbo);
     }
 
     void destroy() {
@@ -575,11 +487,10 @@ public:
     {
         if (!visible) return;
         Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(normal, right, up);
 
-        updateHover(vp, right, up);
+        updateHover(vp);
 
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
@@ -594,19 +505,11 @@ public:
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
-    // Fresh hit test — does not rely on cached hover state.
-    bool hitTest(int mx, int my, const ref Viewport vp)
+    // Fresh hit test — does not rely on cached hover state; also used by Handler.updateHover.
+    override bool hitTest(int mx, int my, const ref Viewport vp)
     {
-        Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
-        return circleHitCheck(mx, my, vp, right, up);
-    }
-
-private:
-    bool circleHitCheck(int mx, int my, const ref Viewport vp, Vec3 right, Vec3 up)
-    {
+        Vec3 right, up;
+        localFrame(normal, right, up);
         float[2][SEGS + 1] pts;
         bool[SEGS + 1]     valid;
         foreach (i; 0 .. SEGS + 1) {
@@ -627,15 +530,6 @@ private:
                 return true;
         }
         return false;
-    }
-
-    void updateHover(const ref Viewport vp, Vec3 right, Vec3 up)
-    {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        hovered = circleHitCheck(mx, my, vp, right, up);
     }
 }
 
@@ -845,31 +739,10 @@ public:
         this.color = color;
 
         // Unit cube (half-extent 1), 6 faces × 2 triangles × 3 vertices
-        immutable float[3][8] cv = [
-            [-1,-1,-1], [ 1,-1,-1], [ 1, 1,-1], [-1, 1,-1],
-            [-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1],
-        ];
-        immutable int[6][6] faces = [
-            [0,1,2, 2,3,0],  // -Z
-            [4,6,5, 6,4,7],  // +Z
-            [0,4,5, 5,1,0],  // -Y
-            [2,6,7, 7,3,2],  // +Y
-            [0,3,7, 7,4,0],  // -X
-            [1,5,6, 6,2,1],  // +X
-        ];
         float[] data;
-        foreach (ref f; faces)
-            foreach (idx; f)
-                data ~= cv[idx][];
+        buildUnitCubeData(data);
         vertCount = cast(int)(data.length / 3);
-
-        glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, data.length * float.sizeof, data.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
+        vao = buildVao3f(data, vbo);
     }
 
     void destroy() {
@@ -879,7 +752,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        updateHover(vp);
+        updateHover(vp);  // defined in Handler base class
 
         Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
                : selected ? Vec3(1.0f, 0.64f, 0.0f)
@@ -905,22 +778,14 @@ public:
         return true;
     }
 
-    // Fresh hit-test (does not rely on cached hover state).
-    bool hitTest(int mx, int my, const ref Viewport vp)
+public:
+    // Fresh hit-test (does not rely on cached hover state); also satisfies Handler.hitTest.
+    override bool hitTest(int mx, int my, const ref Viewport vp)
     {
         return doHitTest(mx, my, vp);
     }
 
 private:
-    void updateHover(const ref Viewport vp)
-    {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        hovered = doHitTest(mx, my, vp);
-    }
-
     bool doHitTest(int mx, int my, const ref Viewport vp)
     {
         // Project all 8 corners and check if mouse is inside any projected face.
@@ -987,13 +852,7 @@ public:
             float a = 2.0f * PI * i / SEGS;
             outData ~= [cos(a), sin(a), 0.0f];
         }
-        glGenVertexArrays(1, &outlineVao); glGenBuffers(1, &outlineVbo);
-        glBindVertexArray(outlineVao);
-        glBindBuffer(GL_ARRAY_BUFFER, outlineVbo);
-        glBufferData(GL_ARRAY_BUFFER, outData.length * float.sizeof,
-                     outData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
+        outlineVao = buildVao3f(outData, outlineVbo);
 
         // ---- Fill: triangle fan (SEGS triangles × 3 verts) ----
         float[] fillData;
@@ -1005,16 +864,7 @@ public:
             fillData ~= [cos(a1), sin(a1), 0.0f];
         }
         fillVertCount = cast(int)(fillData.length / 3);
-
-        glGenVertexArrays(1, &fillVao); glGenBuffers(1, &fillVbo);
-        glBindVertexArray(fillVao);
-        glBindBuffer(GL_ARRAY_BUFFER, fillVbo);
-        glBufferData(GL_ARRAY_BUFFER, fillData.length * float.sizeof,
-                     fillData.ptr, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindVertexArray(0);
+        fillVao = buildVao3f(fillData, fillVbo);
     }
 
     void destroy() {
@@ -1025,7 +875,7 @@ public:
     bool isSelected()        const { return selected; }
     void setSelected(bool v)       { selected = v; }
 
-    bool hitTest(int mx, int my, const ref Viewport vp) {
+    override bool hitTest(int mx, int my, const ref Viewport vp) {
         return doHitTest(mx, my, vp);
     }
 
@@ -1033,11 +883,10 @@ public:
     {
         if (!visible) return;
         Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(normal, right, up);
 
-        updateHover(vp, right, up);
+        updateHover(vp);
 
         Vec3 oc = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
                 : selected ? Vec3(1.0f, 0.64f, 0.0f)
@@ -1071,22 +920,11 @@ public:
     }
 
 private:
-    void updateHover(const ref Viewport vp, Vec3 right, Vec3 up)
-    {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        hovered = doHitTest(mx, my, vp);
-    }
-
     bool doHitTest(int mx, int my, const ref Viewport vp)
     {
         // Project SEGS circle points and check if mouse is inside the polygon.
-        Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(normal, right, up);
 
         float[] xs, ys;
         foreach (i; 0 .. SEGS) {
@@ -1119,10 +957,8 @@ class CenterDiskGizmo : Handler {
         updateHover(vp);
 
         enum SEGS = 32;
-        Vec3 fwd   = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 up    = cross(right, fwd);
+        Vec3 right, up;
+        localFrame(normal, right, up);
 
         ImVec2[SEGS] pts;
         bool allValid = true;
@@ -1145,7 +981,7 @@ class CenterDiskGizmo : Handler {
         dl.AddPolyline(pts.ptr, SEGS, outlineCol, ImDrawFlags.Closed, 1.5f);
     }
 
-    bool hitTest(int mx, int my, const ref Viewport vp) {
+    override bool hitTest(int mx, int my, const ref Viewport vp) {
         return diskHitCheck(mx, my, vp);
     }
 
@@ -1154,10 +990,9 @@ private:
         float cx, cy, ndcZ;
         if (!projectToWindowFull(center, vp, cx, cy, ndcZ)) return false;
         // Project one rim point to get screen-space radius.
-        Vec3 fwd = normalize(normal);
-        Vec3 tmp   = abs(fwd.x) < 0.9f ? Vec3(1,0,0) : Vec3(0,1,0);
-        Vec3 right = normalize(cross(fwd, tmp));
-        Vec3 rim   = vec3Add(center, vec3Scale(right, radius));
+        Vec3 right, up;
+        localFrame(normal, right, up);
+        Vec3 rim = vec3Add(center, vec3Scale(right, radius));
         float rx, ry, rndcZ;
         if (!projectToWindowFull(rim, vp, rx, ry, rndcZ)) return false;
         float screenR = sqrt((rx - cx)*(rx - cx) + (ry - cy)*(ry - cy));
@@ -1165,13 +1000,6 @@ private:
         return sqrt(dx*dx + dy*dy) <= screenR;
     }
 
-    void updateHover(const ref Viewport vp) {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
-        int mx, my;
-        queryMouse(mx, my);
-        hovered = diskHitCheck(mx, my, vp);
-    }
 }
 
 // ---------------------------------------------------------------------------
