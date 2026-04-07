@@ -141,13 +141,8 @@ public:
             Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
                    : avy >= avx && avy >= avz ? Vec3(0,1,0)
                                               : Vec3(0,0,1);
-            Vec3 camOrigin = Vec3(
-                -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-                -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-                -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-            );
             Vec3 hit;
-            if (!rayPlaneIntersect(camOrigin, screenRay(e.x, e.y, cachedVp),
+            if (!rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                                    handler.center, n, hit))
                 return false;
             handler.setPosition(hit);
@@ -172,14 +167,8 @@ public:
                     : dragAxis == 1 ? Vec3(0,1,0)
                                     : Vec3(0,0,1);
         }
-        const ref float[16] v = cachedVp.view;
-        Vec3 camOrigin = Vec3(
-            -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-            -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-            -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-        );
         Vec3 hit;
-        if (rayPlaneIntersect(camOrigin, screenRay(e.x, e.y, cachedVp),
+        if (rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                               handler.center, axisVec, hit)) {
             Vec3 d = vec3Sub(hit, handler.center);
             float dlen = sqrt(d.x*d.x + d.y*d.y + d.z*d.z) * 1.05f;
@@ -222,12 +211,7 @@ public:
         Vec3 center = handler.center;
 
         // Cast rays for current and previous mouse positions into the arc plane.
-        const ref float[16] v = cachedVp.view;
-        Vec3 camOrigin = Vec3(
-            -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-            -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-            -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-        );
+        Vec3 camOrigin = viewCamOrigin();
         Vec3 hitCurr, hitPrev;
         if (!rayPlaneIntersect(camOrigin, screenRay(e.x,    e.y,    cachedVp), center, axisVec, hitCurr) ||
             !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, cachedVp), center, axisVec, hitPrev))
@@ -304,6 +288,40 @@ public:
     }
 
 private:
+    Vec3 viewCamOrigin() {
+        const ref float[16] v = cachedVp.view;
+        return Vec3(
+            -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
+            -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
+            -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
+        );
+    }
+
+    bool[] buildSelectionMask() {
+        bool[] mask = new bool[](mesh.vertices.length);
+        if (*editMode == EditMode.Vertices) {
+            bool any = false;
+            foreach (s; *selected) if (s) { any = true; break; }
+            foreach (i; 0 .. mesh.vertices.length)
+                mask[i] = !any || (i < (*selected).length && (*selected)[i]);
+        } else if (*editMode == EditMode.Edges) {
+            bool any = false;
+            foreach (s; *selectedEdges) if (s) { any = true; break; }
+            if (!any) { mask[] = true; }
+            else foreach (i, edge; mesh.edges)
+                if (i < (*selectedEdges).length && (*selectedEdges)[i])
+                    { mask[edge[0]] = true; mask[edge[1]] = true; }
+        } else if (*editMode == EditMode.Polygons) {
+            bool any = false;
+            foreach (s; *selectedFaces) if (s) { any = true; break; }
+            if (!any) { mask[] = true; }
+            else foreach (i, face; mesh.faces)
+                if (i < (*selectedFaces).length && (*selectedFaces)[i])
+                    foreach (vi; face) mask[vi] = true;
+        }
+        return mask;
+    }
+
     // Rodrigues rotation of a single point around pivot+axis
     Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
         float c = cos(angle), s = sin(angle);
@@ -321,29 +339,7 @@ private:
     void applyAbsoluteFromOrig() {
         if (origVertices.length != mesh.vertices.length) return;
         Vec3 pivot = handler.center;
-
-        bool[] toRotate = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; *selected) if (s) { any = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toRotate[i] = !any || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; *selectedEdges) if (s) { any = true; break; }
-            if (!any) { toRotate[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toRotate[edge[0]] = true; toRotate[edge[1]] = true; }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; *selectedFaces) if (s) { any = true; break; }
-            if (!any) { toRotate[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toRotate[vi] = true;
-        }
-
+        bool[] toRotate = buildSelectionMask();
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toRotate[i]) { mesh.vertices[i] = origVertices[i]; continue; }
             Vec3 v = origVertices[i];
@@ -360,27 +356,7 @@ private:
     void applyRotationVec(Vec3 axisVec, float angle) {
         import std.math : cos, sin;
         Vec3 pivot = handler.center;
-        bool[] toRotate = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; *selected) if (s) { any = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toRotate[i] = !any || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; *selectedEdges) if (s) { any = true; break; }
-            if (!any) { toRotate[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toRotate[edge[0]] = true; toRotate[edge[1]] = true; }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; *selectedFaces) if (s) { any = true; break; }
-            if (!any) { toRotate[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toRotate[vi] = true;
-        }
+        bool[] toRotate = buildSelectionMask();
         float c = cos(angle), s = sin(angle);
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toRotate[i]) continue;
@@ -491,4 +467,3 @@ private:
         return -1;
     }
 }
-

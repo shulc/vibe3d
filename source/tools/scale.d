@@ -179,18 +179,7 @@ public:
 
         if (dragAxis == 3) {
             // Uniform scale: horizontal mouse movement.
-            // Moving left by full viewport width brings scale to 0.
-            // Project handler.size along the screen-right vector to get pixel length
-            Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
-            Vec3 rightEnd = Vec3(center.x + camRight.x * handler.size,
-                                 center.y + camRight.y * handler.size,
-                                 center.z + camRight.z * handler.size);
-            float cx, cy, cndcZ, rx, ry, rndcZ;
-            if (!projectToWindowFull(center,   cachedVp, cx, cy, cndcZ))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            if (!projectToWindowFull(rightEnd, cachedVp, rx, ry, rndcZ))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            float gizmoScreenPx = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
+            float gizmoScreenPx = gizmoScreenWidth(center);
             if (gizmoScreenPx < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
             float dx = cast(float)(e.x - lastMX);
             float scaleFactor = 1.0f + dx / gizmoScreenPx;
@@ -198,29 +187,20 @@ public:
             float minAccum = scaleAccum.x < scaleAccum.y ? scaleAccum.x : scaleAccum.y;
             if (scaleAccum.z < minAccum) minAccum = scaleAccum.z;
             if (minAccum * scaleFactor < 0.0f) scaleFactor = 0.0f;
-            scaleAccum.x    *= scaleFactor;
-            scaleAccum.y    *= scaleFactor;
-            scaleAccum.z    *= scaleFactor;
+            scaleAccum.x     *= scaleFactor;
+            scaleAccum.y     *= scaleFactor;
+            scaleAccum.z     *= scaleFactor;
             dragScaleAccum.x *= scaleFactor;
             dragScaleAccum.y *= scaleFactor;
             dragScaleAccum.z *= scaleFactor;
-            applyScaleUniform(scaleFactor);
+            applyScaleAxes(true, true, true, scaleFactor);
             lastMX = e.x; lastMY = e.y;
             return true;
         }
 
         // Plane drags: 4=XY, 5=YZ, 6=XZ — scale two axes via horizontal movement
         if (dragAxis >= 4) {
-            Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
-            Vec3 rightEnd = Vec3(center.x + camRight.x * handler.size,
-                                 center.y + camRight.y * handler.size,
-                                 center.z + camRight.z * handler.size);
-            float cx, cy, cndcZ, rx, ry, rndcZ;
-            if (!projectToWindowFull(center,   cachedVp, cx, cy, cndcZ))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            if (!projectToWindowFull(rightEnd, cachedVp, rx, ry, rndcZ))
-            { lastMX = e.x; lastMY = e.y; return true; }
-            float gizmoScreenPx = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
+            float gizmoScreenPx = gizmoScreenWidth(center);
             if (gizmoScreenPx < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
             float dx = cast(float)(e.x - lastMX);
             float scaleFactor = 1.0f + dx / gizmoScreenPx;
@@ -233,7 +213,7 @@ public:
             if (scaleX) { scaleAccum.x *= scaleFactor; dragScaleAccum.x *= scaleFactor; }
             if (scaleY) { scaleAccum.y *= scaleFactor; dragScaleAccum.y *= scaleFactor; }
             if (scaleZ) { scaleAccum.z *= scaleFactor; dragScaleAccum.z *= scaleFactor; }
-            applyScale2(scaleX, scaleY, scaleZ, scaleFactor);
+            applyScaleAxes(scaleX, scaleY, scaleZ, scaleFactor);
             lastMX = e.x; lastMY = e.y;
             return true;
         }
@@ -258,19 +238,19 @@ public:
         float scaleFactor = 1.0f + delta;
         if (dragAxis == 0) {
             if (scaleAccum.x * scaleFactor < 0.0f) scaleFactor = 0.0f;
-            scaleAccum.x    *= scaleFactor;
+            scaleAccum.x     *= scaleFactor;
             dragScaleAccum.x *= scaleFactor;
         } else if (dragAxis == 1) {
             if (scaleAccum.y * scaleFactor < 0.0f) scaleFactor = 0.0f;
-            scaleAccum.y    *= scaleFactor;
+            scaleAccum.y     *= scaleFactor;
             dragScaleAccum.y *= scaleFactor;
         } else if (dragAxis == 2) {
             if (scaleAccum.z * scaleFactor < 0.0f) scaleFactor = 0.0f;
-            scaleAccum.z    *= scaleFactor;
+            scaleAccum.z     *= scaleFactor;
             dragScaleAccum.z *= scaleFactor;
         }
 
-        applyScale(dragAxis, scaleFactor);
+        applyScaleAxes(dragAxis == 0, dragAxis == 1, dragAxis == 2, scaleFactor);
 
         lastMX = e.x; lastMY = e.y;
         return true;
@@ -308,101 +288,61 @@ public:
     }
 
 private:
-    void applyScaleUniform(float factor) {
-        Vec3 center = handler.center;
-        bool[] toScale = new bool[](mesh.vertices.length);
+    bool[] buildSelectionMask() {
+        bool[] mask = new bool[](mesh.vertices.length);
         if (*editMode == EditMode.Vertices) {
             bool any = false;
             foreach (s; *selected) if (s) { any = true; break; }
             foreach (i; 0 .. mesh.vertices.length)
-                toScale[i] = !any || (i < (*selected).length && (*selected)[i]);
+                mask[i] = !any || (i < (*selected).length && (*selected)[i]);
         } else if (*editMode == EditMode.Edges) {
             bool any = false;
             foreach (s; *selectedEdges) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
+            if (!any) { mask[] = true; }
             else foreach (i, edge; mesh.edges)
                 if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toScale[edge[0]] = true; toScale[edge[1]] = true; }
+                    { mask[edge[0]] = true; mask[edge[1]] = true; }
         } else if (*editMode == EditMode.Polygons) {
             bool any = false;
             foreach (s; *selectedFaces) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
+            if (!any) { mask[] = true; }
             else foreach (i, face; mesh.faces)
                 if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toScale[vi] = true;
+                    foreach (vi; face) mask[vi] = true;
         }
+        return mask;
+    }
+
+    float gizmoScreenWidth(Vec3 center) {
+        Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
+        Vec3 rightEnd = Vec3(center.x + camRight.x * handler.size,
+                             center.y + camRight.y * handler.size,
+                             center.z + camRight.z * handler.size);
+        float cx, cy, cndcZ, rx, ry, rndcZ;
+        if (!projectToWindowFull(center,   cachedVp, cx, cy, cndcZ)) return -1.0f;
+        if (!projectToWindowFull(rightEnd, cachedVp, rx, ry, rndcZ)) return -1.0f;
+        return sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
+    }
+
+    void applyScaleAxes(bool sx, bool sy, bool sz, float factor) {
+        Vec3 center = handler.center;
+        bool[] mask = buildSelectionMask();
         foreach (i; 0 .. mesh.vertices.length) {
-            if (!toScale[i]) continue;
-            mesh.vertices[i].x = center.x + (mesh.vertices[i].x - center.x) * factor;
-            mesh.vertices[i].y = center.y + (mesh.vertices[i].y - center.y) * factor;
-            mesh.vertices[i].z = center.z + (mesh.vertices[i].z - center.z) * factor;
+            if (!mask[i]) continue;
+            if (sx) mesh.vertices[i].x = center.x + (mesh.vertices[i].x - center.x) * factor;
+            if (sy) mesh.vertices[i].y = center.y + (mesh.vertices[i].y - center.y) * factor;
+            if (sz) mesh.vertices[i].z = center.z + (mesh.vertices[i].z - center.z) * factor;
         }
         gpu.upload(*mesh);
         update();
     }
 
-    void applyScale(int axisIdx, float factor) {
-        Vec3 axis = axisIdx == 0 ? Vec3(1,0,0)
-                  : axisIdx == 1 ? Vec3(0,1,0)
-                                 : Vec3(0,0,1);
-        Vec3 center = handler.center;
-        bool[] toScale = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; *selected) if (s) { any = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toScale[i] = !any || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; *selectedEdges) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toScale[edge[0]] = true; toScale[edge[1]] = true; }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; *selectedFaces) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toScale[vi] = true;
-        }
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!toScale[i]) continue;
-            mesh.vertices[i].x += axis.x * (mesh.vertices[i].x - center.x) * (factor - 1.0f);
-            mesh.vertices[i].y += axis.y * (mesh.vertices[i].y - center.y) * (factor - 1.0f);
-            mesh.vertices[i].z += axis.z * (mesh.vertices[i].z - center.z) * (factor - 1.0f);
-        }
-        gpu.upload(*mesh);
-        update();
-    }
-
-    private void applyScaleFromActivation(int axisIdx, float targetScale) {
+    void applyScaleFromActivation(int axisIdx, float targetScale) {
         if (activationVertices.length == 0) return;
         Vec3 center = activationCenter;
-        bool[] toScale = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; *selected) if (s) { any = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toScale[i] = !any || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; *selectedEdges) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toScale[edge[0]] = true; toScale[edge[1]] = true; }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; *selectedFaces) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toScale[vi] = true;
-        }
+        bool[] mask = buildSelectionMask();
         foreach (i; 0 .. mesh.vertices.length) {
-            if (!toScale[i]) continue;
+            if (!mask[i]) continue;
             // Restore from activation snapshot, then apply current propScale on all axes
             mesh.vertices[i].x = center.x + (activationVertices[i].x - center.x) * (axisIdx == 0 ? targetScale : scaleAccum.x);
             mesh.vertices[i].y = center.y + (activationVertices[i].y - center.y) * (axisIdx == 1 ? targetScale : scaleAccum.y);
@@ -412,40 +352,7 @@ private:
         update();
     }
 
-    private void applyScale2(bool sx, bool sy, bool sz, float factor) {
-        Vec3 center = handler.center;
-        bool[] toScale = new bool[](mesh.vertices.length);
-        if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; *selected) if (s) { any = true; break; }
-            foreach (i; 0 .. mesh.vertices.length)
-                toScale[i] = !any || (i < (*selected).length && (*selected)[i]);
-        } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; *selectedEdges) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
-            else foreach (i, edge; mesh.edges)
-                if (i < (*selectedEdges).length && (*selectedEdges)[i])
-                    { toScale[edge[0]] = true; toScale[edge[1]] = true; }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; *selectedFaces) if (s) { any = true; break; }
-            if (!any) { toScale[] = true; }
-            else foreach (i, face; mesh.faces)
-                if (i < (*selectedFaces).length && (*selectedFaces)[i])
-                    foreach (vi; face) toScale[vi] = true;
-        }
-        foreach (i; 0 .. mesh.vertices.length) {
-            if (!toScale[i]) continue;
-            if (sx) mesh.vertices[i].x += (mesh.vertices[i].x - center.x) * (factor - 1.0f);
-            if (sy) mesh.vertices[i].y += (mesh.vertices[i].y - center.y) * (factor - 1.0f);
-            if (sz) mesh.vertices[i].z += (mesh.vertices[i].z - center.z) * (factor - 1.0f);
-        }
-        gpu.upload(*mesh);
-        update();
-    }
-
-    private int hitTestAxes(int mx, int my) {
+    int hitTestAxes(int mx, int my) {
         // Center disk checked first — it's on top visually.
         if (handler.centerDisk.hitTest(mx, my, cachedVp)) return 3;
 
