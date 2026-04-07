@@ -895,7 +895,7 @@ void main(string[] args) {
             if (ImGui.Button("Load              ")) {
                 string path;
                 version (Windows)
-                    auto result = openDialog(path, [FilterItem("LWO"w.ptr, "lwo"w.ptr)]);
+                    auto result = openDialog(path, [FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)]);
                 else
                     auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
                 assert(result != Result.error, getError());
@@ -915,7 +915,7 @@ void main(string[] args) {
             if (ImGui.Button("Save              ")) {
                 string path;
                 version (Windows)
-                    auto result = saveDialog(path, [FilterItem("LWO"w.ptr, "lwo"w.ptr)], "Untitled.lwo");
+                    auto result = saveDialog(path, [FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)], "Untitled.lwo");
                 else
                     auto result = saveDialog(path, [FilterItem("LWO", "lwo")], "Untitled.lwo");
                 assert(result != Result.error, getError());
