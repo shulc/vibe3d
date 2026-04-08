@@ -37,6 +37,8 @@ import commands.select.expand;
 import commands.select.contract;
 import commands.select.loop;
 import commands.select.invert;
+import commands.select.more;
+import commands.select.less;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 
@@ -283,8 +285,8 @@ void main(string[] args) {
             float fz = cast(float)z;
             verts ~= [-F, 0, fz,   F, 0, fz];
         }
-        // Lines parallel to Z axis (constant X), skip X=0 (that's the Z axis)
         foreach (x; -N .. N + 1) {
+        // Lines parallel to Z axis (constant X), skip X=0 (that's the Z axis)
             if (x == 0) continue;
             float fx = cast(float)x;
             verts ~= [fx, 0, -F,   fx, 0,  F];
@@ -470,6 +472,9 @@ void main(string[] args) {
                 if (shift) {
                     new SelectionExpand(mesh, cameraView, editMode).apply();
                     // run command: select.expand
+                } else {
+                    new SelectMore(mesh, cameraView, editMode).apply();
+                    // run command: select.more
                 }
                 break;
             }
@@ -477,6 +482,9 @@ void main(string[] args) {
                 if (shift) {
                     new SelectionContract(mesh, cameraView, editMode).apply();
                     // run command: select.contract
+                } else {
+                    new SelectLess(mesh, cameraView, editMode).apply();
+                    // run command: select.less
                 }
                 break;
             }
@@ -537,11 +545,13 @@ void main(string[] args) {
             else if (shift && !anyToolActive) dragMode = DragMode.SelectAdd;
             else if (!anyToolActive) {
                 // No modifiers: clear selection for current mode
-                if (editMode == EditMode.Vertices)
+                if (editMode == EditMode.Vertices) {
                     mesh.selectedVertices[] = false;
-                else if (editMode == EditMode.Edges)
+                    mesh.vertexSelectionOrder[] = 0;
+                } else if (editMode == EditMode.Edges) {
                     mesh.selectedEdges[] = false;
-                else if (editMode == EditMode.Polygons) {
+                    mesh.edgeSelectionOrder[] = 0;
+                } else if (editMode == EditMode.Polygons) {
                     mesh.selectedFaces[] = false;
                     mesh.faceSelectionOrder[] = 0;
                     mesh.selectionOrderCounter = 0;
@@ -640,10 +650,14 @@ void main(string[] args) {
 
         if (candidate >= 0) {
             hoveredVertex = candidate;
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd) {
+                if (!mesh.selectedVertices[hoveredVertex])
+                    mesh.vertexSelectionOrder[hoveredVertex] = ++mesh.selectionOrderCounter;
                 mesh.selectedVertices[hoveredVertex] = true;
-            else if (dragMode == DragMode.SelectRemove)
+            } else if (dragMode == DragMode.SelectRemove) {
                 mesh.selectedVertices[hoveredVertex] = false;
+                mesh.vertexSelectionOrder[hoveredVertex] = 0;
+            }
         }
     }
 
@@ -710,10 +724,14 @@ void main(string[] args) {
         }
 
         if (hoveredEdge >= 0) {
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd) {
+                if (!mesh.selectedEdges[hoveredEdge])
+                    mesh.edgeSelectionOrder[hoveredEdge] = ++mesh.selectionOrderCounter;
                 mesh.selectedEdges[hoveredEdge] = true;
-            else if (dragMode == DragMode.SelectRemove)
+            } else if (dragMode == DragMode.SelectRemove) {
                 mesh.selectedEdges[hoveredEdge] = false;
+                mesh.edgeSelectionOrder[hoveredEdge] = 0;
+            }
         }
     }
 

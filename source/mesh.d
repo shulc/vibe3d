@@ -20,7 +20,9 @@ struct Mesh {
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
-    int[]     faceSelectionOrder;  // 1-based counter; 0 = not manually selected
+    int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
+    int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
+    int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected
     int       selectionOrderCounter;
 
     // Resize selection arrays to match geometry and clear them.
@@ -29,8 +31,22 @@ struct Mesh {
         selectedVertices.length = vertices.length; selectedVertices[] = false;
         selectedEdges.length    = edges.length;    selectedEdges[]    = false;
         selectedFaces.length    = faces.length;    selectedFaces[]    = false;
-        faceSelectionOrder.length = faces.length;  faceSelectionOrder[] = 0;
+        vertexSelectionOrder.length = vertices.length; vertexSelectionOrder[] = 0;
+        edgeSelectionOrder.length   = edges.length;   edgeSelectionOrder[]   = 0;
+        faceSelectionOrder.length   = faces.length;   faceSelectionOrder[]   = 0;
         selectionOrderCounter = 0;
+    }
+
+    // Bring selectionOrderCounter up to the maximum value across all order arrays.
+    // Needed after commands that write *SelectionOrder via a slice on a struct copy
+    // (the scalar selectionOrderCounter does not propagate back through ref-less copies).
+    void syncSelectionCounter() {
+        foreach (ord; vertexSelectionOrder)
+            if (ord > selectionOrderCounter) selectionOrderCounter = ord;
+        foreach (ord; edgeSelectionOrder)
+            if (ord > selectionOrderCounter) selectionOrderCounter = ord;
+        foreach (ord; faceSelectionOrder)
+            if (ord > selectionOrderCounter) selectionOrderCounter = ord;
     }
 
     // Grow selection arrays to match geometry without clearing.
@@ -39,7 +55,9 @@ struct Mesh {
         if (selectedVertices.length < vertices.length) selectedVertices.length = vertices.length;
         if (selectedEdges.length    < edges.length)    selectedEdges.length    = edges.length;
         if (selectedFaces.length    < faces.length)    selectedFaces.length    = faces.length;
-        if (faceSelectionOrder.length < faces.length)  faceSelectionOrder.length = faces.length;
+        if (vertexSelectionOrder.length < vertices.length) vertexSelectionOrder.length = vertices.length;
+        if (edgeSelectionOrder.length   < edges.length)    edgeSelectionOrder.length   = edges.length;
+        if (faceSelectionOrder.length   < faces.length)    faceSelectionOrder.length   = faces.length;
     }
 
     uint addVertex(Vec3 v) {
