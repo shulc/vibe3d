@@ -33,6 +33,8 @@ import tools.rotate;
 import tools.box;
 
 import commands.select.connect;
+import commands.select.expand;
+import commands.select.contract;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 
@@ -460,6 +462,20 @@ void main(string[] args) {
             case SDLK_RIGHTBRACKET: {
                 new SelectConnect(mesh, cameraView, editMode).apply();
                 // run command: select.connect
+                break;
+            }
+            case SDLK_UP: {
+                if (shift) {
+                    new SelectionExpand(mesh, cameraView, editMode).apply();
+                    // run command: select.expand
+                }
+                break;
+            }
+            case SDLK_DOWN: {
+                if (shift) {
+                    new SelectionContract(mesh, cameraView, editMode).apply();
+                    // run command: select.contract
+                }
                 break;
             }
             case SDLK_d: {

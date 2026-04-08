@@ -26,13 +26,13 @@
 === 08.04.2026
 selection:
     - Selection fill    | ctrl/cmd + shift + double-click
-    - Grow selection    | shift + up
-    - Shink selection   | shift + down
+[+] - Grow selection    | shift + up
+[+] - Shink selection   | shift + down
     - Select more       | up
     - Select less       | down
     - Select loop       | l
     - Invert selection  | [
-    - Select connected  | ]
+[+] - Select connected  | ]
     - Select between    | shift + g
     - Boundary edges    | ctrl/cmd + "edge"
     - Select ring       | alt + l
