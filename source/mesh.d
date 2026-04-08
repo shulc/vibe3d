@@ -20,6 +20,8 @@ struct Mesh {
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
+    int[]     faceSelectionOrder;  // 1-based counter; 0 = not manually selected
+    int       selectionOrderCounter;
 
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
@@ -27,6 +29,8 @@ struct Mesh {
         selectedVertices.length = vertices.length; selectedVertices[] = false;
         selectedEdges.length    = edges.length;    selectedEdges[]    = false;
         selectedFaces.length    = faces.length;    selectedFaces[]    = false;
+        faceSelectionOrder.length = faces.length;  faceSelectionOrder[] = 0;
+        selectionOrderCounter = 0;
     }
 
     // Grow selection arrays to match geometry without clearing.
@@ -35,6 +39,7 @@ struct Mesh {
         if (selectedVertices.length < vertices.length) selectedVertices.length = vertices.length;
         if (selectedEdges.length    < edges.length)    selectedEdges.length    = edges.length;
         if (selectedFaces.length    < faces.length)    selectedFaces.length    = faces.length;
+        if (faceSelectionOrder.length < faces.length)  faceSelectionOrder.length = faces.length;
     }
 
     uint addVertex(Vec3 v) {

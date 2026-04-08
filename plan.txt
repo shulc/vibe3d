@@ -30,7 +30,7 @@ selection:
 [+] - Shink selection   | shift + down
     - Select more       | up
     - Select less       | down
-    - Select loop       | l
+[+] - Select loop       | l
     - Invert selection  | [
 [+] - Select connected  | ]
     - Select between    | shift + g

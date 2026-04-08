@@ -35,6 +35,7 @@ import tools.box;
 import commands.select.connect;
 import commands.select.expand;
 import commands.select.contract;
+import commands.select.loop;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 
@@ -478,6 +479,11 @@ void main(string[] args) {
                 }
                 break;
             }
+            case SDLK_l: {
+                new SelectLoop(mesh, cameraView, editMode).apply();
+                // run command: select.loop
+                break;
+            }
             case SDLK_d: {
                 if (shift) {
                     setActiveTool(null);
@@ -529,8 +535,11 @@ void main(string[] args) {
                     mesh.selectedVertices[] = false;
                 else if (editMode == EditMode.Edges)
                     mesh.selectedEdges[] = false;
-                else if (editMode == EditMode.Polygons)
+                else if (editMode == EditMode.Polygons) {
                     mesh.selectedFaces[] = false;
+                    mesh.faceSelectionOrder[] = 0;
+                    mesh.selectionOrderCounter = 0;
+                }
                 dragMode = DragMode.Select;
             }
             lastMouseX = btn.x;
@@ -783,10 +792,14 @@ void main(string[] args) {
         }
 
         if (hoveredFace >= 0) {
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd) {
+                if (!mesh.selectedFaces[hoveredFace])
+                    mesh.faceSelectionOrder[hoveredFace] = ++mesh.selectionOrderCounter;
                 mesh.selectedFaces[hoveredFace] = true;
-            else if (dragMode == DragMode.SelectRemove)
+            } else if (dragMode == DragMode.SelectRemove) {
                 mesh.selectedFaces[hoveredFace] = false;
+                mesh.faceSelectionOrder[hoveredFace] = 0;
+            }
         }
     }
 
