@@ -39,6 +39,7 @@ import commands.select.loop;
 import commands.select.invert;
 import commands.select.more;
 import commands.select.less;
+import commands.select.between;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 
@@ -485,6 +486,13 @@ void main(string[] args) {
                 } else {
                     new SelectLess(mesh, cameraView, editMode).apply();
                     // run command: select.less
+                }
+                break;
+            }
+            case SDLK_g: {
+                if (shift) {
+                    new SelectBetween(mesh, cameraView, editMode).apply();
+                    // run command: select.between
                 }
                 break;
             }
