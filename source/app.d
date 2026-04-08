@@ -36,6 +36,7 @@ import commands.select.connect;
 import commands.select.expand;
 import commands.select.contract;
 import commands.select.loop;
+import commands.select.invert;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 
@@ -482,6 +483,11 @@ void main(string[] args) {
             case SDLK_l: {
                 new SelectLoop(mesh, cameraView, editMode).apply();
                 // run command: select.loop
+                break;
+            }
+            case SDLK_LEFTBRACKET: {
+                new SelectInvert(mesh, cameraView, editMode).apply();
+                // run command: select.invert
                 break;
             }
             case SDLK_d: {

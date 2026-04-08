@@ -31,7 +31,7 @@ selection:
     - Select more       | up
     - Select less       | down
 [+] - Select loop       | l
-    - Invert selection  | [
+[+] - Invert selection  | [
 [+] - Select connected  | ]
     - Select between    | shift + g
     - Boundary edges    | ctrl/cmd + "edge"
