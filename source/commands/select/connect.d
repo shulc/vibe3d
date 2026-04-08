@@ -2,6 +2,7 @@ module commands.select.connect;
 
 import command;
 import mesh;
+import view;
 import editmode;
 
 private void bfsSelect(bool[] selection, int[][] adj, int seed) {
@@ -28,7 +29,7 @@ private void bfsSelect(bool[] selection, int[][] adj, int seed) {
 
 
 class SelectConnect : Command {
-    this(ref Mesh mesh, EditMode editMode) { super(mesh, editMode); }
+    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.connect"; }
 

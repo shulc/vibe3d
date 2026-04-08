@@ -33,6 +33,8 @@ import tools.rotate;
 import tools.box;
 
 import commands.select.connect;
+import commands.viewport.fit_selected;
+import commands.viewport.fit;
 
 
 // Read depth buffer at window position (px, py),
@@ -60,11 +62,6 @@ enum DragMode { None, Orbit, Zoom, Pan, Select, SelectAdd, SelectRemove }
 private ulong edgeKey(uint a, uint b) {
     uint lo = a < b ? a : b, hi = a < b ? b : a;
     return (cast(ulong)lo << 32) | hi;
-}
-
-private bool hasAnySelected(bool[] sel) {
-    foreach (s; sel) if (s) return true;
-    return false;
 }
 
 private int countSelected(bool[] sel) {
@@ -233,8 +230,11 @@ void main(string[] args) {
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
+    enum int PANEL_W  = 150;
+    enum int STATUS_H = 38;
+
     // Camera
-    View cameraView;
+    View cameraView = new View(PANEL_W, 0, winW - PANEL_W, winH - STATUS_H);
 
     VertexCache vertexCache;
     vertexCache.resize(mesh.vertices.length);
@@ -383,12 +383,6 @@ void main(string[] args) {
 
     int lastMouseX, lastMouseY;
 
-    // ---- Build matrices ----
-    enum int PANEL_W  = 150;
-    enum int STATUS_H = 38;
-
-    cameraView.setPos(PANEL_W, 0);
-
     bool running = true;
     SDL_Event event;
 
@@ -445,37 +439,14 @@ void main(string[] args) {
                 break;
             case SDLK_a: {
                 if (shift) {
-                    // Frame selected (or whole mesh if nothing selected).
-                    Vec3[] verts;
-                    if (editMode == EditMode.Vertices) {
-                        bool any = hasAnySelected(mesh.selectedVertices);
-                        foreach (i; 0 .. mesh.vertices.length)
-                            if (!any || mesh.selectedVertices[i]) verts ~= mesh.vertices[i];
-                    } else if (editMode == EditMode.Edges) {
-                        bool any = hasAnySelected(mesh.selectedEdges);
-                        bool[] vis = new bool[](mesh.vertices.length);
-                        foreach (i; 0 .. mesh.edges.length) {
-                            if (any && !mesh.selectedEdges[i]) continue;
-                            foreach (vi; mesh.edges[i])
-                                if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
-                        }
-                    } else if (editMode == EditMode.Polygons) {
-                        bool any = hasAnySelected(mesh.selectedFaces);
-                        bool[] vis = new bool[](mesh.vertices.length);
-                        foreach (i; 0 .. mesh.faces.length) {
-                            if (any && !mesh.selectedFaces[i]) continue;
-                            foreach (vi; mesh.faces[i])
-                                if (!vis[vi]) { verts ~= mesh.vertices[vi]; vis[vi] = true; }
-                        }
-                    }
-                    cameraView.frameToVertices(verts);
+                    new FitSelected(mesh, cameraView, editMode).apply();
                 } else {
-                    cameraView.frameToVertices(mesh.vertices);
+                    new Fit(mesh, cameraView, editMode).apply();
                 }
                 break;
             }
             case SDLK_RIGHTBRACKET: {
-                new SelectConnect(mesh, editMode).apply();
+                new SelectConnect(mesh, cameraView, editMode).apply();
                 // run command: select.connect
                 break;
             }
@@ -1156,7 +1127,7 @@ void main(string[] args) {
 
         // Checkerboard overlay for selected faces (Polygons mode).
         if (editMode == EditMode.Polygons) {
-            if (hasAnySelected(mesh.selectedFaces)) {
+            if (mesh.hasAnySelectedFaces()) {
                 checkerShader.useProgram(meshModel, cameraView, 1.0f, 0.5f, 0.1f);  // orange
                 glDisable(GL_DEPTH_TEST);
                 gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
@@ -1215,7 +1186,7 @@ void main(string[] args) {
                 if (allSel) {
                     faceSelEdgesCache[] = true;
                 } else {
-                    if (hasAnySelected(mesh.selectedFaces)) {
+                    if (mesh.hasAnySelectedFaces()) {
                         bool[ulong] edgeSet;
                         foreach (fi, face; mesh.faces) {
                             if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;

@@ -8,6 +8,11 @@ import shader;
 // Mesh
 // ---------------------------------------------------------------------------
 
+private bool hasAnySelected(const bool[] sel) {
+    foreach (s; sel) if (s) return true;
+    return false;
+}
+
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
@@ -59,6 +64,9 @@ struct Mesh {
             }
         }
     }
+    bool hasAnySelectedVertices() const { return hasAnySelected(selectedVertices); }
+    bool hasAnySelectedEdges() const { return hasAnySelected(selectedEdges); }
+    bool hasAnySelectedFaces() const { return hasAnySelected(selectedFaces); }
     void clear() { vertices = []; edges = []; faces = []; }
 }
 

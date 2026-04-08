@@ -4,7 +4,7 @@ import math;
 import std.math : sqrt, tan, PI;
 
 // CameraView
-struct View {
+class View {
     float azimuth   =  0.5f;
     float elevation =  0.4f;
     float distance  =  3.0f;
@@ -18,7 +18,7 @@ struct View {
     float[16] proj;
     Vec3 eye;
 
-    this(int w, int h, int x, int y) { setSize(w, h); setPos(x, y); }
+    this(int x, int y, int w, int h) { setSize(w, h); setPos(x, y); }
     void setSize(int w, int h) { width = w; height = h; }
     void setPos(int x, int y) { this.x = x; this.y = y; }
     void reset() {
