@@ -7,7 +7,7 @@ import editmode;
 class Command {
     // Human-readable name shown in the UI.
     string name() const { return "Command"; }
-    void apply() {}
+    bool apply() { return true; }
 
     this(ref Mesh mesh, ref View view, EditMode editMode) {
         this.mesh = mesh;

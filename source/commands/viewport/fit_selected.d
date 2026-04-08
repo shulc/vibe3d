@@ -12,7 +12,7 @@ class FitSelected : Command {
 
     override string name() const { return "viewport.fitSelected"; }
 
-    override void apply() {
+    override bool apply() {
         // Frame selected (or whole mesh if nothing selected).
         Vec3[] verts;
         if (editMode == EditMode.Vertices) {
@@ -37,6 +37,7 @@ class FitSelected : Command {
             }
         }
         view.frameToVertices(verts);
+        return true;
     }
 };
 

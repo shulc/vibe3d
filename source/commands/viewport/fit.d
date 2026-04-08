@@ -12,8 +12,9 @@ class Fit : Command {
 
     override string name() const { return "viewport.fit"; }
 
-    override void apply() {
+    override bool apply() {
         view.frameToVertices(mesh.vertices);
+        return true;
     }
 };
 

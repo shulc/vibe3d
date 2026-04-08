@@ -33,7 +33,7 @@ class SelectConnect : Command {
 
     override string name() const { return "select.connect"; }
 
-    override void apply() {
+    override bool apply() {
         // Connected selection — flood-fill from current selection / hovered element.
         if (editMode == EditMode.Vertices) {
             int[][] vertAdj = new int[][](mesh.vertices.length);
@@ -76,5 +76,6 @@ class SelectConnect : Command {
             }
             bfsSelect(mesh.selectedFaces, faceAdj, -1);
         }
+        return true;
     }
 };
