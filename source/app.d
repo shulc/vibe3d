@@ -187,6 +187,18 @@ void main(string[] args) {
     if (!window) { writefln("SDL_CreateWindow: %s", SDL_GetError()); return; }
     scope(exit) SDL_DestroyWindow(window);
 
+    version (OSX) {
+        // Make the app appear in the Dock and Command-Tab switcher when launched from terminal.
+        import core.attribute : selector;
+        extern (Objective-C) interface NSApplication {
+            static NSApplication sharedApplication() @selector("sharedApplication");
+            void setActivationPolicy(int policy) @selector("setActivationPolicy:");
+            void activateIgnoringOtherApps(bool flag) @selector("activateIgnoringOtherApps:");
+        }
+        NSApplication.sharedApplication.setActivationPolicy(0); // NSApplicationActivationPolicyRegular
+        NSApplication.sharedApplication.activateIgnoringOtherApps(true);
+    }
+
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
     if (!ctx) { writefln("SDL_GL_CreateContext: %s", SDL_GetError()); return; }
     scope(exit) SDL_GL_DeleteContext(ctx);
@@ -788,15 +800,16 @@ void main(string[] args) {
                     auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
                 assert(result != Result.error, getError());
                 if (path !is null) {
-                    mesh = importLWO(path);
-                    mesh.resetSelection();
-                    gpu.upload(mesh);
-                    vertexCache.resize(mesh.vertices.length);
-                    vertexCache.invalidate();
-                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                    faceCache.invalidate();
-                    edgeCache.resize(mesh.edges.length);
-                    edgeCache.invalidate();
+                    if (importLWO(path, mesh)) {
+                        mesh.resetSelection();
+                        gpu.upload(mesh);
+                        vertexCache.resize(mesh.vertices.length);
+                        vertexCache.invalidate();
+                        faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                        faceCache.invalidate();
+                        edgeCache.resize(mesh.edges.length);
+                        edgeCache.invalidate();
+                    }
                 }
             }
 

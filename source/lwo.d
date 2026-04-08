@@ -4,6 +4,7 @@ import std.stdio     : File;
 import std.file      : read;
 import std.exception : enforce;
 import std.algorithm : min;
+
 import mesh;
 import math;
 
@@ -56,13 +57,16 @@ void exportLWO(ref const Mesh mesh, string path)
 // Reads PNTS and POLS(FACE) chunks; ignores all other chunks (SURF, TAGS, …).
 // Raises Exception on malformed input.
 
-Mesh importLWO(string path)
+bool importLWO(string path, ref Mesh mesh)
 {
     ubyte[] data = cast(ubyte[]) read(path);
 
-    enforce(data.length >= 12,          "File too small to be LWO2");
-    enforce(data[0..4] == "FORM",       "Not an IFF file (no FORM header)");
-    enforce(data[8..12] == "LWO2",      "Not an LWO2 file");
+    if (data.length < 12) // "File too small to be LWO2"
+        return false;
+    if (data[0..4] != "FORM") // "Not an IFF file (no FORM header)"
+        return false;
+    if (data[8..12] != "LWO2") // "Not an LWO2 file"
+        return false;
 
     uint   formSize = readU32(data, 4);
     size_t end      = min(cast(size_t)(8 + formSize), data.length);
@@ -105,15 +109,16 @@ Mesh importLWO(string path)
         if (pos & 1) pos++;   // IFF chunks are padded to even size
     }
 
-    enforce(verts.length > 0, "LWO2 file contains no vertices");
-    enforce(polys.length > 0, "LWO2 file contains no polygons");
+    if (verts.length <= 0) // "LWO2 file contains no vertices"
+        return false;
+    if (polys.length <= 0) // "LWO2 file contains no polygons"
+        return false;
 
-    Mesh m;
-    m.vertices = verts;
+    mesh.vertices = verts;
     uint[ulong] edgeLookup;
     foreach (face; polys)
-        m.addFaceFast(edgeLookup, face);
-    return m;
+        mesh.addFaceFast(edgeLookup, face);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
