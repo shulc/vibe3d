@@ -321,6 +321,10 @@ void main(string[] args) {
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
 
+    // RMB path trail
+    bool    rmbDragging = false;
+    ImVec2[] rmbPath;
+
     // Gizmo size: 9 levels linearly spaced from 0.1 to 1.0; default = middle (index 4).
     enum float[9] gizmoLevels = [0.10f, 0.2125f, 0.325f, 0.4375f, 0.55f,
                                   0.6625f, 0.775f, 0.8875f, 1.0f];
@@ -543,6 +547,11 @@ void main(string[] args) {
     }
 
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
+        if (btn.button == SDL_BUTTON_RIGHT) {
+            rmbDragging = true;
+            rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
+            return;
+        }
         if (activeTool && activeTool.onMouseButtonDown(btn)) return;
         if (btn.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mods = SDL_GetModState();
@@ -572,6 +581,77 @@ void main(string[] args) {
     }
 
     void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
+        if (btn.button == SDL_BUTTON_RIGHT) {
+            if (rmbPath.length >= 3) {
+                SDL_Keymod mods = SDL_GetModState();
+                bool shift = (mods & KMOD_SHIFT) != 0;
+                bool ctrl  = (mods & KMOD_CTRL)  != 0;
+                Viewport vp2 = cameraView.viewport();
+                float[] pxs = new float[](rmbPath.length);
+                float[] pys = new float[](rmbPath.length);
+                foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
+                bool[] visible = computeVisibleVertices(mesh, cameraView);
+
+                if (editMode == EditMode.Polygons) {
+                    if (!shift && !ctrl)
+                        mesh.clearFaceSelection();
+                    foreach (fi; 0 .. mesh.faces.length) {
+                        uint[] face = mesh.faces[fi];
+                        if (face.length < 3) continue;
+                        // Back-face cull
+                        Vec3 v0 = mesh.vertices[face[0]];
+                        Vec3 v1 = mesh.vertices[face[1]];
+                        Vec3 v2 = mesh.vertices[face[2]];
+                        Vec3 fn = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+                        if (dot(fn, vec3Sub(v0, vp2.eye)) >= 0) continue;
+                        // All vertices must project onto screen and be inside the lasso
+                        bool allInside = true;
+                        foreach (vi; face) {
+                            float sx, sy, ndcZ;
+                            if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ) ||
+                                !pointInPolygon2D(sx, sy, pxs, pys)) {
+                                allInside = false;
+                                break;
+                            }
+                        }
+                        if (allInside) {
+                            if (ctrl) mesh.deselectFace(cast(int)fi);
+                            else      mesh.selectFace(cast(int)fi);
+                        }
+                    }
+                } else if (editMode == EditMode.Vertices) {
+                    if (!shift && !ctrl)
+                        mesh.clearVertexSelection();
+                    foreach (vi; 0 .. mesh.vertices.length) {
+                        if (!visible[vi]) continue;
+                        float sx, sy, ndcZ;
+                        if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
+                        if (pointInPolygon2D(sx, sy, pxs, pys)) {
+                            if (ctrl) mesh.deselectVertex(cast(int)vi);
+                            else      mesh.selectVertex(cast(int)vi);
+                        }
+                    }
+                } else if (editMode == EditMode.Edges) {
+                    if (!shift && !ctrl)
+                        mesh.clearEdgeSelection();
+                    foreach (ei; 0 .. mesh.edges.length) {
+                        uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
+                        if (!visible[a] || !visible[b]) continue;
+                        float sxa, sya, ndcZa, sxb, syb, ndcZb;
+                        if (!projectToWindow(mesh.vertices[a], vp2, sxa, sya, ndcZa)) continue;
+                        if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
+                        if (pointInPolygon2D(sxa, sya, pxs, pys) &&
+                            pointInPolygon2D(sxb, syb, pxs, pys)) {
+                            if (ctrl) mesh.deselectEdge(cast(int)ei);
+                            else      mesh.selectEdge(cast(int)ei);
+                        }
+                    }
+                }
+            }
+            rmbDragging = false;
+            rmbPath = null;
+            return;
+        }
         if (activeTool) activeTool.onMouseButtonUp(btn);
         // When BoxTool commits a new face, resize selection + caches.
         {
@@ -592,6 +672,8 @@ void main(string[] args) {
     }
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
+        if (rmbDragging)
+            rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
         if (activeTool && activeTool.onMouseMotion(mot)) return;
         if (dragMode == DragMode.None) return;
 
@@ -1113,6 +1195,15 @@ void main(string[] args) {
                     : IM_COL32(255, 255, 255, 200);
                 dl.AddCircleFilled(pos, 3.0f, dotColor, 12);
             }
+        }
+
+        // ---- RMB path trail ----
+        if (rmbPath.length >= 2) {
+            ImDrawList* dl = ImGui.GetForegroundDrawList();
+            for (size_t i = 1; i < rmbPath.length; i++)
+                dl.AddLine(rmbPath[i - 1], rmbPath[i], IM_COL32(0, 255, 255, 220), 1.0f);
+            // Closing line: start → end
+            dl.AddLine(rmbPath[0], rmbPath[$ - 1], IM_COL32(0, 255, 255, 220), 1.0f);
         }
 
         ImGui.Render();
