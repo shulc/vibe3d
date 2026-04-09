@@ -553,6 +553,13 @@ void main(string[] args) {
             return;
         }
         if (activeTool && activeTool.onMouseButtonDown(btn)) return;
+        if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && activeTool is null) {
+            if (editMode == EditMode.Edges)
+                new SelectLoop(&mesh, cameraView, editMode).apply();
+            else
+                new SelectConnect(&mesh, cameraView, editMode).apply();
+            return;
+        }
         if (btn.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mods = SDL_GetModState();
             bool ctrl  = (mods & KMOD_CTRL)  != 0;
