@@ -45,19 +45,35 @@ private:
     Vec3 gizmoRight;    // unit vector: perpendicular to normal (insert axis)
 
     // Bevel parameters
-    float shiftAmount = 0.0f;  // world-space extrusion along normal
-    float insertScale = 1.0f;  // scale factor from face center (1 = no inset, 0 = collapsed)
+    float shiftAmount   = 0.0f;   // world-space extrusion along normal
+    float insertScale   = 1.0f;   // scale factor from face center (1 = no inset, 0 = collapsed)
+    bool  groupPolygons = false;   // treat all selected faces as one group (shared center/normal)
+
+    // Group-mode snapshot — saved at applyBevelTopology time
+    Vec3 groupCenter;
+    Vec3 groupNormal;
 
     // Topology snapshot — populated on first drag
     bool bevelApplied = false;
 
     struct BevelFaceData {
-        Vec3[] origPos;   // snapshot of original vertex positions at bevel time
-        int[]  newVerts;  // mesh.vertices indices of the new top-face vertices
-        Vec3   center;    // face centroid
-        Vec3   normal;    // unit face normal
+        Vec3[]  origPos;       // snapshot of original vertex positions at bevel time
+        int[]   newVerts;      // mesh.vertices indices of the new top-face vertices
+        Vec3    center;        // face centroid
+        Vec3    normal;        // unit face normal
+        int     origFaceIdx;   // index in mesh.faces (for revert)
+        uint[]  origFaceVerts; // original face vertex array (for revert)
     }
     BevelFaceData[] bevelFaces;
+
+    // Saved state for revertBevelTopology()
+    size_t    bevelVertStart;
+    size_t    bevelFaceStart;
+    // Full edge snapshot — group mode removes internal edges before adding boundary ones,
+    // so simple length-truncation doesn't work; we save and restore the whole edge state.
+    uint[2][] edgesBeforeBevel;
+    bool[]    selEdgesBeforeBevel;
+    int[]     edgeOrderBeforeBevel;
 
     // Drag state
     int      dragHandle = -1;   // 0=shift, 1=insert, 2=free(pending), -1=none
@@ -276,6 +292,14 @@ public:
             changed = true;
         }
 
+        if (ImGui.Checkbox("Group Polygon", &groupPolygons)) {
+            if (bevelApplied) {
+                revertBevelTopology();
+                applyBevelTopology();
+                changed = true;
+            }
+        }
+
         if (changed && bevelApplied) {
             updateBevelVertices();
             gpu.upload(*mesh);
@@ -283,6 +307,21 @@ public:
     }
 
 private:
+    // Undo the topology added by applyBevelTopology() — restores modified faces,
+    // truncates added vertices / faces, and fully restores the edge state.
+    void revertBevelTopology() {
+        foreach (ref bfd; bevelFaces)
+            mesh.faces[bfd.origFaceIdx] = bfd.origFaceVerts;
+        mesh.vertices.length         = bevelVertStart;
+        mesh.faces.length            = bevelFaceStart;
+        mesh.edges                   = edgesBeforeBevel;
+        mesh.selectedEdges           = selEdgesBeforeBevel;
+        mesh.edgeSelectionOrder      = edgeOrderBeforeBevel;
+        bevelApplied = false;
+        bevelFaces   = [];
+        mesh.syncSelection();
+    }
+
     // Recompute gizmoCenter / gizmoNormal / gizmoRight from selected faces.
     void recomputeCenter() {
         if (*editMode != EditMode.Polygons || !mesh.hasAnySelectedFaces()) return;
@@ -329,12 +368,70 @@ private:
 
     // First drag: detach selected faces, create side quads, record new vertex indices.
     void applyBevelTopology() {
-        bevelFaces   = [];
-        bevelApplied = true;
+        bevelFaces     = [];
+        bevelApplied   = true;
+        groupCenter    = gizmoCenter;
+        groupNormal    = gizmoNormal;
+        bevelVertStart = mesh.vertices.length;
+        bevelFaceStart = mesh.faces.length;
+
+        // Always save edge state — revert restores it wholesale.
+        edgesBeforeBevel    = mesh.edges.dup;
+        selEdgesBeforeBevel = mesh.selectedEdges.dup;
+        edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
 
         int[] selFaceIdx;
         foreach (fi, sel; mesh.selectedFaces)
             if (sel && fi < mesh.faces.length) selFaceIdx ~= cast(int)fi;
+
+        // Group mode: build set of internal (shared-between-selected-faces) directed edges
+        // and a map so shared-edge vertices get one new vertex instead of two.
+        bool[ulong] internalEdgeSet;  // directed key (a<<32)|b whose reverse also exists
+        int[uint]   groupVertMap;     // origVert index → new vertex index
+
+        if (groupPolygons) {
+            bool[ulong] selEdges;
+            foreach (fi; selFaceIdx) {
+                auto face = mesh.faces[fi];
+                int M = cast(int)face.length;
+                foreach (i; 0 .. M) {
+                    ulong key = (cast(ulong)face[i] << 32) | face[(i + 1) % M];
+                    selEdges[key] = true;
+                }
+            }
+            foreach (key; selEdges.byKey()) {
+                uint a = cast(uint)(key >> 32);
+                uint b = cast(uint)(key & 0xFFFF_FFFF);
+                ulong rev = (cast(ulong)b << 32) | a;
+                if (rev in selEdges)
+                    internalEdgeSet[key] = true;
+            }
+
+            // Remove internal edges from mesh.edges (they become interior to the group).
+            if (internalEdgeSet.length > 0) {
+                bool[ulong] internalPairs;  // undirected: key = (min<<32)|max
+                foreach (key; internalEdgeSet.byKey()) {
+                    uint a = cast(uint)(key >> 32);
+                    uint b = cast(uint)(key & 0xFFFF_FFFF);
+                    uint mn = a < b ? a : b, mx = a < b ? b : a;
+                    internalPairs[(cast(ulong)mn << 32) | mx] = true;
+                }
+                uint[2][] kept;
+                bool[]    keptSel;
+                int[]     keptOrd;
+                foreach (ei, e; mesh.edges) {
+                    uint mn = e[0] < e[1] ? e[0] : e[1];
+                    uint mx = e[0] < e[1] ? e[1] : e[0];
+                    if (((cast(ulong)mn << 32) | mx) in internalPairs) continue;
+                    kept    ~= e;
+                    keptSel ~= ei < mesh.selectedEdges.length      ? mesh.selectedEdges[ei]      : false;
+                    keptOrd ~= ei < mesh.edgeSelectionOrder.length  ? mesh.edgeSelectionOrder[ei] : 0;
+                }
+                mesh.edges               = kept;
+                mesh.selectedEdges       = keptSel;
+                mesh.edgeSelectionOrder  = keptOrd;
+            }
+        }
 
         foreach (origFi; selFaceIdx) {
             uint[] origFaceVerts = mesh.faces[origFi].dup;
@@ -360,10 +457,24 @@ private:
                 ? Vec3(cr.x/clen, cr.y/clen, cr.z/clen)
                 : Vec3(0, 1, 0);
 
-            // New top-face vertices (copies of originals).
+            // New top-face vertices.
+            // In group mode: reuse the same new vertex for vertices shared across selected
+            // faces (so adjacent top-faces stay connected along internal edges).
             int[] newVerts = new int[](N);
-            foreach (i; 0 .. N)
-                newVerts[i] = cast(int)mesh.addVertex(origPos[i]);
+            foreach (i; 0 .. N) {
+                if (groupPolygons) {
+                    uint ov = origFaceVerts[i];
+                    if (auto p = ov in groupVertMap) {
+                        newVerts[i] = *p;
+                    } else {
+                        int nv = cast(int)mesh.addVertex(origPos[i]);
+                        newVerts[i]      = nv;
+                        groupVertMap[ov] = nv;
+                    }
+                } else {
+                    newVerts[i] = cast(int)mesh.addVertex(origPos[i]);
+                }
+            }
 
             // Replace this face with new vertex indices (keeps selection state at origFi).
             uint[] topFace = new uint[](N);
@@ -371,18 +482,25 @@ private:
             mesh.faces[origFi] = topFace;
 
             // Side quads: [orig_i, orig_{i+1}, new_{i+1}, new_i]
+            // In group mode skip edges that are shared between two selected faces.
             foreach (i; 0 .. N) {
                 int next = (i + 1) % N;
+                if (groupPolygons) {
+                    ulong key = (cast(ulong)origFaceVerts[i] << 32) | origFaceVerts[next];
+                    if (key in internalEdgeSet) continue;
+                }
                 mesh.addFace([origFaceVerts[i],        origFaceVerts[next],
                               cast(uint)newVerts[next], cast(uint)newVerts[i]]);
             }
 
             BevelFaceData bfd;
-            bfd.origPos  = origPos;
-            bfd.newVerts = newVerts;
-            bfd.center   = center;
-            bfd.normal   = faceNormal;
-            bevelFaces  ~= bfd;
+            bfd.origPos       = origPos;
+            bfd.newVerts      = newVerts;
+            bfd.center        = center;
+            bfd.normal        = faceNormal;
+            bfd.origFaceIdx   = origFi;
+            bfd.origFaceVerts = origFaceVerts;  // already .dup'd above
+            bevelFaces       ~= bfd;
         }
 
         mesh.syncSelection();
@@ -392,13 +510,15 @@ private:
     // Mirrors ScaleTool: new_pos = center + (orig - center) * insertScale + normal * shift
     void updateBevelVertices() {
         foreach (ref bfd; bevelFaces) {
+            Vec3 useCenter = groupPolygons ? groupCenter : bfd.center;
+            Vec3 useNormal = groupPolygons ? groupNormal : bfd.normal;
             int N = cast(int)bfd.newVerts.length;
             foreach (i; 0 .. N) {
                 Vec3 orig = bfd.origPos[i];
                 mesh.vertices[bfd.newVerts[i]] = Vec3(
-                    bfd.center.x + (orig.x - bfd.center.x) * insertScale + bfd.normal.x * shiftAmount,
-                    bfd.center.y + (orig.y - bfd.center.y) * insertScale + bfd.normal.y * shiftAmount,
-                    bfd.center.z + (orig.z - bfd.center.z) * insertScale + bfd.normal.z * shiftAmount,
+                    useCenter.x + (orig.x - useCenter.x) * insertScale + useNormal.x * shiftAmount,
+                    useCenter.y + (orig.y - useCenter.y) * insertScale + useNormal.y * shiftAmount,
+                    useCenter.z + (orig.z - useCenter.z) * insertScale + useNormal.z * shiftAmount,
                 );
             }
         }
