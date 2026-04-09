@@ -29,7 +29,7 @@ private void bfsSelect(bool[] selection, int[][] adj, int seed) {
 
 
 class SelectConnect : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.connect"; }
 

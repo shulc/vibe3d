@@ -8,7 +8,7 @@ import view;
 import math;
 
 class FitSelected : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "viewport.fitSelected"; }
 

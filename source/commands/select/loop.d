@@ -6,7 +6,7 @@ import view;
 import editmode;
 
 class SelectLoop : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.loop"; }
 
@@ -60,7 +60,7 @@ class SelectLoop : Command {
                     ulong curKey = edgeKey(a, b);
                     if (curKey in visitedKeys) break;
                     visitedKeys[curKey] = true;
-                    mesh.selectedEdges[curEdge] = true;
+                    mesh.selectEdge(curEdge);
 
                     const face = mesh.faces[curFace];
                     if (face.length != 4) break;
@@ -161,8 +161,8 @@ class SelectLoop : Command {
                     ulong curKey = edgeKey(a, b);
                     if (curKey in visitedKeys) break;
                     visitedKeys[curKey] = true;
-                    mesh.selectedVertices[a] = true;
-                    mesh.selectedVertices[b] = true;
+                    mesh.selectVertex(cast(int)a);
+                    mesh.selectVertex(cast(int)b);
 
                     const face = mesh.faces[curFace];
                     if (face.length != 4) break;
@@ -300,7 +300,7 @@ class SelectLoop : Command {
             while (true) {
                 if (cur in visited) break;
                 visited[cur] = true;
-                mesh.selectedFaces[cur] = true;
+                mesh.selectFace(cur);
 
                 const face = mesh.faces[cur];
                 if (face.length != 4) break;

@@ -6,7 +6,7 @@ import view;
 import editmode;
 
 class SelectionContract : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.contract"; }
 
@@ -26,7 +26,7 @@ class SelectionContract : Command {
                             break;
                         }
             foreach (i; 0 .. toRemove.length)
-                if (toRemove[i]) mesh.selectedVertices[i] = false;
+                if (toRemove[i]) mesh.deselectVertex(cast(int)i);
 
         } else if (editMode == EditMode.Edges) {
             int[][] vertEdges = new int[][](mesh.vertices.length);
@@ -49,7 +49,7 @@ class SelectionContract : Command {
                             break;
                         }
             foreach (i; 0 .. toRemove.length)
-                if (toRemove[i]) mesh.selectedEdges[i] = false;
+                if (toRemove[i]) mesh.deselectEdge(cast(int)i);
 
         } else if (editMode == EditMode.Polygons) {
             // Adjacency via shared vertices (mirrors SelectionExpand).
@@ -78,7 +78,7 @@ class SelectionContract : Command {
                             break;
                         }
             foreach (i; 0 .. toRemove.length)
-                if (toRemove[i]) mesh.selectedFaces[i] = false;
+                if (toRemove[i]) mesh.deselectFace(cast(int)i);
         }
         return true;
     }

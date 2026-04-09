@@ -6,7 +6,7 @@ import view;
 import editmode;
 
 class SelectionExpand : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.expand"; }
 
@@ -23,7 +23,7 @@ class SelectionExpand : Command {
                     foreach (ni; vertAdj[i])
                         toAdd[ni] = true;
             foreach (i; 0 .. toAdd.length)
-                if (toAdd[i]) mesh.selectedVertices[i] = true;
+                if (toAdd[i]) mesh.selectVertex(cast(int)i);
 
         } else if (editMode == EditMode.Edges) {
             int[][] vertEdges = new int[][](mesh.vertices.length);
@@ -43,7 +43,7 @@ class SelectionExpand : Command {
                     foreach (ni; edgeAdj[i])
                         toAdd[ni] = true;
             foreach (i; 0 .. toAdd.length)
-                if (toAdd[i]) mesh.selectedEdges[i] = true;
+                if (toAdd[i]) mesh.selectEdge(cast(int)i);
 
         } else if (editMode == EditMode.Polygons) {
             // Adjacency via shared vertices (includes diagonal neighbours).
@@ -69,7 +69,7 @@ class SelectionExpand : Command {
                     foreach (ni; faceAdj[i])
                         toAdd[ni] = true;
             foreach (i; 0 .. toAdd.length)
-                if (toAdd[i]) mesh.selectedFaces[i] = true;
+                if (toAdd[i]) mesh.selectFace(cast(int)i);
         }
         return true;
     }

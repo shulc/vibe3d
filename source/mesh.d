@@ -23,30 +23,34 @@ struct Mesh {
     int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
     int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
     int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected
-    int       selectionOrderCounter;
+    int       vertexSelectionOrderCounter;
+    int       edgeSelectionOrderCounter;
+    int       faceSelectionOrderCounter;
 
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
     void resetSelection() {
-        selectedVertices.length = vertices.length; selectedVertices[] = false;
-        selectedEdges.length    = edges.length;    selectedEdges[]    = false;
-        selectedFaces.length    = faces.length;    selectedFaces[]    = false;
-        vertexSelectionOrder.length = vertices.length; vertexSelectionOrder[] = 0;
-        edgeSelectionOrder.length   = edges.length;   edgeSelectionOrder[]   = 0;
-        faceSelectionOrder.length   = faces.length;   faceSelectionOrder[]   = 0;
-        selectionOrderCounter = 0;
+        selectedVertices.length     = vertices.length;
+        vertexSelectionOrder.length = vertices.length;
+        selectedEdges.length        = edges.length;
+        edgeSelectionOrder.length   = edges.length;
+        selectedFaces.length        = faces.length;
+        faceSelectionOrder.length   = faces.length;
+        clearVertexSelection();
+        clearEdgeSelection();
+        clearFaceSelection();
     }
 
-    // Bring selectionOrderCounter up to the maximum value across all order arrays.
+    // Bring each *SelectionOrderCounter up to the maximum value in its order array.
     // Needed after commands that write *SelectionOrder via a slice on a struct copy
-    // (the scalar selectionOrderCounter does not propagate back through ref-less copies).
+    // (the scalar counters do not propagate back through ref-less copies).
     void syncSelectionCounter() {
         foreach (ord; vertexSelectionOrder)
-            if (ord > selectionOrderCounter) selectionOrderCounter = ord;
+            if (ord > vertexSelectionOrderCounter) vertexSelectionOrderCounter = ord;
         foreach (ord; edgeSelectionOrder)
-            if (ord > selectionOrderCounter) selectionOrderCounter = ord;
+            if (ord > edgeSelectionOrderCounter) edgeSelectionOrderCounter = ord;
         foreach (ord; faceSelectionOrder)
-            if (ord > selectionOrderCounter) selectionOrderCounter = ord;
+            if (ord > faceSelectionOrderCounter) faceSelectionOrderCounter = ord;
     }
 
     // Grow selection arrays to match geometry without clearing.
@@ -90,6 +94,53 @@ struct Mesh {
     bool hasAnySelectedVertices() const { return hasAnySelected(selectedVertices); }
     bool hasAnySelectedEdges() const { return hasAnySelected(selectedEdges); }
     bool hasAnySelectedFaces() const { return hasAnySelected(selectedFaces); }
+
+    void clearVertexSelection() {
+        selectedVertices[] = false;
+        vertexSelectionOrder[] = 0;
+        vertexSelectionOrderCounter = 0;
+    }
+    void clearEdgeSelection() {
+        selectedEdges[] = false;
+        edgeSelectionOrder[] = 0;
+        edgeSelectionOrderCounter = 0;
+    }
+    void clearFaceSelection() {
+        selectedFaces[] = false;
+        faceSelectionOrder[] = 0;
+        faceSelectionOrderCounter = 0;
+    }
+
+    void selectVertex(int idx) {
+        if (!selectedVertices[idx])
+            vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
+        selectedVertices[idx] = true;
+    }
+    void deselectVertex(int idx) {
+        selectedVertices[idx] = false;
+        vertexSelectionOrder[idx] = 0;
+    }
+
+    void selectEdge(int idx) {
+        if (!selectedEdges[idx])
+            edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
+        selectedEdges[idx] = true;
+    }
+    void deselectEdge(int idx) {
+        selectedEdges[idx] = false;
+        edgeSelectionOrder[idx] = 0;
+    }
+
+    void selectFace(int idx) {
+        if (!selectedFaces[idx])
+            faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
+        selectedFaces[idx] = true;
+    }
+    void deselectFace(int idx) {
+        selectedFaces[idx] = false;
+        faceSelectionOrder[idx] = 0;
+    }
+
     void clear() { vertices = []; edges = []; faces = []; }
 }
 

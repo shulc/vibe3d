@@ -8,7 +8,7 @@ import editmode;
 // SelectLess: all edit modes.
 // Deselects the most recently selected element (highest *SelectionOrder).
 class SelectLess : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.less"; }
 
@@ -21,8 +21,7 @@ class SelectLess : Command {
                 if (ord > lastOrd) { lastOrd = ord; last = cast(int)i; }
             }
             if (last < 0) return true;
-            mesh.selectedFaces[last]      = false;
-            mesh.faceSelectionOrder[last] = 0;
+            mesh.deselectFace(last);
         } else if (editMode == EditMode.Edges) {
             int last = -1, lastOrd = 0;
             foreach (i; 0 .. mesh.selectedEdges.length) {
@@ -31,8 +30,7 @@ class SelectLess : Command {
                 if (ord > lastOrd) { lastOrd = ord; last = cast(int)i; }
             }
             if (last < 0) return true;
-            mesh.selectedEdges[last]      = false;
-            mesh.edgeSelectionOrder[last] = 0;
+            mesh.deselectEdge(last);
         } else if (editMode == EditMode.Vertices) {
             int last = -1, lastOrd = 0;
             foreach (i; 0 .. mesh.selectedVertices.length) {
@@ -41,8 +39,7 @@ class SelectLess : Command {
                 if (ord > lastOrd) { lastOrd = ord; last = cast(int)i; }
             }
             if (last < 0) return true;
-            mesh.selectedVertices[last]      = false;
-            mesh.vertexSelectionOrder[last]  = 0;
+            mesh.deselectVertex(last);
         }
         return true;
     }

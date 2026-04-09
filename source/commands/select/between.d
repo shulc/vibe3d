@@ -19,7 +19,7 @@ import editmode;
 // Vertices: works only when the last 2 selected vertices share a vertex loop.
 // Selects all vertices on the shorter arc between them.
 class SelectBetween : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.between"; }
 
@@ -164,7 +164,7 @@ private:
             if (!fAsgn[i]) continue;
             if (fRow[i] >= rMin && fRow[i] <= rMax &&
                 fCol[i] >= cMin && fCol[i] <= cMax)
-                mesh.selectedFaces[i] = true;
+                mesh.selectFace(cast(int)i);
         }
         return true;
     }
@@ -316,7 +316,7 @@ private:
         if (bestLoop.length == 0) return true;
 
         foreach (k; 0 .. bestPos + 1)
-            mesh.selectedEdges[bestLoop[k]] = true;
+            mesh.selectEdge(bestLoop[k]);
 
         return true;
     }
@@ -369,7 +369,7 @@ private:
         if (bestLoop.length == 0) return true;
 
         foreach (k; 0 .. bestPos + 1)
-            mesh.selectedVertices[bestLoop[k]] = true;
+            mesh.selectVertex(cast(int)bestLoop[k]);
 
         return true;
     }

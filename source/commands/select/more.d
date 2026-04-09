@@ -9,7 +9,7 @@ import editmode;
 // Finds the last 2 manually-selected elements. If they share a loop,
 // extrapolates the gap pattern and selects the next element.
 class SelectMore : Command {
-    this(ref Mesh mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.more"; }
 
@@ -214,13 +214,8 @@ private:
             if (posLast < bestPos) { bestPos = posLast; bestNext = nf; }
         }
 
-        if (bestNext >= 0 && !mesh.selectedFaces[bestNext]) {
-            int newOrd = 0;
-            foreach (ord; mesh.faceSelectionOrder) if (ord > newOrd) newOrd = ord;
-            mesh.selectedFaces[bestNext] = true;
-            mesh.faceSelectionOrder[bestNext] = newOrd + 1;
-            mesh.syncSelectionCounter();
-        }
+        if (bestNext >= 0 && !mesh.selectedFaces[bestNext])
+            mesh.selectFace(bestNext);
         return true;
     }
 
@@ -268,13 +263,8 @@ private:
             if (posLast < bestPos) { bestPos = posLast; bestNext = ne; }
         }
 
-        if (bestNext >= 0 && !mesh.selectedEdges[bestNext]) {
-            int newOrd = 0;
-            foreach (ord; mesh.edgeSelectionOrder) if (ord > newOrd) newOrd = ord;
-            mesh.selectedEdges[bestNext] = true;
-            mesh.edgeSelectionOrder[bestNext] = newOrd + 1;
-            mesh.syncSelectionCounter();
-        }
+        if (bestNext >= 0 && !mesh.selectedEdges[bestNext])
+            mesh.selectEdge(bestNext);
         return true;
     }
 
@@ -321,13 +311,8 @@ private:
             if (posLast < bestPos) { bestPos = posLast; bestNext = nv; }
         }
 
-        if (bestNext >= 0 && !mesh.selectedVertices[bestNext]) {
-            int newOrd = 0;
-            foreach (ord; mesh.vertexSelectionOrder) if (ord > newOrd) newOrd = ord;
-            mesh.selectedVertices[bestNext] = true;
-            mesh.vertexSelectionOrder[bestNext] = newOrd + 1;
-            mesh.syncSelectionCounter();
-        }
+        if (bestNext >= 0 && !mesh.selectedVertices[bestNext])
+            mesh.selectVertex(bestNext);
         return true;
     }
 }

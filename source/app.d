@@ -458,51 +458,51 @@ void main(string[] args) {
                 break;
             case SDLK_a: {
                 if (shift) {
-                    new FitSelected(mesh, cameraView, editMode).apply();
+                    new FitSelected(&mesh, cameraView, editMode).apply();
                 } else {
-                    new Fit(mesh, cameraView, editMode).apply();
+                    new Fit(&mesh, cameraView, editMode).apply();
                 }
                 break;
             }
             case SDLK_RIGHTBRACKET: {
-                new SelectConnect(mesh, cameraView, editMode).apply();
+                new SelectConnect(&mesh, cameraView, editMode).apply();
                 // run command: select.connect
                 break;
             }
             case SDLK_UP: {
                 if (shift) {
-                    new SelectionExpand(mesh, cameraView, editMode).apply();
+                    new SelectionExpand(&mesh, cameraView, editMode).apply();
                     // run command: select.expand
                 } else {
-                    new SelectMore(mesh, cameraView, editMode).apply();
+                    new SelectMore(&mesh, cameraView, editMode).apply();
                     // run command: select.more
                 }
                 break;
             }
             case SDLK_DOWN: {
                 if (shift) {
-                    new SelectionContract(mesh, cameraView, editMode).apply();
+                    new SelectionContract(&mesh, cameraView, editMode).apply();
                     // run command: select.contract
                 } else {
-                    new SelectLess(mesh, cameraView, editMode).apply();
+                    new SelectLess(&mesh, cameraView, editMode).apply();
                     // run command: select.less
                 }
                 break;
             }
             case SDLK_g: {
                 if (shift) {
-                    new SelectBetween(mesh, cameraView, editMode).apply();
+                    new SelectBetween(&mesh, cameraView, editMode).apply();
                     // run command: select.between
                 }
                 break;
             }
             case SDLK_l: {
-                new SelectLoop(mesh, cameraView, editMode).apply();
+                new SelectLoop(&mesh, cameraView, editMode).apply();
                 // run command: select.loop
                 break;
             }
             case SDLK_LEFTBRACKET: {
-                new SelectInvert(mesh, cameraView, editMode).apply();
+                new SelectInvert(&mesh, cameraView, editMode).apply();
                 // run command: select.invert
                 break;
             }
@@ -553,17 +553,12 @@ void main(string[] args) {
             else if (shift && !anyToolActive) dragMode = DragMode.SelectAdd;
             else if (!anyToolActive) {
                 // No modifiers: clear selection for current mode
-                if (editMode == EditMode.Vertices) {
-                    mesh.selectedVertices[] = false;
-                    mesh.vertexSelectionOrder[] = 0;
-                } else if (editMode == EditMode.Edges) {
-                    mesh.selectedEdges[] = false;
-                    mesh.edgeSelectionOrder[] = 0;
-                } else if (editMode == EditMode.Polygons) {
-                    mesh.selectedFaces[] = false;
-                    mesh.faceSelectionOrder[] = 0;
-                    mesh.selectionOrderCounter = 0;
-                }
+                if (editMode == EditMode.Vertices)
+                    mesh.clearVertexSelection();
+                else if (editMode == EditMode.Edges)
+                    mesh.clearEdgeSelection();
+                else if (editMode == EditMode.Polygons)
+                    mesh.clearFaceSelection();
                 dragMode = DragMode.Select;
             }
             lastMouseX = btn.x;
@@ -658,14 +653,10 @@ void main(string[] args) {
 
         if (candidate >= 0) {
             hoveredVertex = candidate;
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd) {
-                if (!mesh.selectedVertices[hoveredVertex])
-                    mesh.vertexSelectionOrder[hoveredVertex] = ++mesh.selectionOrderCounter;
-                mesh.selectedVertices[hoveredVertex] = true;
-            } else if (dragMode == DragMode.SelectRemove) {
-                mesh.selectedVertices[hoveredVertex] = false;
-                mesh.vertexSelectionOrder[hoveredVertex] = 0;
-            }
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                mesh.selectVertex(hoveredVertex);
+            else if (dragMode == DragMode.SelectRemove)
+                mesh.deselectVertex(hoveredVertex);
         }
     }
 
@@ -732,14 +723,10 @@ void main(string[] args) {
         }
 
         if (hoveredEdge >= 0) {
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd) {
-                if (!mesh.selectedEdges[hoveredEdge])
-                    mesh.edgeSelectionOrder[hoveredEdge] = ++mesh.selectionOrderCounter;
-                mesh.selectedEdges[hoveredEdge] = true;
-            } else if (dragMode == DragMode.SelectRemove) {
-                mesh.selectedEdges[hoveredEdge] = false;
-                mesh.edgeSelectionOrder[hoveredEdge] = 0;
-            }
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                mesh.selectEdge(hoveredEdge);
+            else if (dragMode == DragMode.SelectRemove)
+                mesh.deselectEdge(hoveredEdge);
         }
     }
 
@@ -824,14 +811,10 @@ void main(string[] args) {
         }
 
         if (hoveredFace >= 0) {
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd) {
-                if (!mesh.selectedFaces[hoveredFace])
-                    mesh.faceSelectionOrder[hoveredFace] = ++mesh.selectionOrderCounter;
-                mesh.selectedFaces[hoveredFace] = true;
-            } else if (dragMode == DragMode.SelectRemove) {
-                mesh.selectedFaces[hoveredFace] = false;
-                mesh.faceSelectionOrder[hoveredFace] = 0;
-            }
+            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                mesh.selectFace(hoveredFace);
+            else if (dragMode == DragMode.SelectRemove)
+                mesh.deselectFace(hoveredFace);
         }
     }
 

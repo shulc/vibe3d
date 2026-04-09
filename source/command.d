@@ -9,14 +9,14 @@ class Command {
     string name() const { return "Command"; }
     bool apply() { return true; }
 
-    this(ref Mesh mesh, ref View view, EditMode editMode) {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
         this.mesh = mesh;
         this.view = view;
         this.editMode = editMode;
     }
 
 protected:
-    Mesh mesh;
+    Mesh* mesh;
     View view;
     EditMode editMode;
 };
