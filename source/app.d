@@ -36,6 +36,7 @@ import commands.select.connect;
 import commands.select.expand;
 import commands.select.contract;
 import commands.select.loop;
+import commands.select.ring;
 import commands.select.invert;
 import commands.select.more;
 import commands.select.less;
@@ -422,6 +423,7 @@ void main(string[] args) {
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         bool shift = (kev.keysym.mod & KMOD_SHIFT) != 0;
+        bool alt   = (kev.keysym.mod & KMOD_ALT)   != 0;
         switch (kev.keysym.sym) {
             case SDLK_F1:
                 recLog.close();
@@ -497,8 +499,11 @@ void main(string[] args) {
                 break;
             }
             case SDLK_l: {
-                new SelectLoop(&mesh, cameraView, editMode).apply();
-                // run command: select.loop
+                if (alt)
+                    new SelectRing(&mesh, cameraView, editMode).apply();
+                else
+                    new SelectLoop(&mesh, cameraView, editMode).apply();
+                // run command: select.ring (Alt+L) / select.loop (L)
                 break;
             }
             case SDLK_LEFTBRACKET: {
