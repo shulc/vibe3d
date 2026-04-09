@@ -138,7 +138,7 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        bool anyFace = (*editMode == EditMode.Polygons) && mesh.hasAnySelectedFaces();
+        bool anyFace = (*editMode == EditMode.Polygons) && mesh.faces.length > 0;
         shiftHandle .setVisible(anyFace);
         insertHandle.setVisible(anyFace);
 
@@ -176,8 +176,8 @@ public:
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
-        if (*editMode != EditMode.Polygons)  return false;
-        if (!mesh.hasAnySelectedFaces())     return false;
+        if (*editMode != EditMode.Polygons) return false;
+        if (mesh.faces.length == 0)         return false;
 
         if (shiftHandle.hitTest(e.x, e.y, cachedVp))
             dragHandle = 0;
@@ -324,14 +324,16 @@ private:
 
     // Recompute gizmoCenter / gizmoNormal / gizmoRight from selected faces.
     void recomputeCenter() {
-        if (*editMode != EditMode.Polygons || !mesh.hasAnySelectedFaces()) return;
+        if (*editMode != EditMode.Polygons || mesh.faces.length == 0) return;
+
+        bool allFaces = !mesh.hasAnySelectedFaces();
 
         Vec3 centerSum = Vec3(0, 0, 0);
         Vec3 normalSum = Vec3(0, 0, 0);
         int  count = 0;
 
         foreach (fi, face; mesh.faces) {
-            if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
+            if (!allFaces && (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi])) continue;
             if (face.length < 3) continue;
 
             Vec3 c = Vec3(0, 0, 0);
@@ -381,8 +383,13 @@ private:
         edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
 
         int[] selFaceIdx;
-        foreach (fi, sel; mesh.selectedFaces)
-            if (sel && fi < mesh.faces.length) selFaceIdx ~= cast(int)fi;
+        if (mesh.hasAnySelectedFaces()) {
+            foreach (fi, sel; mesh.selectedFaces)
+                if (sel && fi < mesh.faces.length) selFaceIdx ~= cast(int)fi;
+        } else {
+            foreach (fi; 0 .. mesh.faces.length)
+                selFaceIdx ~= cast(int)fi;
+        }
 
         // Group mode: build set of internal (shared-between-selected-faces) directed edges
         // and a map so shared-edge vertices get one new vertex instead of two.
