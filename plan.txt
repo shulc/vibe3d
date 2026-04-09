@@ -1,9 +1,9 @@
-=== 20.04.2026
+=== 20.03.2026
 добавить инструменты:
 [+] - scale
 [+] - rotate
 [+] - box
- - bevel для полигонов
+[+] - bevel для полигонов
  - bevel для edges.
  - bevel для points
  - Subpatch surface
@@ -28,12 +28,12 @@ selection:
     - Selection fill    | ctrl/cmd + shift + double-click
 [+] - Grow selection    | shift + up
 [+] - Shink selection   | shift + down
-    - Select more       | up
-    - Select less       | down
+[+] - Select more       | up
+[+] - Select less       | down
 [+] - Select loop       | l
 [+] - Invert selection  | [
 [+] - Select connected  | ]
-    - Select between    | shift + g
+[+] - Select between    | shift + g
     - Boundary edges    | ctrl/cmd + "edge"
-    - Select ring       | alt + l
+[+] - Select ring       | alt + l
     - Select close loop | shift + ]
