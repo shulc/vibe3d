@@ -11,3 +11,4 @@ vibe3d.pdb
 vibe3d.exe
 .dub/version.json
 install.cmd
+*.lwo
