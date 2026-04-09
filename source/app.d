@@ -189,7 +189,7 @@ void main(string[] args) {
 
     int winW = 800, winH = 600;
     SDL_Window* window = SDL_CreateWindow(
-        "OpenGL Mesh  |  Alt+drag=orbit  Alt+Shift=pan  Ctrl+Alt=zoom  LMB=select",
+        "Vibe3d",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
@@ -926,10 +926,6 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
-            ImGui.LabelText("Vertices", "%d", cast(int)mesh.vertices.length);
-            ImGui.LabelText("Edges",    "%d", cast(int)mesh.edges.length);
-            ImGui.LabelText("Faces",    "%d", cast(int)mesh.faces.length);
-            ImGui.Separator();
             ImGui.Text("File");
             if (ImGui.Button("Load              ")) {
                 string path;
@@ -996,77 +992,16 @@ void main(string[] args) {
             }
 
             ImGui.Separator();
-            ImGui.Text("Selection");
-
-            if (editMode == EditMode.Vertices) {
-                if (hoveredVertex >= 0)
-                    ImGui.LabelText("Hover", "v%d  (%.2f, %.2f, %.2f)",
-                        hoveredVertex,
-                        cast(double)mesh.vertices[hoveredVertex].x,
-                        cast(double)mesh.vertices[hoveredVertex].y,
-                        cast(double)mesh.vertices[hoveredVertex].z);
-                else
-                    ImGui.LabelText("Hover", "—");
-                ImGui.LabelText("Selected", "%d", selCount);
-                if (selCount > 0) {
-                    foreach (i; 0 .. mesh.selectedVertices.length) {
-                        if (!mesh.selectedVertices[i]) continue;
-                        ImGui.Text("  v%d  (%.2f, %.2f, %.2f)",
-                            cast(int)i,
-                            cast(double)mesh.vertices[i].x,
-                            cast(double)mesh.vertices[i].y,
-                            cast(double)mesh.vertices[i].z);
-                    }
-                }
-            } else if (editMode == EditMode.Edges) {
-                if (hoveredEdge >= 0)
-                    ImGui.LabelText("Hover", "e%d  v%d-v%d",
-                        hoveredEdge,
-                        cast(int)mesh.edges[hoveredEdge][0],
-                        cast(int)mesh.edges[hoveredEdge][1]);
-                else
-                    ImGui.LabelText("Hover", "—");
-                ImGui.LabelText("Selected", "%d", selEdgeCount);
-                if (selEdgeCount > 0) {
-                    foreach (i; 0 .. mesh.selectedEdges.length) {
-                        if (!mesh.selectedEdges[i]) continue;
-                        ImGui.Text("  e%d  v%d-v%d",
-                            cast(int)i,
-                            cast(int)mesh.edges[i][0],
-                            cast(int)mesh.edges[i][1]);
-                    }
-                }
-            } else if (editMode == EditMode.Polygons) {
-                if (hoveredFace >= 0)
-                    ImGui.LabelText("Hover", "f%d  (%d verts)",
-                        hoveredFace,
-                        cast(int)mesh.faces[hoveredFace].length);
-                else
-                    ImGui.LabelText("Hover", "—");
-                ImGui.LabelText("Selected", "%d", selFaceCount);
-                if (selFaceCount > 0) {
-                    foreach (i; 0 .. mesh.selectedFaces.length) {
-                        if (!mesh.selectedFaces[i]) continue;
-                        ImGui.Text("  f%d  (%d verts)",
-                            cast(int)i,
-                            cast(int)mesh.faces[i].length);
-                    }
-                }
-            }
-
-            ImGui.Separator();
             ImGui.Text("Camera");
             ImGui.LabelText("Dist",  "%.2f", cameraView.distance);
             ImGui.LabelText("Az",    "%.1f°", cast(double)(cameraView.azimuth   * 180.0 / PI));
             ImGui.LabelText("El",    "%.1f°", cast(double)(cameraView.elevation * 180.0 / PI));
 
             ImGui.Separator();
-            ImGui.TextDisabled("Alt+drag        orbit");
-            ImGui.TextDisabled("Alt+Shift+drag  pan");
-            ImGui.TextDisabled("Ctrl+Alt+drag   zoom");
-            ImGui.TextDisabled("LMB / drag       select");
-            ImGui.TextDisabled("Shift+LMB/drag   add to select");
-            ImGui.TextDisabled("Ctrl+LMB/drag    remove from select");
+            ImGui.Text("Info");
+            ImGui.LabelText("Verts", "%d/%d", mesh.vertexSelectionOrderCounter, cast(int)mesh.vertices.length);
+            ImGui.LabelText("Edges", "%d/%d", mesh.edgeSelectionOrderCounter, cast(int)mesh.edges.length);
+            ImGui.LabelText("Faces", "%d/%d", mesh.faceSelectionOrderCounter, cast(int)mesh.faces.length);
         }
         ImGui.End();
     }
