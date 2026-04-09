@@ -31,6 +31,7 @@ import tools.move;
 import tools.scale;
 import tools.rotate;
 import tools.box;
+import tools.bevel;
 
 import commands.select.connect;
 import commands.select.expand;
@@ -459,8 +460,8 @@ void main(string[] args) {
                     : new RotateTool(&mesh, &gpu, &editMode));
                 break;
             case SDLK_b:
-                setActiveTool(cast(BoxTool)activeTool ? null
-                    : new BoxTool(&mesh, &gpu, litShader));
+                setActiveTool(cast(BevelTool)activeTool ? null
+                    : new BevelTool(&mesh, &gpu, &editMode));
                 break;
             case SDLK_a: {
                 if (shift) {
@@ -989,7 +990,7 @@ void main(string[] args) {
             {
                 bool on = cast(BoxTool)activeTool !is null;
                 if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Box              B"))
+                if (ImGui.Button("Box               "))
                     setActiveTool(on ? null : new BoxTool(&mesh, &gpu, litShader));
                 if (on) ImGui.PopStyleColor();
             }
