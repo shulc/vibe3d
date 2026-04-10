@@ -14,7 +14,8 @@ import drag;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
-import std.math : sqrt;
+import std.math : sqrt, abs;
+import std.algorithm : reverse;
 
 // ---------------------------------------------------------------------------
 // BevelTool — polygon bevel (Polygons mode) and edge bevel (Edges mode).
@@ -97,12 +98,31 @@ private:
     }
     ModifiedFace[] modifiedFaces;
 
+    // Miter vertex at a junction where two selected edges meet inside one face.
+    // Its position is the intersection of the two offset edge lines.
+    struct JunctionMiter {
+        int  vertIdx;
+        uint origVertIdx;   // original vertex index (for cap-face grouping)
+        Vec3 origV;
+        Vec3 sideDir_in;    // sideDir of incoming edge in this face
+        Vec3 sideDir_out;   // sideDir of outgoing edge in this face
+        Vec3 dir_in;        // unit: direction of e_in  (A → B = toward junction)
+        Vec3 dir_out;       // unit: direction of e_out (A → B = away from junction)
+        int  ei_in;         // incoming edge index (for cap-face cycle traversal)
+        int  ei_out;        // outgoing edge index
+        int  fi_junction;   // face index where this junction occurs
+        int  nv_in_other;   // bevel vert of origV in non-junction face of ei_in (-1 = boundary)
+        int  nv_out_other;  // bevel vert of origV in non-junction face of ei_out (-1 = boundary)
+    }
+    JunctionMiter[] junctionMiters;
+
     // ---- Revert state ------------------------------------------------------
     size_t    bevelVertStart;
     size_t    bevelFaceStart;
     uint[2][] edgesBeforeBevel;
     bool[]    selEdgesBeforeBevel;
     int[]     edgeOrderBeforeBevel;
+    Vec3[]    vertsBeforeBevel;   // full vertex snapshot (edge bevel only) for revert after compaction
 
     // ---- Drag state --------------------------------------------------------
     // dragHandle: 0=shift, 1=insert, 2=free(polygon), 3=width(edge), -1=none
@@ -141,11 +161,13 @@ public:
     override string name() const { return "Bevel"; }
 
     override void activate() {
-        active        = true;
-        bevelApplied  = false;
-        bevelFaces    = [];
-        bevelEdges    = [];
-        modifiedFaces = [];
+        active          = true;
+        bevelApplied    = false;
+        bevelFaces      = [];
+        bevelEdges      = [];
+        modifiedFaces   = [];
+        junctionMiters  = [];
+        vertsBeforeBevel = [];
         shiftAmount   = 0.0f;
         insertScale   = 1.0f;
         bevelWidth    = 0.0f;
@@ -403,14 +425,16 @@ private:
         if (bevelEdges.length > 0) {
             foreach (ref mf; modifiedFaces)
                 mesh.faces[mf.idx] = mf.origVerts;
-            modifiedFaces = [];
-            bevelEdges    = [];
+            modifiedFaces  = [];
+            bevelEdges     = [];
+            junctionMiters = [];
+            mesh.vertices  = vertsBeforeBevel;
         } else {
             foreach (ref bfd; bevelFaces)
                 mesh.faces[bfd.origFaceIdx] = bfd.origFaceVerts;
             bevelFaces = [];
+            mesh.vertices.length = bevelVertStart;
         }
-        mesh.vertices.length    = bevelVertStart;
         mesh.faces.length       = bevelFaceStart;
         mesh.edges              = edgesBeforeBevel;
         mesh.selectedEdges      = selEdgesBeforeBevel;
@@ -703,8 +727,9 @@ private:
     //             selected edge.
     // ------------------------------------------------------------------------
     void applyEdgeBevelTopology() {
-        bevelEdges    = [];
-        modifiedFaces = [];
+        bevelEdges     = [];
+        modifiedFaces  = [];
+        junctionMiters = [];
         bevelApplied  = true;
         bevelVertStart = mesh.vertices.length;
         bevelFaceStart = mesh.faces.length;
@@ -712,6 +737,7 @@ private:
         edgesBeforeBevel     = mesh.edges.dup;
         selEdgesBeforeBevel  = mesh.selectedEdges.dup;
         edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
+        vertsBeforeBevel     = mesh.vertices.dup;  // full snapshot for revert after compaction
 
         // Edge-key → edge-index
         int[ulong] edgeIdxMap;
@@ -835,9 +861,56 @@ private:
                 }
 
                 if (ei_in >= 0 && ei_out >= 0) {
-                    // Junction: insert both new vertices
-                    newFace ~= cast(uint)getNewVert(ei_in,  v);
-                    newFace ~= cast(uint)getNewVert(ei_out, v);
+                    // Junction: two selected edges meet at v inside this face.
+                    // Create ONE miter vertex (intersection of offset lines) instead
+                    // of two separate vertices, which would produce a self-intersecting face.
+                    Vec3 sd_in = Vec3(0,1,0), sd_out = Vec3(0,1,0);
+                    foreach (ref side; edgeDataMap[ei_in].sides)
+                        if (side.faceIdx == fi) { sd_in = side.sideDir; break; }
+                    foreach (ref side; edgeDataMap[ei_out].sides)
+                        if (side.faceIdx == fi) { sd_out = side.sideDir; break; }
+
+                    Vec3 di  = normalize(vec3Sub(edgeDataMap[ei_in].origPosB,
+                                                 edgeDataMap[ei_in].origPosA));
+                    Vec3 dout = normalize(vec3Sub(edgeDataMap[ei_out].origPosB,
+                                                  edgeDataMap[ei_out].origPosA));
+
+                    int miterV = cast(int)mesh.addVertex(mesh.vertices[v]);
+                    // Redirect the side record endpoint that corresponds to v.
+                    // Same logic as getNewVert: origA==v → newVertA, else → newVertB.
+                    foreach (ref side; edgeDataMap[ei_in].sides)
+                        if (side.faceIdx == fi) {
+                            if (edgeDataMap[ei_in].origA == v) side.newVertA = miterV;
+                            else                               side.newVertB = miterV;
+                            break;
+                        }
+                    foreach (ref side; edgeDataMap[ei_out].sides)
+                        if (side.faceIdx == fi) {
+                            if (edgeDataMap[ei_out].origA == v) side.newVertA = miterV;
+                            else                                side.newVertB = miterV;
+                            break;
+                        }
+
+                    // Find the bevel vertices for origV in the non-junction faces of
+                    // ei_in and ei_out.  These are needed to close the corner gap when
+                    // only two selected edges meet at this vertex (jms.length == 1 in Phase 4).
+                    int nv_in_other = -1;
+                    foreach (ref s; edgeDataMap[ei_in].sides)
+                        if (s.faceIdx != fi) {
+                            nv_in_other = (edgeDataMap[ei_in].origA == v) ? s.newVertA : s.newVertB;
+                            break;
+                        }
+                    int nv_out_other = -1;
+                    foreach (ref s; edgeDataMap[ei_out].sides)
+                        if (s.faceIdx != fi) {
+                            nv_out_other = (edgeDataMap[ei_out].origA == v) ? s.newVertA : s.newVertB;
+                            break;
+                        }
+                    junctionMiters ~= JunctionMiter(miterV, v, mesh.vertices[v],
+                                                    sd_in, sd_out, di, dout,
+                                                    ei_in, ei_out,
+                                                    fi, nv_in_other, nv_out_other);
+                    newFace ~= cast(uint)miterV;
                 } else if (ei_in >= 0) {
                     newFace ~= cast(uint)getNewVert(ei_in, v);
                 } else if (ei_out >= 0) {
@@ -851,10 +924,19 @@ private:
 
         // ---- Phase 2.5: expand side faces (share only a vertex with the selected
         //      edge, not the edge itself) → replace that vertex with the two new
-        //      split vertices so each such face gains one extra vertex. ----------
+        //      split vertices so each such face gains one extra vertex.
+        //
+        //      A single face may need to be expanded multiple times when it contains
+        //      endpoints of several different bevel edges (e.g. the face opposite to
+        //      three coplanar selected edges).  We therefore use two separate sets:
+        //        phase2FaceSet  — faces already modified in Phase 2; never touch these.
+        //        phase25SavedSet — faces whose pre-Phase-2.5 state has been saved to
+        //                          modifiedFaces; save only once but allow re-expansion.
         {
-            bool[int] modFaceSet;
-            foreach (ref mf; modifiedFaces) modFaceSet[mf.idx] = true;
+            bool[int] phase2FaceSet;
+            foreach (ref mf; modifiedFaces) phase2FaceSet[mf.idx] = true;
+
+            bool[int] phase25SavedSet; // original state already saved for this face
 
             foreach (ref bed; bevelEdges) {
                 if (bed.sides.length < 2) continue;
@@ -868,7 +950,7 @@ private:
 
                     foreach (fi, face; mesh.faces) {
                         if (fi >= bevelFaceStart) break;
-                        if (cast(int)fi in modFaceSet) continue;
+                        if (cast(int)fi in phase2FaceSet) continue;
 
                         int vidx = -1;
                         foreach (i, v; face)
@@ -896,8 +978,13 @@ private:
                                 newFace ~= v;
                             }
                         }
-                        modifiedFaces ~= ModifiedFace(cast(int)fi, face.dup);
-                        modFaceSet[cast(int)fi] = true;
+                        // Save the pre-bevel state only on the first visit to this face.
+                        // Do NOT add to phase2FaceSet — the face may need further
+                        // expansion for other bevel-edge endpoints it contains.
+                        if (cast(int)fi !in phase25SavedSet) {
+                            modifiedFaces ~= ModifiedFace(cast(int)fi, face.dup);
+                            phase25SavedSet[cast(int)fi] = true;
+                        }
                         mesh.faces[fi] = newFace;
                     }
                 }
@@ -922,6 +1009,121 @@ private:
             else
                 mesh.addFace([cast(uint)s1.newVertA, cast(uint)s1.newVertB,
                               cast(uint)s0.newVertB, cast(uint)s0.newVertA]);
+        }
+
+        // ---- Phase 4: corner cap faces -----------------------------------------
+        // When 3+ selected edges meet at one vertex, each face at that vertex
+        // produces a separate miter vertex.  The strip quads leave a polygonal gap
+        // at the corner; close it with a cap face.
+        //
+        // Cycle traversal: each jm has ei_in (edge arriving at V) and ei_out
+        // (edge leaving V).  The next miter in the cycle is the one whose ei_in
+        // equals the current ei_out.  Following this produces the cap polygon in
+        // an order consistent with face winding; we verify against the inward
+        // direction (average of sideDir vectors) and flip if needed.
+        {
+            // Group junction miters by original vertex index
+            JunctionMiter[][uint] jmByOrig;
+            foreach (ref jm; junctionMiters)
+                jmByOrig[jm.origVertIdx] ~= jm;
+
+            foreach (origVI, jms; jmByOrig) {
+                // ---- 1 junction: two selected edges meet at origV in exactly one face.
+                // The two bevel strips leave a gap polygon at the corner; close it.
+                // Gap vertices: miterV, nv_in_other, [V3 if any], nv_out_other.
+                if (jms.length == 1) {
+                    auto jm = jms[0];
+                    if (jm.nv_in_other < 0 || jm.nv_out_other < 0) continue;
+
+                    // Find V3: an original vertex (index < bevelVertStart) adjacent to
+                    // nv_in_other in a modified face that is not the junction face.
+                    // It is the endpoint of the non-selected edge at origV.
+                    int V3 = -1;
+                    foreach (ref mf; modifiedFaces) {
+                        if (mf.idx == jm.fi_junction) continue;
+                        auto face = mesh.faces[mf.idx];
+                        int  fN   = cast(int)face.length;
+                        foreach (i; 0..fN) {
+                            if (cast(int)face[i] != jm.nv_in_other) continue;
+                            uint adj0 = face[(i - 1 + fN) % fN];
+                            uint adj1 = face[(i + 1)      % fN];
+                            if (adj0 < bevelVertStart) { V3 = cast(int)adj0; break; }
+                            if (adj1 < bevelVertStart) { V3 = cast(int)adj1; break; }
+                        }
+                        if (V3 >= 0) break;
+                    }
+
+                    uint[] cap;
+                    cap ~= cast(uint)jm.vertIdx;
+                    cap ~= cast(uint)jm.nv_in_other;
+                    if (V3 >= 0) cap ~= cast(uint)V3;
+                    cap ~= cast(uint)jm.nv_out_other;
+
+                    if (cap.length >= 3) {
+                        Vec3 inwardSum = vec3Add(jm.sideDir_in, jm.sideDir_out);
+                        Vec3 p0        = mesh.vertices[cap[0]];
+                        Vec3 capNorm   = Vec3(0, 0, 0);
+                        for (int ci = 1; ci + 1 < cast(int)cap.length; ci++) {
+                            capNorm = vec3Add(capNorm,
+                                cross(vec3Sub(mesh.vertices[cap[ci]],     p0),
+                                      vec3Sub(mesh.vertices[cap[ci + 1]], p0)));
+                        }
+                        if (dot(capNorm, inwardSum) >= 0) reverse(cap);
+                        mesh.addFace(cap);
+                    }
+                    continue;
+                }
+
+                if (jms.length < 3) continue;
+
+                // Build lookup maps for cycle traversal
+                int[int] eiInToVert;    // ei_in  → miterVertIdx
+                int[int] vertToEiOut;   // miterVertIdx → ei_out
+                foreach (ref jm; jms) {
+                    eiInToVert[jm.ei_in]    = jm.vertIdx;
+                    vertToEiOut[jm.vertIdx] = jm.ei_out;
+                }
+
+                // Traverse cycle starting from the first miter vertex
+                uint[] cap;
+                int cur = jms[0].vertIdx;
+                int start = cur;
+                do {
+                    cap ~= cast(uint)cur;
+                    auto p = cur in vertToEiOut;
+                    if (!p) break;
+                    auto q = *p in eiInToVert;
+                    if (!q) break;
+                    cur = *q;
+                } while (cur != start && cap.length < jms.length + 1);
+
+                if (cap.length < 3) continue;
+
+                // Sum of sideDir vectors at V points "inward" (toward face centers).
+                // Cap normal should point outward → dot(capNormal, inwardSum) must be < 0.
+                Vec3 inwardSum = Vec3(0,0,0);
+                foreach (ref jm; jms) {
+                    inwardSum = vec3Add(inwardSum, jm.sideDir_in);
+                    inwardSum = vec3Add(inwardSum, jm.sideDir_out);
+                }
+
+                Vec3 p0 = mesh.vertices[cap[0]];
+                Vec3 capNormal = Vec3(0,0,0);
+                int  CN = cast(int)cap.length;
+                for (int ci = 1; ci < CN - 1; ci++) {
+                    Vec3 pi  = mesh.vertices[cap[ci]];
+                    Vec3 pi1 = mesh.vertices[cap[ci + 1]];
+                    capNormal = vec3Add(capNormal,
+                        cross(vec3Sub(pi, p0), vec3Sub(pi1, p0)));
+                }
+
+                if (dot(capNormal, inwardSum) >= 0) {
+                    // Winding is inward — reverse
+                    reverse(cap);
+                }
+
+                mesh.addFace(cap);
+            }
         }
 
         // ---- Remove stale edges: origA/origB vertices are no longer in any face
@@ -956,6 +1158,39 @@ private:
                 mesh.addEdge(face[i], face[(i+1)%N]);
         }
 
+        // ---- Remove orphaned original vertices (origA/origB no longer in any face) ----
+        {
+            uint N = cast(uint)mesh.vertices.length;
+            bool[] used = new bool[](N);
+            foreach (face; mesh.faces)
+                foreach (vi; face) used[vi] = true;
+            uint ni = 0;
+            uint[] remap = new uint[](N);
+            foreach (i; 0..N) remap[i] = used[i] ? ni++ : uint.max;
+            if (ni < N) {
+                foreach (ref face; mesh.faces)
+                    foreach (ref vi; face) vi = remap[vi];
+                foreach (ref e; mesh.edges) { e[0] = remap[e[0]]; e[1] = remap[e[1]]; }
+                foreach (ref bed; bevelEdges)
+                    foreach (ref side; bed.sides) {
+                        side.newVertA = cast(int)remap[side.newVertA];
+                        side.newVertB = cast(int)remap[side.newVertB];
+                    }
+                foreach (ref jm; junctionMiters) {
+                    jm.vertIdx = cast(int)remap[jm.vertIdx];
+                    if (jm.nv_in_other >= 0) jm.nv_in_other = cast(int)remap[jm.nv_in_other];
+                    if (jm.nv_out_other >= 0) jm.nv_out_other = cast(int)remap[jm.nv_out_other];
+                }
+                size_t newBVS = 0;
+                for (size_t i = 0; i < bevelVertStart; i++)
+                    if (i < N && used[i]) newBVS++;
+                bevelVertStart = newBVS;
+                Vec3[] newVerts;
+                foreach (i; 0..N) if (used[i]) newVerts ~= mesh.vertices[i];
+                mesh.vertices = newVerts;
+            }
+        }
+
         mesh.syncSelection();
         updateEdgeBevelVertices();
     }
@@ -968,6 +1203,30 @@ private:
                 mesh.vertices[side.newVertB] = vec3Add(bed.origPosB,
                     vec3Scale(side.sideDir, bevelWidth));
             }
+        }
+        // Recompute miter vertices: intersection of the two offset edge lines.
+        // n_in  = origV + sideDir_in  * bw  (offset B-endpoint of e_in)
+        // n_out = origV + sideDir_out * bw  (offset A-endpoint of e_out)
+        // Solve: n_in + t * dir_in = n_out + s * dir_out  → miter = n_in + t * dir_in
+        foreach (ref jm; junctionMiters) {
+            Vec3 n_in  = vec3Add(jm.origV, vec3Scale(jm.sideDir_in,  bevelWidth));
+            Vec3 n_out = vec3Add(jm.origV, vec3Scale(jm.sideDir_out, bevelWidth));
+            Vec3 r     = vec3Sub(n_in, n_out);
+            float a    = dot(jm.dir_in,  jm.dir_in);
+            float b    = dot(jm.dir_in,  jm.dir_out);
+            float c    = dot(jm.dir_out, jm.dir_out);
+            float e    = -dot(jm.dir_in,  r);
+            float f    = -dot(jm.dir_out, r);
+            float denom = a*c - b*b;
+            Vec3 miter;
+            if (abs(denom) > 1e-6f) {
+                float t = (e*c - f*b) / denom;
+                miter = vec3Add(n_in, vec3Scale(jm.dir_in, t));
+            } else {
+                // Parallel edges — average the two offset positions
+                miter = vec3Scale(vec3Add(n_in, n_out), 0.5f);
+            }
+            mesh.vertices[jm.vertIdx] = miter;
         }
     }
 }
