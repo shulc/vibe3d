@@ -737,13 +737,23 @@ private:
 
         if (sel.length == 0) { bevelApplied = false; return; }
 
+        // Find vertices shared by two or more selected edges (junction points).
+        int[uint] vertSelCount;
+        foreach (ref s; sel) {
+            vertSelCount[s.va]++;
+            vertSelCount[s.vb]++;
+        }
+        bool[uint] junctionVerts;
+        foreach (v, cnt; vertSelCount)
+            if (cnt >= 2) junctionVerts[v] = true;
+
         // Replacement table: key = (faceIdx << 32 | vertIdx)
         // value = (fromBefore, fromAfter) — new vertex indices (-1 = not set).
         // The original vertex is replaced by [fromBefore?, fromAfter?] in the face.
         struct Replace { int fromBefore = -1, fromAfter = -1; }
         Replace[ulong] repTable;
 
-        foreach (ref s; sel) {
+        foreach (si, ref s; sel) {
             auto f1face = mesh.faces[s.f1];
             auto f2face = mesh.faces[s.f2];
             int f1N = cast(int)f1face.length;
@@ -795,6 +805,9 @@ private:
                     uint next = face[(i + 1) % N];
 
                     if (v == s.va) {
+                        // For junction vertices only write into faces this edge owns.
+                        if (s.va in junctionVerts)
+                            if (cast(int)fi != s.f1 && cast(int)fi != s.f2) continue;
                         int fb = -1, fa = -1;
                         if      (prev == capNbrA1) fb = nvA1;
                         else if (prev == capNbrA2) fb = nvA2;
@@ -807,6 +820,9 @@ private:
                             if (fa >= 0) repTable[k].fromAfter  = fa;
                         }
                     } else { // v == s.vb
+                        // For junction vertices only write into faces this edge owns.
+                        if (s.vb in junctionVerts)
+                            if (cast(int)fi != s.f1 && cast(int)fi != s.f2) continue;
                         int fb = -1, fa = -1;
                         if      (prev == capNbrB1) fb = nvB1;
                         else if (prev == capNbrB2) fb = nvB2;
@@ -819,6 +835,52 @@ private:
                             if (fa >= 0) repTable[k].fromAfter  = fa;
                         }
                     }
+                }
+            }
+        }
+
+        // For junction vertices: replace each slide direction with the normalized
+        // sum of all slide directions that share the same (polygon, vertex) pair.
+        // This ensures that two entries touching the same vertex in the same face
+        // get a consistent merged direction instead of two conflicting ones.
+        if (junctionVerts.length > 0) {
+            struct DirRef { int ei; int field; }  // field: 0=dirA1,1=dirA2,2=dirB1,3=dirB2
+            Vec3[ulong]     dirSum;
+            DirRef[][ulong] dirRefs;
+
+            foreach (i; 0 .. ebEntries.length) {
+                int f1 = sel[i].f1, f2 = sel[i].f2;
+
+                if (ebEntries[i].va in junctionVerts) {
+                    ulong ka1 = (cast(ulong)f1 << 32) | ebEntries[i].va;
+                    ulong ka2 = (cast(ulong)f2 << 32) | ebEntries[i].va;
+                    if (auto p = ka1 in dirSum) *p = vec3Add(*p, ebEntries[i].dirA1);
+                    else dirSum[ka1] = ebEntries[i].dirA1;
+                    if (auto p = ka2 in dirSum) *p = vec3Add(*p, ebEntries[i].dirA2);
+                    else dirSum[ka2] = ebEntries[i].dirA2;
+                    dirRefs[ka1] ~= DirRef(cast(int)i, 0);
+                    dirRefs[ka2] ~= DirRef(cast(int)i, 1);
+                }
+                if (ebEntries[i].vb in junctionVerts) {
+                    ulong kb1 = (cast(ulong)f1 << 32) | ebEntries[i].vb;
+                    ulong kb2 = (cast(ulong)f2 << 32) | ebEntries[i].vb;
+                    if (auto p = kb1 in dirSum) *p = vec3Add(*p, ebEntries[i].dirB1);
+                    else dirSum[kb1] = ebEntries[i].dirB1;
+                    if (auto p = kb2 in dirSum) *p = vec3Add(*p, ebEntries[i].dirB2);
+                    else dirSum[kb2] = ebEntries[i].dirB2;
+                    dirRefs[kb1] ~= DirRef(cast(int)i, 2);
+                    dirRefs[kb2] ~= DirRef(cast(int)i, 3);
+                }
+            }
+
+            foreach (k, refs; dirRefs) {
+                if (refs.length < 2) continue;
+                Vec3 nd = safeNorm(dirSum[k]);
+                foreach (ref dr; refs) {
+                    if      (dr.field == 0) ebEntries[dr.ei].dirA1 = nd;
+                    else if (dr.field == 1) ebEntries[dr.ei].dirA2 = nd;
+                    else if (dr.field == 2) ebEntries[dr.ei].dirB1 = nd;
+                    else                   ebEntries[dr.ei].dirB2 = nd;
                 }
             }
         }
