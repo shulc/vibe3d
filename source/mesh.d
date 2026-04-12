@@ -13,10 +13,23 @@ private bool hasAnySelected(const bool[] sel) {
     return false;
 }
 
+/// Half-edge dart: represents the directed edge vert → next(vert) inside one face.
+struct Loop {
+    uint vert;   // start vertex of this dart
+    uint face;   // face this loop belongs to
+    uint next;   // index of the next loop in the same face (CCW)
+    uint prev;   // index of the previous loop in the same face
+    uint twin;   // dart in the adjacent face (reverse direction); ~0u if boundary
+}
+
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
     uint[][]  faces;
+
+    Loop[]  loops;      // all half-edge loops
+    uint[]  faceLoop;   // faceLoop[fi] = index of first loop of face fi
+    uint[]  vertLoop;   // vertLoop[vi] = index of one loop starting at vi
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
@@ -141,7 +154,52 @@ struct Mesh {
         faceSelectionOrder[idx] = 0;
     }
 
-    void clear() { vertices = []; edges = []; faces = []; }
+    void clear() {
+        vertices = []; edges = []; faces = [];
+        loops = []; faceLoop = []; vertLoop = [];
+    }
+
+    /// Rebuild the half-edge loop structure from the current faces/vertices.
+    /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
+    void buildLoops() {
+        size_t total = 0;
+        foreach (f; faces) total += f.length;
+
+        loops.length    = total;
+        faceLoop.length = faces.length;
+        vertLoop.length = vertices.length;
+        vertLoop[]      = ~0u;
+
+        // First pass: fill vert, face, next, prev
+        uint li = 0;
+        foreach (fi, face; faces) {
+            faceLoop[fi] = li;
+            uint N = cast(uint)face.length;
+            foreach (i; 0 .. N) {
+                loops[li + i].vert = face[i];
+                loops[li + i].face = cast(uint)fi;
+                loops[li + i].next = li + (i + 1) % N;
+                loops[li + i].prev = li + (i + N - 1) % N;
+                loops[li + i].twin = ~0u;
+                vertLoop[face[i]]  = li + i;  // any loop will do
+            }
+            li += N;
+        }
+
+        // Second pass: fill twin via directed-edge map
+        uint[ulong] dirMap;
+        foreach (idx; 0 .. total) {
+            uint u = loops[idx].vert;
+            uint v = loops[loops[idx].next].vert;
+            dirMap[(cast(ulong)u << 32) | v] = cast(uint)idx;
+        }
+        foreach (idx; 0 .. total) {
+            uint u = loops[idx].vert;
+            uint v = loops[loops[idx].next].vert;
+            if (auto p = ((cast(ulong)v << 32) | u) in dirMap)
+                loops[idx].twin = *p;
+        }
+    }
 }
 
 // Canonical edge key: always (min, max) packed into a ulong.
@@ -168,6 +226,7 @@ Mesh makeCube() {
     m.addFace([1, 2, 6, 5]);
     m.addFace([3, 7, 6, 2]);
     m.addFace([0, 1, 5, 4]);
+    m.buildLoops();
     return m;
 }
 
@@ -316,6 +375,7 @@ Mesh catmullClark(ref const Mesh m) {
         }
     }
 
+    result.buildLoops();
     return result;
 }
 

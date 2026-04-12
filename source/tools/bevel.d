@@ -91,20 +91,19 @@ private:
     // Per-edge data populated by applyEdgeBevelTopology().
     struct EdgeBevelEntry {
         uint va, vb;
-        int nvA1, nvA2;      // new vertex indices at va (A1 slides toward capNbrA1, A2 toward capNbrA2)
+        int nvA1, nvA2;      // new vertex indices at va
         int nvB1, nvB2;      // new vertex indices at vb
         Vec3 origA, origB;   // va/vb positions at bevel time
         Vec3 dirA1, dirA2;   // normalized slide directions at va
         Vec3 dirB1, dirB2;   // normalized slide directions at vb
-        // Slide-target vertex indices — the neighbours in F1/F2 that each new vert
-        // slides toward.  Used to route replacements in ALL faces containing va/vb.
-        //   A1 slides toward capNbrA1 (= prevA in F1)
-        //   A2 slides toward capNbrA2 (= nextA in F2)
-        //   B1 slides toward capNbrB1 (= nextB in F1)
-        //   B2 slides toward capNbrB2 (= prevB in F2)
-        uint capNbrA1, capNbrA2, capNbrB1, capNbrB2;
     }
     EdgeBevelEntry[] ebEntries;
+
+    // Gap vertex data for junction vertices — one entry per gap-face occurrence.
+    // Computed in Phase 2 using offsetMeetDir so the shared vertex lands at the
+    // intersection of the two per-edge offset lines (Blender's offset_meet result).
+    struct GapVertEntry { int gvi; Vec3 orig; Vec3 dir; }
+    GapVertEntry[] gapEntries;
 
     // Original face data saved for revert — covers ALL faces modified by the bevel.
     struct EbFaceSnap { int idx; uint[] orig; }
@@ -150,6 +149,7 @@ public:
         bevelApplied = false;
         bevelFaces   = [];
         ebEntries         = [];
+        gapEntries        = [];
         ebFaceSnaps       = [];
         ebVertsBeforeBevel = [];
         shiftAmount  = 0.0f;
@@ -669,24 +669,18 @@ private:
         gizmoRight = normalize(cross(gizmoNormal, tmp));
     }
 
-    // First drag in edge mode: build chamfer topology.
+    // First drag in edge mode: build chamfer topology using half-edge loops.
     //
-    // For each selected manifold edge (va, vb):
-    //   F1 = face where va→vb is consecutive  (positions ia, ib)
-    //   F2 = face where vb→va is consecutive  (positions jb, ja)
+    // For each selected manifold edge (va, vb) the two adjacent faces F1 (va→vb)
+    // and F2 (vb→va) are identified via mesh.loops.  Four slide directions are
+    // computed and four new vertices created (one per endpoint per face).
+    // Junction vertices (shared by ≥2 selected edges) reuse one shared "gap vertex"
+    // per gap face (face where both prev and next of the junction are bevel neighbours)
+    // — the same logic as Blender's offset_meet / gap-face handling.
     //
-    //   Four slide directions are computed from F1/F2:
-    //     dirA1 toward prevA_in_F1, dirA2 toward nextA_in_F2
-    //     dirB1 toward nextB_in_F1, dirB2 toward prevB_in_F2
-    //
-    //   General replacement rule applied to ALL faces containing va or vb:
-    //     At position i of va in face F:
-    //       if F[i-1] == capNbrA1: fromBefore = nvA1
-    //       if F[i-1] == capNbrA2: fromBefore = nvA2
-    //       if F[i+1] == capNbrA1: fromAfter  = nvA1
-    //       if F[i+1] == capNbrA2: fromAfter  = nvA2
-    //     (same pattern for vb with capNbrB1/B2)
-    //   The original vertex is dropped; only fromBefore/fromAfter are emitted.
+    // Face rebuild follows bev_rebuild_polygon: walk each affected face's loop ring;
+    // where a loop is in loopNewVert substitute the new vertex, otherwise keep the
+    // original.  The original va/vb vertices are then compacted out.
     void applyEdgeBevelTopology() {
         ebEntries          = [];
         ebFaceSnaps        = [];
@@ -698,12 +692,21 @@ private:
         edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
         ebVertsBeforeBevel   = mesh.vertices.dup;
 
-        // Collect selected edge info.
+        // ---- Build directed-loop map from current mesh loops ----
+        uint[ulong] dirLoopMap;   // (u<<32|v) → loop index for directed edge u→v
+        foreach (li; 0 .. mesh.loops.length) {
+            uint u = mesh.loops[li].vert;
+            uint v = mesh.loops[mesh.loops[li].next].vert;
+            dirLoopMap[(cast(ulong)u << 32) | v] = cast(uint)li;
+        }
+
+        // ---- Collect selected manifold edges with their four loop indices ----
         struct SelEdge {
-            int  idx;
             uint va, vb;
-            int  f1, ia, ib;   // F1: va→vb; ia=idx of va, ib=idx of vb
-            int  f2, jb, ja;   // F2: vb→va; jb=idx of vb, ja=idx of va
+            uint liF1_va;   // loop at va in F1 (dart va→vb)
+            uint liF1_vb;   // loop at vb in F1 (= liF1_va.next)
+            uint liF2_vb;   // loop at vb in F2 (dart vb→va)
+            uint liF2_va;   // loop at va in F2 (= liF2_vb.next)
         }
         SelEdge[] sel;
 
@@ -711,28 +714,16 @@ private:
             if (ei >= mesh.selectedEdges.length || !mesh.selectedEdges[ei]) continue;
             uint va = mesh.edges[ei][0];
             uint vb = mesh.edges[ei][1];
-            int f1 = -1, f2 = -1, ia, ib, jb, ja;
-
-            foreach (fi, face; mesh.faces) {
-                int N = cast(int)face.length;
-                foreach (i; 0 .. N) {
-                    int nxt = (i + 1) % N;
-                    if (face[i] == va && face[nxt] == vb && f1 < 0) {
-                        f1 = cast(int)fi; ia = i; ib = nxt;
-                    }
-                    if (face[i] == vb && face[nxt] == va && f2 < 0) {
-                        f2 = cast(int)fi; jb = i; ja = nxt;
-                    }
-                }
-            }
-
-            if (f1 < 0 || f2 < 0) continue;  // boundary / non-manifold — skip
-            sel ~= SelEdge(cast(int)ei, va, vb, f1, ia, ib, f2, jb, ja);
+            auto p1 = (cast(ulong)va << 32 | vb) in dirLoopMap;
+            auto p2 = (cast(ulong)vb << 32 | va) in dirLoopMap;
+            if (!p1 || !p2) continue;   // boundary / non-manifold — skip
+            uint l1 = *p1, l2 = *p2;
+            sel ~= SelEdge(va, vb, l1, mesh.loops[l1].next, l2, mesh.loops[l2].next);
         }
 
         if (sel.length == 0) { bevelApplied = false; return; }
 
-        // Find vertices shared by two or more selected edges (junction points).
+        // ---- Junction vertices (appear in ≥2 selected edges) ----
         int[uint] vertSelCount;
         foreach (ref s; sel) {
             vertSelCount[s.va]++;
@@ -742,175 +733,86 @@ private:
         foreach (v, cnt; vertSelCount)
             if (cnt >= 2) junctionVerts[v] = true;
 
-        // --- Phase 2 pre-pass: shared gap vertices at junction points --------
-        // For each junction vertex V, walk its face ring.  A "gap face" is a face
-        // where BOTH the prev and next neighbours of V are endpoints of selected
-        // edges at V.  Instead of two separate vertices in the gap face (one from
-        // each adjacent edge), we create ONE shared vertex.  This eliminates the
-        // direction-averaging hack and allows building a proper cap polygon for
-        // junctions with N≥3 selected edges.
-        //
-        // jGapVert : (junctionV << 32 | faceIdx) → shared vertex index
-        // jCapOrder: junctionV → ordered list of gap vertex indices (cap polygon)
-        // -----------------------------------------------------------------------
-
-        // Directed-edge → face index map for face-ring traversal.
-        int[ulong] dirEdgeFace;
-        foreach (fi2, face2; mesh.faces) {
-            int N2 = cast(int)face2.length;
-            foreach (i2; 0 .. N2) {
-                ulong ek = (cast(ulong)face2[i2] << 32) | face2[(i2+1)%N2];
-                dirEdgeFace[ek] = cast(int)fi2;
-            }
-        }
-
-        int[ulong]    jGapVert;   // (jv << 32 | faceIdx) → vertex index
-        uint[][uint]  jCapOrder;  // jv → ordered cap polygon vertices
+        // ---- Pre-pass: shared gap vertices for junction vertices ----
+        // A gap loop is a loop li at junction vertex jv where both the prev vertex
+        // and the next vertex in the face are bevel neighbours of jv.  All gap loops
+        // of jv in the same face share one gap vertex.
+        uint[uint]   gapLoopVert;  // loop_idx → gap vertex index
+        uint[][uint] jCapOrder;    // jv → ordered cap polygon verts (N≥3 edges)
 
         foreach (jv; junctionVerts.byKey()) {
-            // Selected neighbours of this junction vertex.
-            bool[uint] selNbrs;
+            bool[uint] bevelNbrs;
             foreach (ref s2; sel) {
-                if (s2.va == jv) selNbrs[s2.vb] = true;
-                if (s2.vb == jv) selNbrs[s2.va] = true;
+                if (s2.va == jv) bevelNbrs[s2.vb] = true;
+                if (s2.vb == jv) bevelNbrs[s2.va] = true;
             }
-            if (selNbrs.length < 2) continue;
+            if (bevelNbrs.length < 2) continue;
 
-            // Find any face containing jv to start the ring walk.
-            int  startFi   = -1;
-            uint startNext = 0;
-            outer: foreach (fi3, face3; mesh.faces) {
-                int N3 = cast(int)face3.length;
-                foreach (i3; 0 .. N3) {
-                    if (face3[i3] == jv) {
-                        startFi   = cast(int)fi3;
-                        startNext = face3[(i3+1)%N3];
-                        break outer;
-                    }
-                }
-            }
-            if (startFi < 0) continue;
-
-            // Walk the face ring around jv.
-            // In each face, "nv" is jv's next neighbour (the exit edge is jv→nv).
-            // Advancing: find the face that contains the directed edge nv→jv.
             uint[] capVerts;
-            int  fi  = startFi;
-            uint nv  = startNext;
-
+            uint startLi = mesh.vertLoop[jv];
+            if (startLi == ~0u) continue;
+            uint li = startLi;
             for (int step = 0; step < 256; step++) {
-                // Find jv's position in the current face and read its prev.
-                auto curFace = mesh.faces[fi];
-                int  cfN     = cast(int)curFace.length;
-                int  vi4     = -1;
-                foreach (i4; 0 .. cfN) if (curFace[i4] == jv) { vi4 = i4; break; }
-                if (vi4 < 0) break;
-                uint pv = curFace[(vi4 - 1 + cfN) % cfN];
-
-                // Gap face: both prev and next of jv are selected neighbours.
-                if ((pv in selNbrs) && (nv in selNbrs)) {
-                    ulong gk = (cast(ulong)jv << 32) | fi;
-                    if (gk !in jGapVert) {
-                        // Create a placeholder vertex (position set by updateEdgeBevelVertices).
+                uint prevV = mesh.loops[mesh.loops[li].prev].vert;
+                uint nextV = mesh.loops[mesh.loops[li].next].vert;
+                if ((prevV in bevelNbrs) && (nextV in bevelNbrs)) {
+                    if ((li in gapLoopVert) == null) {
                         int gvi = cast(int)mesh.addVertex(mesh.vertices[jv]);
-                        jGapVert[gk] = gvi;
-                        capVerts    ~= cast(uint)gvi;
+                        gapLoopVert[li] = cast(uint)gvi;
+                        capVerts ~= cast(uint)gvi;
+                        Vec3 gfn = polyNormal(mesh.faces[mesh.loops[li].face], mesh.vertices);
+                        Vec3 gDir = offsetMeetDir(
+                            vec3Sub(mesh.vertices[jv], mesh.vertices[prevV]),
+                            vec3Sub(mesh.vertices[nextV], mesh.vertices[jv]),
+                            gfn);
+                        gapEntries ~= GapVertEntry(gvi, mesh.vertices[jv], gDir);
                     } else {
-                        capVerts ~= cast(uint)jGapVert[gk];
+                        capVerts ~= gapLoopVert[li];
                     }
                 }
-
-                // Advance: move to the face that contains directed edge nv→jv.
-                ulong advKey = (cast(ulong)nv << 32) | jv;
-                auto  pFi    = advKey in dirEdgeFace;
-                if (!pFi) break;          // boundary edge — open mesh
-                int nextFi = *pFi;
-                if (nextFi == startFi) break;  // completed the ring
-
-                // Find jv in nextFi to read its new "next" neighbour.
-                auto nextFace = mesh.faces[nextFi];
-                int  nfN      = cast(int)nextFace.length;
-                int  vi5      = -1;
-                foreach (i5; 0 .. nfN) if (nextFace[i5] == jv) { vi5 = i5; break; }
-                if (vi5 < 0) break;
-
-                fi = nextFi;
-                nv = nextFace[(vi5+1)%nfN];
+                if (mesh.loops[li].twin == ~0u) break;
+                li = mesh.loops[mesh.loops[li].twin].next;
+                if (li == startLi) break;
             }
-
             if (capVerts.length >= 3)
                 jCapOrder[jv] = capVerts;
         }
-        // --- end of Phase 2 pre-pass -------------------------------------------
 
-        // Replacement table: key = (faceIdx << 32 | vertIdx)
-        // value = (fromBefore, fromAfter) — new vertex indices (-1 = not set).
-        // The original vertex is replaced by [fromBefore?, fromAfter?] in the face.
-        struct Replace { int fromBefore = -1, fromAfter = -1; }
-        Replace[ulong] repTable;
+        // ---- Per-edge: compute slide directions, create new vertices ----
+        // loopNewVert[loop_idx] = the new vertex that replaces the loop's original vert.
+        int[uint] loopNewVert;
 
-        foreach (si, ref s; sel) {
-            auto f1face = mesh.faces[s.f1];
-            auto f2face = mesh.faces[s.f2];
-            int f1N = cast(int)f1face.length;
-            int f2N = cast(int)f2face.length;
-
+        foreach (ref s; sel) {
             Vec3 va_pos = mesh.vertices[s.va];
             Vec3 vb_pos = mesh.vertices[s.vb];
 
-            // In F1 = [..., prevA, va, vb, nextB, ...]
-            uint capNbrA1 = f1face[(s.ia - 1 + f1N) % f1N]; // A1 slides toward this
-            uint capNbrB1 = f1face[(s.ib + 1) % f1N];       // B1 slides toward this
-            // In F2 = [..., prevB, vb, va, nextA, ...]
-            uint capNbrB2 = f2face[(s.jb - 1 + f2N) % f2N]; // B2 slides toward this
-            uint capNbrA2 = f2face[(s.ja + 1) % f2N];       // A2 slides toward this
+            uint capNbrA1 = mesh.loops[mesh.loops[s.liF1_va].prev].vert;
+            uint capNbrA2 = mesh.loops[mesh.loops[s.liF2_va].next].vert;
+            uint capNbrB1 = mesh.loops[mesh.loops[s.liF1_vb].next].vert;
+            uint capNbrB2 = mesh.loops[mesh.loops[s.liF2_vb].prev].vert;
 
-            Vec3 fnF1 = polyNormal(f1face, mesh.vertices);
-            Vec3 fnF2 = polyNormal(f2face, mesh.vertices);
+            Vec3 dirA1 = edgeSlideDir(va_pos, mesh.vertices[capNbrA1], vb_pos);
+            Vec3 dirA2 = edgeSlideDir(va_pos, mesh.vertices[capNbrA2], vb_pos);
+            Vec3 dirB1 = edgeSlideDir(vb_pos, mesh.vertices[capNbrB1], va_pos);
+            Vec3 dirB2 = edgeSlideDir(vb_pos, mesh.vertices[capNbrB2], va_pos);
 
-            // dirA1: at va, in F1=[..., capNbrA1, va, vb, ...]
-            Vec3 dirA1 = offsetMeetDir(
-                vec3Sub(va_pos, mesh.vertices[capNbrA1]),
-                vec3Sub(vb_pos, va_pos),
-                fnF1);
-            // dirA2: at va, in F2=[..., vb, va, capNbrA2, ...]
-            Vec3 dirA2 = offsetMeetDir(
-                vec3Sub(va_pos, vb_pos),
-                vec3Sub(mesh.vertices[capNbrA2], va_pos),
-                fnF2);
-            // dirB1: at vb, in F1=[..., va, vb, capNbrB1, ...]
-            Vec3 dirB1 = offsetMeetDir(
-                vec3Sub(vb_pos, va_pos),
-                vec3Sub(mesh.vertices[capNbrB1], vb_pos),
-                fnF1);
-            // dirB2: at vb, in F2=[..., capNbrB2, vb, va, ...]
-            Vec3 dirB2 = offsetMeetDir(
-                vec3Sub(vb_pos, mesh.vertices[capNbrB2]),
-                vec3Sub(va_pos, vb_pos),
-                fnF2);
+            int nvA1 = (s.liF1_va in gapLoopVert)
+                ? cast(int)gapLoopVert[s.liF1_va]
+                : cast(int)mesh.addVertex(va_pos);
+            int nvA2 = (s.liF2_va in gapLoopVert)
+                ? cast(int)gapLoopVert[s.liF2_va]
+                : cast(int)mesh.addVertex(va_pos);
+            int nvB1 = (s.liF1_vb in gapLoopVert)
+                ? cast(int)gapLoopVert[s.liF1_vb]
+                : cast(int)mesh.addVertex(vb_pos);
+            int nvB2 = (s.liF2_vb in gapLoopVert)
+                ? cast(int)gapLoopVert[s.liF2_vb]
+                : cast(int)mesh.addVertex(vb_pos);
 
-            // Create 4 new vertices (moved by updateEdgeBevelVertices).
-            // For junction endpoints, reuse the shared gap vertex when the
-            // face is a gap face; otherwise allocate a fresh vertex.
-            int nvA1, nvA2, nvB1, nvB2;
-            if (s.va in junctionVerts) {
-                ulong kA1 = (cast(ulong)s.va << 32) | s.f1;
-                ulong kA2 = (cast(ulong)s.va << 32) | s.f2;
-                nvA1 = (kA1 in jGapVert) ? jGapVert[kA1] : cast(int)mesh.addVertex(va_pos);
-                nvA2 = (kA2 in jGapVert) ? jGapVert[kA2] : cast(int)mesh.addVertex(va_pos);
-            } else {
-                nvA1 = cast(int)mesh.addVertex(va_pos);
-                nvA2 = cast(int)mesh.addVertex(va_pos);
-            }
-            if (s.vb in junctionVerts) {
-                ulong kB1 = (cast(ulong)s.vb << 32) | s.f1;
-                ulong kB2 = (cast(ulong)s.vb << 32) | s.f2;
-                nvB1 = (kB1 in jGapVert) ? jGapVert[kB1] : cast(int)mesh.addVertex(vb_pos);
-                nvB2 = (kB2 in jGapVert) ? jGapVert[kB2] : cast(int)mesh.addVertex(vb_pos);
-            } else {
-                nvB1 = cast(int)mesh.addVertex(vb_pos);
-                nvB2 = cast(int)mesh.addVertex(vb_pos);
-            }
+            loopNewVert[s.liF1_va] = nvA1;
+            loopNewVert[s.liF2_va] = nvA2;
+            loopNewVert[s.liF1_vb] = nvB1;
+            loopNewVert[s.liF2_vb] = nvB2;
 
             EdgeBevelEntry entry;
             entry.va = s.va; entry.vb = s.vb;
@@ -919,97 +821,43 @@ private:
             entry.origA = va_pos; entry.origB = vb_pos;
             entry.dirA1 = dirA1; entry.dirA2 = dirA2;
             entry.dirB1 = dirB1; entry.dirB2 = dirB2;
-            entry.capNbrA1 = capNbrA1;
-            entry.capNbrA2 = capNbrA2;
-            entry.capNbrB1 = capNbrB1;
-            entry.capNbrB2 = capNbrB2;
             ebEntries ~= entry;
-
-            // Build replacement table by scanning ALL faces for va or vb.
-            // For each occurrence of va/vb in any face, check its prev and next
-            // neighbours against capNbr* to decide which new vertex to insert.
-            foreach (fi, face; mesh.faces) {
-                int N = cast(int)face.length;
-                foreach (i; 0 .. N) {
-                    uint v = face[i];
-                    if (v != s.va && v != s.vb) continue;
-                    uint prev = face[(i - 1 + N) % N];
-                    uint next = face[(i + 1) % N];
-
-                    if (v == s.va) {
-                        // For junction vertices only write into faces this edge owns.
-                        if (s.va in junctionVerts)
-                            if (cast(int)fi != s.f1 && cast(int)fi != s.f2) continue;
-                        int fb = -1, fa = -1;
-                        if      (prev == capNbrA1) fb = nvA1;
-                        else if (prev == capNbrA2) fb = nvA2;
-                        if      (next == capNbrA1) fa = nvA1;
-                        else if (next == capNbrA2) fa = nvA2;
-                        if (fb >= 0 || fa >= 0) {
-                            ulong k = (cast(ulong)fi << 32) | s.va;
-                            if (k !in repTable) repTable[k] = Replace();
-                            if (fb >= 0) repTable[k].fromBefore = fb;
-                            if (fa >= 0) repTable[k].fromAfter  = fa;
-                        }
-                    } else { // v == s.vb
-                        // For junction vertices only write into faces this edge owns.
-                        if (s.vb in junctionVerts)
-                            if (cast(int)fi != s.f1 && cast(int)fi != s.f2) continue;
-                        int fb = -1, fa = -1;
-                        if      (prev == capNbrB1) fb = nvB1;
-                        else if (prev == capNbrB2) fb = nvB2;
-                        if      (next == capNbrB1) fa = nvB1;
-                        else if (next == capNbrB2) fa = nvB2;
-                        if (fb >= 0 || fa >= 0) {
-                            ulong k = (cast(ulong)fi << 32) | s.vb;
-                            if (k !in repTable) repTable[k] = Replace();
-                            if (fb >= 0) repTable[k].fromBefore = fb;
-                            if (fa >= 0) repTable[k].fromAfter  = fa;
-                        }
-                    }
-                }
-            }
         }
 
-        // Collect the set of faces that need modification.
-        bool[int] modSet;
-        foreach (k; repTable.byKey())
-            modSet[cast(int)(k >> 32)] = true;
+        // ---- Collect affected faces ----
+        bool[uint] affectedFaces;
+        foreach (li; loopNewVert.byKey())
+            affectedFaces[mesh.loops[li].face] = true;
 
-        // Save snapshots and apply modifications to ALL affected faces.
-        foreach (fi; modSet.byKey()) {
-            auto origFace = mesh.faces[fi];
-            ebFaceSnaps ~= EbFaceSnap(fi, origFace.dup);
+        // ---- Rebuild each affected face (bev_rebuild_polygon style) ----
+        // Walk the face's loop ring; substitute via loopNewVert where mapped,
+        // otherwise keep the original vertex.  The original va/vb are dropped.
+        foreach (fi; affectedFaces.byKey()) {
+            ebFaceSnaps ~= EbFaceSnap(fi, mesh.faces[fi].dup);
 
             uint[] newFace;
-            newFace.reserve(origFace.length + 2);
-            foreach (v; origFace) {
-                ulong key = (cast(ulong)fi << 32) | v;
-                if (auto rp = key in repTable) {
-                    // Original vertex is dropped; emit new vertices in its place.
-                    // When fromBefore == fromAfter (shared gap vertex), emit once.
-                    if (rp.fromBefore >= 0) newFace ~= cast(uint)rp.fromBefore;
-                    if (rp.fromAfter  >= 0 && rp.fromAfter != rp.fromBefore)
-                        newFace ~= cast(uint)rp.fromAfter;
-                } else {
-                    newFace ~= v;
-                }
-            }
+            newFace.reserve(mesh.faces[fi].length + 2);
+            uint li = mesh.faceLoop[fi];
+            do {
+                if (auto pnv = li in loopNewVert)
+                    newFace ~= cast(uint)(*pnv);
+                else
+                    newFace ~= mesh.loops[li].vert;
+                li = mesh.loops[li].next;
+            } while (li != mesh.faceLoop[fi]);
             mesh.faces[fi] = newFace;
         }
 
-        // Add bevel quad per edge: [B1, A1, A2, B2]
-        // Use direct append (not addFace) — we rebuild all edges from scratch below.
-        foreach (ref entry; ebEntries) {
+        // ---- Add bevel quad per edge: [nvB1, nvA1, nvA2, nvB2] ----
+        foreach (ref entry; ebEntries)
             mesh.faces ~= [cast(uint)entry.nvB1, cast(uint)entry.nvA1,
                            cast(uint)entry.nvA2, cast(uint)entry.nvB2];
-        }
 
-        // Add cap polygons for junction vertices with N≥3 selected edges.
+        // ---- Add cap polygons for junction vertices with N≥3 selected edges ----
         foreach (jv2, capPoly; jCapOrder)
             mesh.faces ~= capPoly;
 
-        // ---- Compact vertex array: remove va/vb (now unreferenced by any face) ----
+        // ---- Compact: remove original va/vb (now unreferenced) ----
         bool[] referenced;
         referenced.length = mesh.vertices.length;
         foreach (ref face; mesh.faces)
@@ -1028,21 +876,19 @@ private:
         }
         mesh.vertices = newVerts;
 
-        // Remap every face's vertex indices.
         foreach (ref face; mesh.faces)
             foreach (ref v; face) v = cast(uint)remap[v];
 
-        // Remap new vertex indices stored in entries (used by updateEdgeBevelVertices).
         foreach (ref entry; ebEntries) {
             entry.nvA1 = remap[entry.nvA1];
             entry.nvA2 = remap[entry.nvA2];
             entry.nvB1 = remap[entry.nvB1];
             entry.nvB2 = remap[entry.nvB2];
         }
+        foreach (ref ge; gapEntries)
+            ge.gvi = remap[ge.gvi];
 
-        // ---- Rebuild edge list from current faces ----
-        // This removes the original selected edge (va–vb) and any stale face edges,
-        // and adds the correct edges for all modified faces + bevel quad.
+        // ---- Rebuild edge list from faces ----
         mesh.edges.length = 0;
         mesh.selectedEdges.length = 0;
         mesh.edgeSelectionOrder.length = 0;
@@ -1063,6 +909,7 @@ private:
         }
 
         mesh.syncSelection();
+        mesh.buildLoops();
     }
 
     // Restore mesh to state before applyEdgeBevelTopology().
@@ -1076,9 +923,11 @@ private:
         mesh.edgeSelectionOrder = edgeOrderBeforeBevel;
         bevelApplied       = false;
         ebEntries          = [];
+        gapEntries         = [];
         ebFaceSnaps        = [];
         ebVertsBeforeBevel = [];
         mesh.syncSelection();
+        mesh.buildLoops();
     }
 
     // Reposition the 4 new vertices for every chamfered edge.
@@ -1090,5 +939,10 @@ private:
             mesh.vertices[entry.nvB1] = vec3Add(entry.origB, vec3Scale(entry.dirB1, ebWidth));
             mesh.vertices[entry.nvB2] = vec3Add(entry.origB, vec3Scale(entry.dirB2, ebWidth));
         }
+        // Override positions for gap (junction) vertices: each was written above by
+        // two different edges with conflicting per-edge directions.  Use the correct
+        // two-edge intersection direction computed in Phase 2 instead.
+        foreach (ref ge; gapEntries)
+            mesh.vertices[ge.gvi] = vec3Add(ge.orig, vec3Scale(ge.dir, ebWidth));
     }
 }

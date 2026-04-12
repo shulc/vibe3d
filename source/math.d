@@ -261,6 +261,18 @@ Vec3 safeNormalize(Vec3 v) {
     return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
 }
 
+// Slide direction for edge bevel: places the new vertex on the line from v
+// toward capNbr, scaled so that its perpendicular distance from the beveled
+// edge (v→otherEnd) equals the bevel width.
+// Equivalent to Blender's offset_meet(unbeveled_e offset=0, beveled_e).
+Vec3 edgeSlideDir(Vec3 v, Vec3 capNbr, Vec3 otherEnd) {
+    Vec3 d1 = safeNormalize(vec3Sub(capNbr, v));    // toward cap neighbour
+    Vec3 d2 = safeNormalize(vec3Sub(otherEnd, v));  // toward other end of beveled edge
+    Vec3 c  = cross(d1, d2);
+    float sinA = sqrt(c.x*c.x + c.y*c.y + c.z*c.z);
+    return sinA > 1e-6f ? vec3Scale(d1, 1.0f / sinA) : d1;
+}
+
 // Compute polygon normal from a face's vertex-index array and position array.
 Vec3 polyNormal(const uint[] face, const Vec3[] verts) {
     if (face.length < 3) return Vec3(0, 1, 0);

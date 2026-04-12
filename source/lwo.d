@@ -118,6 +118,7 @@ bool importLWO(string path, ref Mesh mesh)
     uint[ulong] edgeLookup;
     foreach (face; polys)
         mesh.addFaceFast(edgeLookup, face);
+    mesh.buildLoops();
     return true;
 }
 

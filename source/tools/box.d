@@ -621,6 +621,7 @@ private:
 
     void commitBase() {
         buildBase(mesh);
+        mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
     }
@@ -688,6 +689,7 @@ private:
 
     void commitCuboid() {
         buildCuboid(mesh);
+        mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
     }
