@@ -255,6 +255,62 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
     return true;
 }
 
+// Safe normalize — returns (0,1,0) for near-zero vectors.
+Vec3 safeNormalize(Vec3 v) {
+    float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+    return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
+}
+
+// Compute polygon normal from a face's vertex-index array and position array.
+Vec3 polyNormal(const uint[] face, const Vec3[] verts) {
+    if (face.length < 3) return Vec3(0, 1, 0);
+    Vec3 v0 = verts[face[0]], v1 = verts[face[1]], v2 = verts[face[2]];
+    Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+    float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
+    return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
+}
+
+// Compute the offset-meet direction at a polygon corner vertex.
+//
+// rawIn  — vector pointing INTO the vertex (= vertex - prevVertex, unnormalized)
+// rawOut — vector pointing OUT OF the vertex (= nextVertex - vertex, unnormalized)
+// faceNorm — polygon normal (for consistent orientation of the corner normal)
+//
+// Returns direction d such that  vertex + d * width  positions the new bevel
+// vertex at the intersection of the two per-edge offset lines at the given
+// width, ensuring constant perpendicular distance from each adjacent edge.
+Vec3 offsetMeetDir(Vec3 rawIn, Vec3 rawOut, Vec3 faceNorm) {
+    Vec3 d1 = safeNormalize(rawIn);    // incoming edge direction (toward vertex)
+    Vec3 d2 = safeNormalize(rawOut);   // outgoing edge direction (from vertex)
+
+    // Corner normal: perpendicular to both edges, oriented to match faceNorm.
+    Vec3 cn    = cross(d2, d1);
+    float cnLen = sqrt(cn.x*cn.x + cn.y*cn.y + cn.z*cn.z);
+    if (cnLen < 1e-6f) {
+        // Parallel / antiparallel edges — fall back to faceNorm × d1.
+        Vec3 perp = cross(d1, faceNorm);
+        float pLen = sqrt(perp.x*perp.x + perp.y*perp.y + perp.z*perp.z);
+        return pLen > 1e-6f ? Vec3(perp.x/pLen, perp.y/pLen, perp.z/pLen)
+                            : Vec3(1, 0, 0);
+    }
+    Vec3 n = Vec3(cn.x/cnLen, cn.y/cnLen, cn.z/cnLen);
+    if (dot(n, faceNorm) < 0.0f) n = Vec3(-n.x, -n.y, -n.z);
+
+    // Perpendicular-offset directions for the two edges (into face interior).
+    Vec3 perp1 = normalize(cross(n, d1));
+    Vec3 perp2 = normalize(cross(n, d2));
+
+    // Intersect offset lines (relative to vertex = origin):
+    //   L1(t) = perp1 + t * d1
+    //   L2(s) = perp2 + s * d2
+    // Solve via projected line-line formula using n as reference normal.
+    Vec3  rhs   = vec3Sub(perp2, perp1);
+    float denom = dot(cross(d1, d2), n);
+    float t     = abs(denom) > 1e-6f ? dot(cross(rhs, d2), n) / denom : 0.0f;
+
+    return vec3Add(perp1, vec3Scale(d1, t));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
