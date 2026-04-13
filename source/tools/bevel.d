@@ -86,16 +86,17 @@ private:
     int[]     edgeOrderBeforeBevel;
 
     // ---- Edge bevel parameters ----
-    float ebWidth = 0.0f;
+    float ebWidth    = 0.0f;
+    int   ebSegments = 1;     // number of bevel quads per edge (Blender "segments")
 
     // Per-edge data populated by applyEdgeBevelTopology().
     struct EdgeBevelEntry {
         uint va, vb;
-        int nvA1, nvA2;      // new vertex indices at va
-        int nvB1, nvB2;      // new vertex indices at vb
-        Vec3 origA, origB;   // va/vb positions at bevel time
-        Vec3 dirA1, dirA2;   // normalized slide directions at va
-        Vec3 dirB1, dirB2;   // normalized slide directions at vb
+        int[] nvsA;    // N+1 vertex indices at va: nvsA[0]=F1 side, nvsA[N]=F2 side
+        int[] nvsB;    // N+1 vertex indices at vb: nvsB[0]=F1 side, nvsB[N]=F2 side
+        Vec3 origA, origB;
+        Vec3 dirA1, dirA2;   // offsetInPlane directions (F1 / F2) at va
+        Vec3 dirB1, dirB2;   // offsetInPlane directions (F1 / F2) at vb
     }
     EdgeBevelEntry[] ebEntries;
 
@@ -148,13 +149,14 @@ public:
         active       = true;
         bevelApplied = false;
         bevelFaces   = [];
-        ebEntries         = [];
-        gapEntries        = [];
-        ebFaceSnaps       = [];
+        ebEntries          = [];
+        gapEntries         = [];
+        ebFaceSnaps        = [];
         ebVertsBeforeBevel = [];
         shiftAmount  = 0.0f;
         insertScale  = 1.0f;
         ebWidth      = 0.0f;
+        ebSegments   = 1;
         dragHandle   = -1;
         freeDragAxis = -1;
         if (*editMode == EditMode.Edges)
@@ -352,6 +354,16 @@ public:
             if (ImGui.IsItemActive()) {
                 if (ebWidth < 0.0f) ebWidth = 0.0f;
                 if (bevelApplied) { updateBevelVertices(); gpu.upload(*mesh); }
+            }
+
+            int prevSeg = ebSegments;
+            ImGui.DragInt("Segments", &ebSegments, 0.1f, 1, 8);
+            if (ebSegments < 1) ebSegments = 1;
+            if (ebSegments != prevSeg && bevelApplied) {
+                revertEdgeBevelTopology();
+                applyEdgeBevelTopology();
+                updateEdgeBevelVertices();
+                gpu.upload(*mesh);
             }
             return;
         }
@@ -749,6 +761,8 @@ private:
             if (bevelNbrs.length < 2) continue;
 
             uint[] capVerts;
+            Vec3[] capDirs;        // offset-meet direction per cap vert (for winding check)
+            Vec3 avgFaceNorm = Vec3(0, 0, 0);
             uint startLi = mesh.vertLoop[jv];
             if (startLi == ~0u) continue;
             uint li = startLi;
@@ -756,91 +770,207 @@ private:
                 uint prevV = mesh.loops[mesh.loops[li].prev].vert;
                 uint nextV = mesh.loops[mesh.loops[li].next].vert;
                 if ((prevV in bevelNbrs) && (nextV in bevelNbrs)) {
+                    Vec3 gfn = polyNormal(mesh.faces[mesh.loops[li].face], mesh.vertices);
+                    avgFaceNorm = vec3Add(avgFaceNorm, gfn);
                     if ((li in gapLoopVert) == null) {
                         int gvi = cast(int)mesh.addVertex(mesh.vertices[jv]);
                         gapLoopVert[li] = cast(uint)gvi;
                         capVerts ~= cast(uint)gvi;
-                        Vec3 gfn = polyNormal(mesh.faces[mesh.loops[li].face], mesh.vertices);
-                        Vec3 gDir = offsetMeetDir(
-                            vec3Sub(mesh.vertices[jv], mesh.vertices[prevV]),
-                            vec3Sub(mesh.vertices[nextV], mesh.vertices[jv]),
-                            gfn);
+                        // e1, e2 — directions FROM jv along each bevel edge (Blender offset_meet convention)
+                        Vec3 e1 = safeNormalize(vec3Sub(mesh.vertices[prevV], mesh.vertices[jv]));
+                        Vec3 e2 = safeNormalize(vec3Sub(mesh.vertices[nextV], mesh.vertices[jv]));
+                        Vec3 gDir = offsetMeetDir(e1, e2, gfn);
+                        capDirs ~= gDir;
                         gapEntries ~= GapVertEntry(gvi, mesh.vertices[jv], gDir);
                     } else {
                         capVerts ~= gapLoopVert[li];
+                        // Find existing gDir for this gap vert.
+                        int gvIdx = cast(int)gapLoopVert[li];
+                        Vec3 existDir = Vec3(0, 0, 0);
+                        foreach (ref ge; gapEntries)
+                            if (ge.gvi == gvIdx) { existDir = ge.dir; break; }
+                        capDirs ~= existDir;
                     }
                 }
                 if (mesh.loops[li].twin == ~0u) break;
                 li = mesh.loops[mesh.loops[li].twin].next;
                 if (li == startLi) break;
             }
-            if (capVerts.length >= 3)
+            if (capVerts.length >= 3) {
+                // Check cap winding: cap polygon normal (from offset directions)
+                // must agree with average face normal at jv.
+                Vec3 d01 = vec3Sub(capDirs[1], capDirs[0]);
+                Vec3 d02 = vec3Sub(capDirs[2], capDirs[0]);
+                Vec3 capNorm = cross(d01, d02);
+                if (dot(capNorm, avgFaceNorm) < 0.0f) {
+                    // Reverse cap polygon winding.
+                    for (int i = 0, j = cast(int)capVerts.length - 1; i < j; i++, j--) {
+                        uint tv = capVerts[i]; capVerts[i] = capVerts[j]; capVerts[j] = tv;
+                    }
+                }
                 jCapOrder[jv] = capVerts;
+            }
         }
 
         // ---- Per-edge: compute slide directions, create new vertices ----
-        // loopNewVert[loop_idx] = the new vertex that replaces the loop's original vert.
-        int[uint] loopNewVert;
+        // loopNewVerts[loop_idx] = chain of new vertices that replaces the original vertex.
+        // For faces sharing the beveled edge (F1/F2): chain has 1 element.
+        // For "span" faces (contain both cap neighbors of a bevel endpoint): chain has N+1 elements.
+        // Blender bev_rebuild_polygon: ALL faces containing a beveled vertex are rebuilt.
+        int[][uint] loopNewVerts;
 
         foreach (ref s; sel) {
             Vec3 va_pos = mesh.vertices[s.va];
             Vec3 vb_pos = mesh.vertices[s.vb];
 
+            // Blender offset_in_plane: slide perpendicular to the bevel edge in each face plane.
+            // edgeDir (va→vb) is used for F1; reversed for F2 (because F2 traverses vb→va).
+            Vec3 faceNormF1 = polyNormal(mesh.faces[mesh.loops[s.liF1_va].face], mesh.vertices);
+            Vec3 faceNormF2 = polyNormal(mesh.faces[mesh.loops[s.liF2_va].face], mesh.vertices);
+            Vec3 edgeDir    = safeNormalize(vec3Sub(vb_pos, va_pos));
+
+            Vec3 dirA1 = offsetInPlane(edgeDir,          faceNormF1);  // va in F1
+            Vec3 dirB1 = offsetInPlane(edgeDir,          faceNormF1);  // vb in F1
+            Vec3 dirA2 = offsetInPlane(vec3Neg(edgeDir), faceNormF2);  // va in F2
+            Vec3 dirB2 = offsetInPlane(vec3Neg(edgeDir), faceNormF2);  // vb in F2
+
+            // Cap neighbors: the vertices va/vb slide toward in F1 / F2.
+            // capNbrA1 = prev of va in F1, capNbrA2 = next of va in F2.
             uint capNbrA1 = mesh.loops[mesh.loops[s.liF1_va].prev].vert;
             uint capNbrA2 = mesh.loops[mesh.loops[s.liF2_va].next].vert;
             uint capNbrB1 = mesh.loops[mesh.loops[s.liF1_vb].next].vert;
             uint capNbrB2 = mesh.loops[mesh.loops[s.liF2_vb].prev].vert;
 
-            Vec3 dirA1 = edgeSlideDir(va_pos, mesh.vertices[capNbrA1], vb_pos);
-            Vec3 dirA2 = edgeSlideDir(va_pos, mesh.vertices[capNbrA2], vb_pos);
-            Vec3 dirB1 = edgeSlideDir(vb_pos, mesh.vertices[capNbrB1], va_pos);
-            Vec3 dirB2 = edgeSlideDir(vb_pos, mesh.vertices[capNbrB2], va_pos);
+            // Create N+1 profile vertices per endpoint (indices 0=F1-side, N=F2-side).
+            int[] nvsA = new int[](ebSegments + 1);
+            int[] nvsB = new int[](ebSegments + 1);
 
-            int nvA1 = (s.liF1_va in gapLoopVert)
+            nvsA[0] = (s.liF1_va in gapLoopVert)
                 ? cast(int)gapLoopVert[s.liF1_va]
                 : cast(int)mesh.addVertex(va_pos);
-            int nvA2 = (s.liF2_va in gapLoopVert)
+            nvsA[ebSegments] = (s.liF2_va in gapLoopVert)
                 ? cast(int)gapLoopVert[s.liF2_va]
                 : cast(int)mesh.addVertex(va_pos);
-            int nvB1 = (s.liF1_vb in gapLoopVert)
+            nvsB[0] = (s.liF1_vb in gapLoopVert)
                 ? cast(int)gapLoopVert[s.liF1_vb]
                 : cast(int)mesh.addVertex(vb_pos);
-            int nvB2 = (s.liF2_vb in gapLoopVert)
+            nvsB[ebSegments] = (s.liF2_vb in gapLoopVert)
                 ? cast(int)gapLoopVert[s.liF2_vb]
                 : cast(int)mesh.addVertex(vb_pos);
 
-            loopNewVert[s.liF1_va] = nvA1;
-            loopNewVert[s.liF2_va] = nvA2;
-            loopNewVert[s.liF1_vb] = nvB1;
-            loopNewVert[s.liF2_vb] = nvB2;
+            // Middle profile vertices (only for ebSegments > 1).
+            for (int k = 1; k < ebSegments; k++) {
+                nvsA[k] = cast(int)mesh.addVertex(va_pos);
+                nvsB[k] = cast(int)mesh.addVertex(vb_pos);
+            }
+
+            // Direct assignments: the two faces that share the bevel edge.
+            // liF1_va → F1 side (nvsA[0]), liF2_va → F2 side (nvsA[N]).
+            // Gap loops are already in gapLoopVert and their vertex is nvsA[0/N].
+            loopNewVerts[s.liF1_va] = [nvsA[0]];
+            loopNewVerts[s.liF2_va] = [nvsA[ebSegments]];
+            loopNewVerts[s.liF1_vb] = [nvsB[0]];
+            loopNewVerts[s.liF2_vb] = [nvsB[ebSegments]];
+
+            // For non-junction vertices with N>1 segments: also update the "span" face
+            // (the face at va/vb that contains BOTH cap neighbors but NOT the bevel edge).
+            // Blender's bev_rebuild_polygon inserts the full profile chain there.
+            // if (ebSegments > 1) {
+                int[] nvsA_rev = nvsA.dup; {
+                    for (int i=0, j=cast(int)nvsA_rev.length-1; i<j; i++, j--) {
+                        int t = nvsA_rev[i]; nvsA_rev[i] = nvsA_rev[j]; nvsA_rev[j] = t;
+                    }
+                }
+                int[] nvsB_rev = nvsB.dup; {
+                    for (int i=0, j=cast(int)nvsB_rev.length-1; i<j; i++, j--) {
+                        int t = nvsB_rev[i]; nvsB_rev[i] = nvsB_rev[j]; nvsB_rev[j] = t;
+                    }
+                }
+
+                // Walk ALL faces around va / vb (non-junction only).
+                // Faces before the span face → nvsA[0]; span face → full chain;
+                // faces after the span face → nvsA[N].
+                // This ensures every face that contains va (which will be compacted
+                // away) is updated, not just the span face.
+                if (!(s.va in junctionVerts)) {
+                    uint startLi = s.liF1_va;
+                    uint li = startLi;
+                    bool pastSpan = false;
+                    for (int step = 0; step < 256; step++) {
+                        if ((li in loopNewVerts) == null && (li in gapLoopVert) == null) {
+                            uint prevV = mesh.loops[mesh.loops[li].prev].vert;
+                            uint nextV = mesh.loops[mesh.loops[li].next].vert;
+                            if (prevV == capNbrA1 && nextV == capNbrA2) {
+                                loopNewVerts[li] = nvsA;
+                                pastSpan = true;
+                            } else if (prevV == capNbrA2 && nextV == capNbrA1) {
+                                loopNewVerts[li] = nvsA_rev;
+                                pastSpan = true;
+                            } else if (!pastSpan) {
+                                loopNewVerts[li] = [nvsA[0]];
+                            } else {
+                                loopNewVerts[li] = [nvsA[ebSegments]];
+                            }
+                        }
+                        if (mesh.loops[li].twin == ~0u) break;
+                        li = mesh.loops[mesh.loops[li].twin].next;
+                        if (li == startLi) break;
+                    }
+                }
+
+                // Walk vb.
+                if (!(s.vb in junctionVerts)) {
+                    uint startLi = s.liF1_vb;
+                    uint li = startLi;
+                    bool pastSpan = false;
+                    for (int step = 0; step < 256; step++) {
+                        if ((li in loopNewVerts) == null && (li in gapLoopVert) == null) {
+                            uint prevV = mesh.loops[mesh.loops[li].prev].vert;
+                            uint nextV = mesh.loops[mesh.loops[li].next].vert;
+                            if (prevV == capNbrB1 && nextV == capNbrB2) {
+                                loopNewVerts[li] = nvsB;
+                                pastSpan = true;
+                            } else if (prevV == capNbrB2 && nextV == capNbrB1) {
+                                loopNewVerts[li] = nvsB_rev;
+                                pastSpan = true;
+                            } else if (!pastSpan) {
+                                loopNewVerts[li] = [nvsB[0]];
+                            } else {
+                                loopNewVerts[li] = [nvsB[ebSegments]];
+                            }
+                        }
+                        if (mesh.loops[li].twin == ~0u) break;
+                        li = mesh.loops[mesh.loops[li].twin].next;
+                        if (li == startLi) break;
+                    }
+                }
+            // }
 
             EdgeBevelEntry entry;
-            entry.va = s.va; entry.vb = s.vb;
-            entry.nvA1 = nvA1; entry.nvA2 = nvA2;
-            entry.nvB1 = nvB1; entry.nvB2 = nvB2;
+            entry.va   = s.va;  entry.vb   = s.vb;
+            entry.nvsA = nvsA;  entry.nvsB = nvsB;
             entry.origA = va_pos; entry.origB = vb_pos;
             entry.dirA1 = dirA1; entry.dirA2 = dirA2;
             entry.dirB1 = dirB1; entry.dirB2 = dirB2;
             ebEntries ~= entry;
         }
 
-        // ---- Collect affected faces ----
+        // ---- Collect affected faces (now ALL faces containing any beveled vertex) ----
         bool[uint] affectedFaces;
-        foreach (li; loopNewVert.byKey())
+        foreach (li; loopNewVerts.byKey())
             affectedFaces[mesh.loops[li].face] = true;
 
         // ---- Rebuild each affected face (bev_rebuild_polygon style) ----
-        // Walk the face's loop ring; substitute via loopNewVert where mapped,
-        // otherwise keep the original vertex.  The original va/vb are dropped.
+        // For each loop: substitute with chain if mapped, otherwise keep original vertex.
         foreach (fi; affectedFaces.byKey()) {
             ebFaceSnaps ~= EbFaceSnap(fi, mesh.faces[fi].dup);
 
             uint[] newFace;
-            newFace.reserve(mesh.faces[fi].length + 2);
+            newFace.reserve(mesh.faces[fi].length + ebSegments + 1);
             uint li = mesh.faceLoop[fi];
             do {
-                if (auto pnv = li in loopNewVert)
-                    newFace ~= cast(uint)(*pnv);
+                if (auto pchain = li in loopNewVerts)
+                    foreach (v; *pchain) newFace ~= cast(uint)v;
                 else
                     newFace ~= mesh.loops[li].vert;
                 li = mesh.loops[li].next;
@@ -848,14 +978,49 @@ private:
             mesh.faces[fi] = newFace;
         }
 
-        // ---- Add bevel quad per edge: [nvB1, nvA1, nvA2, nvB2] ----
-        foreach (ref entry; ebEntries)
-            mesh.faces ~= [cast(uint)entry.nvB1, cast(uint)entry.nvA1,
-                           cast(uint)entry.nvA2, cast(uint)entry.nvB2];
+        // ---- Add N bevel quads per edge: [B[k], A[k], A[k+1], B[k+1]] ----
+        foreach (ref entry; ebEntries) {
+            for (int k = 0; k < ebSegments; k++)
+                mesh.faces ~= [cast(uint)entry.nvsB[k],   cast(uint)entry.nvsA[k],
+                               cast(uint)entry.nvsA[k+1], cast(uint)entry.nvsB[k+1]];
+        }
 
-        // ---- Add cap polygons for junction vertices with N≥3 selected edges ----
+        // ---- Add outer cap polygons for M≥3 junction vertices (ring 0) ----
         foreach (jv2, capPoly; jCapOrder)
             mesh.faces ~= capPoly;
+
+        // ---- Add inner cap rings for M≥3 junctions (rings 1..N-1) ----
+        // Use profile[k] directly (consistent lerp t=k/N) — no reversal.
+        if (ebSegments > 1) {
+            bool[int] gapVertSet;
+            foreach (ref ge; gapEntries) gapVertSet[ge.gvi] = true;
+
+            // Map: gap vertex → raw profile (nvsA or nvsB as-is, index k = lerp t=k/N).
+            int[][int] gapProfile;
+            foreach (ref entry; ebEntries) {
+                if (entry.nvsA[0] in gapVertSet)
+                    gapProfile[entry.nvsA[0]] = entry.nvsA;
+                else if (entry.nvsA[$-1] in gapVertSet)
+                    gapProfile[entry.nvsA[$-1]] = entry.nvsA;
+
+                if (entry.nvsB[0] in gapVertSet)
+                    gapProfile[entry.nvsB[0]] = entry.nvsB;
+                else if (entry.nvsB[$-1] in gapVertSet)
+                    gapProfile[entry.nvsB[$-1]] = entry.nvsB;
+            }
+
+            foreach (jv2, capPoly; jCapOrder) {
+                for (int k = 1; k < ebSegments; k++) {
+                    uint[] innerCap;
+                    foreach (gv; capPoly) {
+                        auto pRef = cast(int)gv in gapProfile;
+                        if (pRef) innerCap ~= cast(uint)(*pRef)[k];
+                    }
+                    if (innerCap.length == capPoly.length && innerCap.length >= 3)
+                        mesh.faces ~= innerCap;
+                }
+            }
+        }
 
         // ---- Compact: remove original va/vb (now unreferenced) ----
         bool[] referenced;
@@ -880,10 +1045,8 @@ private:
             foreach (ref v; face) v = cast(uint)remap[v];
 
         foreach (ref entry; ebEntries) {
-            entry.nvA1 = remap[entry.nvA1];
-            entry.nvA2 = remap[entry.nvA2];
-            entry.nvB1 = remap[entry.nvB1];
-            entry.nvB2 = remap[entry.nvB2];
+            foreach (ref v; entry.nvsA) v = remap[v];
+            foreach (ref v; entry.nvsB) v = remap[v];
         }
         foreach (ref ge; gapEntries)
             ge.gvi = remap[ge.gvi];
@@ -930,18 +1093,25 @@ private:
         mesh.buildLoops();
     }
 
-    // Reposition the 4 new vertices for every chamfered edge.
-    // new_pos = orig_pos + slide_dir * ebWidth
+    // Reposition all profile vertices for every chamfered edge.
+    // For a flat (straight) profile: lerp between the two endpoint positions (Blender).
+    // new_pos(k) = lerp(origA + dirA1*w, origA + dirA2*w, k/N)
     void updateEdgeBevelVertices() {
+        int ns = ebSegments;
         foreach (ref entry; ebEntries) {
-            mesh.vertices[entry.nvA1] = vec3Add(entry.origA, vec3Scale(entry.dirA1, ebWidth));
-            mesh.vertices[entry.nvA2] = vec3Add(entry.origA, vec3Scale(entry.dirA2, ebWidth));
-            mesh.vertices[entry.nvB1] = vec3Add(entry.origB, vec3Scale(entry.dirB1, ebWidth));
-            mesh.vertices[entry.nvB2] = vec3Add(entry.origB, vec3Scale(entry.dirB2, ebWidth));
+            Vec3 posA0 = vec3Add(entry.origA, vec3Scale(entry.dirA1, ebWidth));
+            Vec3 posAN = vec3Add(entry.origA, vec3Scale(entry.dirA2, ebWidth));
+            Vec3 posB0 = vec3Add(entry.origB, vec3Scale(entry.dirB1, ebWidth));
+            Vec3 posBN = vec3Add(entry.origB, vec3Scale(entry.dirB2, ebWidth));
+            Vec3 dA = vec3Sub(posAN, posA0);
+            Vec3 dB = vec3Sub(posBN, posB0);
+            for (int k = 0; k <= ns; k++) {
+                float t = ns > 0 ? cast(float)k / ns : 0.0f;
+                mesh.vertices[entry.nvsA[k]] = vec3Add(posA0, vec3Scale(dA, t));
+                mesh.vertices[entry.nvsB[k]] = vec3Add(posB0, vec3Scale(dB, t));
+            }
         }
-        // Override positions for gap (junction) vertices: each was written above by
-        // two different edges with conflicting per-edge directions.  Use the correct
-        // two-edge intersection direction computed in Phase 2 instead.
+        // Override gap (junction) vertices: placed at the offsetMeetDir intersection.
         foreach (ref ge; gapEntries)
             mesh.vertices[ge.gvi] = vec3Add(ge.orig, vec3Scale(ge.dir, ebWidth));
     }

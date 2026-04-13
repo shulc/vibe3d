@@ -21,6 +21,7 @@ struct Viewport {
 Vec3 vec3Add  (Vec3 a, Vec3 b)  { return Vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
 Vec3 vec3Sub  (Vec3 a, Vec3 b)  { return Vec3(a.x-b.x, a.y-b.y, a.z-b.z); }
 Vec3 vec3Scale(Vec3 v, float s) { return Vec3(v.x*s, v.y*s, v.z*s); }
+Vec3 vec3Neg  (Vec3 v)          { return Vec3(-v.x, -v.y, -v.z); }
 
 Vec3 normalize(Vec3 v) {
     float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
@@ -261,18 +262,6 @@ Vec3 safeNormalize(Vec3 v) {
     return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
 }
 
-// Slide direction for edge bevel: places the new vertex on the line from v
-// toward capNbr, scaled so that its perpendicular distance from the beveled
-// edge (v→otherEnd) equals the bevel width.
-// Equivalent to Blender's offset_meet(unbeveled_e offset=0, beveled_e).
-Vec3 edgeSlideDir(Vec3 v, Vec3 capNbr, Vec3 otherEnd) {
-    Vec3 d1 = safeNormalize(vec3Sub(capNbr, v));    // toward cap neighbour
-    Vec3 d2 = safeNormalize(vec3Sub(otherEnd, v));  // toward other end of beveled edge
-    Vec3 c  = cross(d1, d2);
-    float sinA = sqrt(c.x*c.x + c.y*c.y + c.z*c.z);
-    return sinA > 1e-6f ? vec3Scale(d1, 1.0f / sinA) : d1;
-}
-
 // Compute polygon normal from a face's vertex-index array and position array.
 Vec3 polyNormal(const uint[] face, const Vec3[] verts) {
     if (face.length < 3) return Vec3(0, 1, 0);
@@ -282,45 +271,44 @@ Vec3 polyNormal(const uint[] face, const Vec3[] verts) {
     return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
 }
 
-// Compute the offset-meet direction at a polygon corner vertex.
+// Blender offset_in_plane: direction perpendicular to edgeDir inside a face.
 //
-// rawIn  — vector pointing INTO the vertex (= vertex - prevVertex, unnormalized)
-// rawOut — vector pointing OUT OF the vertex (= nextVertex - vertex, unnormalized)
-// faceNorm — polygon normal (for consistent orientation of the corner normal)
+// edgeDir  — normalized direction of the bevel edge (va→vb for F1, vb→va for F2)
+// faceNorm — unit normal of the face the new vertex lives in
 //
-// Returns direction d such that  vertex + d * width  positions the new bevel
-// vertex at the intersection of the two per-edge offset lines at the given
-// width, ensuring constant perpendicular distance from each adjacent edge.
-Vec3 offsetMeetDir(Vec3 rawIn, Vec3 rawOut, Vec3 faceNorm) {
-    Vec3 d1 = safeNormalize(rawIn);    // incoming edge direction (toward vertex)
-    Vec3 d2 = safeNormalize(rawOut);   // outgoing edge direction (from vertex)
+// Returns unit vector d such that  orig + d * width  places the new vertex at
+// perpendicular distance width from the bevel-edge line, lying in the face plane.
+// Formula: cross(faceNorm, edgeDir), normalised — points INTO the face.
+Vec3 offsetInPlane(Vec3 edgeDir, Vec3 faceNorm) {
+    Vec3 p = cross(faceNorm, edgeDir);
+    float len = sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+    return len > 1e-6f ? Vec3(p.x/len, p.y/len, p.z/len) : Vec3(0, 1, 0);
+}
 
-    // Corner normal: perpendicular to both edges, oriented to match faceNorm.
-    Vec3 cn    = cross(d2, d1);
-    float cnLen = sqrt(cn.x*cn.x + cn.y*cn.y + cn.z*cn.z);
-    if (cnLen < 1e-6f) {
-        // Parallel / antiparallel edges — fall back to faceNorm × d1.
-        Vec3 perp = cross(d1, faceNorm);
-        float pLen = sqrt(perp.x*perp.x + perp.y*perp.y + perp.z*perp.z);
-        return pLen > 1e-6f ? Vec3(perp.x/pLen, perp.y/pLen, perp.z/pLen)
-                            : Vec3(1, 0, 0);
+// Blender offset_meet: junction-vertex offset direction.
+//
+// e1 — unit vector FROM jv toward prevV in the gap face (face winding prevV→jv→nextV)
+// e2 — unit vector FROM jv toward nextV in the gap face
+// faceNorm — unit normal of the gap face
+//
+// In the gap face, prevV arrives INTO jv (F2 winding → edge direction = -e1),
+// while nextV departs FROM jv (F1 winding → edge direction = +e2).
+// So the two offset lines are:
+//   L1: p1 + t*e1,  where p1 = offsetInPlane(-e1, faceNorm)  ← prevV / F2 side
+//   L2: p2 + s*e2,  where p2 = offsetInPlane( e2, faceNorm)  ← nextV / F1 side
+// Returns direction d s.t.  jv + d*width  = intersection of L1 and L2.
+Vec3 offsetMeetDir(Vec3 e1, Vec3 e2, Vec3 faceNorm) {
+    Vec3 p1 = offsetInPlane(vec3Neg(e1), faceNorm); // prevV side: negate (F2 winding)
+    Vec3 p2 = offsetInPlane(e2,          faceNorm); // nextV side: direct (F1 winding)
+
+    Vec3  rhs   = vec3Sub(p2, p1);
+    Vec3  n     = cross(e1, e2);
+    float denom = dot(n, n);
+    if (denom < 1e-12f) {
+        return safeNormalize(vec3Scale(vec3Add(p1, p2), 0.5f));
     }
-    Vec3 n = Vec3(cn.x/cnLen, cn.y/cnLen, cn.z/cnLen);
-    if (dot(n, faceNorm) < 0.0f) n = Vec3(-n.x, -n.y, -n.z);
-
-    // Perpendicular-offset directions for the two edges (into face interior).
-    Vec3 perp1 = normalize(cross(n, d1));
-    Vec3 perp2 = normalize(cross(n, d2));
-
-    // Intersect offset lines (relative to vertex = origin):
-    //   L1(t) = perp1 + t * d1
-    //   L2(s) = perp2 + s * d2
-    // Solve via projected line-line formula using n as reference normal.
-    Vec3  rhs   = vec3Sub(perp2, perp1);
-    float denom = dot(cross(d1, d2), n);
-    float t     = abs(denom) > 1e-6f ? dot(cross(rhs, d2), n) / denom : 0.0f;
-
-    return vec3Add(perp1, vec3Scale(d1, t));
+    float t = dot(cross(rhs, e2), n) / denom;
+    return vec3Add(p1, vec3Scale(e1, t));
 }
 
 // ---------------------------------------------------------------------------
