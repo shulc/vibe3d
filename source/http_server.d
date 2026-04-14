@@ -25,11 +25,9 @@ class HttpServer {
     private Thread serverThread;
     private alias ModelDataProvider = string delegate();
     private ModelDataProvider modelDataProvider;
-    private alias DetailedModelDataProvider = string delegate(float[], uint[][]);
+    private alias DetailedModelDataProvider = string delegate();
     private DetailedModelDataProvider detailedModelDataProvider;
     private bool useDetailedProvider = false;
-    private float[] meshVertices;
-    private uint[][] meshFaces;
     private alias CameraDataProvider = string delegate();
     private CameraDataProvider cameraDataProvider;
     private alias SelectionDataProvider = string delegate();
@@ -62,10 +60,8 @@ class HttpServer {
     /**
      * Set the detailed model data provider callback
      */
-    public void setDetailedModelDataProvider(DetailedModelDataProvider provider, float[] vertices, uint[][] faces) {
+    public void setDetailedModelDataProvider(DetailedModelDataProvider provider) {
         this.detailedModelDataProvider = provider;
-        this.meshVertices = vertices;
-        this.meshFaces = faces;
         this.useDetailedProvider = true;
     }
 
@@ -145,6 +141,15 @@ class HttpServer {
 
         isRunning = false;
         if (serverSocket !is null) {
+            // Connect to ourselves to unblock the accept() call in serverThread
+            try {
+                Socket unblockSocket = new TcpSocket();
+                unblockSocket.connect(new InternetAddress("127.0.0.1", port));
+                unblockSocket.close();
+            } catch (Exception e) {
+                // Ignore connection errors during shutdown
+            }
+            
             serverSocket.close();
             serverSocket = null;
         }
@@ -272,7 +277,7 @@ class HttpServer {
             if (useDetailedProvider && detailedModelDataProvider !is null) {
                 try {
                     response.statusCode = 200;
-                    response.body = detailedModelDataProvider(meshVertices, meshFaces);
+                    response.body = detailedModelDataProvider();
                     response.headers["Content-Type"] = "application/json";
                 } catch (Exception e) {
                     response.statusCode = 500;

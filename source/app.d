@@ -344,9 +344,29 @@ void main(string[] args) {
             return verts;
         }
 
-        httpServer.setDetailedModelDataProvider((float[] vertices, uint[][] faces) {
-            return meshToJsonDetailed(mesh.vertices.length, mesh.edges.length, mesh.faces.length, vertices, faces);
-        }, getMeshVertices(), mesh.faces);
+        httpServer.setDetailedModelDataProvider(() {
+            // Создаём свежий массив вершин при КАЖДОМ запросе
+            float[] verts = new float[](mesh.vertices.length * 3);
+            for (size_t i = 0; i < mesh.vertices.length; i++) {
+                verts[i * 3] = mesh.vertices[i].x;
+                verts[i * 3 + 1] = mesh.vertices[i].y;
+                verts[i * 3 + 2] = mesh.vertices[i].z;
+            }
+            
+            // Копируем faces (тоже свежая копия)
+            uint[][] facesCopy = new uint[][](mesh.faces.length);
+            for (size_t i = 0; i < mesh.faces.length; i++) {
+                facesCopy[i] = mesh.faces[i].dup;
+            }
+            
+            return meshToJsonDetailed(
+                mesh.vertices.length, 
+                mesh.edges.length, 
+                mesh.faces.length, 
+                verts, 
+                facesCopy
+            );
+        });
         httpServer.setCameraDataProvider(() => cameraView.toJson());
         httpServer.setSelectionDataProvider(() {
             import std.format : format;
