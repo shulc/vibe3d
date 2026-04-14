@@ -812,6 +812,57 @@ private:
             }
         }
 
+        // ---- Weld vertex pre-pass: merge inner-corner vertices at 2-edge junctions ----
+        // Blender's "weld case" (selcount==2, M_NONE vmesh): at a junction where exactly
+        // 2 selected edges meet, the two side faces adjacent to the non-selected edge both
+        // need a vertex that slides to the same position.  Detect "weld loops" — loops at
+        // jv where exactly ONE of prev/next is a bevel neighbour (not a full gap loop) —
+        // and group them by their non-bevel neighbour.  All loops in the same group share
+        // one weld vertex, placed by the same offsetInPlane(-edgeDir, faceNorm) rule as
+        // the per-edge dirB2/dirA2 formula.  The vertex is added to gapLoopVert so the
+        // per-edge code picks it up via the existing (s.liF2_vX in gapLoopVert) check.
+        foreach (jvW; junctionVerts.byKey()) {
+            bool[uint] bvNbrsW;
+            foreach (ref s2; sel) {
+                if (s2.va == jvW) bvNbrsW[s2.vb] = true;
+                if (s2.vb == jvW) bvNbrsW[s2.va] = true;
+            }
+
+            uint[][uint] weldLoopsByNbr;  // non-bevel-nbr → [loop_idx, ...]
+            uint startLiW = mesh.vertLoop[jvW];
+            if (startLiW == ~0u) continue;
+            uint liW = startLiW;
+            for (int step = 0; step < 256; step++) {
+                uint pW = mesh.loops[mesh.loops[liW].prev].vert;
+                uint nW = mesh.loops[mesh.loops[liW].next].vert;
+                bool pIsBev = (pW in bvNbrsW) != null;
+                bool nIsBev = (nW in bvNbrsW) != null;
+                if (pIsBev != nIsBev) {          // exactly one bevel neighbour → weld loop
+                    uint nonBvNbr = pIsBev ? nW : pW;
+                    weldLoopsByNbr[nonBvNbr] ~= liW;
+                }
+                if (mesh.loops[liW].twin == ~0u) break;
+                liW = mesh.loops[mesh.loops[liW].twin].next;
+                if (liW == startLiW) break;
+            }
+
+            foreach (nonBvNbr, wloops; weldLoopsByNbr) {
+                if (wloops.length < 2) continue;  // nothing to merge
+                int wvi = cast(int)mesh.addVertex(mesh.vertices[jvW]);
+                // Direction: F2-convention offsetInPlane (bevel edge arrives INTO jvW).
+                uint wl0  = wloops[0];
+                uint wpV  = mesh.loops[mesh.loops[wl0].prev].vert;
+                uint wnV  = mesh.loops[mesh.loops[wl0].next].vert;
+                uint bvNb = (wpV in bvNbrsW) ? wpV : wnV;
+                Vec3 eToBv = safeNormalize(vec3Sub(mesh.vertices[bvNb], mesh.vertices[jvW]));
+                Vec3 wfn   = polyNormal(mesh.faces[mesh.loops[wl0].face], mesh.vertices);
+                Vec3 wDir  = offsetInPlane(vec3Neg(eToBv), wfn);
+                gapEntries ~= GapVertEntry(wvi, mesh.vertices[jvW], wDir);
+                foreach (wl; wloops)
+                    gapLoopVert[wl] = cast(uint)wvi;
+            }
+        }
+
         // ---- Per-edge: compute slide directions, create new vertices ----
         // loopNewVerts[loop_idx] = chain of new vertices that replaces the original vertex.
         // For faces sharing the beveled edge (F1/F2): chain has 1 element.
