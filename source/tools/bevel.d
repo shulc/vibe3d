@@ -849,14 +849,8 @@ private:
             foreach (nonBvNbr, wloops; weldLoopsByNbr) {
                 if (wloops.length < 2) continue;  // nothing to merge
                 int wvi = cast(int)mesh.addVertex(mesh.vertices[jvW]);
-                // Direction: F2-convention offsetInPlane (bevel edge arrives INTO jvW).
-                uint wl0  = wloops[0];
-                uint wpV  = mesh.loops[mesh.loops[wl0].prev].vert;
-                uint wnV  = mesh.loops[mesh.loops[wl0].next].vert;
-                uint bvNb = (wpV in bvNbrsW) ? wpV : wnV;
-                Vec3 eToBv = safeNormalize(vec3Sub(mesh.vertices[bvNb], mesh.vertices[jvW]));
-                Vec3 wfn   = polyNormal(mesh.faces[mesh.loops[wl0].face], mesh.vertices);
-                Vec3 wDir  = offsetInPlane(vec3Neg(eToBv), wfn);
+                // The weld vertex slides along the non-selected edge toward nonBvNbr.
+                Vec3 wDir = safeNormalize(vec3Sub(mesh.vertices[nonBvNbr], mesh.vertices[jvW]));
                 gapEntries ~= GapVertEntry(wvi, mesh.vertices[jvW], wDir);
                 foreach (wl; wloops)
                     gapLoopVert[wl] = cast(uint)wvi;
@@ -1030,6 +1024,7 @@ private:
         }
 
         // ---- Add N bevel quads per edge: [B[k], A[k], A[k+1], B[k+1]] ----
+        size_t newFaceStart = mesh.faces.length;
         foreach (ref entry; ebEntries) {
             for (int k = 0; k < ebSegments; k++)
                 mesh.faces ~= [cast(uint)entry.nvsB[k],   cast(uint)entry.nvsA[k],
@@ -1123,6 +1118,29 @@ private:
         }
 
         mesh.syncSelection();
+
+        // Select all edges that belong to the new bevel faces.
+        // The edge list was just rebuilt from scratch (all unselected), so we only
+        // need to mark the edges we want — no need to clear first.
+        {
+            uint[ulong] edgeIdx;
+            foreach (ei, ref e; mesh.edges) {
+                uint lo = e[0] < e[1] ? e[0] : e[1];
+                uint hi = e[0] < e[1] ? e[1] : e[0];
+                edgeIdx[(cast(ulong)lo << 32) | hi] = cast(uint)ei;
+            }
+            foreach (fi; newFaceStart .. mesh.faces.length) {
+                auto face = mesh.faces[fi];
+                int N = cast(int)face.length;
+                for (int i = 0; i < N; i++) {
+                    uint a = face[i], b = face[(i + 1) % N];
+                    uint lo = a < b ? a : b, hi = a < b ? b : a;
+                    if (auto p = (cast(ulong)lo << 32 | hi) in edgeIdx)
+                        mesh.selectEdge(cast(int)*p);
+                }
+            }
+        }
+
         mesh.buildLoops();
     }
 
