@@ -22,6 +22,8 @@ Vec3 vec3Add  (Vec3 a, Vec3 b)  { return Vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
 Vec3 vec3Sub  (Vec3 a, Vec3 b)  { return Vec3(a.x-b.x, a.y-b.y, a.z-b.z); }
 Vec3 vec3Scale(Vec3 v, float s) { return Vec3(v.x*s, v.y*s, v.z*s); }
 Vec3 vec3Neg  (Vec3 v)          { return Vec3(-v.x, -v.y, -v.z); }
+float vec3Length(Vec3 v)        { return sqrt(v.x*v.x + v.y*v.y + v.z*v.z); }
+Vec3 vec3Lerp (Vec3 a, Vec3 b, float t) { return Vec3(a.x+t*(b.x-a.x), a.y+t*(b.y-a.y), a.z+t*(b.z-a.z)); }
 
 Vec3 normalize(Vec3 v) {
     float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
@@ -541,4 +543,19 @@ unittest { // rayPlaneIntersect: near-parallel ray below threshold returns false
     // dot((0,1,0), (1, 5e-7, 0)) = 5e-7 < 1e-6
     assert(!rayPlaneIntersect(Vec3(0,0,0), Vec3(1.0f, 5e-7f, 0),
                               Vec3(0,1,0), Vec3(0,1,0), hit));
+}
+
+unittest { // vec3Length
+    assert(isClose(vec3Length(Vec3(3,4,0)), 5.0f));
+    assert(isClose(vec3Length(Vec3(0,0,0)), 0.0f));
+    assert(isClose(vec3Length(Vec3(1,0,0)), 1.0f));
+}
+
+unittest { // vec3Lerp
+    auto r = vec3Lerp(Vec3(0,0,0), Vec3(4,4,4), 0.25f);
+    assert(isClose(r.x, 1.0f) && isClose(r.y, 1.0f) && isClose(r.z, 1.0f));
+    auto a = vec3Lerp(Vec3(1,2,3), Vec3(5,6,7), 0.0f);
+    assert(isClose(a.x, 1.0f) && isClose(a.y, 2.0f) && isClose(a.z, 3.0f));
+    auto b = vec3Lerp(Vec3(1,2,3), Vec3(5,6,7), 1.0f);
+    assert(isClose(b.x, 5.0f) && isClose(b.y, 6.0f) && isClose(b.z, 7.0f));
 }
