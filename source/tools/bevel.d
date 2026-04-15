@@ -17,11 +17,14 @@ import d_imgui.imgui_h;
 import std.math : sqrt, abs;
 
 // ---------------------------------------------------------------------------
-// BevelTool — polygon bevel (Polygons mode)
+// BevelTool — polygon bevel (Polygons mode) + edge bevel (Edges mode)
 //
 // Polygon mode:
 //   shiftHandle  (Arrow)      : MoveTool-style drag along face normal → shift
 //   insertHandle (CubicArrow) : ScaleTool-style drag along face tangent → inset
+//
+// Edge mode:
+//   shiftHandle  (Arrow)      : drag along edge-adjacent normal → width
 // ---------------------------------------------------------------------------
 
 
@@ -70,6 +73,30 @@ private:
     bool[]    selEdgesBeforeBevel;
     int[]     edgeOrderBeforeBevel;
 
+    // ---- Edge bevel parameters ----
+    float ebWidth = 0.0f;
+
+    // Per-endpoint data: original pos + N BoundVert indices + N slide directions
+    struct EbEndpoint {
+        uint   origVert;
+        Vec3   origPos;
+        int[]  boundVerts;   // indices in mesh.vertices (length = valence)
+        Vec3[] slideDirs;    // offsetInPlane directions (length = valence)
+        uint[] capPoly;      // ordered cap polygon (same order as boundVerts, CCW)
+    }
+
+    struct EbEntry {
+        EbEndpoint endA, endB;  // a = edges[ei][0], b = edges[ei][1]
+    }
+    EbEntry[] ebEntries;
+
+    // Snapshot for revert
+    struct EbFaceSnap { int idx; uint[] orig; }
+    EbFaceSnap[] ebFaceSnaps;
+    Vec3[]  ebVertsBeforeBevel;
+    size_t  ebBevelVertStart;
+    size_t  ebBevelFaceStart;
+
     // ---- Drag state ----
     int      dragHandle = -1;   // 0=shift/width, 1=insert, 2=free, -1=none
     int      lastMX, lastMY;
@@ -110,7 +137,14 @@ public:
         insertScale  = 1.0f;
         dragHandle   = -1;
         freeDragAxis = -1;
-        recomputeCenter();
+        ebWidth      = 0.0f;
+        ebEntries    = [];
+        ebFaceSnaps  = [];
+        ebVertsBeforeBevel = [];
+        if (*editMode == EditMode.Edges)
+            recomputeEdgeCenter();
+        else
+            recomputeCenter();
     }
 
     override void deactivate() {
@@ -124,7 +158,10 @@ public:
 
     override void update() {
         if (!active || dragHandle >= 0) return;
-        recomputeCenter();
+        if (*editMode == EditMode.Edges)
+            recomputeEdgeCenter();
+        else
+            recomputeCenter();
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
@@ -132,11 +169,12 @@ public:
         cachedVp = vp;
 
         bool anyFace = (*editMode == EditMode.Polygons) && mesh.faces.length > 0;
+        bool anyEdge = (*editMode == EditMode.Edges)    && mesh.hasAnySelectedEdges();
 
-        shiftHandle .setVisible(anyFace);
+        shiftHandle .setVisible(anyFace || anyEdge);
         insertHandle.setVisible(anyFace);
 
-        if (anyFace) {
+        if (anyFace || anyEdge) {
             float size = gizmoSize(gizmoCenter, vp);
 
             shiftHandle.start = vec3Add(gizmoCenter, vec3Scale(gizmoNormal, size / 6.0f));
@@ -144,17 +182,19 @@ public:
             shiftHandle.setForceHovered(dragHandle == 0);
             shiftHandle.setHoverBlocked(dragHandle == 1);
 
-            insertHandle.start = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size / 6.0f));
-            insertHandle.end   = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size));
-            insertHandle.setForceHovered(false);
-            insertHandle.setHoverBlocked(dragHandle >= 0);
+            if (anyFace) {
+                insertHandle.start = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size / 6.0f));
+                insertHandle.end   = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size));
+                insertHandle.setForceHovered(false);
+                insertHandle.setHoverBlocked(dragHandle >= 0);
 
-            float cubeFixed = size * 0.03f;
-            if (dragHandle != 1)
-                insertScaleArrow.start = insertHandle.start;
-            insertScaleArrow.end           = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size * insertScale));
-            insertScaleArrow.fixedDir      = gizmoRight;
-            insertScaleArrow.fixedCubeHalf = cubeFixed;
+                float cubeFixed = size * 0.03f;
+                if (dragHandle != 1)
+                    insertScaleArrow.start = insertHandle.start;
+                insertScaleArrow.end           = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size * insertScale));
+                insertScaleArrow.fixedDir      = gizmoRight;
+                insertScaleArrow.fixedCubeHalf = cubeFixed;
+            }
         }
 
         shiftHandle.draw(shader, vp);
@@ -171,9 +211,12 @@ public:
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
 
         bool polyMode = (*editMode == EditMode.Polygons);
+        bool edgeMode = (*editMode == EditMode.Edges);
 
-        if (!polyMode) return false;
+        if (!polyMode && !edgeMode) return false;
         if (mesh.faces.length == 0) return false;
+
+        if (edgeMode && !mesh.hasAnySelectedEdges()) return false;
 
         if (shiftHandle.hitTest(e.x, e.y, cachedVp))
             dragHandle = 0;
@@ -205,6 +248,8 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active || dragHandle < 0) return false;
 
+        bool edgeMode = (*editMode == EditMode.Edges);
+
         if (dragHandle == 2) {
             // Free drag: wait for enough movement to determine axis.
             if (freeDragAxis < 0) {
@@ -216,7 +261,15 @@ public:
                 lastMX = e.x; lastMY = e.y; return true;
             }
 
-            if (freeDragAxis == 0) {
+            if (edgeMode) {
+                // In edge mode, both axes increase width (use the larger absolute delta).
+                float worldScale = gizmoSize(gizmoCenter, cachedVp) * 2.0f / cachedVp.height;
+                float dx = cast(float)(e.x - lastMX);
+                float dy = -(cast(float)(e.y - lastMY));
+                float d  = (abs(dx) >= abs(dy)) ? dx * worldScale : dy * worldScale;
+                ebWidth += d;
+                if (ebWidth < 0.0f) ebWidth = 0.0f;
+            } else if (freeDragAxis == 0) {
                 float worldScale = gizmoSize(gizmoCenter, cachedVp) * 2.0f / cachedVp.height;
                 float d          = -(e.y - lastMY) * worldScale;
                 shiftAmount += d;
@@ -241,8 +294,14 @@ public:
             Vec3 delta = screenAxisDelta(e.x, e.y, lastMX, lastMY,
                                          gizmoCenter, gizmoNormal, cachedVp, skip);
             if (!skip) {
-                shiftAmount += dot(delta, gizmoNormal);
-                gizmoCenter  = vec3Add(gizmoCenter, delta);
+                if (edgeMode) {
+                    float d = dot(delta, gizmoNormal);
+                    ebWidth += d;
+                    if (ebWidth < 0.0f) ebWidth = 0.0f;
+                } else {
+                    shiftAmount += dot(delta, gizmoNormal);
+                    gizmoCenter  = vec3Add(gizmoCenter, delta);
+                }
                 updateBevelVertices();
                 gpu.upload(*mesh);
             }
@@ -272,6 +331,20 @@ public:
     }
 
     override void drawProperties() {
+        if (*editMode == EditMode.Edges) {
+            bool changed = false;
+            ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, float.max, "%.4f");
+            if (ImGui.IsItemActive()) {
+                if (ebWidth < 0.0f) ebWidth = 0.0f;
+                changed = true;
+            }
+            if (changed && bevelApplied) {
+                updateBevelVertices();
+                gpu.upload(*mesh);
+            }
+            return;
+        }
+
         bool changed = false;
 
         ImGui.DragFloat("Shift",  &shiftAmount, 0.005f, -float.max, float.max, "%.4f");
@@ -299,19 +372,365 @@ public:
 
 private:
     // ------------------------------------------------------------------
-    // Polygon bevel.
+    // Dispatch by edit mode.
     // ------------------------------------------------------------------
 
     void applyBevelTopology() {
-        applyPolyBevelTopology();
+        if (*editMode == EditMode.Edges)
+            applyEdgeBevelTopology();
+        else
+            applyPolyBevelTopology();
     }
 
     void revertBevelTopology() {
-        revertPolyBevelTopology();
+        if (*editMode == EditMode.Edges)
+            revertEdgeBevelTopology();
+        else
+            revertPolyBevelTopology();
     }
 
     void updateBevelVertices() {
-        updatePolyBevelVertices();
+        if (*editMode == EditMode.Edges)
+            updateEdgeBevelVertices();
+        else
+            updatePolyBevelVertices();
+    }
+
+    // ------------------------------------------------------------------
+    // Edge bevel: recomputeEdgeCenter
+    // ------------------------------------------------------------------
+
+    void recomputeEdgeCenter() {
+        if (*editMode != EditMode.Edges) return;
+        if (!mesh.hasAnySelectedEdges()) return;
+
+        Vec3 centerSum = Vec3(0, 0, 0);
+        Vec3 normalSum = Vec3(0, 0, 0);
+        int  count = 0;
+
+        foreach (ei, sel; mesh.selectedEdges) {
+            if (!sel || ei >= mesh.edges.length) continue;
+            uint a = mesh.edges[ei][0];
+            uint b = mesh.edges[ei][1];
+            Vec3 pa = mesh.vertices[a];
+            Vec3 pb = mesh.vertices[b];
+            // midpoint of edge
+            Vec3 mid = Vec3((pa.x + pb.x) * 0.5f,
+                            (pa.y + pb.y) * 0.5f,
+                            (pa.z + pb.z) * 0.5f);
+            centerSum = vec3Add(centerSum, mid);
+
+            // accumulate normals of adjacent faces
+            foreach (fi, face; mesh.faces) {
+                if (face.length < 3) continue;
+                bool hasA = false, hasB = false;
+                foreach (vi; face) {
+                    if (vi == a) hasA = true;
+                    if (vi == b) hasB = true;
+                }
+                if (!hasA || !hasB) continue;
+                Vec3 fn = polyNormal(face, mesh.vertices);
+                normalSum = vec3Add(normalSum, fn);
+            }
+            count++;
+        }
+
+        if (count == 0) return;
+
+        float inv = 1.0f / cast(float)count;
+        gizmoCenter = Vec3(centerSum.x * inv, centerSum.y * inv, centerSum.z * inv);
+
+        float nlen = vec3Length(normalSum);
+        gizmoNormal = nlen > 1e-6f
+            ? Vec3(normalSum.x/nlen, normalSum.y/nlen, normalSum.z/nlen)
+            : Vec3(0, 1, 0);
+
+        Vec3 tmp   = (gizmoNormal.x < 0.9f && gizmoNormal.x > -0.9f)
+                     ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+        gizmoRight = normalize(cross(gizmoNormal, tmp));
+    }
+
+    // ------------------------------------------------------------------
+    // Edge bevel: apply topology
+    // ------------------------------------------------------------------
+
+    void applyEdgeBevelTopology() {
+        bevelApplied       = true;
+        ebEntries          = [];
+        ebFaceSnaps        = [];
+        ebBevelVertStart   = mesh.vertices.length;
+        ebBevelFaceStart   = mesh.faces.length;
+        ebVertsBeforeBevel = mesh.vertices.dup;
+
+        edgesBeforeBevel     = mesh.edges.dup;
+        selEdgesBeforeBevel  = mesh.selectedEdges.dup;
+        edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
+
+        // Build half-edge structure.
+        mesh.buildLoops();
+
+        // Build directed-loop map: (u<<32|v) → loop index.
+        uint[ulong] dirLoopMap;
+        foreach (li, ref lp; mesh.loops) {
+            uint u = lp.vert;
+            uint v = mesh.loops[lp.next].vert;
+            dirLoopMap[(cast(ulong)u << 32) | v] = cast(uint)li;
+        }
+
+        // We need a face → snap record map to avoid double-snapping.
+        bool[int] faceSnapped;
+
+        // Process each selected manifold edge.
+        foreach (ei, sel; mesh.selectedEdges) {
+            if (!sel || ei >= mesh.edges.length) continue;
+
+            uint va = mesh.edges[ei][0];
+            uint vb = mesh.edges[ei][1];
+
+            // Require both directed loops to exist (manifold edge).
+            ulong keyAB = (cast(ulong)va << 32) | vb;
+            ulong keyBA = (cast(ulong)vb << 32) | va;
+            auto pAB = keyAB in dirLoopMap;
+            auto pBA = keyBA in dirLoopMap;
+            if (!pAB || !pBA) continue;
+
+            uint loopAB = *pAB; // loop: va→vb  (face F1, contains directed edge a→b)
+            uint loopBA = *pBA; // loop: vb→va  (face F2, contains directed edge b→a)
+
+            EbEntry entry;
+            entry.endA.origVert = va;
+            entry.endA.origPos  = mesh.vertices[va];
+            entry.endB.origVert = vb;
+            entry.endB.origPos  = mesh.vertices[vb];
+
+            // Gather BoundVerts for each endpoint.
+            // idxF1 is always 0 (we start the ring at loopAB = F1).
+            // idxF2 is the k-index of F2 in the faceDarts ring for each endpoint.
+            int idxF2_A, idxF2_B;
+            buildEbEndpoint(entry.endA, va, vb, loopAB, loopBA,
+                            faceSnapped, idxF2_A);
+            buildEbEndpoint(entry.endB, vb, va, loopBA, loopAB,
+                            faceSnapped, idxF2_B);
+
+            // Add bevel quad: [bvA_F1, bvB_F1, bvB_F2, bvA_F2]
+            //
+            // endA ring starts at loopAB (dart va→vb, face F1) → boundVerts[0] = bvA_F1
+            //                                                    → boundVerts[idxF2_A] = bvA_F2
+            // endB ring starts at loopBA (dart vb→va, face F2) → boundVerts[0] = bvB_F2
+            //                                                    → boundVerts[idxF2_B] = bvB_F1
+            //   (for endB, buildEbEndpoint's "loopPeerOv" = loopAB = F1, so outIdxF2 = F1 index)
+            if (entry.endA.boundVerts.length > 0 && entry.endB.boundVerts.length > 0 &&
+                idxF2_A >= 0 && idxF2_B >= 0 &&
+                idxF2_A < cast(int)entry.endA.boundVerts.length &&
+                idxF2_B < cast(int)entry.endB.boundVerts.length)
+            {
+                uint bvA_F1 = cast(uint)entry.endA.boundVerts[0];
+                uint bvA_F2 = cast(uint)entry.endA.boundVerts[idxF2_A];
+                uint bvB_F2 = cast(uint)entry.endB.boundVerts[0];        // endB ring[0] = F2
+                uint bvB_F1 = cast(uint)entry.endB.boundVerts[idxF2_B];  // endB idxF2 = F1 index
+                // Quad winding: CCW looking from outside the bevel.
+                mesh.faces ~= [bvA_F1, bvB_F1, bvB_F2, bvA_F2];
+            }
+
+            ebEntries ~= entry;
+        }
+
+        // Rebuild edges from scratch from all current faces.
+        mesh.edges = [];
+        bool[ulong] seenEdge;
+        foreach (face; mesh.faces) {
+            int M = cast(int)face.length;
+            foreach (i; 0 .. M) {
+                uint u = face[i];
+                uint w = face[(i + 1) % M];
+                ulong key = edgeKey(u, w);
+                if (key !in seenEdge) {
+                    seenEdge[key] = true;
+                    mesh.edges ~= [u, w];
+                }
+            }
+        }
+
+        mesh.buildLoops();
+        mesh.syncSelection();
+    }
+
+    // Build the BoundVert ring for one endpoint `ep` (orig vertex = `ov`).
+    // `ov_peer` is the other end of the bevel edge.
+    // `loopOvPeer` = directed loop ov→ov_peer (face F1, ring index 0).
+    // `loopPeerOv` = directed loop ov_peer→ov (face F2, ring index = outIdxF2).
+    // `outIdxF2`   = output: index into ep.boundVerts that belongs to face F2.
+    private void buildEbEndpoint(ref EbEndpoint ep,
+                                  uint ov, uint /*ov_peer*/,
+                                  uint loopOvPeer,   // ov→ov_peer dart (F1, ring[0])
+                                  uint loopPeerOv,   // ov_peer→ov dart
+                                  ref bool[int] faceSnapped,
+                                  out int outIdxF2)
+    {
+        outIdxF2 = -1;
+
+        // Walk all faces around ov via the half-edge ring.
+        // In each face the dart for ov has .vert == ov.
+        // Ring traversal: from dart li (.vert==ov), next dart around ov =
+        //   twin(prev(li)).
+        // twin(prev(li)).vert == ov because:
+        //   prev(li).vert == some X  →  directed edge X→ov in face Fi
+        //   twin(X→ov) = dart ov→X in adjacent face Fj  →  .vert == ov ✓
+
+        uint startLi = loopOvPeer; // dart ov→ov_peer in F1 (ring index 0)
+        uint li      = startLi;
+
+        // F2 dart for ov: in face F2, the directed edge ov_peer→ov exists as loopPeerOv.
+        // The dart for ov in F2 is loops[loopPeerOv].next (since .vert of next == ov,
+        // because loopPeerOv.vert==ov_peer and loopPeerOv.next.vert==ov).
+        uint dartOvInF2 = (loopPeerOv != ~0u) ? mesh.loops[loopPeerOv].next : ~0u;
+
+        // Safety limit to avoid infinite loop on degenerate meshes.
+        int maxSteps = cast(int)mesh.faces.length + 4;
+
+        uint[] faceDarts; // dart index for ov in each face, in ring order
+        do {
+            faceDarts ~= li;
+            // Track when we hit F2's dart
+            if (li == dartOvInF2)
+                outIdxF2 = cast(int)(faceDarts.length - 1);
+            // Next dart around ov: twin of prev(li)
+            uint prevLi   = mesh.loops[li].prev;
+            uint twinPrev = mesh.loops[prevLi].twin;
+            if (twinPrev == ~0u) break; // boundary — stop
+            li = twinPrev;
+            if (--maxSteps <= 0) break;
+        } while (li != startLi);
+
+        int N = cast(int)faceDarts.length;
+        if (N == 0) return;
+
+        // If we never encountered dartOvInF2 in the ring, find it by face index.
+        if (outIdxF2 < 0 && dartOvInF2 != ~0u) {
+            uint f2 = (dartOvInF2 < mesh.loops.length) ? mesh.loops[dartOvInF2].face : ~0u;
+            foreach (k; 0 .. N) {
+                if (mesh.loops[faceDarts[k]].face == f2) {
+                    outIdxF2 = cast(int)k;
+                    break;
+                }
+            }
+        }
+
+        ep.boundVerts.length = N;
+        ep.slideDirs .length = N;
+
+        Vec3 aPos = ep.origPos;
+
+        foreach (k; 0 .. N) {
+            uint dart    = faceDarts[k];
+            uint faceIdx = mesh.loops[dart].face;
+            uint nextVi  = mesh.loops[mesh.loops[dart].next].vert; // neighbor along ov→nextVi
+
+            // edgeDir: from ov toward the neighbor vertex in this face
+            Vec3 nbr     = mesh.vertices[nextVi];
+            Vec3 edgeDir = safeNormalize(vec3Sub(nbr, aPos));
+
+            // face normal
+            Vec3 fNorm = polyNormal(mesh.faces[faceIdx], mesh.vertices);
+
+            // slideDir = offsetInPlane(edgeDir, fNorm)
+            Vec3 sd = offsetInPlane(edgeDir, fNorm);
+            ep.slideDirs[k] = sd;
+
+            // Create the BoundVert at origPos (updated later by updateEdgeBevelVertices)
+            int bvi = cast(int)mesh.addVertex(aPos);
+            ep.boundVerts[k] = bvi;
+
+            // Snapshot the face (once), then replace ov with bvi
+            if (faceIdx < cast(uint)mesh.faces.length) {
+                if (!(cast(int)faceIdx in faceSnapped)) {
+                    EbFaceSnap snap;
+                    snap.idx  = cast(int)faceIdx;
+                    snap.orig = mesh.faces[faceIdx].dup;
+                    ebFaceSnaps ~= snap;
+                    faceSnapped[cast(int)faceIdx] = true;
+                }
+                foreach (ref vi; mesh.faces[faceIdx])
+                    if (vi == ov) { vi = cast(uint)bvi; break; }
+            }
+        }
+
+        // Build cap polygon (CCW winding check using slide directions as proxies).
+        uint[] capPoly = new uint[](N);
+        foreach (k; 0 .. N) capPoly[k] = cast(uint)ep.boundVerts[k];
+
+        // Cap normal: sum of cross products of consecutive slide directions
+        Vec3 capNorm = Vec3(0, 0, 0);
+        for (int k = 0; k < N; k++) {
+            Vec3 d0 = ep.slideDirs[k];
+            Vec3 d1 = ep.slideDirs[(k + 1) % N];
+            capNorm = vec3Add(capNorm, cross(d0, d1));
+        }
+        // Average face normal around ov
+        Vec3 avgFN = Vec3(0, 0, 0);
+        foreach (dart; faceDarts) {
+            uint fi = mesh.loops[dart].face;
+            avgFN = vec3Add(avgFN, polyNormal(mesh.faces[fi], mesh.vertices));
+        }
+        // If cap normal opposes the average face normal, reverse the ring.
+        if (dot(capNorm, avgFN) < 0.0f) {
+            for (int lo = 0, hi = N - 1; lo < hi; lo++, hi--) {
+                uint tmp2 = capPoly[lo];
+                capPoly[lo] = capPoly[hi];
+                capPoly[hi] = tmp2;
+            }
+            // Also keep outIdxF2 consistent with the reversed order.
+            if (outIdxF2 > 0)
+                outIdxF2 = N - outIdxF2;
+        }
+
+        ep.capPoly = capPoly;
+
+        // Append cap polygon directly (edge rebuild happens at the end of apply).
+        mesh.faces ~= capPoly.dup;
+    }
+
+    // ------------------------------------------------------------------
+    // Edge bevel: revert topology
+    // ------------------------------------------------------------------
+
+    void revertEdgeBevelTopology() {
+        // Restore patched faces from snapshots.
+        foreach (ref snap; ebFaceSnaps)
+            mesh.faces[snap.idx] = snap.orig;
+
+        // Trim appended vertices and faces.
+        mesh.vertices.length = ebBevelVertStart;
+        mesh.faces.length    = ebBevelFaceStart;
+
+        // Restore edges and selection.
+        mesh.edges              = edgesBeforeBevel.dup;
+        mesh.selectedEdges      = selEdgesBeforeBevel.dup;
+        mesh.edgeSelectionOrder = edgeOrderBeforeBevel.dup;
+
+        bevelApplied = false;
+        ebEntries    = [];
+        ebFaceSnaps  = [];
+
+        mesh.buildLoops();
+        mesh.syncSelection();
+    }
+
+    // ------------------------------------------------------------------
+    // Edge bevel: update vertex positions from ebWidth
+    // ------------------------------------------------------------------
+
+    void updateEdgeBevelVertices() {
+        foreach (ref entry; ebEntries) {
+            updateEbEndpointVerts(entry.endA);
+            updateEbEndpointVerts(entry.endB);
+        }
+    }
+
+    private void updateEbEndpointVerts(ref EbEndpoint ep) {
+        foreach (k; 0 .. ep.boundVerts.length)
+            mesh.vertices[ep.boundVerts[k]] =
+                vec3Add(ep.origPos, vec3Scale(ep.slideDirs[k], ebWidth));
     }
 
     void revertPolyBevelTopology() {
