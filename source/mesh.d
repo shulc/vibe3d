@@ -185,6 +185,12 @@ struct Mesh {
     /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
     FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
 
+    /// Return a range over all vertices directly connected to vertex `vi` by an edge.
+    VertexNeighborRange verticesAroundVertex(uint vi) const {
+        uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        return VertexNeighborRange(loops, first);
+    }
+
     /// Return a range over all edge indices incident to vertex `vi`.
     /// Correctly handles boundary vertices: emits the extra boundary edge at the end.
     /// Requires buildLoops() to have been called (uses vertLoop and loopEdge).
@@ -416,6 +422,61 @@ struct VertexFaceRange {
     @property uint front() const { return _loops[_inner.front].face; }
     void popFront() { _inner.popFront(); }
     @property VertexFaceRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// VertexNeighborRange
+// ---------------------------------------------------------------------------
+
+/// Forward range over all vertices directly connected to a vertex by an edge.
+/// For boundary vertices emits the extra neighbour at the open end of the fan.
+/// Requires buildLoops() (uses vertLoop anchored to the fan start).
+struct VertexNeighborRange {
+    private const(Loop)[] _loops;
+    private uint _start;
+    private uint _cur;
+    private bool _done;
+    private bool _atExtra;
+    private uint _steps;
+    private enum uint MAX_STEPS = 1024;
+
+    this(const(Loop)[] loops, uint startLi) {
+        _loops   = loops;
+        _start   = startLi;
+        _cur     = startLi;
+        _done    = (startLi == ~0u);
+        _atExtra = false;
+        _steps   = 0;
+    }
+
+    @property bool empty() const { return _done; }
+
+    @property uint front() const
+    in (!_done)
+    {
+        // Main darts: neighbour is the next vertex in the dart.
+        // Extra boundary dart: the open-end vertex is prev(cur).vert.
+        return _atExtra ? _loops[_loops[_cur].prev].vert
+                        : _loops[_loops[_cur].next].vert;
+    }
+
+    void popFront()
+    in (!_done)
+    {
+        if (_atExtra) { _done = true; return; }
+        uint prevLi   = _loops[_cur].prev;
+        uint twinPrev = _loops[prevLi].twin;
+        if (twinPrev == ~0u) { _atExtra = true; return; }
+        if (++_steps >= MAX_STEPS) {
+            debug assert(false, "VertexNeighborRange: MAX_STEPS exceeded");
+            _done = true;
+            return;
+        }
+        _cur = twinPrev;
+        if (_cur == _start) _done = true;
+    }
+
+    @property VertexNeighborRange save() const { return this; }
 }
 
 // ---------------------------------------------------------------------------

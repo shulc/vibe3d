@@ -12,16 +12,11 @@ class SelectionContract : Command {
 
     override bool apply() {
         if (editMode == EditMode.Vertices) {
-            int[][] vertAdj = new int[][](mesh.vertices.length);
-            foreach (edge; mesh.edges) {
-                vertAdj[edge[0]] ~= cast(int)edge[1];
-                vertAdj[edge[1]] ~= cast(int)edge[0];
-            }
             bool[] toRemove = new bool[](mesh.selectedVertices.length);
             foreach (i; 0 .. mesh.selectedVertices.length)
                 if (mesh.selectedVertices[i])
-                    foreach (ni; vertAdj[i])
-                        if (ni >= cast(int)mesh.selectedVertices.length || !mesh.selectedVertices[ni]) {
+                    foreach (ni; mesh.verticesAroundVertex(cast(uint)i))
+                        if (ni >= mesh.selectedVertices.length || !mesh.selectedVertices[ni]) {
                             toRemove[i] = true;
                             break;
                         }
