@@ -227,7 +227,7 @@ class Arrow : ShaftedArrow {
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
-        Vec3 dir = vec3Sub(end, start);
+        Vec3 dir = end - start;
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
         if (len < 1e-6f) return;
         Vec3 fwd = Vec3(dir.x/len, dir.y/len, dir.z/len);
@@ -237,7 +237,7 @@ class Arrow : ShaftedArrow {
         float coneLen    = len * 0.25f;
         float coneRadius = len * 0.05f;
         float shaftLen   = len - coneLen;
-        Vec3  coneBase   = vec3Sub(end, vec3Scale(fwd, coneLen));
+        Vec3  coneBase   = end - fwd * coneLen;
 
         updateHover(vp);
         Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
@@ -285,7 +285,7 @@ class CubicArrow : ShaftedArrow {
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
-        Vec3 dir = vec3Sub(end, start);
+        Vec3 dir = end - start;
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
         if (len < 1e-6f) return;
         Vec3 fwd = (fixedDir.x != 0.0f || fixedDir.y != 0.0f || fixedDir.z != 0.0f)
@@ -295,7 +295,7 @@ class CubicArrow : ShaftedArrow {
         localFrame(fwd, right, up);
 
         float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
-        Vec3  cubeCenter = vec3Sub(end, vec3Scale(fwd, cubeHalf));
+        Vec3  cubeCenter = end - fwd * cubeHalf;
 
         // When end is behind start (dot < 0), shaft goes from cube's back face to start.
         float dotFwd = dir.x*fwd.x + dir.y*fwd.y + dir.z*fwd.z;
@@ -305,7 +305,7 @@ class CubicArrow : ShaftedArrow {
             shaftOrigin = start;
             shaftLen    = len - cubeHalf * 2;
         } else {
-            shaftOrigin = vec3Add(end, vec3Scale(fwd, cubeHalf));
+            shaftOrigin = end + fwd * cubeHalf;
             shaftLen    = len - cubeHalf;
         }
         if (shaftLen < 0.0f) shaftLen = 0.0f;
@@ -427,9 +427,7 @@ public:
         bool[SEGS + 1]     valid;
         foreach (i; 0 .. SEGS + 1) {
             float a = startAngle + cast(float)i * PI / SEGS;
-            Vec3 w = vec3Add(center,
-                        vec3Add(vec3Scale(right, cos(a) * radius),
-                                vec3Scale(up,    sin(a) * radius)));
+            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
             float sx, sy, ndcZ;
             valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
             pts[i]   = [sx, sy];
@@ -514,9 +512,7 @@ public:
         bool[SEGS + 1]     valid;
         foreach (i; 0 .. SEGS + 1) {
             float a = cast(float)i * 2.0f * PI / SEGS;
-            Vec3 w = vec3Add(center,
-                        vec3Add(vec3Scale(right, cos(a) * radius),
-                                vec3Scale(up,    sin(a) * radius)));
+            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
             float sx, sy, ndcZ;
             valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
             pts[i]   = [sx, sy];
@@ -546,18 +542,18 @@ class MoveHandler : Handler {
 
     this(Vec3 center) {
         this.center = center;
-        arrowX    = new Arrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY    = new Arrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ    = new Arrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
+        arrowX    = new Arrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY    = new Arrow(center + Vec3(0,0.1f,0), center + Vec3(0,1,0), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ    = new Arrow(center + Vec3(0,0,0.1f), center + Vec3(0,0,1), Vec3(0.2f, 0.2f, 0.9f));
         centerBox = new BoxHandler(center, Vec3(0.0f, 0.9f, 0.9f));
         // XY plane (Z normal) — blue tint
-        circleXY  = new CircleHandler(vec3Add(center, Vec3(1, 1,0)), Vec3(0,0,1), 1.0f,
+        circleXY  = new CircleHandler(center + Vec3(1, 1,0), Vec3(0,0,1), 1.0f,
                         Vec3(0.2f, 0.2f, 0.9f), Vec3(0.1f, 0.1f, 0.4f));
         // YZ plane (X normal) — red tint
-        circleYZ  = new CircleHandler(vec3Add(center, Vec3(0,1,1)), Vec3(1,0,0), 1.0f,
+        circleYZ  = new CircleHandler(center + Vec3(0,1,1), Vec3(1,0,0), 1.0f,
                         Vec3(0.9f, 0.2f, 0.2f), Vec3(0.4f, 0.1f, 0.1f));
         // XZ plane (Y normal) — green tint
-        circleXZ  = new CircleHandler(vec3Add(center, Vec3(1,0,1)), Vec3(0,1,0), 1.0f,
+        circleXZ  = new CircleHandler(center + Vec3(1,0,1), Vec3(0,1,0), 1.0f,
                         Vec3(0.2f, 0.9f, 0.2f), Vec3(0.1f, 0.4f, 0.1f));
     }
 
@@ -579,25 +575,25 @@ class MoveHandler : Handler {
     {
         float size = gizmoSize(center, vp);
 
-        arrowX.start = vec3Add(center, Vec3(size/6, 0     , 0));;
-        arrowX.end   = vec3Add(center, Vec3(size  , 0.    , 0));
-        arrowY.start = vec3Add(center, Vec3(0     , size/6, 0));;
-        arrowY.end   = vec3Add(center, Vec3(0     , size  , 0));
-        arrowZ.start = vec3Add(center, Vec3(0     , 0     , size/6));
-        arrowZ.end   = vec3Add(center, Vec3(0     , 0     , size));
+        arrowX.start = center + Vec3(size/6, 0     , 0);
+        arrowX.end   = center + Vec3(size  , 0.    , 0);
+        arrowY.start = center + Vec3(0     , size/6, 0);
+        arrowY.end   = center + Vec3(0     , size  , 0);
+        arrowZ.start = center + Vec3(0     , 0     , size/6);
+        arrowZ.end   = center + Vec3(0     , 0     , size);
 
         centerBox.pos  = center;
         centerBox.size = size * 0.04f;
 
         float circR = size * 0.07f;
         float cirOffset = size * 0.75;
-        circleXY.center = vec3Add(center, Vec3(cirOffset, cirOffset, 0   )); circleXY.radius = circR;
-        circleYZ.center = vec3Add(center, Vec3(0   , cirOffset, cirOffset)); circleYZ.radius = circR;
-        circleXZ.center = vec3Add(center, Vec3(size, 0   , cirOffset)); circleXZ.radius = circR;
+        circleXY.center = center + Vec3(cirOffset, cirOffset, 0   ); circleXY.radius = circR;
+        circleYZ.center = center + Vec3(0   , cirOffset, cirOffset); circleYZ.radius = circR;
+        circleXZ.center = center + Vec3(size, 0   , cirOffset); circleXZ.radius = circR;
 
         // Hide arrows that point too directly toward/away from the camera.
         // viewDir is the normalised vector from eye to center.
-        Vec3  d    = vec3Sub(vp.eye, center);
+        Vec3  d    = vp.eye - center;
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
             ? Vec3(d.x / dist, d.y / dist, d.z / dist)  // eye→center direction (d = eye-center, flip)
@@ -796,7 +792,7 @@ private:
         float[8] sx, sy; bool[8] valid;
         foreach (i; 0 .. 8) {
             float ndcZ;
-            Vec3 w = vec3Add(pos, Vec3(cv[i][0]*size, cv[i][1]*size, cv[i][2]*size));
+            Vec3 w = pos + Vec3(cv[i][0]*size, cv[i][1]*size, cv[i][2]*size);
             valid[i] = projectToWindowFull(w, vp, sx[i], sy[i], ndcZ);
         }
 
@@ -929,9 +925,7 @@ private:
         float[] xs, ys;
         foreach (i; 0 .. SEGS) {
             float a = 2.0f * PI * i / SEGS;
-            Vec3 w = vec3Add(center,
-                        vec3Add(vec3Scale(right, cos(a) * radius),
-                                vec3Scale(up,    sin(a) * radius)));
+            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
             float sx, sy, ndcZ;
             if (!projectToWindowFull(w, vp, sx, sy, ndcZ)) return false;
             xs ~= sx;
@@ -964,9 +958,7 @@ class CenterDiskGizmo : Handler {
         bool allValid = true;
         foreach (i; 0 .. SEGS) {
             float a = 2.0f * PI * i / SEGS;
-            Vec3 w = vec3Add(center,
-                        vec3Add(vec3Scale(right, cos(a) * radius),
-                                vec3Scale(up,    sin(a) * radius)));
+            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
             float sx, sy, ndcZ;
             if (!projectToWindowFull(w, vp, sx, sy, ndcZ)) { allValid = false; break; }
             pts[i] = ImVec2(sx, sy);
@@ -992,7 +984,7 @@ private:
         // Project one rim point to get screen-space radius.
         Vec3 right, up;
         localFrame(normal, right, up);
-        Vec3 rim = vec3Add(center, vec3Scale(right, radius));
+        Vec3 rim = center + right * radius;
         float rx, ry, rndcZ;
         if (!projectToWindowFull(rim, vp, rx, ry, rndcZ)) return false;
         float screenR = sqrt((rx - cx)*(rx - cx) + (ry - cy)*(ry - cy));
@@ -1018,12 +1010,12 @@ class ScaleHandler : Handler {
 
     this(Vec3 center) {
         this.center = center;
-        arrowX      = new CubicArrow(vec3Add(center, Vec3(0.1f,0,0)), vec3Add(center, Vec3(1,0,0)), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY      = new CubicArrow(vec3Add(center, Vec3(0,0.1f,0)), vec3Add(center, Vec3(0,1,0)), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ      = new CubicArrow(vec3Add(center, Vec3(0,0,0.1f)), vec3Add(center, Vec3(0,0,1)), Vec3(0.2f, 0.2f, 0.9f));
-        scaleArrowX = new CubicArrow(center, vec3Add(center, Vec3(1,0,0)), Vec3(1.0f, 1.0f, 0.0f));
-        scaleArrowY = new CubicArrow(center, vec3Add(center, Vec3(0,1,0)), Vec3(1.0f, 1.0f, 0.0f));
-        scaleArrowZ = new CubicArrow(center, vec3Add(center, Vec3(0,0,1)), Vec3(1.0f, 1.0f, 0.0f));
+        arrowX      = new CubicArrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
+        arrowY      = new CubicArrow(center + Vec3(0,0.1f,0), center + Vec3(0,1,0), Vec3(0.2f, 0.9f, 0.2f));
+        arrowZ      = new CubicArrow(center + Vec3(0,0,0.1f), center + Vec3(0,0,1), Vec3(0.2f, 0.2f, 0.9f));
+        scaleArrowX = new CubicArrow(center, center + Vec3(1,0,0), Vec3(1.0f, 1.0f, 0.0f));
+        scaleArrowY = new CubicArrow(center, center + Vec3(0,1,0), Vec3(1.0f, 1.0f, 0.0f));
+        scaleArrowZ = new CubicArrow(center, center + Vec3(0,0,1), Vec3(1.0f, 1.0f, 0.0f));
         scaleArrowX.fixedDir = Vec3(1, 0, 0);
         scaleArrowY.fixedDir = Vec3(0, 1, 0);
         scaleArrowZ.fixedDir = Vec3(0, 0, 1);
@@ -1063,12 +1055,12 @@ class ScaleHandler : Handler {
     {
         size = gizmoSize(center, vp);
 
-        arrowX.start = vec3Add(center, Vec3(size/7, 0,      0     ));
-        arrowX.end   = vec3Add(center, Vec3(size,    0,      0     ));
-        arrowY.start = vec3Add(center, Vec3(0,       size/7, 0    ));
-        arrowY.end   = vec3Add(center, Vec3(0,       size,    0    ));
-        arrowZ.start = vec3Add(center, Vec3(0,       0,      size/7));
-        arrowZ.end   = vec3Add(center, Vec3(0,       0,      size  ));
+        arrowX.start = center + Vec3(size/7, 0,      0     );
+        arrowX.end   = center + Vec3(size,   0,      0     );
+        arrowY.start = center + Vec3(0,      size/7, 0     );
+        arrowY.end   = center + Vec3(0,      size,   0     );
+        arrowZ.start = center + Vec3(0,      0,      size/7);
+        arrowZ.end   = center + Vec3(0,      0,      size  );
 
         float cubeFixed = size * 0.03f;
         // Start matches the regular arrows (size/8 offset); frozen during drag.
@@ -1077,14 +1069,14 @@ class ScaleHandler : Handler {
             scaleArrowY.start = arrowY.start;
             scaleArrowZ.start = arrowZ.start;
         }
-        scaleArrowX.end           = vec3Add(center, Vec3(size * scaleAccum.x, 0, 0));
+        scaleArrowX.end           = center + Vec3(size * scaleAccum.x, 0, 0);
         scaleArrowX.fixedCubeHalf = cubeFixed;
-        scaleArrowY.end           = vec3Add(center, Vec3(0, size * scaleAccum.y, 0));
+        scaleArrowY.end           = center + Vec3(0, size * scaleAccum.y, 0);
         scaleArrowY.fixedCubeHalf = cubeFixed;
-        scaleArrowZ.end           = vec3Add(center, Vec3(0, 0, size * scaleAccum.z));
+        scaleArrowZ.end           = center + Vec3(0, 0, size * scaleAccum.z);
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
-        Vec3  d    = vec3Sub(vp.eye, center);
+        Vec3  d    = vp.eye - center;
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
             ? Vec3(d.x / dist, d.y / dist, d.z / dist)
@@ -1101,9 +1093,9 @@ class ScaleHandler : Handler {
 
         float circR      = size * 0.07f;
         float cirOffset  = size * 0.75f;
-        circleXY.center = vec3Add(center, Vec3(cirOffset, cirOffset, 0));        circleXY.radius = circR;
-        circleYZ.center = vec3Add(center, Vec3(0,         cirOffset, cirOffset)); circleYZ.radius = circR;
-        circleXZ.center = vec3Add(center, Vec3(cirOffset, 0,         cirOffset)); circleXZ.radius = circR;
+        circleXY.center = center + Vec3(cirOffset, cirOffset, 0);         circleXY.radius = circR;
+        circleYZ.center = center + Vec3(0,         cirOffset, cirOffset); circleYZ.radius = circR;
+        circleXZ.center = center + Vec3(cirOffset, 0,         cirOffset); circleXZ.radius = circR;
 
         circleXY.draw(shader, vp);
         circleYZ.draw(shader, vp);

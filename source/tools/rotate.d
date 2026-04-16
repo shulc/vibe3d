@@ -156,7 +156,7 @@ public:
         Vec3 hit;
         if (rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                               handler.center, dragAxisVec, hit)) {
-            Vec3 d = vec3Sub(hit, handler.center);
+            Vec3 d = hit - handler.center;
             float dlen = sqrt(d.x*d.x + d.y*d.y + d.z*d.z) * 1.05f;
             dragStartDir = dlen > 1e-6f ? Vec3(d.x/dlen, d.y/dlen, d.z/dlen)
                                         : Vec3(0,0,0);
@@ -209,8 +209,8 @@ public:
             !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, cachedVp), center, dragAxisVec, hitPrev))
         { lastMX = e.x; lastMY = e.y; return true; }
 
-        Vec3 d1 = vec3Sub(hitPrev, center);
-        Vec3 d2 = vec3Sub(hitCurr, center);
+        Vec3 d1 = hitPrev - center;
+        Vec3 d2 = hitCurr - center;
         float l1 = sqrt(d1.x*d1.x + d1.y*d1.y + d1.z*d1.z);
         float l2 = sqrt(d2.x*d2.x + d2.y*d2.y + d2.z*d2.z);
         if (l1 < 1e-6f || l2 < 1e-6f) { lastMX = e.x; lastMY = e.y; return true; }
@@ -325,14 +325,14 @@ private:
 
     Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
         float c = cos(angle), s = sin(angle);
-        Vec3 p = vec3Sub(v, pivot);
+        Vec3 p = v - pivot;
         float d = p.x*axis.x + p.y*axis.y + p.z*axis.z;
         Vec3 pcr = cross(axis, p);
-        return vec3Add(pivot, Vec3(
+        return pivot + Vec3(
             p.x*c + pcr.x*s + axis.x*d*(1.0f - c),
             p.y*c + pcr.y*s + axis.y*d*(1.0f - c),
             p.z*c + pcr.z*s + axis.z*d*(1.0f - c),
-        ));
+        );
     }
 
     // Apply final rotation from dragStartVertices to mesh.vertices at mouseUp.
@@ -343,14 +343,14 @@ private:
         float ax = dragAxisVec.x, ay = dragAxisVec.y, az = dragAxisVec.z;
         float t = 1.0f - c;
         foreach (i; 0 .. mesh.vertices.length) {
-            Vec3 p = vec3Sub(dragStartVertices[i], pivot);
+            Vec3 p = dragStartVertices[i] - pivot;
             float dd = p.x*ax + p.y*ay + p.z*az;
             Vec3 pcr = cross(dragAxisVec, p);
-            mesh.vertices[i] = vec3Add(pivot, Vec3(
+            mesh.vertices[i] = pivot + Vec3(
                 p.x*c + pcr.x*s + ax*dd*t,
                 p.y*c + pcr.y*s + ay*dd*t,
                 p.z*c + pcr.z*s + az*dd*t,
-            ));
+            );
         }
     }
 
@@ -383,14 +383,14 @@ private:
         Vec3 pivot = handler.center;
         float c = cos(angle), s = sin(angle);
         foreach (vi; vertexIndicesToProcess) {
-            Vec3 p = vec3Sub(mesh.vertices[vi], pivot);
+            Vec3 p = mesh.vertices[vi] - pivot;
             float dd = p.x*axisVec.x + p.y*axisVec.y + p.z*axisVec.z;
             Vec3 pcr = cross(axisVec, p);
-            mesh.vertices[vi] = vec3Add(pivot, Vec3(
+            mesh.vertices[vi] = pivot + Vec3(
                 p.x*c + pcr.x*s + axisVec.x*dd*(1.0f - c),
                 p.y*c + pcr.y*s + axisVec.y*dd*(1.0f - c),
                 p.z*c + pcr.z*s + axisVec.z*dd*(1.0f - c),
-            ));
+            );
         }
         needsGpuUpdate = true;
     }
@@ -432,7 +432,7 @@ private:
         bool sectorOk = true;
         for (int i = 0; i <= N; i++) {
             float a = aFrom + (aTo - aFrom) * i / N;
-            Vec3 w = vec3Add(center, vec3Scale(rodrig(dragStartDir, a), cachedSize));
+            Vec3 w = center + rodrig(dragStartDir, a) * cachedSize;
             float sx, sy, ndcZ;
             if (!projectToWindowFull(w, vp, sx, sy, ndcZ)) { sectorOk = false; break; }
             dl.PathLineTo(ImVec2(sx, sy));
@@ -442,7 +442,7 @@ private:
 
         for (int i = 0; i <= N; i++) {
             float a = dispAngle * i / N;
-            Vec3 w = vec3Add(center, vec3Scale(rodrig(dragStartDir, a), cachedSize));
+            Vec3 w = center + rodrig(dragStartDir, a) * cachedSize;
             float sx, sy, ndcZ;
             if (!projectToWindowFull(w, vp, sx, sy, ndcZ)) { dl.PathClear(); break; }
             dl.PathLineTo(ImVec2(sx, sy));
@@ -450,8 +450,8 @@ private:
         dl.PathStroke(lineCol, ImDrawFlags.None, 1.0f);
 
         float ssx, ssy, sex, sey, ndcZ;
-        Vec3 startWorld = vec3Add(center, vec3Scale(dragStartDir, cachedSize));
-        Vec3 endWorld   = vec3Add(center, vec3Scale(rodrig(dragStartDir, dispAngle), cachedSize));
+        Vec3 startWorld = center + dragStartDir * cachedSize;
+        Vec3 endWorld   = center + rodrig(dragStartDir, dispAngle) * cachedSize;
         if (projectToWindowFull(startWorld, vp, ssx, ssy, ndcZ))
             dl.AddLine(ImVec2(cx, cy), ImVec2(ssx, ssy), lineCol, 1.0f);
         if (projectToWindowFull(endWorld,   vp, sex, sey, ndcZ))

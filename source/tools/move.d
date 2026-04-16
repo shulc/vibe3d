@@ -249,8 +249,8 @@ public:
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
         // Update gizmo position immediately (always fast)
-        dragDelta = vec3Add(dragDelta, worldDelta);
-        handler.setPosition(vec3Add(handler.center, worldDelta));
+        dragDelta += worldDelta;
+        handler.setPosition(handler.center + worldDelta);
 
         // Apply delta to CPU vertices (fast: simple float additions, no GPU work)
         applyDelta(worldDelta);
@@ -287,10 +287,10 @@ public:
                               propInput.y - dragDelta.y,
                               propInput.z - dragDelta.z);
             if (delta.x != 0 || delta.y != 0 || delta.z != 0) {
-                dragDelta = vec3Add(dragDelta, delta);
+                dragDelta += delta;
                 buildVertexCacheIfNeeded();
                 applyDeltaImmediate(delta);
-                handler.setPosition(vec3Add(handler.center, delta));
+                handler.setPosition(handler.center + delta);
                 cachedCenter = handler.center;
                 if (vertexProcessCount == cast(int)mesh.vertices.length) {
                     wholeMeshDrag = true;

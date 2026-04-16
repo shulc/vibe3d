@@ -218,7 +218,7 @@ public:
         float cx, cy, cndcZ, ax_, ay_, andcZ;
         if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
-        if (!projectToWindowFull(vec3Add(center, axis), cachedVp, ax_, ay_, andcZ))
+        if (!projectToWindowFull(center + axis, cachedVp, ax_, ay_, andcZ))
         { lastMX = e.x; lastMY = e.y; return true; }
 
         float sdx = ax_ - cx, sdy = ay_ - cy;

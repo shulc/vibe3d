@@ -47,13 +47,13 @@ class View {
         Vec3 right   = normalize(cross(forward, Vec3(0, 1, 0)));
         Vec3 up      = cross(right, forward);
         float speed  = distance * 0.001f;
-        focus = vec3Add(focus, vec3Scale(right, -dx * speed));
-        focus = vec3Add(focus, vec3Scale(up,     dy * speed));
+        focus += right * (-dx * speed);
+        focus += up    * (dy * speed);
     }
 
     Viewport viewport() {
         Vec3 offset = sphericalToCartesian(azimuth, elevation, distance);
-        eye    = vec3Add(focus, offset);
+        eye    = focus + offset;
         view   = lookAt(eye, focus, Vec3(0, 1, 0));
         proj   = perspectiveMatrix(45.0f * PI / 180.0f,
                                         cast(float)width / height, 0.001f, 100.0f);

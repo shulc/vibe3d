@@ -168,7 +168,7 @@ struct Mesh {
         const uint[] face = faces[fi];
         if (face.length < 3) return Vec3(0, 1, 0);
         Vec3 v0 = vertices[face[0]], v1 = vertices[face[1]], v2 = vertices[face[2]];
-        Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+        Vec3 cr = cross(v1 - v0, v2 - v0);
         float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
         return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
     }
@@ -297,7 +297,7 @@ struct Mesh {
         int  count = 0;
         foreach (i, v; vertices) {
             if (!any || (i < selectedVertices.length && selectedVertices[i])) {
-                sum = vec3Add(sum, v);
+                sum += v;
                 count++;
             }
         }
@@ -315,7 +315,7 @@ struct Mesh {
             if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
             foreach (vi; edge) {
                 if (!vis[vi]) {
-                    sum = vec3Add(sum, vertices[vi]);
+                    sum += vertices[vi];
                     count++;
                     vis[vi] = true;
                 }
@@ -335,7 +335,7 @@ struct Mesh {
             if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
             foreach (vi; face) {
                 if (!vis[vi]) {
-                    sum = vec3Add(sum, vertices[vi]);
+                    sum += vertices[vi];
                     count++;
                     vis[vi] = true;
                 }
@@ -348,7 +348,7 @@ struct Mesh {
     Vec3 faceCentroid(uint fi) const {
         const uint[] face = faces[fi];
         Vec3 s = Vec3(0, 0, 0);
-        foreach (vi; face) s = vec3Add(s, vertices[vi]);
+        foreach (vi; face) s += vertices[vi];
         float inv = 1.0f / cast(float)face.length;
         return Vec3(s.x * inv, s.y * inv, s.z * inv);
     }
@@ -361,9 +361,9 @@ struct Mesh {
         bool[] vis = new bool[](vertices.length);
         foreach (face; faces) {
             if (face.length < 3) continue;
-            Vec3 fn = cross(vec3Sub(vertices[face[1]], vertices[face[0]]),
-                            vec3Sub(vertices[face[2]], vertices[face[0]]));
-            if (dot(fn, vec3Sub(vertices[face[0]], eye)) >= 0) continue;
+            Vec3 fn = cross(vertices[face[1]] - vertices[face[0]],
+                            vertices[face[2]] - vertices[face[0]]);
+            if (dot(fn, vertices[face[0]] - eye) >= 0) continue;
             foreach (vi; face) vis[vi] = true;
         }
         return vis;
@@ -1051,9 +1051,9 @@ Mesh catmullClark(ref const Mesh m) {
                 if (edgeFaces[ei].length >= 2) continue;
                 Vec3 ea = m.vertices[m.edges[ei][0]];
                 Vec3 eb = m.vertices[m.edges[ei][1]];
-                sum = vec3Add(sum, Vec3((ea.x + eb.x) * 0.5f,
-                                       (ea.y + eb.y) * 0.5f,
-                                       (ea.z + eb.z) * 0.5f));
+                sum += Vec3((ea.x + eb.x) * 0.5f,
+                            (ea.y + eb.y) * 0.5f,
+                            (ea.z + eb.z) * 0.5f);
                 cnt++;
             }
             float inv = 1.0f / cast(float)cnt;
@@ -1061,7 +1061,7 @@ Mesh catmullClark(ref const Mesh m) {
         } else {
             // Interior rule: (F + 2R + (n-3)*v) / n
             Vec3 F = Vec3(0, 0, 0);
-            foreach (fi; vertFaces[vi]) F = vec3Add(F, facePoints[fi]);
+            foreach (fi; vertFaces[vi]) F += facePoints[fi];
             float fn = cast(float)n;
             F = Vec3(F.x / fn, F.y / fn, F.z / fn);
 
@@ -1070,9 +1070,9 @@ Mesh catmullClark(ref const Mesh m) {
             foreach (ei; vertEdges[vi]) {
                 Vec3 ea = m.vertices[m.edges[ei][0]];
                 Vec3 eb = m.vertices[m.edges[ei][1]];
-                R = vec3Add(R, Vec3((ea.x + eb.x) * 0.5f,
-                                   (ea.y + eb.y) * 0.5f,
-                                   (ea.z + eb.z) * 0.5f));
+                R += Vec3((ea.x + eb.x) * 0.5f,
+                          (ea.y + eb.y) * 0.5f,
+                          (ea.z + eb.z) * 0.5f);
             }
             R = Vec3(R.x / ne, R.y / ne, R.z / ne);
 
@@ -1155,7 +1155,7 @@ struct GpuMesh {
                 Vec3 v0 = mesh.vertices[face[0]];
                 Vec3 v1 = mesh.vertices[face[1]];
                 Vec3 v2 = mesh.vertices[face[2]];
-                Vec3 e1 = vec3Sub(v1, v0), e2 = vec3Sub(v2, v0);
+                Vec3 e1 = v1 - v0, e2 = v2 - v0;
                 Vec3 cr = cross(e1, e2);
                 float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
                 Vec3  n   = nlen > 1e-6f
@@ -1244,7 +1244,7 @@ struct GpuMesh {
                     Vec3 v0 = mesh.vertices[face[0]];
                     Vec3 v1 = mesh.vertices[face[1]];
                     Vec3 v2 = mesh.vertices[face[2]];
-                    Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+                    Vec3 cr = cross(v1 - v0, v2 - v0);
                     float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
                     Vec3 n = nlen > 1e-6f
                         ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)

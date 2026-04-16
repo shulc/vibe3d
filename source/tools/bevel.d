@@ -177,21 +177,21 @@ public:
         if (anyFace || anyEdge) {
             float size = gizmoSize(gizmoCenter, vp);
 
-            shiftHandle.start = vec3Add(gizmoCenter, vec3Scale(gizmoNormal, size / 6.0f));
-            shiftHandle.end   = vec3Add(gizmoCenter, vec3Scale(gizmoNormal, size));
+            shiftHandle.start = gizmoCenter + gizmoNormal * (size / 6.0f);
+            shiftHandle.end   = gizmoCenter + gizmoNormal * size;
             shiftHandle.setForceHovered(dragHandle == 0);
             shiftHandle.setHoverBlocked(dragHandle == 1);
 
             if (anyFace) {
-                insertHandle.start = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size / 6.0f));
-                insertHandle.end   = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size));
+                insertHandle.start = gizmoCenter + gizmoRight * (size / 6.0f);
+                insertHandle.end   = gizmoCenter + gizmoRight * size;
                 insertHandle.setForceHovered(false);
                 insertHandle.setHoverBlocked(dragHandle >= 0);
 
                 float cubeFixed = size * 0.03f;
                 if (dragHandle != 1)
                     insertScaleArrow.start = insertHandle.start;
-                insertScaleArrow.end           = vec3Add(gizmoCenter, vec3Scale(gizmoRight, size * insertScale));
+                insertScaleArrow.end           = gizmoCenter + gizmoRight * (size * insertScale);
                 insertScaleArrow.fixedDir      = gizmoRight;
                 insertScaleArrow.fixedCubeHalf = cubeFixed;
             }
@@ -273,7 +273,7 @@ public:
                 float worldScale = gizmoSize(gizmoCenter, cachedVp) * 2.0f / cachedVp.height;
                 float d          = -(e.y - lastMY) * worldScale;
                 shiftAmount += d;
-                gizmoCenter  = vec3Add(gizmoCenter, vec3Scale(gizmoNormal, d));
+                gizmoCenter  += gizmoNormal * d;
             } else {
                 float scaleFactor = 1.0f + cast(float)(e.x - lastMX) / 200.0f;
                 if (insertScale * scaleFactor < 0.0f) scaleFactor = 0.0f;
@@ -300,7 +300,7 @@ public:
                     if (ebWidth < 0.0f) ebWidth = 0.0f;
                 } else {
                     shiftAmount += dot(delta, gizmoNormal);
-                    gizmoCenter  = vec3Add(gizmoCenter, delta);
+                    gizmoCenter  += delta;
                 }
                 updateBevelVertices();
                 gpu.upload(*mesh);
@@ -309,7 +309,7 @@ public:
             // Insert (polygon mode only).
             float cx, cy, cndcZ, ax_, ay_, andcZ;
             if (!projectToWindowFull(gizmoCenter, cachedVp, cx, cy, cndcZ) ||
-                !projectToWindowFull(vec3Add(gizmoCenter, gizmoRight), cachedVp, ax_, ay_, andcZ))
+                !projectToWindowFull(gizmoCenter + gizmoRight, cachedVp, ax_, ay_, andcZ))
             { lastMX = e.x; lastMY = e.y; return true; }
 
             float sdx   = ax_ - cx, sdy = ay_ - cy;
@@ -418,11 +418,11 @@ private:
             Vec3 mid = Vec3((pa.x + pb.x) * 0.5f,
                             (pa.y + pb.y) * 0.5f,
                             (pa.z + pb.z) * 0.5f);
-            centerSum = vec3Add(centerSum, mid);
+            centerSum += mid;
 
             // accumulate normals of adjacent faces
             foreach (fi; mesh.facesAroundEdge(cast(uint)ei))
-                normalSum = vec3Add(normalSum, mesh.faceNormal(fi));
+                normalSum += mesh.faceNormal(fi);
             count++;
         }
 
@@ -431,7 +431,7 @@ private:
         float inv = 1.0f / cast(float)count;
         gizmoCenter = Vec3(centerSum.x * inv, centerSum.y * inv, centerSum.z * inv);
 
-        float nlen = vec3Length(normalSum);
+        float nlen = normalSum.length;
         gizmoNormal = nlen > 1e-6f
             ? Vec3(normalSum.x/nlen, normalSum.y/nlen, normalSum.z/nlen)
             : Vec3(0, 1, 0);
@@ -609,7 +609,7 @@ private:
 
             // edgeDir: from ov toward the neighbor vertex in this face
             Vec3 nbr     = mesh.vertices[nextVi];
-            Vec3 edgeDir = safeNormalize(vec3Sub(nbr, aPos));
+            Vec3 edgeDir = safeNormalize(nbr - aPos);
 
             // face normal
             Vec3 fNorm = mesh.faceNormal(faceIdx);
@@ -645,13 +645,13 @@ private:
         for (int k = 0; k < N; k++) {
             Vec3 d0 = ep.slideDirs[k];
             Vec3 d1 = ep.slideDirs[(k + 1) % N];
-            capNorm = vec3Add(capNorm, cross(d0, d1));
+            capNorm += cross(d0, d1);
         }
         // Average face normal around ov
         Vec3 avgFN = Vec3(0, 0, 0);
         foreach (dart; faceDarts) {
             uint fi = mesh.loops[dart].face;
-            avgFN = vec3Add(avgFN, mesh.faceNormal(fi));
+            avgFN += mesh.faceNormal(fi);
         }
         // If cap normal opposes the average face normal, reverse the ring.
         if (dot(capNorm, avgFN) < 0.0f) {
@@ -710,8 +710,7 @@ private:
 
     private void updateEbEndpointVerts(ref EbEndpoint ep) {
         foreach (k; 0 .. ep.boundVerts.length)
-            mesh.vertices[ep.boundVerts[k]] =
-                vec3Add(ep.origPos, vec3Scale(ep.slideDirs[k], ebWidth));
+            mesh.vertices[ep.boundVerts[k]] = ep.origPos + ep.slideDirs[k] * ebWidth;
     }
 
     void revertPolyBevelTopology() {
@@ -740,9 +739,9 @@ private:
             if (!allFaces && (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi])) continue;
             if (face.length < 3) continue;
 
-            centerSum = vec3Add(centerSum, mesh.faceCentroid(cast(uint)fi));
+            centerSum += mesh.faceCentroid(cast(uint)fi);
 
-            normalSum = vec3Add(normalSum, mesh.faceNormal(cast(uint)fi));
+            normalSum += mesh.faceNormal(cast(uint)fi);
 
             count++;
         }
@@ -839,12 +838,12 @@ private:
                 origPos[i] = mesh.vertices[origFaceVerts[i]];
 
             Vec3 center = Vec3(0, 0, 0);
-            foreach (p; origPos) center = vec3Add(center, p);
+            foreach (p; origPos) center += p;
             float invN = 1.0f / cast(float)N;
             center = Vec3(center.x*invN, center.y*invN, center.z*invN);
 
-            Vec3 e1 = vec3Sub(origPos[1], origPos[0]);
-            Vec3 e2 = vec3Sub(origPos[2], origPos[0]);
+            Vec3 e1 = origPos[1] - origPos[0];
+            Vec3 e2 = origPos[2] - origPos[0];
             Vec3 cr = cross(e1, e2);
             float clen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
             Vec3 faceNormal = clen > 1e-6f

@@ -5,7 +5,30 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 // Math
 // ---------------------------------------------------------------------------
 
-struct Vec3 { float x, y, z; }
+struct Vec3 {
+    float x, y, z;
+
+    Vec3 opBinary(string op)(Vec3 b) const @safe pure nothrow @nogc
+    if (op == "+" || op == "-") {
+        static if (op == "+") return Vec3(x+b.x, y+b.y, z+b.z);
+        else                  return Vec3(x-b.x, y-b.y, z-b.z);
+    }
+    Vec3 opBinary(string op)(float s) const @safe pure nothrow @nogc
+    if (op == "*") { return Vec3(x*s, y*s, z*s); }
+    Vec3 opBinaryRight(string op)(float s) const @safe pure nothrow @nogc
+    if (op == "*") { return Vec3(x*s, y*s, z*s); }
+    Vec3 opUnary(string op)() const @safe pure nothrow @nogc
+    if (op == "-") { return Vec3(-x, -y, -z); }
+    ref Vec3 opOpAssign(string op)(Vec3 b) @safe pure nothrow @nogc
+    if (op == "+" || op == "-") {
+        static if (op == "+") { x += b.x; y += b.y; z += b.z; }
+        else                  { x -= b.x; y -= b.y; z -= b.z; }
+        return this;
+    }
+    ref Vec3 opOpAssign(string op)(float s) @safe pure nothrow @nogc
+    if (op == "*") { x *= s; y *= s; z *= s; return this; }
+    float length() const @safe pure nothrow @nogc { return sqrt(x*x + y*y + z*z); }
+}
 struct Vec4 { float x, y, z, w; }
 
 struct Viewport {
@@ -18,21 +41,18 @@ struct Viewport {
     Vec3 eye;
 }
 
-Vec3 vec3Add  (Vec3 a, Vec3 b)  { return Vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
-Vec3 vec3Sub  (Vec3 a, Vec3 b)  { return Vec3(a.x-b.x, a.y-b.y, a.z-b.z); }
-Vec3 vec3Scale(Vec3 v, float s) { return Vec3(v.x*s, v.y*s, v.z*s); }
-Vec3 vec3Neg  (Vec3 v)          { return Vec3(-v.x, -v.y, -v.z); }
-float vec3Length(Vec3 v)        { return sqrt(v.x*v.x + v.y*v.y + v.z*v.z); }
-Vec3 vec3Lerp (Vec3 a, Vec3 b, float t) { return Vec3(a.x+t*(b.x-a.x), a.y+t*(b.y-a.y), a.z+t*(b.z-a.z)); }
+Vec3 vec3Lerp(Vec3 a, Vec3 b, float t) @safe pure nothrow @nogc {
+    return Vec3(a.x+t*(b.x-a.x), a.y+t*(b.y-a.y), a.z+t*(b.z-a.z));
+}
 
-Vec3 normalize(Vec3 v) {
+Vec3 normalize(Vec3 v) @safe pure nothrow @nogc {
     float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
     return Vec3(v.x/len, v.y/len, v.z/len);
 }
-Vec3 cross(Vec3 a, Vec3 b) {
+Vec3 cross(Vec3 a, Vec3 b) @safe pure nothrow @nogc {
     return Vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
 }
-float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+float dot(Vec3 a, Vec3 b) @safe pure nothrow @nogc { return a.x*b.x + a.y*b.y + a.z*b.z; }
 
 immutable float[16] identityMatrix = [
     1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1,
@@ -107,7 +127,7 @@ Vec4 mulMV(const ref float[16] m, Vec4 v) {
 }
 
 float[16] lookAt(Vec3 eye, Vec3 center, Vec3 worldUp) {
-    Vec3 f = normalize(vec3Sub(center, eye));
+    Vec3 f = normalize(center - eye);
     Vec3 r = normalize(cross(f, worldUp));
     Vec3 u = cross(r, f);
     return [
@@ -252,14 +272,14 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
     import std.math : abs;
     float denom = n.x*dir.x + n.y*dir.y + n.z*dir.z;
     if (abs(denom) < 1e-6f) return false;
-    Vec3 d = vec3Sub(planePoint, origin);
+    Vec3 d = planePoint - origin;
     float t = (n.x*d.x + n.y*d.y + n.z*d.z) / denom;
     hit = Vec3(origin.x + t*dir.x, origin.y + t*dir.y, origin.z + t*dir.z);
     return true;
 }
 
 // Safe normalize — returns (0,1,0) for near-zero vectors.
-Vec3 safeNormalize(Vec3 v) {
+Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
     float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
     return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
 }
@@ -273,7 +293,7 @@ Vec3 safeNormalize(Vec3 v) {
 // Returns unit vector d such that  orig + d * width  places the new vertex at
 // perpendicular distance width from the bevel-edge line, lying in the face plane.
 // Formula: cross(faceNorm, edgeDir), normalised — points INTO the face.
-Vec3 offsetInPlane(Vec3 edgeDir, Vec3 faceNorm) {
+Vec3 offsetInPlane(Vec3 edgeDir, Vec3 faceNorm) @safe pure nothrow @nogc {
     Vec3 p = cross(faceNorm, edgeDir);
     float len = sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
     return len > 1e-6f ? Vec3(p.x/len, p.y/len, p.z/len) : Vec3(0, 1, 0);
@@ -291,18 +311,18 @@ Vec3 offsetInPlane(Vec3 edgeDir, Vec3 faceNorm) {
 //   L1: p1 + t*e1,  where p1 = offsetInPlane(-e1, faceNorm)  ← prevV / F2 side
 //   L2: p2 + s*e2,  where p2 = offsetInPlane( e2, faceNorm)  ← nextV / F1 side
 // Returns direction d s.t.  jv + d*width  = intersection of L1 and L2.
-Vec3 offsetMeetDir(Vec3 e1, Vec3 e2, Vec3 faceNorm) {
-    Vec3 p1 = offsetInPlane(vec3Neg(e1), faceNorm); // prevV side: negate (F2 winding)
-    Vec3 p2 = offsetInPlane(e2,          faceNorm); // nextV side: direct (F1 winding)
+Vec3 offsetMeetDir(Vec3 e1, Vec3 e2, Vec3 faceNorm) @safe pure nothrow @nogc {
+    Vec3 p1 = offsetInPlane(-e1, faceNorm); // prevV side: negate (F2 winding)
+    Vec3 p2 = offsetInPlane(e2,  faceNorm); // nextV side: direct (F1 winding)
 
-    Vec3  rhs   = vec3Sub(p2, p1);
+    Vec3  rhs   = p2 - p1;
     Vec3  n     = cross(e1, e2);
     float denom = dot(n, n);
     if (denom < 1e-12f) {
-        return safeNormalize(vec3Scale(vec3Add(p1, p2), 0.5f));
+        return safeNormalize((p1 + p2) * 0.5f);
     }
     float t = dot(cross(rhs, e2), n) / denom;
-    return vec3Add(p1, vec3Scale(e1, t));
+    return p1 + e1 * t;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,22 +332,22 @@ Vec3 offsetMeetDir(Vec3 e1, Vec3 e2, Vec3 faceNorm) {
 version (unittest) import std.math : isClose;
 
 unittest { // vec3Add
-    auto r = vec3Add(Vec3(1,2,3), Vec3(4,5,6));
+    auto r = Vec3(1,2,3) + Vec3(4,5,6);
     assert(r.x == 5 && r.y == 7 && r.z == 9);
 }
 
 unittest { // vec3Sub
-    auto r = vec3Sub(Vec3(4,5,6), Vec3(1,2,3));
+    auto r = Vec3(4,5,6) - Vec3(1,2,3);
     assert(r.x == 3 && r.y == 3 && r.z == 3);
 }
 
 unittest { // vec3Scale
-    auto r = vec3Scale(Vec3(1,2,3), 2.0f);
+    auto r = Vec3(1,2,3) * 2.0f;
     assert(r.x == 2 && r.y == 4 && r.z == 6);
 }
 
 unittest { // vec3Scale by zero
-    auto r = vec3Scale(Vec3(5,-3,7), 0.0f);
+    auto r = Vec3(5,-3,7) * 0.0f;
     assert(r.x == 0 && r.y == 0 && r.z == 0);
 }
 
@@ -538,9 +558,9 @@ unittest { // rayPlaneIntersect: near-parallel ray below threshold returns false
 }
 
 unittest { // vec3Length
-    assert(isClose(vec3Length(Vec3(3,4,0)), 5.0f));
-    assert(isClose(vec3Length(Vec3(0,0,0)), 0.0f));
-    assert(isClose(vec3Length(Vec3(1,0,0)), 1.0f));
+    assert(isClose(Vec3(3,4,0).length, 5.0f));
+    assert(isClose(Vec3(0,0,0).length, 0.0f));
+    assert(isClose(Vec3(1,0,0).length, 1.0f));
 }
 
 unittest { // vec3Lerp

@@ -41,12 +41,12 @@ Vec3 axisDragDelta(int mx,     int my,
     float slen2 = sdx*sdx + sdy*sdy;
     if (slen2 < 1.0f) { skip = true; return Vec3(0,0,0); }
 
-    Vec3  ae      = vec3Sub(axisEnd, center);
+    Vec3  ae      = axisEnd - center;
     float axisLen = sqrt(ae.x*ae.x + ae.y*ae.y + ae.z*ae.z);
     if (axisLen < 1e-9f) { skip = true; return Vec3(0,0,0); }
 
     float d = ((mx - lastMX) * sdx + (my - lastMY) * sdy) / slen2 * axisLen;
-    return vec3Scale(axis, d);
+    return axis * d;
 }
 
 // Delta for dragging along an arbitrary world axis from a screen mouse delta.
@@ -58,7 +58,7 @@ Vec3 screenAxisDelta(int mx,     int my,
                      out bool skip)
 {
     skip = false;
-    Vec3 tip = vec3Add(origin, axis);
+    Vec3 tip = origin + axis;
     float ox, oy, ondcZ, tx, ty, tndcZ;
     if (!projectToWindowFull(origin, vp, ox, oy, ondcZ) ||
         !projectToWindowFull(tip,    vp, tx, ty, tndcZ))
@@ -70,7 +70,7 @@ Vec3 screenAxisDelta(int mx,     int my,
 
     float axisLen = sqrt(axis.x*axis.x + axis.y*axis.y + axis.z*axis.z);
     float d = ((mx - lastMX) * sdx + (my - lastMY) * sdy) / slen2 * axisLen;
-    return vec3Scale(axis, d);
+    return axis * d;
 }
 
 // Plane drag (dragAxis 3/4/5/6).
@@ -108,5 +108,5 @@ Vec3 planeDragDelta(int mx,     int my,
         !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, vp), center, n, hitPrev))
     { skip = true; return Vec3(0,0,0); }
 
-    return vec3Sub(hitCurr, hitPrev);
+    return hitCurr - hitPrev;
 }

@@ -153,7 +153,7 @@ public:
             if (heightHHitIdx == 1) {
                 // Top handle: non-incremental drag; anchor so current height is preserved.
                 heightDragStart = hhitOk
-                    ? vec3Sub(hhit, vec3Scale(planeNormal, height))
+                    ? hhit - planeNormal * height
                     : hpOrigin;
             } else {
                 // Bottom handle: incremental drag; anchor at the current hit point.
@@ -217,7 +217,7 @@ public:
 
         if (state == BoxState.DrawingBase) {
             computeBaseCorners();
-            Vec3 d = vec3Sub(currentPoint, startPoint);
+            Vec3 d = currentPoint - startPoint;
             float dd1 = dot(d, planeAxis1);
             float dd2 = dot(d, planeAxis2);
             // Also rejects NaN (NaN comparisons are false, so !(dd1 > 1e-5f) catches NaN).
@@ -272,16 +272,16 @@ public:
             {
                 if (heightHDragIdx == 1) {
                     // Top handle: move top face, base stays.
-                    height = dot(vec3Sub(hit, heightDragStart), planeNormal);
+                    height = dot(hit - heightDragStart, planeNormal);
                 } else {
                     // Bottom handle: move base, top face stays.
                     // Incremental delta so the top face world position is preserved.
-                    float delta = dot(vec3Sub(hit, heightDragStart), planeNormal);
-                    Vec3  d     = vec3Scale(planeNormal, delta);
-                    startPoint   = vec3Add(startPoint,   d);
-                    currentPoint = vec3Add(currentPoint, d);
-                    hpOrigin     = vec3Add(hpOrigin,     d);
-                    foreach (ref c; baseCorners) c = vec3Add(c, d);
+                    float delta = dot(hit - heightDragStart, planeNormal);
+                    Vec3  d     = planeNormal * delta;
+                    startPoint   += d;
+                    currentPoint += d;
+                    hpOrigin     += d;
+                    foreach (ref c; baseCorners) c += d;
                     height      -= delta;
                     heightDragStart = hit; // incremental: advance anchor each frame
                 }
@@ -321,7 +321,7 @@ public:
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
             {
-                height = dot(vec3Sub(hit, heightDragStart), planeNormal);
+                height = dot(hit - heightDragStart, planeNormal);
                 uploadCuboid();
             }
             return true;
@@ -410,14 +410,13 @@ public:
         }
         computeBaseCorners();
         Vec3  cen = baseCentroid();
-        float d1  = dot(vec3Sub(currentPoint, startPoint), planeAxis1);
-        float d2  = dot(vec3Sub(currentPoint, startPoint), planeAxis2);
+        float d1  = dot(currentPoint - startPoint, planeAxis1);
+        float d2  = dot(currentPoint - startPoint, planeAxis2);
 
         // World-space size: axis1/axis2 cover the base; planeNormal covers height.
-        Vec3 sizeVec = vec3Add(vec3Scale(planeAxis1, abs(d1)),
-                               vec3Scale(planeAxis2, abs(d2)));
+        Vec3 sizeVec = planeAxis1 * abs(d1) + planeAxis2 * abs(d2);
         if (state >= BoxState.DrawingHeight)
-            sizeVec = vec3Add(sizeVec, vec3Scale(planeNormal, abs(height)));
+            sizeVec = sizeVec + planeNormal * abs(height);
 
         // ---- Center ----
         float cx = cen.x, cy = cen.y, cz = cen.z;
@@ -428,8 +427,8 @@ public:
         cChanged |= ImGui.DragFloat("Z##cenZ", &cz, 0.01f, 0, 0, "%.3f");
         if (cChanged) {
             Vec3 delta  = Vec3(cx - cen.x, cy - cen.y, cz - cen.z);
-            startPoint   = vec3Add(startPoint,   delta);
-            currentPoint = vec3Add(currentPoint, delta);
+            startPoint   = startPoint   + delta;
+            currentPoint = currentPoint + delta;
             uploadPreview();
         }
 
@@ -459,10 +458,8 @@ public:
                 else if (abs(planeNormal.z) > 0.5f) height = sz * signH;
             }
             // Reconstruct startPoint/currentPoint from center + new d1/d2.
-            startPoint   = vec3Sub(vec3Sub(cen, vec3Scale(planeAxis1, d1 * 0.5f)),
-                                               vec3Scale(planeAxis2, d2 * 0.5f));
-            currentPoint = vec3Add(vec3Add(cen, vec3Scale(planeAxis1, d1 * 0.5f)),
-                                               vec3Scale(planeAxis2, d2 * 0.5f));
+            startPoint   = cen - planeAxis1 * (d1 * 0.5f) - planeAxis2 * (d2 * 0.5f);
+            currentPoint = cen + planeAxis1 * (d1 * 0.5f) + planeAxis2 * (d2 * 0.5f);
             uploadPreview();
         }
     }
@@ -472,7 +469,7 @@ private:
     Vec3 boxCenter() const {
         Vec3 c = baseCentroid();
         if (state >= BoxState.DrawingHeight)
-            c = vec3Add(c, vec3Scale(planeNormal, height * 0.5f));
+            c = c + planeNormal * (height * 0.5f);
         return c;
     }
 
@@ -496,11 +493,11 @@ private:
 
     // Apply world-space delta to all box geometry.
     void applyMoverDelta(Vec3 d) {
-        startPoint   = vec3Add(startPoint,   d);
-        currentPoint = vec3Add(currentPoint, d);
-        hpOrigin     = vec3Add(hpOrigin,     d);
-        heightDragStart = vec3Add(heightDragStart, d);
-        foreach (ref c; baseCorners) c = vec3Add(c, d);
+        startPoint      = startPoint      + d;
+        currentPoint    = currentPoint    + d;
+        hpOrigin        = hpOrigin        + d;
+        heightDragStart = heightDragStart + d;
+        foreach (ref c; baseCorners) c = c + d;
         uploadPreview();
     }
 
@@ -516,7 +513,7 @@ private:
     // [1] = top face center (baseCentroid + height), DrawingHeight/HeightSet only.
     void updateHeightHandler(const ref Viewport vp) {
         Vec3 bot = baseCentroid();
-        Vec3 top = vec3Add(bot, vec3Scale(planeNormal, height));
+        Vec3 top = bot + planeNormal * height;
         Vec3[2] pts = [bot, top];
         foreach (i; 0 .. 2) {
             heightH[i].pos   = pts[i];
@@ -530,13 +527,13 @@ private:
     // DrawingHeight/HeightSet → centers of the 4 side faces (edge midpoints + half height).
     void updateEdgeHandlers(const ref Viewport vp) {
         Vec3 halfH = (state >= BoxState.DrawingHeight)
-            ? vec3Scale(planeNormal, height * 0.5f)
+            ? planeNormal * (height * 0.5f)
             : Vec3(0, 0, 0);
 
         static immutable int[4][4] edgePairs = [[0,1],[1,2],[2,3],[3,0]];
         Vec3[4] mids;
         foreach (i, pair; edgePairs)
-            mids[i] = vec3Add(vec3Scale(vec3Add(baseCorners[pair[0]], baseCorners[pair[1]]), 0.5f), halfH);
+            mids[i] = (baseCorners[pair[0]] + baseCorners[pair[1]]) * 0.5f + halfH;
 
         Vec3[4] colors = [axisColor(planeAxis2), axisColor(planeAxis1),
                           axisColor(planeAxis2), axisColor(planeAxis1)];
@@ -555,10 +552,10 @@ private:
     // Edge 3 (corners 3,0): shift startPoint along axis1
     void applyEdgeDelta(int idx, Vec3 delta) {
         switch (idx) {
-            case 0: startPoint   = vec3Add(startPoint,   vec3Scale(planeAxis2, dot(delta, planeAxis2))); break;
-            case 1: currentPoint = vec3Add(currentPoint, vec3Scale(planeAxis1, dot(delta, planeAxis1))); break;
-            case 2: currentPoint = vec3Add(currentPoint, vec3Scale(planeAxis2, dot(delta, planeAxis2))); break;
-            case 3: startPoint   = vec3Add(startPoint,   vec3Scale(planeAxis1, dot(delta, planeAxis1))); break;
+            case 0: startPoint   = startPoint   + planeAxis2 * dot(delta, planeAxis2); break;
+            case 1: currentPoint = currentPoint + planeAxis1 * dot(delta, planeAxis1); break;
+            case 2: currentPoint = currentPoint + planeAxis2 * dot(delta, planeAxis2); break;
+            case 3: startPoint   = startPoint   + planeAxis1 * dot(delta, planeAxis1); break;
             default: break;
         }
         uploadPreview();
@@ -584,21 +581,21 @@ private:
     }
 
     void computeBaseCorners() {
-        Vec3  d  = vec3Sub(currentPoint, startPoint);
+        Vec3  d  = currentPoint - startPoint;
         float d1 = dot(d, planeAxis1);
         float d2 = dot(d, planeAxis2);
         baseCorners[0] = startPoint;
-        baseCorners[1] = vec3Add(startPoint, vec3Scale(planeAxis1, d1));
-        baseCorners[2] = vec3Add(baseCorners[1], vec3Scale(planeAxis2, d2));
-        baseCorners[3] = vec3Add(startPoint,     vec3Scale(planeAxis2, d2));
+        baseCorners[1] = startPoint   + planeAxis1 * d1;
+        baseCorners[2] = baseCorners[1] + planeAxis2 * d2;
+        baseCorners[3] = startPoint     + planeAxis2 * d2;
     }
 
     void buildBase(Mesh* m) {
         computeBaseCorners();
         foreach (c; baseCorners) m.addVertex(c);
-        Vec3 n     = cross(vec3Sub(baseCorners[1], baseCorners[0]),
-                           vec3Sub(baseCorners[2], baseCorners[0]));
-        Vec3 toEye = vec3Sub(cachedVp.eye, baseCentroid());
+        Vec3 n     = cross(baseCorners[1] - baseCorners[0],
+                           baseCorners[2] - baseCorners[0]);
+        Vec3 toEye = cachedVp.eye - baseCentroid();
         if (dot(n, toEye) >= 0)
             m.addFace([0u, 1u, 2u, 3u]);
         else
@@ -636,8 +633,8 @@ private:
 
     void setupHeightPlane() {
         hpOrigin = baseCentroid();
-        Vec3 toCamera = vec3Sub(cachedVp.eye, hpOrigin);
-        Vec3 inPlane  = vec3Sub(toCamera, vec3Scale(planeNormal, dot(toCamera, planeNormal)));
+        Vec3 toCamera = cachedVp.eye - hpOrigin;
+        Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
         float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
         hpn = len > 1e-6f
             ? Vec3(inPlane.x/len, inPlane.y/len, inPlane.z/len)
@@ -645,14 +642,14 @@ private:
     }
 
     void buildCuboid(Mesh* m) {
-        Vec3 H = vec3Scale(planeNormal, height);
+        Vec3 H = planeNormal * height;
         Vec3[8] pts = [
             baseCorners[0], baseCorners[1], baseCorners[2], baseCorners[3],
-            vec3Add(baseCorners[0], H), vec3Add(baseCorners[1], H),
-            vec3Add(baseCorners[2], H), vec3Add(baseCorners[3], H),
+            baseCorners[0] + H, baseCorners[1] + H,
+            baseCorners[2] + H, baseCorners[3] + H,
         ];
         Vec3 cen = Vec3(0,0,0);
-        foreach (p; pts) cen = vec3Add(cen, vec3Scale(p, 0.125f));
+        foreach (p; pts) cen = cen + p * 0.125f;
 
         static immutable int[24] faceIdx = [
             0,1,2,3,   // bottom
@@ -670,11 +667,9 @@ private:
             int b  = fi * 4;
             int i0 = faceIdx[b], i1 = faceIdx[b+1],
                 i2 = faceIdx[b+2], i3 = faceIdx[b+3];
-            Vec3 n  = cross(vec3Sub(pts[i1], pts[i0]), vec3Sub(pts[i2], pts[i0]));
-            Vec3 fc = vec3Scale(
-                vec3Add(vec3Add(pts[i0], pts[i1]), vec3Add(pts[i2], pts[i3])),
-                0.25f);
-            if (dot(n, vec3Sub(fc, cen)) > 0)
+            Vec3 n  = cross(pts[i1] - pts[i0], pts[i2] - pts[i0]);
+            Vec3 fc = (pts[i0] + pts[i1] + pts[i2] + pts[i3]) * 0.25f;
+            if (dot(n, fc - cen) > 0)
                 m.addFace([vi[i0], vi[i1], vi[i2], vi[i3]]);
             else
                 m.addFace([vi[i0], vi[i3], vi[i2], vi[i1]]);
