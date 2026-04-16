@@ -326,13 +326,9 @@ private:
     Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
         float c = cos(angle), s = sin(angle);
         Vec3 p = v - pivot;
-        float d = p.x*axis.x + p.y*axis.y + p.z*axis.z;
+        float d = dot(p, axis);
         Vec3 pcr = cross(axis, p);
-        return pivot + Vec3(
-            p.x*c + pcr.x*s + axis.x*d*(1.0f - c),
-            p.y*c + pcr.y*s + axis.y*d*(1.0f - c),
-            p.z*c + pcr.z*s + axis.z*d*(1.0f - c),
-        );
+        return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
     }
 
     // Apply final rotation from dragStartVertices to mesh.vertices at mouseUp.
@@ -414,10 +410,7 @@ private:
                                      : IM_COL32(180, 180, 180, 200);
 
         Vec3 rodrig(Vec3 p, float a) {
-            float rc = cos(a), rs = sin(a);
-            float rd = dot(p, axisVec);
-            Vec3 rcr = cross(axisVec, p);
-            return p * rc + rcr * rs + axisVec * (rd * (1-rc));
+            return rotateVec(p, Vec3(0,0,0), axisVec, a);
         }
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();
