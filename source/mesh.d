@@ -159,6 +159,19 @@ struct Mesh {
         loops = []; faceLoop = []; vertLoop = [];
     }
 
+    /// Return an input range over all loop indices (darts) incident to vertex `vi`.
+    /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
+    /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.
+    /// If `startLi == ~0u`, uses `vertLoop[vi]` as the first dart.
+    /// Returns an empty range when the vertex is isolated (vertLoop[vi] == ~0u).
+    VertexDartRange dartsAroundVertex(uint vi, uint startLi = ~0u) const {
+        uint first = (startLi != ~0u) ? startLi : vertLoop[vi];
+        debug if (first != ~0u)
+            assert(loops[first].vert == vi,
+                   "dartsAroundVertex: startLi does not belong to vertex vi");
+        return VertexDartRange(loops, first);
+    }
+
     /// Rebuild the half-edge loop structure from the current faces/vertices.
     /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
     void buildLoops() {
@@ -201,6 +214,74 @@ struct Mesh {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// VertexDartRange
+// ---------------------------------------------------------------------------
+
+/// Input range (and forward range via .save) over all half-edge dart indices
+/// incident to a given vertex.  Each element is a uint loop index `li` such
+/// that `loops[li].vert` equals the start vertex.
+///
+/// Traversal rule: from the current dart `li`, the next dart around the vertex
+/// is `twin(prev(li))`.  The range stops when:
+///   - `twin == ~0u`  (boundary edge reached), or
+///   - the dart wraps back to the starting dart (full circle), or
+///   - the internal safety counter exceeds 1024 (degenerate mesh guard).
+///
+/// The range holds only a slice of `Loop[]`, not a reference to the whole
+/// Mesh, so it is a lightweight value type with no cyclic dependency.
+struct VertexDartRange {
+    private const(Loop)[] _loops;
+    private uint  _start;   // first dart (also the stop sentinel for cycles)
+    private uint  _cur;     // current dart
+    private bool  _done;
+    private uint  _steps;
+
+    private enum uint MAX_STEPS = 1024;
+
+    /// Construct from a loops slice and a starting dart index.
+    /// If `startLi == ~0u` the range is immediately empty (isolated vertex).
+    this(const(Loop)[] loops, uint startLi) {
+        _loops = loops;
+        _start = startLi;
+        _cur   = startLi;
+        _done  = (startLi == ~0u);
+        _steps = 0;
+    }
+
+    /// True when the range has been exhausted.
+    @property bool empty() const { return _done; }
+
+    /// The current dart index.
+    @property uint front() const
+    in (!_done)
+    { return _cur; }
+
+    /// Advance to the next dart around the vertex.
+    void popFront()
+    in (!_done)
+    {
+        uint prevLi   = _loops[_cur].prev;
+        uint twinPrev = _loops[prevLi].twin;
+        if (twinPrev == ~0u) { _done = true; return; }
+        if (++_steps >= MAX_STEPS) {
+            debug assert(false, "VertexDartRange: MAX_STEPS exceeded — degenerate mesh or infinite loop");
+            _done = true;
+            return;
+        }
+        _cur = twinPrev;
+        if (_cur == _start)
+            _done = true;
+    }
+
+    /// Save a copy so the range can be used as a ForwardRange.
+    @property VertexDartRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// edgeKey
+// ---------------------------------------------------------------------------
 
 // Canonical edge key: always (min, max) packed into a ulong.
 ulong edgeKey(uint a, uint b) {

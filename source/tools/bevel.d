@@ -578,29 +578,19 @@ private:
         //   twin(X→ov) = dart ov→X in adjacent face Fj  →  .vert == ov ✓
 
         uint startLi = loopOvPeer; // dart ov→ov_peer in F1 (ring index 0)
-        uint li      = startLi;
 
         // F2 dart for ov: in face F2, the directed edge ov_peer→ov exists as loopPeerOv.
         // The dart for ov in F2 is loops[loopPeerOv].next (since .vert of next == ov,
         // because loopPeerOv.vert==ov_peer and loopPeerOv.next.vert==ov).
         uint dartOvInF2 = (loopPeerOv != ~0u) ? mesh.loops[loopPeerOv].next : ~0u;
 
-        // Safety limit to avoid infinite loop on degenerate meshes.
-        int maxSteps = cast(int)mesh.faces.length + 4;
-
         uint[] faceDarts; // dart index for ov in each face, in ring order
-        do {
+        foreach (li; mesh.dartsAroundVertex(ov, startLi)) {
             faceDarts ~= li;
             // Track when we hit F2's dart
             if (li == dartOvInF2)
                 outIdxF2 = cast(int)(faceDarts.length - 1);
-            // Next dart around ov: twin of prev(li)
-            uint prevLi   = mesh.loops[li].prev;
-            uint twinPrev = mesh.loops[prevLi].twin;
-            if (twinPrev == ~0u) break; // boundary — stop
-            li = twinPrev;
-            if (--maxSteps <= 0) break;
-        } while (li != startLi);
+        }
 
         int N = cast(int)faceDarts.length;
         if (N == 0) return;
