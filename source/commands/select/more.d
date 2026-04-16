@@ -29,10 +29,8 @@ private:
     uint[][ulong] buildEdgeFaces() {
         uint[][ulong] m;
         foreach (fi, face; mesh.faces)
-            for (size_t j = 0; j < face.length; j++) {
-                uint a = face[j], b = face[(j + 1) % face.length];
-                m[edgeKey(a, b)] ~= cast(uint)fi;
-            }
+            foreach (e; mesh.faceEdges(cast(uint)fi))
+                m[edgeKey(e.a, e.b)] ~= cast(uint)fi;
         return m;
     }
 

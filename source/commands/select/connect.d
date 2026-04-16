@@ -59,21 +59,14 @@ class SelectConnect : Command {
         } else if (editMode == EditMode.Polygons) {
             // Build face → adjacent faces map via shared edges
             uint[][ulong] edgeFaces;
-            foreach (fi, face; mesh.faces) {
-                for (size_t j = 0; j < face.length; j++) {
-                    uint a = face[j], b = face[(j + 1) % face.length];
-                    edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
-                }
-            }
+            foreach (fi, face; mesh.faces)
+                foreach (e; mesh.faceEdges(cast(uint)fi))
+                    edgeFaces[edgeKey(e.a, e.b)] ~= cast(uint)fi;
             int[][] faceAdj = new int[][](mesh.faces.length);
-            foreach (fi, face; mesh.faces) {
-                for (size_t j = 0; j < face.length; j++) {
-                    uint a = face[j], b = face[(j + 1) % face.length];
-                    foreach (adjFi; edgeFaces[edgeKey(a, b)]) {
+            foreach (fi, face; mesh.faces)
+                foreach (e; mesh.faceEdges(cast(uint)fi))
+                    foreach (adjFi; edgeFaces[edgeKey(e.a, e.b)])
                         if (adjFi != cast(uint)fi) faceAdj[fi] ~= cast(int)adjFi;
-                    }
-                }
-            }
             bfsSelect(mesh.selectedFaces, faceAdj, -1);
         }
         return true;

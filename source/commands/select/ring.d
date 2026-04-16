@@ -23,10 +23,8 @@ class SelectRing : Command {
         // edgeKey(a,b) → list of face indices containing this geometric edge
         uint[][ulong] edgeFaces;
         foreach (fi, face; mesh.faces)
-            for (size_t j = 0; j < face.length; j++) {
-                uint a = face[j], b = face[(j + 1) % face.length];
-                edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
-            }
+            foreach (e; mesh.faceEdges(cast(uint)fi))
+                edgeFaces[edgeKey(e.a, e.b)] ~= cast(uint)fi;
 
         // edgeKey(a,b) → edge index in mesh.edges
         int[ulong] keyToEdge;

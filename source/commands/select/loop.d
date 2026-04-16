@@ -13,12 +13,9 @@ class SelectLoop : Command {
     override bool apply() {
         // Build edge → faces map (used by both modes).
         uint[][ulong] edgeFaces;
-        foreach (fi, face; mesh.faces) {
-            for (size_t j = 0; j < face.length; j++) {
-                uint a = face[j], b = face[(j + 1) % face.length];
-                edgeFaces[edgeKey(a, b)] ~= cast(uint)fi;
-            }
-        }
+        foreach (fi, face; mesh.faces)
+            foreach (e; mesh.faceEdges(cast(uint)fi))
+                edgeFaces[edgeKey(e.a, e.b)] ~= cast(uint)fi;
 
         // ------------------------------------------------------------------ //
         //  Edge loop                                                           //
@@ -253,8 +250,8 @@ class SelectLoop : Command {
         Pair[] pairs;
         foreach (fi, face; mesh.faces) {
             if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
-            for (size_t j = 0; j < face.length; j++) {
-                uint va = face[j], vb = face[(j + 1) % face.length];
+            foreach (e; mesh.faceEdges(cast(uint)fi)) {
+                uint va = e.a, vb = e.b;
                 ulong key = edgeKey(va, vb);
                 if (auto p = key in edgeFaces) {
                     foreach (adjFi; *p) {

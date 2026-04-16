@@ -181,6 +181,9 @@ struct Mesh {
         return (vi == a) ? b : a;
     }
 
+    /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
+    FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
+
     /// Return the canonical edge key for edge `ei` (order-independent hash of its two vertices).
     pragma(inline, true)
     ulong edgeKeyOf(uint ei) const {
@@ -305,6 +308,27 @@ struct VertexDartRange {
 
     /// Save a copy so the range can be used as a ForwardRange.
     @property VertexDartRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// FaceEdgeRange
+// ---------------------------------------------------------------------------
+
+/// One directed edge of a face: the consecutive vertex pair (a → b).
+struct FaceEdge { uint a, b; }
+
+/// Forward range over all consecutive vertex pairs of a face polygon.
+/// Yields FaceEdge(face[j], face[(j+1) % N]) for j in 0..N.
+struct FaceEdgeRange {
+    private const(uint)[] _verts;
+    private uint _j;
+
+    this(const(uint)[] verts) { _verts = verts; _j = 0; }
+
+    @property bool      empty() const { return _j >= _verts.length; }
+    @property FaceEdge  front() const { return FaceEdge(_verts[_j], _verts[(_j + 1) % _verts.length]); }
+    void popFront() { ++_j; }
+    @property FaceEdgeRange save() const { return this; }
 }
 
 // ---------------------------------------------------------------------------

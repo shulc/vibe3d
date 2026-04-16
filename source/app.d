@@ -1365,10 +1365,8 @@ void main(string[] args) {
                         bool[ulong] edgeSet;
                         foreach (fi, face; mesh.faces) {
                             if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
-                            for (size_t j = 0; j < face.length; j++) {
-                                uint a = face[j], b = face[(j + 1) % face.length];
-                                edgeSet[edgeKey(a, b)] = true;
-                            }
+                            foreach (e; mesh.faceEdges(cast(uint)fi))
+                                edgeSet[edgeKey(e.a, e.b)] = true;
                         }
                         foreach (ei, edge; mesh.edges) {
                             if (edgeKey(edge[0], edge[1]) in edgeSet)
