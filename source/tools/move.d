@@ -3,7 +3,7 @@ module tools.move;
 import bindbc.opengl;
 import bindbc.sdl;
 
-import tool;
+import tools.transform;
 import handler;
 import mesh;
 import editmode;
@@ -17,98 +17,35 @@ import std.math;
 import drag;
 
 // ---------------------------------------------------------------------------
-// MoveTool : Tool — shows MoveHandler at selection/mesh center
+// MoveTool : TransformTool — shows MoveHandler at selection/mesh center
 // ---------------------------------------------------------------------------
 
-class MoveTool : Tool {
+class MoveTool : TransformTool {
     MoveHandler handler;
-    bool        active;
-
-    // app.d reads this every frame and sets u_model accordingly.
-    // Reset to zero after final GPU upload on mouseUp.
-    Vec3 gpuOffset;
 
 private:
-    Mesh*     mesh;
-    GpuMesh*  gpu;
-    EditMode* editMode;
-
-    int      dragAxis = -1;   // 0=X 1=Y 2=Z  -1=none
-    int      lastMX, lastMY;
-    Viewport cachedVp;
     Vec3     dragDelta;       // accumulated world-space offset since drag start
     Vec3     propInput;       // value shown in Tool Properties (persisted for ImGui)
-    bool     centerManual;   // true = update() must not recompute handler.center
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
-    bool[]   toMove;         // bool mask of vertices to move (for partial GPU upload)
-    bool     needsGpuUpdate;  // Flag to delay GPU upload until draw()
-    int[]    vertexIndicesToMove;  // Cached indices of vertices to move
-    int      vertexMoveCount;      // Cached count to avoid re-iterating toMove
-    bool     vertexMoveCacheDirty;
-    Vec3     cachedCenter;
-    int      lastSelectionHash;
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        this.mesh     = mesh;
-        this.gpu      = gpu;
-        this.editMode = editMode;
+        super(mesh, gpu, editMode);
         handler = new MoveHandler(Vec3(0, 0, 0));
-        toMove.length = mesh.vertices.length;
-        toMove[] = false;
-        vertexMoveCacheDirty = true;
-        vertexIndicesToMove = null;
-        vertexMoveCount = 0;
         cachedCenter = Vec3(0, 0, 0);
-        lastSelectionHash = uint.max;  // sentinel: force recompute on first update()
     }
 
     void destroy() {
         handler.destroy();
-        toMove.length = 0;
     }
 
     override string name() const { return "Move"; }
 
     override void activate() {
-        active = true;
-        needsGpuUpdate = false;
-        vertexMoveCacheDirty = true;
-        lastSelectionHash = uint.max;  // sentinel: force recompute on first update()
-        gpuOffset = Vec3(0, 0, 0);
+        super.activate();
         dragDelta = Vec3(0, 0, 0);
         propInput = Vec3(0, 0, 0);
-    }
-
-    override void deactivate() {
-        active = false;
-        if (needsGpuUpdate || gpuOffset.x != 0 || gpuOffset.y != 0 || gpuOffset.z != 0) {
-            gpu.upload(*mesh);
-            needsGpuUpdate = false;
-            gpuOffset = Vec3(0, 0, 0);
-        }
-        dragAxis = -1;
-        centerManual = false;
-    }
-
-    // Simple hash of selection state to detect changes between frames.
-    private uint computeSelectionHash() {
-        uint hash = cast(uint)(*editMode);
-        if (*editMode == EditMode.Vertices) {
-            foreach (i, s; mesh.selectedVertices) {
-                if (s) hash = hash * 31 + cast(uint)i;
-            }
-        } else if (*editMode == EditMode.Edges) {
-            foreach (i, s; mesh.selectedEdges) {
-                if (s) hash = hash * 31 + cast(uint)i;
-            }
-        } else if (*editMode == EditMode.Polygons) {
-            foreach (i, s; mesh.selectedFaces) {
-                if (s) hash = hash * 31 + cast(uint)i;
-            }
-        }
-        return hash;
     }
 
     // Recompute gizmo center from current selection / mesh state (with caching).
@@ -121,7 +58,7 @@ public:
         uint currentHash = computeSelectionHash();
         if (currentHash != lastSelectionHash) {
             lastSelectionHash = currentHash;
-            vertexMoveCacheDirty = true;  // selection changed — rebuild on next drag
+            vertexCacheDirty = true;  // selection changed — rebuild on next drag
 
             if (*editMode == EditMode.Vertices)
                 cachedCenter = mesh.selectionCentroidVertices();
@@ -172,12 +109,13 @@ public:
 
         ctrlConstrain = false;
 
-        // Commit GPU offset (whole-mesh) or flush partial selection — one final upload.
-        if (vertexMoveCount > 0) {
+        // Commit GPU (whole-mesh) or flush partial selection — one final upload.
+        if (wholeMeshDrag || needsGpuUpdate) {
             gpu.upload(*mesh);
-            gpuOffset = Vec3(0, 0, 0);  // model matrix returns to identity
+            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            needsGpuUpdate = false;
         }
-
+        wholeMeshDrag = false;
         dragAxis = -1;
         propInput = dragDelta;
         // Sync cachedCenter to the actual post-move gizmo position so update()
@@ -226,6 +164,9 @@ public:
                 constrainStartMX = e.x; constrainStartMY = e.y;
             }
             lastMX = e.x; lastMY = e.y;
+            dragDelta = Vec3(0, 0, 0);
+            buildVertexCacheIfNeeded();
+            wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
             return true;
         }
 
@@ -236,13 +177,8 @@ public:
         Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
                : avy >= avx && avy >= avz ? Vec3(0,1,0)
                                           : Vec3(0,0,1);
-        Vec3 camOrigin = Vec3(
-            -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-            -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-            -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-        );
         Vec3 hit;
-        if (!rayPlaneIntersect(camOrigin, screenRay(e.x, e.y, cachedVp),
+        if (!rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                                handler.center, n, hit))
             return false;
 
@@ -250,6 +186,9 @@ public:
         centerManual = true;
         dragAxis = 3;
         lastMX = e.x; lastMY = e.y;
+        dragDelta = Vec3(0, 0, 0);
+        buildVertexCacheIfNeeded();
+        wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
         if (ctrl) {
             ctrlConstrain = true;
             constrainStartMX = e.x; constrainStartMY = e.y;
@@ -316,10 +255,10 @@ public:
         // Apply delta to CPU vertices (fast: simple float additions, no GPU work)
         applyDelta(worldDelta);
 
-        if (vertexMoveCount == cast(int)mesh.vertices.length) {
-            // Whole-mesh move: accumulate GPU offset so app.d can set u_model as a
-            // translation matrix. Zero GPU uploads during drag — only one on mouseUp.
-            gpuOffset = vec3Add(gpuOffset, worldDelta);
+        if (wholeMeshDrag) {
+            // Whole-mesh move: update gpuMatrix so app.d sets u_model each frame.
+            // Zero GPU uploads during drag — only one on mouseUp.
+            gpuMatrix = translationMatrix(dragDelta);
         } else {
             // Partial selection: defer GPU upload to draw() — once per frame.
             needsGpuUpdate = true;
@@ -353,16 +292,19 @@ public:
                 applyDeltaImmediate(delta);
                 handler.setPosition(vec3Add(handler.center, delta));
                 cachedCenter = handler.center;
-                if (vertexMoveCount == cast(int)mesh.vertices.length)
-                    gpuOffset = vec3Add(gpuOffset, delta);
-                else
+                if (vertexProcessCount == cast(int)mesh.vertices.length) {
+                    wholeMeshDrag = true;
+                    gpuMatrix = translationMatrix(dragDelta);
+                } else {
                     needsGpuUpdate = true;
+                }
             }
         }
 
         if (xDone || yDone || zDone) {
             gpu.upload(*mesh);
-            gpuOffset = Vec3(0, 0, 0);
+            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            wholeMeshDrag = false;
         }
     }
 
@@ -373,75 +315,12 @@ private:
         applyDeltaImmediate(delta);
     }
 
-    // Build cache of vertex indices to move (expensive — done once per selection change).
-    void buildVertexCacheIfNeeded() {
-        if (!vertexMoveCacheDirty) return;
-
-        int[] indices;
-
-        if (*editMode == EditMode.Vertices) {
-            bool any = mesh.hasAnySelectedVertices();
-            if (any) {
-                foreach (i, s; mesh.selectedVertices)
-                    if (s && i < mesh.vertices.length) indices ~= cast(int)i;
-            } else {
-                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
-            }
-        } else if (*editMode == EditMode.Edges) {
-            bool any = mesh.hasAnySelectedEdges();
-            if (any) {
-                bool[] added = new bool[](mesh.vertices.length);
-                foreach (i, edge; mesh.edges) {
-                    if (i < mesh.selectedEdges.length && mesh.selectedEdges[i]) {
-                        if (!added[edge[0]]) { added[edge[0]] = true; indices ~= cast(int)edge[0]; }
-                        if (!added[edge[1]]) { added[edge[1]] = true; indices ~= cast(int)edge[1]; }
-                    }
-                }
-            } else {
-                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
-            }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = mesh.hasAnySelectedFaces();
-            if (any) {
-                bool[] added = new bool[](mesh.vertices.length);
-                foreach (i, face; mesh.faces) {
-                    if (i < mesh.selectedFaces.length && mesh.selectedFaces[i]) {
-                        foreach (vi; face)
-                            if (!added[vi]) { added[vi] = true; indices ~= cast(int)vi; }
-                    }
-                }
-            } else {
-                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
-            }
-        }
-
-        vertexIndicesToMove = indices;
-        vertexMoveCount = cast(int)indices.length;
-        vertexMoveCacheDirty = false;
-
-        // Sync bool mask used by uploadToGpu.
-        if (toMove.length != mesh.vertices.length)
-            toMove.length = mesh.vertices.length;
-        toMove[] = false;
-        foreach (vi; vertexIndicesToMove)
-            toMove[vi] = true;
-    }
-
     // Apply delta immediately to cached vertex indices (very fast inner loop).
     void applyDeltaImmediate(Vec3 delta) {
-        foreach (vi; vertexIndicesToMove) {
+        foreach (vi; vertexIndicesToProcess) {
             mesh.vertices[vi].x += delta.x;
             mesh.vertices[vi].y += delta.y;
             mesh.vertices[vi].z += delta.z;
         }
-    }
-
-    // Upload to GPU: partial upload when < 80% of vertices move, full upload otherwise.
-    void uploadToGpu() {
-        if (vertexMoveCount <= 0) return;
-        if (vertexMoveCount < cast(int)(mesh.vertices.length * 0.8))
-            gpu.uploadSelectedVertices(*mesh, toMove);
-        else
-            gpu.upload(*mesh);
     }
 }

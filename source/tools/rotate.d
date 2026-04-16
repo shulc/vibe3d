@@ -3,7 +3,7 @@ module tools.rotate;
 import bindbc.opengl;
 import bindbc.sdl;
 
-import tool;
+import tools.transform;
 import handler;
 import mesh;
 import editmode;
@@ -20,23 +20,10 @@ import d_imgui.imgui_h;
 //              rotates selected vertices around the dragged axis.
 // ---------------------------------------------------------------------------
 
-class RotateTool : Tool {
+class RotateTool : TransformTool {
     RotateHandler handler;
-    bool          active;
-
-    // app.d reads this every frame and sets u_model accordingly.
-    // Reset to identity when not in a whole-mesh drag.
-    float[16] gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
 private:
-    Mesh*     mesh;
-    GpuMesh*  gpu;
-    EditMode* editMode;
-
-    int      dragAxis = -1;   // 0=X 1=Y 2=Z 3=View  -1=none
-    bool     centerManual;    // true = update() must not recompute handler.center
-    int      lastMX, lastMY;
-    Viewport cachedVp;
     float    cachedSize;      // gizmo radius in world units (from last draw)
     Vec3     dragStartDir;    // direction from center to click point in arc plane
     float    totalAngle = 0;       // accumulated raw angle during drag (radians)
@@ -47,29 +34,9 @@ private:
     Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
     Vec3[]   origVertices;                // snapshot of vertex positions at activate()
 
-    // Vertex index cache — rebuilt once per selection change, reused every event.
-    int[]  vertexIndicesToProcess;
-    bool[] toProcess;
-    int    vertexProcessCount;
-    bool   vertexCacheDirty = true;
-    int    lastSelectionHash;
-
-    // Deferred GPU upload for partial-selection drags (flushed in draw() once per frame).
-    bool   needsGpuUpdate;
-
-    // Whole-mesh GPU bypass: snapshot at drag start; commit on mouseUp.
-    Vec3[] dragStartVertices;
-    bool   wholeMeshDrag;   // true when mouse drag bypasses GPU uploads entirely
-    bool   propsDragging;   // true when DragFloat props drag bypasses GPU uploads
-
-    // Cached gizmo center (recomputed only when selection hash changes).
-    Vec3   cachedCenter;
-
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        this.mesh     = mesh;
-        this.gpu      = gpu;
-        this.editMode = editMode;
+        super(mesh, gpu, editMode);
         handler = new RotateHandler(Vec3(0, 0, 0));
     }
 
@@ -78,33 +45,10 @@ public:
     override string name() const { return "Rotate"; }
 
     override void activate() {
-        active = true;
-        centerManual = false;
+        super.activate();
         angleAccum = Vec3(0, 0, 0);
         propDeg = Vec3(0, 0, 0);
         origVertices = mesh.vertices.dup;
-        vertexCacheDirty = true;
-        lastSelectionHash = uint.max;
-        needsGpuUpdate = false;
-        wholeMeshDrag = false;
-        propsDragging = false;
-        gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-    }
-
-    override void deactivate() {
-        active = false;
-        // Commit any pending state to GPU.
-        if (wholeMeshDrag || propsDragging) {
-            gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            wholeMeshDrag = false;
-            propsDragging = false;
-        } else if (needsGpuUpdate) {
-            gpu.upload(*mesh);
-            needsGpuUpdate = false;
-        }
-        dragAxis = -1;
-        centerManual = false;
     }
 
     override void update() {
@@ -378,86 +322,6 @@ public:
     }
 
 private:
-    uint computeSelectionHash() {
-        uint hash = cast(uint)(*editMode);
-        if (*editMode == EditMode.Vertices) {
-            foreach (i, s; mesh.selectedVertices) if (s) hash = hash * 31 + cast(uint)i;
-        } else if (*editMode == EditMode.Edges) {
-            foreach (i, s; mesh.selectedEdges) if (s) hash = hash * 31 + cast(uint)i;
-        } else if (*editMode == EditMode.Polygons) {
-            foreach (i, s; mesh.selectedFaces) if (s) hash = hash * 31 + cast(uint)i;
-        }
-        return hash;
-    }
-
-    void buildVertexCacheIfNeeded() {
-        if (!vertexCacheDirty) return;
-
-        int[] indices;
-
-        if (*editMode == EditMode.Vertices) {
-            bool any = mesh.hasAnySelectedVertices();
-            if (any) {
-                foreach (i, s; mesh.selectedVertices)
-                    if (s && i < mesh.vertices.length) indices ~= cast(int)i;
-            } else {
-                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
-            }
-        } else if (*editMode == EditMode.Edges) {
-            bool any = mesh.hasAnySelectedEdges();
-            if (any) {
-                bool[] added = new bool[](mesh.vertices.length);
-                foreach (i, edge; mesh.edges) {
-                    if (i < mesh.selectedEdges.length && mesh.selectedEdges[i]) {
-                        if (!added[edge[0]]) { added[edge[0]] = true; indices ~= cast(int)edge[0]; }
-                        if (!added[edge[1]]) { added[edge[1]] = true; indices ~= cast(int)edge[1]; }
-                    }
-                }
-            } else {
-                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
-            }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = mesh.hasAnySelectedFaces();
-            if (any) {
-                bool[] added = new bool[](mesh.vertices.length);
-                foreach (i, face; mesh.faces) {
-                    if (i < mesh.selectedFaces.length && mesh.selectedFaces[i]) {
-                        foreach (vi; face)
-                            if (!added[vi]) { added[vi] = true; indices ~= cast(int)vi; }
-                    }
-                }
-            } else {
-                foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
-            }
-        }
-
-        vertexIndicesToProcess = indices;
-        vertexProcessCount = cast(int)indices.length;
-        vertexCacheDirty = false;
-
-        if (toProcess.length != mesh.vertices.length)
-            toProcess.length = mesh.vertices.length;
-        toProcess[] = false;
-        foreach (vi; vertexIndicesToProcess)
-            toProcess[vi] = true;
-    }
-
-    void uploadToGpu() {
-        if (vertexProcessCount <= 0) return;
-        if (vertexProcessCount < cast(int)(mesh.vertices.length * 0.8))
-            gpu.uploadSelectedVertices(*mesh, toProcess);
-        else
-            gpu.upload(*mesh);
-    }
-
-    Vec3 viewCamOrigin() {
-        const ref float[16] v = cachedVp.view;
-        return Vec3(
-            -(v[0]*v[12] + v[1]*v[13] + v[2]*v[14]),
-            -(v[4]*v[12] + v[5]*v[13] + v[6]*v[14]),
-            -(v[8]*v[12] + v[9]*v[13] + v[10]*v[14]),
-        );
-    }
 
     Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
         float c = cos(angle), s = sin(angle);
@@ -502,15 +366,6 @@ private:
             if (angleAccum.z != 0) v = rotateVec(v, pivot, Vec3(0,0,1), angleAccum.z);
             mesh.vertices[i] = v;
         }
-    }
-
-    // Upload a vertex snapshot to GPU without modifying mesh.vertices.
-    // Used once at the start of a props drag to establish the GPU base for gpuMatrix.
-    void uploadPropsBase(Vec3[] base) {
-        Vec3[] saved = mesh.vertices;
-        mesh.vertices = base;
-        gpu.upload(*mesh);
-        mesh.vertices = saved;
     }
 
     // Compose the current angleAccum into a single 4x4 rotation matrix around the pivot.

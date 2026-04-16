@@ -27,6 +27,7 @@ import shader;
 import viewcache;
 import lwo;
 
+import tools.transform;
 import tools.move;
 import tools.scale;
 import tools.rotate;
@@ -94,20 +95,6 @@ private string buildJsonArray(bool[] sel) {
     }
     buf ~= "]";
     return buf.data;
-}
-
-private bool[] computeVisibleVertices(ref Mesh mesh, ref View cameraView) {
-    bool[] vertexVisible = new bool[](mesh.vertices.length);
-    foreach (face; mesh.faces) {
-        if (face.length < 3) continue;
-        Vec3 fv0 = mesh.vertices[face[0]];
-        Vec3 fv1 = mesh.vertices[face[1]];
-        Vec3 fv2 = mesh.vertices[face[2]];
-        Vec3 fn = cross(vec3Sub(fv1, fv0), vec3Sub(fv2, fv0));
-        if (dot(fn, vec3Sub(fv0, cameraView.eye)) >= 0) continue;
-        foreach (vi; face) vertexVisible[vi] = true;
-    }
-    return vertexVisible;
 }
 
 
@@ -618,7 +605,7 @@ void main(string[] args) {
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
-                bool[] visible = computeVisibleVertices(mesh, cameraView);
+                bool[] visible = mesh.visibleVertices(cameraView.eye);
 
                 if (editMode == EditMode.Polygons) {
                     if (!shift && !ctrl)
@@ -740,7 +727,7 @@ void main(string[] args) {
 
         // A vertex is visible if at least one adjacent face is front-facing.
         // Geometry-exact: replaces unreliable depth-buffer test (near=0.001).
-        bool[] vertexVisible = computeVisibleVertices(mesh, cameraView);
+        bool[] vertexVisible = mesh.visibleVertices(cameraView.eye);
 
         foreach_reverse (i; 0 .. mesh.vertices.length) {
             if (!vertexVisible[i]) continue;
@@ -785,7 +772,7 @@ void main(string[] args) {
 
         // A vertex is visible if at least one adjacent face is front-facing.
         // Computed once here — O(faces), replaces unreliable depth-buffer test.
-        bool[] vertexVisible = computeVisibleVertices(mesh, cameraView);
+        bool[] vertexVisible = mesh.visibleVertices(cameraView.eye);
 
         foreach (i; 0 .. mesh.edges.length) {
             uint a = mesh.edges[i][0], b = mesh.edges[i][1];
@@ -1247,21 +1234,9 @@ void main(string[] args) {
         // vertex data every frame.
         float[16] meshModel = identityMatrix;
         {
-            MoveTool mt = cast(MoveTool)activeTool;
-            if (mt !is null) {
-                Vec3 off = mt.gpuOffset;
-                if (off.x != 0 || off.y != 0 || off.z != 0)
-                    meshModel = translationMatrix(off);
-            } else {
-                RotateTool rt = cast(RotateTool)activeTool;
-                if (rt !is null) {
-                    meshModel = rt.gpuMatrix;
-                } else {
-                    ScaleTool st = cast(ScaleTool)activeTool;
-                    if (st !is null)
-                        meshModel = st.gpuMatrix;
-                }
-            }
+            TransformTool tt = cast(TransformTool)activeTool;
+            if (tt !is null)
+                meshModel = tt.gpuMatrix;
         }
 
         shader.useProgram(meshModel, cameraView);

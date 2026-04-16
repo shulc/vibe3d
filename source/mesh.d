@@ -219,6 +219,77 @@ struct Mesh {
         return AdjacentFaceRange(loops, start);
     }
 
+    /// Return a hash of the current vertex selection state (seed = 0).
+    /// Useful for detecting selection changes between frames.
+    uint selectionHashVertices() const {
+        uint h = 0;
+        foreach (i, s; selectedVertices) if (s) h = h * 31 + cast(uint)i;
+        return h;
+    }
+
+    /// Return a hash of the current edge selection state (seed = 1).
+    uint selectionHashEdges() const {
+        uint h = 1;
+        foreach (i, s; selectedEdges) if (s) h = h * 31 + cast(uint)i;
+        return h;
+    }
+
+    /// Return a hash of the current face selection state (seed = 2).
+    uint selectionHashFaces() const {
+        uint h = 2;
+        foreach (i, s; selectedFaces) if (s) h = h * 31 + cast(uint)i;
+        return h;
+    }
+
+    /// Return the vertex indices touched by the current vertex selection.
+    /// If nothing is selected, returns all vertex indices.
+    int[] selectedVertexIndicesVertices() const {
+        int[] idx;
+        if (hasAnySelected(selectedVertices)) {
+            foreach (i, s; selectedVertices)
+                if (s && i < vertices.length) idx ~= cast(int)i;
+        } else {
+            foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
+        }
+        return idx;
+    }
+
+    /// Return the vertex indices touched by the current edge selection.
+    /// Each vertex is included at most once.
+    /// If nothing is selected, returns all vertex indices.
+    int[] selectedVertexIndicesEdges() const {
+        int[] idx;
+        if (hasAnySelected(selectedEdges)) {
+            bool[] added = new bool[](vertices.length);
+            foreach (i, edge; edges) {
+                if (i >= selectedEdges.length || !selectedEdges[i]) continue;
+                if (!added[edge[0]]) { added[edge[0]] = true; idx ~= cast(int)edge[0]; }
+                if (!added[edge[1]]) { added[edge[1]] = true; idx ~= cast(int)edge[1]; }
+            }
+        } else {
+            foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
+        }
+        return idx;
+    }
+
+    /// Return the vertex indices touched by the current face selection.
+    /// Each vertex is included at most once.
+    /// If nothing is selected, returns all vertex indices.
+    int[] selectedVertexIndicesFaces() const {
+        int[] idx;
+        if (hasAnySelected(selectedFaces)) {
+            bool[] added = new bool[](vertices.length);
+            foreach (i, face; faces) {
+                if (i >= selectedFaces.length || !selectedFaces[i]) continue;
+                foreach (vi; face)
+                    if (!added[vi]) { added[vi] = true; idx ~= cast(int)vi; }
+            }
+        } else {
+            foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
+        }
+        return idx;
+    }
+
     /// Return the centroid of the current vertex selection (or all vertices if none selected).
     Vec3 selectionCentroidVertices() const {
         bool any = hasAnySelected(selectedVertices);
