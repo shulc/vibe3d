@@ -415,11 +415,9 @@ private:
 
         Vec3 rodrig(Vec3 p, float a) {
             float rc = cos(a), rs = sin(a);
-            float rd = p.x*axisVec.x + p.y*axisVec.y + p.z*axisVec.z;
+            float rd = dot(p, axisVec);
             Vec3 rcr = cross(axisVec, p);
-            return Vec3(p.x*rc + rcr.x*rs + axisVec.x*rd*(1-rc),
-                        p.y*rc + rcr.y*rs + axisVec.y*rd*(1-rc),
-                        p.z*rc + rcr.z*rs + axisVec.z*rd*(1-rc));
+            return p * rc + rcr * rs + axisVec * (rd * (1-rc));
         }
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();
