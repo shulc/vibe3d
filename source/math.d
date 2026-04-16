@@ -46,7 +46,7 @@ Vec3 vec3Lerp(Vec3 a, Vec3 b, float t) @safe pure nothrow @nogc {
 }
 
 Vec3 normalize(Vec3 v) @safe pure nothrow @nogc {
-    float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+    float len = v.length;
     return Vec3(v.x/len, v.y/len, v.z/len);
 }
 Vec3 cross(Vec3 a, Vec3 b) @safe pure nothrow @nogc {
@@ -260,7 +260,7 @@ Vec3 screenRay(float sx, float sy, const ref Viewport vp)
         v[4]*vx + v[5]*vy + v[6]*(-1.0f),
         v[8]*vx + v[9]*vy + v[10]*(-1.0f),
     );
-    float len = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    float len = d.length;
     return len > 1e-9f ? Vec3(d.x/len, d.y/len, d.z/len) : Vec3(0,0,-1);
 }
 
@@ -270,17 +270,17 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
                                out Vec3 hit)
 {
     import std.math : abs;
-    float denom = n.x*dir.x + n.y*dir.y + n.z*dir.z;
+    float denom = dot(n, dir);
     if (abs(denom) < 1e-6f) return false;
     Vec3 d = planePoint - origin;
-    float t = (n.x*d.x + n.y*d.y + n.z*d.z) / denom;
+    float t = dot(n, d) / denom;
     hit = origin + dir * t;
     return true;
 }
 
 // Safe normalize — returns (0,1,0) for near-zero vectors.
 Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
-    float len = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+    float len = v.length;
     return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
 }
 
@@ -295,7 +295,7 @@ Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
 // Formula: cross(faceNorm, edgeDir), normalised — points INTO the face.
 Vec3 offsetInPlane(Vec3 edgeDir, Vec3 faceNorm) @safe pure nothrow @nogc {
     Vec3 p = cross(faceNorm, edgeDir);
-    float len = sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+    float len = p.length;
     return len > 1e-6f ? Vec3(p.x/len, p.y/len, p.z/len) : Vec3(0, 1, 0);
 }
 
@@ -358,8 +358,7 @@ unittest { // normalize axis-aligned
 
 unittest { // normalize length == 1
     auto n = normalize(Vec3(1,2,3));
-    float len = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
-    assert(isClose(len, 1.0f));
+    assert(isClose(n.length, 1.0f));
 }
 
 unittest { // dot
@@ -495,8 +494,7 @@ unittest { // screenRay: result is always unit length
     foreach (sx; [0.0f, 400.0f, 799.0f])
         foreach (sy; [0.0f, 400.0f, 799.0f]) {
             auto r = screenRay(sx, sy, vp);
-            float len = sqrt(r.x*r.x + r.y*r.y + r.z*r.z);
-            assert(isClose(len, 1.0f, 1e-4f));
+            assert(isClose(r.length, 1.0f, 1e-4f));
         }
 }
 
