@@ -118,36 +118,14 @@ public:
         lastSelectionHash = currentHash;
         vertexCacheDirty = true;
 
-        Vec3 sum  = Vec3(0, 0, 0);
-        int  count = 0;
-        if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; mesh.selectedVertices) if (s) { any = true; break; }
-            foreach (i, v; mesh.vertices)
-                if (!any || (i < mesh.selectedVertices.length && mesh.selectedVertices[i]))
-                    { sum = vec3Add(sum, v); count++; }
-        } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; mesh.selectedEdges) if (s) { any = true; break; }
-            bool[] vis = new bool[](mesh.vertices.length);
-            foreach (i, edge; mesh.edges) {
-                if (any && !(i < mesh.selectedEdges.length && mesh.selectedEdges[i])) continue;
-                foreach (vi; edge)
-                    if (!vis[vi]) { sum = vec3Add(sum, mesh.vertices[vi]); count++; vis[vi]=true; }
-            }
-        } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; mesh.selectedFaces) if (s) { any = true; break; }
-            bool[] vis = new bool[](mesh.vertices.length);
-            foreach (i, face; mesh.faces) {
-                if (any && !(i < mesh.selectedFaces.length && mesh.selectedFaces[i])) continue;
-                foreach (vi; face)
-                    if (!vis[vi]) { sum = vec3Add(sum, mesh.vertices[vi]); count++; vis[vi]=true; }
-            }
-        }
-        cachedCenter = count > 0
-            ? Vec3(sum.x / count, sum.y / count, sum.z / count)
-            : Vec3(0, 0, 0);
+        if (*editMode == EditMode.Vertices)
+            cachedCenter = mesh.selectionCentroidVertices();
+        else if (*editMode == EditMode.Edges)
+            cachedCenter = mesh.selectionCentroidEdges();
+        else if (*editMode == EditMode.Polygons)
+            cachedCenter = mesh.selectionCentroidFaces();
+        else
+            cachedCenter = Vec3(0, 0, 0);
 
         if (!centerManual)
             handler.setPosition(cachedCenter);

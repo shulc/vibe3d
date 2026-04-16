@@ -123,51 +123,14 @@ public:
             lastSelectionHash = currentHash;
             vertexMoveCacheDirty = true;  // selection changed — rebuild on next drag
 
-            Vec3 sum = Vec3(0, 0, 0);
-            int count = 0;
-
-            if (*editMode == EditMode.Vertices) {
-                bool anySelected = false;
-                foreach (s; mesh.selectedVertices) if (s) { anySelected = true; break; }
-                foreach (i, v; mesh.vertices) {
-                    if (!anySelected || (i < mesh.selectedVertices.length && mesh.selectedVertices[i])) {
-                        sum = vec3Add(sum, v);
-                        count++;
-                    }
-                }
-            } else if (*editMode == EditMode.Edges) {
-                bool anySelected = false;
-                foreach (s; mesh.selectedEdges) if (s) { anySelected = true; break; }
-                bool[] visited = new bool[](mesh.vertices.length);
-                foreach (i, edge; mesh.edges) {
-                    if (anySelected && !(i < mesh.selectedEdges.length && mesh.selectedEdges[i]))
-                        continue;
-                    foreach (vi; edge) {
-                        if (!visited[vi]) {
-                            sum = vec3Add(sum, mesh.vertices[vi]);
-                            count++;
-                            visited[vi] = true;
-                        }
-                    }
-                }
-            } else if (*editMode == EditMode.Polygons) {
-                bool anySelected = false;
-                foreach (s; mesh.selectedFaces) if (s) { anySelected = true; break; }
-                bool[] visited = new bool[](mesh.vertices.length);
-                foreach (i, face; mesh.faces) {
-                    if (anySelected && !(i < mesh.selectedFaces.length && mesh.selectedFaces[i]))
-                        continue;
-                    foreach (vi; face) {
-                        if (!visited[vi]) {
-                            sum = vec3Add(sum, mesh.vertices[vi]);
-                            count++;
-                            visited[vi] = true;
-                        }
-                    }
-                }
-            }
-
-            cachedCenter = count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+            if (*editMode == EditMode.Vertices)
+                cachedCenter = mesh.selectionCentroidVertices();
+            else if (*editMode == EditMode.Edges)
+                cachedCenter = mesh.selectionCentroidEdges();
+            else if (*editMode == EditMode.Polygons)
+                cachedCenter = mesh.selectionCentroidFaces();
+            else
+                cachedCenter = Vec3(0, 0, 0);
             dragDelta = Vec3(0, 0, 0);
             propInput = Vec3(0, 0, 0);
         }

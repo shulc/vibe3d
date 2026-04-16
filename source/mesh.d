@@ -219,6 +219,60 @@ struct Mesh {
         return AdjacentFaceRange(loops, start);
     }
 
+    /// Return the centroid of the current vertex selection (or all vertices if none selected).
+    Vec3 selectionCentroidVertices() const {
+        bool any = hasAnySelected(selectedVertices);
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        foreach (i, v; vertices) {
+            if (!any || (i < selectedVertices.length && selectedVertices[i])) {
+                sum = vec3Add(sum, v);
+                count++;
+            }
+        }
+        return count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+    }
+
+    /// Return the centroid of vertices belonging to the current edge selection
+    /// (or all edge vertices if none selected).  Each vertex is counted once.
+    Vec3 selectionCentroidEdges() const {
+        bool any = hasAnySelected(selectedEdges);
+        bool[] vis = new bool[](vertices.length);
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        foreach (i, edge; edges) {
+            if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
+            foreach (vi; edge) {
+                if (!vis[vi]) {
+                    sum = vec3Add(sum, vertices[vi]);
+                    count++;
+                    vis[vi] = true;
+                }
+            }
+        }
+        return count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+    }
+
+    /// Return the centroid of vertices belonging to the current face selection
+    /// (or all face vertices if none selected).  Each vertex is counted once.
+    Vec3 selectionCentroidFaces() const {
+        bool any = hasAnySelected(selectedFaces);
+        bool[] vis = new bool[](vertices.length);
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        foreach (i, face; faces) {
+            if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
+            foreach (vi; face) {
+                if (!vis[vi]) {
+                    sum = vec3Add(sum, vertices[vi]);
+                    count++;
+                    vis[vi] = true;
+                }
+            }
+        }
+        return count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+    }
+
     /// Return the centroid (average position) of face `fi`.
     Vec3 faceCentroid(uint fi) const {
         const uint[] face = faces[fi];
