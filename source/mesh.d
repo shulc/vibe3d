@@ -184,6 +184,15 @@ struct Mesh {
     /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
     FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
 
+    /// Return the centroid (average position) of face `fi`.
+    Vec3 faceCentroid(uint fi) const {
+        const uint[] face = faces[fi];
+        Vec3 s = Vec3(0, 0, 0);
+        foreach (vi; face) s = vec3Add(s, vertices[vi]);
+        float inv = 1.0f / cast(float)face.length;
+        return Vec3(s.x * inv, s.y * inv, s.z * inv);
+    }
+
     /// Return the canonical edge key for edge `ei` (order-independent hash of its two vertices).
     pragma(inline, true)
     ulong edgeKeyOf(uint ei) const {
@@ -401,12 +410,8 @@ Mesh catmullClark(ref const Mesh m) {
 
     // Step 1 — face points: centroid of each face
     Vec3[] facePoints = new Vec3[](nF);
-    foreach (fi, face; m.faces) {
-        Vec3 s = Vec3(0, 0, 0);
-        foreach (vi; face) s = vec3Add(s, m.vertices[vi]);
-        float inv = 1.0f / cast(float)face.length;
-        facePoints[fi] = Vec3(s.x * inv, s.y * inv, s.z * inv);
-    }
+    foreach (fi; 0 .. m.faces.length)
+        facePoints[fi] = m.faceCentroid(cast(uint)fi);
 
     // Step 2 — edge points
     Vec3[] edgePoints = new Vec3[](nE);

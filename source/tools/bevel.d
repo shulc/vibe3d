@@ -749,11 +749,7 @@ private:
             if (!allFaces && (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi])) continue;
             if (face.length < 3) continue;
 
-            Vec3 c = Vec3(0, 0, 0);
-            foreach (vi; face) c = vec3Add(c, mesh.vertices[vi]);
-            float inv = 1.0f / cast(float)face.length;
-            c = Vec3(c.x * inv, c.y * inv, c.z * inv);
-            centerSum = vec3Add(centerSum, c);
+            centerSum = vec3Add(centerSum, mesh.faceCentroid(cast(uint)fi));
 
             normalSum = vec3Add(normalSum, mesh.faceNormal(cast(uint)fi));
 
