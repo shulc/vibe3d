@@ -184,6 +184,13 @@ struct Mesh {
     /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
     FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
 
+    /// Return a range over all faces that share an edge with face `fi`.
+    /// Uses twin links from the half-edge structure — no hash map needed.
+    AdjacentFaceRange adjacentFaces(uint fi) const {
+        uint start = (fi < faceLoop.length) ? faceLoop[fi] : ~0u;
+        return AdjacentFaceRange(loops, start);
+    }
+
     /// Return the centroid (average position) of face `fi`.
     Vec3 faceCentroid(uint fi) const {
         const uint[] face = faces[fi];
@@ -338,6 +345,54 @@ struct FaceEdgeRange {
     @property FaceEdge  front() const { return FaceEdge(_verts[_j], _verts[(_j + 1) % _verts.length]); }
     void popFront() { ++_j; }
     @property FaceEdgeRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// AdjacentFaceRange
+// ---------------------------------------------------------------------------
+
+/// Forward range over all faces that share an edge with a given face.
+/// Uses the half-edge twin links directly — no hash map needed.
+/// Boundary edges (twin == ~0u) are skipped silently.
+/// Each adjacent face is yielded once per shared edge (normally once per face).
+struct AdjacentFaceRange {
+    private const(Loop)[] _loops;
+    private uint _start;  // faceLoop[fi]: first loop of the face
+    private uint _cur;    // loop currently pointing at an adjacent face
+    private bool _done;
+
+    this(const(Loop)[] loops, uint faceStart) {
+        _loops    = loops;
+        _start    = faceStart;
+        _cur      = faceStart;
+        _done     = (faceStart == ~0u);
+        if (!_done) _skipInvalid();
+    }
+
+    @property bool empty() const { return _done; }
+
+    /// Index of the adjacent face reached via the current loop's twin.
+    @property uint front() const
+    in (!_done)
+    { return _loops[_loops[_cur].twin].face; }
+
+    void popFront()
+    in (!_done)
+    {
+        _cur = _loops[_cur].next;
+        if (_cur == _start) { _done = true; return; }
+        _skipInvalid();
+    }
+
+    @property AdjacentFaceRange save() const { return this; }
+
+private:
+    void _skipInvalid() {
+        while (_loops[_cur].twin == ~0u) {
+            _cur = _loops[_cur].next;
+            if (_cur == _start) { _done = true; return; }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
