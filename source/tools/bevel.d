@@ -755,13 +755,7 @@ private:
             c = Vec3(c.x * inv, c.y * inv, c.z * inv);
             centerSum = vec3Add(centerSum, c);
 
-            Vec3 v0 = mesh.vertices[face[0]];
-            Vec3 v1 = mesh.vertices[face[1]];
-            Vec3 v2 = mesh.vertices[face[2]];
-            Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
-            float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-            if (len > 1e-6f)
-                normalSum = vec3Add(normalSum, Vec3(cr.x/len, cr.y/len, cr.z/len));
+            normalSum = vec3Add(normalSum, mesh.faceNormal(cast(uint)fi));
 
             count++;
         }

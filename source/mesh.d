@@ -181,6 +181,12 @@ struct Mesh {
         return (vi == a) ? b : a;
     }
 
+    /// Return the canonical edge key for edge `ei` (order-independent hash of its two vertices).
+    pragma(inline, true)
+    ulong edgeKeyOf(uint ei) const {
+        return edgeKey(edges[ei][0], edges[ei][1]);
+    }
+
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
     /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
     /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.

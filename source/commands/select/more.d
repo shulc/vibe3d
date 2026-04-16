@@ -68,7 +68,7 @@ private:
                        ref uint[][ulong] ef, ref int[ulong] ke) {
         const sfv = mesh.faces[startFace];
         if (sfv.length != 4) return [];
-        ulong startKey = edgeKey(mesh.edges[startEdge][0], mesh.edges[startEdge][1]);
+        ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
         int si = -1;
         for (int j = 0; j < 4; j++)
             if (edgeKey(sfv[j], sfv[(j+1)%4]) == startKey) { si = j; break; }
@@ -242,10 +242,10 @@ private:
         auto ef = buildEdgeFaces();
         int[ulong] keyToEdge;
         foreach (i; 0 .. mesh.edges.length)
-            keyToEdge[edgeKey(mesh.edges[i][0], mesh.edges[i][1])] = cast(int)i;
+            keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
 
         // Try both adjacent faces of secondLastEdge (each gives one loop direction).
-        ulong slKey = edgeKey(mesh.edges[secondLastEdge][0], mesh.edges[secondLastEdge][1]);
+        ulong slKey = mesh.edgeKeyOf(cast(uint)secondLastEdge);
         auto fp = slKey in ef;
         if (!fp) return true;
 
@@ -294,10 +294,8 @@ private:
         int bestNext = -1, bestPos = int.max;
         foreach (i; 0 .. mesh.edges.length) {
             uint ea = mesh.edges[i][0], eb = mesh.edges[i][1];
-            uint neighbor;
-            if      (ea == cast(uint)secondLastVert) neighbor = eb;
-            else if (eb == cast(uint)secondLastVert) neighbor = ea;
-            else continue;
+            if (ea != cast(uint)secondLastVert && eb != cast(uint)secondLastVert) continue;
+            uint neighbor = mesh.edgeOtherVertex(cast(uint)i, cast(uint)secondLastVert);
 
             uint[] seq = walkVertexLoop(cast(uint)secondLastVert, neighbor, ef);
             if (seq.length < 2) continue;

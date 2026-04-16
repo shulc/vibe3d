@@ -627,11 +627,8 @@ void main(string[] args) {
                         uint[] face = mesh.faces[fi];
                         if (face.length < 3) continue;
                         // Back-face cull
-                        Vec3 v0 = mesh.vertices[face[0]];
-                        Vec3 v1 = mesh.vertices[face[1]];
-                        Vec3 v2 = mesh.vertices[face[2]];
-                        Vec3 fn = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
-                        if (dot(fn, vec3Sub(v0, vp2.eye)) >= 0) continue;
+                        Vec3 fn = mesh.faceNormal(cast(uint)fi);
+                        if (dot(fn, vec3Sub(mesh.vertices[face[0]], vp2.eye)) >= 0) continue;
                         // All vertices must project onto screen and be inside the lasso
                         bool allInside = true;
                         foreach (vi; face) {
@@ -864,11 +861,8 @@ void main(string[] args) {
 
             // Back-face culling: skip faces whose normal points away from camera.
             {
-                Vec3 v0 = mesh.vertices[face[0]];
-                Vec3 v1 = mesh.vertices[face[1]];
-                Vec3 v2 = mesh.vertices[face[2]];
-                Vec3 n = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
-                if (dot(n, vec3Sub(v0, cameraView.eye)) >= 0) continue;
+                Vec3 n = mesh.faceNormal(cast(uint)fi);
+                if (dot(n, vec3Sub(mesh.vertices[face[0]], cameraView.eye)) >= 0) continue;
             }
 
             // Quick bounds check if cached — avoids expensive projection.

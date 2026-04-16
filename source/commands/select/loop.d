@@ -27,7 +27,7 @@ class SelectLoop : Command {
             // Build edge key → edge index map.
             int[ulong] keyToEdge;
             foreach (i; 0 .. mesh.edges.length)
-                keyToEdge[edgeKey(mesh.edges[i][0], mesh.edges[i][1])] = cast(int)i;
+                keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
 
             // Ensure selectedEdges covers all edges.
             if (mesh.selectedEdges.length < mesh.edges.length)
@@ -41,7 +41,7 @@ class SelectLoop : Command {
                 const startFaceVerts = mesh.faces[startFace];
                 if (startFaceVerts.length != 4) return;
 
-                ulong startKey = edgeKey(mesh.edges[startEdge][0], mesh.edges[startEdge][1]);
+                ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
                 int startIdx = -1;
                 for (int j = 0; j < 4; j++) {
                     if (edgeKey(startFaceVerts[j], startFaceVerts[(j + 1) % 4]) == startKey) {
@@ -120,7 +120,7 @@ class SelectLoop : Command {
             // For each originally selected edge walk the loop in both face directions.
             foreach (i; 0 .. initSel.length) {
                 if (!initSel[i]) continue;
-                ulong key = edgeKey(mesh.edges[i][0], mesh.edges[i][1]);
+                ulong key = mesh.edgeKeyOf(cast(uint)i);
                 auto fp = key in edgeFaces;
                 if (!fp) continue;
                 foreach (fi; *fp)
@@ -143,7 +143,7 @@ class SelectLoop : Command {
                 const startFaceVerts = mesh.faces[startFace];
                 if (startFaceVerts.length != 4) return;
 
-                ulong startKey = edgeKey(mesh.edges[startEdge][0], mesh.edges[startEdge][1]);
+                ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
                 int startIdx = -1;
                 for (int j = 0; j < 4; j++) {
                     if (edgeKey(startFaceVerts[j], startFaceVerts[(j + 1) % 4]) == startKey) {

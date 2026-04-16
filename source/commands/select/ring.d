@@ -31,7 +31,7 @@ class SelectRing : Command {
         // edgeKey(a,b) → edge index in mesh.edges
         int[ulong] keyToEdge;
         foreach (i; 0 .. mesh.edges.length)
-            keyToEdge[edgeKey(mesh.edges[i][0], mesh.edges[i][1])] = cast(int)i;
+            keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
 
         // Walk the ring from startEdge entering through startFace.
         // For each quad: finds the opposite edge and calls onOpposite(va, vb).
@@ -40,7 +40,7 @@ class SelectRing : Command {
                       scope void delegate(uint a, uint b) onOpposite) {
             bool[int] visited;
             int   curFace = startFace;
-            ulong curKey  = edgeKey(mesh.edges[startEdge][0], mesh.edges[startEdge][1]);
+            ulong curKey  = mesh.edgeKeyOf(cast(uint)startEdge);
 
             while (true) {
                 if (curFace in visited) break;
@@ -79,7 +79,7 @@ class SelectRing : Command {
             bool[] initSel = mesh.selectedEdges.dup;
             foreach (i; 0 .. initSel.length) {
                 if (!initSel[i]) continue;
-                ulong key = edgeKey(mesh.edges[i][0], mesh.edges[i][1]);
+                ulong key = mesh.edgeKeyOf(cast(uint)i);
                 auto fp = key in edgeFaces;
                 if (!fp) continue;
                 foreach (fi; *fp)

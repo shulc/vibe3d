@@ -175,7 +175,7 @@ private:
                        ref uint[][ulong] ef, ref int[ulong] ke) {
         const sfv = mesh.faces[startFace];
         if (sfv.length != 4) return [];
-        ulong startKey = edgeKey(mesh.edges[startEdge][0], mesh.edges[startEdge][1]);
+        ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
         int si = -1;
         for (int j = 0; j < 4; j++)
             if (edgeKey(sfv[j], sfv[(j+1)%4]) == startKey) { si = j; break; }
@@ -236,7 +236,7 @@ private:
             if (face.length != 4) break;
 
             // Find curEdge in face winding.
-            ulong ek = edgeKey(mesh.edges[curEdge][0], mesh.edges[curEdge][1]);
+            ulong ek = mesh.edgeKeyOf(cast(uint)curEdge);
             int ei = -1;
             for (int j = 0; j < 4; j++)
                 if (edgeKey(face[j], face[(j+1)%4]) == ek) { ei = j; break; }
@@ -284,10 +284,10 @@ private:
 
         int[ulong] keyToEdge;
         foreach (i; 0 .. mesh.edges.length)
-            keyToEdge[edgeKey(mesh.edges[i][0], mesh.edges[i][1])] = cast(int)i;
+            keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
 
         // Try both adjacent faces of secondLastEdge (each gives one loop direction).
-        ulong slKey = edgeKey(mesh.edges[secondLastEdge][0], mesh.edges[secondLastEdge][1]);
+        ulong slKey = mesh.edgeKeyOf(cast(uint)secondLastEdge);
         auto fp = slKey in ef;
         if (!fp) return true;
 
@@ -351,10 +351,8 @@ private:
 
         foreach (i; 0 .. mesh.edges.length) {
             uint ea = mesh.edges[i][0], eb = mesh.edges[i][1];
-            uint neighbor;
-            if      (ea == cast(uint)secondLastVert) neighbor = eb;
-            else if (eb == cast(uint)secondLastVert) neighbor = ea;
-            else continue;
+            if (ea != cast(uint)secondLastVert && eb != cast(uint)secondLastVert) continue;
+            uint neighbor = mesh.edgeOtherVertex(cast(uint)i, cast(uint)secondLastVert);
 
             uint[] loop = walkVertexLoop(cast(uint)secondLastVert, neighbor, ef);
             if (loop.length < 2) continue;
