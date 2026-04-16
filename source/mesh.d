@@ -170,6 +170,17 @@ struct Mesh {
         return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
     }
 
+    /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
+    /// In debug builds, asserts that `vi` is actually one of the edge's endpoints.
+    pragma(inline, true)
+    uint edgeOtherVertex(uint ei, uint vi) const {
+        uint a = edges[ei][0];
+        uint b = edges[ei][1];
+        debug assert(vi == a || vi == b,
+                     "edgeOtherVertex: vi does not belong to edge ei");
+        return (vi == a) ? b : a;
+    }
+
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
     /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
     /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.
