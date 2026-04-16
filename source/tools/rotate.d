@@ -335,19 +335,8 @@ private:
     void commitWholeMeshRotation(float angle) {
         if (dragStartVertices.length != mesh.vertices.length) return;
         Vec3 pivot = handler.center;
-        float c = cos(angle), s = sin(angle);
-        float ax = dragAxisVec.x, ay = dragAxisVec.y, az = dragAxisVec.z;
-        float t = 1.0f - c;
-        foreach (i; 0 .. mesh.vertices.length) {
-            Vec3 p = dragStartVertices[i] - pivot;
-            float dd = p.x*ax + p.y*ay + p.z*az;
-            Vec3 pcr = cross(dragAxisVec, p);
-            mesh.vertices[i] = pivot + Vec3(
-                p.x*c + pcr.x*s + ax*dd*t,
-                p.y*c + pcr.y*s + ay*dd*t,
-                p.z*c + pcr.z*s + az*dd*t,
-            );
-        }
+        foreach (i; 0 .. mesh.vertices.length)
+            mesh.vertices[i] = rotateVec(dragStartVertices[i], pivot, dragAxisVec, angle);
     }
 
     // Apply X→Y→Z Euler rotation from origVertices to CPU vertices only (no GPU).
@@ -377,17 +366,8 @@ private:
     // Apply incremental rotation to cached vertex indices — used for partial selection.
     void applyRotationVec(Vec3 axisVec, float angle) {
         Vec3 pivot = handler.center;
-        float c = cos(angle), s = sin(angle);
-        foreach (vi; vertexIndicesToProcess) {
-            Vec3 p = mesh.vertices[vi] - pivot;
-            float dd = p.x*axisVec.x + p.y*axisVec.y + p.z*axisVec.z;
-            Vec3 pcr = cross(axisVec, p);
-            mesh.vertices[vi] = pivot + Vec3(
-                p.x*c + pcr.x*s + axisVec.x*dd*(1.0f - c),
-                p.y*c + pcr.y*s + axisVec.y*dd*(1.0f - c),
-                p.z*c + pcr.z*s + axisVec.z*dd*(1.0f - c),
-            );
-        }
+        foreach (vi; vertexIndicesToProcess)
+            mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, axisVec, angle);
         needsGpuUpdate = true;
     }
 
