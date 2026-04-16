@@ -169,8 +169,7 @@ private:
 
     // Walk edge loop starting from startEdge on startFace.
     // Returns ordered edge indices.
-    int[] walkEdgeLoop(int startEdge, int startFace,
-                       ref uint[][ulong] ef, ref int[ulong] ke) {
+    int[] walkEdgeLoop(int startEdge, int startFace, ref uint[][ulong] ef) {
         const sfv = mesh.faces[startFace];
         if (sfv.length != 4) return [];
         ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
@@ -208,8 +207,8 @@ private:
             if      (p2 == c) d = n2;
             else if (n2 == c) d = p2;
             else break;
-            auto ep = edgeKey(b, d) in ke; if (!ep) break;
-            a = b; b = d; curEdge = *ep; curFace = nf;
+            uint bd_ei = mesh.edgeIndex(b, d); if (bd_ei == ~0u) break;
+            a = b; b = d; curEdge = cast(int)bd_ei; curFace = nf;
         }
         return res;
     }
@@ -219,8 +218,7 @@ private:
     // the final exit edge when the loop ends at a boundary (open chain).
     // For a closed loop of L faces this yields L edges; for an open chain of
     // L faces it yields L+1 edges (one on each side of every face).
-    int[] walkFaceLoopEdges(int startEdge, int startFace,
-                            ref uint[][ulong] ef, ref int[ulong] ke) {
+    int[] walkFaceLoopEdges(int startEdge, int startFace, ref uint[][ulong] ef) {
         int[] res;
         bool[int] vis;
         int cur     = startFace;
@@ -243,8 +241,8 @@ private:
             // Exit via opposite edge.
             int   oppIdx  = (ei + 2) % 4;
             ulong oppKey  = edgeKey(face[oppIdx], face[(oppIdx+1)%4]);
-            auto  ep      = oppKey in ke; if (!ep) break;
-            int   exitEdge = *ep;
+            uint  opp_ei  = mesh.edgeIndexByKey(oppKey); if (opp_ei == ~0u) break;
+            int   exitEdge = cast(int)opp_ei;
 
             // Cross to next face.
             auto p = oppKey in ef; if (!p) { res ~= exitEdge; break; }
@@ -280,10 +278,6 @@ private:
 
         auto ef = buildEdgeFaces();
 
-        int[ulong] keyToEdge;
-        foreach (i; 0 .. mesh.edges.length)
-            keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
-
         // Try both adjacent faces of secondLastEdge (each gives one loop direction).
         ulong slKey = mesh.edgeKeyOf(cast(uint)secondLastEdge);
         auto fp = slKey in ef;
@@ -294,7 +288,7 @@ private:
 
         foreach (fi; *fp) {
             // Approach 1: edge loop (both edges on the same edge loop).
-            int[] loop = walkEdgeLoop(secondLastEdge, cast(int)fi, ef, keyToEdge);
+            int[] loop = walkEdgeLoop(secondLastEdge, cast(int)fi, ef);
             if (loop.length >= 2) {
                 int posLast = -1;
                 foreach (k, ei; loop) if (ei == lastEdge) { posLast = cast(int)k; break; }
@@ -303,7 +297,7 @@ private:
 
             // Approach 2: face-loop traversal (edges on opposite sides of faces
             // in the same face loop, e.g. entry edge of F0 and exit edge of F2).
-            int[] floop = walkFaceLoopEdges(secondLastEdge, cast(int)fi, ef, keyToEdge);
+            int[] floop = walkFaceLoopEdges(secondLastEdge, cast(int)fi, ef);
             if (floop.length >= 2) {
                 int posLast = -1;
                 foreach (k, ei; floop) if (ei == lastEdge) { posLast = cast(int)k; break; }

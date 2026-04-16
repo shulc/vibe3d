@@ -27,10 +27,11 @@ struct Mesh {
     uint[2][] edges;
     uint[][]  faces;
 
-    Loop[]  loops;      // all half-edge loops
-    uint[]  faceLoop;   // faceLoop[fi] = index of first loop of face fi
-    uint[]  vertLoop;   // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
-    uint[]  loopEdge;   // loopEdge[li] = index in edges[] of the undirected edge for loop li
+    Loop[]     loops;        // all half-edge loops
+    uint[]     faceLoop;     // faceLoop[fi] = index of first loop of face fi
+    uint[]     vertLoop;     // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
+    uint[]     loopEdge;     // loopEdge[li] = index in edges[] of the undirected edge for loop li
+    uint[ulong] edgeIndexMap; // edgeKey(a,b) → index in edges[]; populated by buildLoops + addEdge
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
@@ -83,8 +84,9 @@ struct Mesh {
         return cast(uint)(vertices.length - 1);
     }
     void addEdge(uint a, uint b) {
-        foreach (e; edges)
-            if ((e[0]==a && e[1]==b) || (e[0]==b && e[1]==a)) return;
+        ulong key = edgeKey(a, b);
+        if (key in edgeIndexMap) return;
+        edgeIndexMap[key] = cast(uint)edges.length;
         edges ~= [a, b];
     }
     void addFace(uint[] idx) {
@@ -232,6 +234,21 @@ struct Mesh {
         return edgeKey(edges[ei][0], edges[ei][1]);
     }
 
+    /// Return the index in `edges[]` of the edge connecting vertices `a` and `b`.
+    /// Returns `~0u` if no such edge exists.  O(1) via `edgeIndexMap`.
+    pragma(inline, true)
+    uint edgeIndex(uint a, uint b) const {
+        if (auto p = edgeKey(a, b) in edgeIndexMap) return *p;
+        return ~0u;
+    }
+
+    /// Same as `edgeIndex` but accepts a pre-computed canonical key.
+    pragma(inline, true)
+    uint edgeIndexByKey(ulong key) const {
+        if (auto p = key in edgeIndexMap) return *p;
+        return ~0u;
+    }
+
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
     /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
     /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.
@@ -286,19 +303,18 @@ struct Mesh {
                 loops[idx].twin = *p;
         }
 
-        // Third pass: fill loopEdge and anchor vertLoop at the open start of each fan.
+        // Third pass: fill loopEdge, rebuild edgeIndexMap, and anchor vertLoop at the open start
+        // of each fan.
         //
         // loopEdge[li] = index in edges[] for the undirected edge of loop li.
         loopEdge.length = total;
         loopEdge[]      = ~0u;
-        {
-            uint[ulong] eiMap;
-            foreach (i, e; edges) eiMap[edgeKey(e[0], e[1])] = cast(uint)i;
-            foreach (idx; 0 .. total) {
-                uint u = loops[idx].vert;
-                uint v = loops[loops[idx].next].vert;
-                if (auto p = edgeKey(u, v) in eiMap) loopEdge[idx] = *p;
-            }
+        edgeIndexMap    = null;
+        foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
+        foreach (idx; 0 .. total) {
+            uint u = loops[idx].vert;
+            uint v = loops[loops[idx].next].vert;
+            if (auto p = edgeKey(u, v) in edgeIndexMap) loopEdge[idx] = *p;
         }
         // For boundary vertices, vertLoop was set to an arbitrary loop.
         // Walk backward (via next(twin(cur))) until cur.twin == ~0u (open start)

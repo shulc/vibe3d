@@ -21,11 +21,6 @@ class SelectLoop : Command {
         //  Edge loop                                                           //
         // ------------------------------------------------------------------ //
         if (editMode == EditMode.Edges) {
-            // Build edge key → edge index map.
-            int[ulong] keyToEdge;
-            foreach (i; 0 .. mesh.edges.length)
-                keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
-
             // Ensure selectedEdges covers all edges.
             if (mesh.selectedEdges.length < mesh.edges.length)
                 mesh.selectedEdges.length = mesh.edges.length;
@@ -100,12 +95,12 @@ class SelectLoop : Command {
                     else break;
 
                     // Next loop edge is (b,d) in nextFace.
-                    auto ep = edgeKey(b, d) in keyToEdge;
-                    if (!ep) break;
+                    uint bd_ei = mesh.edgeIndex(b, d);
+                    if (bd_ei == ~0u) break;
 
                     a = b;
                     b = d;
-                    curEdge = *ep;
+                    curEdge = cast(int)bd_ei;
                     curFace = nextFace;
                 }
             }

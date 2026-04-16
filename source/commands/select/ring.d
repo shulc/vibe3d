@@ -26,11 +26,6 @@ class SelectRing : Command {
             foreach (e; mesh.faceEdges(cast(uint)fi))
                 edgeFaces[edgeKey(e.a, e.b)] ~= cast(uint)fi;
 
-        // edgeKey(a,b) → edge index in mesh.edges
-        int[ulong] keyToEdge;
-        foreach (i; 0 .. mesh.edges.length)
-            keyToEdge[mesh.edgeKeyOf(cast(uint)i)] = cast(int)i;
-
         // Walk the ring from startEdge entering through startFace.
         // For each quad: finds the opposite edge and calls onOpposite(va, vb).
         // Then crosses to the next face via that opposite edge.
@@ -54,7 +49,7 @@ class SelectRing : Command {
 
                 int   oppJ   = (j + 2) % 4;
                 ulong oppKey = edgeKey(face[oppJ], face[(oppJ + 1) % 4]);
-                if ((oppKey in keyToEdge) is null) break;
+                if (mesh.edgeIndexByKey(oppKey) == ~0u) break;
 
                 onOpposite(face[oppJ], face[(oppJ + 1) % 4]);
 
@@ -82,8 +77,8 @@ class SelectRing : Command {
                 if (!fp) continue;
                 foreach (fi; *fp)
                     walkRing(cast(int)i, cast(int)fi, (uint a, uint b) {
-                        auto ep = edgeKey(a, b) in keyToEdge;
-                        if (ep) mesh.selectEdge(*ep);
+                        uint ei = mesh.edgeIndex(a, b);
+                        if (ei != ~0u) mesh.selectEdge(cast(int)ei);
                     });
             }
         } else { // Vertices
