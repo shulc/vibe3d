@@ -20,51 +20,6 @@ class SelectRing : Command {
     override bool apply() {
         if (editMode != EditMode.Edges && editMode != EditMode.Vertices) return true;
 
-        // edgeKey(a,b) → list of face indices containing this geometric edge
-        uint[][ulong] edgeFaces;
-        foreach (fi, face; mesh.faces)
-            foreach (e; mesh.faceEdges(cast(uint)fi))
-                edgeFaces[edgeKey(e.a, e.b)] ~= cast(uint)fi;
-
-        // Walk the ring from startEdge entering through startFace.
-        // For each quad: finds the opposite edge and calls onOpposite(va, vb).
-        // Then crosses to the next face via that opposite edge.
-        void walkRing(int startEdge, int startFace,
-                      scope void delegate(uint a, uint b) onOpposite) {
-            bool[int] visited;
-            int   curFace = startFace;
-            ulong curKey  = mesh.edgeKeyOf(cast(uint)startEdge);
-
-            while (true) {
-                if (curFace in visited) break;
-                const face = mesh.faces[curFace];
-                if (face.length != 4) break;
-
-                int j = -1;
-                for (int k = 0; k < 4; k++)
-                    if (edgeKey(face[k], face[(k + 1) % 4]) == curKey) { j = k; break; }
-                if (j < 0) break;
-
-                visited[curFace] = true;
-
-                int   oppJ   = (j + 2) % 4;
-                ulong oppKey = edgeKey(face[oppJ], face[(oppJ + 1) % 4]);
-                if (mesh.edgeIndexByKey(oppKey) == ~0u) break;
-
-                onOpposite(face[oppJ], face[(oppJ + 1) % 4]);
-
-                auto fp = oppKey in edgeFaces;
-                if (!fp) break;
-                int nextFace = -1;
-                foreach (fi; *fp)
-                    if (fi != cast(uint)curFace) { nextFace = cast(int)fi; break; }
-                if (nextFace < 0) break;
-
-                curFace = nextFace;
-                curKey  = oppKey;
-            }
-        }
-
         if (editMode == EditMode.Edges) {
             if (mesh.selectedEdges.length < mesh.edges.length)
                 mesh.selectedEdges.length = mesh.edges.length;
@@ -72,18 +27,11 @@ class SelectRing : Command {
             bool[] initSel = mesh.selectedEdges.dup;
             foreach (i; 0 .. initSel.length) {
                 if (!initSel[i]) continue;
-                ulong key = mesh.edgeKeyOf(cast(uint)i);
-                auto fp = key in edgeFaces;
-                if (!fp) continue;
-                foreach (fi; *fp)
-                    walkRing(cast(int)i, cast(int)fi, (uint a, uint b) {
-                        uint ei = mesh.edgeIndex(a, b);
-                        if (ei != ~0u) mesh.selectEdge(cast(int)ei);
-                    });
+                foreach (fi; mesh.facesAroundEdge(cast(uint)i))
+                    foreach (ei; mesh.walkEdgeRing(cast(int)i, cast(int)fi))
+                        mesh.selectEdge(ei);
             }
         } else { // Vertices
-            // Treat each mesh edge whose both endpoints are selected as a seed,
-            // mirroring the multi-edge logic above.
             if (mesh.selectedVertices.length < mesh.vertices.length)
                 mesh.selectedVertices.length = mesh.vertices.length;
 
@@ -92,14 +40,11 @@ class SelectRing : Command {
                 uint va = mesh.edges[i][0], vb = mesh.edges[i][1];
                 if (va >= initSel.length || !initSel[va]) continue;
                 if (vb >= initSel.length || !initSel[vb]) continue;
-                ulong key = edgeKey(va, vb);
-                auto fp = key in edgeFaces;
-                if (!fp) continue;
-                foreach (fi; *fp)
-                    walkRing(cast(int)i, cast(int)fi, (uint a, uint b) {
-                        mesh.selectVertex(cast(int)a);
-                        mesh.selectVertex(cast(int)b);
-                    });
+                foreach (fi; mesh.facesAroundEdge(cast(uint)i))
+                    foreach (ei; mesh.walkEdgeRing(cast(int)i, cast(int)fi)) {
+                        mesh.selectVertex(cast(int)mesh.edges[ei][0]);
+                        mesh.selectVertex(cast(int)mesh.edges[ei][1]);
+                    }
             }
         }
 

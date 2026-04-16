@@ -11,114 +11,20 @@ class SelectLoop : Command {
     override string name() const { return "select.loop"; }
 
     override bool apply() {
-        // Build edge → faces map (used by both modes).
-        uint[][ulong] edgeFaces;
-        foreach (fi, face; mesh.faces)
-            foreach (e; mesh.faceEdges(cast(uint)fi))
-                edgeFaces[edgeKey(e.a, e.b)] ~= cast(uint)fi;
-
         // ------------------------------------------------------------------ //
         //  Edge loop                                                           //
         // ------------------------------------------------------------------ //
         if (editMode == EditMode.Edges) {
-            // Ensure selectedEdges covers all edges.
             if (mesh.selectedEdges.length < mesh.edges.length)
                 mesh.selectedEdges.length = mesh.edges.length;
 
-            // Walk an edge loop starting from `startEdge` through face `startFace`.
-            // Direction: a→b per winding. At b, find side vertex c (≠ a), cross into the
-            // adjacent face via side edge (b,c), then in that face find d (≠ c at b) —
-            // edge (b,d) is the next loop edge. This makes consecutive edges share a vertex.
-            void walkEdge(int startEdge, int startFace) {
-                const startFaceVerts = mesh.faces[startFace];
-                if (startFaceVerts.length != 4) return;
-
-                ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
-                int startIdx = -1;
-                for (int j = 0; j < 4; j++) {
-                    if (edgeKey(startFaceVerts[j], startFaceVerts[(j + 1) % 4]) == startKey) {
-                        startIdx = j; break;
-                    }
-                }
-                if (startIdx < 0) return;
-
-                uint a = startFaceVerts[startIdx];
-                uint b = startFaceVerts[(startIdx + 1) % 4];
-                int  curEdge = startEdge;
-                int  curFace = startFace;
-
-                bool[ulong] visitedKeys;
-                while (true) {
-                    ulong curKey = edgeKey(a, b);
-                    if (curKey in visitedKeys) break;
-                    visitedKeys[curKey] = true;
-                    mesh.selectEdge(curEdge);
-
-                    const face = mesh.faces[curFace];
-                    if (face.length != 4) break;
-
-                    // At b: find side vertex c (the neighbor of b in face that is ≠ a).
-                    int jb = -1;
-                    for (int j = 0; j < 4; j++)
-                        if (face[j] == b) { jb = j; break; }
-                    if (jb < 0) break;
-
-                    uint prev = face[(jb - 1 + 4) % 4];
-                    uint next = face[(jb + 1) % 4];
-                    uint c;
-                    if      (prev == a) c = next;
-                    else if (next == a) c = prev;
-                    else break;
-
-                    // Cross into the face adjacent to side edge (b,c).
-                    auto fp2 = edgeKey(b, c) in edgeFaces;
-                    if (!fp2) break;
-                    int nextFace = -1;
-                    foreach (fi; *fp2)
-                        if (fi != cast(uint)curFace) { nextFace = cast(int)fi; break; }
-                    if (nextFace < 0) break;
-
-                    // In nextFace at b: find d, the neighbor of b that is ≠ c.
-                    const nface = mesh.faces[nextFace];
-                    if (nface.length != 4) break;
-
-                    int jb2 = -1;
-                    for (int j = 0; j < 4; j++)
-                        if (nface[j] == b) { jb2 = j; break; }
-                    if (jb2 < 0) break;
-
-                    uint prev2 = nface[(jb2 - 1 + 4) % 4];
-                    uint next2 = nface[(jb2 + 1) % 4];
-                    uint d;
-                    if      (prev2 == c) d = next2;
-                    else if (next2 == c) d = prev2;
-                    else break;
-
-                    // Next loop edge is (b,d) in nextFace.
-                    uint bd_ei = mesh.edgeIndex(b, d);
-                    if (bd_ei == ~0u) break;
-
-                    a = b;
-                    b = d;
-                    curEdge = cast(int)bd_ei;
-                    curFace = nextFace;
-                }
-            }
-
-            // Snapshot initial selection; only walk loops from originally selected edges,
-            // not from edges added during the walk (each edge can belong to different loops).
             bool[] initSel = mesh.selectedEdges.dup;
-
-            // For each originally selected edge walk the loop in both face directions.
             foreach (i; 0 .. initSel.length) {
                 if (!initSel[i]) continue;
-                ulong key = mesh.edgeKeyOf(cast(uint)i);
-                auto fp = key in edgeFaces;
-                if (!fp) continue;
-                foreach (fi; *fp)
-                    walkEdge(cast(int)i, cast(int)fi);
+                foreach (fi; mesh.facesAroundEdge(cast(uint)i))
+                    foreach (ei; mesh.walkEdgeLoop(cast(int)i, cast(int)fi))
+                        mesh.selectEdge(ei);
             }
-
             return true;
         }
 
@@ -129,90 +35,14 @@ class SelectLoop : Command {
             if (mesh.selectedVertices.length < mesh.vertices.length)
                 mesh.selectedVertices.length = mesh.vertices.length;
 
-            // Same traversal as edge loop, but selects the two vertices of each
-            // loop edge instead of the edge itself.
-            void walkVertexLoop(int startEdge, int startFace) {
-                const startFaceVerts = mesh.faces[startFace];
-                if (startFaceVerts.length != 4) return;
-
-                ulong startKey = mesh.edgeKeyOf(cast(uint)startEdge);
-                int startIdx = -1;
-                for (int j = 0; j < 4; j++) {
-                    if (edgeKey(startFaceVerts[j], startFaceVerts[(j + 1) % 4]) == startKey) {
-                        startIdx = j; break;
-                    }
-                }
-                if (startIdx < 0) return;
-
-                uint a = startFaceVerts[startIdx];
-                uint b = startFaceVerts[(startIdx + 1) % 4];
-                int  curFace = startFace;
-
-                bool[ulong] visitedKeys;
-                while (true) {
-                    ulong curKey = edgeKey(a, b);
-                    if (curKey in visitedKeys) break;
-                    visitedKeys[curKey] = true;
-                    mesh.selectVertex(cast(int)a);
-                    mesh.selectVertex(cast(int)b);
-
-                    const face = mesh.faces[curFace];
-                    if (face.length != 4) break;
-
-                    int jb = -1;
-                    for (int j = 0; j < 4; j++)
-                        if (face[j] == b) { jb = j; break; }
-                    if (jb < 0) break;
-
-                    uint prev = face[(jb - 1 + 4) % 4];
-                    uint next = face[(jb + 1) % 4];
-                    uint c;
-                    if      (prev == a) c = next;
-                    else if (next == a) c = prev;
-                    else break;
-
-                    auto fp2 = edgeKey(b, c) in edgeFaces;
-                    if (!fp2) break;
-                    int nextFace = -1;
-                    foreach (fi; *fp2)
-                        if (fi != cast(uint)curFace) { nextFace = cast(int)fi; break; }
-                    if (nextFace < 0) break;
-
-                    const nface = mesh.faces[nextFace];
-                    if (nface.length != 4) break;
-
-                    int jb2 = -1;
-                    for (int j = 0; j < 4; j++)
-                        if (nface[j] == b) { jb2 = j; break; }
-                    if (jb2 < 0) break;
-
-                    uint prev2 = nface[(jb2 - 1 + 4) % 4];
-                    uint next2 = nface[(jb2 + 1) % 4];
-                    uint d;
-                    if      (prev2 == c) d = next2;
-                    else if (next2 == c) d = prev2;
-                    else break;
-
-                    a = b;
-                    b = d;
-                    curFace = nextFace;
-                }
-            }
-
-            // Starting edges: those with both endpoints initially selected.
-            // Snapshot to avoid cascade from newly selected vertices.
             bool[] initVSel = mesh.selectedVertices.dup;
-
             foreach (i; 0 .. mesh.edges.length) {
                 uint va = mesh.edges[i][0], vb = mesh.edges[i][1];
-                if (va >= initVSel.length || vb >= initVSel.length) continue;
-                if (!initVSel[va] || !initVSel[vb]) continue;
-                auto fp = edgeKey(va, vb) in edgeFaces;
-                if (!fp) continue;
-                foreach (fi; *fp)
-                    walkVertexLoop(cast(int)i, cast(int)fi);
+                if (va >= initVSel.length || !initVSel[va]) continue;
+                if (vb >= initVSel.length || !initVSel[vb]) continue;
+                foreach (vi; mesh.walkVertexLoop(va, vb)) mesh.selectVertex(cast(int)vi);
+                foreach (vi; mesh.walkVertexLoop(vb, va)) mesh.selectVertex(cast(int)vi);
             }
-
             return true;
         }
 
@@ -246,15 +76,14 @@ class SelectLoop : Command {
         foreach (fi, face; mesh.faces) {
             if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
             foreach (e; mesh.faceEdges(cast(uint)fi)) {
-                uint va = e.a, vb = e.b;
-                ulong key = edgeKey(va, vb);
-                if (auto p = key in edgeFaces) {
-                    foreach (adjFi; *p) {
-                        if (adjFi > fi &&
-                            adjFi < mesh.selectedFaces.length &&
-                            mesh.selectedFaces[adjFi])
-                            pairs ~= Pair(cast(int)fi, cast(int)adjFi, key);
-                    }
+                uint ei = mesh.edgeIndex(e.a, e.b);
+                if (ei == ~0u) continue;
+                ulong key = edgeKey(e.a, e.b);
+                foreach (adjFi; mesh.facesAroundEdge(ei)) {
+                    if (adjFi > fi &&
+                        adjFi < mesh.selectedFaces.length &&
+                        mesh.selectedFaces[adjFi])
+                        pairs ~= Pair(cast(int)fi, cast(int)adjFi, key);
                 }
             }
         }
@@ -285,42 +114,6 @@ class SelectLoop : Command {
             if (best != i) { auto tmp = groups[i]; groups[i] = groups[best]; groups[best] = tmp; }
         }
 
-        void walkFace(int startFace, ulong entryKey) {
-            bool[int] visited;
-            int   cur   = startFace;
-            ulong entry = entryKey;
-            while (true) {
-                if (cur in visited) break;
-                visited[cur] = true;
-                mesh.selectFace(cur);
-
-                const face = mesh.faces[cur];
-                if (face.length != 4) break;
-
-                int entryIdx = -1;
-                for (int j = 0; j < 4; j++) {
-                    if (edgeKey(face[j], face[(j + 1) % 4]) == entry) {
-                        entryIdx = j; break;
-                    }
-                }
-                if (entryIdx < 0) break;
-
-                int oppIdx = (entryIdx + 2) % 4;
-                ulong oppKey = edgeKey(face[oppIdx], face[(oppIdx + 1) % 4]);
-
-                auto p = oppKey in edgeFaces;
-                if (!p) break;
-
-                int nextFace = -1;
-                foreach (adjFi; *p)
-                    if (adjFi != cast(uint)cur) { nextFace = cast(int)adjFi; break; }
-                if (nextFace < 0) break;
-
-                cur   = nextFace;
-                entry = oppKey;
-            }
-        }
-
         bool[] origSel = mesh.selectedFaces.dup;
         bool[] covered = new bool[](mesh.faces.length);
 
@@ -336,8 +129,8 @@ class SelectLoop : Command {
             if (!hasUncovered) continue;
 
             foreach (ref pair; g.pairs) {
-                walkFace(pair.a, pair.key);
-                walkFace(pair.b, pair.key);
+                foreach (fi; mesh.walkFaceLoop(pair.a, pair.key)) mesh.selectFace(fi);
+                foreach (fi; mesh.walkFaceLoop(pair.b, pair.key)) mesh.selectFace(fi);
                 covered[pair.a] = true;
                 covered[pair.b] = true;
             }

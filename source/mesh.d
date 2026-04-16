@@ -282,6 +282,22 @@ struct Mesh {
         return Vec3(s.x * inv, s.y * inv, s.z * inv);
     }
 
+    /// Return a bool mask (indexed by vertex index) where `true` means the vertex
+    /// belongs to at least one front-facing face as seen from `eye`.
+    /// A face is front-facing when its normal points toward the camera
+    /// (dot(normal, face[0] - eye) < 0).
+    bool[] visibleVertices(Vec3 eye) const {
+        bool[] vis = new bool[](vertices.length);
+        foreach (face; faces) {
+            if (face.length < 3) continue;
+            Vec3 fn = cross(vec3Sub(vertices[face[1]], vertices[face[0]]),
+                            vec3Sub(vertices[face[2]], vertices[face[0]]));
+            if (dot(fn, vec3Sub(vertices[face[0]], eye)) >= 0) continue;
+            foreach (vi; face) vis[vi] = true;
+        }
+        return vis;
+    }
+
     /// Return the canonical edge key for edge `ei` (order-independent hash of its two vertices).
     pragma(inline, true)
     ulong edgeKeyOf(uint ei) const {
@@ -301,6 +317,167 @@ struct Mesh {
     uint edgeIndexByKey(ulong key) const {
         if (auto p = key in edgeIndexMap) return *p;
         return ~0u;
+    }
+
+    // -----------------------------------------------------------------------
+    // Quad-loop / ring helpers
+    // -----------------------------------------------------------------------
+
+    /// Given edge `ei` and one of its incident faces `fi`, return the index of
+    /// the other face sharing `ei`.  Returns -1 if `ei` is a boundary edge.
+    int adjacentFaceThrough(uint ei, uint fi) const {
+        foreach (f; facesAroundEdge(ei))
+            if (f != fi) return cast(int)f;
+        return -1;
+    }
+
+    /// Find the winding-order position of the edge with canonical key `ek` in
+    /// face `fi`.  Returns -1 if not found.
+    int findEdgeInFace(uint fi, ulong ek) const {
+        const face = faces[fi];
+        for (int j = 0; j < cast(int)face.length; j++)
+            if (edgeKey(face[j], face[(j+1) % face.length]) == ek) return j;
+        return -1;
+    }
+
+    /// Walk an edge loop starting from `startEdge` in the direction given by
+    /// `startFace`.  Returns ordered edge indices; `startEdge` is first.
+    /// Stops at non-quad faces, boundaries, or when the loop closes.
+    int[] walkEdgeLoop(int startEdge, int startFace) const {
+        if (startFace < 0 || startFace >= cast(int)faces.length) return [];
+        const sfv = faces[startFace];
+        if (sfv.length != 4) return [];
+        int si = findEdgeInFace(cast(uint)startFace, edgeKeyOf(cast(uint)startEdge));
+        if (si < 0) return [];
+        uint a = sfv[si], b = sfv[(si+1)%4];
+        int curEdge = startEdge, curFace = startFace;
+        int[] res; bool[ulong] vis;
+        while (true) {
+            ulong ck = edgeKey(a, b);
+            if (ck in vis) break;
+            vis[ck] = true;
+            res ~= curEdge;
+            const face = faces[curFace];
+            if (face.length != 4) break;
+            int jb = -1;
+            for (int j = 0; j < 4; j++) if (face[j] == b) { jb = j; break; }
+            if (jb < 0) break;
+            uint prev = face[(jb-1+4)%4], next = face[(jb+1)%4], c;
+            if      (prev == a) c = next;
+            else if (next == a) c = prev;
+            else break;
+            uint sei = edgeIndex(b, c); if (sei == ~0u) break;
+            int nf = adjacentFaceThrough(sei, cast(uint)curFace); if (nf < 0) break;
+            const nface = faces[nf];
+            if (nface.length != 4) break;
+            int jb2 = -1;
+            for (int j = 0; j < 4; j++) if (nface[j] == b) { jb2 = j; break; }
+            if (jb2 < 0) break;
+            uint p2 = nface[(jb2-1+4)%4], n2 = nface[(jb2+1)%4], d;
+            if      (p2 == c) d = n2;
+            else if (n2 == c) d = p2;
+            else break;
+            uint bd_ei = edgeIndex(b, d); if (bd_ei == ~0u) break;
+            a = b; b = d; curEdge = cast(int)bd_ei; curFace = nf;
+        }
+        return res;
+    }
+
+    /// Walk a vertex loop in the direction `startVert`→`nextVert`.
+    /// Returns ordered vertex indices starting with `startVert`.
+    /// Stops at non-quad faces, boundaries, or when the loop closes.
+    uint[] walkVertexLoop(uint startVert, uint nextVert) const {
+        uint sei = edgeIndex(startVert, nextVert);
+        if (sei == ~0u) return [];
+        int startFace = -1;
+        foreach (fi; facesAroundEdge(sei)) {
+            const fv = faces[fi];
+            if (fv.length != 4) continue;
+            for (int j = 0; j < 4; j++)
+                if (fv[j] == startVert && fv[(j+1)%4] == nextVert) { startFace = cast(int)fi; break; }
+            if (startFace >= 0) break;
+        }
+        if (startFace < 0) return [];
+        uint a = startVert, b = nextVert;
+        int curFace = startFace;
+        uint[] res; bool[ulong] vis;
+        while (true) {
+            ulong ck = edgeKey(a, b);
+            if (ck in vis) break;
+            vis[ck] = true;
+            res ~= a;
+            const face = faces[curFace];
+            if (face.length != 4) break;
+            int jb = -1;
+            for (int j = 0; j < 4; j++) if (face[j] == b) { jb = j; break; }
+            if (jb < 0) break;
+            uint prev = face[(jb-1+4)%4], next = face[(jb+1)%4], c;
+            if      (prev == a) c = next;
+            else if (next == a) c = prev;
+            else break;
+            uint seis = edgeIndex(b, c); if (seis == ~0u) break;
+            int nf = adjacentFaceThrough(seis, cast(uint)curFace); if (nf < 0) break;
+            const nface = faces[nf];
+            if (nface.length != 4) break;
+            int jb2 = -1;
+            for (int j = 0; j < 4; j++) if (nface[j] == b) { jb2 = j; break; }
+            if (jb2 < 0) break;
+            uint p2 = nface[(jb2-1+4)%4], n2 = nface[(jb2+1)%4], d;
+            if      (p2 == c) d = n2;
+            else if (n2 == c) d = p2;
+            else break;
+            a = b; b = d; curFace = nf;
+        }
+        return res;
+    }
+
+    /// Walk a face loop entered via `entryKey` into `startFace`.
+    /// Returns ordered face indices; `startFace` is first.
+    int[] walkFaceLoop(int startFace, ulong entryKey) const {
+        int[] res; bool[int] vis;
+        int cur = startFace; ulong entry = entryKey;
+        while (true) {
+            if (cur in vis) break;
+            vis[cur] = true;
+            res ~= cur;
+            const face = faces[cur];
+            if (face.length != 4) break;
+            int ei = findEdgeInFace(cast(uint)cur, entry);
+            if (ei < 0) break;
+            ulong oppKey = edgeKey(face[(ei+2)%4], face[(ei+3)%4]);
+            uint opp_idx = edgeIndexByKey(oppKey);
+            if (opp_idx == ~0u) break;
+            int nf = adjacentFaceThrough(opp_idx, cast(uint)cur);
+            if (nf < 0) break;
+            cur = nf; entry = oppKey;
+        }
+        return res;
+    }
+
+    /// Walk an edge ring starting from `startEdge` in the direction given by
+    /// `startFace`.  Returns the opposite edge indices encountered at each quad.
+    /// The starting edge itself is NOT included — the caller handles it.
+    int[] walkEdgeRing(int startEdge, int startFace) const {
+        int[] res; bool[int] vis;
+        int curFace = startFace;
+        ulong curKey = edgeKeyOf(cast(uint)startEdge);
+        while (true) {
+            if (curFace in vis) break;
+            const face = faces[curFace];
+            if (face.length != 4) break;
+            int j = findEdgeInFace(cast(uint)curFace, curKey);
+            if (j < 0) break;
+            vis[curFace] = true;
+            int oppJ = (j+2)%4;
+            ulong oppKey = edgeKey(face[oppJ], face[(oppJ+1)%4]);
+            uint opp_ei = edgeIndexByKey(oppKey);
+            if (opp_ei == ~0u) break;
+            res ~= cast(int)opp_ei;
+            int nf = adjacentFaceThrough(opp_ei, cast(uint)curFace);
+            if (nf < 0) break;
+            curFace = nf; curKey = oppKey;
+        }
+        return res;
     }
 
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
