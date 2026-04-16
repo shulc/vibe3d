@@ -159,6 +159,17 @@ struct Mesh {
         loops = []; faceLoop = []; vertLoop = [];
     }
 
+    /// Compute the unit normal of face fi using the first triangle (v0, v1, v2).
+    /// Returns (0,1,0) for degenerate or tiny faces.
+    Vec3 faceNormal(uint fi) const {
+        const uint[] face = faces[fi];
+        if (face.length < 3) return Vec3(0, 1, 0);
+        Vec3 v0 = vertices[face[0]], v1 = vertices[face[1]], v2 = vertices[face[2]];
+        Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
+        float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
+        return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
+    }
+
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
     /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
     /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.

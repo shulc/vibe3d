@@ -429,7 +429,7 @@ private:
                     if (vi == b) hasB = true;
                 }
                 if (!hasA || !hasB) continue;
-                Vec3 fn = polyNormal(face, mesh.vertices);
+                Vec3 fn = mesh.faceNormal(cast(uint)fi);
                 normalSum = vec3Add(normalSum, fn);
             }
             count++;
@@ -621,7 +621,7 @@ private:
             Vec3 edgeDir = safeNormalize(vec3Sub(nbr, aPos));
 
             // face normal
-            Vec3 fNorm = polyNormal(mesh.faces[faceIdx], mesh.vertices);
+            Vec3 fNorm = mesh.faceNormal(faceIdx);
 
             // slideDir = offsetInPlane(edgeDir, fNorm)
             Vec3 sd = offsetInPlane(edgeDir, fNorm);
@@ -660,7 +660,7 @@ private:
         Vec3 avgFN = Vec3(0, 0, 0);
         foreach (dart; faceDarts) {
             uint fi = mesh.loops[dart].face;
-            avgFN = vec3Add(avgFN, polyNormal(mesh.faces[fi], mesh.vertices));
+            avgFN = vec3Add(avgFN, mesh.faceNormal(fi));
         }
         // If cap normal opposes the average face normal, reverse the ring.
         if (dot(capNorm, avgFN) < 0.0f) {

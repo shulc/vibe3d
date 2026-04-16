@@ -264,14 +264,6 @@ Vec3 safeNormalize(Vec3 v) {
     return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
 }
 
-// Compute polygon normal from a face's vertex-index array and position array.
-Vec3 polyNormal(const uint[] face, const Vec3[] verts) {
-    if (face.length < 3) return Vec3(0, 1, 0);
-    Vec3 v0 = verts[face[0]], v1 = verts[face[1]], v2 = verts[face[2]];
-    Vec3 cr = cross(vec3Sub(v1, v0), vec3Sub(v2, v0));
-    float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-    return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
-}
 
 // Blender offset_in_plane: direction perpendicular to edgeDir inside a face.
 //
