@@ -380,8 +380,7 @@ private:
         int[] indices;
 
         if (*editMode == EditMode.Vertices) {
-            bool any = false;
-            foreach (s; mesh.selectedVertices) if (s) { any = true; break; }
+            bool any = mesh.hasAnySelectedVertices();
             if (any) {
                 foreach (i, s; mesh.selectedVertices)
                     if (s && i < mesh.vertices.length) indices ~= cast(int)i;
@@ -389,8 +388,7 @@ private:
                 foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
             }
         } else if (*editMode == EditMode.Edges) {
-            bool any = false;
-            foreach (s; mesh.selectedEdges) if (s) { any = true; break; }
+            bool any = mesh.hasAnySelectedEdges();
             if (any) {
                 bool[] added = new bool[](mesh.vertices.length);
                 foreach (i, edge; mesh.edges) {
@@ -403,8 +401,7 @@ private:
                 foreach (i; 0 .. mesh.vertices.length) indices ~= cast(int)i;
             }
         } else if (*editMode == EditMode.Polygons) {
-            bool any = false;
-            foreach (s; mesh.selectedFaces) if (s) { any = true; break; }
+            bool any = mesh.hasAnySelectedFaces();
             if (any) {
                 bool[] added = new bool[](mesh.vertices.length);
                 foreach (i, face; mesh.faces) {
