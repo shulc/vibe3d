@@ -184,6 +184,17 @@ struct Mesh {
     /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
     FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
 
+    /// Return a range over all faces incident to vertex `vi`.
+    VertexFaceRange facesAroundVertex(uint vi) const {
+        uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        return VertexFaceRange(loops, first);
+    }
+
+    /// Return a range over the 1–2 faces incident to edge `ei`.
+    EdgeFaceRange facesAroundEdge(uint ei) const {
+        return EdgeFaceRange(loops, edges, vertLoop, ei);
+    }
+
     /// Return a range over all faces that share an edge with face `fi`.
     /// Uses twin links from the half-edge structure — no hash map needed.
     AdjacentFaceRange adjacentFaces(uint fi) const {
@@ -345,6 +356,64 @@ struct FaceEdgeRange {
     @property FaceEdge  front() const { return FaceEdge(_verts[_j], _verts[(_j + 1) % _verts.length]); }
     void popFront() { ++_j; }
     @property FaceEdgeRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// VertexFaceRange
+// ---------------------------------------------------------------------------
+
+/// Forward range over all faces incident to a vertex.
+/// Wraps VertexDartRange and projects each dart to its face index.
+struct VertexFaceRange {
+    private const(Loop)[]  _loops;
+    private VertexDartRange _inner;
+
+    this(const(Loop)[] loops, uint startLi) {
+        _loops = loops;
+        _inner = VertexDartRange(loops, startLi);
+    }
+
+    @property bool empty() const { return _inner.empty; }
+    @property uint front() const { return _loops[_inner.front].face; }
+    void popFront() { _inner.popFront(); }
+    @property VertexFaceRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// EdgeFaceRange
+// ---------------------------------------------------------------------------
+
+/// Forward range over the 1–2 faces incident to an edge.
+/// Finds the dart va→vb by walking darts around va (O(valence)).
+/// Yields the face of that dart, then the face of its twin (if not boundary).
+struct EdgeFaceRange {
+    private uint[2] _faces;
+    private uint    _count;
+    private uint    _i;
+
+    this(const(Loop)[] loops, const(uint[2])[] edges,
+         const(uint)[] vertLoop, uint ei)
+    {
+        _count = 0; _i = 0;
+        if (ei >= edges.length) return;
+        uint va = edges[ei][0], vb = edges[ei][1];
+        if (va >= vertLoop.length || vertLoop[va] == ~0u) return;
+        // Walk darts from va; find the one whose next vertex is vb.
+        foreach (li; VertexDartRange(loops, vertLoop[va])) {
+            if (loops[loops[li].next].vert == vb) {
+                _faces[_count++] = loops[li].face;
+                uint twin = loops[li].twin;
+                if (twin != ~0u)
+                    _faces[_count++] = loops[twin].face;
+                break;
+            }
+        }
+    }
+
+    @property bool empty() const { return _i >= _count; }
+    @property uint front() const { return _faces[_i]; }
+    void popFront() { ++_i; }
+    @property EdgeFaceRange save() const { return this; }
 }
 
 // ---------------------------------------------------------------------------

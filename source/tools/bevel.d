@@ -421,17 +421,8 @@ private:
             centerSum = vec3Add(centerSum, mid);
 
             // accumulate normals of adjacent faces
-            foreach (fi, face; mesh.faces) {
-                if (face.length < 3) continue;
-                bool hasA = false, hasB = false;
-                foreach (vi; face) {
-                    if (vi == a) hasA = true;
-                    if (vi == b) hasB = true;
-                }
-                if (!hasA || !hasB) continue;
-                Vec3 fn = mesh.faceNormal(cast(uint)fi);
-                normalSum = vec3Add(normalSum, fn);
-            }
+            foreach (fi; mesh.facesAroundEdge(cast(uint)ei))
+                normalSum = vec3Add(normalSum, mesh.faceNormal(fi));
             count++;
         }
 
