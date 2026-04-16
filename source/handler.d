@@ -390,8 +390,8 @@ public:
         glDisable(GL_DEPTH_TEST);
 
         float ca = cos(startAngle), sa = sin(startAngle);
-        Vec3 rr = Vec3(right.x*ca + up.x*sa, right.y*ca + up.y*sa, right.z*ca + up.z*sa);
-        Vec3 ru = Vec3(-right.x*sa + up.x*ca, -right.y*sa + up.y*ca, -right.z*sa + up.z*ca);
+        Vec3 rr = right * ca + up * sa;
+        Vec3 ru = up * ca - right * sa;
         auto model = modelMatrix(rr, ru, fwd,
                                  Vec3(radius, radius, radius), center);
         drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, shader.program);

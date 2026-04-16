@@ -304,9 +304,7 @@ public:
 private:
     float gizmoScreenWidth(Vec3 center) {
         Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4], cachedVp.view[8]);
-        Vec3 rightEnd = Vec3(center.x + camRight.x * handler.size,
-                             center.y + camRight.y * handler.size,
-                             center.z + camRight.z * handler.size);
+        Vec3 rightEnd = center + camRight * handler.size;
         float cx, cy, cndcZ, rx, ry, rndcZ;
         if (!projectToWindowFull(center,   cachedVp, cx, cy, cndcZ)) return -1.0f;
         if (!projectToWindowFull(rightEnd, cachedVp, rx, ry, rndcZ)) return -1.0f;

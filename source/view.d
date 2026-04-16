@@ -95,9 +95,7 @@ class View {
             if (v.z > mx.z) mx.z = v.z;
         }
 
-        focus = Vec3((mn.x + mx.x) * 0.5f,
-                     (mn.y + mx.y) * 0.5f,
-                     (mn.z + mx.z) * 0.5f);
+        focus = (mn + mx) * 0.5f;
 
         float dx = mx.x - mn.x, dy = mx.y - mn.y, dz = mx.z - mn.z;
         float radius = sqrt(dx*dx + dy*dy + dz*dz) * 0.5f;

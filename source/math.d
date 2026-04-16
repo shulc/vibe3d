@@ -274,7 +274,7 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
     if (abs(denom) < 1e-6f) return false;
     Vec3 d = planePoint - origin;
     float t = (n.x*d.x + n.y*d.y + n.z*d.z) / denom;
-    hit = Vec3(origin.x + t*dir.x, origin.y + t*dir.y, origin.z + t*dir.z);
+    hit = origin + dir * t;
     return true;
 }
 
