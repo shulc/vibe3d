@@ -290,10 +290,8 @@ private:
 
         // Try every neighbor of secondLastVert as a possible loop direction.
         int bestNext = -1, bestPos = int.max;
-        foreach (i; 0 .. mesh.edges.length) {
-            uint ea = mesh.edges[i][0], eb = mesh.edges[i][1];
-            if (ea != cast(uint)secondLastVert && eb != cast(uint)secondLastVert) continue;
-            uint neighbor = mesh.edgeOtherVertex(cast(uint)i, cast(uint)secondLastVert);
+        foreach (i; mesh.edgesAroundVertex(cast(uint)secondLastVert)) {
+            uint neighbor = mesh.edgeOtherVertex(i, cast(uint)secondLastVert);
 
             uint[] seq = walkVertexLoop(cast(uint)secondLastVert, neighbor, ef);
             if (seq.length < 2) continue;

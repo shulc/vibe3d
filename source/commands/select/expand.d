@@ -26,16 +26,11 @@ class SelectionExpand : Command {
                 if (toAdd[i]) mesh.selectVertex(cast(int)i);
 
         } else if (editMode == EditMode.Edges) {
-            int[][] vertEdges = new int[][](mesh.vertices.length);
-            foreach (i; 0 .. mesh.edges.length) {
-                vertEdges[mesh.edges[i][0]] ~= cast(int)i;
-                vertEdges[mesh.edges[i][1]] ~= cast(int)i;
-            }
             int[][] edgeAdj = new int[][](mesh.edges.length);
             foreach (i; 0 .. mesh.edges.length)
                 foreach (vi; mesh.edges[i])
-                    foreach (ni; vertEdges[vi])
-                        if (ni != cast(int)i) edgeAdj[i] ~= ni;
+                    foreach (ni; mesh.edgesAroundVertex(vi))
+                        if (ni != i) edgeAdj[i] ~= cast(int)ni;
 
             bool[] toAdd = new bool[](mesh.edges.length);
             foreach (i; 0 .. mesh.selectedEdges.length)

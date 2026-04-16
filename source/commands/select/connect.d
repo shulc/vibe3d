@@ -45,16 +45,10 @@ class SelectConnect : Command {
         } else if (editMode == EditMode.Edges) {
             // Build edge → adjacent edges map via shared vertices
             int[][] edgeAdj = new int[][](mesh.edges.length);
-            int[][] vertEdges = new int[][](mesh.vertices.length);
-            foreach (i; 0 .. mesh.edges.length) {
-                vertEdges[mesh.edges[i][0]] ~= cast(int)i;
-                vertEdges[mesh.edges[i][1]] ~= cast(int)i;
-            }
-            foreach (i; 0 .. mesh.edges.length) {
+            foreach (i; 0 .. mesh.edges.length)
                 foreach (vi; mesh.edges[i])
-                    foreach (ni; vertEdges[vi])
-                        if (ni != cast(int)i) edgeAdj[i] ~= ni;
-            }
+                    foreach (ni; mesh.edgesAroundVertex(vi))
+                        if (ni != i) edgeAdj[i] ~= cast(int)ni;
             bfsSelect(mesh.selectedEdges, edgeAdj, -1);
         } else if (editMode == EditMode.Polygons) {
             int[][] faceAdj = new int[][](mesh.faces.length);

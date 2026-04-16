@@ -347,10 +347,8 @@ private:
         int    bestPos  = int.max;
         uint[] bestLoop;
 
-        foreach (i; 0 .. mesh.edges.length) {
-            uint ea = mesh.edges[i][0], eb = mesh.edges[i][1];
-            if (ea != cast(uint)secondLastVert && eb != cast(uint)secondLastVert) continue;
-            uint neighbor = mesh.edgeOtherVertex(cast(uint)i, cast(uint)secondLastVert);
+        foreach (i; mesh.edgesAroundVertex(cast(uint)secondLastVert)) {
+            uint neighbor = mesh.edgeOtherVertex(i, cast(uint)secondLastVert);
 
             uint[] loop = walkVertexLoop(cast(uint)secondLastVert, neighbor, ef);
             if (loop.length < 2) continue;

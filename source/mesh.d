@@ -29,7 +29,8 @@ struct Mesh {
 
     Loop[]  loops;      // all half-edge loops
     uint[]  faceLoop;   // faceLoop[fi] = index of first loop of face fi
-    uint[]  vertLoop;   // vertLoop[vi] = index of one loop starting at vi
+    uint[]  vertLoop;   // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
+    uint[]  loopEdge;   // loopEdge[li] = index in edges[] of the undirected edge for loop li
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
@@ -184,6 +185,14 @@ struct Mesh {
     /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
     FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
 
+    /// Return a range over all edge indices incident to vertex `vi`.
+    /// Correctly handles boundary vertices: emits the extra boundary edge at the end.
+    /// Requires buildLoops() to have been called (uses vertLoop and loopEdge).
+    VertexEdgeRange edgesAroundVertex(uint vi) const {
+        uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        return VertexEdgeRange(loops, loopEdge, first);
+    }
+
     /// Return a range over all faces incident to vertex `vi`.
     VertexFaceRange facesAroundVertex(uint vi) const {
         uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
@@ -269,6 +278,36 @@ struct Mesh {
             uint v = loops[loops[idx].next].vert;
             if (auto p = ((cast(ulong)v << 32) | u) in dirMap)
                 loops[idx].twin = *p;
+        }
+
+        // Third pass: fill loopEdge and anchor vertLoop at the open start of each fan.
+        //
+        // loopEdge[li] = index in edges[] for the undirected edge of loop li.
+        loopEdge.length = total;
+        loopEdge[]      = ~0u;
+        {
+            uint[ulong] eiMap;
+            foreach (i, e; edges) eiMap[edgeKey(e[0], e[1])] = cast(uint)i;
+            foreach (idx; 0 .. total) {
+                uint u = loops[idx].vert;
+                uint v = loops[loops[idx].next].vert;
+                if (auto p = edgeKey(u, v) in eiMap) loopEdge[idx] = *p;
+            }
+        }
+        // For boundary vertices, vertLoop was set to an arbitrary loop.
+        // Walk backward (via next(twin(cur))) until cur.twin == ~0u (open start)
+        // or we detect a closed ring (back == original start).
+        foreach (vi; 0 .. vertices.length) {
+            if (vertLoop[vi] == ~0u) continue;
+            uint cur  = vertLoop[vi];
+            uint orig = cur;
+            foreach (_; 0 .. faces.length + 4) {
+                if (loops[cur].twin == ~0u) break; // cur is the open start of the fan
+                uint back = loops[loops[cur].twin].next;
+                if (back == orig) break;           // closed ring — any start is fine
+                cur = back;
+            }
+            vertLoop[vi] = cur;
         }
     }
 }
@@ -377,6 +416,63 @@ struct VertexFaceRange {
     @property uint front() const { return _loops[_inner.front].face; }
     void popFront() { _inner.popFront(); }
     @property VertexFaceRange save() const { return this; }
+}
+
+// ---------------------------------------------------------------------------
+// VertexEdgeRange
+// ---------------------------------------------------------------------------
+
+/// Forward range over all edge indices incident to a vertex.
+///
+/// Uses vertLoop[vi] (anchored to the open start of the fan by buildLoops) and
+/// walks via twin(prev(li)).  For boundary vertices, emits one extra edge at the
+/// end — the boundary edge represented by prev(lastDart) — so all incident edges
+/// are always yielded, whether the vertex is interior or on a boundary.
+struct VertexEdgeRange {
+    private const(Loop)[] _loops;
+    private const(uint)[] _loopEdge;
+    private uint _start;
+    private uint _cur;
+    private bool _done;
+    private bool _atExtra;   // true while emitting the boundary extra edge
+    private uint _steps;
+    private enum uint MAX_STEPS = 1024;
+
+    this(const(Loop)[] loops, const(uint)[] loopEdge, uint startLi) {
+        _loops    = loops;
+        _loopEdge = loopEdge;
+        _start    = startLi;
+        _cur      = startLi;
+        _done     = (startLi == ~0u);
+        _atExtra  = false;
+        _steps    = 0;
+    }
+
+    @property bool empty() const { return _done; }
+
+    @property uint front() const
+    in (!_done)
+    {
+        return _atExtra ? _loopEdge[_loops[_cur].prev] : _loopEdge[_cur];
+    }
+
+    void popFront()
+    in (!_done)
+    {
+        if (_atExtra) { _done = true; return; }
+        uint prevLi   = _loops[_cur].prev;
+        uint twinPrev = _loops[prevLi].twin;
+        if (twinPrev == ~0u) { _atExtra = true; return; }  // boundary: emit extra next
+        if (++_steps >= MAX_STEPS) {
+            debug assert(false, "VertexEdgeRange: MAX_STEPS exceeded — degenerate mesh");
+            _done = true;
+            return;
+        }
+        _cur = twinPrev;
+        if (_cur == _start) _done = true;
+    }
+
+    @property VertexEdgeRange save() const { return this; }
 }
 
 // ---------------------------------------------------------------------------
