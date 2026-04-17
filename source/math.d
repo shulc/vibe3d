@@ -26,7 +26,13 @@ struct Vec3 {
         return this;
     }
     ref Vec3 opOpAssign(string op)(float s) @safe pure nothrow @nogc
-    if (op == "*") { x *= s; y *= s; z *= s; return this; }
+    if (op == "*" || op == "/") {
+        static if (op == "*") { x *= s; y *= s; z *= s; }
+        else                  { x /= s; y /= s; z /= s; }
+        return this;
+    }
+    Vec3 opBinary(string op)(float s) const @safe pure nothrow @nogc
+    if (op == "/") { return Vec3(x/s, y/s, z/s); }
     float length() const @safe pure nothrow @nogc { return sqrt(x*x + y*y + z*z); }
 }
 struct Vec4 { float x, y, z, w; }
@@ -47,7 +53,7 @@ Vec3 vec3Lerp(Vec3 a, Vec3 b, float t) @safe pure nothrow @nogc {
 
 Vec3 normalize(Vec3 v) @safe pure nothrow @nogc {
     float len = v.length;
-    return Vec3(v.x/len, v.y/len, v.z/len);
+    return v / len;
 }
 Vec3 cross(Vec3 a, Vec3 b) @safe pure nothrow @nogc {
     return Vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
@@ -261,7 +267,7 @@ Vec3 screenRay(float sx, float sy, const ref Viewport vp)
         v[8]*vx + v[9]*vy + v[10]*(-1.0f),
     );
     float len = d.length;
-    return len > 1e-9f ? Vec3(d.x/len, d.y/len, d.z/len) : Vec3(0,0,-1);
+    return len > 1e-9f ? d / len : Vec3(0,0,-1);
 }
 
 // Intersect ray (origin + t*dir) with plane (point on plane + normal).
@@ -281,7 +287,7 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
 // Safe normalize — returns (0,1,0) for near-zero vectors.
 Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
     float len = v.length;
-    return len > 1e-6f ? Vec3(v.x/len, v.y/len, v.z/len) : Vec3(0, 1, 0);
+    return len > 1e-6f ? v / len : Vec3(0, 1, 0);
 }
 
 
@@ -296,7 +302,7 @@ Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
 Vec3 offsetInPlane(Vec3 edgeDir, Vec3 faceNorm) @safe pure nothrow @nogc {
     Vec3 p = cross(faceNorm, edgeDir);
     float len = p.length;
-    return len > 1e-6f ? Vec3(p.x/len, p.y/len, p.z/len) : Vec3(0, 1, 0);
+    return len > 1e-6f ? p / len : Vec3(0, 1, 0);
 }
 
 // Blender offset_meet: junction-vertex offset direction.

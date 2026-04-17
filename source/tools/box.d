@@ -637,7 +637,7 @@ private:
         Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
         float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
         hpn = len > 1e-6f
-            ? Vec3(inPlane.x/len, inPlane.y/len, inPlane.z/len)
+            ? inPlane / len
             : planeAxis1;
     }
 

@@ -415,9 +415,7 @@ private:
             Vec3 pa = mesh.vertices[a];
             Vec3 pb = mesh.vertices[b];
             // midpoint of edge
-            Vec3 mid = Vec3((pa.x + pb.x) * 0.5f,
-                            (pa.y + pb.y) * 0.5f,
-                            (pa.z + pb.z) * 0.5f);
+            Vec3 mid = (pa + pb) * 0.5f;
             centerSum += mid;
 
             // accumulate normals of adjacent faces
@@ -429,11 +427,11 @@ private:
         if (count == 0) return;
 
         float inv = 1.0f / cast(float)count;
-        gizmoCenter = Vec3(centerSum.x * inv, centerSum.y * inv, centerSum.z * inv);
+        gizmoCenter = centerSum * inv;
 
         float nlen = normalSum.length;
         gizmoNormal = nlen > 1e-6f
-            ? Vec3(normalSum.x/nlen, normalSum.y/nlen, normalSum.z/nlen)
+            ? normalSum / nlen
             : Vec3(0, 1, 0);
 
         Vec3 tmp   = (gizmoNormal.x < 0.9f && gizmoNormal.x > -0.9f)
@@ -749,11 +747,11 @@ private:
         if (count == 0) return;
 
         float inv = 1.0f / cast(float)count;
-        gizmoCenter = Vec3(centerSum.x * inv, centerSum.y * inv, centerSum.z * inv);
+        gizmoCenter = centerSum * inv;
 
         float nlen = sqrt(normalSum.x*normalSum.x + normalSum.y*normalSum.y + normalSum.z*normalSum.z);
         gizmoNormal = nlen > 1e-6f
-            ? Vec3(normalSum.x/nlen, normalSum.y/nlen, normalSum.z/nlen)
+            ? normalSum / nlen
             : Vec3(0, 1, 0);
 
         Vec3 tmp   = (gizmoNormal.x < 0.9f && gizmoNormal.x > -0.9f)
@@ -840,14 +838,14 @@ private:
             Vec3 center = Vec3(0, 0, 0);
             foreach (p; origPos) center += p;
             float invN = 1.0f / cast(float)N;
-            center = Vec3(center.x*invN, center.y*invN, center.z*invN);
+            center = center * invN;
 
             Vec3 e1 = origPos[1] - origPos[0];
             Vec3 e2 = origPos[2] - origPos[0];
             Vec3 cr = cross(e1, e2);
             float clen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
             Vec3 faceNormal = clen > 1e-6f
-                ? Vec3(cr.x/clen, cr.y/clen, cr.z/clen)
+                ? cr / clen
                 : Vec3(0, 1, 0);
 
             int[] newVerts = new int[](N);

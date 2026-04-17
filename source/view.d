@@ -43,7 +43,7 @@ class View {
 
     void pan(int dx, int dy) {
         Vec3 off     = sphericalToCartesian(azimuth, elevation, distance);
-        Vec3 forward = normalize(Vec3(-off.x, -off.y, -off.z));
+        Vec3 forward = normalize(-off);
         Vec3 right   = normalize(cross(forward, Vec3(0, 1, 0)));
         Vec3 up      = cross(right, forward);
         float speed  = distance * 0.001f;

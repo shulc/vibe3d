@@ -230,7 +230,7 @@ class Arrow : ShaftedArrow {
         Vec3 dir = end - start;
         float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
         if (len < 1e-6f) return;
-        Vec3 fwd = Vec3(dir.x/len, dir.y/len, dir.z/len);
+        Vec3 fwd = dir / len;
         Vec3 right, up;
         localFrame(fwd, right, up);
 
@@ -290,7 +290,7 @@ class CubicArrow : ShaftedArrow {
         if (len < 1e-6f) return;
         Vec3 fwd = (fixedDir.x != 0.0f || fixedDir.y != 0.0f || fixedDir.z != 0.0f)
             ? fixedDir
-            : Vec3(dir.x/len, dir.y/len, dir.z/len);
+            : dir / len;
         Vec3 right, up;
         localFrame(fwd, right, up);
 
@@ -596,7 +596,7 @@ class MoveHandler : Handler {
         Vec3  d    = vp.eye - center;
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
-            ? Vec3(d.x / dist, d.y / dist, d.z / dist)  // eye→center direction (d = eye-center, flip)
+            ? d / dist  // eye→center direction (d = eye-center, flip)
             : Vec3(0,0,1);
         // d = eye - center, so viewDir (center→eye) = d/dist; axis dot with that.
         enum float HIDE_THRESHOLD = 0.995f;
@@ -689,12 +689,12 @@ class RotateHandler : Handler {
             Vec3 dir = cross(n, camFwd);
             float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
             if (len <= 1e-4f) return;
-            dir = Vec3(dir.x/len, dir.y/len, dir.z/len);
+            dir = dir / len;
             // Midpoint of arc is at 90° CCW from dir around n: cross(n, dir).
             // If it faces away from camera (dot > 0 with camFwd), flip dir.
             Vec3 mid = cross(n, dir);
             if (dot(mid, camFwd) < 0.0f)
-                dir = Vec3(-dir.x, -dir.y, -dir.z);
+                dir = -dir;
 
             // Arrow a = new Arrow(center, vec3Add(center, dir), Vec3(0.2f, 0.2f, 0.9f));
             // a.draw(program, locColor, vp);
@@ -1079,7 +1079,7 @@ class ScaleHandler : Handler {
         Vec3  d    = vp.eye - center;
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
-            ? Vec3(d.x / dist, d.y / dist, d.z / dist)
+            ? d / dist
             : Vec3(0,0,1);
         enum float HIDE_THRESHOLD = 0.995f;
         arrowX.setVisible(abs(viewDir.x) < HIDE_THRESHOLD);

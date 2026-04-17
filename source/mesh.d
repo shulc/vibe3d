@@ -170,7 +170,7 @@ struct Mesh {
         Vec3 v0 = vertices[face[0]], v1 = vertices[face[1]], v2 = vertices[face[2]];
         Vec3 cr = cross(v1 - v0, v2 - v0);
         float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-        return len > 1e-6f ? Vec3(cr.x/len, cr.y/len, cr.z/len) : Vec3(0, 1, 0);
+        return len > 1e-6f ? cr / len : Vec3(0, 1, 0);
     }
 
     /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
@@ -301,7 +301,7 @@ struct Mesh {
                 count++;
             }
         }
-        return count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
     }
 
     /// Return the centroid of vertices belonging to the current edge selection
@@ -321,7 +321,7 @@ struct Mesh {
                 }
             }
         }
-        return count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
     }
 
     /// Return the centroid of vertices belonging to the current face selection
@@ -341,7 +341,7 @@ struct Mesh {
                 }
             }
         }
-        return count > 0 ? Vec3(sum.x / count, sum.y / count, sum.z / count) : Vec3(0, 0, 0);
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
     }
 
     /// Return the centroid (average position) of face `fi`.
@@ -350,7 +350,7 @@ struct Mesh {
         Vec3 s = Vec3(0, 0, 0);
         foreach (vi; face) s += vertices[vi];
         float inv = 1.0f / cast(float)face.length;
-        return Vec3(s.x * inv, s.y * inv, s.z * inv);
+        return s * inv;
     }
 
     /// Return a bool mask (indexed by vertex index) where `true` means the vertex
@@ -1020,14 +1020,10 @@ Mesh catmullClark(ref const Mesh m) {
             // Interior: average of 2 endpoints + 2 face points
             Vec3 f0 = facePoints[edgeFaces[ei][0]];
             Vec3 f1 = facePoints[edgeFaces[ei][1]];
-            edgePoints[ei] = Vec3((a.x + b.x + f0.x + f1.x) * 0.25f,
-                                  (a.y + b.y + f0.y + f1.y) * 0.25f,
-                                  (a.z + b.z + f0.z + f1.z) * 0.25f);
+            edgePoints[ei] = (a + b + f0 + f1) * 0.25f;
         } else {
             // Boundary: midpoint
-            edgePoints[ei] = Vec3((a.x + b.x) * 0.5f,
-                                  (a.y + b.y) * 0.5f,
-                                  (a.z + b.z) * 0.5f);
+            edgePoints[ei] = (a + b) * 0.5f;
         }
     }
 
@@ -1051,30 +1047,26 @@ Mesh catmullClark(ref const Mesh m) {
                 if (edgeFaces[ei].length >= 2) continue;
                 Vec3 ea = m.vertices[m.edges[ei][0]];
                 Vec3 eb = m.vertices[m.edges[ei][1]];
-                sum += Vec3((ea.x + eb.x) * 0.5f,
-                            (ea.y + eb.y) * 0.5f,
-                            (ea.z + eb.z) * 0.5f);
+                sum += (ea + eb) * 0.5f;
                 cnt++;
             }
             float inv = 1.0f / cast(float)cnt;
-            newVerts[vi] = Vec3(sum.x * inv, sum.y * inv, sum.z * inv);
+            newVerts[vi] = sum * inv;
         } else {
             // Interior rule: (F + 2R + (n-3)*v) / n
             Vec3 F = Vec3(0, 0, 0);
             foreach (fi; vertFaces[vi]) F += facePoints[fi];
             float fn = cast(float)n;
-            F = Vec3(F.x / fn, F.y / fn, F.z / fn);
+            F = F / fn;
 
             uint  ne = cast(uint)vertEdges[vi].length;
             Vec3  R  = Vec3(0, 0, 0);
             foreach (ei; vertEdges[vi]) {
                 Vec3 ea = m.vertices[m.edges[ei][0]];
                 Vec3 eb = m.vertices[m.edges[ei][1]];
-                R += Vec3((ea.x + eb.x) * 0.5f,
-                          (ea.y + eb.y) * 0.5f,
-                          (ea.z + eb.z) * 0.5f);
+                R += (ea + eb) * 0.5f;
             }
-            R = Vec3(R.x / ne, R.y / ne, R.z / ne);
+            R = R / ne;
 
             newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
                                 (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
@@ -1159,7 +1151,7 @@ struct GpuMesh {
                 Vec3 cr = cross(e1, e2);
                 float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
                 Vec3  n   = nlen > 1e-6f
-                            ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)
+                            ? cr / nlen
                             : Vec3(0, 1, 0);
                 for (uint i = 1; i + 1 < face.length; i++) {
                     foreach (idx; [face[0], face[i], face[i+1]]) {
@@ -1247,7 +1239,7 @@ struct GpuMesh {
                     Vec3 cr = cross(v1 - v0, v2 - v0);
                     float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
                     Vec3 n = nlen > 1e-6f
-                        ? Vec3(cr.x/nlen, cr.y/nlen, cr.z/nlen)
+                        ? cr / nlen
                         : Vec3(0, 1, 0);
 
                     int k = faceTriStart[fi] * FACE_STRIDE;

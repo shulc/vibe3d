@@ -158,7 +158,7 @@ public:
                               handler.center, dragAxisVec, hit)) {
             Vec3 d = hit - handler.center;
             float dlen = sqrt(d.x*d.x + d.y*d.y + d.z*d.z) * 1.05f;
-            dragStartDir = dlen > 1e-6f ? Vec3(d.x/dlen, d.y/dlen, d.z/dlen)
+            dragStartDir = dlen > 1e-6f ? d / dlen
                                         : Vec3(0,0,0);
         } else {
             dragStartDir = Vec3(0,0,0);
@@ -214,8 +214,8 @@ public:
         float l1 = sqrt(d1.x*d1.x + d1.y*d1.y + d1.z*d1.z);
         float l2 = sqrt(d2.x*d2.x + d2.y*d2.y + d2.z*d2.z);
         if (l1 < 1e-6f || l2 < 1e-6f) { lastMX = e.x; lastMY = e.y; return true; }
-        d1 = Vec3(d1.x/l1, d1.y/l1, d1.z/l1);
-        d2 = Vec3(d2.x/l2, d2.y/l2, d2.z/l2);
+        d1 = d1 / l1;
+        d2 = d2 / l2;
         Vec3  cr    = cross(d1, d2);
         float angle = atan2(dot(cr, dragAxisVec), dot(d1, d2));
         totalAngle += angle;
