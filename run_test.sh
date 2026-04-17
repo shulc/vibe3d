@@ -1,5 +1,5 @@
 #!/bin/bash
-set -xe
+set -e
 
 
 # Compile and run the HTTP endpoint test
@@ -26,10 +26,12 @@ while true; do
 done
 
 # Run all compiled test binaries (skip .obj files produced on Windows)
+failed=0
 for f in $temp_dir/test_*; do
     case "$f" in *.obj) continue;; esac
     case "$f" in *.o) continue;; esac
-    $f
+    echo "Running $f..."
+    $f || { echo "FAILED: $f"; failed=1; }
 done
 
 # Kill vibe3d cross-platform (pkill on macOS/Linux, taskkill on Windows)
@@ -40,3 +42,4 @@ else
 fi
 
 rm -rf $temp_dir
+exit $failed

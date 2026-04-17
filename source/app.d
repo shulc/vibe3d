@@ -318,6 +318,29 @@ void main(string[] args) {
                                   0.6625f, 0.775f, 0.8875f, 1.0f];
     int gizmoLevelIdx = 4;  // middle
 
+    Tool activeTool = null;
+
+    scope(exit) {
+        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
+    }
+    void setActiveTool(Tool t) {
+        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
+        activeTool = t;
+        if (activeTool) activeTool.activate();
+        // deactivate() may have added geometry — sync selection arrays and caches.
+        mesh.syncSelection();
+        if (vertexCache.valid.length != mesh.vertices.length) {
+            vertexCache.resize(mesh.vertices.length);
+            vertexCache.invalidate();
+            faceCache.resize(mesh.vertices.length, mesh.faces.length);
+            faceCache.invalidate();
+        }
+        if (edgeCache.valid.length != mesh.edges.length) {
+            edgeCache.resize(mesh.edges.length);
+            edgeCache.invalidate();
+        }
+    }    
+
     // Set up HTTP server model data provider
     if (httpServer !is null) {
         // Convert mesh vertices to flat float array for HTTP server
@@ -378,6 +401,8 @@ void main(string[] args) {
             mesh = makeCube();
             cameraView.reset();
             mesh.resetSelection();
+            editMode = EditMode.Vertices;
+            setActiveTool(null);
             gpu.upload(mesh);
             vertexCache.resize(mesh.vertices.length);
             vertexCache.invalidate();
@@ -386,31 +411,6 @@ void main(string[] args) {
             edgeCache.resize(mesh.edges.length);
             edgeCache.invalidate();
         });
-    }
-
-
-    Tool activeTool = null;
-
-    scope(exit) {
-        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
-    }
-
-    void setActiveTool(Tool t) {
-        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
-        activeTool = t;
-        if (activeTool) activeTool.activate();
-        // deactivate() may have added geometry — sync selection arrays and caches.
-        mesh.syncSelection();
-        if (vertexCache.valid.length != mesh.vertices.length) {
-            vertexCache.resize(mesh.vertices.length);
-            vertexCache.invalidate();
-            faceCache.resize(mesh.vertices.length, mesh.faces.length);
-            faceCache.invalidate();
-        }
-        if (edgeCache.valid.length != mesh.edges.length) {
-            edgeCache.resize(mesh.edges.length);
-            edgeCache.invalidate();
-        }
     }
 
     int lastMouseX, lastMouseY;
