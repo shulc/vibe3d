@@ -292,12 +292,7 @@ public:
                 applyDeltaImmediate(delta);
                 handler.setPosition(handler.center + delta);
                 cachedCenter = handler.center;
-                if (vertexProcessCount == cast(int)mesh.vertices.length) {
-                    wholeMeshDrag = true;
-                    gpuMatrix = translationMatrix(dragDelta);
-                } else {
-                    needsGpuUpdate = true;
-                }
+                needsGpuUpdate = true;
             }
         }
 
