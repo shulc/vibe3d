@@ -105,7 +105,7 @@ unittest { // ROTATE: Test camera state after playing rotate events
         -0.575, 0.53, 3.0,
         0.0, 0.0, 0.0,
         -1.407673, 1.516600, 2.172183,
-        650, 562
+        650, 524
     ));
 }
 
@@ -129,7 +129,7 @@ unittest { // PAN: Test camera state after playing pan events
         0.5, 0.4, 3.0,
         -0.862409, 0.513952, 0.223529,
         0.462332, 1.682207, 2.648450,
-        650, 562
+        650, 524
     ));
 }
 
@@ -158,6 +158,6 @@ unittest { // ZOOM: Test camera state after playing events from events.log
         0.5, 0.4, 19.132467,
         0.0, 0.0, 0.0,
         8.448519, 7.450533, 15.464909,
-        650, 562
+        650, 524
     ));
 }

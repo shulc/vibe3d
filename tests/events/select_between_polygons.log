@@ -1,0 +1,16 @@
+{"t":100.0,"type":"SDL_KEYDOWN","sym":100,"scan":7,"mod":1,"repeat":0}
+{"t":116.667,"type":"SDL_KEYUP","sym":100,"scan":7,"mod":0,"repeat":0}
+{"t":300.0,"type":"SDL_KEYDOWN","sym":100,"scan":7,"mod":1,"repeat":0}
+{"t":316.667,"type":"SDL_KEYUP","sym":100,"scan":7,"mod":0,"repeat":0}
+{"t":500.0,"type":"SDL_KEYDOWN","sym":51,"scan":32,"mod":0,"repeat":0}
+{"t":516.667,"type":"SDL_KEYUP","sym":51,"scan":32,"mod":0,"repeat":0}
+{"t":700.0,"type":"SDL_MOUSEMOTION","x":326,"y":336,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":716.667,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":326,"y":336,"clicks":1,"mod":0}
+{"t":750.0,"type":"SDL_MOUSEMOTION","x":326,"y":336,"xrel":0,"yrel":0,"state":1,"mod":0}
+{"t":766.667,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":326,"y":336,"clicks":0,"mod":0}
+{"t":900.0,"type":"SDL_MOUSEMOTION","x":413,"y":267,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":916.667,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":413,"y":267,"clicks":1,"mod":1}
+{"t":950.0,"type":"SDL_MOUSEMOTION","x":413,"y":267,"xrel":0,"yrel":0,"state":1,"mod":1}
+{"t":966.667,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":413,"y":267,"clicks":0,"mod":1}
+{"t":1100.0,"type":"SDL_KEYDOWN","sym":103,"scan":10,"mod":1,"repeat":0}
+{"t":1116.667,"type":"SDL_KEYUP","sym":103,"scan":10,"mod":0,"repeat":0}
