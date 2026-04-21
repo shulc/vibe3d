@@ -99,6 +99,39 @@ private string buildJsonArray(bool[] sel) {
 
 
 // ---------------------------------------------------------------------------
+// Panel layout
+// ---------------------------------------------------------------------------
+
+struct Layout {
+    int sideW   = 150;
+    int statusH = 38;
+
+    ImVec2 sidePos;
+    ImVec2 sideSize;
+    ImVec2 tabPos;
+    ImVec2 tabSize;
+    ImVec2 statusPos;
+    ImVec2 statusSize;
+
+    int vpX, vpY, vpGlY, vpW, vpH;
+
+    void resize(int winW, int winH) {
+        sidePos    = ImVec2(0, 0);
+        sideSize   = ImVec2(sideW, winH);
+        tabPos     = ImVec2(sideW, 0);
+        tabSize    = ImVec2(winW - sideW, statusH);
+        statusPos  = ImVec2(sideW, winH - statusH);
+        statusSize = ImVec2(winW - sideW, statusH);
+
+        vpX   = sideW;
+        vpY   = statusH;  // screen-space top edge (Y down), below tab bar
+        vpGlY = statusH;  // OpenGL bottom edge (Y up), above status bar
+        vpW   = winW - sideW;
+        vpH   = winH - 2 * statusH;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -238,11 +271,11 @@ void main(string[] args) {
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
-    enum int PANEL_W  = 150;
-    enum int STATUS_H = 38;
+    Layout layout;
+    layout.resize(winW, winH);
 
     // Camera
-    View cameraView = new View(PANEL_W, 0, winW - PANEL_W, winH - STATUS_H);
+    View cameraView = new View(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
 
     VertexCache vertexCache;
     vertexCache.resize(mesh.vertices.length);
@@ -339,7 +372,7 @@ void main(string[] args) {
             edgeCache.resize(mesh.edges.length);
             edgeCache.invalidate();
         }
-    }    
+    }
 
     // Set up HTTP server model data provider
     if (httpServer !is null) {
@@ -362,18 +395,18 @@ void main(string[] args) {
                 verts[i * 3 + 1] = mesh.vertices[i].y;
                 verts[i * 3 + 2] = mesh.vertices[i].z;
             }
-            
+
             // Копируем faces (тоже свежая копия)
             uint[][] facesCopy = new uint[][](mesh.faces.length);
             for (size_t i = 0; i < mesh.faces.length; i++) {
                 facesCopy[i] = mesh.faces[i].dup;
             }
-            
+
             return meshToJsonDetailed(
-                mesh.vertices.length, 
-                mesh.edges.length, 
-                mesh.faces.length, 
-                verts, 
+                mesh.vertices.length,
+                mesh.edges.length,
+                mesh.faces.length,
+                verts,
                 facesCopy
             );
         });
@@ -428,6 +461,7 @@ void main(string[] args) {
                 SDL_SetWindowSize(window, we.data1, we.data2);
             SDL_GetWindowSize(window, &winW, &winH);
             SDL_GL_GetDrawableSize(window, &fbW, &fbH);
+            layout.resize(winW, winH);
             glViewport(0, 0, fbW, fbH);
             initThickLineProgram(thickLineProgram, fbW, fbH);
         }
@@ -919,8 +953,8 @@ void main(string[] args) {
         int selEdgeCount = countSelected(mesh.selectedEdges);
         int selFaceCount = countSelected(mesh.selectedFaces);
 
-        ImGui.SetNextWindowPos(ImVec2(0, 0), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(ImVec2(PANEL_W, winH), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
         if (ImGui.Begin("Mesh Info", null,
                         ImGuiWindowFlags.NoTitleBar |
                         ImGuiWindowFlags.NoResize |
@@ -1008,8 +1042,8 @@ void main(string[] args) {
     }
 
     void drawStatusBar() {
-        ImGui.SetNextWindowPos(ImVec2(PANEL_W, winH - STATUS_H), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(ImVec2(winW - PANEL_W, STATUS_H), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
         if (ImGui.Begin("Status line", null,
                         ImGuiWindowFlags.NoTitleBar |
                         ImGuiWindowFlags.NoResize |
@@ -1040,6 +1074,19 @@ void main(string[] args) {
                 if (active) ImGui.PopStyleColor();
                 ImGui.SameLine();
             }
+        }
+        ImGui.End();
+    }
+
+    void drawTabPanel() {
+        ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
+        if (ImGui.Begin("Tab bar", null,
+                        ImGuiWindowFlags.NoTitleBar |
+                        ImGuiWindowFlags.NoResize   |
+                        ImGuiWindowFlags.NoMove     |
+                        ImGuiWindowFlags.NoCollapse))
+        {
         }
         ImGui.End();
     }
@@ -1088,7 +1135,7 @@ void main(string[] args) {
         }
 
 
-        cameraView.setSize(winW - PANEL_W, winH - STATUS_H);
+        cameraView.setSize(layout.vpW, layout.vpH);
 
         Viewport vp = cameraView.viewport();
 
@@ -1098,11 +1145,12 @@ void main(string[] args) {
         ImGui.NewFrame();
 
         drawSidePanel();
+        drawTabPanel();
         drawStatusBar();
 
         // ---- Tool Properties (floating) ----
         if (activeTool !is null) {
-            ImGui.SetNextWindowPos(ImVec2(PANEL_W + 10, 10), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties"))
                 activeTool.drawProperties();
@@ -1113,7 +1161,7 @@ void main(string[] args) {
 
 
         // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
-        DrawGizmo(PANEL_W + 32.0f, cameraView.height - STATUS_H - 32.0f, cameraView.view);
+        DrawGizmo(layout.sideW + 32.0f, cameraView.height - layout.statusH - 32.0f, cameraView.view);
 
         // ---- Playback cursor overlay ----
         {
@@ -1159,8 +1207,8 @@ void main(string[] args) {
         // Restrict rendering to the 3D viewport area (exclude panels).
         float scaleX = cast(float)fbW / winW;
         float scaleY = cast(float)fbH / winH;
-        glViewport(cast(int)(PANEL_W  * scaleX),
-                   cast(int)(STATUS_H * scaleY),
+        glViewport(cast(int)(layout.vpX   * scaleX),
+                   cast(int)(layout.vpGlY * scaleY),
                    cast(int)(cameraView.width  * scaleX),
                    cast(int)(cameraView.height * scaleY));
 
@@ -1184,7 +1232,7 @@ void main(string[] args) {
         gridShader.useProgram(identityMatrix, cameraView,
             cameraView.distance * 2.0f,
             cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY,
-            cast(float)PANEL_W  * scaleX, cast(float)STATUS_H * scaleY);
+            cast(float)layout.vpX * scaleX, cast(float)layout.vpGlY * scaleY);
 
         glBindVertexArray(gridVao);
         // Grid lines — gray
