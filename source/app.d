@@ -47,6 +47,8 @@ import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.file.load;
 import commands.file.save;
+import commands.mesh.subdivide;
+import commands.mesh.subdivide_faceted;
 
 import command;
 import registry;
@@ -410,6 +412,14 @@ void main(string[] args) {
         new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["file.save"] = () => cast(Command)
         new FileSave(&mesh, cameraView, editMode);
+    reg.commandFactories["mesh.subdivide"] = () => cast(Command)
+        new Subdivide(&mesh, cameraView, editMode,
+                      &gpu, &vertexCache, &edgeCache, &faceCache,
+                      () => setActiveTool(null));
+    reg.commandFactories["mesh.subdivide_faceted"] = () => cast(Command)
+        new SubdivideFaceted(&mesh, cameraView, editMode,
+                             &gpu, &vertexCache, &edgeCache, &faceCache,
+                             () => setActiveTool(null));
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -548,8 +558,6 @@ void main(string[] args) {
     }
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
-        bool shift = (kev.keysym.mod & KMOD_SHIFT) != 0;
-
         // YAML-driven shortcut lookup (tool, command, editmode).
         string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
         if (canon.length > 0) {
@@ -587,21 +595,6 @@ void main(string[] args) {
                 if (activeTool) setActiveTool(null);
                 else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
                 break;
-            case SDLK_d: {
-                if (shift) {
-                    setActiveTool(null);
-                    mesh = catmullClark(mesh);
-                    mesh.resetSelection();
-                    gpu.upload(mesh);
-                    vertexCache.resize(mesh.vertices.length);
-                    vertexCache.invalidate();
-                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                    faceCache.invalidate();
-                    edgeCache.resize(mesh.edges.length);
-                    edgeCache.invalidate();
-                }
-                break;
-            }
             case SDLK_MINUS:
                 if (gizmoLevelIdx > 0) {
                     --gizmoLevelIdx;

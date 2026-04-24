@@ -13,7 +13,12 @@ panels:
       - title: Create
         buttons:
           - { label: Box,    action: { kind: tool, id: box } }
-
+  - title: Multiply
+    items:
+      - title: Subdivide
+        buttons:
+          - { label: Subdivide, action: { kind: command, id: mesh.subdivide } }
+          - { label: Faceted,   action: { kind: command, id: mesh.subdivide_faceted } }
   - title: Selection
     items:
       - title: Grow / Shrink

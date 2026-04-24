@@ -17,6 +17,7 @@ commands:
   select.between:        "Shift+G"
   viewport.fit:          A
   viewport.fit_selected: "Shift+A"
+  mesh.subdivide:        "Shift+D"
 
 editmodes:
   vertices: "1"

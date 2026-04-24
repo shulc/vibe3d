@@ -1108,6 +1108,285 @@ Mesh catmullClark(ref const Mesh m) {
     return result;
 }
 
+/// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
+/// is true is split into n quads using its centroid and edge midpoints — no
+/// vertex smoothing, unlike Catmull-Clark. Non-selected faces sharing an edge
+/// with a selected face are widened to include that edge's midpoint, keeping
+/// the mesh manifold (no T-junctions). `faceMask` may be shorter than
+/// m.faces.length — missing entries are treated as false. If no face is
+/// selected the mesh is returned topologically unchanged.
+Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
+    uint nV = cast(uint)m.vertices.length;
+    uint nF = cast(uint)m.faces.length;
+    uint nE = cast(uint)m.edges.length;
+
+    bool isSelected(size_t fi) {
+        return fi < faceMask.length && faceMask[fi];
+    }
+
+    // Map edge key → index in m.edges.
+    uint[ulong] edgeLookup;
+    foreach (i, e; m.edges)
+        edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+
+    // An edge is "active" (gets a midpoint) iff at least one adjacent face is
+    // selected. Walking selected face perimeters is enough — an unselected
+    // face by itself never activates its edges.
+    bool[] edgeActive = new bool[](nE);
+    foreach (fi, face; m.faces) {
+        if (!isSelected(fi)) continue;
+        uint len = cast(uint)face.length;
+        foreach (i; 0 .. len) {
+            uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
+            edgeActive[ei] = true;
+        }
+    }
+
+    // Output vertex layout: [original] [edge midpoints] [selected centroids].
+    uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
+    uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
+
+    uint outVCount = nV;
+    foreach (ei; 0 .. nE) if (edgeActive[ei]) {
+        edgeMidIdx[ei] = outVCount++;
+    }
+    foreach (fi; 0 .. nF) if (isSelected(fi)) {
+        faceCentroidIdx[fi] = outVCount++;
+    }
+
+    Mesh result;
+    result.vertices.length = outVCount;
+    foreach (vi; 0 .. nV) result.vertices[vi] = m.vertices[vi];
+    foreach (ei; 0 .. nE) if (edgeActive[ei]) {
+        Vec3 a = m.vertices[m.edges[ei][0]];
+        Vec3 b = m.vertices[m.edges[ei][1]];
+        result.vertices[edgeMidIdx[ei]] = (a + b) * 0.5f;
+    }
+    foreach (fi; 0 .. nF) if (isSelected(fi)) {
+        result.vertices[faceCentroidIdx[fi]] = m.faceCentroid(cast(uint)fi);
+    }
+
+    uint[ulong] resultEdgeLookup;
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        if (isSelected(fi)) {
+            uint cIdx = faceCentroidIdx[fi];
+            foreach (i; 0 .. len) {
+                uint vi0  = face[i];
+                uint vi1  = face[(i + 1) % len];
+                uint vim1 = face[(i + len - 1) % len];
+                uint eFwd  = edgeLookup[edgeKey(vi0, vi1)];
+                uint eBack = edgeLookup[edgeKey(vim1, vi0)];
+                result.addFaceFast(resultEdgeLookup,
+                    [vi0, edgeMidIdx[eFwd], cIdx, edgeMidIdx[eBack]]);
+            }
+        } else {
+            // Keep shape but splice in midpoints of any edge that is shared
+            // with a selected face.
+            uint[] widened;
+            foreach (i; 0 .. len) {
+                uint v0 = face[i];
+                uint v1 = face[(i + 1) % len];
+                widened ~= v0;
+                uint ei = edgeLookup[edgeKey(v0, v1)];
+                if (edgeMidIdx[ei] != uint.max)
+                    widened ~= edgeMidIdx[ei];
+            }
+            result.addFaceFast(resultEdgeLookup, widened);
+        }
+    }
+
+    result.buildLoops();
+    return result;
+}
+
+/// Catmull-Clark restricted to a face mask. Selected faces are split into n
+/// quads with full C-C smoothing; vertices whose adjacent faces are ALL
+/// selected move per the interior rule (or the mesh-boundary rule for open
+/// edges), while vertices touching any unselected face are pinned to preserve
+/// continuity with the unaltered region. Edges interior to the selection get
+/// C-C edge points; edges on the selection boundary use the simple midpoint
+/// so unselected faces can widen without breaking manifold topology. If
+/// `faceMask` is empty or all-false the mesh is returned essentially
+/// unchanged — callers should fall back to `catmullClark` for that case.
+Mesh catmullClarkSelected(ref const Mesh m, const bool[] faceMask) {
+    uint nV = cast(uint)m.vertices.length;
+    uint nF = cast(uint)m.faces.length;
+    uint nE = cast(uint)m.edges.length;
+
+    bool isSelected(size_t fi) {
+        return fi < faceMask.length && faceMask[fi];
+    }
+
+    uint[ulong] edgeLookup;
+    foreach (i, e; m.edges)
+        edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+
+    uint[][] edgeFaces = new uint[][](nE);
+    uint[][] vertFaces = new uint[][](nV);
+    uint[][] vertEdges = new uint[][](nV);
+
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        foreach (vi; face)
+            vertFaces[vi] ~= cast(uint)fi;
+        foreach (i; 0 .. len) {
+            uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
+            edgeFaces[ei] ~= cast(uint)fi;
+        }
+    }
+    foreach (ei, e; m.edges) {
+        vertEdges[e[0]] ~= cast(uint)ei;
+        vertEdges[e[1]] ~= cast(uint)ei;
+    }
+
+    // Edge classification: active = at least one adjacent face selected;
+    // smoothInterior = both adjacent faces selected and edge is not a mesh
+    // boundary (=> use full C-C edge-point formula).
+    bool[] edgeActive         = new bool[](nE);
+    bool[] edgeSmoothInterior = new bool[](nE);
+    foreach (ei, fList; edgeFaces) {
+        bool anySel = false, allSel = fList.length > 0;
+        foreach (fi; fList) {
+            if (isSelected(fi)) anySel = true;
+            else                allSel = false;
+        }
+        edgeActive[ei]         = anySel;
+        edgeSmoothInterior[ei] = allSel && fList.length == 2;
+    }
+
+    // Vertex classification: "interior to selection" means every adjacent face
+    // is selected — such vertices move; all others stay pinned.
+    bool[] vertInterior = new bool[](nV);
+    foreach (vi; 0 .. nV) {
+        if (vertFaces[vi].length == 0) continue;
+        bool allSel = true;
+        foreach (fi; vertFaces[vi])
+            if (!isSelected(fi)) { allSel = false; break; }
+        vertInterior[vi] = allSel;
+    }
+
+    // Face centroids (selected only).
+    Vec3[] facePoints = new Vec3[](nF);
+    foreach (fi; 0 .. nF)
+        if (isSelected(fi))
+            facePoints[fi] = m.faceCentroid(cast(uint)fi);
+
+    // Edge points.
+    Vec3[] edgePoints = new Vec3[](nE);
+    foreach (ei; 0 .. nE) {
+        if (!edgeActive[ei]) continue;
+        Vec3 a = m.vertices[m.edges[ei][0]];
+        Vec3 b = m.vertices[m.edges[ei][1]];
+        if (edgeSmoothInterior[ei]) {
+            Vec3 f0 = facePoints[edgeFaces[ei][0]];
+            Vec3 f1 = facePoints[edgeFaces[ei][1]];
+            edgePoints[ei] = (a + b + f0 + f1) * 0.25f;
+        } else {
+            edgePoints[ei] = (a + b) * 0.5f;
+        }
+    }
+
+    // Updated positions for the original vertices.
+    Vec3[] newVerts = new Vec3[](nV);
+    foreach (vi; 0 .. nV) {
+        if (!vertInterior[vi]) {
+            newVerts[vi] = m.vertices[vi];
+            continue;
+        }
+        Vec3 v = m.vertices[vi];
+
+        bool meshBoundary = false;
+        foreach (ei; vertEdges[vi])
+            if (edgeFaces[ei].length < 2) { meshBoundary = true; break; }
+
+        if (meshBoundary) {
+            // Boundary rule: average v with midpoints of its mesh-boundary edges.
+            Vec3 sum = v;
+            int  cnt = 1;
+            foreach (ei; vertEdges[vi]) {
+                if (edgeFaces[ei].length >= 2) continue;
+                Vec3 ea = m.vertices[m.edges[ei][0]];
+                Vec3 eb = m.vertices[m.edges[ei][1]];
+                sum += (ea + eb) * 0.5f;
+                cnt++;
+            }
+            newVerts[vi] = sum * (1.0f / cast(float)cnt);
+        } else {
+            // Interior rule: (F + 2R + (n-3)v) / n.
+            uint  n  = cast(uint)vertFaces[vi].length;
+            float fn = cast(float)n;
+            Vec3 F = Vec3(0, 0, 0);
+            foreach (fi; vertFaces[vi]) F += facePoints[fi];
+            F = F / fn;
+
+            Vec3 R = Vec3(0, 0, 0);
+            uint ne = cast(uint)vertEdges[vi].length;
+            foreach (ei; vertEdges[vi]) {
+                Vec3 ea = m.vertices[m.edges[ei][0]];
+                Vec3 eb = m.vertices[m.edges[ei][1]];
+                R += (ea + eb) * 0.5f;
+            }
+            R = R / cast(float)ne;
+
+            newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
+                                (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
+                                (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
+        }
+    }
+
+    // Output vertex layout: [original/shifted] [edge points] [face centroids].
+    uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
+    uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
+
+    uint outVCount = nV;
+    foreach (ei; 0 .. nE) if (edgeActive[ei]) {
+        edgeMidIdx[ei] = outVCount++;
+    }
+    foreach (fi; 0 .. nF) if (isSelected(fi)) {
+        faceCentroidIdx[fi] = outVCount++;
+    }
+
+    Mesh result;
+    result.vertices.length = outVCount;
+    foreach (vi; 0 .. nV) result.vertices[vi] = newVerts[vi];
+    foreach (ei; 0 .. nE) if (edgeActive[ei])
+        result.vertices[edgeMidIdx[ei]] = edgePoints[ei];
+    foreach (fi; 0 .. nF) if (isSelected(fi))
+        result.vertices[faceCentroidIdx[fi]] = facePoints[fi];
+
+    uint[ulong] resultEdgeLookup;
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        if (isSelected(fi)) {
+            uint cIdx = faceCentroidIdx[fi];
+            foreach (i; 0 .. len) {
+                uint vi0  = face[i];
+                uint vi1  = face[(i + 1) % len];
+                uint vim1 = face[(i + len - 1) % len];
+                uint eFwd  = edgeLookup[edgeKey(vi0, vi1)];
+                uint eBack = edgeLookup[edgeKey(vim1, vi0)];
+                result.addFaceFast(resultEdgeLookup,
+                    [vi0, edgeMidIdx[eFwd], cIdx, edgeMidIdx[eBack]]);
+            }
+        } else {
+            uint[] widened;
+            foreach (i; 0 .. len) {
+                uint v0 = face[i];
+                uint v1 = face[(i + 1) % len];
+                widened ~= v0;
+                uint ei = edgeLookup[edgeKey(v0, v1)];
+                if (edgeMidIdx[ei] != uint.max)
+                    widened ~= edgeMidIdx[ei];
+            }
+            result.addFaceFast(resultEdgeLookup, widened);
+        }
+    }
+
+    result.buildLoops();
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // GpuMesh
 // ---------------------------------------------------------------------------
