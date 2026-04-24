@@ -45,6 +45,8 @@ import commands.select.less;
 import commands.select.between;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
+import commands.file.load;
+import commands.file.save;
 
 import command;
 import registry;
@@ -404,6 +406,10 @@ void main(string[] args) {
     reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh, cameraView, editMode);
     reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh, cameraView, editMode);
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh, cameraView, editMode);
+    reg.commandFactories["file.load"] = () => cast(Command)
+        new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["file.save"] = () => cast(Command)
+        new FileSave(&mesh, cameraView, editMode);
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -413,7 +419,7 @@ void main(string[] args) {
         import std.array : appender;
         auto missing = appender!string();
         foreach (ref p; panels) {
-            foreach (ref btn; p.buttons) {
+            foreach (ref btn; allButtons(p)) {
                 if (btn.action.kind == ActionKind.tool) {
                     if ((btn.action.id in reg.toolFactories) is null)
                         missing ~= " tool:" ~ btn.action.id;
@@ -972,10 +978,48 @@ void main(string[] args) {
         }
     }
 
+    // LightWave-style raised-bevel border around the last ImGui item.
+    // Colors sampled from LightWave Modeler screenshot.
+    void drawRaisedBevel(uint light, uint dark, bool pressed = false) {
+        auto dl = ImGui.GetWindowDrawList();
+        ImVec2 rmin = ImGui.GetItemRectMin();
+        ImVec2 rmax = ImGui.GetItemRectMax();
+        uint tl = pressed ? dark  : light;
+        uint br = pressed ? light : dark;
+        // Top + left edges
+        dl.AddLine(ImVec2(rmin.x,        rmin.y),        ImVec2(rmax.x - 1.0f, rmin.y),        tl);
+        dl.AddLine(ImVec2(rmin.x,        rmin.y),        ImVec2(rmin.x,        rmax.y - 1.0f), tl);
+        // Bottom + right edges
+        dl.AddLine(ImVec2(rmin.x,        rmax.y - 1.0f), ImVec2(rmax.x - 1.0f, rmax.y - 1.0f), br);
+        dl.AddLine(ImVec2(rmax.x - 1.0f, rmin.y),        ImVec2(rmax.x - 1.0f, rmax.y - 1.0f), br);
+    }
+
+    // LightWave-style section header: dark slate-blue band with centered white text.
+    void drawSectionHeader(string title) {
+        auto dl = ImGui.GetWindowDrawList();
+        ImVec2 pos = ImGui.GetCursorScreenPos();
+        float  w   = ImGui.GetContentRegionAvail().x;
+        ImVec2 ts  = ImGui.CalcTextSize(title);
+        float  h   = ts.y + 4.0f;
+        dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h),
+                         IM_COL32(84, 84, 94, 255));
+        float tx = pos.x + (w - ts.x) * 0.5f;
+        float ty = pos.y + 2.0f;
+        dl.AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 255), title);
+        ImGui.Dummy(ImVec2(w, h));
+    }
+
     void drawSidePanel() {
         int selCount     = countSelected(mesh.selectedVertices);
         int selEdgeCount = countSelected(mesh.selectedEdges);
         int selFaceCount = countSelected(mesh.selectedFaces);
+
+        // LightWave-style panel background (applied before Begin).
+        // Sampled from LightWave Modeler: panel bg = (143, 143, 143).
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0.561f, 0.561f, 0.561f, 1.0f));
+        ImGui.PushStyleColor(ImGuiCol.Border,   ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
 
         ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
@@ -985,78 +1029,106 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
-            ImGui.Text("File");
-            if (ImGui.Button("Load              ")) {
-                string path;
-                version (Windows)
-                    auto result = openDialog(path, [FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)]);
-                else
-                    auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
-                assert(result != Result.error, getError());
-                if (path !is null) {
-                    if (importLWO(path, mesh)) {
-                        mesh.resetSelection();
-                        gpu.upload(mesh);
-                        vertexCache.resize(mesh.vertices.length);
-                        vertexCache.invalidate();
-                        faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                        faceCache.invalidate();
-                        edgeCache.resize(mesh.edges.length);
-                        edgeCache.invalidate();
-                    }
-                }
+            // LightWave-style button/text styling. Sampled colors:
+            //   bg=(181,181,167), bevel-light=(225,225,211), bevel-dark=(162,162,148),
+            //   text=black, shortcut=(245,245,231).
+            ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(0.710f, 0.710f, 0.655f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.773f, 0.773f, 0.718f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(1.0f,   1.0f,   1.0f,   1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Text,          ImVec4(0.0f,   0.0f,   0.0f,   1.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImVec2(4, 2));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 1));
+            scope(exit) {
+                ImGui.PopStyleVar(3);
+                ImGui.PopStyleColor(4);
             }
+            void renderButton(ref Button btn) {
+                string sc;
+                if (btn.action.kind == ActionKind.tool) {
+                    if (auto sp = btn.action.id in shortcuts.byToolId)
+                        sc = sp.display();
+                } else {
+                    if (auto sp = btn.action.id in shortcuts.byCommandId)
+                        sc = sp.display();
+                }
 
-            if (ImGui.Button("Save              ")) {
-                string path;
-                version (Windows)
-                    auto result = saveDialog(path, [FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)], "Untitled.lwo");
-                else
-                    auto result = saveDialog(path, [FilterItem("LWO", "lwo")], "Untitled.lwo");
-                assert(result != Result.error, getError());
-                if (path !is null) {
-                    exportLWO(mesh, path);
+                bool on = (btn.action.kind == ActionKind.tool &&
+                           activeToolId == btn.action.id);
+                bool isCommand = btn.action.kind == ActionKind.command;
+
+                // Per-kind palette (sampled from LightWave).
+                ImVec4 bgNormal, bgHover;
+                uint   bevelLightN, bevelDarkN, bevelLightH, bevelDarkH;
+                if (isCommand) {
+                    bgNormal    = ImVec4(0.635f, 0.686f, 0.749f, 1.0f);  // (162,175,191)
+                    bgHover     = ImVec4(0.698f, 0.749f, 0.812f, 1.0f);  // (178,191,207)
+                    bevelLightN = IM_COL32(206, 219, 235, 255);
+                    bevelDarkN  = IM_COL32(143, 156, 172, 255);
+                    bevelLightH = IM_COL32(222, 235, 251, 255);
+                    bevelDarkH  = IM_COL32(159, 172, 188, 255);
+                } else {
+                    bgNormal    = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);  // (181,181,167)
+                    bgHover     = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
+                    bevelLightN = IM_COL32(225, 225, 211, 255);
+                    bevelDarkN  = IM_COL32(162, 162, 148, 255);
+                    bevelLightH = IM_COL32(241, 241, 227, 255);
+                    bevelDarkH  = IM_COL32(178, 178, 164, 255);
+                }
+
+                ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+                ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
+                ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
+                bool clicked = ImGui.Button(btn.label, ImVec2(-1, 0));
+                ImGui.PopStyleVar();
+                ImGui.PopStyleColor(3);
+
+                bool held = ImGui.IsItemActive();
+                if (!on && !held) {
+                    bool hov = ImGui.IsItemHovered();
+                    drawRaisedBevel(hov ? bevelLightH : bevelLightN,
+                                    hov ? bevelDarkH  : bevelDarkN,
+                                    false);
+                }
+
+                if (sc.length > 0) {
+                    ImVec2 rmin = ImGui.GetItemRectMin();
+                    ImVec2 rmax = ImGui.GetItemRectMax();
+                    ImVec2 ts   = ImGui.CalcTextSize(sc);
+                    ImVec2 tp   = ImVec2(rmax.x - ts.x - 6.0f,
+                                         rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
+                    uint scCol = (on || held) ? IM_COL32(0, 0, 0, 255)
+                                              : IM_COL32(245, 245, 231, 255);
+                    ImGui.GetWindowDrawList().AddText(tp, scCol, sc);
+                }
+
+                if (clicked) {
+                    if (btn.action.kind == ActionKind.tool)
+                        activateToolById(btn.action.id);
+                    else
+                        reg.commandFactories[btn.action.id]().apply();
                 }
             }
 
             if (activePanelIdx >= 0 && activePanelIdx < cast(int)panels.length) {
                 Panel* p = &panels[activePanelIdx];
-                ImGui.Separator();
-                ImGui.Text("%s", p.title);
-                foreach (ref btn; p.buttons) {
-                    string sc;
-                    if (btn.action.kind == ActionKind.tool) {
-                        if (auto sp = btn.action.id in shortcuts.byToolId)
-                            sc = sp.display();
+                drawSectionHeader(p.title);
+                bool prevWasGroup = true;  // panel title acts as a group
+                foreach (ref item; p.items) {
+                    bool curIsGroup = item.isGroup;
+                    if (prevWasGroup || curIsGroup)
+                        ImGui.Dummy(ImVec2(0, 9));  // LW inter-group gap = 10px total
+                    if (curIsGroup) {
+                        if (item.group.title.length > 0)
+                            drawSectionHeader(item.group.title);
+                        foreach (ref b; item.group.buttons)
+                            renderButton(b);
                     } else {
-                        if (auto sp = btn.action.id in shortcuts.byCommandId)
-                            sc = sp.display();
+                        renderButton(item.button);
                     }
-
-                    bool on = (btn.action.kind == ActionKind.tool &&
-                               activeToolId == btn.action.id);
-                    if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
-                    bool clicked = ImGui.Button(btn.label, ImVec2(-1, 0));
-                    ImGui.PopStyleVar();
-                    if (on) ImGui.PopStyleColor();
-
-                    if (sc.length > 0) {
-                        ImVec2 rmin = ImGui.GetItemRectMin();
-                        ImVec2 rmax = ImGui.GetItemRectMax();
-                        ImVec2 ts   = ImGui.CalcTextSize(sc);
-                        ImVec2 tp   = ImVec2(rmax.x - ts.x - 6.0f,
-                                             rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
-                        ImGui.GetWindowDrawList().AddText(
-                            tp, IM_COL32(180, 180, 180, 255), sc);
-                    }
-
-                    if (clicked) {
-                        if (btn.action.kind == ActionKind.tool)
-                            activateToolById(btn.action.id);
-                        else
-                            reg.commandFactories[btn.action.id]().apply();
-                    }
+                    prevWasGroup = curIsGroup;
                 }
             }
 
@@ -1073,6 +1145,8 @@ void main(string[] args) {
             ImGui.LabelText("Faces", "%d/%d", mesh.faceSelectionOrderCounter, cast(int)mesh.faces.length);
         }
         ImGui.End();
+        ImGui.PopStyleVar(2);     // WindowPadding, WindowBorderSize
+        ImGui.PopStyleColor(2);   // Border, WindowBg
     }
 
     void drawStatusBar() {
