@@ -1066,15 +1066,23 @@ void main(string[] args) {
         return clicked;
     }
 
-    // LightWave-style section header: dark slate-blue band with centered white text.
+    // LightWave-style section header: dark slate-blue band with centered white
+    // text, framed by a 1-pixel black outline matching button edges.
     void drawSectionHeader(string title) {
         auto dl = ImGui.GetWindowDrawList();
         ImVec2 pos = ImGui.GetCursorScreenPos();
-        float  w   = ImGui.GetContentRegionAvail().x;
+        // Match full-width buttons rendered with ImVec2(-1, 0) — ImGui resolves
+        // that to avail.x - 1, so subtract one here to keep right edges flush.
+        float  w   = ImGui.GetContentRegionAvail().x - 1.0f;
         ImVec2 ts  = ImGui.CalcTextSize(title);
         float  h   = ts.y + 4.0f;
-        dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h),
-                         IM_COL32(84, 84, 94, 255));
+        ImVec2 rmax = ImVec2(pos.x + w, pos.y + h);
+        dl.AddRectFilled(pos, rmax, IM_COL32(84, 84, 94, 255));
+        uint c = IM_COL32(0, 0, 0, 255);
+        dl.AddLine(ImVec2(pos.x, pos.y),  ImVec2(rmax.x, pos.y),  c);  // top
+        dl.AddLine(ImVec2(pos.x, pos.y),  ImVec2(pos.x, rmax.y),  c);  // left
+        dl.AddLine(ImVec2(pos.x, rmax.y), ImVec2(rmax.x, rmax.y), c);  // bottom
+        dl.AddLine(ImVec2(rmax.x, pos.y), ImVec2(rmax.x, rmax.y), c);  // right
         float tx = pos.x + (w - ts.x) * 0.5f;
         float ty = pos.y + 2.0f;
         dl.AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 255), title);
@@ -1168,11 +1176,11 @@ void main(string[] args) {
 
             if (activePanelIdx >= 0 && activePanelIdx < cast(int)panels.length) {
                 Panel* p = &panels[activePanelIdx];
-                drawSectionHeader(p.title);
-                bool prevWasGroup = true;  // panel title acts as a group
+                bool prevWasGroup = false;
+                bool first        = true;
                 foreach (ref item; p.items) {
                     bool curIsGroup = item.isGroup;
-                    if (prevWasGroup || curIsGroup)
+                    if (!first && (prevWasGroup || curIsGroup))
                         ImGui.Dummy(ImVec2(0, 10));  // LW inter-group gap = 10px
                     if (curIsGroup) {
                         if (item.group.title.length > 0)
@@ -1183,6 +1191,7 @@ void main(string[] args) {
                         renderButton(item.button);
                     }
                     prevWasGroup = curIsGroup;
+                    first = false;
                 }
             }
 
