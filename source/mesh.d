@@ -41,6 +41,14 @@ struct Mesh {
     int       vertexSelectionOrderCounter;
     int       edgeSelectionOrderCounter;
     int       faceSelectionOrderCounter;
+    // Persistent per-face subpatch flag (LightWave-style Tab toggle). Faces
+    // with isSubpatch[fi] == true are displayed through a subdivided preview
+    // while the cage geometry remains authoritative.
+    bool[]    isSubpatch;
+    // Monotonic counter bumped on any topology or vertex-position change that
+    // invalidates the subpatch preview. Mutators that touch geometry should
+    // increment this so cached previews can detect the change.
+    ulong     mutationVersion;
 
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
@@ -51,9 +59,12 @@ struct Mesh {
         edgeSelectionOrder.length   = edges.length;
         selectedFaces.length        = faces.length;
         faceSelectionOrder.length   = faces.length;
+        isSubpatch.length           = faces.length;
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
+        isSubpatch[] = false;
+        ++mutationVersion;
     }
 
     // Bring each *SelectionOrderCounter up to the maximum value in its order array.
@@ -77,10 +88,12 @@ struct Mesh {
         if (vertexSelectionOrder.length < vertices.length) vertexSelectionOrder.length = vertices.length;
         if (edgeSelectionOrder.length   < edges.length)    edgeSelectionOrder.length   = edges.length;
         if (faceSelectionOrder.length   < faces.length)    faceSelectionOrder.length   = faces.length;
+        if (isSubpatch.length           < faces.length)    isSubpatch.length           = faces.length;
     }
 
     uint addVertex(Vec3 v) {
         vertices ~= v;
+        ++mutationVersion;
         return cast(uint)(vertices.length - 1);
     }
     void addEdge(uint a, uint b) {
@@ -88,11 +101,13 @@ struct Mesh {
         if (key in edgeIndexMap) return;
         edgeIndexMap[key] = cast(uint)edges.length;
         edges ~= [a, b];
+        ++mutationVersion;
     }
     void addFace(uint[] idx) {
         faces ~= idx.dup;
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
+        ++mutationVersion;
     }
     // Fast version using hash lookup for duplicate checking
     void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
@@ -106,10 +121,26 @@ struct Mesh {
                 edgeLookup[key] = cast(uint)(edges.length - 1);
             }
         }
+        ++mutationVersion;
     }
     bool hasAnySelectedVertices() const { return hasAnySelected(selectedVertices); }
     bool hasAnySelectedEdges() const { return hasAnySelected(selectedEdges); }
     bool hasAnySelectedFaces() const { return hasAnySelected(selectedFaces); }
+    bool hasAnySubpatch() const        { return hasAnySelected(isSubpatch); }
+
+    void setSubpatch(size_t idx, bool on) {
+        if (idx >= isSubpatch.length) return;
+        if (isSubpatch[idx] != on) {
+            isSubpatch[idx] = on;
+            ++mutationVersion;
+        }
+    }
+    void clearSubpatch() {
+        bool any = false;
+        foreach (b; isSubpatch) if (b) { any = true; break; }
+        isSubpatch[] = false;
+        if (any) ++mutationVersion;
+    }
 
     void clearVertexSelection() {
         selectedVertices[] = false;
@@ -1387,6 +1418,285 @@ Mesh catmullClarkSelected(ref const Mesh m, const bool[] faceMask) {
     return result;
 }
 
+/// Back-references mapping a subdivided mesh's vertices/edges/faces to an
+/// "ultimate source" mesh (typically the cage). Indices are into the source
+/// mesh; `uint.max` means the element was introduced by subdivision and has
+/// no direct counterpart in the source. `subpatch` is the per-face mask that
+/// drives the next subdivision pass.
+struct SubpatchTrace {
+    uint[] vertOrigin;
+    uint[] edgeOrigin;
+    uint[] faceOrigin;
+    bool[] subpatch;
+
+    /// Identity trace for `m`: every vert/edge/face traces to itself.
+    /// `initialSubpatch` is copied into `subpatch`; missing entries default false.
+    static SubpatchTrace identity(ref const Mesh m, const bool[] initialSubpatch) {
+        SubpatchTrace t;
+        t.vertOrigin = new uint[](m.vertices.length);
+        t.edgeOrigin = new uint[](m.edges.length);
+        t.faceOrigin = new uint[](m.faces.length);
+        t.subpatch   = new bool[](m.faces.length);
+        foreach (i; 0 .. m.vertices.length) t.vertOrigin[i] = cast(uint)i;
+        foreach (i; 0 .. m.edges.length)    t.edgeOrigin[i] = cast(uint)i;
+        foreach (i; 0 .. m.faces.length)    t.faceOrigin[i] = cast(uint)i;
+        foreach (i; 0 .. m.faces.length)
+            t.subpatch[i] = (i < initialSubpatch.length) && initialSubpatch[i];
+        return t;
+    }
+}
+
+struct SubdivStep {
+    Mesh          mesh;
+    SubpatchTrace trace;
+}
+
+/// One pass of selection-aware Catmull-Clark that also composes an origin
+/// trace back to the source mesh. Uses the same geometry math as
+/// `catmullClarkSelected` (selected faces smoothed internally, boundary
+/// vertices pinned, boundary edges use simple midpoints). Subpatch flags of
+/// the input propagate to the output: every child of a selected face is
+/// subpatch, every pass-through face keeps its original flag.
+SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace) {
+    uint nV = cast(uint)m.vertices.length;
+    uint nF = cast(uint)m.faces.length;
+    uint nE = cast(uint)m.edges.length;
+
+    bool isSelected(size_t fi) {
+        return fi < inTrace.subpatch.length && inTrace.subpatch[fi];
+    }
+
+    uint[ulong] edgeLookup;
+    foreach (i, e; m.edges)
+        edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+
+    uint[][] edgeFaces = new uint[][](nE);
+    uint[][] vertFaces = new uint[][](nV);
+    uint[][] vertEdges = new uint[][](nV);
+
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        foreach (vi; face) vertFaces[vi] ~= cast(uint)fi;
+        foreach (i; 0 .. len) {
+            uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
+            edgeFaces[ei] ~= cast(uint)fi;
+        }
+    }
+    foreach (ei, e; m.edges) {
+        vertEdges[e[0]] ~= cast(uint)ei;
+        vertEdges[e[1]] ~= cast(uint)ei;
+    }
+
+    bool[] edgeActive         = new bool[](nE);
+    bool[] edgeSmoothInterior = new bool[](nE);
+    foreach (ei, fList; edgeFaces) {
+        bool anySel = false, allSel = fList.length > 0;
+        foreach (fi; fList) {
+            if (isSelected(fi)) anySel = true;
+            else                allSel = false;
+        }
+        edgeActive[ei]         = anySel;
+        edgeSmoothInterior[ei] = allSel && fList.length == 2;
+    }
+
+    bool[] vertInterior = new bool[](nV);
+    foreach (vi; 0 .. nV) {
+        if (vertFaces[vi].length == 0) continue;
+        bool allSel = true;
+        foreach (fi; vertFaces[vi])
+            if (!isSelected(fi)) { allSel = false; break; }
+        vertInterior[vi] = allSel;
+    }
+
+    Vec3[] facePoints = new Vec3[](nF);
+    foreach (fi; 0 .. nF)
+        if (isSelected(fi))
+            facePoints[fi] = m.faceCentroid(cast(uint)fi);
+
+    Vec3[] edgePoints = new Vec3[](nE);
+    foreach (ei; 0 .. nE) {
+        if (!edgeActive[ei]) continue;
+        Vec3 a = m.vertices[m.edges[ei][0]];
+        Vec3 b = m.vertices[m.edges[ei][1]];
+        if (edgeSmoothInterior[ei]) {
+            Vec3 f0 = facePoints[edgeFaces[ei][0]];
+            Vec3 f1 = facePoints[edgeFaces[ei][1]];
+            edgePoints[ei] = (a + b + f0 + f1) * 0.25f;
+        } else {
+            edgePoints[ei] = (a + b) * 0.5f;
+        }
+    }
+
+    Vec3[] newVerts = new Vec3[](nV);
+    foreach (vi; 0 .. nV) {
+        if (!vertInterior[vi]) {
+            newVerts[vi] = m.vertices[vi];
+            continue;
+        }
+        Vec3 v = m.vertices[vi];
+        bool meshBoundary = false;
+        foreach (ei; vertEdges[vi])
+            if (edgeFaces[ei].length < 2) { meshBoundary = true; break; }
+
+        if (meshBoundary) {
+            Vec3 sum = v;
+            int  cnt = 1;
+            foreach (ei; vertEdges[vi]) {
+                if (edgeFaces[ei].length >= 2) continue;
+                Vec3 ea = m.vertices[m.edges[ei][0]];
+                Vec3 eb = m.vertices[m.edges[ei][1]];
+                sum += (ea + eb) * 0.5f;
+                cnt++;
+            }
+            newVerts[vi] = sum * (1.0f / cast(float)cnt);
+        } else {
+            uint  n  = cast(uint)vertFaces[vi].length;
+            float fn = cast(float)n;
+            Vec3 F = Vec3(0, 0, 0);
+            foreach (fi; vertFaces[vi]) F += facePoints[fi];
+            F = F / fn;
+
+            Vec3 R = Vec3(0, 0, 0);
+            uint ne = cast(uint)vertEdges[vi].length;
+            foreach (ei; vertEdges[vi]) {
+                Vec3 ea = m.vertices[m.edges[ei][0]];
+                Vec3 eb = m.vertices[m.edges[ei][1]];
+                R += (ea + eb) * 0.5f;
+            }
+            R = R / cast(float)ne;
+
+            newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
+                                (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
+                                (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
+        }
+    }
+
+    uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
+    uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
+
+    uint outVCount = nV;
+    foreach (ei; 0 .. nE) if (edgeActive[ei])   edgeMidIdx[ei]      = outVCount++;
+    foreach (fi; 0 .. nF) if (isSelected(fi))   faceCentroidIdx[fi] = outVCount++;
+
+    // Output trace — composed with inTrace so it targets the ultimate source.
+    SubpatchTrace outTrace;
+    outTrace.vertOrigin = new uint[](outVCount);
+    foreach (vi; 0 .. nV) outTrace.vertOrigin[vi] = inTrace.vertOrigin[vi];
+    foreach (ei; 0 .. nE) if (edgeActive[ei])   outTrace.vertOrigin[edgeMidIdx[ei]]      = uint.max;
+    foreach (fi; 0 .. nF) if (isSelected(fi))   outTrace.vertOrigin[faceCentroidIdx[fi]] = uint.max;
+
+    Mesh result;
+    result.vertices.length = outVCount;
+    foreach (vi; 0 .. nV) result.vertices[vi] = newVerts[vi];
+    foreach (ei; 0 .. nE) if (edgeActive[ei])
+        result.vertices[edgeMidIdx[ei]] = edgePoints[ei];
+    foreach (fi; 0 .. nF) if (isSelected(fi))
+        result.vertices[faceCentroidIdx[fi]] = facePoints[fi];
+
+    // Track face origin + subpatch flag as we emit faces, and remember edge
+    // origin per output-edge-key for a final fill after buildLoops.
+    uint[] faceOriginAcc;
+    bool[] subpatchAcc;
+    uint[ulong] outEdgeOrigin;
+
+    void emitOutEdge(uint a, uint b, uint origin) {
+        outEdgeOrigin[edgeKey(a, b)] = origin;
+    }
+
+    uint[ulong] resultEdgeLookup;
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        if (isSelected(fi)) {
+            uint cIdx = faceCentroidIdx[fi];
+            foreach (i; 0 .. len) {
+                uint vi0  = face[i];
+                uint vi1  = face[(i + 1) % len];
+                uint vim1 = face[(i + len - 1) % len];
+                uint eFwd  = edgeLookup[edgeKey(vi0, vi1)];
+                uint eBack = edgeLookup[edgeKey(vim1, vi0)];
+                uint mFwd  = edgeMidIdx[eFwd];
+                uint mBack = edgeMidIdx[eBack];
+                result.addFaceFast(resultEdgeLookup, [vi0, mFwd, cIdx, mBack]);
+                faceOriginAcc ~= inTrace.faceOrigin[fi];
+                subpatchAcc   ~= true;
+                // Quad edges: (vi0,mFwd) along eFwd, (mBack,vi0) along eBack,
+                // (mFwd,cIdx) and (cIdx,mBack) are new radial edges.
+                emitOutEdge(vi0,  mFwd, inTrace.edgeOrigin[eFwd]);
+                emitOutEdge(mBack, vi0, inTrace.edgeOrigin[eBack]);
+                emitOutEdge(mFwd, cIdx, uint.max);
+                emitOutEdge(cIdx, mBack, uint.max);
+            }
+        } else {
+            uint[] widened;
+            foreach (i; 0 .. len) {
+                uint v0 = face[i];
+                uint v1 = face[(i + 1) % len];
+                widened ~= v0;
+                uint ei = edgeLookup[edgeKey(v0, v1)];
+                if (edgeMidIdx[ei] != uint.max) {
+                    uint mid = edgeMidIdx[ei];
+                    widened ~= mid;
+                    emitOutEdge(v0, mid, inTrace.edgeOrigin[ei]);
+                    emitOutEdge(mid, v1, inTrace.edgeOrigin[ei]);
+                } else {
+                    emitOutEdge(v0, v1, inTrace.edgeOrigin[ei]);
+                }
+            }
+            result.addFaceFast(resultEdgeLookup, widened);
+            faceOriginAcc ~= inTrace.faceOrigin[fi];
+            subpatchAcc   ~= false;
+        }
+    }
+
+    result.buildLoops();
+
+    outTrace.faceOrigin = faceOriginAcc;
+    outTrace.subpatch   = subpatchAcc;
+    outTrace.edgeOrigin = new uint[](result.edges.length);
+    foreach (ei, e; result.edges) {
+        auto p = edgeKey(e[0], e[1]) in outEdgeOrigin;
+        outTrace.edgeOrigin[ei] = p ? *p : uint.max;
+    }
+
+    return SubdivStep(result, outTrace);
+}
+
+/// Cached subdivision preview of a source (cage) mesh. When `active` is true,
+/// `mesh`/`trace` hold the subdivided display geometry; otherwise the cage
+/// should be rendered directly and this struct is inert. The cache is
+/// rebuilt lazily when `source.mutationVersion` or `depth` changes.
+struct SubpatchPreview {
+    Mesh          mesh;
+    SubpatchTrace trace;
+    bool          active;
+    ulong         sourceVersion = ulong.max;
+    int           depth         = -1;
+
+    void rebuildIfStale(ref const Mesh source, int d) {
+        if (sourceVersion == source.mutationVersion && depth == d)
+            return;
+        rebuild(source, d);
+    }
+
+    void rebuild(ref const Mesh source, int d) {
+        depth         = d;
+        sourceVersion = source.mutationVersion;
+        if (d <= 0 || !source.hasAnySubpatch()) {
+            mesh   = Mesh.init;
+            trace  = SubpatchTrace.init;
+            active = false;
+            return;
+        }
+        auto t0   = SubpatchTrace.identity(source, source.isSubpatch);
+        auto step = catmullClarkTracked(source, t0);
+        foreach (_; 1 .. d)
+            step = catmullClarkTracked(step.mesh, step.trace);
+        mesh   = step.mesh;
+        trace  = step.trace;
+        active = true;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GpuMesh
 // ---------------------------------------------------------------------------
@@ -1400,6 +1710,17 @@ struct GpuMesh {
     int    vertCount;
     int[]  faceTriStart;   // first vertex index in faceVbo for each face
     int[]  faceTriCount;   // vertex count for each face
+    // When true the main loop owns GPU uploads (because a subpatch preview
+    // is currently displayed). Tool-side cage uploads become no-ops that
+    // only bump the mesh's mutation version so the preview is rebuilt.
+    bool   suppressCageUpload;
+    // Maps each VBO line-segment to a source (cage) edge index when a
+    // subpatch preview was uploaded. Empty for cage uploads, in which case
+    // drawEdges assumes VBO segment i == cage edge i.
+    uint[] edgeOriginGpu;
+    // Maps each VBO face (position in faceTriStart/Count) to its cage face
+    // index. Populated for subpatch uploads; empty in cage mode.
+    uint[] faceOriginGpu;
 
     void init() {
         glGenVertexArrays(1, &faceVao); glGenBuffers(1, &faceVbo);
@@ -1413,12 +1734,32 @@ struct GpuMesh {
         glDeleteVertexArrays(1, &vertVao); glDeleteBuffers(1, &vertVbo);
     }
 
-    void upload(ref const Mesh mesh) {
+    // When `edgeOrigin`/`vertOrigin` are provided (same length as the mesh's
+    // edges/vertices) entries equal to `uint.max` are skipped. This is how
+    // the subpatch preview hides derived edges/points while still uploading
+    // the full subdivided face surface. `faceOrigin` does not filter (every
+    // preview face is rendered) but when supplied is cached in
+    // `faceOriginGpu` so selection/hover can translate cage indices.
+    void upload(ref const Mesh mesh,
+                const uint[] edgeOrigin = null,
+                const uint[] vertOrigin = null,
+                const uint[] faceOrigin = null) {
+        // Redirect tool-side cage refreshes: the GPU buffers currently hold
+        // the preview, and main loop owns re-uploads. Bumping the mutation
+        // version ensures the preview is rebuilt on the next frame against
+        // the latest cage positions.
+        if (suppressCageUpload && edgeOrigin.length == 0 && vertOrigin.length == 0) {
+            ++(cast(Mesh*)&mesh).mutationVersion;
+            return;
+        }
         // Faces — interleaved [pos(3) + normal(3)] per vertex, flat shading.
         enum FACE_STRIDE = 6;
         float[] faceData;
         faceTriStart.length = 0;
         faceTriCount.length = 0;
+        faceOriginGpu.length = 0;
+        if (faceOrigin.length > 0)
+            faceOriginGpu = faceOrigin.dup;
         foreach (face; mesh.faces) {
             int start = cast(int)(faceData.length / FACE_STRIDE);
             if (face.length >= 3) {
@@ -1455,9 +1796,15 @@ struct GpuMesh {
                               cast(void*)(3 * float.sizeof));
         glEnableVertexAttribArray(1);
 
-        // Edges
+        // Edges — skip derived edges (edgeOrigin[ei] == uint.max). When a
+        // filter is provided, remember each surviving segment's cage origin
+        // so drawEdges can translate selection/hover into segment space.
         float[] edgeData;
-        foreach (edge; mesh.edges) {
+        edgeOriginGpu.length = 0;
+        foreach (ei, edge; mesh.edges) {
+            if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) continue;
+            if (edgeOrigin.length > 0)
+                edgeOriginGpu ~= edgeOrigin[ei];
             Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
             edgeData ~= [a.x, a.y, a.z, b.x, b.y, b.z];
         }
@@ -1468,11 +1815,15 @@ struct GpuMesh {
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
 
-        // Vertex points
+        // Vertex points — skip derived vertices (vertOrigin[vi] == uint.max).
         float[] vertData;
-        foreach (v; mesh.vertices)
+        int     kept = 0;
+        foreach (vi, v; mesh.vertices) {
+            if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
             vertData ~= [v.x, v.y, v.z];
-        vertCount = cast(int)mesh.vertices.length;
+            ++kept;
+        }
+        vertCount = kept;
         glBindVertexArray(vertVao);
         glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
         glBufferData(GL_ARRAY_BUFFER, vertData.length * float.sizeof, vertData.ptr, GL_DYNAMIC_DRAW);
@@ -1484,6 +1835,13 @@ struct GpuMesh {
 
     // Optimized: update only selected vertices on GPU (much faster for large meshes)
     void uploadSelectedVertices(ref const Mesh mesh, const bool[] toUpdate) {
+        // Preview is currently displayed; cage-indexed scatter writes would
+        // corrupt the VBO. Signal a mutation and let the main loop rebuild
+        // the preview instead.
+        if (suppressCageUpload) {
+            ++(cast(Mesh*)&mesh).mutationVersion;
+            return;
+        }
         enum FACE_STRIDE = 6;
 
         // O(faces × verts_per_face): for each face check if any vertex moved.
@@ -1588,64 +1946,99 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
-    // Draw faces with per-face hover highlights (Polygons mode).
-    // Optimized: minimal draw calls for large meshes.
+    // Draw faces with per-face hover highlights (Polygons mode). When the
+    // subpatch preview is uploaded, `faceOriginGpu` maps each VBO face to
+    // its cage face so every preview child of a hovered cage face is tinted.
     void drawFacesHighlighted(const ref LitShader shader,
                                int hoveredFace, const bool[] selectedFaces) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
+        scope(exit) { glDisable(GL_POLYGON_OFFSET_FILL); glBindVertexArray(0); }
 
-        // If no hovered face, draw all at once
-        if (hoveredFace < 0 || hoveredFace >= faceTriStart.length) {
+        int vboFaceCount = cast(int)faceTriStart.length;
+
+        if (hoveredFace < 0) {
             glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
             glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
-        } else {
-            // Draw all faces except hovered face in one batch
-            glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
-            int hoverStart = faceTriStart[hoveredFace];
-            int hoverCount = faceTriCount[hoveredFace];
-
-            // Draw faces before hovered
-            if (hoverStart > 0)
-                glDrawArrays(GL_TRIANGLES, 0, hoverStart);
-
-            // Draw faces after hovered
-            if (hoverStart + hoverCount < faceVertCount)
-                glDrawArrays(GL_TRIANGLES, hoverStart + hoverCount,
-                            faceVertCount - hoverStart - hoverCount);
-
-            // Draw hovered face with highlight
-            if (hoverCount > 0) {
-                glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
-                glDrawArrays(GL_TRIANGLES, hoverStart, hoverCount);
-            }
+            return;
         }
 
-        glDisable(GL_POLYGON_OFFSET_FILL);
-        glBindVertexArray(0);
+        bool preview = faceOriginGpu.length > 0;
+        int cageOf(int fi) {
+            return preview ? cast(int)faceOriginGpu[fi] : fi;
+        }
+
+        // Cage-mode single-face fast path.
+        if (!preview) {
+            if (hoveredFace >= vboFaceCount) {
+                glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
+                glDrawArrays(GL_TRIANGLES, 0, faceVertCount);
+                return;
+            }
+            int hs = faceTriStart[hoveredFace];
+            int hc = faceTriCount[hoveredFace];
+            glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
+            if (hs > 0) glDrawArrays(GL_TRIANGLES, 0, hs);
+            if (hs + hc < faceVertCount)
+                glDrawArrays(GL_TRIANGLES, hs + hc, faceVertCount - hs - hc);
+            if (hc > 0) {
+                glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
+                glDrawArrays(GL_TRIANGLES, hs, hc);
+            }
+            return;
+        }
+
+        // Preview: batch contiguous VBO-face runs of the same hover state.
+        void batchRun(bool hoverState) {
+            int batchStart = -1;
+            for (int i = 0; i < vboFaceCount; i++) {
+                bool isHover = cageOf(i) == hoveredFace;
+                if (isHover == hoverState) {
+                    if (batchStart < 0) batchStart = i;
+                } else if (batchStart >= 0) {
+                    int s = faceTriStart[batchStart];
+                    int e = faceTriStart[i];
+                    if (e > s) glDrawArrays(GL_TRIANGLES, s, e - s);
+                    batchStart = -1;
+                }
+            }
+            if (batchStart >= 0) {
+                int s = faceTriStart[batchStart];
+                if (faceVertCount > s) glDrawArrays(GL_TRIANGLES, s, faceVertCount - s);
+            }
+        }
+        glUniform3f(shader.locColor, 0.8f, 0.8f, 0.8f);
+        batchRun(false);
+        glUniform3f(shader.locColor, 0.5f, 0.71f, 0.79f);
+        batchRun(true);
     }
 
     // Draw only the selected faces geometry (no color set — caller sets up shader).
-    // Optimized: batch selected faces to minimize draw calls.
+    // Optimized: batch selected faces to minimize draw calls. In subpatch
+    // mode each VBO face is mapped through `faceOriginGpu` so all children
+    // of a selected cage face are included.
     void drawSelectedFacesOverlay(const bool[] selectedFaces) {
         glBindVertexArray(faceVao);
 
-        // If many selected faces, draw them in batches
+        bool preview = faceOriginGpu.length > 0;
+        bool isSelected(int i) {
+            int cage = preview ? cast(int)faceOriginGpu[i] : i;
+            return cage >= 0 && cage < cast(int)selectedFaces.length && selectedFaces[cage];
+        }
+
         int batchStart = -1;
-        for (int i = 0; i < cast(int)faceTriStart.length; i++) {
-            if (i >= cast(int)selectedFaces.length || !selectedFaces[i]) {
+        int vboFaceCount = cast(int)faceTriStart.length;
+        for (int i = 0; i < vboFaceCount; i++) {
+            if (!isSelected(i)) {
                 if (batchStart >= 0) {
-                    // Draw the current batch
-                    int batchEnd = i;
                     int startIdx = faceTriStart[batchStart];
-                    int endIdx = (batchEnd < cast(int)faceTriStart.length)
-                                ? faceTriStart[batchEnd] : faceVertCount;
+                    int endIdx   = faceTriStart[i];
                     glDrawArrays(GL_TRIANGLES, startIdx, endIdx - startIdx);
                     batchStart = -1;
                 }
-            } else {
-                if (batchStart < 0) batchStart = i;
+            } else if (batchStart < 0) {
+                batchStart = i;
             }
         }
 
@@ -1659,72 +2052,85 @@ struct GpuMesh {
     }
 
     // Draw edges with optional hover/selection highlights.
-    // Optimized: batch rendering for large meshes.
-    // hoveredEdge = -1 means no hover; selectedEdges may be shorter than edgeCount.
+    // `selectedEdges` and `hoveredEdge` are indexed by CAGE edges. When a
+    // subpatch preview is uploaded, `edgeOriginGpu` maps each VBO segment
+    // back to its cage edge so highlights propagate across every segment of
+    // the corresponding original edge.
     void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges) {
         int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
 
-        // Default gray edges — with depth test (skip hovered and selected)
-        // Batch draw all default edges
-        glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
+        bool preview = edgeOriginGpu.length > 0;
+        int  cageOf(int segIdx) {
+            return preview ? cast(int)edgeOriginGpu[segIdx] : segIdx;
+        }
+        bool segSelected(int segIdx) {
+            int c = cageOf(segIdx);
+            return c >= 0 && c < cast(int)selectedEdges.length && selectedEdges[c];
+        }
+        bool segHovered(int segIdx) {
+            return hoveredEdge >= 0 && cageOf(segIdx) == hoveredEdge;
+        }
 
-        // Check once if all edges are selected (avoids per-edge iteration in gray pass).
-        bool allEdgesSelected = (selectedEdges.length >= edgeCount && hoveredEdge < 0);
+        // "All selected" shortcut is only safe when VBO segments are 1:1 with
+        // cage edges (cage mode). Skip it in preview mode.
+        bool allEdgesSelected = !preview
+            && selectedEdges.length >= edgeCount
+            && hoveredEdge < 0;
         if (allEdgesSelected)
             foreach (s; selectedEdges[0 .. edgeCount]) if (!s) { allEdgesSelected = false; break; }
 
+        // Gray pass — depth-tested, skip hovered/selected segments.
+        glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
         if (hoveredEdge < 0 && selectedEdges.length == 0) {
-            // No selection: draw everything gray in one call.
             glDrawArrays(GL_LINES, 0, edgeVertCount);
         } else if (!allEdgesSelected) {
-            // Partial selection: draw gray edges, skipping selected/hovered.
             int batchStart = -1;
             for (int i = 0; i < edgeCount; i++) {
-                bool skipThis = (i == hoveredEdge) ||
-                    (i < cast(int)selectedEdges.length && selectedEdges[i]);
-                if (!skipThis) {
+                bool skip = segHovered(i) || segSelected(i);
+                if (!skip) {
                     if (batchStart < 0) batchStart = i;
-                } else {
-                    if (batchStart >= 0) {
-                        glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
-                        batchStart = -1;
-                    }
+                } else if (batchStart >= 0) {
+                    glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                    batchStart = -1;
                 }
             }
             if (batchStart >= 0)
                 glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
         }
-        // allEdgesSelected: gray pass skipped entirely — 0 unselected edges to draw.
 
-        // Selected and hovered — drawn without depth test so they show through faces.
+        // Highlight pass — draw without depth so selection shows through.
         glDisable(GL_DEPTH_TEST);
 
         if (allEdgesSelected && hoveredEdge < 0) {
-            // All edges selected: one draw call.
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
             glDrawArrays(GL_LINES, 0, edgeVertCount);
         } else if (selectedEdges.length > 0) {
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
             int batchStart = -1;
-            for (int i = 0; i < cast(int)selectedEdges.length; i++) {
-                if (selectedEdges[i] && i != hoveredEdge) {
+            for (int i = 0; i < edgeCount; i++) {
+                if (segSelected(i) && !segHovered(i)) {
                     if (batchStart < 0) batchStart = i;
-                } else {
-                    if (batchStart >= 0) {
-                        glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
-                        batchStart = -1;
-                    }
+                } else if (batchStart >= 0) {
+                    glDrawArrays(GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                    batchStart = -1;
                 }
             }
             if (batchStart >= 0)
-                glDrawArrays(GL_LINES, batchStart * 2, (cast(int)selectedEdges.length - batchStart) * 2);
+                glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
         }
 
-        // Draw hovered edge
-        if (hoveredEdge >= 0 && hoveredEdge < edgeCount) {
+        if (hoveredEdge >= 0) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
-            glDrawArrays(GL_LINES, hoveredEdge * 2, 2);
+            if (preview) {
+                // A hovered cage edge fans out to every VBO segment tracing
+                // back to it.
+                for (int i = 0; i < edgeCount; i++)
+                    if (segHovered(i))
+                        glDrawArrays(GL_LINES, i * 2, 2);
+            } else if (hoveredEdge < edgeCount) {
+                glDrawArrays(GL_LINES, hoveredEdge * 2, 2);
+            }
         }
 
         glEnable(GL_DEPTH_TEST);

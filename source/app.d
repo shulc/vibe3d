@@ -280,6 +280,19 @@ void main(string[] args) {
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
+    // Subpatch preview: cached subdivision of the cage mesh, rebuilt lazily
+    // when mesh.mutationVersion or depth changes. Depth is user-adjustable;
+    // 3 matches LightWave default. Consumed by rendering and picking in
+    // subsequent steps.
+    SubpatchPreview subpatchPreview;
+    int             subpatchDepth = 3;
+
+    // Tracks what is currently uploaded to the GPU so the main loop can
+    // re-upload when the preview toggles on/off or when the cage changes
+    // while the preview is active.
+    ulong gpuUploadedVersion = ulong.max;
+    bool  gpuUploadedPreview;
+
     Layout layout;
     layout.resize(winW, winH);
 
@@ -595,6 +608,20 @@ void main(string[] args) {
                 if (activeTool) setActiveTool(null);
                 else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
                 break;
+            case SDLK_TAB: {
+                // Toggle subpatch flag on selected faces; if nothing is
+                // selected, invert the flag globally. The preview rebuilds
+                // next frame via mutationVersion bumped inside setSubpatch.
+                mesh.syncSelection();
+                bool any = mesh.hasAnySelectedFaces();
+                foreach (fi; 0 .. mesh.faces.length) {
+                    if (any && !(fi < mesh.selectedFaces.length && mesh.selectedFaces[fi]))
+                        continue;
+                    bool cur = fi < mesh.isSubpatch.length && mesh.isSubpatch[fi];
+                    mesh.setSubpatch(fi, !cur);
+                }
+                break;
+            }
             case SDLK_MINUS:
                 if (gizmoLevelIdx > 0) {
                     --gizmoLevelIdx;
@@ -779,6 +806,37 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
+
+        // In subpatch mode, cage positions differ from what the user sees.
+        // Project the preview's original-derived verts (which carry smoothed
+        // positions) and translate hits back to cage indices via the trace.
+        if (subpatchPreview.active) {
+            const pv = &subpatchPreview.mesh;
+            bool[] visible = pv.visibleVertices(cameraView.eye);
+            float closestSqS = 9.0f;
+            int   best      = -1;
+            foreach_reverse (pi; 0 .. pv.vertices.length) {
+                uint origin = subpatchPreview.trace.vertOrigin[pi];
+                if (origin == uint.max) continue;
+                if (!visible[pi]) continue;
+                float sx, sy, ndcZ;
+                if (!projectToWindow(pv.vertices[pi], vp, sx, sy, ndcZ)) continue;
+                float ddx = sx - mx, ddy = sy - my;
+                float d2  = ddx*ddx + ddy*ddy;
+                if (d2 >= closestSqS) continue;
+                closestSqS = d2;
+                best       = cast(int)origin;
+            }
+            if (best >= 0) {
+                hoveredVertex = best;
+                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                    mesh.selectVertex(hoveredVertex);
+                else if (dragMode == DragMode.SelectRemove)
+                    mesh.deselectVertex(hoveredVertex);
+            }
+            return;
+        }
+
         float closestSq = 9.0f;  // 3.0f^2
         int candidate = -1;
 
@@ -824,8 +882,48 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
-        float closest = 4.0f;  // pixel radius for edges
+        float closest   = 4.0f;
         float closestSq = closest * closest;
+
+        // In subpatch mode, iterate preview segments that trace back to cage
+        // edges; any hit promotes to the cage index via the trace so the
+        // whole polyline of that cage edge is treated as a single edge.
+        if (subpatchPreview.active) {
+            const pv = &subpatchPreview.mesh;
+            bool[] visible = pv.visibleVertices(cameraView.eye);
+            int bestCage = -1;
+            foreach (i; 0 .. pv.edges.length) {
+                uint cageEi = subpatchPreview.trace.edgeOrigin[i];
+                if (cageEi == uint.max) continue;
+                uint a = pv.edges[i][0], b = pv.edges[i][1];
+                if (!visible[a] || !visible[b]) continue;
+
+                float ax, ay, aZ, bx, by, bZ;
+                if (!projectToWindow(pv.vertices[a], vp, ax, ay, aZ)) continue;
+                if (!projectToWindow(pv.vertices[b], vp, bx, by, bZ)) continue;
+
+                float minX = ax < bx ? ax : bx, maxX = ax < bx ? bx : ax;
+                float minY = ay < by ? ay : by, maxY = ay < by ? by : ay;
+                if (mx < minX - closest || mx > maxX + closest ||
+                    my < minY - closest || my > maxY + closest)
+                    continue;
+
+                float t;
+                float d2 = closestOnSegment2DSquared(cast(float)mx, cast(float)my,
+                                                    ax, ay, bx, by, t);
+                if (d2 >= closestSq) continue;
+                closestSq = d2;
+                bestCage  = cast(int)cageEi;
+            }
+            if (bestCage >= 0) {
+                hoveredEdge = bestCage;
+                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                    mesh.selectEdge(hoveredEdge);
+                else if (dragMode == DragMode.SelectRemove)
+                    mesh.deselectEdge(hoveredEdge);
+            }
+            return;
+        }
 
         // A vertex is visible if at least one adjacent face is front-facing.
         // Computed once here — O(faces), replaces unreliable depth-buffer test.
@@ -895,6 +993,46 @@ void main(string[] args) {
         int mx, my;
         queryMouse(mx, my);
         float bestZ = float.infinity;
+
+        // Subpatch mode: project preview faces, translate hit to cage.
+        if (subpatchPreview.active) {
+            const pv = &subpatchPreview.mesh;
+            int bestCage = -1;
+            foreach (fi; 0 .. pv.faces.length) {
+                const(uint)[] face = pv.faces[fi];
+                if (face.length < 3) continue;
+                Vec3 n = pv.faceNormal(cast(uint)fi);
+                if (dot(n, pv.vertices[face[0]] - cameraView.eye) >= 0) continue;
+
+                int len = cast(int)face.length;
+                auto sx  = new float[](len);
+                auto sy  = new float[](len);
+                auto ndz = new float[](len);
+                bool ok = true;
+                for (int j = 0; j < len; j++) {
+                    if (!projectToWindowFull(pv.vertices[face[j]], vp,
+                                             sx[j], sy[j], ndz[j])) { ok = false; break; }
+                }
+                if (!ok) continue;
+                if (!pointInPolygon2D(cast(float)mx, cast(float)my, sx, sy)) continue;
+
+                float cZ = 0;
+                foreach (z; ndz) cZ += z;
+                cZ /= len;
+                if (cZ < bestZ) {
+                    bestZ    = cZ;
+                    bestCage = cast(int)subpatchPreview.trace.faceOrigin[fi];
+                }
+            }
+            if (bestCage >= 0) {
+                hoveredFace = bestCage;
+                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+                    mesh.selectFace(hoveredFace);
+                else if (dragMode == DragMode.SelectRemove)
+                    mesh.deselectFace(hoveredFace);
+            }
+            return;
+        }
 
         // Quick screen-space bounds check first (if cache available)
         bool useBoundsCache = faceCache.minX.length >= mesh.faces.length;
@@ -1375,6 +1513,35 @@ void main(string[] args) {
         }
 
         ImGui.Render();
+
+        // Refresh subpatch preview if the cage or depth changed since last
+        // frame.
+        subpatchPreview.rebuildIfStale(mesh, subpatchDepth);
+
+        // Re-upload GPU buffers when transitioning between cage/preview view
+        // or when the cage changed during an active preview. While the
+        // preview is active, tool-side gpu.upload calls are redirected to
+        // bump mutationVersion (see GpuMesh.suppressCageUpload) so this main
+        // loop owns the actual upload.
+        {
+            bool wantPreview = subpatchPreview.active;
+            gpu.suppressCageUpload = wantPreview;
+            bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
+            bool stateChanged   = gpuUploadedPreview != wantPreview;
+            if ((wantPreview && (versionChanged || stateChanged)) ||
+                (!wantPreview && stateChanged))
+            {
+                if (wantPreview)
+                    gpu.upload(subpatchPreview.mesh,
+                               subpatchPreview.trace.edgeOrigin,
+                               subpatchPreview.trace.vertOrigin,
+                               subpatchPreview.trace.faceOrigin);
+                else
+                    gpu.upload(mesh);
+                gpuUploadedVersion = mesh.mutationVersion;
+                gpuUploadedPreview = wantPreview;
+            }
+        }
 
         // ---- 3D render ----
         glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
