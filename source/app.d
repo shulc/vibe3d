@@ -111,7 +111,7 @@ private string buildJsonArray(bool[] sel) {
 
 struct Layout {
     int sideW   = 150;
-    int statusH = 38;
+    int statusH = 28;
 
     ImVec2 sidePos;
     ImVec2 sideSize;
@@ -993,19 +993,23 @@ void main(string[] args) {
         dl.AddLine(ImVec2(rmax.x, rmin.y), ImVec2(rmax.x, rmax.y), c);  // right
     }
 
-    // LightWave-style raised bevel drawn one pixel inside the button outline.
-    void drawRaisedBevel(uint light, uint dark, bool pressed = false) {
+    // LightWave-style raised bevel drawn as `thickness` concentric rings just
+    // inside the 1-pixel outline.
+    void drawRaisedBevel(uint light, uint dark, bool pressed = false,
+                         int thickness = 2) {
         auto dl = ImGui.GetWindowDrawList();
         ImVec2 rmin = ImGui.GetItemRectMin();
         ImVec2 rmax = ImGui.GetItemRectMax();
-        float x0 = rmin.x + 1.0f, y0 = rmin.y + 1.0f;
-        float x1 = rmax.x - 2.0f, y1 = rmax.y - 2.0f;
         uint tl = pressed ? dark  : light;
         uint br = pressed ? light : dark;
-        dl.AddLine(ImVec2(x0, y0), ImVec2(x1, y0), tl);
-        dl.AddLine(ImVec2(x0, y0), ImVec2(x0, y1), tl);
-        dl.AddLine(ImVec2(x0, y1), ImVec2(x1, y1), br);
-        dl.AddLine(ImVec2(x1, y0), ImVec2(x1, y1), br);
+        foreach (i; 0 .. thickness) {
+            float x0 = rmin.x + 1.0f + i, y0 = rmin.y + 1.0f + i;
+            float x1 = rmax.x - 2.0f - i, y1 = rmax.y - 2.0f - i;
+            dl.AddLine(ImVec2(x0, y0), ImVec2(x1, y0), tl);
+            dl.AddLine(ImVec2(x0, y0), ImVec2(x0, y1), tl);
+            dl.AddLine(ImVec2(x0, y1), ImVec2(x1, y1), br);
+            dl.AddLine(ImVec2(x1, y0), ImVec2(x1, y1), br);
+        }
     }
 
     // LightWave-style button: beige palette for tools, pale blue for commands;
@@ -1077,18 +1081,61 @@ void main(string[] args) {
         ImGui.Dummy(ImVec2(w, h));
     }
 
+    // LightWave-style panel chrome: grey bg, black border, beige/blue button
+    // palette, black text, flat frames. Call BEFORE `ImGui.Begin` and pair with
+    // popPanelChromeStyle() AFTER `ImGui.End`.
+    void pushPanelChromeStyle() {
+        ImVec4 winBg   = ImVec4(0.561f, 0.561f, 0.561f, 1.0f);   // (143,143,143)
+        ImVec4 border  = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
+        ImVec4 btnBg   = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);   // tool beige
+        ImVec4 btnHov  = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);
+        ImVec4 btnAct  = ImVec4(1.0f,   1.0f,   1.0f,   1.0f);
+        ImVec4 black   = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
+        ImVec4 grabLo  = ImVec4(0.45f,  0.45f,  0.45f,  1.0f);
+        ImVec4 grabHi  = ImVec4(0.20f,  0.20f,  0.20f,  1.0f);
+
+        ImGui.PushStyleColor(ImGuiCol.WindowBg,         winBg);
+        ImGui.PushStyleColor(ImGuiCol.Border,           border);
+        ImGui.PushStyleColor(ImGuiCol.TitleBg,          winBg);
+        ImGui.PushStyleColor(ImGuiCol.TitleBgActive,    winBg);
+        ImGui.PushStyleColor(ImGuiCol.TitleBgCollapsed, winBg);
+        ImGui.PushStyleColor(ImGuiCol.Text,             black);
+        ImGui.PushStyleColor(ImGuiCol.Button,           btnBg);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered,    btnHov);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive,     btnAct);
+        ImGui.PushStyleColor(ImGuiCol.FrameBg,          btnBg);
+        ImGui.PushStyleColor(ImGuiCol.FrameBgHovered,   btnHov);
+        ImGui.PushStyleColor(ImGuiCol.FrameBgActive,    btnAct);
+        ImGui.PushStyleColor(ImGuiCol.SliderGrab,       grabLo);
+        ImGui.PushStyleColor(ImGuiCol.SliderGrabActive, grabHi);
+        ImGui.PushStyleColor(ImGuiCol.CheckMark,        black);
+
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding,    0.0f);
+    }
+    void popPanelChromeStyle() {
+        ImGui.PopStyleVar(3);
+        ImGui.PopStyleColor(15);
+    }
+
+    // Packed-button-row layout (large FramePadding, zero ItemSpacing). Use inside
+    // Begin for button-only panels; skip for Tool Properties so inputs keep
+    // normal spacing. Pair with popButtonBarStyle().
+    void pushButtonBarStyle() {
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImVec2(6, 5));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 0));
+    }
+    void popButtonBarStyle() {
+        ImGui.PopStyleVar(2);
+    }
+
     void drawSidePanel() {
         int selCount     = countSelected(mesh.selectedVertices);
         int selEdgeCount = countSelected(mesh.selectedEdges);
         int selFaceCount = countSelected(mesh.selectedFaces);
 
-        // LightWave-style panel background (applied before Begin).
-        // Sampled from LightWave Modeler: panel bg = (143, 143, 143).
-        ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0.561f, 0.561f, 0.561f, 1.0f));
-        ImGui.PushStyleColor(ImGuiCol.Border,   ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-
+        pushPanelChromeStyle();
         ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
         if (ImGui.Begin("Mesh Info", null,
@@ -1097,20 +1144,8 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
-            // LightWave-style button/text styling. Sampled colors:
-            //   bg=(181,181,167), bevel-light=(225,225,211), bevel-dark=(162,162,148),
-            //   text=black, shortcut=(245,245,231).
-            ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(0.710f, 0.710f, 0.655f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.773f, 0.773f, 0.718f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(1.0f,   1.0f,   1.0f,   1.0f));
-            ImGui.PushStyleColor(ImGuiCol.Text,          ImVec4(0.0f,   0.0f,   0.0f,   1.0f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImVec2(4, 2));
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 0));
-            scope(exit) {
-                ImGui.PopStyleVar(3);
-                ImGui.PopStyleColor(4);
-            }
+            pushButtonBarStyle();
+            scope(exit) popButtonBarStyle();
             void renderButton(ref Button btn) {
                 string sc;
                 if (btn.action.kind == ActionKind.tool) {
@@ -1164,16 +1199,11 @@ void main(string[] args) {
             ImGui.LabelText("Faces", "%d/%d", mesh.faceSelectionOrderCounter, cast(int)mesh.faces.length);
         }
         ImGui.End();
-        ImGui.PopStyleVar(2);     // WindowPadding, WindowBorderSize
-        ImGui.PopStyleColor(2);   // Border, WindowBg
+        popPanelChromeStyle();
     }
 
     void drawStatusBar() {
-        ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0.561f, 0.561f, 0.561f, 1.0f));
-        ImGui.PushStyleColor(ImGuiCol.Border,   ImVec4(0.0f,   0.0f,   0.0f,   1.0f));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
-
+        pushPanelChromeStyle();
         ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
         if (ImGui.Begin("Status line", null,
@@ -1182,14 +1212,8 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
-            ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,  ImVec2(4, 2));
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,   ImVec2(0, 0));
-            scope(exit) {
-                ImGui.PopStyleVar(3);
-                ImGui.PopStyleColor(1);
-            }
+            pushButtonBarStyle();
+            scope(exit) popButtonBarStyle();
 
             void renderModeButton(string label, string modeId, EditMode mode, float w) {
                 auto sp = modeId in shortcuts.byEditMode;
@@ -1209,11 +1233,11 @@ void main(string[] args) {
             renderModeButton("Polygons", "polygons", EditMode.Polygons, btnW);
         }
         ImGui.End();
-        ImGui.PopStyleVar(2);
-        ImGui.PopStyleColor(2);
+        popPanelChromeStyle();
     }
 
     void drawTabPanel() {
+        pushPanelChromeStyle();
         ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
         if (ImGui.Begin("Tab bar", null,
@@ -1222,25 +1246,21 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove     |
                         ImGuiWindowFlags.NoCollapse))
         {
-            float btnW = 90.0f;
-            float btnH = layout.statusH - 8.0f;
-            ImGui.SetCursorPosY((layout.statusH - btnH) * 0.5f);
+            pushButtonBarStyle();
+            scope(exit) popButtonBarStyle();
+
+            enum float btnW = 90.0f;
             foreach (i, ref p; panels) {
-                bool active = cast(int)i == activePanelIdx;
-                if (active) {
-                    ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(0.26f, 0.59f, 0.98f, 1.00f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.36f, 0.69f, 1.00f, 1.00f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(0.16f, 0.49f, 0.88f, 1.00f));
-                }
-                if (ImGui.Button(p.title, ImVec2(btnW, btnH)))
+                bool on = (cast(int)i == activePanelIdx);
+                if (renderStyledButton(p.title, "", on, /*isCommand=*/true,
+                                       ImVec2(btnW, 0)))
                     activePanelIdx = cast(int)i;
-                if (active)
-                    ImGui.PopStyleColor(3);
                 if (i + 1 < panels.length)
                     ImGui.SameLine();
             }
         }
         ImGui.End();
+        popPanelChromeStyle();
     }
 
     // -------------------------------------------------------------------------
@@ -1302,11 +1322,13 @@ void main(string[] args) {
 
         // ---- Tool Properties (floating) ----
         if (activeTool !is null) {
+            pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties"))
                 activeTool.drawProperties();
             ImGui.End();
+            popPanelChromeStyle();
         }
 
         // ShowDemoWindow();
