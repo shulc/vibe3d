@@ -691,55 +691,133 @@ void main(string[] args) {
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
                 bool[] visible = mesh.visibleVertices(cameraView.eye);
 
+                // In subpatch mode iterate preview geometry and translate
+                // hits back to cage indices via the trace. A cage element is
+                // considered lasso-hit only when every one of its preview
+                // children is fully inside (strict semantics matching the
+                // cage behavior).
+                bool preview = subpatchPreview.active;
+                const pv = preview ? &subpatchPreview.mesh : null;
+                bool[] pvVisible = preview ? pv.visibleVertices(cameraView.eye) : null;
+
                 if (editMode == EditMode.Polygons) {
                     if (!shift && !ctrl)
                         mesh.clearFaceSelection();
-                    foreach (fi; 0 .. mesh.faces.length) {
-                        uint[] face = mesh.faces[fi];
-                        if (face.length < 3) continue;
-                        // Back-face cull
-                        Vec3 fn = mesh.faceNormal(cast(uint)fi);
-                        if (dot(fn, mesh.vertices[face[0]] - vp2.eye) >= 0) continue;
-                        // All vertices must project onto screen and be inside the lasso
-                        bool allInside = true;
-                        foreach (vi; face) {
-                            float sx, sy, ndcZ;
-                            if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ) ||
-                                !pointInPolygon2D(sx, sy, pxs, pys)) {
-                                allInside = false;
-                                break;
+                    if (preview) {
+                        // Per cage face: every preview child must have all
+                        // visible verts inside the lasso.
+                        bool[] cageAllInside = new bool[](mesh.faces.length);
+                        bool[] cageVisited   = new bool[](mesh.faces.length);
+                        cageAllInside[] = true;
+                        foreach (fi; 0 .. pv.faces.length) {
+                            uint cage = subpatchPreview.trace.faceOrigin[fi];
+                            if (cage == uint.max || cage >= mesh.faces.length) continue;
+                            auto face = pv.faces[fi];
+                            if (face.length < 3) { cageAllInside[cage] = false; continue; }
+                            Vec3 fn = pv.faceNormal(cast(uint)fi);
+                            if (dot(fn, pv.vertices[face[0]] - vp2.eye) >= 0) continue;
+                            cageVisited[cage] = true;
+                            foreach (vi; face) {
+                                float sx, sy, ndcZ;
+                                if (!projectToWindow(pv.vertices[vi], vp2, sx, sy, ndcZ) ||
+                                    !pointInPolygon2D(sx, sy, pxs, pys)) {
+                                    cageAllInside[cage] = false;
+                                    break;
+                                }
                             }
                         }
-                        if (allInside) {
+                        foreach (fi; 0 .. mesh.faces.length) {
+                            if (!cageVisited[fi] || !cageAllInside[fi]) continue;
                             if (ctrl) mesh.deselectFace(cast(int)fi);
                             else      mesh.selectFace(cast(int)fi);
+                        }
+                    } else {
+                        foreach (fi; 0 .. mesh.faces.length) {
+                            uint[] face = mesh.faces[fi];
+                            if (face.length < 3) continue;
+                            Vec3 fn = mesh.faceNormal(cast(uint)fi);
+                            if (dot(fn, mesh.vertices[face[0]] - vp2.eye) >= 0) continue;
+                            bool allInside = true;
+                            foreach (vi; face) {
+                                float sx, sy, ndcZ;
+                                if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ) ||
+                                    !pointInPolygon2D(sx, sy, pxs, pys)) {
+                                    allInside = false;
+                                    break;
+                                }
+                            }
+                            if (allInside) {
+                                if (ctrl) mesh.deselectFace(cast(int)fi);
+                                else      mesh.selectFace(cast(int)fi);
+                            }
                         }
                     }
                 } else if (editMode == EditMode.Vertices) {
                     if (!shift && !ctrl)
                         mesh.clearVertexSelection();
-                    foreach (vi; 0 .. mesh.vertices.length) {
-                        if (!visible[vi]) continue;
-                        float sx, sy, ndcZ;
-                        if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
-                        if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                            if (ctrl) mesh.deselectVertex(cast(int)vi);
-                            else      mesh.selectVertex(cast(int)vi);
+                    if (preview) {
+                        foreach (pi; 0 .. pv.vertices.length) {
+                            uint cage = subpatchPreview.trace.vertOrigin[pi];
+                            if (cage == uint.max) continue;
+                            if (!pvVisible[pi]) continue;
+                            float sx, sy, ndcZ;
+                            if (!projectToWindow(pv.vertices[pi], vp2, sx, sy, ndcZ)) continue;
+                            if (pointInPolygon2D(sx, sy, pxs, pys)) {
+                                if (ctrl) mesh.deselectVertex(cast(int)cage);
+                                else      mesh.selectVertex(cast(int)cage);
+                            }
+                        }
+                    } else {
+                        foreach (vi; 0 .. mesh.vertices.length) {
+                            if (!visible[vi]) continue;
+                            float sx, sy, ndcZ;
+                            if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
+                            if (pointInPolygon2D(sx, sy, pxs, pys)) {
+                                if (ctrl) mesh.deselectVertex(cast(int)vi);
+                                else      mesh.selectVertex(cast(int)vi);
+                            }
                         }
                     }
                 } else if (editMode == EditMode.Edges) {
                     if (!shift && !ctrl)
                         mesh.clearEdgeSelection();
-                    foreach (ei; 0 .. mesh.edges.length) {
-                        uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
-                        if (!visible[a] || !visible[b]) continue;
-                        float sxa, sya, ndcZa, sxb, syb, ndcZb;
-                        if (!projectToWindow(mesh.vertices[a], vp2, sxa, sya, ndcZa)) continue;
-                        if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
-                        if (pointInPolygon2D(sxa, sya, pxs, pys) &&
-                            pointInPolygon2D(sxb, syb, pxs, pys)) {
+                    if (preview) {
+                        // Cage edge selected only if every visible preview
+                        // segment tracing back to it is fully inside lasso.
+                        bool[] cageAllInside = new bool[](mesh.edges.length);
+                        bool[] cageVisited   = new bool[](mesh.edges.length);
+                        cageAllInside[] = true;
+                        foreach (pei; 0 .. pv.edges.length) {
+                            uint cage = subpatchPreview.trace.edgeOrigin[pei];
+                            if (cage == uint.max || cage >= mesh.edges.length) continue;
+                            uint a = pv.edges[pei][0], b = pv.edges[pei][1];
+                            if (!pvVisible[a] || !pvVisible[b]) continue;
+                            cageVisited[cage] = true;
+                            float sxa, sya, ndcZa, sxb, syb, ndcZb;
+                            if (!projectToWindow(pv.vertices[a], vp2, sxa, sya, ndcZa) ||
+                                !projectToWindow(pv.vertices[b], vp2, sxb, syb, ndcZb) ||
+                                !pointInPolygon2D(sxa, sya, pxs, pys) ||
+                                !pointInPolygon2D(sxb, syb, pxs, pys)) {
+                                cageAllInside[cage] = false;
+                            }
+                        }
+                        foreach (ei; 0 .. mesh.edges.length) {
+                            if (!cageVisited[ei] || !cageAllInside[ei]) continue;
                             if (ctrl) mesh.deselectEdge(cast(int)ei);
                             else      mesh.selectEdge(cast(int)ei);
+                        }
+                    } else {
+                        foreach (ei; 0 .. mesh.edges.length) {
+                            uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
+                            if (!visible[a] || !visible[b]) continue;
+                            float sxa, sya, ndcZa, sxb, syb, ndcZb;
+                            if (!projectToWindow(mesh.vertices[a], vp2, sxa, sya, ndcZa)) continue;
+                            if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
+                            if (pointInPolygon2D(sxa, sya, pxs, pys) &&
+                                pointInPolygon2D(sxb, syb, pxs, pys)) {
+                                if (ctrl) mesh.deselectEdge(cast(int)ei);
+                                else      mesh.selectEdge(cast(int)ei);
+                            }
                         }
                     }
                 }
