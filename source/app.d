@@ -978,20 +978,88 @@ void main(string[] args) {
         }
     }
 
-    // LightWave-style raised-bevel border around the last ImGui item.
-    // Colors sampled from LightWave Modeler screenshot.
+    // 1-px black outline around the last ImGui item.
+    // Right and bottom edges are drawn ON rmax so adjacent buttons' top/left
+    // (drawn at their own rmin) land on the SAME pixel, producing a 1-pixel
+    // shared border rather than two abutting lines.
+    void drawButtonOutline() {
+        auto dl = ImGui.GetWindowDrawList();
+        ImVec2 rmin = ImGui.GetItemRectMin();
+        ImVec2 rmax = ImGui.GetItemRectMax();
+        uint c = IM_COL32(0, 0, 0, 255);
+        dl.AddLine(ImVec2(rmin.x, rmin.y), ImVec2(rmax.x, rmin.y), c);  // top
+        dl.AddLine(ImVec2(rmin.x, rmin.y), ImVec2(rmin.x, rmax.y), c);  // left
+        dl.AddLine(ImVec2(rmin.x, rmax.y), ImVec2(rmax.x, rmax.y), c);  // bottom
+        dl.AddLine(ImVec2(rmax.x, rmin.y), ImVec2(rmax.x, rmax.y), c);  // right
+    }
+
+    // LightWave-style raised bevel drawn one pixel inside the button outline.
     void drawRaisedBevel(uint light, uint dark, bool pressed = false) {
         auto dl = ImGui.GetWindowDrawList();
         ImVec2 rmin = ImGui.GetItemRectMin();
         ImVec2 rmax = ImGui.GetItemRectMax();
+        float x0 = rmin.x + 1.0f, y0 = rmin.y + 1.0f;
+        float x1 = rmax.x - 2.0f, y1 = rmax.y - 2.0f;
         uint tl = pressed ? dark  : light;
         uint br = pressed ? light : dark;
-        // Top + left edges
-        dl.AddLine(ImVec2(rmin.x,        rmin.y),        ImVec2(rmax.x - 1.0f, rmin.y),        tl);
-        dl.AddLine(ImVec2(rmin.x,        rmin.y),        ImVec2(rmin.x,        rmax.y - 1.0f), tl);
-        // Bottom + right edges
-        dl.AddLine(ImVec2(rmin.x,        rmax.y - 1.0f), ImVec2(rmax.x - 1.0f, rmax.y - 1.0f), br);
-        dl.AddLine(ImVec2(rmax.x - 1.0f, rmin.y),        ImVec2(rmax.x - 1.0f, rmax.y - 1.0f), br);
+        dl.AddLine(ImVec2(x0, y0), ImVec2(x1, y0), tl);
+        dl.AddLine(ImVec2(x0, y0), ImVec2(x0, y1), tl);
+        dl.AddLine(ImVec2(x0, y1), ImVec2(x1, y1), br);
+        dl.AddLine(ImVec2(x1, y0), ImVec2(x1, y1), br);
+    }
+
+    // LightWave-style button: beige palette for tools, pale blue for commands;
+    // renders as pure white when `on` (active) or `held` (mouse down).
+    // Returns true when the button is clicked this frame.
+    bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
+                            ImVec2 size) {
+        ImVec4 bgNormal, bgHover;
+        uint   bevelLightN, bevelDarkN, bevelLightH, bevelDarkH;
+        if (isCommand) {
+            bgNormal    = ImVec4(0.635f, 0.686f, 0.749f, 1.0f);  // (162,175,191)
+            bgHover     = ImVec4(0.698f, 0.749f, 0.812f, 1.0f);  // (178,191,207)
+            bevelLightN = IM_COL32(206, 219, 235, 255);
+            bevelDarkN  = IM_COL32(143, 156, 172, 255);
+            bevelLightH = IM_COL32(222, 235, 251, 255);
+            bevelDarkH  = IM_COL32(159, 172, 188, 255);
+        } else {
+            bgNormal    = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);  // (181,181,167)
+            bgHover     = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
+            bevelLightN = IM_COL32(225, 225, 211, 255);
+            bevelDarkN  = IM_COL32(162, 162, 148, 255);
+            bevelLightH = IM_COL32(241, 241, 227, 255);
+            bevelDarkH  = IM_COL32(178, 178, 164, 255);
+        }
+
+        ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
+        ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
+        bool clicked = ImGui.Button(label, size);
+        ImGui.PopStyleVar();
+        ImGui.PopStyleColor(3);
+
+        bool held = ImGui.IsItemActive();
+        drawButtonOutline();
+        if (!on && !held) {
+            bool hov = ImGui.IsItemHovered();
+            drawRaisedBevel(hov ? bevelLightH : bevelLightN,
+                            hov ? bevelDarkH  : bevelDarkN,
+                            false);
+        }
+
+        if (shortcut.length > 0) {
+            ImVec2 rmin = ImGui.GetItemRectMin();
+            ImVec2 rmax = ImGui.GetItemRectMax();
+            ImVec2 ts   = ImGui.CalcTextSize(shortcut);
+            ImVec2 tp   = ImVec2(rmax.x - ts.x - 6.0f,
+                                 rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
+            uint scCol = (on || held) ? IM_COL32(0, 0, 0, 255)
+                                      : IM_COL32(245, 245, 231, 255);
+            ImGui.GetWindowDrawList().AddText(tp, scCol, shortcut);
+        }
+        return clicked;
     }
 
     // LightWave-style section header: dark slate-blue band with centered white text.
@@ -1038,7 +1106,7 @@ void main(string[] args) {
             ImGui.PushStyleColor(ImGuiCol.Text,          ImVec4(0.0f,   0.0f,   0.0f,   1.0f));
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0.0f);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, ImVec2(4, 2));
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 1));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,  ImVec2(0, 0));
             scope(exit) {
                 ImGui.PopStyleVar(3);
                 ImGui.PopStyleColor(4);
@@ -1052,59 +1120,10 @@ void main(string[] args) {
                     if (auto sp = btn.action.id in shortcuts.byCommandId)
                         sc = sp.display();
                 }
-
                 bool on = (btn.action.kind == ActionKind.tool &&
                            activeToolId == btn.action.id);
                 bool isCommand = btn.action.kind == ActionKind.command;
-
-                // Per-kind palette (sampled from LightWave).
-                ImVec4 bgNormal, bgHover;
-                uint   bevelLightN, bevelDarkN, bevelLightH, bevelDarkH;
-                if (isCommand) {
-                    bgNormal    = ImVec4(0.635f, 0.686f, 0.749f, 1.0f);  // (162,175,191)
-                    bgHover     = ImVec4(0.698f, 0.749f, 0.812f, 1.0f);  // (178,191,207)
-                    bevelLightN = IM_COL32(206, 219, 235, 255);
-                    bevelDarkN  = IM_COL32(143, 156, 172, 255);
-                    bevelLightH = IM_COL32(222, 235, 251, 255);
-                    bevelDarkH  = IM_COL32(159, 172, 188, 255);
-                } else {
-                    bgNormal    = ImVec4(0.710f, 0.710f, 0.655f, 1.0f);  // (181,181,167)
-                    bgHover     = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
-                    bevelLightN = IM_COL32(225, 225, 211, 255);
-                    bevelDarkN  = IM_COL32(162, 162, 148, 255);
-                    bevelLightH = IM_COL32(241, 241, 227, 255);
-                    bevelDarkH  = IM_COL32(178, 178, 164, 255);
-                }
-
-                ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-                ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
-                ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
-                bool clicked = ImGui.Button(btn.label, ImVec2(-1, 0));
-                ImGui.PopStyleVar();
-                ImGui.PopStyleColor(3);
-
-                bool held = ImGui.IsItemActive();
-                if (!on && !held) {
-                    bool hov = ImGui.IsItemHovered();
-                    drawRaisedBevel(hov ? bevelLightH : bevelLightN,
-                                    hov ? bevelDarkH  : bevelDarkN,
-                                    false);
-                }
-
-                if (sc.length > 0) {
-                    ImVec2 rmin = ImGui.GetItemRectMin();
-                    ImVec2 rmax = ImGui.GetItemRectMax();
-                    ImVec2 ts   = ImGui.CalcTextSize(sc);
-                    ImVec2 tp   = ImVec2(rmax.x - ts.x - 6.0f,
-                                         rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
-                    uint scCol = (on || held) ? IM_COL32(0, 0, 0, 255)
-                                              : IM_COL32(245, 245, 231, 255);
-                    ImGui.GetWindowDrawList().AddText(tp, scCol, sc);
-                }
-
-                if (clicked) {
+                if (renderStyledButton(btn.label, sc, on, isCommand, ImVec2(-1, 0))) {
                     if (btn.action.kind == ActionKind.tool)
                         activateToolById(btn.action.id);
                     else
@@ -1119,7 +1138,7 @@ void main(string[] args) {
                 foreach (ref item; p.items) {
                     bool curIsGroup = item.isGroup;
                     if (prevWasGroup || curIsGroup)
-                        ImGui.Dummy(ImVec2(0, 9));  // LW inter-group gap = 10px total
+                        ImGui.Dummy(ImVec2(0, 10));  // LW inter-group gap = 10px
                     if (curIsGroup) {
                         if (item.group.title.length > 0)
                             drawSectionHeader(item.group.title);
@@ -1150,6 +1169,11 @@ void main(string[] args) {
     }
 
     void drawStatusBar() {
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, ImVec4(0.561f, 0.561f, 0.561f, 1.0f));
+        ImGui.PushStyleColor(ImGuiCol.Border,   ImVec4(0.0f,   0.0f,   0.0f,   1.0f));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
+
         ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
         if (ImGui.Begin("Status line", null,
@@ -1158,41 +1182,35 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove   |
                         ImGuiWindowFlags.NoCollapse))
         {
-            {
-                import std.format : format;
-                auto sp1 = "vertices" in shortcuts.byEditMode;
-                auto sp2 = "edges"    in shortcuts.byEditMode;
-                auto sp3 = "polygons" in shortcuts.byEditMode;
-                string sc1 = sp1 ? sp1.display() : "1";
-                string sc2 = sp2 ? sp2.display() : "2";
-                string sc3 = sp3 ? sp3.display() : "3";
-                {
-                    bool active = (editMode == EditMode.Vertices);
-                    if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    if (ImGui.Button(format("Vertices  %s", sc1)))
-                        { setActiveTool(null); editMode = EditMode.Vertices; }
-                    if (active) ImGui.PopStyleColor();
-                    ImGui.SameLine();
-                }
-                {
-                    bool active = (editMode == EditMode.Edges);
-                    if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    if (ImGui.Button(format("Edges     %s", sc2)))
-                        { setActiveTool(null); editMode = EditMode.Edges; }
-                    if (active) ImGui.PopStyleColor();
-                    ImGui.SameLine();
-                }
-                {
-                    bool active = (editMode == EditMode.Polygons);
-                    if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                    if (ImGui.Button(format("Polygons  %s", sc3)))
-                        { setActiveTool(null); editMode = EditMode.Polygons; }
-                    if (active) ImGui.PopStyleColor();
-                    ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,  ImVec2(4, 2));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,   ImVec2(0, 0));
+            scope(exit) {
+                ImGui.PopStyleVar(3);
+                ImGui.PopStyleColor(1);
+            }
+
+            void renderModeButton(string label, string modeId, EditMode mode, float w) {
+                auto sp = modeId in shortcuts.byEditMode;
+                string sc = sp ? sp.display() : "";
+                bool on = (editMode == mode);
+                if (renderStyledButton(label, sc, on, /*isCommand=*/true, ImVec2(w, 0))) {
+                    setActiveTool(null);
+                    editMode = mode;
                 }
             }
+
+            enum float btnW = 85.0f;
+            renderModeButton("Vertices", "vertices", EditMode.Vertices, btnW);
+            ImGui.SameLine();
+            renderModeButton("Edges",    "edges",    EditMode.Edges,    btnW);
+            ImGui.SameLine();
+            renderModeButton("Polygons", "polygons", EditMode.Polygons, btnW);
         }
         ImGui.End();
+        ImGui.PopStyleVar(2);
+        ImGui.PopStyleColor(2);
     }
 
     void drawTabPanel() {
