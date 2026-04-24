@@ -1,0 +1,22 @@
+panels:
+  - title: Tools
+    buttons:
+      - { label: Move,   action: { kind: tool, id: move } }
+      - { label: Rotate, action: { kind: tool, id: rotate } }
+      - { label: Scale,  action: { kind: tool, id: scale } }
+      - { label: Box,    action: { kind: tool, id: box } }
+  - title: Selection
+    buttons:
+      - { label: Expand,   action: { kind: command, id: select.expand } }
+      - { label: Contract, action: { kind: command, id: select.contract } }
+      - { label: More,     action: { kind: command, id: select.more } }
+      - { label: Less,     action: { kind: command, id: select.less } }
+      - { label: Loop,     action: { kind: command, id: select.loop } }
+      - { label: Ring,     action: { kind: command, id: select.ring } }
+      - { label: Invert,   action: { kind: command, id: select.invert } }
+      - { label: Connect,  action: { kind: command, id: select.connect } }
+      - { label: Between,  action: { kind: command, id: select.between } }
+  - title: Viewport
+    buttons:
+      - { label: Fit,          action: { kind: command, id: viewport.fit } }
+      - { label: Fit Selected, action: { kind: command, id: viewport.fit_selected } }

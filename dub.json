@@ -1,23 +1,43 @@
 {
-    "name": "vibe3d",
-    "description": "simple 3d modeller inspired MODO and LigthWave",
-    "authors": ["Alexander Shaagarov"],
-    "license": "MIT",
-    "dependencies": {
-        "bindbc-sdl": "~>1.5.2",
-        "bindbc-opengl": "~>1.1.1",
-        "bindbc-loader": "~>1.1.5",
-        "bindbc-common": "~>1.0.5",
-        "d_imgui": {
-            "repository": "git+https://github.com/shulc/imgui.git",
-            "version": "b67c6bf0b3f9474d3a783051ced6ff9acdd620bf"
-        },
-        "nfde": "~>0.1.3"
-    },
-    "versions": ["SDL_2020", "GL_33", "IMGUI_OPENGL3", "IMGUI_SDL2"],
-    "sourcePaths": ["source"],
-    "mainSourceFile": "source/app.d",
-    "libs-windows": ["Imm32", "User32"],
-    "libs-linux": ["pthread", "gdk-3", "gobject-2.0", "wayland-client"],
-    "libs-osx": ["pthread"]
+	"authors": [
+		"Alexander Shaagarov"
+	],
+	"libs-windows": [
+		"Imm32",
+		"User32"
+	],
+	"mainSourceFile": "source/app.d",
+	"versions": [
+		"SDL_2020",
+		"GL_33",
+		"IMGUI_OPENGL3",
+		"IMGUI_SDL2"
+	],
+	"license": "MIT",
+	"name": "vibe3d",
+	"sourcePaths": [
+		"source"
+	],
+	"libs-linux": [
+		"pthread",
+		"gdk-3",
+		"gobject-2.0",
+		"wayland-client"
+	],
+	"libs-osx": [
+		"pthread"
+	],
+	"description": "simple 3d modeller inspired MODO and LigthWave",
+	"dependencies": {
+		"bindbc-opengl": "~>1.1.1",
+		"bindbc-common": "~>1.0.5",
+		"d_imgui": {
+			"version": "b67c6bf0b3f9474d3a783051ced6ff9acdd620bf",
+			"repository": "git+https://github.com/shulc/imgui.git"
+		},
+		"bindbc-sdl": "~>1.5.2",
+		"nfde": "~>0.1.3",
+		"bindbc-loader": "~>1.1.5",
+		"dyaml": "~>0.10.0"
+	}
 }

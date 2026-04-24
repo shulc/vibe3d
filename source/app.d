@@ -46,6 +46,11 @@ import commands.select.between;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 
+import command;
+import registry;
+import shortcuts;
+import buttonset;
+
 
 // Read depth buffer at window position (px, py),
 // accounting for HiDPI framebuffer scale.
@@ -341,6 +346,7 @@ void main(string[] args) {
 
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
+    int activePanelIdx = 0;
 
     // RMB path trail
     bool    rmbDragging = false;
@@ -351,14 +357,16 @@ void main(string[] args) {
                                   0.6625f, 0.775f, 0.8875f, 1.0f];
     int gizmoLevelIdx = 4;  // middle
 
-    Tool activeTool = null;
+    Tool   activeTool   = null;
+    string activeToolId = "";
 
     scope(exit) {
         if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
     }
     void setActiveTool(Tool t) {
         if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
-        activeTool = t;
+        activeTool   = t;
+        activeToolId = "";
         if (activeTool) activeTool.activate();
         // deactivate() may have added geometry — sync selection arrays and caches.
         mesh.syncSelection();
@@ -371,6 +379,72 @@ void main(string[] args) {
         if (edgeCache.valid.length != mesh.edges.length) {
             edgeCache.resize(mesh.edges.length);
             edgeCache.invalidate();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Registry + YAML config
+    // -------------------------------------------------------------------------
+
+    Registry reg;
+    reg.toolFactories["move"]   = () => cast(Tool) new MoveTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["rotate"] = () => cast(Tool) new RotateTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["scale"]  = () => cast(Tool) new ScaleTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["bevel"]  = () => cast(Tool) new BevelTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["box"]    = () => cast(Tool) new BoxTool(&mesh, &gpu, litShader);
+
+    reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
+    reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
+    reg.commandFactories["select.more"]           = () => cast(Command) new SelectMore(&mesh, cameraView, editMode);
+    reg.commandFactories["select.less"]           = () => cast(Command) new SelectLess(&mesh, cameraView, editMode);
+    reg.commandFactories["select.loop"]           = () => cast(Command) new SelectLoop(&mesh, cameraView, editMode);
+    reg.commandFactories["select.ring"]           = () => cast(Command) new SelectRing(&mesh, cameraView, editMode);
+    reg.commandFactories["select.invert"]         = () => cast(Command) new SelectInvert(&mesh, cameraView, editMode);
+    reg.commandFactories["select.connect"]        = () => cast(Command) new SelectConnect(&mesh, cameraView, editMode);
+    reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh, cameraView, editMode);
+    reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh, cameraView, editMode);
+    reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh, cameraView, editMode);
+
+    Panel[]       panels    = loadButtons("config/buttons.yaml");
+    ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
+
+    // Validate: every action id in panels must exist in the registry.
+    {
+        import std.array : appender;
+        auto missing = appender!string();
+        foreach (ref p; panels) {
+            foreach (ref btn; p.buttons) {
+                if (btn.action.kind == ActionKind.tool) {
+                    if ((btn.action.id in reg.toolFactories) is null)
+                        missing ~= " tool:" ~ btn.action.id;
+                } else {
+                    if ((btn.action.id in reg.commandFactories) is null)
+                        missing ~= " command:" ~ btn.action.id;
+                }
+            }
+        }
+        if (missing.data.length > 0)
+            throw new Exception("buttons.yaml references unknown ids:" ~ missing.data);
+    }
+    // Validate shortcut tool/command ids.
+    {
+        import std.array : appender;
+        auto missing = appender!string();
+        foreach (id, sc; shortcuts.byToolId)
+            if ((id in reg.toolFactories) is null)
+                missing ~= " tool:" ~ id;
+        foreach (id, sc; shortcuts.byCommandId)
+            if ((id in reg.commandFactories) is null)
+                missing ~= " command:" ~ id;
+        if (missing.data.length > 0)
+            throw new Exception("shortcuts.yaml references unknown ids:" ~ missing.data);
+    }
+
+    void activateToolById(string id) {
+        if (activeToolId == id) { setActiveTool(null); activeToolId = ""; }
+        else {
+            setActiveTool(reg.toolFactories[id]());
+            activeToolId = id;
         }
     }
 
@@ -469,7 +543,29 @@ void main(string[] args) {
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         bool shift = (kev.keysym.mod & KMOD_SHIFT) != 0;
-        bool alt   = (kev.keysym.mod & KMOD_ALT)   != 0;
+
+        // YAML-driven shortcut lookup (tool, command, editmode).
+        string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
+        if (canon.length > 0) {
+            if (auto id = canon in shortcuts.toolIdByCanon) {
+                activateToolById(*id);
+                return;
+            }
+            if (auto id = canon in shortcuts.commandIdByCanon) {
+                reg.commandFactories[*id]().apply();
+                return;
+            }
+            if (auto id = canon in shortcuts.editModeByCanon) {
+                setActiveTool(null);
+                final switch (*id) {
+                    case "vertices": editMode = EditMode.Vertices; break;
+                    case "edges":    editMode = EditMode.Edges;    break;
+                    case "polygons": editMode = EditMode.Polygons; break;
+                }
+                return;
+            }
+        }
+
         switch (kev.keysym.sym) {
             case SDLK_F1:
                 recLog.close();
@@ -480,83 +576,11 @@ void main(string[] args) {
                 recLog.close();
                 stderr.writeln("[REC] stopped");
                 break;
-            case SDLK_ESCAPE: running = false;                             break;
-            case SDLK_1:      setActiveTool(null); editMode = EditMode.Vertices; break;
-            case SDLK_2:      setActiveTool(null); editMode = EditMode.Edges;    break;
-            case SDLK_3:      setActiveTool(null); editMode = EditMode.Polygons; break;
+            case SDLK_ESCAPE: running = false; break;
             case SDLK_SPACE:
                 if (activeTool) setActiveTool(null);
                 else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
                 break;
-            case SDLK_w:
-                setActiveTool(cast(MoveTool)activeTool ? null
-                    : new MoveTool(&mesh, &gpu, &editMode));
-                break;
-            case SDLK_r:
-                setActiveTool(cast(ScaleTool)activeTool ? null
-                    : new ScaleTool(&mesh, &gpu, &editMode));
-                break;
-            case SDLK_e:
-                setActiveTool(cast(RotateTool)activeTool ? null
-                    : new RotateTool(&mesh, &gpu, &editMode));
-                break;
-            case SDLK_b:
-                setActiveTool(cast(BevelTool)activeTool ? null
-                    : new BevelTool(&mesh, &gpu, &editMode));
-                break;
-            case SDLK_a: {
-                if (shift) {
-                    new FitSelected(&mesh, cameraView, editMode).apply();
-                } else {
-                    new Fit(&mesh, cameraView, editMode).apply();
-                }
-                break;
-            }
-            case SDLK_RIGHTBRACKET: {
-                new SelectConnect(&mesh, cameraView, editMode).apply();
-                // run command: select.connect
-                break;
-            }
-            case SDLK_UP: {
-                if (shift) {
-                    new SelectionExpand(&mesh, cameraView, editMode).apply();
-                    // run command: select.expand
-                } else {
-                    new SelectMore(&mesh, cameraView, editMode).apply();
-                    // run command: select.more
-                }
-                break;
-            }
-            case SDLK_DOWN: {
-                if (shift) {
-                    new SelectionContract(&mesh, cameraView, editMode).apply();
-                    // run command: select.contract
-                } else {
-                    new SelectLess(&mesh, cameraView, editMode).apply();
-                    // run command: select.less
-                }
-                break;
-            }
-            case SDLK_g: {
-                if (shift) {
-                    new SelectBetween(&mesh, cameraView, editMode).apply();
-                    // run command: select.between
-                }
-                break;
-            }
-            case SDLK_l: {
-                if (alt)
-                    new SelectRing(&mesh, cameraView, editMode).apply();
-                else
-                    new SelectLoop(&mesh, cameraView, editMode).apply();
-                // run command: select.ring (Alt+L) / select.loop (L)
-                break;
-            }
-            case SDLK_LEFTBRACKET: {
-                new SelectInvert(&mesh, cameraView, editMode).apply();
-                // run command: select.invert
-                break;
-            }
             case SDLK_d: {
                 if (shift) {
                     setActiveTool(null);
@@ -995,35 +1019,45 @@ void main(string[] args) {
                 }
             }
 
-            ImGui.Separator();
-            ImGui.Text("Tools");
-            {
-                bool on = cast(MoveTool)activeTool !is null;
-                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Move             W"))
-                    setActiveTool(on ? null : new MoveTool(&mesh, &gpu, &editMode));
-                if (on) ImGui.PopStyleColor();
-            }
-            {
-                bool on = cast(RotateTool)activeTool !is null;
-                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Rotate           E"))
-                    setActiveTool(on ? null : new RotateTool(&mesh, &gpu, &editMode));
-                if (on) ImGui.PopStyleColor();
-            }
-            {
-                bool on = cast(ScaleTool)activeTool !is null;
-                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Scale            R"))
-                    setActiveTool(on ? null : new ScaleTool(&mesh, &gpu, &editMode));
-                if (on) ImGui.PopStyleColor();
-            }
-            {
-                bool on = cast(BoxTool)activeTool !is null;
-                if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Box               "))
-                    setActiveTool(on ? null : new BoxTool(&mesh, &gpu, litShader));
-                if (on) ImGui.PopStyleColor();
+            if (activePanelIdx >= 0 && activePanelIdx < cast(int)panels.length) {
+                Panel* p = &panels[activePanelIdx];
+                ImGui.Separator();
+                ImGui.Text("%s", p.title);
+                foreach (ref btn; p.buttons) {
+                    string sc;
+                    if (btn.action.kind == ActionKind.tool) {
+                        if (auto sp = btn.action.id in shortcuts.byToolId)
+                            sc = sp.display();
+                    } else {
+                        if (auto sp = btn.action.id in shortcuts.byCommandId)
+                            sc = sp.display();
+                    }
+
+                    bool on = (btn.action.kind == ActionKind.tool &&
+                               activeToolId == btn.action.id);
+                    if (on) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
+                    bool clicked = ImGui.Button(btn.label, ImVec2(-1, 0));
+                    ImGui.PopStyleVar();
+                    if (on) ImGui.PopStyleColor();
+
+                    if (sc.length > 0) {
+                        ImVec2 rmin = ImGui.GetItemRectMin();
+                        ImVec2 rmax = ImGui.GetItemRectMax();
+                        ImVec2 ts   = ImGui.CalcTextSize(sc);
+                        ImVec2 tp   = ImVec2(rmax.x - ts.x - 6.0f,
+                                             rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
+                        ImGui.GetWindowDrawList().AddText(
+                            tp, IM_COL32(180, 180, 180, 255), sc);
+                    }
+
+                    if (clicked) {
+                        if (btn.action.kind == ActionKind.tool)
+                            activateToolById(btn.action.id);
+                        else
+                            reg.commandFactories[btn.action.id]().apply();
+                    }
+                }
             }
 
             ImGui.Separator();
@@ -1051,28 +1085,37 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoCollapse))
         {
             {
-                bool active = (editMode == EditMode.Vertices);
-                if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Vertices  1"))
-                    { setActiveTool(null); editMode = EditMode.Vertices; }
-                if (active) ImGui.PopStyleColor();
-                ImGui.SameLine();
-            }
-            {
-                bool active = (editMode == EditMode.Edges);
-                if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Edges     2"))
-                    { setActiveTool(null); editMode = EditMode.Edges; }
-                if (active) ImGui.PopStyleColor();
-                ImGui.SameLine();
-            }
-            {
-                bool active = (editMode == EditMode.Polygons);
-                if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
-                if (ImGui.Button("Polygons  3"))
-                    { setActiveTool(null); editMode = EditMode.Polygons; }
-                if (active) ImGui.PopStyleColor();
-                ImGui.SameLine();
+                import std.format : format;
+                auto sp1 = "vertices" in shortcuts.byEditMode;
+                auto sp2 = "edges"    in shortcuts.byEditMode;
+                auto sp3 = "polygons" in shortcuts.byEditMode;
+                string sc1 = sp1 ? sp1.display() : "1";
+                string sc2 = sp2 ? sp2.display() : "2";
+                string sc3 = sp3 ? sp3.display() : "3";
+                {
+                    bool active = (editMode == EditMode.Vertices);
+                    if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    if (ImGui.Button(format("Vertices  %s", sc1)))
+                        { setActiveTool(null); editMode = EditMode.Vertices; }
+                    if (active) ImGui.PopStyleColor();
+                    ImGui.SameLine();
+                }
+                {
+                    bool active = (editMode == EditMode.Edges);
+                    if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    if (ImGui.Button(format("Edges     %s", sc2)))
+                        { setActiveTool(null); editMode = EditMode.Edges; }
+                    if (active) ImGui.PopStyleColor();
+                    ImGui.SameLine();
+                }
+                {
+                    bool active = (editMode == EditMode.Polygons);
+                    if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
+                    if (ImGui.Button(format("Polygons  %s", sc3)))
+                        { setActiveTool(null); editMode = EditMode.Polygons; }
+                    if (active) ImGui.PopStyleColor();
+                    ImGui.SameLine();
+                }
             }
         }
         ImGui.End();
@@ -1087,6 +1130,23 @@ void main(string[] args) {
                         ImGuiWindowFlags.NoMove     |
                         ImGuiWindowFlags.NoCollapse))
         {
+            float btnW = 90.0f;
+            float btnH = layout.statusH - 8.0f;
+            ImGui.SetCursorPosY((layout.statusH - btnH) * 0.5f);
+            foreach (i, ref p; panels) {
+                bool active = cast(int)i == activePanelIdx;
+                if (active) {
+                    ImGui.PushStyleColor(ImGuiCol.Button,        ImVec4(0.26f, 0.59f, 0.98f, 1.00f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImVec4(0.36f, 0.69f, 1.00f, 1.00f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive,  ImVec4(0.16f, 0.49f, 0.88f, 1.00f));
+                }
+                if (ImGui.Button(p.title, ImVec2(btnW, btnH)))
+                    activePanelIdx = cast(int)i;
+                if (active)
+                    ImGui.PopStyleColor(3);
+                if (i + 1 < panels.length)
+                    ImGui.SameLine();
+            }
         }
         ImGui.End();
     }

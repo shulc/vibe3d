@@ -1,0 +1,24 @@
+tools:
+  move:   W
+  rotate: E
+  scale:  R
+  box:    B
+  bevel:  ""
+
+commands:
+  select.expand:         "Shift+Up"
+  select.contract:       "Shift+Down"
+  select.more:           Up
+  select.less:           Down
+  select.loop:           L
+  select.ring:           "Alt+L"
+  select.invert:         "["
+  select.connect:        "]"
+  select.between:        "Shift+G"
+  viewport.fit:          A
+  viewport.fit_selected: "Shift+A"
+
+editmodes:
+  vertices: "1"
+  edges:    "2"
+  polygons: "3"
