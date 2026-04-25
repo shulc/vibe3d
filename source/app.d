@@ -4,6 +4,7 @@ import std.string : toStringz;
 import std.stdio : writeln, writefln, File, stderr;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
+import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
@@ -613,6 +614,110 @@ void main(string[] args) {
                     throw new Exception("invalid mode '" ~ mode ~
                                         "', expected vertices/edges/polygons");
             }
+        });
+
+        httpServer.setTransformHandler((string kind, JSONValue params) {
+            import std.math : sin, cos;
+            import math    : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
+
+            // Resolve which vertex indices to transform from current selection
+            // and edit mode. Match the tools' behaviour: selected verts in
+            // Vertices mode, verts of selected edges/faces otherwise. Empty
+            // selection => no-op (matches tools' "nothing selected" path).
+            bool[] vmask = new bool[](mesh.vertices.length);
+            if (editMode == EditMode.Vertices) {
+                foreach (i; 0 .. mesh.selectedVertices.length)
+                    if (mesh.selectedVertices[i]) vmask[i] = true;
+            } else if (editMode == EditMode.Edges) {
+                foreach (i; 0 .. mesh.selectedEdges.length)
+                    if (mesh.selectedEdges[i])
+                        foreach (vi; mesh.edges[i]) vmask[vi] = true;
+            } else if (editMode == EditMode.Polygons) {
+                foreach (i; 0 .. mesh.selectedFaces.length)
+                    if (mesh.selectedFaces[i])
+                        foreach (vi; mesh.faces[i]) vmask[vi] = true;
+            }
+
+            // Helper to read a 3-vector field with default value.
+            Vec3 vec3From(string field, Vec3 def) {
+                if (field !in params) return def;
+                auto a = params[field].array;
+                if (a.length != 3) throw new Exception("'" ~ field ~ "' must be [x,y,z]");
+                Vec3 r;
+                foreach (i, n; a) {
+                    double v;
+                    switch (n.type) {
+                        case JSONType.integer:  v = cast(double)n.integer;  break;
+                        case JSONType.uinteger: v = cast(double)n.uinteger; break;
+                        case JSONType.float_:   v = n.floating;             break;
+                        default: throw new Exception("'" ~ field ~ "' components must be numbers");
+                    }
+                    if (i == 0) r.x = cast(float)v;
+                    if (i == 1) r.y = cast(float)v;
+                    if (i == 2) r.z = cast(float)v;
+                }
+                return r;
+            }
+            float floatFrom(string field, float def) {
+                if (field !in params) return def;
+                auto n = params[field];
+                switch (n.type) {
+                    case JSONType.integer:  return cast(float)n.integer;
+                    case JSONType.uinteger: return cast(float)n.uinteger;
+                    case JSONType.float_:   return cast(float)n.floating;
+                    default: throw new Exception("'" ~ field ~ "' must be a number");
+                }
+            }
+
+            switch (kind) {
+                case "translate": {
+                    Vec3 d = vec3From("delta", Vec3(0, 0, 0));
+                    foreach (i; 0 .. mesh.vertices.length)
+                        if (vmask[i]) {
+                            mesh.vertices[i].x += d.x;
+                            mesh.vertices[i].y += d.y;
+                            mesh.vertices[i].z += d.z;
+                        }
+                    break;
+                }
+                case "rotate": {
+                    Vec3 axis  = vec3From("axis",  Vec3(0, 1, 0));
+                    Vec3 pivot = vec3From("pivot", Vec3(0, 0, 0));
+                    float angle = floatFrom("angle", 0);
+                    auto m = pivotRotationMatrix(pivot, axis, angle);
+                    foreach (i; 0 .. mesh.vertices.length)
+                        if (vmask[i]) {
+                            auto v0 = Vec4(mesh.vertices[i].x,
+                                           mesh.vertices[i].y,
+                                           mesh.vertices[i].z, 1.0f);
+                            auto v1 = mulMV(m, v0);
+                            mesh.vertices[i] = Vec3(v1.x, v1.y, v1.z);
+                        }
+                    break;
+                }
+                case "scale": {
+                    Vec3 f     = vec3From("factor", Vec3(1, 1, 1));
+                    Vec3 pivot = vec3From("pivot",  Vec3(0, 0, 0));
+                    auto m = pivotScaleMatrix(pivot, f.x, f.y, f.z);
+                    foreach (i; 0 .. mesh.vertices.length)
+                        if (vmask[i]) {
+                            auto v0 = Vec4(mesh.vertices[i].x,
+                                           mesh.vertices[i].y,
+                                           mesh.vertices[i].z, 1.0f);
+                            auto v1 = mulMV(m, v0);
+                            mesh.vertices[i] = Vec3(v1.x, v1.y, v1.z);
+                        }
+                    break;
+                }
+                default:
+                    throw new Exception("invalid kind '" ~ kind ~
+                                        "', expected translate/rotate/scale");
+            }
+
+            gpu.upload(mesh);
+            vertexCache.invalidate();
+            faceCache.invalidate();
+            edgeCache.invalidate();
         });
 
         httpServer.setResetHandler(() {
@@ -1580,6 +1685,7 @@ void main(string[] args) {
             httpServer.tickReset();
             httpServer.tickCommand();
             httpServer.tickSelection();
+            httpServer.tickTransform();
         }
 
         // ---- Events ----

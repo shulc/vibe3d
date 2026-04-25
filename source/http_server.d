@@ -60,6 +60,15 @@ class HttpServer {
     private int[]  pendingSelIndices;
     private string pendingSelError;
 
+    // ----- /api/transform synchronous bridge -------------------------------
+    private alias TransformHandler = void delegate(string kind, JSONValue params);
+    private TransformHandler transformHandler;
+    private shared long xfSubmittedEpoch;
+    private shared long xfCompletedEpoch;
+    private string    pendingXfKind;
+    private JSONValue pendingXfParams;
+    private string    pendingXfError;
+
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
 
@@ -130,6 +139,14 @@ class HttpServer {
      */
     public void setSelectionHandler(SelectionHandler handler) {
         this.selectionHandler = handler;
+    }
+
+    /**
+     * Set the transform handler callback. Same synchronous main-thread
+     * dispatch as the others — see tickTransform().
+     */
+    public void setTransformHandler(TransformHandler handler) {
+        this.transformHandler = handler;
     }
 
     /**
@@ -409,6 +426,43 @@ class HttpServer {
                 eventPlayer.entries.length,
                 done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/transform" && request.method == "POST") {
+            if (transformHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"transform handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if ("kind" !in j || j["kind"].type != JSONType.string)
+                        throw new Exception("missing 'kind' string field");
+                    pendingXfKind   = j["kind"].str;
+                    pendingXfParams = j;  // pass full request body for handler
+                    pendingXfError  = "";
+                    long my = atomicOp!"+="(xfSubmittedEpoch, 1);
+                    enum int maxIters = 2500;
+                    int iters = 0;
+                    while (atomicLoad(xfCompletedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingXfError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingXfError.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingXfError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/select" && request.method == "POST") {
             if (selectionHandler is null) {
                 response.statusCode = 200;
@@ -579,6 +633,26 @@ class HttpServer {
             }
         }
         atomicStore(completedEpoch, sub);
+    }
+
+    /**
+     * Tick transform — same pattern as tickCommand, for /api/transform.
+     */
+    public void tickTransform() {
+        long sub = atomicLoad(xfSubmittedEpoch);
+        long cmp = atomicLoad(xfCompletedEpoch);
+        if (sub <= cmp) return;
+        if (transformHandler is null) {
+            pendingXfError = "transform handler not set";
+        } else {
+            try {
+                transformHandler(pendingXfKind, pendingXfParams);
+                pendingXfError = "";
+            } catch (Exception e) {
+                pendingXfError = e.msg;
+            }
+        }
+        atomicStore(xfCompletedEpoch, sub);
     }
 
     /**
