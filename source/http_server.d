@@ -50,6 +50,15 @@ class HttpServer {
     private string pendingCmdId;
     private string pendingCmdError;
 
+    // ----- /api/select synchronous bridge ----------------------------------
+    private alias SelectionHandler = void delegate(string mode, int[] indices);
+    private SelectionHandler selectionHandler;
+    private shared long selSubmittedEpoch;
+    private shared long selCompletedEpoch;
+    private string pendingSelMode;
+    private int[]  pendingSelIndices;
+    private string pendingSelError;
+
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
 
@@ -112,6 +121,14 @@ class HttpServer {
      */
     public void setCommandHandler(CommandHandler handler) {
         this.commandHandler = handler;
+    }
+
+    /**
+     * Set the selection handler callback. Same synchronous main-thread
+     * dispatch as setCommandHandler — see tickSelection().
+     */
+    public void setSelectionHandler(SelectionHandler handler) {
+        this.selectionHandler = handler;
     }
 
     /**
@@ -391,6 +408,51 @@ class HttpServer {
                 eventPlayer.entries.length,
                 done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/select" && request.method == "POST") {
+            if (selectionHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"selection handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if ("mode" !in j || j["mode"].type != JSONType.string)
+                        throw new Exception("missing 'mode' string field");
+                    if ("indices" !in j || j["indices"].type != JSONType.array)
+                        throw new Exception("missing 'indices' array field");
+                    pendingSelMode = j["mode"].str;
+                    int[] idx;
+                    foreach (n; j["indices"].array) {
+                        if (n.type != JSONType.integer && n.type != JSONType.uinteger)
+                            throw new Exception("indices must be integers");
+                        idx ~= cast(int)n.integer;
+                    }
+                    pendingSelIndices = idx;
+                    pendingSelError   = "";
+                    long my = atomicOp!"+="(selSubmittedEpoch, 1);
+                    enum int maxIters = 2500;
+                    int iters = 0;
+                    while (atomicLoad(selCompletedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingSelError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingSelError.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingSelError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/command" && request.method == "POST") {
             if (commandHandler is null) {
                 response.statusCode = 200;
@@ -515,6 +577,26 @@ class HttpServer {
             }
         }
         atomicStore(completedEpoch, sub);
+    }
+
+    /**
+     * Tick selection — same pattern as tickCommand, for /api/select.
+     */
+    public void tickSelection() {
+        long sub = atomicLoad(selSubmittedEpoch);
+        long cmp = atomicLoad(selCompletedEpoch);
+        if (sub <= cmp) return;
+        if (selectionHandler is null) {
+            pendingSelError = "selection handler not set";
+        } else {
+            try {
+                selectionHandler(pendingSelMode, pendingSelIndices);
+                pendingSelError = "";
+            } catch (Exception e) {
+                pendingSelError = e.msg;
+            }
+        }
+        atomicStore(selCompletedEpoch, sub);
     }
 
     /**

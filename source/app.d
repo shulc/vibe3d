@@ -542,6 +542,46 @@ void main(string[] args) {
                 throw new Exception("command '" ~ id ~ "' did not apply");
         });
 
+        httpServer.setSelectionHandler((string mode, int[] indices) {
+            mesh.syncSelection();
+            int max;
+            switch (mode) {
+                case "vertices":
+                    editMode = EditMode.Vertices;
+                    mesh.clearVertexSelection();
+                    max = cast(int)mesh.vertices.length;
+                    foreach (i; indices) {
+                        if (i < 0 || i >= max)
+                            throw new Exception("vertex index out of range");
+                        mesh.selectVertex(i);
+                    }
+                    break;
+                case "edges":
+                    editMode = EditMode.Edges;
+                    mesh.clearEdgeSelection();
+                    max = cast(int)mesh.edges.length;
+                    foreach (i; indices) {
+                        if (i < 0 || i >= max)
+                            throw new Exception("edge index out of range");
+                        mesh.selectEdge(i);
+                    }
+                    break;
+                case "polygons":
+                    editMode = EditMode.Polygons;
+                    mesh.clearFaceSelection();
+                    max = cast(int)mesh.faces.length;
+                    foreach (i; indices) {
+                        if (i < 0 || i >= max)
+                            throw new Exception("face index out of range");
+                        mesh.selectFace(i);
+                    }
+                    break;
+                default:
+                    throw new Exception("invalid mode '" ~ mode ~
+                                        "', expected vertices/edges/polygons");
+            }
+        });
+
         httpServer.setResetHandler(() {
             mesh = makeCube();
             cameraView.reset();
@@ -1501,6 +1541,7 @@ void main(string[] args) {
             httpServer.tickEventPlayer();
             httpServer.tickReset();
             httpServer.tickCommand();
+            httpServer.tickSelection();
         }
 
         // ---- Events ----
