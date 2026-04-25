@@ -131,12 +131,12 @@ jobs:
 
       - name: Zip artifact (Linux / macOS)
         if: runner.os != 'Windows'
-        run: zip vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }}
+        run: zip -r vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }} config
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll -DestinationPath vibe3d-${{ matrix.name }}.zip
+        run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, config -DestinationPath vibe3d-${{ matrix.name }}.zip
 
       # ---- Upload zip as artifact for the release job ----
 
