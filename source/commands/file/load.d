@@ -37,7 +37,10 @@ class FileLoad : Command {
         if (path is null) return false;
         if (!importLWO(path, *mesh)) return false;
 
-        mesh.resetSelection();
+        // importLWO has already rebuilt the mesh on a fresh struct (Mesh.init)
+        // and applied subpatch flags from PTCH chunks; grow selection arrays
+        // to match but don't clear isSubpatch.
+        mesh.syncSelection();
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length);
         vc.invalidate();

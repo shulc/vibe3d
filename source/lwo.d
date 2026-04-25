@@ -1,7 +1,7 @@
 module lwo;
 
-import std.stdio     : File;
-import std.file      : read;
+import std.stdio     : File, stderr, writefln;
+import std.file      : read, exists, getSize;
 import std.exception : enforce;
 import std.algorithm : min;
 
@@ -59,39 +59,78 @@ void exportLWO(ref const Mesh mesh, string path)
 
 bool importLWO(string path, ref Mesh mesh)
 {
-    ubyte[] data = cast(ubyte[]) read(path);
+    stderr.writefln("[LWO] importLWO: path=%s", path);
 
-    if (data.length < 12) // "File too small to be LWO2"
+    if (!exists(path)) {
+        stderr.writefln("[LWO] file does not exist");
         return false;
-    if (data[0..4] != "FORM") // "Not an IFF file (no FORM header)"
+    }
+    stderr.writefln("[LWO] file size = %d bytes", getSize(path));
+
+    ubyte[] data = cast(ubyte[]) read(path);
+    stderr.writefln("[LWO] read %d bytes", data.length);
+
+    if (data.length < 12) {
+        stderr.writefln("[LWO] reject: file too small (%d < 12)", data.length);
         return false;
-    if (data[8..12] != "LWO2") // "Not an LWO2 file"
+    }
+    if (data[0..4] != "FORM") {
+        stderr.writefln("[LWO] reject: missing FORM header, got %s",
+                        cast(string) data[0..4].idup);
         return false;
+    }
+    if (data[8..12] != "LWO2") {
+        stderr.writefln("[LWO] reject: not LWO2, header=%s",
+                        cast(string) data[8..12].idup);
+        return false;
+    }
 
     uint   formSize = readU32(data, 4);
     size_t end      = min(cast(size_t)(8 + formSize), data.length);
     size_t pos      = 12;   // first sub-chunk starts after "LWO2"
+    stderr.writefln("[LWO] formSize=%d, end=%d, parse from pos=%d",
+                    formSize, end, pos);
 
     Vec3[]   verts;
     uint[][] polys;
+    bool[]   polyIsSubpatch;     // parallel to polys — true for PTCH entries
+    int      faceChunks     = 0;
+    int      subpatchChunks = 0;
+    int      nonFaceChunks  = 0;
+    int      skippedByArity = 0;
 
     while (pos + 8 <= end) {
         ubyte[4] tagBytes = data[pos .. pos + 4];
         uint     sz       = readU32(data, pos + 4);
         pos += 8;
         size_t chunkEnd = pos + sz;
+        if (chunkEnd > end) {
+            stderr.writefln("[LWO] chunk %s size=%d overflows container " ~
+                            "(pos=%d, end=%d), truncating",
+                            cast(string) tagBytes[].idup, sz, pos, end);
+            chunkEnd = end;
+        }
 
         if (tagBytes == "PNTS") {
+            size_t count0 = verts.length;
             for (size_t i = pos; i + 12 <= chunkEnd; i += 12) {
                 float x = readF32(data, i);
                 float y = readF32(data, i + 4);
                 float z = readF32(data, i + 8);
                 verts ~= Vec3(x, y, z);
             }
+            stderr.writefln("[LWO] PNTS: %d verts (+%d)",
+                            verts.length, verts.length - count0);
         } else if (tagBytes == "POLS" && chunkEnd - pos >= 4) {
             ubyte[4] polyType = data[pos .. pos + 4];
             size_t   p        = pos + 4;
-            if (polyType == "FACE") {
+            // FACE = ordinary polygons; PTCH = LightWave Catmull-Clark
+            // subpatches (same on-disk format, interpreted as subpatches).
+            bool isFace = (polyType == "FACE");
+            bool isPtch = (polyType == "PTCH");
+            if (isFace || isPtch) {
+                if (isFace) ++faceChunks; else ++subpatchChunks;
+                size_t count0 = polys.length;
                 while (p + 2 <= chunkEnd) {
                     ushort numVerts = readU16(data, p);
                     p += 2;
@@ -99,26 +138,78 @@ bool importLWO(string path, ref Mesh mesh)
                     face.reserve(numVerts);
                     for (int i = 0; i < numVerts && p < chunkEnd; i++)
                         face ~= readVX(data, p);
-                    if (face.length >= 3)
-                        polys ~= face;
+                    if (face.length >= 3) {
+                        polys          ~= face;
+                        polyIsSubpatch ~= isPtch;
+                    } else {
+                        ++skippedByArity;
+                    }
                 }
+                stderr.writefln("[LWO] POLS(%s): %d polys (+%d, skipped %d < 3-vert)",
+                                isPtch ? "PTCH" : "FACE",
+                                polys.length, polys.length - count0, skippedByArity);
+            } else {
+                ++nonFaceChunks;
+                stderr.writefln("[LWO] POLS: unsupported type %s, skipped",
+                                cast(string) polyType[].idup);
             }
+        } else {
+            stderr.writefln("[LWO] skip chunk %s (size %d)",
+                            cast(string) tagBytes[].idup, sz);
         }
 
         pos = chunkEnd;
         if (pos & 1) pos++;   // IFF chunks are padded to even size
     }
 
-    if (verts.length <= 0) // "LWO2 file contains no vertices"
-        return false;
-    if (polys.length <= 0) // "LWO2 file contains no polygons"
-        return false;
+    stderr.writefln("[LWO] parse done: verts=%d, polys=%d, face-chunks=%d, " ~
+                    "ptch-chunks=%d, other-POLS=%d, skipped-by-arity=%d",
+                    verts.length, polys.length, faceChunks, subpatchChunks,
+                    nonFaceChunks, skippedByArity);
 
+    if (verts.length <= 0) {
+        stderr.writefln("[LWO] reject: no vertices");
+        return false;
+    }
+    if (polys.length <= 0) {
+        stderr.writefln("[LWO] reject: no polygons");
+        return false;
+    }
+
+    // Check for out-of-range vertex indices before committing.
+    uint nv = cast(uint) verts.length;
+    foreach (fi, face; polys) {
+        foreach (idx; face) {
+            if (idx >= nv) {
+                stderr.writefln("[LWO] reject: face %d references vertex %d " ~
+                                "(only %d verts)", fi, idx, nv);
+                return false;
+            }
+        }
+    }
+
+    // Replace the scene rather than merge: clear prior topology, selection
+    // and subpatch state so the new file is loaded onto a fresh mesh.
+    mesh = Mesh.init;
     mesh.vertices = verts;
     uint[ulong] edgeLookup;
     foreach (face; polys)
         mesh.addFaceFast(edgeLookup, face);
     mesh.buildLoops();
+
+    // Map PTCH polygons onto our isSubpatch flag so LightWave subpatches
+    // render through the subdivision preview without requiring manual Tab.
+    mesh.isSubpatch.length = mesh.faces.length;
+    int subpatchCount = 0;
+    foreach (fi, flag; polyIsSubpatch) {
+        if (fi >= mesh.isSubpatch.length) break;
+        mesh.isSubpatch[fi] = flag;
+        if (flag) ++subpatchCount;
+    }
+    stderr.writefln("[LWO] mesh ready: %d verts, %d edges, %d faces, " ~
+                    "%d marked subpatch",
+                    mesh.vertices.length, mesh.edges.length,
+                    mesh.faces.length, subpatchCount);
     return true;
 }
 
