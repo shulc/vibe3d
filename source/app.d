@@ -533,6 +533,15 @@ void main(string[] args) {
             if (!exists("recording.jsonl")) return null;
             return readText("recording.jsonl");
         });
+        httpServer.setCommandHandler((string id) {
+            auto factory = id in reg.commandFactories;
+            if (factory is null)
+                throw new Exception("unknown command id '" ~ id ~ "'");
+            auto cmd = (*factory)();
+            if (!cmd.apply())
+                throw new Exception("command '" ~ id ~ "' did not apply");
+        });
+
         httpServer.setResetHandler(() {
             mesh = makeCube();
             cameraView.reset();
@@ -1491,6 +1500,7 @@ void main(string[] args) {
         if (httpServer !is null) {
             httpServer.tickEventPlayer();
             httpServer.tickReset();
+            httpServer.tickCommand();
         }
 
         // ---- Events ----

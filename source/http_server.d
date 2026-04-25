@@ -39,6 +39,17 @@ class HttpServer {
     private shared bool resetPending = false;
     private bool testMode = false;
 
+    // ----- /api/command synchronous bridge ---------------------------------
+    // The HTTP thread fills pendingCmdId/Params, bumps submittedEpoch, and
+    // spins on completedEpoch. The main thread runs the command via
+    // commandHandler from tickCommand() and bumps completedEpoch.
+    private alias CommandHandler = void delegate(string id);
+    private CommandHandler commandHandler;
+    private shared long submittedEpoch;
+    private shared long completedEpoch;
+    private string pendingCmdId;
+    private string pendingCmdError;
+
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
 
@@ -92,6 +103,15 @@ class HttpServer {
      */
     public void setResetHandler(ResetHandler handler) {
         this.resetHandler = handler;
+    }
+
+    /**
+     * Set the command handler callback. The handler runs on the main thread,
+     * synchronously with respect to the HTTP request: see tickCommand().
+     * The handler should throw on failure; the message is forwarded to the client.
+     */
+    public void setCommandHandler(CommandHandler handler) {
+        this.commandHandler = handler;
     }
 
     /**
@@ -371,6 +391,43 @@ class HttpServer {
                 eventPlayer.entries.length,
                 done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/command" && request.method == "POST") {
+            if (commandHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"command handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if ("id" !in j || j["id"].type != JSONType.string)
+                        throw new Exception("missing 'id' string field");
+                    pendingCmdId    = j["id"].str;
+                    pendingCmdError = "";
+                    long my = atomicOp!"+="(submittedEpoch, 1);
+                    // Wait for main thread to drain — bounded at ~5s.
+                    enum int maxIters = 2500;  // 2500 * 2ms = 5s
+                    int iters = 0;
+                    while (atomicLoad(completedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingCmdError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingCmdError.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingCmdError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/play-events" && request.method == "POST") {
             if (!testMode) {
                 response.statusCode = 403;
@@ -435,6 +492,29 @@ class HttpServer {
             if (resetHandler !is null)
                 resetHandler();
         }
+    }
+
+    /**
+     * Tick command — call once per frame from the main loop.
+     * Drains a pending /api/command request: dispatches via commandHandler,
+     * captures any thrown error message, and bumps completedEpoch so the
+     * waiting HTTP thread can return a response.
+     */
+    public void tickCommand() {
+        long sub = atomicLoad(submittedEpoch);
+        long cmp = atomicLoad(completedEpoch);
+        if (sub <= cmp) return;
+        if (commandHandler is null) {
+            pendingCmdError = "command handler not set";
+        } else {
+            try {
+                commandHandler(pendingCmdId);
+                pendingCmdError = "";
+            } catch (Exception e) {
+                pendingCmdError = e.msg;
+            }
+        }
+        atomicStore(completedEpoch, sub);
     }
 
     /**
