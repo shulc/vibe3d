@@ -21,20 +21,18 @@ dub build            # Build the project
 
 ## Running Tests
 
-Tests are D programs compiled with `dmd -unittest` and exercised via an HTTP API against a running vibe3d instance:
+Tests are D programs compiled with `dmd -unittest` and exercised via an HTTP API against a running vibe3d instance. The runner (`run_test.d`, an `rdmd` script) handles `dub build`, test compilation, vibe3d lifecycle, and reports pass/fail counts:
 
 ```bash
-./run_test.sh        # Build app + compile all tests/test_*.d + run them
+./run_test.d                    # all tests
+./run_test.d test_bevel         # one test (also accepts: bevel, tests/test_bevel.d)
+./run_test.d bevel selection    # subset
+./run_test.d -v test_bevel      # stream the test's stdout/stderr
+./run_test.d --keep             # leave vibe3d running after tests finish (for debugging)
+./run_test.d --no-build         # skip `dub build`
 ```
 
-To compile and run a single test:
-```bash
-dmd -unittest tests/test_selection.d -w -of=/tmp/test_selection
-./vibe3d --test 2>run.log &
-# wait for "HTTP server started on port 8080" in run.log
-/tmp/test_selection
-pkill vibe3d
-```
+The runner kills any stale `vibe3d --test` before starting, waits for the HTTP server to become responsive, and tears vibe3d down on exit (including SIGINT).
 
 Test files live in `tests/test_*.d`. Pre-recorded event logs (JSON Lines) are in `tests/events/*.log`.
 

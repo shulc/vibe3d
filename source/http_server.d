@@ -106,6 +106,7 @@ class HttpServer {
         serverThread = new Thread({
             try {
                 serverSocket = new TcpSocket();
+                serverSocket.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, 1);
                 serverSocket.bind(new InternetAddress(port));
                 serverSocket.listen(10);
 

@@ -106,17 +106,12 @@ dub build
 Тесты — это D-программы, которые через HTTP API управляют запущенным экземпляром vibe3d.
 
 ```sh
-./run_test.sh   # Собрать приложение + скомпилировать и запустить все тесты
-```
-
-Запуск одного теста вручную:
-
-```sh
-dmd -unittest tests/test_selection.d -w -of=/tmp/test_selection
-./vibe3d --test 2>run.log &
-# подождать "HTTP server started on port 8080" в run.log
-/tmp/test_selection
-pkill vibe3d
+./run_test.d                    # все тесты
+./run_test.d test_bevel         # один тест (или: bevel, tests/test_bevel.d)
+./run_test.d bevel selection    # несколько
+./run_test.d -v test_bevel      # подробный вывод
+./run_test.d --keep             # оставить vibe3d запущенным после прогона
+./run_test.d --no-build         # пропустить `dub build`
 ```
 
 Файлы тестов: `tests/test_*.d`. Записанные сессии событий: `tests/events/*.log`.
