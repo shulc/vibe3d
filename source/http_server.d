@@ -43,11 +43,12 @@ class HttpServer {
     // The HTTP thread fills pendingCmdId/Params, bumps submittedEpoch, and
     // spins on completedEpoch. The main thread runs the command via
     // commandHandler from tickCommand() and bumps completedEpoch.
-    private alias CommandHandler = void delegate(string id);
+    private alias CommandHandler = void delegate(string id, string paramsJson);
     private CommandHandler commandHandler;
     private shared long submittedEpoch;
     private shared long completedEpoch;
     private string pendingCmdId;
+    private string pendingCmdParams;
     private string pendingCmdError;
 
     // ----- /api/select synchronous bridge ----------------------------------
@@ -462,8 +463,9 @@ class HttpServer {
                     auto j = parseJSON(request.body);
                     if ("id" !in j || j["id"].type != JSONType.string)
                         throw new Exception("missing 'id' string field");
-                    pendingCmdId    = j["id"].str;
-                    pendingCmdError = "";
+                    pendingCmdId     = j["id"].str;
+                    pendingCmdParams = ("params" in j) ? j["params"].toString : "";
+                    pendingCmdError  = "";
                     long my = atomicOp!"+="(submittedEpoch, 1);
                     // Wait for main thread to drain — bounded at ~5s.
                     enum int maxIters = 2500;  // 2500 * 2ms = 5s
@@ -570,7 +572,7 @@ class HttpServer {
             pendingCmdError = "command handler not set";
         } else {
             try {
-                commandHandler(pendingCmdId);
+                commandHandler(pendingCmdId, pendingCmdParams);
                 pendingCmdError = "";
             } catch (Exception e) {
                 pendingCmdError = e.msg;

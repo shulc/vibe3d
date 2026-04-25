@@ -538,11 +538,29 @@ void main(string[] args) {
             if (!exists("recording.jsonl")) return null;
             return readText("recording.jsonl");
         });
-        httpServer.setCommandHandler((string id) {
+        httpServer.setCommandHandler((string id, string paramsJson) {
+            import std.json : parseJSON, JSONType;
+            import commands.file.load : FileLoad;
+            import commands.file.save : FileSave;
+
             auto factory = id in reg.commandFactories;
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
             auto cmd = (*factory)();
+
+            // Inject params into commands that accept them. Currently only
+            // file.load/file.save use the `path` field — extend here as
+            // more commands grow JSON-driven inputs.
+            if (paramsJson.length > 0) {
+                auto pj = parseJSON(paramsJson);
+                if (pj.type == JSONType.object && "path" in pj
+                        && pj["path"].type == JSONType.string) {
+                    string path = pj["path"].str;
+                    if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
+                    else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
+                }
+            }
+
             if (!cmd.apply())
                 throw new Exception("command '" ~ id ~ "' did not apply");
         });
