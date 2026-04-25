@@ -38,6 +38,9 @@
 		"bindbc-sdl": "~>1.5.2",
 		"nfde": "~>0.1.3",
 		"bindbc-loader": "~>1.1.5",
-		"dyaml": "~>0.10.0"
+		"dyaml": {
+			"version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
+			"repository": "git+https://github.com/shulc/D-YAML.git"
+		}
 	}
 }
