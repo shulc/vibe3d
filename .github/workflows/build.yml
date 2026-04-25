@@ -20,6 +20,9 @@ jobs:
           - os: ubuntu-latest
             name: linux
             binary: vibe3d
+          - os: macos-13         # Intel x86_64 — DMD has no ARM64 macOS toolchain
+            name: macos
+            binary: vibe3d
           - os: windows-latest
             name: windows
             binary: vibe3d.exe
@@ -81,14 +84,14 @@ jobs:
           echo "CFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
           echo "CXXFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
 
-      # ---- nfde submodule (Linux only) ----
+      # ---- nfde submodule (Linux + macOS) ----
 
       - name: First-pass build (fetches nfde and clones NFD repo, expected to fail)
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         run: dub build --compiler=dmd --build=release || true
 
       - name: Initialize nativefiledialog-extended submodules
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         run: |
           NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
           if [ -d "$NFD_DIR" ]; then
@@ -140,4 +143,5 @@ jobs:
             --title "vibe3d ${{ inputs.tag }}" \
             --generate-notes \
             vibe3d-linux.zip \
+            vibe3d-macos.zip \
             vibe3d-windows.zip
