@@ -23,7 +23,7 @@ jobs:
     - uses: dlang-community/setup-dlang@4c99aa991ce7d19dd3064de0a4f2f6b2f152e2d7
 
     - name: 'Install system dependencies'
-      run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libgtk-3-dev ninja-build
+      run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libgtk-3-dev ninja-build xvfb
 
     - name: 'First-pass build (fetches nfde and clones NFD repo, expected to fail)'
       run: dub build --compiler=$DC || true
@@ -39,4 +39,6 @@ jobs:
     - name: 'Build & Test'
       run: |
         dub build --compiler=$DC
-        dub test --compiler=$DC
+        # nfde's static ctor calls NFD_Init() (GTK), which needs a display.
+        # xvfb-run gives the headless runner a virtual one.
+        xvfb-run -a dub test --compiler=$DC
