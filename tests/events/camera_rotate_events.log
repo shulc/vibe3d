@@ -1,3 +1,4 @@
+{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}
 {"t":424.679,"type":"SDL_WINDOWEVENT","sub":1}
 {"t":424.987,"type":"SDL_WINDOWEVENT","sub":3}
 {"t":567.184,"type":"SDL_WINDOWEVENT","sub":12}

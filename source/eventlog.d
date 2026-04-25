@@ -51,6 +51,36 @@ void queryMouse(out int mx, out int my) {
 }
 
 // ---------------------------------------------------------------------------
+// Viewport metadata for layout-/aspect-independent event playback.
+//
+// At record time the logger emits a single VIEWPORT line up front; at replay
+// time the player remaps mouse coordinates from the recorded viewport into
+// the current one. With identical fovY (the editor uses 45° everywhere),
+// only ndc-x changes when aspect changes, and pixel→ndc→pixel round-trips
+// stay accurate.
+// ---------------------------------------------------------------------------
+
+struct ViewportMeta {
+    int   vpX, vpY, vpW, vpH;
+    float fovY;
+    bool  valid;
+}
+
+private __gshared ViewportMeta g_replayCurrentViewport;
+
+/// Tell the EventPlayer what the runtime viewport looks like right now.
+/// Call from app.d whenever Layout.resize() runs (record-time observers
+/// don't need this — the recorded log carries its own viewport).
+void setReplayCurrentViewport(int vpX, int vpY, int vpW, int vpH, float fovY) {
+    g_replayCurrentViewport = ViewportMeta(vpX, vpY, vpW, vpH, fovY, true);
+}
+
+/// Reset the current viewport (mainly for tests).
+void clearReplayCurrentViewport() {
+    g_replayCurrentViewport = ViewportMeta.init;
+}
+
+// ---------------------------------------------------------------------------
 // JSON helper — safe integer read from a JSONValue object
 // ---------------------------------------------------------------------------
 private long _jsonGet(JSONValue obj, string key, long def = 0) nothrow {
@@ -72,6 +102,16 @@ struct EventLogger {
         startCounter = _perfCounter();
         freq         = _perfFreq();
         active       = true;
+        file.flush();
+    }
+
+    /// Write the viewport metadata line. Call once after open(), as soon as
+    /// the layout is known. Makes the log layout-/aspect-independent on replay.
+    void writeViewportMeta(int vpX, int vpY, int vpW, int vpH, float fovY) {
+        if (!active) return;
+        file.writefln(
+            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":%.6f}`,
+            vpX, vpY, vpW, vpH, fovY);
         file.flush();
     }
 
@@ -151,6 +191,11 @@ struct EventPlayer {
     int     mouseX, mouseY;   // current replayed cursor position
     bool    mouseDown;        // left button state (for visual feedback)
 
+    // Recorded viewport from the log's VIEWPORT meta line, if present.
+    // Used together with the module-level g_replayCurrentViewport to remap
+    // pixel coordinates of mouse events on replay.
+    ViewportMeta recordedViewport;
+
     // Load and parse a JSON Lines log file written by EventLogger.
     // Returns true on success.
     bool open(string path) {
@@ -175,13 +220,27 @@ struct EventPlayer {
             catch (JSONException) { continue; }
 
             double t;
-            try { t = obj["t"].floating; } catch (Exception) { continue; }
+            try {
+                if (obj["t"].type == JSONType.integer)       t = cast(double)obj["t"].integer;
+                else if (obj["t"].type == JSONType.uinteger) t = cast(double)obj["t"].uinteger;
+                else                                         t = obj["t"].floating;
+            } catch (Exception) { continue; }
 
             string typeName;
             try { typeName = obj["type"].str; } catch (Exception) { continue; }
 
             SDL_Event e;
             switch (typeName) {
+                case "VIEWPORT":
+                    // Meta line — store and skip; not an SDL event.
+                    recordedViewport.vpX  = cast(int)_jsonGet(obj, "vpX");
+                    recordedViewport.vpY  = cast(int)_jsonGet(obj, "vpY");
+                    recordedViewport.vpW  = cast(int)_jsonGet(obj, "vpW");
+                    recordedViewport.vpH  = cast(int)_jsonGet(obj, "vpH");
+                    try { recordedViewport.fovY = cast(float)obj["fovY"].floating; }
+                    catch (Exception) { recordedViewport.fovY = 0.7853982f; }
+                    recordedViewport.valid = true;
+                    continue;
                 case "SDL_QUIT":
                     e.type = SDL_QUIT;
                     break;
@@ -246,6 +305,39 @@ struct EventPlayer {
         return true;
     }
 
+    // Remap (x, y) from the recorded viewport into the current one.
+    // No-op if either viewport is unknown (legacy logs without meta).
+    private void remapPixel(ref int x, ref int y) const {
+        const rec = recordedViewport;
+        const cur = g_replayCurrentViewport;
+        if (!rec.valid || !cur.valid) return;
+        if (rec.vpW <= 0 || rec.vpH <= 0 || cur.vpW <= 0 || cur.vpH <= 0) return;
+
+        // ndc-y factor: invariant of fovY (assuming fixed fovY across versions)
+        double ndcYFactor = (cast(double)y - rec.vpY) / (rec.vpH / 2.0);
+        // ndc-x factor in [-1..1]
+        double ndcX = (cast(double)x - rec.vpX) / (rec.vpW / 2.0) - 1.0;
+        // aspect change (fovY constant): ndcX scales by recAspect/curAspect
+        double recAspect = cast(double)rec.vpW / cast(double)rec.vpH;
+        double curAspect = cast(double)cur.vpW / cast(double)cur.vpH;
+        ndcX *= recAspect / curAspect;
+
+        x = cast(int)(cur.vpX + (ndcX + 1.0) * (cur.vpW / 2.0) + 0.5);
+        y = cast(int)(cur.vpY + ndcYFactor * (cur.vpH / 2.0) + 0.5);
+    }
+
+    // Remap a pixel delta (xrel/yrel). With fovY constant, both axes scale by
+    // cur_vpH / rec_vpH (the x aspect-correction and the vpW/vpW factors cancel).
+    private void remapDelta(ref int dx, ref int dy) const {
+        const rec = recordedViewport;
+        const cur = g_replayCurrentViewport;
+        if (!rec.valid || !cur.valid) return;
+        if (rec.vpH <= 0) return;
+        double s = cast(double)cur.vpH / cast(double)rec.vpH;
+        dx = cast(int)(dx * s + (dx >= 0 ? 0.5 : -0.5));
+        dy = cast(int)(dy * s + (dy >= 0 ? 0.5 : -0.5));
+    }
+
     // Call once per frame. Pushes all events whose timestamp has elapsed.
     // Returns false when playback is finished.
     bool tick() {
@@ -255,12 +347,26 @@ struct EventPlayer {
         while (idx < entries.length && entries[idx].timeMs <= nowMs) {
             auto  entry = entries[idx];
             SDL_Event e = entry.event;
+            // Remap mouse pixels from the recorded viewport into the current one.
+            if (e.type == SDL_MOUSEMOTION) {
+                int x = e.motion.x, y = e.motion.y;
+                remapPixel(x, y);
+                e.motion.x = x; e.motion.y = y;
+                int dx = e.motion.xrel, dy = e.motion.yrel;
+                remapDelta(dx, dy);
+                e.motion.xrel = dx; e.motion.yrel = dy;
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                int x = e.button.x, y = e.button.y;
+                remapPixel(x, y);
+                e.button.x = x; e.button.y = y;
+            }
             // Restore modifier key state for mouse events so that
             // SDL_GetModState() returns the correct value when the app
             // processes the pushed event (SDL_PushEvent does not update
             // SDL's internal modifier state on macOS).
             // Also update the global mouse-position override so that
             // queryMouse() returns the replayed position for picking code.
+            // (Mouse coords here are post-remap so g_mouseX/Y stay consistent.)
             if (e.type == SDL_MOUSEMOTION) {
                 _setModState(entry.mod);
                 mouseX = e.motion.x;

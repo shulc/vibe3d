@@ -296,6 +296,16 @@ void main(string[] args) {
     Layout layout;
     layout.resize(winW, winH);
 
+    // The editor uses a fixed fovY=45° everywhere (see source/view.d).
+    enum float kFovY = 45.0f * 3.14159265358979f / 180.0f;
+
+    // Now that the viewport is known, attach metadata to the always-on log
+    // so it stays layout/aspect-independent on replay, and tell the player
+    // what the current viewport looks like.
+    if (evLog.active)
+        evLog.writeViewportMeta(layout.vpX, layout.vpY, layout.vpW, layout.vpH, kFovY);
+    setReplayCurrentViewport(layout.vpX, layout.vpY, layout.vpW, layout.vpH, kFovY);
+
     // Camera
     View cameraView = new View(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
 
@@ -639,6 +649,9 @@ void main(string[] args) {
             layout.resize(winW, winH);
             glViewport(0, 0, fbW, fbH);
             initThickLineProgram(thickLineProgram, fbW, fbH);
+            // Keep replay-time pixel remapping calibrated to the new layout.
+            setReplayCurrentViewport(layout.vpX, layout.vpY,
+                                     layout.vpW, layout.vpH, kFovY);
         }
     }
 
@@ -669,6 +682,8 @@ void main(string[] args) {
             case SDLK_F1:
                 recLog.close();
                 recLog.open("recording.jsonl");
+                recLog.writeViewportMeta(layout.vpX, layout.vpY,
+                                         layout.vpW, layout.vpH, kFovY);
                 stderr.writeln("[REC] started → recording.jsonl");
                 break;
             case SDLK_F2:
