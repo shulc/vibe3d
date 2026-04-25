@@ -36,7 +36,8 @@ class HttpServer {
     private RecordedEventsProvider recordedEventsProvider;
     private alias ResetHandler = void delegate();
     private ResetHandler resetHandler;
-    private shared bool resetPending = false;
+    private shared long resetSubmittedEpoch;
+    private shared long resetCompletedEpoch;
     private bool testMode = false;
 
     // ----- /api/command synchronous bridge ---------------------------------
@@ -409,7 +410,13 @@ class HttpServer {
             }
         } else if (request.path == "/api/reset" && request.method == "POST") {
             if (resetHandler !is null) {
-                atomicStore(resetPending, true);
+                long my = atomicOp!"+="(resetSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(resetCompletedEpoch) < my) {
+                    if (++iters > maxIters) break;  // give up; main thread stuck
+                    Thread.sleep(2.msecs);
+                }
                 response.statusCode = 200;
                 response.body = `{"status":"ok"}`;
             } else {
@@ -602,14 +609,15 @@ class HttpServer {
 
     /**
      * Tick reset — call once per frame from the main loop.
-     * Executes the reset handler on the main thread if /api/reset was requested.
+     * Drains a pending /api/reset request synchronously so that the HTTP
+     * thread waiting on the reset can return only after state is rebuilt.
      */
     public void tickReset() {
-        if (atomicLoad(resetPending)) {
-            atomicStore(resetPending, false);
-            if (resetHandler !is null)
-                resetHandler();
-        }
+        long sub = atomicLoad(resetSubmittedEpoch);
+        long cmp = atomicLoad(resetCompletedEpoch);
+        if (sub <= cmp) return;
+        if (resetHandler !is null) resetHandler();
+        atomicStore(resetCompletedEpoch, sub);
     }
 
     /**
@@ -739,7 +747,8 @@ string meshToJson(size_t vertexCount, size_t edgeCount, size_t faceCount) {
  * Convert detailed mesh data to JSON string
  */
 string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount,
-                          float[] vertices, uint[2][] edges, uint[][] faces) {
+                          float[] vertices, uint[2][] edges,
+                          uint[][] faces, bool[] isSubpatch) {
     import std.format : format;
     import std.array : appender;
     import std.string : join;
@@ -777,6 +786,14 @@ string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount
             json ~= format("%d", faces[i][j]);
         }
         json ~= "]";
+    }
+    json ~= "], ";
+
+    // Add per-face subpatch flags (parallel to faces[]).
+    json ~= "\"isSubpatch\": [";
+    for (size_t i = 0; i < isSubpatch.length; ++i) {
+        if (i > 0) json ~= ", ";
+        json ~= isSubpatch[i] ? "true" : "false";
     }
     json ~= "]";
     json ~= "}";

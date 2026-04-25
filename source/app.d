@@ -50,6 +50,7 @@ import commands.file.load;
 import commands.file.save;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
+import commands.mesh.subpatch_toggle;
 
 import command;
 import registry;
@@ -444,6 +445,8 @@ void main(string[] args) {
         new SubdivideFaceted(&mesh, cameraView, editMode,
                              &gpu, &vertexCache, &edgeCache, &faceCache,
                              () => setActiveTool(null));
+    reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
+        new SubpatchToggle(&mesh, cameraView, editMode);
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -510,7 +513,7 @@ void main(string[] args) {
                 verts[i * 3 + 2] = mesh.vertices[i].z;
             }
 
-            // Копируем edges и faces (свежие копии)
+            // Копируем edges, faces и subpatch-флаги (свежие копии)
             uint[2][] edgesCopy = new uint[2][](mesh.edges.length);
             for (size_t i = 0; i < mesh.edges.length; i++) {
                 edgesCopy[i] = mesh.edges[i];
@@ -519,6 +522,10 @@ void main(string[] args) {
             for (size_t i = 0; i < mesh.faces.length; i++) {
                 facesCopy[i] = mesh.faces[i].dup;
             }
+            // isSubpatch parallel to faces — pad with false if shorter.
+            bool[] subCopy = new bool[](mesh.faces.length);
+            for (size_t i = 0; i < mesh.faces.length; i++)
+                subCopy[i] = i < mesh.isSubpatch.length && mesh.isSubpatch[i];
 
             return meshToJsonDetailed(
                 mesh.vertices.length,
@@ -526,7 +533,8 @@ void main(string[] args) {
                 mesh.faces.length,
                 verts,
                 edgesCopy,
-                facesCopy
+                facesCopy,
+                subCopy
             );
         });
         httpServer.setCameraDataProvider(() => cameraView.toJson());
