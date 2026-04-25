@@ -662,7 +662,8 @@ string meshToJson(size_t vertexCount, size_t edgeCount, size_t faceCount) {
 /**
  * Convert detailed mesh data to JSON string
  */
-string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount, float[] vertices, uint[][] faces) {
+string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount,
+                          float[] vertices, uint[2][] edges, uint[][] faces) {
     import std.format : format;
     import std.array : appender;
     import std.string : join;
@@ -679,6 +680,14 @@ string meshToJsonDetailed(size_t vertexCount, size_t edgeCount, size_t faceCount
     for (size_t i = 0; i < vertices.length; i += 3) {
         if (i > 0) json ~= ", ";
         json ~= format("[%f, %f, %f]", vertices[i], vertices[i+1], vertices[i+2]);
+    }
+    json ~= "], ";
+
+    // Add edges array (each edge as a 2-element [a, b] vertex-index pair)
+    json ~= "\"edges\": [";
+    for (size_t i = 0; i < edges.length; ++i) {
+        if (i > 0) json ~= ", ";
+        json ~= format("[%d, %d]", edges[i][0], edges[i][1]);
     }
     json ~= "], ";
 

@@ -499,7 +499,11 @@ void main(string[] args) {
                 verts[i * 3 + 2] = mesh.vertices[i].z;
             }
 
-            // Копируем faces (тоже свежая копия)
+            // Копируем edges и faces (свежие копии)
+            uint[2][] edgesCopy = new uint[2][](mesh.edges.length);
+            for (size_t i = 0; i < mesh.edges.length; i++) {
+                edgesCopy[i] = mesh.edges[i];
+            }
             uint[][] facesCopy = new uint[][](mesh.faces.length);
             for (size_t i = 0; i < mesh.faces.length; i++) {
                 facesCopy[i] = mesh.faces[i].dup;
@@ -510,6 +514,7 @@ void main(string[] args) {
                 mesh.edges.length,
                 mesh.faces.length,
                 verts,
+                edgesCopy,
                 facesCopy
             );
         });

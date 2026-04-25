@@ -21,6 +21,7 @@ unittest { // Test the /api/model endpoint
     assert("edgeCount" in json, "Missing edgeCount field");
     assert("faceCount" in json, "Missing faceCount field");
     assert("vertices" in json, "Missing vertices field");
+    assert("edges" in json, "Missing edges field");
     assert("faces" in json, "Missing faces field");
 
     // Check vertex data
@@ -52,6 +53,27 @@ unittest { // Test the /api/model endpoint
                "Vertex " ~ to!(string)(i) ~ " Y coordinate mismatch");
         assert(approxEqual(vertex.array[2].floating, expectedVertices[i][2]),
                "Vertex " ~ to!(string)(i) ~ " Z coordinate mismatch");
+    }
+
+    // Check edge data — 12 edges for a cube, in the order addFace inserts them.
+    auto edges = json["edges"];
+    assert(edges.type == JSONType.ARRAY, "Edges should be an array");
+    assert(edges.array.length == 12, "Expected 12 edges for a cube, got "
+           ~ to!string(edges.array.length));
+
+    int[2][12] expectedEdges = [
+        [0, 3], [3, 2], [2, 1], [1, 0],   // back face perimeter
+        [4, 5], [5, 6], [6, 7], [7, 4],   // front face perimeter
+        [0, 4], [7, 3],                   // left-face new edges
+        [2, 6],                           // right-face new edge
+        [5, 1],                           // right-face new edge
+    ];
+    foreach (i, edge; edges.array) {
+        assert(edge.array.length == 2, "Each edge should have 2 vertex indices");
+        assert(edge.array[0].integer == expectedEdges[i][0],
+               "Edge " ~ to!string(i) ~ " endpoint 0 mismatch");
+        assert(edge.array[1].integer == expectedEdges[i][1],
+               "Edge " ~ to!string(i) ~ " endpoint 1 mismatch");
     }
 
     // Check face data
