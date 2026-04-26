@@ -337,7 +337,13 @@ void revertEdgeBevelTopology(Mesh* mesh, ref const BevelOp op)
         if (snap.idx >= 0 && snap.idx < cast(int)mesh.faces.length)
             mesh.faces[snap.idx] = snap.orig.dup;
     }
-    mesh.vertices.length    = op.origVertexCount;
+    // Restore vertex POSITIONS as well, not just the array length. The first
+    // apply may have slid reused-vertex BoundVerts (e.g. v_0 → 0.3 along a
+    // non-bev edge); without restoring those positions, a follow-up apply
+    // would read the slid coordinates as bv.origPos and chain another offset
+    // on top — producing a cumulative, ever-drifting bevel on every mode/
+    // width change.
+    mesh.vertices           = op.origVertices.dup;
     mesh.faces.length       = op.origFaceCount;
     mesh.edges              = op.origEdges.dup;
     mesh.selectedEdges      = op.origSelectedEdges.dup;
