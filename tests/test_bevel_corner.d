@@ -30,6 +30,13 @@ private void runBevel(float width) {
     assert(resp["status"].str == "ok", "bevel failed: " ~ resp.toString());
 }
 
+private void runBevelSeg(float width, int seg) {
+    auto resp = postJson("http://localhost:8080/api/command",
+                         `{"id":"mesh.bevel","params":{"width":` ~ width.to!string
+                         ~ `,"seg":` ~ seg.to!string ~ `}}`);
+    assert(resp["status"].str == "ok", "bevel failed: " ~ resp.toString());
+}
+
 // Manifold check: every undirected edge in the face soup must be incident
 // to exactly two faces.
 private int countNonManifoldEdges(JSONValue model) {
@@ -174,4 +181,85 @@ unittest { // CUBE CORNER: total vertex count = 8 + 2 (at v_0) + 1 each at v_1, 
     auto m = parseJSON(get("http://localhost:8080/api/model"));
     assert(m["vertexCount"].integer == 13,
         "expected 13 vertices, got " ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // CUBE CORNER seg=2: M_ADJ cap (3 quads + center) — manifold
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    int bad = countNonManifoldEdges(m);
+    assert(bad == 0,
+        "expected manifold mesh for seg=2 cube corner, got "
+        ~ bad.to!string ~ " non-manifold edges");
+}
+
+unittest { // CUBE CORNER seg=2: total vertex count = 8 + 6 (at v_0: 2 BV + 3 mid + 1 ctr)
+           // + 2 each at v_1, v_3, v_4 (1 BV + 1 cap mid) = 20
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    assert(m["vertexCount"].integer == 20,
+        "expected 20 vertices for seg=2 cube corner, got "
+        ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // CUBE CORNER seg=2: cap is 3 quads sharing one center vertex
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto faces = m["faces"].array;
+    auto verts = m["vertices"].array;
+
+    double[] v0orig = [-0.5, -0.5, -0.5];
+    double dist3(JSONValue v, double[] o) {
+        auto a = v.array;
+        double dx = a[0].floating - o[0];
+        double dy = a[1].floating - o[1];
+        double dz = a[2].floating - o[2];
+        return sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    // The center vertex sits roughly at the centroid of the three cap-profile
+    // midpoints; for a 0.2-width cube corner that is ~0.27 from v_0_orig.
+    // Find every quad whose 4 vertices are all within 1.0 of v_0_orig and
+    // share one common vertex — that common vertex is the M_ADJ center.
+    int[int] vertHits;
+    int capQuads = 0;
+    foreach (f; faces) {
+        auto fv = f.array;
+        if (fv.length != 4) continue;
+        bool nearV0 = true;
+        foreach (vi; fv) {
+            if (dist3(verts[cast(int)vi.integer], v0orig) > 1.0) {
+                nearV0 = false; break;
+            }
+        }
+        if (!nearV0) continue;
+        // Skip strip quads: a strip quad spans BOTH v_0 and another bev-edge
+        // endpoint, so at least one vertex is far from v_0_orig (>0.4 ≈ 1
+        // edge minus a width). Cap quads sit entirely near v_0_orig.
+        bool allClose = true;
+        foreach (vi; fv) {
+            if (dist3(verts[cast(int)vi.integer], v0orig) > 0.5) {
+                allClose = false; break;
+            }
+        }
+        if (!allClose) continue;
+        capQuads++;
+        foreach (vi; fv)
+            vertHits[cast(int)vi.integer] = (cast(int)vi.integer in vertHits)
+                ? vertHits[cast(int)vi.integer] + 1 : 1;
+    }
+    assert(capQuads == 3,
+        "expected 3 M_ADJ cap quads at v_0, got " ~ capQuads.to!string);
+
+    // The center vertex should appear in all 3 cap quads.
+    int sharedCount = 0;
+    foreach (k, c; vertHits) if (c == 3) sharedCount++;
+    assert(sharedCount == 1,
+        "expected exactly one shared center vertex across cap quads, got "
+        ~ sharedCount.to!string);
 }

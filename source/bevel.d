@@ -152,6 +152,12 @@ struct BevVert {
     BoundVert[] boundVerts;
     VMesh       vmesh;
     int         bevEdgeIdx = -1;  // index in edges[] of the (single, stage 1) beveled EdgeHalf
+    // M_ADJ cap (selCount == valence, seg ≥ 2): one Catmull-Clark step on the
+    // BoundVert ring produces N corner-quads sharing a single center vertex.
+    // The midpoint of each quad's outer arc is the cap-profile midpoint of
+    // the corresponding BoundVert (already stored in profile.sampleVertIds).
+    int         adjCenterVid = -1;
+    Vec3        adjCenterDir = Vec3(0, 0, 0);  // (centerAtUnitWidth - origPos)
 }
 
 // ---------------------------------------------------------------------------
@@ -249,18 +255,44 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
 
         // For selCount ≥ 2 there is no F_other left to absorb the BoundVert
         // ring — every face around bv.vert had its corner replaced by a BV.
-        // Close the open cap with an N-gon connecting all BVs in their CCW
-        // ring order. (selCount == 1 already covers the gap via F_other
-        // splicing.)
+        // Close the open cap. Two layouts:
+        //   - useMAdj(bv): N quads sharing a center vertex (one Catmull-Clark
+        //     step on the BoundVert ring). Each quad is bounded by a corner
+        //     BV, two cap-profile midpoints (which are also strip cross-section
+        //     midpoints — see strip emission below), and the center.
+        //   - Otherwise: a single N-gon connecting all non-aliased BVs in CCW.
         if (bv.selCount >= 2 && bv.boundVerts.length >= 3) {
-            uint[] cap;
-            cap.reserve(bv.boundVerts.length);
-            foreach (ref bnd; bv.boundVerts) {
+            int[] capBvs;
+            foreach (i, ref bnd; bv.boundVerts) {
                 if (bnd.aliasOf >= 0) continue;  // collapsed onto an earlier BV
-                cap ~= cast(uint)bnd.vertId;
+                capBvs ~= cast(int)i;
             }
-            if (cap.length >= 3)
-                mesh.faces ~= cap;
+            if (capBvs.length >= 3) {
+                if (useMAdj(bv) && bv.adjCenterVid >= 0) {
+                    int N = cast(int)capBvs.length;
+                    foreach (j; 0 .. N) {
+                        int prevJ = (j + N - 1) % N;
+                        // The cap profile of capBvs[j] runs from BV[j] to
+                        // BV[next(j)] and owns the midpoint between them.
+                        // Midpoint preceding BV[j] = profile midpoint of
+                        // capBvs[prevJ].
+                        int midNext = bv.boundVerts[capBvs[j]].profile.sampleVertIds[1];
+                        int midPrev = bv.boundVerts[capBvs[prevJ]].profile.sampleVertIds[1];
+                        mesh.faces ~= [
+                            cast(uint)bv.boundVerts[capBvs[j]].vertId,
+                            cast(uint)midNext,
+                            cast(uint)bv.adjCenterVid,
+                            cast(uint)midPrev,
+                        ];
+                    }
+                } else {
+                    uint[] cap;
+                    cap.reserve(capBvs.length);
+                    foreach (i; capBvs)
+                        cap ~= cast(uint)bv.boundVerts[i].vertId;
+                    mesh.faces ~= cap;
+                }
+            }
         }
         bvByVert[vert] = bv;
     }
@@ -288,21 +320,32 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
         int qB_r = boundVertIdxForEhTo(*pBvB, ehBIdx);
         if (qA_l < 0 || qA_r < 0 || qB_l < 0 || qB_r < 0) continue;
 
-        int[] sa = pBvA.boundVerts[qA_l].profile.sampleVertIds;
-        int[] sb = pBvB.boundVerts[qB_l].profile.sampleVertIds;
-        int strip = cast(int)sa.length - 1;
+        // sa/sb are the strip cross-sections at v_a / v_b: a `seg+1`-long
+        // sequence of mesh vert ids running from qX_l (canonical L face) to
+        // qX_r (canonical R face). Two layouts:
+        //   - selCount == 1: qX_l's CCW-next BV is qX_r, so qX_l's cap
+        //     profile already runs from qX_l to qX_r through F_other.
+        //   - useMAdj(bv): qX_r's CCW-next BV is qX_l (closed BoundVert
+        //     ring). qX_r's cap profile runs qX_r → qX_l, so reversing it
+        //     yields the strip cross-section qX_l → qX_r passing through the
+        //     M_ADJ midpoint that's also shared with the cap quads.
+        int[] capSamples(ref BevVert bv, int qL, int qR) {
+            if (bv.selCount == 1) return bv.boundVerts[qL].profile.sampleVertIds.dup;
+            if (useMAdj(bv)) {
+                auto p = bv.boundVerts[qR].profile.sampleVertIds;
+                int[] r;
+                r.length = p.length;
+                foreach (i, _; p) r[i] = p[$ - 1 - i];
+                return r;
+            }
+            return null;
+        }
+        int[] sa = capSamples(*pBvA, qA_l, qA_r);
+        int[] sb = capSamples(*pBvB, qB_l, qB_r);
+        int strip = (sa.length > 0) ? cast(int)sa.length - 1 : 0;
 
-        // The cap profile for selCount=1 valence-N goes from BV_left to
-        // BV_right because they are CCW-adjacent (only 2 BoundVerts in the
-        // ring). For selCount ≥ 2 there are extra BoundVerts between
-        // BV_left and BV_right of the same beveled edge, so the cap profile
-        // does NOT terminate at qB_r and the multi-seg strip layout would
-        // bridge the wrong vertices. Drop back to the seg=1 four-vertex
-        // fallback in that case (and obviously when seg=1 anyway).
         bool useProfileStrip = strip >= 2
-                               && cast(int)sb.length - 1 == strip
-                               && pBvA.selCount == 1
-                               && pBvB.selCount == 1;
+                               && sb.length == sa.length;
         if (!useProfileStrip) {
             op.bevelQuadFaces ~= cast(int)mesh.faces.length;
             mesh.faces ~= [
@@ -372,6 +415,9 @@ void updateEdgeBevelPositions(Mesh* mesh, ref const BevelOp op, float width)
                 mesh.vertices[vid] = bv.origPos + (p.sample[k] - bv.origPos) * width;
             }
         }
+        if (bv.adjCenterVid >= 0
+            && bv.adjCenterVid < cast(int)mesh.vertices.length)
+            mesh.vertices[bv.adjCenterVid] = bv.origPos + bv.adjCenterDir * width;
     }
 }
 
@@ -647,6 +693,27 @@ private int findEhIdxForEdge(ref const BevVert bv, uint edgeIdx) {
     return -1;
 }
 
+// True iff every EdgeHalf around this BevVert is part of the bevel selection.
+// Cube-corner-style: with selCount == valence the BoundVert ring has no
+// "F_other" gap, so M_ADJ subdivision is well-defined and qA_r's CCW-next
+// always wraps back to qA_l (each cap-profile midpoint coincides with the
+// strip cross-section midpoint of the bev edge between qA_l and qA_r).
+private bool isAllBevAtVert(ref const BevVert bv) {
+    foreach (ref eh; bv.edges)
+        if (!eh.isBev) return false;
+    return bv.edges.length > 0;
+}
+
+// True iff this BevVert should use M_ADJ topology in the cap and bev strips.
+// Stage 7 phase 2 supports only seg == 2 (one Catmull-Clark step); higher
+// seg with selCount ≥ 3 falls back to the seg=1 N-gon cap.
+private bool useMAdj(ref const BevVert bv) {
+    return bv.vmesh.kind == VMeshKind.ADJ
+        && bv.vmesh.seg  == 2
+        && isAllBevAtVert(bv)
+        && bv.boundVerts.length >= 3;
+}
+
 // Assign new vertex ids, snapshot faces, patch each face around bv.vert.
 //
 // New layout (post-stage-7): for every face F around bv.vert, the corner BV
@@ -693,13 +760,19 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
 
     int M = cast(int)bv.boundVerts.length;
     int leftBVidxAlloc = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+    bool madj = useMAdj(bv);
     foreach (i; 0 .. M) {
         auto p = &bv.boundVerts[i].profile;
         int seg = (p.sample.length > 0) ? cast(int)p.sample.length - 1 : 1;
         p.sampleVertIds.length = seg + 1;
         p.sampleVertIds[0]   = bv.boundVerts[i].vertId;
         p.sampleVertIds[seg] = bv.boundVerts[(i + 1) % M].vertId;
-        if (cast(int)i == leftBVidxAlloc) {
+        // Allocate intermediate sample vertices when this profile actually
+        // bounds new geometry: the leftBV cap profile (selCount == 1, splices
+        // into F_other) or every profile under M_ADJ (each is shared between
+        // a cap quad and a strip quad).
+        bool needIntermediates = (cast(int)i == leftBVidxAlloc) || madj;
+        if (needIntermediates) {
             foreach (k; 1 .. seg) {
                 // Seed intermediates at origPos (see addVertex comment above).
                 p.sampleVertIds[k] = cast(int)mesh.addVertex(bv.origPos);
@@ -707,6 +780,28 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         } else {
             foreach (k; 1 .. seg)
                 p.sampleVertIds[k] = -1;
+        }
+    }
+
+    // M_ADJ center vertex: the Catmull-Clark "face point" of the BoundVert
+    // ring. Computed at unit width as the average of the cap-profile mid
+    // sample positions (sample[seg/2]); updateEdgeBevelPositions scales it
+    // linearly with the user width.
+    if (madj) {
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        int  midK = bv.vmesh.seg / 2;
+        foreach (ref bnd; bv.boundVerts) {
+            if (bnd.aliasOf >= 0) continue;
+            if (midK < cast(int)bnd.profile.sample.length) {
+                sum = sum + bnd.profile.sample[midK];
+                count++;
+            }
+        }
+        if (count > 0) {
+            Vec3 capCenter = sum * (1.0f / cast(float)count);
+            bv.adjCenterVid = cast(int)mesh.addVertex(bv.origPos);
+            bv.adjCenterDir = capCenter - bv.origPos;
         }
     }
 
