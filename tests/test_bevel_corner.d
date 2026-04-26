@@ -205,6 +205,86 @@ unittest { // CUBE CORNER seg=2: total vertex count = 8 + 6 (at v_0: 2 BV + 3 mi
         ~ m["vertexCount"].integer.to!string);
 }
 
+unittest { // selCount=2 valence=3 (two adjacent bev edges) seg=2 — manifold
+           // The alias-merged cap edge has its midpoint shared between both
+           // bev strips; without the leftBV-profile-forwarding fix in
+           // capSamples, the midpoint would be left dangling and edges
+           // BV0-mid / mid-BV1 would only sit in one face each.
+    resetCube();
+    selectEdges([0, 3]);          // edges sharing v_0
+    runBevelSeg(0.2f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    int bad = countNonManifoldEdges(m);
+    assert(bad == 0,
+        "expected manifold mesh for selCount=2 seg=2, got "
+        ~ bad.to!string ~ " non-manifold edges");
+}
+
+unittest { // selCount=2 seg=2 with non-bev EH BETWEEN the two bev EHs in
+           // CCW order — regression: with the naive
+           // leftBVidxAlloc=boundVertIdxForEh(bevEdgeIdx) selection, the
+           // chosen leftBV is the alias-target sliding on the non-bev edge.
+           // Its profile.start == profile.end (post alias-merge), so the
+           // super-ellipse midpoint collapses onto a degenerate curve and
+           // the strip cross-section midpoint lands at a meaningless
+           // (≈ midpoint of origPos and the alias) point instead of on the
+           // rounded cap. The fix scans for a non-degenerate leftBV.
+           //
+           // Edges 5 (v_5–v_6) and 6 (v_6–v_7) share v_6; the third edge at
+           // v_6 (v_6–v_2) is non-bev and falls *between* them in the EH
+           // ring. The cap mid at v_6 must land at the super-ellipse
+           // midpoint of the corner BV (v8 ≈ (0.355, 0.355, 0.5)) and the
+           // alias BV (v6 ≈ (0.5, 0.5, 0.355)) → roughly (0.397, 0.397, 0.397).
+    resetCube();
+    selectEdges([5, 6]);
+    runBevelSeg(0.145f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    int bad = countNonManifoldEdges(m);
+    assert(bad == 0,
+        "expected manifold mesh, got " ~ bad.to!string ~ " non-manifold edges");
+
+    // Find the cap mid at v_6 by looking for the unique vertex at distance
+    // ~0.18 (= 0.145 · √(3/2)) from v_6_orig.
+    double[] v6orig = [0.5, 0.5, 0.5];
+    double dist3(JSONValue v, double[] o) {
+        auto a = v.array;
+        double dx = a[0].floating - o[0];
+        double dy = a[1].floating - o[1];
+        double dz = a[2].floating - o[2];
+        return sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    int found = 0;
+    foreach (i, v; m["vertices"].array) {
+        // The super-ellipse cap midpoint at v_6 sits at (-0.103, -0.103, -0.103)
+        // from origPos (= 0.145·cos(45°) on each axis): coord ≈ 0.397 each.
+        auto a = v.array;
+        if (abs(a[0].floating - 0.3975) < 0.005
+         && abs(a[1].floating - 0.3975) < 0.005
+         && abs(a[2].floating - 0.3975) < 0.005) {
+            found++;
+        }
+    }
+    assert(found == 1,
+        "expected exactly one cap mid at (0.3975, 0.3975, 0.3975) for v_6 "
+        ~ "selCount=2 seg=2; got " ~ found.to!string ~ " — leftBVidxAlloc "
+        ~ "regression?");
+}
+
+unittest { // selCount=2 valence=3 seg=2: total vertex count
+           // v_0:  1 unique BV (BV0; BV1 aliases to BV2) + 1 mid (cap edge)
+           //       Wait: BV0 + (BV1=BV2 alias) = 2 unique BVs at v_0,
+           //       one of which reuses v_0 → 1 NEW BV. Plus 1 mid = 2 new.
+           // v_1, v_3 (selCount=1): 1 BV + 1 cap-mid = 2 each → 4 total.
+           // Total = 8 + 2 + 4 = 14.
+    resetCube();
+    selectEdges([0, 3]);
+    runBevelSeg(0.2f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    assert(m["vertexCount"].integer == 14,
+        "expected 14 vertices for selCount=2 seg=2, got "
+        ~ m["vertexCount"].integer.to!string);
+}
+
 unittest { // CUBE CORNER seg=4: M_ADJ grid (2 CC steps via topology) — manifold
     resetCube();
     selectEdges([0, 3, 8]);
@@ -227,6 +307,52 @@ unittest { // CUBE CORNER seg=4: total vertex count
     assert(m["vertexCount"].integer == 38,
         "expected 38 vertices for seg=4 cube corner, got "
         ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // CUBE CORNER seg=2: M_ADJ center placed via fullness-blend
+           // Blender circle-profile fullness for nseg=2 is 0.559, so
+           //   adjCenterDir = (1 - 0.559) * avg(slideDir).
+           // For cube corner v_0 (selCount=valence=3) with three perpendicular
+           // bev edges, avg(slideDir) = (2/3, 2/3, 2/3). At width 0.2 the
+           // center lands at v_0_orig + 0.441 * (2/3) * 0.2 in each axis,
+           // i.e. ≈ (-0.4412, -0.4412, -0.4412), distance ≈ 0.102 from v_0.
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 2);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto faces = m["faces"].array;
+    auto verts = m["vertices"].array;
+    double[] v0orig = [-0.5, -0.5, -0.5];
+    double dist3(JSONValue v, double[] o) {
+        auto a = v.array;
+        double dx = a[0].floating - o[0];
+        double dy = a[1].floating - o[1];
+        double dz = a[2].floating - o[2];
+        return sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    // Find the cap center: the unique vertex shared by all three cap quads.
+    int[int] vertHits;
+    foreach (f; faces) {
+        auto fv = f.array;
+        if (fv.length != 4) continue;
+        bool allClose = true;
+        foreach (vi; fv) {
+            if (dist3(verts[cast(int)vi.integer], v0orig) > 0.5) {
+                allClose = false; break;
+            }
+        }
+        if (!allClose) continue;
+        foreach (vi; fv)
+            vertHits[cast(int)vi.integer] = (cast(int)vi.integer in vertHits)
+                ? vertHits[cast(int)vi.integer] + 1 : 1;
+    }
+    int centerVid = -1;
+    foreach (k, c; vertHits) if (c == 3) { centerVid = k; break; }
+    assert(centerVid >= 0, "could not find M_ADJ center vertex");
+    double d = dist3(verts[centerVid], v0orig);
+    assert(abs(d - 0.1018) < 0.005,
+        "M_ADJ center at distance " ~ d.to!string ~ " from v_0_orig, "
+        ~ "expected ~0.102 (fullness=0.559)");
 }
 
 unittest { // CUBE CORNER seg=8: M_ADJ grid generalizes — manifold + face count

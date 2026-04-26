@@ -354,6 +354,34 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                 foreach (i, _; p) r[i] = p[$ - 1 - i];
                 return r;
             }
+            // selCount ≥ 2 without M_ADJ — typically the alias case with two
+            // bev EHs flanking a single non-bev EH (selCount=2 valence=3 etc.).
+            // The unique cap edge runs between the chosen leftBV and its
+            // CCW-next; midpoints are allocated only on leftBV's profile.
+            // Use it forward when qL == leftBV, reversed when qR == leftBV.
+            // The leftBV picked here must match materializeBevVert's choice —
+            // it scans for a non-degenerate profile (i.e. CCW-next is not
+            // alias-merged back to it), so the cap edge is geometrically real.
+            int leftBV = -1;
+            int M = cast(int)bv.boundVerts.length;
+            foreach (i; 0 .. M) {
+                if (bv.boundVerts[i].aliasOf >= 0) continue;
+                int nextI = (cast(int)i + 1) % M;
+                if (bv.boundVerts[nextI].aliasOf == cast(int)i) continue;
+                leftBV = cast(int)i;
+                break;
+            }
+            if (leftBV < 0)
+                leftBV = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+            if (leftBV < 0) return null;
+            if (qL == leftBV) return bv.boundVerts[leftBV].profile.sampleVertIds.dup;
+            if (qR == leftBV) {
+                auto p = bv.boundVerts[leftBV].profile.sampleVertIds;
+                int[] r;
+                r.length = p.length;
+                foreach (i, _; p) r[i] = p[$ - 1 - i];
+                return r;
+            }
             return null;
         }
         int[] sa = capSamples(*pBvA, qA_l, qA_r);
@@ -739,6 +767,34 @@ private bool useMAdj(ref const BevVert bv) {
         && bv.boundVerts.length >= 3;
 }
 
+// Profile fullness for the M_ADJ cap center placement (Blender's
+// find_profile_fullness, bmesh_bevel.cc). The cap center is positioned at
+//   center = boundverts_center + fullness * (origPos - boundverts_center)
+// so fullness ∈ [0, 1] interpolates from a flat cap (0) toward the original
+// vertex (1). Values were chosen by Blender via offline optimization to give
+// the closest fit to a sphere on a cube corner; we reuse the table for
+// circle profiles (superR ≈ 2). Non-circle profiles fall back to a sensible
+// constant — Stage 7.2d only targets circle profiles.
+private float findCapFullness(float superR, int seg) {
+    static immutable float[11] circleFullness = [
+        0.0f,   // seg=1 (no M_ADJ cap, kept for completeness)
+        0.559f, // seg=2
+        0.642f, // seg=3
+        0.551f, // seg=4
+        0.646f, // seg=5
+        0.624f, // seg=6
+        0.646f, // seg=7
+        0.619f, // seg=8
+        0.647f, // seg=9
+        0.639f, // seg=10
+        0.647f, // seg=11
+    ];
+    if (superR > 1.99f && superR < 2.01f && seg >= 1 && seg <= 11)
+        return circleFullness[seg - 1];
+    if (superR < 1.01f) return 0.0f;       // straight-line profile → flat cap
+    return 0.55f;                          // fallback for other super_r
+}
+
 // Flat-array stride for the canonical M_ADJ grid: (ns2 + 1) rows × (ns + 1)
 // columns per panel. Includes some non-canonical slots for indexing simplicity.
 private size_t adjFlatIdx(int i, int j, int k, int ns) {
@@ -857,7 +913,25 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
     }
 
     int M = cast(int)bv.boundVerts.length;
-    int leftBVidxAlloc = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+    // Pick a leftBV whose cap profile is *non-degenerate* — i.e. its CCW-next
+    // BoundVert is not aliased back to it. The default
+    // boundVertIdxForEh(bevEdgeIdx) picks the BV CCW-after the first bev EH,
+    // but for selCount=2 with the non-bev EH lying *between* the two bev EHs
+    // in CCW order, that BV is the alias-target sliding on the non-bev edge.
+    // Its profile to the next BV (which alias-merges back to it) collapses
+    // start == end, so the super-ellipse midpoint becomes meaningless. The
+    // corner BV (between two bev EHs) always has a real profile that the
+    // bev strips on both flanking bev edges can reuse via capSamples.
+    int leftBVidxAlloc = -1;
+    foreach (i; 0 .. M) {
+        if (bv.boundVerts[i].aliasOf >= 0) continue;
+        int nextI = (cast(int)i + 1) % M;
+        if (bv.boundVerts[nextI].aliasOf == cast(int)i) continue;
+        leftBVidxAlloc = cast(int)i;
+        break;
+    }
+    if (leftBVidxAlloc < 0)
+        leftBVidxAlloc = boundVertIdxForEh(bv, bv.bevEdgeIdx);
     bool madj = useMAdj(bv);
 
     if (madj) {
@@ -887,7 +961,7 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
     }
 
     int N = cast(int)bv.edges.length;
-    int leftBVidx = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+    int leftBVidx = leftBVidxAlloc;     // reuse the non-degenerate selection
 
     foreach (k; 0 .. N) {
         uint faceIdx = bv.edges[k].fnext;
@@ -946,12 +1020,19 @@ private void materializeBevVertMAdj(Mesh* mesh, ref BevVert bv) {
     bv.adjGridVids[] = -1;
 
     // Center first (referenced by the bilinear formulas via bv.adjCenterDir).
+    // Blender-style fullness blend: center sits at
+    //   center = boundverts_center + fullness * (origPos - boundverts_center)
+    // i.e. (1-f) of the way from origPos toward the BV centroid. Working in
+    // slide-direction space (relative to origPos) this collapses to
+    //   adjCenterDir = (1 - fullness) * average(BV.slideDir).
     if (!odd) {
-        Vec3 sum = Vec3(0, 0, 0);
+        Vec3 bvSum = Vec3(0, 0, 0);
         foreach (ref bnd; bv.boundVerts)
-            sum = sum + bnd.profile.sample[ns2];
-        Vec3 capCenter = sum * (1.0f / cast(float)n);
-        bv.adjCenterDir = capCenter - bv.origPos;
+            bvSum = bvSum + bnd.slideDir;
+        Vec3 bvCenter = bvSum * (1.0f / cast(float)n);
+        float superR  = bv.boundVerts[0].profile.superR;
+        float fullness = findCapFullness(superR, ns);
+        bv.adjCenterDir = bvCenter * (1.0f - fullness);
         bv.adjCenterVid = cast(int)mesh.addVertex(bv.origPos);
     }
 
