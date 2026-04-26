@@ -149,8 +149,10 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges)
         uint loopAB = *pAB;             // dart va→vb in face F1
         uint loopBA = *pBA;             // dart vb→va in face F2
 
-        BevVert bvA = buildBevVert(mesh, va, cast(uint)ei, loopAB);
-        BevVert bvB = buildBevVert(mesh, vb, cast(uint)ei, loopBA);
+        BevVert bvA = buildBevVert(mesh, va, selectedEdges, loopAB);
+        BevVert bvB = buildBevVert(mesh, vb, selectedEdges, loopBA);
+        populateBoundVerts(mesh, bvA);
+        populateBoundVerts(mesh, bvB);
 
         materializeBevVert(mesh, bvA, faceSnapped, op.faceSnaps);
         materializeBevVert(mesh, bvB, faceSnapped, op.faceSnaps);
@@ -235,26 +237,34 @@ void revertEdgeBevelTopology(Mesh* mesh, ref const BevelOp op)
 }
 
 // ---------------------------------------------------------------------------
-// Internals
+// buildBevVert — assemble the EdgeHalf ring around `vert` in CCW order via
+// `dartsAroundVertex`. Marks each EdgeHalf whose underlying edge is in
+// `selectedEdges`, counts selCount, and records the index of the (single,
+// stage 1) beveled EdgeHalf in `bevEdgeIdx`. Pure data: no BoundVerts and
+// no mesh mutation. Pass `startDart` to anchor the ring at a specific dart
+// (e.g. the dart of a beveled edge so the beveled EdgeHalf sits at index 0);
+// `~0u` falls back to `mesh.vertLoop[vert]`.
 // ---------------------------------------------------------------------------
 
-private BevVert buildBevVert(Mesh* mesh, uint ov, uint bevEdgeIdx, uint startDart)
+BevVert buildBevVert(Mesh* mesh, uint vert, const(bool)[] selectedEdges,
+                     uint startDart = ~0u)
 {
     BevVert bv;
-    bv.vert    = ov;
-    bv.origPos = mesh.vertices[ov];
+    bv.vert    = vert;
+    bv.origPos = mesh.vertices[vert];
 
-    foreach (li; mesh.dartsAroundVertex(ov, startDart)) {
+    foreach (li; mesh.dartsAroundVertex(vert, startDart)) {
         uint nextVi = mesh.loops[mesh.loops[li].next].vert;
-        ulong undirected = edgeKey(ov, nextVi);
+        ulong undirected = edgeKey(vert, nextVi);
         uint  edgeIdx    = ~0u;
         if (auto p = undirected in mesh.edgeIndexMap) edgeIdx = *p;
 
         EdgeHalf eh;
         eh.edgeIdx    = edgeIdx;
-        eh.vert       = ov;
-        eh.isReversed = (edgeIdx != ~0u && mesh.edges[edgeIdx][0] != ov);
-        eh.isBev      = (edgeIdx == bevEdgeIdx);
+        eh.vert       = vert;
+        eh.isReversed = (edgeIdx != ~0u && mesh.edges[edgeIdx][0] != vert);
+        eh.isBev      = (edgeIdx != ~0u && edgeIdx < selectedEdges.length
+                         && selectedEdges[edgeIdx]);
         eh.fnext      = mesh.loops[li].face;
         eh.fprev      = (mesh.loops[li].twin != ~0u)
                             ? mesh.loops[mesh.loops[li].twin].face
@@ -263,17 +273,23 @@ private BevVert buildBevVert(Mesh* mesh, uint ov, uint bevEdgeIdx, uint startDar
 
         if (eh.isBev) {
             bv.selCount++;
-            bv.bevEdgeIdx = cast(int)bv.edges.length - 1;
+            if (bv.bevEdgeIdx < 0)
+                bv.bevEdgeIdx = cast(int)bv.edges.length - 1;
         }
     }
+    return bv;
+}
 
-    if (bv.bevEdgeIdx < 0) return bv;
+// Populate BoundVerts on a BevVert assembled by buildBevVert. Stage 1 only
+// handles selCount == 1: one BoundVert per non-beveled EdgeHalf, the one
+// immediately CCW after the beveled EdgeHalf reuses the original vertex.
+private void populateBoundVerts(Mesh* mesh, ref BevVert bv)
+{
+    if (bv.selCount != 1 || bv.bevEdgeIdx < 0) return;
 
     int N = cast(int)bv.edges.length;
     int leftIdx = (bv.bevEdgeIdx + 1) % N;
 
-    // One BoundVert per non-beveled EdgeHalf. The "left" BV (immediately CCW
-    // after the beveled edge) reuses the original vertex; the rest are new.
     foreach (k; 0 .. N) {
         if (k == bv.bevEdgeIdx) continue;
 
@@ -284,13 +300,12 @@ private BevVert buildBevVert(Mesh* mesh, uint ov, uint bevEdgeIdx, uint startDar
         bnd.slideDir   = computeSlideDirForEdge(mesh, bv, cast(int)k);
         bnd.pos        = bv.origPos;
         bnd.reusesOrig = (cast(int)k == leftIdx);
-        bnd.vertId     = bnd.reusesOrig ? cast(int)ov : -1;  // -1 → allocated in materialize
+        bnd.vertId     = bnd.reusesOrig ? cast(int)bv.vert : -1;
         bv.boundVerts ~= bnd;
     }
 
     bv.vmesh.kind = VMeshKind.POLY;
     bv.vmesh.seg  = 1;
-    return bv;
 }
 
 private Vec3 computeSlideDirForEdge(Mesh* mesh, ref const BevVert bv, int ehIdx)

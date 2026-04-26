@@ -561,6 +561,29 @@ void main(string[] args) {
             if (!exists("recording.jsonl")) return null;
             return readText("recording.jsonl");
         });
+        httpServer.setBevvertProvider((int vert) {
+            import bevel : buildBevVert, BevVert;
+            import std.format : format;
+            import std.array  : appender;
+            if (vert < 0 || vert >= cast(int)mesh.vertices.length)
+                throw new Exception("vert out of range");
+            mesh.buildLoops();
+            BevVert bv = buildBevVert(&mesh, cast(uint)vert,
+                                      mesh.selectedEdges);
+            auto json = appender!string();
+            json ~= format(`{"vert":%d,"selCount":%d,"bevEdgeIdx":%d,"edges":[`,
+                           bv.vert, bv.selCount, bv.bevEdgeIdx);
+            foreach (i, eh; bv.edges) {
+                if (i > 0) json ~= ",";
+                json ~= format(`{"edgeIdx":%d,"isBev":%s,"fnext":%d,"fprev":%d}`,
+                               cast(int)eh.edgeIdx,
+                               eh.isBev ? "true" : "false",
+                               cast(int)eh.fnext,
+                               cast(int)eh.fprev);
+            }
+            json ~= "]}";
+            return json.data;
+        });
         httpServer.setCommandHandler((string id, string paramsJson) {
             import std.json : parseJSON, JSONType;
             import commands.file.load : FileLoad;

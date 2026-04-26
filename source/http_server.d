@@ -111,6 +111,13 @@ class HttpServer {
         this.recordedEventsProvider = provider;
     }
 
+    private alias BevvertProvider = string delegate(int vert);
+    private BevvertProvider bevvertProvider;
+
+    public void setBevvertProvider(BevvertProvider provider) {
+        this.bevvertProvider = provider;
+    }
+
     public void setTestMode(bool enabled) { testMode = enabled; }
 
     public int  playerMouseX()    const { return eventPlayer.mouseX; }
@@ -391,6 +398,27 @@ class HttpServer {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Camera data provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path.startsWith("/api/bevvert") && request.method == "GET") {
+            response.headers["Content-Type"] = "application/json";
+            if (bevvertProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"bevvert provider not set"}`;
+            } else {
+                int vert = parseQueryInt(request.path, "vert", -1);
+                if (vert < 0) {
+                    response.statusCode = 400;
+                    response.body = `{"error":"missing or invalid 'vert' query param"}`;
+                } else {
+                    try {
+                        response.statusCode = 200;
+                        response.body = bevvertProvider(vert);
+                    } catch (Exception e) {
+                        response.statusCode = 400;
+                        response.body = `{"error":"`
+                                        ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                    }
+                }
             }
         } else if (request.path == "/api/recorded-events" && request.method == "GET") {
             if (recordedEventsProvider !is null) {
@@ -731,6 +759,23 @@ class HttpResponse {
         this.headers["Connection"] = "close";
         this.body = "";
     }
+}
+
+// Parse `?key=N` (or `&key=N`) from a request path. Returns `def` when the
+// key is missing or not parseable as int.
+private int parseQueryInt(string path, string key, int def) {
+    import std.conv : to, ConvException;
+    auto qi = path.indexOf('?');
+    if (qi < 0) return def;
+    foreach (kv; path[qi + 1 .. $].split('&')) {
+        auto eq = kv.indexOf('=');
+        if (eq < 0) continue;
+        if (kv[0 .. eq] == key) {
+            try return kv[eq + 1 .. $].to!int;
+            catch (ConvException) return def;
+        }
+    }
+    return def;
 }
 
 /**
