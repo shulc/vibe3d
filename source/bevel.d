@@ -1,6 +1,6 @@
 module bevel;
 
-import std.math : sin, cos, acos, pow, PI;
+import std.math : sin, cos, acos, pow, fabs, sqrt, PI;
 
 import math;
 import mesh;
@@ -1075,6 +1075,127 @@ private void materializeBevVertMAdj(Mesh* mesh, ref BevVert bv) {
         p.sampleVertIds.length = ns + 1;
         foreach (kk; 0 .. ns + 1) {
             p.sampleVertIds[kk] = adjCanonVid(bv, i, 0, kk);
+        }
+    }
+
+    // Cube-corner override: replace the bilinear cap geometry with the
+    // sphere-octant template Blender uses in tri_corner_adj_vmesh. This is
+    // a no-op for non-cube-corner cases (different valence, non-orthogonal
+    // bev edges, etc.).
+    overrideCubeCornerCap(mesh, bv);
+}
+
+// True iff this BevVert is a "cube corner" candidate: 3 BoundVerts whose
+// flanking face normals are mutually perpendicular and whose slideDirs are
+// equal length. For a cube vertex with 3 mutually orthogonal bev edges this
+// holds; for other 3-edge corners (e.g. octahedron tip with non-perpendicular
+// face normals) the detection fails and the cap stays on the bilinear
+// approximation.
+private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
+    if (!isAllBevAtVert(bv)) return false;
+    if (bv.boundVerts.length != 3) return false;
+    Vec3 d0 = bv.boundVerts[0].slideDir;
+    Vec3 d1 = bv.boundVerts[1].slideDir;
+    Vec3 d2 = bv.boundVerts[2].slideDir;
+    float r0 = d0.length;
+    if (r0 < 1e-6f) return false;
+    if (fabs(d1.length - r0) > 1e-3f * r0) return false;
+    if (fabs(d2.length - r0) > 1e-3f * r0) return false;
+    Vec3 n0 = mesh.faceNormal(bv.boundVerts[0].face);
+    Vec3 n1 = mesh.faceNormal(bv.boundVerts[1].face);
+    Vec3 n2 = mesh.faceNormal(bv.boundVerts[2].face);
+    if (fabs(dot(n0, n1)) > 1e-3f) return false;
+    if (fabs(dot(n1, n2)) > 1e-3f) return false;
+    if (fabs(dot(n2, n0)) > 1e-3f) return false;
+    return true;
+}
+
+// Place every M_ADJ canonical position on the sphere octant centered at the
+// "offset point" — the sphere of radius `width` tangent to all 3 bev-flanking
+// faces — following Blender's tri_corner_adj_vmesh + make_unit_cube_map +
+// snap_to_superellipsoid path.
+//
+// Affine map (Blender's `mat`):
+//   position = sphere_center + width · (a · n_0 + b · n_1 + c · n_2)
+// where n_i are the outward face normals of BV[i]'s face, sphere_center
+// satisfies BV[i].pos == sphere_center + width · n_i for any i, and (a, b, c)
+// lies on the unit superellipsoid |a|^r + |b|^r + |c|^r = 1.
+//
+// For the seg=2 control mesh the (a, b, c) coords are explicit (BoundVerts at
+// e_i, cap-arc midpoints at e_i + e_{(i+1)%n}, center at (1, 1, 1)). For
+// seg ≥ 4 we re-decompose the existing bilinear positions and re-snap, which
+// keeps the surface on the correct superellipsoid (true Blender behavior
+// would iterate Catmull-Clark in the unit frame — TODO for stage 7.2b proper).
+private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
+    if (!isCubeCornerLike(bv, mesh)) return;
+
+    int n  = cast(int)bv.boundVerts.length;
+    int ns = bv.vmesh.seg;
+
+    Vec3 n0 = mesh.faceNormal(bv.boundVerts[0].face);
+    Vec3 n1 = mesh.faceNormal(bv.boundVerts[1].face);
+    Vec3 n2 = mesh.faceNormal(bv.boundVerts[2].face);
+
+    // For perpendicular face normals, |slideDir| == width · √2 (BV is the
+    // offset_meet of two width-offset perpendicular bev edges in the face).
+    float width = bv.boundVerts[0].slideDir.length / sqrt(2.0f);
+    if (width < 1e-6f) return;
+
+    Vec3 sphereCenter = bv.boundVerts[0].pos - n0 * width;
+
+    float superR = bv.boundVerts[0].profile.superR;
+    if (superR < 1e-3f) superR = 1e-3f;
+
+    Vec3 mapToWorld(float a, float b, float c) {
+        float aa = fabs(a), ab = fabs(b), ac = fabs(c);
+        float sum = pow(aa, superR) + pow(ab, superR) + pow(ac, superR);
+        if (sum > 1e-10f) {
+            float scale = pow(sum, -1.0f / superR);
+            a *= scale; b *= scale; c *= scale;
+        }
+        Vec3 world = sphereCenter + (n0 * a + n1 * b + n2 * c) * width;
+        return world - bv.origPos;
+    }
+
+    if (ns == 2) {
+        // Cap-arc midpoints (i, 0, 1): unit-frame coord 1 at index i and
+        // (i+1)%n, 0 elsewhere — this is the SLERP midpoint of the two BVs
+        // on the unit sphere (after normalization in mapToWorld).
+        foreach (i; 0 .. n) {
+            int inext = (i + 1) % n;
+            float[3] uvw = [0, 0, 0];
+            uvw[i]     = 1.0f;
+            uvw[inext] = 1.0f;
+            size_t idx = adjFlatIdx(cast(int)i, 0, 1, ns);
+            bv.adjGridDirs[idx] = mapToWorld(uvw[0], uvw[1], uvw[2]);
+        }
+        // Center (0, 1, 1) — Blender's diagonal point (1, 1, 1) snapped to
+        // the unit superellipsoid.
+        if (bv.adjCenterVid >= 0)
+            bv.adjCenterDir = mapToWorld(1.0f, 1.0f, 1.0f);
+    } else {
+        // seg ≥ 4: decompose every canonical position's existing direction
+        // into the cube-corner unit frame, then re-snap to the superellipsoid.
+        // Approximate — a true match to Blender would iterate Catmull-Clark
+        // in the unit frame.
+        foreach (i; 0 .. n) {
+            size_t bvIdx = adjFlatIdx(cast(int)i, 0, 0, ns);
+            foreach (slot, ref dir; bv.adjGridDirs) {
+                if (slot == bvIdx) continue;
+                if (bv.adjGridVids[slot] < 0) continue;
+                Vec3 d = (bv.origPos + dir) - sphereCenter;
+                float a = dot(d, n0) / width;
+                float b = dot(d, n1) / width;
+                float c = dot(d, n2) / width;
+                dir = mapToWorld(a, b, c);
+            }
+        }
+        if (bv.adjCenterVid >= 0) {
+            Vec3 d = (bv.origPos + bv.adjCenterDir) - sphereCenter;
+            float a = dot(d, n0) / width;
+            float b = dot(d, n1) / width;
+            float c = dot(d, n2) / width;
+            bv.adjCenterDir = mapToWorld(a, b, c);
         }
     }
 }

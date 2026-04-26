@@ -309,20 +309,26 @@ unittest { // CUBE CORNER seg=4: total vertex count
         ~ m["vertexCount"].integer.to!string);
 }
 
-unittest { // CUBE CORNER seg=2: M_ADJ center placed via fullness-blend
-           // Blender circle-profile fullness for nseg=2 is 0.559, so
-           //   adjCenterDir = (1 - 0.559) * avg(slideDir).
-           // For cube corner v_0 (selCount=valence=3) with three perpendicular
-           // bev edges, avg(slideDir) = (2/3, 2/3, 2/3). At width 0.2 the
-           // center lands at v_0_orig + 0.441 * (2/3) * 0.2 in each axis,
-           // i.e. ≈ (-0.4412, -0.4412, -0.4412), distance ≈ 0.102 from v_0.
+unittest { // CUBE CORNER seg=2: M_ADJ cap is a sphere octant (Blender's
+           // tri_corner_adj_vmesh). All 7 cap vertices (3 corner BVs +
+           // 3 cap-arc midpoints + 1 center) lie on the sphere of radius
+           // `width` centered at the offset point sphere_center =
+           // origPos + width · sum(unit_bev_edge_dirs).
+           //
+           // For cube corner v_0 with width=0.2:
+           //   sphere_center = (-0.5+0.2, -0.5+0.2, -0.5+0.2) = (-0.3, -0.3, -0.3)
+           //   center on (1,1,1) diagonal at dist 0.2 from sphere_center
+           //     → (-0.4155, -0.4155, -0.4155), dist from v_0_orig ≈ 0.1464.
+           //   cap-arc mid SLERP of two BVs at dist 0.2 from sphere_center
+           //     → coords like (-0.3, -0.4414, -0.4414), dist from v_0 ≈ 0.2165.
     resetCube();
     selectEdges([0, 3, 8]);
     runBevelSeg(0.2f, 2);
     auto m = parseJSON(get("http://localhost:8080/api/model"));
     auto faces = m["faces"].array;
     auto verts = m["vertices"].array;
-    double[] v0orig = [-0.5, -0.5, -0.5];
+    double[] v0orig    = [-0.5, -0.5, -0.5];
+    double[] sphereC   = [-0.3, -0.3, -0.3];
     double dist3(JSONValue v, double[] o) {
         auto a = v.array;
         double dx = a[0].floating - o[0];
@@ -349,10 +355,18 @@ unittest { // CUBE CORNER seg=2: M_ADJ center placed via fullness-blend
     int centerVid = -1;
     foreach (k, c; vertHits) if (c == 3) { centerVid = k; break; }
     assert(centerVid >= 0, "could not find M_ADJ center vertex");
-    double d = dist3(verts[centerVid], v0orig);
-    assert(abs(d - 0.1018) < 0.005,
-        "M_ADJ center at distance " ~ d.to!string ~ " from v_0_orig, "
-        ~ "expected ~0.102 (fullness=0.559)");
+    double dCenterFromV0 = dist3(verts[centerVid], v0orig);
+    assert(abs(dCenterFromV0 - 0.1464) < 0.005,
+        "M_ADJ center at distance " ~ dCenterFromV0.to!string ~ " from v_0_orig, "
+        ~ "expected ~0.1464 (sphere octant, width=0.2)");
+    // Stronger invariant: every cap vertex (any vertex referenced in a cap
+    // quad) sits on the sphere of radius 0.2 centered at sphere_center.
+    foreach (k, _; vertHits) {
+        double dS = dist3(verts[k], sphereC);
+        assert(abs(dS - 0.2) < 1e-4,
+            "cap vertex " ~ k.to!string ~ " at dist " ~ dS.to!string
+            ~ " from sphere_center; expected 0.2 (sphere octant)");
+    }
 }
 
 unittest { // CUBE CORNER seg=8: M_ADJ grid generalizes — manifold + face count
