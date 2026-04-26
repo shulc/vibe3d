@@ -10,6 +10,7 @@ import editmode;
 import math;
 import shader;
 import drag;
+import bevel;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -74,28 +75,8 @@ private:
     int[]     edgeOrderBeforeBevel;
 
     // ---- Edge bevel parameters ----
-    float ebWidth = 0.0f;
-
-    // Per-endpoint data: original pos + N BoundVert indices + N slide directions
-    struct EbEndpoint {
-        uint   origVert;
-        Vec3   origPos;
-        int[]  boundVerts;   // indices in mesh.vertices (length = valence)
-        Vec3[] slideDirs;    // offsetInPlane directions (length = valence)
-        uint[] capPoly;      // ordered cap polygon (same order as boundVerts, CCW)
-    }
-
-    struct EbEntry {
-        EbEndpoint endA, endB;  // a = edges[ei][0], b = edges[ei][1]
-    }
-    EbEntry[] ebEntries;
-
-    // Snapshot for revert
-    struct EbFaceSnap { int idx; uint[] orig; }
-    EbFaceSnap[] ebFaceSnaps;
-    Vec3[]  ebVertsBeforeBevel;
-    size_t  ebBevelVertStart;
-    size_t  ebBevelFaceStart;
+    float   ebWidth = 0.0f;
+    BevelOp ebOp;
 
     // ---- Drag state ----
     int      dragHandle = -1;   // 0=shift/width, 1=insert, 2=free, -1=none
@@ -138,9 +119,7 @@ public:
         dragHandle   = -1;
         freeDragAxis = -1;
         ebWidth      = 0.0f;
-        ebEntries    = [];
-        ebFaceSnaps  = [];
-        ebVertsBeforeBevel = [];
+        ebOp         = BevelOp.init;
         if (*editMode == EditMode.Edges)
             recomputeEdgeCenter();
         else
@@ -440,259 +419,24 @@ private:
     }
 
     // ------------------------------------------------------------------
-    // Edge bevel: apply topology
+    // Edge bevel: apply / revert / update — delegated to source/bevel.d.
     // ------------------------------------------------------------------
 
     void applyEdgeBevelTopology() {
-        bevelApplied       = true;
-        ebEntries          = [];
-        ebFaceSnaps        = [];
-        ebBevelVertStart   = mesh.vertices.length;
-        ebBevelFaceStart   = mesh.faces.length;
-        ebVertsBeforeBevel = mesh.vertices.dup;
+        bevelApplied = true;
+        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges);
 
-        edgesBeforeBevel     = mesh.edges.dup;
-        selEdgesBeforeBevel  = mesh.selectedEdges.dup;
-        edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
-
-        // Build half-edge structure.
-        mesh.buildLoops();
-
-        // Build directed-loop map: (u<<32|v) → loop index.
-        uint[ulong] dirLoopMap;
-        foreach (li, ref lp; mesh.loops) {
-            uint u = lp.vert;
-            uint v = mesh.loops[lp.next].vert;
-            dirLoopMap[(cast(ulong)u << 32) | v] = cast(uint)li;
-        }
-
-        // We need a face → snap record map to avoid double-snapping.
-        bool[int] faceSnapped;
-
-        // Process each selected manifold edge.
-        foreach (ei, sel; mesh.selectedEdges) {
-            if (!sel || ei >= mesh.edges.length) continue;
-
-            uint va = mesh.edges[ei][0];
-            uint vb = mesh.edges[ei][1];
-
-            // Require both directed loops to exist (manifold edge).
-            ulong keyAB = (cast(ulong)va << 32) | vb;
-            ulong keyBA = (cast(ulong)vb << 32) | va;
-            auto pAB = keyAB in dirLoopMap;
-            auto pBA = keyBA in dirLoopMap;
-            if (!pAB || !pBA) continue;
-
-            uint loopAB = *pAB; // loop: va→vb  (face F1, contains directed edge a→b)
-            uint loopBA = *pBA; // loop: vb→va  (face F2, contains directed edge b→a)
-
-            EbEntry entry;
-            entry.endA.origVert = va;
-            entry.endA.origPos  = mesh.vertices[va];
-            entry.endB.origVert = vb;
-            entry.endB.origPos  = mesh.vertices[vb];
-
-            // Gather BoundVerts for each endpoint.
-            // idxF1 is always 0 (we start the ring at loopAB = F1).
-            // idxF2 is the k-index of F2 in the faceDarts ring for each endpoint.
-            int idxF2_A, idxF2_B;
-            buildEbEndpoint(entry.endA, va, vb, loopAB, loopBA,
-                            faceSnapped, idxF2_A);
-            buildEbEndpoint(entry.endB, vb, va, loopBA, loopAB,
-                            faceSnapped, idxF2_B);
-
-            // Add bevel quad: [bvA_F1, bvB_F1, bvB_F2, bvA_F2]
-            //
-            // endA ring starts at loopAB (dart va→vb, face F1) → boundVerts[0] = bvA_F1
-            //                                                    → boundVerts[idxF2_A] = bvA_F2
-            // endB ring starts at loopBA (dart vb→va, face F2) → boundVerts[0] = bvB_F2
-            //                                                    → boundVerts[idxF2_B] = bvB_F1
-            //   (for endB, buildEbEndpoint's "loopPeerOv" = loopAB = F1, so outIdxF2 = F1 index)
-            if (entry.endA.boundVerts.length > 0 && entry.endB.boundVerts.length > 0 &&
-                idxF2_A >= 0 && idxF2_B >= 0 &&
-                idxF2_A < cast(int)entry.endA.boundVerts.length &&
-                idxF2_B < cast(int)entry.endB.boundVerts.length)
-            {
-                uint bvA_F1 = cast(uint)entry.endA.boundVerts[0];
-                uint bvA_F2 = cast(uint)entry.endA.boundVerts[idxF2_A];
-                uint bvB_F2 = cast(uint)entry.endB.boundVerts[0];        // endB ring[0] = F2
-                uint bvB_F1 = cast(uint)entry.endB.boundVerts[idxF2_B];  // endB idxF2 = F1 index
-                // Quad winding: CCW looking from outside the bevel.
-                mesh.faces ~= [bvA_F1, bvB_F1, bvB_F2, bvA_F2];
-            }
-
-            ebEntries ~= entry;
-        }
-
-        // Rebuild edges from scratch from all current faces.
-        mesh.edges = [];
-        bool[ulong] seenEdge;
-        foreach (face; mesh.faces) {
-            int M = cast(int)face.length;
-            foreach (i; 0 .. M) {
-                uint u = face[i];
-                uint w = face[(i + 1) % M];
-                ulong key = edgeKey(u, w);
-                if (key !in seenEdge) {
-                    seenEdge[key] = true;
-                    mesh.edges ~= [u, w];
-                }
-            }
-        }
-
-        mesh.buildLoops();
-        mesh.syncSelection();
+        // Selection: bevel-quad edges replace the previously selected edge ring.
+        mesh.clearEdgeSelection();
+        foreach (eidx; ebOp.bevelQuadEdges)
+            if (eidx >= 0 && eidx < cast(int)mesh.edges.length)
+                mesh.selectEdge(eidx);
     }
-
-    // Build the BoundVert ring for one endpoint `ep` (orig vertex = `ov`).
-    // `ov_peer` is the other end of the bevel edge.
-    // `loopOvPeer` = directed loop ov→ov_peer (face F1, ring index 0).
-    // `loopPeerOv` = directed loop ov_peer→ov (face F2, ring index = outIdxF2).
-    // `outIdxF2`   = output: index into ep.boundVerts that belongs to face F2.
-    private void buildEbEndpoint(ref EbEndpoint ep,
-                                  uint ov, uint /*ov_peer*/,
-                                  uint loopOvPeer,   // ov→ov_peer dart (F1, ring[0])
-                                  uint loopPeerOv,   // ov_peer→ov dart
-                                  ref bool[int] faceSnapped,
-                                  out int outIdxF2)
-    {
-        outIdxF2 = -1;
-
-        // Walk all faces around ov via the half-edge ring.
-        // In each face the dart for ov has .vert == ov.
-        // Ring traversal: from dart li (.vert==ov), next dart around ov =
-        //   twin(prev(li)).
-        // twin(prev(li)).vert == ov because:
-        //   prev(li).vert == some X  →  directed edge X→ov in face Fi
-        //   twin(X→ov) = dart ov→X in adjacent face Fj  →  .vert == ov ✓
-
-        uint startLi = loopOvPeer; // dart ov→ov_peer in F1 (ring index 0)
-
-        // F2 dart for ov: in face F2, the directed edge ov_peer→ov exists as loopPeerOv.
-        // The dart for ov in F2 is loops[loopPeerOv].next (since .vert of next == ov,
-        // because loopPeerOv.vert==ov_peer and loopPeerOv.next.vert==ov).
-        uint dartOvInF2 = (loopPeerOv != ~0u) ? mesh.loops[loopPeerOv].next : ~0u;
-
-        uint[] faceDarts; // dart index for ov in each face, in ring order
-        foreach (li; mesh.dartsAroundVertex(ov, startLi)) {
-            faceDarts ~= li;
-            // Track when we hit F2's dart
-            if (li == dartOvInF2)
-                outIdxF2 = cast(int)(faceDarts.length - 1);
-        }
-
-        int N = cast(int)faceDarts.length;
-        if (N == 0) return;
-
-        // If we never encountered dartOvInF2 in the ring, find it by face index.
-        if (outIdxF2 < 0 && dartOvInF2 != ~0u) {
-            uint f2 = (dartOvInF2 < mesh.loops.length) ? mesh.loops[dartOvInF2].face : ~0u;
-            foreach (k; 0 .. N) {
-                if (mesh.loops[faceDarts[k]].face == f2) {
-                    outIdxF2 = cast(int)k;
-                    break;
-                }
-            }
-        }
-
-        ep.boundVerts.length = N;
-        ep.slideDirs .length = N;
-
-        Vec3 aPos = ep.origPos;
-
-        foreach (k; 0 .. N) {
-            uint dart    = faceDarts[k];
-            uint faceIdx = mesh.loops[dart].face;
-            uint nextVi  = mesh.loops[mesh.loops[dart].next].vert; // neighbor along ov→nextVi
-
-            // edgeDir: from ov toward the neighbor vertex in this face
-            Vec3 nbr     = mesh.vertices[nextVi];
-            Vec3 edgeDir = safeNormalize(nbr - aPos);
-
-            // face normal
-            Vec3 fNorm = mesh.faceNormal(faceIdx);
-
-            // slideDir = offsetInPlane(edgeDir, fNorm)
-            Vec3 sd = offsetInPlane(edgeDir, fNorm);
-            ep.slideDirs[k] = sd;
-
-            // Create the BoundVert at origPos (updated later by updateEdgeBevelVertices)
-            int bvi = cast(int)mesh.addVertex(aPos);
-            ep.boundVerts[k] = bvi;
-
-            // Snapshot the face (once), then replace ov with bvi
-            if (faceIdx < cast(uint)mesh.faces.length) {
-                if (!(cast(int)faceIdx in faceSnapped)) {
-                    EbFaceSnap snap;
-                    snap.idx  = cast(int)faceIdx;
-                    snap.orig = mesh.faces[faceIdx].dup;
-                    ebFaceSnaps ~= snap;
-                    faceSnapped[cast(int)faceIdx] = true;
-                }
-                foreach (ref vi; mesh.faces[faceIdx])
-                    if (vi == ov) { vi = cast(uint)bvi; break; }
-            }
-        }
-
-        // Build cap polygon (CCW winding check using slide directions as proxies).
-        uint[] capPoly = new uint[](N);
-        foreach (k; 0 .. N) capPoly[k] = cast(uint)ep.boundVerts[k];
-
-        // Cap normal: sum of cross products of consecutive slide directions
-        Vec3 capNorm = Vec3(0, 0, 0);
-        for (int k = 0; k < N; k++) {
-            Vec3 d0 = ep.slideDirs[k];
-            Vec3 d1 = ep.slideDirs[(k + 1) % N];
-            capNorm += cross(d0, d1);
-        }
-        // Average face normal around ov
-        Vec3 avgFN = Vec3(0, 0, 0);
-        foreach (dart; faceDarts) {
-            uint fi = mesh.loops[dart].face;
-            avgFN += mesh.faceNormal(fi);
-        }
-        // If cap normal opposes the average face normal, reverse the ring.
-        if (dot(capNorm, avgFN) < 0.0f) {
-            for (int lo = 0, hi = N - 1; lo < hi; lo++, hi--) {
-                uint tmp2 = capPoly[lo];
-                capPoly[lo] = capPoly[hi];
-                capPoly[hi] = tmp2;
-            }
-            // Also keep outIdxF2 consistent with the reversed order.
-            if (outIdxF2 > 0)
-                outIdxF2 = N - outIdxF2;
-        }
-
-        ep.capPoly = capPoly;
-
-        // Append cap polygon directly (edge rebuild happens at the end of apply).
-        mesh.faces ~= capPoly.dup;
-    }
-
-    // ------------------------------------------------------------------
-    // Edge bevel: revert topology
-    // ------------------------------------------------------------------
 
     void revertEdgeBevelTopology() {
-        // Restore patched faces from snapshots.
-        foreach (ref snap; ebFaceSnaps)
-            mesh.faces[snap.idx] = snap.orig;
-
-        // Trim appended vertices and faces.
-        mesh.vertices.length = ebBevelVertStart;
-        mesh.faces.length    = ebBevelFaceStart;
-
-        // Restore edges and selection.
-        mesh.edges              = edgesBeforeBevel.dup;
-        mesh.selectedEdges      = selEdgesBeforeBevel.dup;
-        mesh.edgeSelectionOrder = edgeOrderBeforeBevel.dup;
-
+        bevel.revertEdgeBevelTopology(mesh, ebOp);
+        ebOp = BevelOp.init;
         bevelApplied = false;
-        ebEntries    = [];
-        ebFaceSnaps  = [];
-
-        mesh.buildLoops();
-        mesh.syncSelection();
     }
 
     // ------------------------------------------------------------------
@@ -700,15 +444,7 @@ private:
     // ------------------------------------------------------------------
 
     void updateEdgeBevelVertices() {
-        foreach (ref entry; ebEntries) {
-            updateEbEndpointVerts(entry.endA);
-            updateEbEndpointVerts(entry.endB);
-        }
-    }
-
-    private void updateEbEndpointVerts(ref EbEndpoint ep) {
-        foreach (k; 0 .. ep.boundVerts.length)
-            mesh.vertices[ep.boundVerts[k]] = ep.origPos + ep.slideDirs[k] * ebWidth;
+        bevel.updateEdgeBevelPositions(mesh, ebOp, ebWidth);
     }
 
     void revertPolyBevelTopology() {

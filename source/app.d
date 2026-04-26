@@ -51,6 +51,7 @@ import commands.file.save;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.subpatch_toggle;
+import commands.mesh.bevel;
 
 import command;
 import registry;
@@ -447,6 +448,9 @@ void main(string[] args) {
                              () => setActiveTool(null));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh, cameraView, editMode);
+    reg.commandFactories["mesh.bevel"] = () => cast(Command)
+        new MeshBevel(&mesh, cameraView, editMode, &gpu,
+                      &vertexCache, &edgeCache, &faceCache);
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -572,11 +576,22 @@ void main(string[] args) {
             // more commands grow JSON-driven inputs.
             if (paramsJson.length > 0) {
                 auto pj = parseJSON(paramsJson);
-                if (pj.type == JSONType.object && "path" in pj
-                        && pj["path"].type == JSONType.string) {
-                    string path = pj["path"].str;
-                    if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
-                    else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
+                if (pj.type == JSONType.object) {
+                    if ("path" in pj && pj["path"].type == JSONType.string) {
+                        string path = pj["path"].str;
+                        if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
+                        else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
+                    }
+                    if (auto mb = cast(MeshBevel)cmd) {
+                        if ("width" in pj) {
+                            auto w = pj["width"];
+                            float wf = (w.type == JSONType.integer)  ? cast(float)w.integer
+                                     : (w.type == JSONType.uinteger) ? cast(float)w.uinteger
+                                     : (w.type == JSONType.float_)   ? cast(float)w.floating
+                                                                     : 0.0f;
+                            mb.setWidth(wf);
+                        }
+                    }
                 }
             }
 

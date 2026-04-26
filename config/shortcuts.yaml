@@ -2,8 +2,8 @@ tools:
   move:   W
   rotate: E
   scale:  R
-  box:    B
-  bevel:  ""
+  box:    ""
+  bevel:  B
 
 commands:
   select.expand:         "Shift+Up"
