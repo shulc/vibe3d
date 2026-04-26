@@ -54,13 +54,17 @@ enum VMeshKind {
 
 struct BoundVert {
     Vec3    pos;
-    int     ehFromIdx = -1;   // index into BevVert.edges of the EdgeHalf this BV sits on
+    // EdgeHalf indices in BevVert.edges flanking this BoundVert in CCW order:
+    // ehFromIdx ↔ ehToIdx with ehToIdx == (ehFromIdx + 1) % N. The face the
+    // BoundVert lives in is `edges[ehFromIdx].fnext` (== edges[ehToIdx].fprev).
+    int     ehFromIdx = -1;
     int     ehToIdx   = -1;
+    uint    face      = ~0u;
     Profile profile;
-    bool    isOnEdge   = false;
+    bool    isOnEdge   = false;  // true when one of the flanking edges is non-bev
     int     vertId     = -1;
     bool    reusesOrig = false;  // when true, vertId == BevVert.vert
-    Vec3    slideDir   = Vec3(0, 0, 0);
+    Vec3    slideDir   = Vec3(0, 0, 0);  // (offsetMeet at width=1) - origPos
 }
 
 struct VMesh {
@@ -157,19 +161,17 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges)
         materializeBevVert(mesh, bvA, faceSnapped, op.faceSnaps);
         materializeBevVert(mesh, bvB, faceSnapped, op.faceSnaps);
 
-        // Bevel quad replaces the beveled edge. Shared with patched faces:
-        //   (BV_left_a, BV_right_a) shared with F_other_a (=F5 for cube),
-        //   (BV_right_a, BV_left_b) shared with edges[bev].fprev,
-        //   (BV_left_b, BV_right_b) shared with F_other_b,
-        //   (BV_right_b, BV_left_a) shared with edges[bev].fnext.
-        // CCW order from outside: [BV_left_a, BV_right_a, BV_left_b, BV_right_b].
+        // Bevel quad replaces the beveled edge. CCW order from outside:
+        // [BV_left_a, BV_right_a, BV_left_b, BV_right_b], where
+        //   BV_left_*  = corner BV with ehFromIdx == bevEdgeIdx (face fnext side)
+        //   BV_right_* = corner BV with ehToIdx   == bevEdgeIdx (face fprev side)
         if (bvA.bevEdgeIdx >= 0 && bvB.bevEdgeIdx >= 0 &&
             bvA.boundVerts.length >= 2 && bvB.boundVerts.length >= 2)
         {
-            int qA_l = boundVertIdxForEh(bvA, leftEhIdx(bvA));
-            int qA_r = boundVertIdxForEh(bvA, rightEhIdx(bvA));
-            int qB_l = boundVertIdxForEh(bvB, leftEhIdx(bvB));
-            int qB_r = boundVertIdxForEh(bvB, rightEhIdx(bvB));
+            int qA_l = boundVertIdxForEh  (bvA, bvA.bevEdgeIdx);
+            int qA_r = boundVertIdxForEhTo(bvA, bvA.bevEdgeIdx);
+            int qB_l = boundVertIdxForEh  (bvB, bvB.bevEdgeIdx);
+            int qB_r = boundVertIdxForEhTo(bvB, bvB.bevEdgeIdx);
             if (qA_l >= 0 && qA_r >= 0 && qB_l >= 0 && qB_r >= 0) {
                 op.bevelQuadFaces ~= cast(int)mesh.faces.length;
                 mesh.faces ~= [
@@ -280,27 +282,57 @@ BevVert buildBevVert(Mesh* mesh, uint vert, const(bool)[] selectedEdges,
     return bv;
 }
 
-// Populate BoundVerts on a BevVert assembled by buildBevVert. Stage 1 only
-// handles selCount == 1: one BoundVert per non-beveled EdgeHalf, the one
-// immediately CCW after the beveled EdgeHalf reuses the original vertex.
-private void populateBoundVerts(Mesh* mesh, ref BevVert bv)
+// Populate BoundVerts on a BevVert assembled by buildBevVert.
+//
+// One BoundVert per CCW-adjacent EdgeHalf pair (k, (k+1)%N) where at least
+// one of the two is beveled. The BoundVert lives in the common face
+// `edges[k].fnext` (== `edges[(k+1)%N].fprev`) and its slide direction is
+// (offsetMeet at unit widths) - origPos, so the runtime position is just
+// `origPos + slideDir * width`.
+//
+// Reuse rule: the first BoundVert encountered whose left flanking EdgeHalf
+// is the beveled one (i.e. `edges[k].isBev` and (selCount==1 ⇒ k==bevEdgeIdx))
+// reuses the original vertex; the rest are allocated fresh in materialize.
+//
+// Stage 1 invariant: this matches the previous slide-along-edge behavior for
+// selCount=1 valence-3 endpoints exactly, since offsetMeet of one bev edge
+// (width=1) and one non-bev edge (width=0) lands on the non-bev edge at unit
+// distance from the corner.
+void populateBoundVerts(Mesh* mesh, ref BevVert bv)
 {
-    if (bv.selCount != 1 || bv.bevEdgeIdx < 0) return;
+    if (bv.selCount < 1) return;
 
     int N = cast(int)bv.edges.length;
-    int leftIdx = (bv.bevEdgeIdx + 1) % N;
+    bool reuseAssigned = false;
 
     foreach (k; 0 .. N) {
-        if (k == bv.bevEdgeIdx) continue;
+        int knext = (k + 1) % N;
+        EdgeHalf eh1 = bv.edges[k];
+        EdgeHalf eh2 = bv.edges[knext];
+        if (!eh1.isBev && !eh2.isBev) continue;
+
+        Vec3 ePrev = computeSlideDirForEdge(mesh, bv, knext); // toward prevV in face
+        Vec3 eNext = computeSlideDirForEdge(mesh, bv, k);     // toward nextV in face
+        Vec3 faceN = mesh.faceNormal(eh1.fnext);
+        float wPrev = eh2.isBev ? 1.0f : 0.0f;
+        float wNext = eh1.isBev ? 1.0f : 0.0f;
+        Vec3 meetUnit = offsetMeet(bv.origPos, ePrev, eNext, faceN, wPrev, wNext);
 
         BoundVert bnd;
         bnd.ehFromIdx  = cast(int)k;
-        bnd.ehToIdx    = cast(int)k;
-        bnd.isOnEdge   = true;
-        bnd.slideDir   = computeSlideDirForEdge(mesh, bv, cast(int)k);
+        bnd.ehToIdx    = cast(int)knext;
+        bnd.face       = eh1.fnext;
+        bnd.isOnEdge   = !(eh1.isBev && eh2.isBev);
+        bnd.slideDir   = meetUnit - bv.origPos;
         bnd.pos        = bv.origPos;
-        bnd.reusesOrig = (cast(int)k == leftIdx);
-        bnd.vertId     = bnd.reusesOrig ? cast(int)bv.vert : -1;
+
+        // Reuse rule: first BV after the first beveled EdgeHalf in CCW.
+        if (!reuseAssigned && eh1.isBev) {
+            bnd.reusesOrig = true;
+            bnd.vertId     = cast(int)bv.vert;
+            reuseAssigned  = true;
+        }
+
         bv.boundVerts ~= bnd;
     }
 
@@ -328,16 +360,30 @@ private int rightEhIdx(ref const BevVert bv) {
     return (bv.bevEdgeIdx + N - 1) % N;
 }
 
+// Find the BoundVert whose left flanking EdgeHalf (ehFromIdx) is `ehIdx`.
 private int boundVertIdxForEh(ref const BevVert bv, int ehIdx) {
     foreach (i, ref bnd; bv.boundVerts)
         if (bnd.ehFromIdx == ehIdx) return cast(int)i;
     return -1;
 }
 
-// Assign new vertex ids, snapshot faces, patch each face around bv.vert:
-//   - F = edges[bevEdgeIdx].fnext: keep bv.vert (BV_left = bv.vert).
-//   - F = edges[bevEdgeIdx].fprev: replace bv.vert with BV_right (new vert).
-//   - F_other: insert [BV on prev edge, BV on next edge] at the corner.
+// Find the BoundVert whose right flanking EdgeHalf (ehToIdx) is `ehIdx`.
+private int boundVertIdxForEhTo(ref const BevVert bv, int ehIdx) {
+    foreach (i, ref bnd; bv.boundVerts)
+        if (bnd.ehToIdx == ehIdx) return cast(int)i;
+    return -1;
+}
+
+// Assign new vertex ids, snapshot faces, patch each face around bv.vert.
+// Stage 3 layout: BoundVerts live at corners between consecutive EdgeHalfs.
+//   - F = edges[bevEdgeIdx].fnext: corner BV is the one with ehFromIdx==bevEdgeIdx
+//     (BoundVert between the bev EH and the next EH in CCW). When reused, no
+//     face-index change.
+//   - F = edges[bevEdgeIdx].fprev: corner BV is the one with ehToIdx==bevEdgeIdx
+//     (BoundVert between the prev EH and the bev EH).
+//   - F_other (face between two non-bev EdgeHalfs k, (k+1)%N): insert
+//     [BV(ehFromIdx=(k+1)%N), BV(ehToIdx=k)] at the corner — pulled in from
+//     the two neighboring face corners.
 private void materializeBevVert(Mesh* mesh, ref BevVert bv,
                                 ref bool[int] faceSnapped,
                                 ref FaceSnap[] faceSnaps)
@@ -359,24 +405,28 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         snapshotFace(mesh, faceIdx, faceSnapped, faceSnaps);
 
         if (faceIdx == fBevNext) {
-            // BV_left at corner = bv.vert (reused). No index change.
+            int bIdx = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+            if (bIdx < 0) continue;
+            uint vid = cast(uint)bv.boundVerts[bIdx].vertId;
+            if (vid != bv.vert)
+                replaceVertInFace(mesh, faceIdx, bv.vert, vid);
             continue;
         }
 
         if (faceIdx == fBevPrev) {
-            // BV_right at corner = new vert.
-            int bIdx = boundVertIdxForEh(bv, rightEhIdx(bv));
+            int bIdx = boundVertIdxForEhTo(bv, bv.bevEdgeIdx);
             if (bIdx < 0) continue;
-            replaceVertInFace(mesh, faceIdx, bv.vert,
-                              cast(uint)bv.boundVerts[bIdx].vertId);
+            uint vid = cast(uint)bv.boundVerts[bIdx].vertId;
+            if (vid != bv.vert)
+                replaceVertInFace(mesh, faceIdx, bv.vert, vid);
             continue;
         }
 
-        // F_other: prev-entering edge = edges[(k+1) % N], next-leaving edge = edges[k].
-        int prevEhIdx = (k + 1) % N;
-        int nextEhIdx = k;
-        int bvPrevIdx = boundVertIdxForEh(bv, prevEhIdx);
-        int bvNextIdx = boundVertIdxForEh(bv, nextEhIdx);
+        // F_other: prev-entering edge in this face = edges[(k+1)%N],
+        // next-leaving edge = edges[k]. The two BVs to splice in come from
+        // the two adjacent face corners.
+        int bvPrevIdx = boundVertIdxForEh(bv, (k + 1) % N);
+        int bvNextIdx = boundVertIdxForEhTo(bv, cast(int)k);
         if (bvPrevIdx < 0 || bvNextIdx < 0) continue;
 
         spliceInTwoAtCorner(mesh, faceIdx, bv.vert,

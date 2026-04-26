@@ -331,6 +331,50 @@ Vec3 offsetMeetDir(Vec3 e1, Vec3 e2, Vec3 faceNorm) @safe pure nothrow @nogc {
     return p1 + e1 * t;
 }
 
+// Blender offset_meet with per-edge widths.
+//
+// Same geometry as offsetMeetDir but the two offset lines may be displaced
+// by different amounts (wPrev for the prevV side, wNext for the nextV side).
+// Returns the absolute world-space intersection point. Useful when one
+// EdgeHalf is beveled (wEdge = width) and the other is not (wEdge = 0).
+//
+// Falls back to the midpoint of the two offset origins when the edges are
+// parallel inside the face plane.
+Vec3 offsetMeet(Vec3 jv, Vec3 ePrev, Vec3 eNext, Vec3 faceNorm,
+                float wPrev, float wNext) @safe pure nothrow @nogc {
+    import std.math : abs;
+    Vec3 p1 = jv + offsetInPlane(-ePrev, faceNorm) * wPrev;
+    Vec3 p2 = jv + offsetInPlane( eNext, faceNorm) * wNext;
+    Vec3 r  = p2 - p1;
+    float denom = dot(cross(ePrev, eNext), faceNorm);
+    if (abs(denom) < 1e-6f)
+        return (p1 + p2) * 0.5f;
+    float t = dot(cross(r, eNext), faceNorm) / denom;
+    return p1 + ePrev * t;
+}
+
+unittest { // offsetMeet: 90° corner, one bev one non-bev — slides on non-bev edge
+    Vec3 jv     = Vec3(0, 0, 0);
+    Vec3 ePrev  = Vec3(1, 0, 0);   // non-bev edge along +X
+    Vec3 eNext  = Vec3(0, 1, 0);   // bev edge along +Y
+    Vec3 faceN  = Vec3(0, 0, -1);  // face normal in -Z
+    Vec3 r = offsetMeet(jv, ePrev, eNext, faceN, 0.0f, 0.1f);
+    assert(isClose(r.x, 0.1f, 1e-5));
+    assert(isClose(r.y, 0.0f, 1e-5));
+    assert(isClose(r.z, 0.0f, 1e-5));
+}
+
+unittest { // offsetMeet: 90° corner, both bev — meets at the diagonal
+    Vec3 jv     = Vec3(0, 0, 0);
+    Vec3 ePrev  = Vec3(1, 0, 0);
+    Vec3 eNext  = Vec3(0, 1, 0);
+    Vec3 faceN  = Vec3(0, 0, -1);
+    Vec3 r = offsetMeet(jv, ePrev, eNext, faceN, 0.1f, 0.1f);
+    assert(isClose(r.x, 0.1f, 1e-5));
+    assert(isClose(r.y, 0.1f, 1e-5));
+    assert(isClose(r.z, 0.0f, 1e-5));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

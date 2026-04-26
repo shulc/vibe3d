@@ -562,7 +562,7 @@ void main(string[] args) {
             return readText("recording.jsonl");
         });
         httpServer.setBevvertProvider((int vert) {
-            import bevel : buildBevVert, BevVert;
+            import bevel : buildBevVert, populateBoundVerts, BevVert;
             import std.format : format;
             import std.array  : appender;
             if (vert < 0 || vert >= cast(int)mesh.vertices.length)
@@ -570,9 +570,11 @@ void main(string[] args) {
             mesh.buildLoops();
             BevVert bv = buildBevVert(&mesh, cast(uint)vert,
                                       mesh.selectedEdges);
+            populateBoundVerts(&mesh, bv);
             auto json = appender!string();
-            json ~= format(`{"vert":%d,"selCount":%d,"bevEdgeIdx":%d,"edges":[`,
-                           bv.vert, bv.selCount, bv.bevEdgeIdx);
+            json ~= format(`{"vert":%d,"selCount":%d,"bevEdgeIdx":%d,"origPos":[%f,%f,%f],"edges":[`,
+                           bv.vert, bv.selCount, bv.bevEdgeIdx,
+                           bv.origPos.x, bv.origPos.y, bv.origPos.z);
             foreach (i, eh; bv.edges) {
                 if (i > 0) json ~= ",";
                 json ~= format(`{"edgeIdx":%d,"isBev":%s,"fnext":%d,"fprev":%d}`,
@@ -580,6 +582,17 @@ void main(string[] args) {
                                eh.isBev ? "true" : "false",
                                cast(int)eh.fnext,
                                cast(int)eh.fprev);
+            }
+            json ~= `],"boundVerts":[`;
+            foreach (i, bnd; bv.boundVerts) {
+                if (i > 0) json ~= ",";
+                json ~= format(`{"ehFromIdx":%d,"ehToIdx":%d,"face":%d,`
+                               ~ `"isOnEdge":%s,"reusesOrig":%s,`
+                               ~ `"slideDir":[%f,%f,%f]}`,
+                               bnd.ehFromIdx, bnd.ehToIdx, cast(int)bnd.face,
+                               bnd.isOnEdge   ? "true" : "false",
+                               bnd.reusesOrig ? "true" : "false",
+                               bnd.slideDir.x, bnd.slideDir.y, bnd.slideDir.z);
             }
             json ~= "]}";
             return json.data;
