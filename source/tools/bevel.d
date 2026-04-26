@@ -78,6 +78,8 @@ private:
     float          ebWidth   = 0.0f;
     float          ebWidthR  = 0.0f;
     bool           ebAsymmetric = false;
+    int            ebSeg     = 1;
+    float          ebSuperR  = 2.0f;
     BevelWidthMode ebMode    = BevelWidthMode.Offset;
     BevelOp        ebOp;
 
@@ -334,6 +336,16 @@ public:
                 }
             }
 
+            if (ImGui.SliderInt("Segments", &ebSeg, 1, 16)) {
+                if (ebSeg < 1)  ebSeg = 1;
+                if (ebSeg > 16) ebSeg = 16;
+                topologyDirty = true;
+            }
+            if (ebSeg >= 2) {
+                ImGui.DragFloat("Super R", &ebSuperR, 0.05f, 0.5f, 8.0f, "%.2f");
+                if (ImGui.IsItemActive()) topologyDirty = true;
+            }
+
             int modeIdx = cast(int)ebMode;
             ImGui.Text("Mode:");
             if (ImGui.RadioButton("Offset",  modeIdx == 0)) {
@@ -470,7 +482,7 @@ private:
         float wRRatio = (ebAsymmetric && ebWidth > 0.0f) ? (ebWidthR / ebWidth)
                                                           : 1.0f;
         ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, ebMode,
-                                             1.0f, wRRatio);
+                                             1.0f, wRRatio, ebSeg, ebSuperR);
 
         // Selection: bevel-quad edges replace the previously selected edge ring.
         mesh.clearEdgeSelection();

@@ -1,6 +1,6 @@
 module bevel;
 
-import std.math : sin, cos, acos;
+import std.math : sin, cos, acos, pow, PI;
 
 import math;
 import mesh;
@@ -101,12 +101,13 @@ struct EdgeHalf {
 }
 
 struct Profile {
-    Vec3   start;
-    Vec3   middle;
-    Vec3   end;
-    Vec3   planeNormal;
-    float  superR = 2.0f;
-    Vec3[] sample;
+    Vec3   start;            // BoundVert position (sample[0])
+    Vec3   middle;           // bv.origPos — original vertex
+    Vec3   end;              // next BoundVert position (sample[seg])
+    Vec3   planeNormal;      // sum of adjacent face normals (unit)
+    float  superR = 2.0f;    // 2 = circle, 1 = straight line, 4 = closer to square
+    Vec3[] sample;           // seg+1 points along the super-ellipse curve
+    int[]  sampleVertIds;    // seg+1 mesh vertex ids (filled in materialize)
 }
 
 enum VMeshKind {
@@ -187,8 +188,11 @@ struct BevelOp {
 
 BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                                 BevelWidthMode mode = BevelWidthMode.Offset,
-                                float widthL = 1.0f, float widthR = 1.0f)
+                                float widthL = 1.0f, float widthR = 1.0f,
+                                int seg = 1, float superR = 2.0f)
 {
+    if (seg < 1)  seg = 1;
+    if (seg > 64) seg = 64;
     BevelOp op;
     op.origVertexCount   = mesh.vertices.length;
     op.origFaceCount     = mesh.faces.length;
@@ -226,31 +230,48 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
 
         BevVert bvA = buildBevVert(mesh, va, selectedEdges, loopAB);
         BevVert bvB = buildBevVert(mesh, vb, selectedEdges, loopBA);
-        populateBoundVerts(mesh, bvA, mode, widthL, widthR);
-        populateBoundVerts(mesh, bvB, mode, widthL, widthR);
+        populateBoundVerts(mesh, bvA, mode, widthL, widthR, seg, superR);
+        populateBoundVerts(mesh, bvB, mode, widthL, widthR, seg, superR);
 
         materializeBevVert(mesh, bvA, faceSnapped, op.faceSnaps);
         materializeBevVert(mesh, bvB, faceSnapped, op.faceSnaps);
 
-        // Bevel quad replaces the beveled edge. CCW order from outside:
-        // [BV_left_a, BV_right_a, BV_left_b, BV_right_b], where
-        //   BV_left_*  = corner BV with ehFromIdx == bevEdgeIdx (face fnext side)
-        //   BV_right_* = corner BV with ehToIdx   == bevEdgeIdx (face fprev side)
+        // Bevel quad strip replaces the beveled edge. For seg=1 it's a
+        // single quad [BV_left_a, BV_right_a, BV_left_b, BV_right_b]; for
+        // seg>=2 it expands to `seg` quads using the cap-profile sample
+        // points from each endpoint:
+        //   quad k = [sa[k], sa[k+1], sb[seg-k-1], sb[seg-k]]
+        // where sa = bvA.leftBV.profile.sampleVertIds and similarly sb.
         if (bvA.bevEdgeIdx >= 0 && bvB.bevEdgeIdx >= 0 &&
             bvA.boundVerts.length >= 2 && bvB.boundVerts.length >= 2)
         {
-            int qA_l = boundVertIdxForEh  (bvA, bvA.bevEdgeIdx);
-            int qA_r = boundVertIdxForEhTo(bvA, bvA.bevEdgeIdx);
-            int qB_l = boundVertIdxForEh  (bvB, bvB.bevEdgeIdx);
-            int qB_r = boundVertIdxForEhTo(bvB, bvB.bevEdgeIdx);
-            if (qA_l >= 0 && qA_r >= 0 && qB_l >= 0 && qB_r >= 0) {
-                op.bevelQuadFaces ~= cast(int)mesh.faces.length;
-                mesh.faces ~= [
-                    cast(uint)bvA.boundVerts[qA_l].vertId,
-                    cast(uint)bvA.boundVerts[qA_r].vertId,
-                    cast(uint)bvB.boundVerts[qB_l].vertId,
-                    cast(uint)bvB.boundVerts[qB_r].vertId,
-                ];
+            int qA_l = boundVertIdxForEh(bvA, bvA.bevEdgeIdx);
+            int qB_l = boundVertIdxForEh(bvB, bvB.bevEdgeIdx);
+            if (qA_l >= 0 && qB_l >= 0) {
+                int[] sa = bvA.boundVerts[qA_l].profile.sampleVertIds;
+                int[] sb = bvB.boundVerts[qB_l].profile.sampleVertIds;
+                int strip = cast(int)sa.length - 1;
+                if (strip < 1 || cast(int)sb.length - 1 != strip) {
+                    // Fallback to the seg=1 quad layout if the profiles
+                    // didn't materialize as expected.
+                    op.bevelQuadFaces ~= cast(int)mesh.faces.length;
+                    mesh.faces ~= [
+                        cast(uint)bvA.boundVerts[qA_l].vertId,
+                        cast(uint)bvA.boundVerts[boundVertIdxForEhTo(bvA, bvA.bevEdgeIdx)].vertId,
+                        cast(uint)bvB.boundVerts[qB_l].vertId,
+                        cast(uint)bvB.boundVerts[boundVertIdxForEhTo(bvB, bvB.bevEdgeIdx)].vertId,
+                    ];
+                } else {
+                    foreach (kk; 0 .. strip) {
+                        op.bevelQuadFaces ~= cast(int)mesh.faces.length;
+                        mesh.faces ~= [
+                            cast(uint)sa[kk],
+                            cast(uint)sa[kk + 1],
+                            cast(uint)sb[strip - kk - 1],
+                            cast(uint)sb[strip - kk],
+                        ];
+                    }
+                }
             }
         }
 
@@ -277,15 +298,31 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
 }
 
 // ---------------------------------------------------------------------------
-// Apply a width: pos = origPos + slideDir * width for every BoundVert.
+// Scale all BoundVerts and their profile sample vertices by `width`. The
+// BoundVerts themselves slide via origPos + slideDir * width; intermediate
+// profile sample points are shifted by the same `width` factor relative to
+// origPos along the parametric profile curve direction.
 // ---------------------------------------------------------------------------
 
 void updateEdgeBevelPositions(Mesh* mesh, ref const BevelOp op, float width)
 {
     foreach (ref bv; op.bevVerts) {
         foreach (ref bnd; bv.boundVerts) {
-            if (bnd.vertId < 0 || bnd.vertId >= cast(int)mesh.vertices.length) continue;
-            mesh.vertices[bnd.vertId] = bv.origPos + bnd.slideDir * width;
+            if (bnd.vertId >= 0 && bnd.vertId < cast(int)mesh.vertices.length)
+                mesh.vertices[bnd.vertId] = bv.origPos + bnd.slideDir * width;
+        }
+        foreach (ref bnd; bv.boundVerts) {
+            auto p = &bnd.profile;
+            int seg = cast(int)p.sample.length - 1;
+            if (seg <= 1) continue;
+            // sample[0] and sample[seg] coincide with their owning BoundVerts
+            // and were updated above. Scale each intermediate by the linear
+            // displacement (sample[k] - origPos) * width.
+            foreach (k; 1 .. seg) {
+                int vid = (k < cast(int)p.sampleVertIds.length) ? p.sampleVertIds[k] : -1;
+                if (vid < 0 || vid >= cast(int)mesh.vertices.length) continue;
+                mesh.vertices[vid] = bv.origPos + (p.sample[k] - bv.origPos) * width;
+            }
         }
     }
 }
@@ -376,7 +413,8 @@ BevVert buildBevVert(Mesh* mesh, uint vert, const(bool)[] selectedEdges,
 // fresh in materialize.
 void populateBoundVerts(Mesh* mesh, ref BevVert bv,
                         BevelWidthMode mode = BevelWidthMode.Offset,
-                        float widthL = 1.0f, float widthR = 1.0f)
+                        float widthL = 1.0f, float widthR = 1.0f,
+                        int seg = 1, float superR = 2.0f)
 {
     if (bv.selCount < 1) return;
 
@@ -423,7 +461,7 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
         bnd.face       = eh1.fnext;
         bnd.isOnEdge   = !(eh1.isBev && eh2.isBev);
         bnd.slideDir   = meetUnit - bv.origPos;
-        bnd.pos        = bv.origPos;
+        bnd.pos        = meetUnit;
 
         // Reuse rule: first BV after the first beveled EdgeHalf in CCW.
         if (!reuseAssigned && eh1.isBev) {
@@ -435,8 +473,57 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
         bv.boundVerts ~= bnd;
     }
 
-    bv.vmesh.kind = VMeshKind.POLY;
-    bv.vmesh.seg  = 1;
+    // Now that all BoundVerts are placed, compute each one's profile (the
+    // curve from this BV to the next BV in CCW). Stage 6 only needs to fill
+    // sample positions; vertex ids are assigned in materializeBevVert.
+    int M = cast(int)bv.boundVerts.length;
+    foreach (i; 0 .. M) {
+        auto next = (i + 1) % M;
+        bv.boundVerts[i].profile = computeProfile(mesh, bv,
+                                                   bv.boundVerts[i],
+                                                   bv.boundVerts[next],
+                                                   seg, superR);
+    }
+
+    bv.vmesh.kind = (seg == 1) ? VMeshKind.POLY : VMeshKind.ADJ;
+    bv.vmesh.seg  = seg;
+}
+
+// Sample a quarter super-ellipse curve from `start` to `end` with the curve
+// bulging away from `middle`. The map sends (1, 0) → start, (0, 1) → end,
+// and (u, v) on the unit super-ellipse |u|^r + |v|^r = 1 in the first
+// quadrant onto the curve via P(u, v) = middle + u*(start - middle) +
+// v*(end - middle). For r=2 (circle) and orthogonal start/end vectors of
+// equal length w, every sample lies at distance w from middle.
+private Profile computeProfile(Mesh* mesh, ref const BevVert bv,
+                                ref const BoundVert curr, ref const BoundVert next,
+                                int seg, float superR)
+{
+    Profile p;
+    p.start  = curr.pos;
+    p.middle = bv.origPos;
+    p.end    = next.pos;
+    p.superR = superR;
+
+    Vec3 nA = (curr.face != ~0u) ? mesh.faceNormal(curr.face) : Vec3(0, 1, 0);
+    Vec3 nB = (next.face != ~0u) ? mesh.faceNormal(next.face) : Vec3(0, 1, 0);
+    p.planeNormal = safeNormalize(nA + nB);
+
+    if (seg < 1) seg = 1;
+    p.sample = new Vec3[](seg + 1);
+    Vec3 dStart = p.start - p.middle;
+    Vec3 dEnd   = p.end   - p.middle;
+    foreach (k; 0 .. seg + 1) {
+        float t  = cast(float)k / cast(float)seg;
+        float th = t * cast(float)(PI * 0.5);
+        float ct = cos(th), st = sin(th);
+        // Super-ellipse parameterization in the first quadrant.
+        // r=2 → u=cos(th), v=sin(th); r=1 → linear; r→∞ → square.
+        float u = pow(ct, 2.0f / superR);
+        float v = pow(st, 2.0f / superR);
+        p.sample[k] = p.middle + dStart * u + dEnd * v;
+    }
+    return p;
 }
 
 private Vec3 computeSlideDirForEdge(Mesh* mesh, ref const BevVert bv, int ehIdx)
@@ -489,13 +576,41 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
 {
     if (bv.bevEdgeIdx < 0 || bv.boundVerts.length == 0) return;
 
+    // Allocate vertex ids for BoundVerts that don't reuse the original.
     foreach (ref bnd; bv.boundVerts)
         if (!bnd.reusesOrig)
-            bnd.vertId = cast(int)mesh.addVertex(bv.origPos);
+            bnd.vertId = cast(int)mesh.addVertex(bnd.pos);
+
+    // For the cap profile (the one spanning the F_other gap, owned by the
+    // leftBV with ehFromIdx == bevEdgeIdx) allocate (seg-1) intermediate
+    // vertices. Profiles of other BVs are kept symbolic (just the two
+    // endpoint vertIds) since they describe the bev-edge side that the
+    // bevel quad strip already covers.
+    int M = cast(int)bv.boundVerts.length;
+    int leftBVidxAlloc = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+    foreach (i; 0 .. M) {
+        auto p = &bv.boundVerts[i].profile;
+        int seg = (p.sample.length > 0) ? cast(int)p.sample.length - 1 : 1;
+        p.sampleVertIds.length = seg + 1;
+        p.sampleVertIds[0]   = bv.boundVerts[i].vertId;
+        p.sampleVertIds[seg] = bv.boundVerts[(i + 1) % M].vertId;
+        if (cast(int)i == leftBVidxAlloc) {
+            foreach (k; 1 .. seg) {
+                p.sampleVertIds[k] = cast(int)mesh.addVertex(p.sample[k]);
+            }
+        } else {
+            // Mark intermediates as not allocated.
+            foreach (k; 1 .. seg)
+                p.sampleVertIds[k] = -1;
+        }
+    }
 
     int N = cast(int)bv.edges.length;
     uint fBevNext = bv.edges[bv.bevEdgeIdx].fnext;
     uint fBevPrev = bv.edges[bv.bevEdgeIdx].fprev;
+
+    int leftBVidx = boundVertIdxForEh  (bv, bv.bevEdgeIdx);
+    int rightBVidx = boundVertIdxForEhTo(bv, bv.bevEdgeIdx);
 
     foreach (k; 0 .. N) {
         uint faceIdx = bv.edges[k].fnext;
@@ -504,34 +619,68 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         snapshotFace(mesh, faceIdx, faceSnapped, faceSnaps);
 
         if (faceIdx == fBevNext) {
-            int bIdx = boundVertIdxForEh(bv, bv.bevEdgeIdx);
-            if (bIdx < 0) continue;
-            uint vid = cast(uint)bv.boundVerts[bIdx].vertId;
+            // Bev-adjacent face on the "next" CCW side: corner BV is the
+            // left BV (with ehFromIdx==bevEdgeIdx).
+            if (leftBVidx < 0) continue;
+            uint vid = cast(uint)bv.boundVerts[leftBVidx].vertId;
             if (vid != bv.vert)
                 replaceVertInFace(mesh, faceIdx, bv.vert, vid);
             continue;
         }
 
         if (faceIdx == fBevPrev) {
-            int bIdx = boundVertIdxForEhTo(bv, bv.bevEdgeIdx);
-            if (bIdx < 0) continue;
-            uint vid = cast(uint)bv.boundVerts[bIdx].vertId;
+            // Bev-adjacent face on the "prev" CCW side: corner BV is the
+            // right BV (with ehToIdx==bevEdgeIdx).
+            if (rightBVidx < 0) continue;
+            uint vid = cast(uint)bv.boundVerts[rightBVidx].vertId;
             if (vid != bv.vert)
                 replaceVertInFace(mesh, faceIdx, bv.vert, vid);
             continue;
         }
 
-        // F_other: prev-entering edge in this face = edges[(k+1)%N],
-        // next-leaving edge = edges[k]. The two BVs to splice in come from
-        // the two adjacent face corners.
+        // F_other: splice in profile points spanning from the prev-side BV
+        // to the next-side BV. For valence-3 selCount=1 there is a single
+        // F_other corner whose flanking corners are the bev-adjacent ones.
+        //
+        // Order in face traversal: prev-side first (adjacent to F_bev_prev),
+        // then sample[seg-1..1] across the F_other "front", then next-side
+        // (adjacent to F_bev_next).
         int bvPrevIdx = boundVertIdxForEh(bv, (k + 1) % N);
         int bvNextIdx = boundVertIdxForEhTo(bv, cast(int)k);
         if (bvPrevIdx < 0 || bvNextIdx < 0) continue;
 
-        spliceInTwoAtCorner(mesh, faceIdx, bv.vert,
-                            cast(uint)bv.boundVerts[bvPrevIdx].vertId,
-                            cast(uint)bv.boundVerts[bvNextIdx].vertId);
+        // The cap profile we splice spans from leftBV through F_other to
+        // rightBV. Its sampleVertIds is on leftBV's profile.
+        // sample[0] = leftBV.vertId, sample[seg] = rightBV.vertId.
+        // Inserting in the order [rightBV, ..., leftBV] means
+        // [sample[seg], sample[seg-1], ..., sample[0]].
+        if (leftBVidx < 0) continue;
+        auto cap = bv.boundVerts[leftBVidx].profile;
+        int seg = cast(int)cap.sampleVertIds.length - 1;
+        if (seg < 1) seg = 1;
+
+        uint[] toInsert;
+        toInsert.length = seg + 1;
+        for (int j = 0; j <= seg; j++)
+            toInsert[j] = cast(uint)cap.sampleVertIds[seg - j];
+        spliceInManyAtCorner(mesh, faceIdx, bv.vert, toInsert);
     }
+}
+
+private void spliceInManyAtCorner(Mesh* mesh, uint faceIdx,
+                                  uint corner, uint[] insertSeq)
+{
+    auto face = mesh.faces[faceIdx];
+    int idx = -1;
+    foreach (i, vi; face) if (vi == corner) { idx = cast(int)i; break; }
+    if (idx < 0) return;
+
+    uint[] newFace;
+    newFace.reserve(face.length + insertSeq.length - 1);
+    newFace ~= face[0 .. idx];
+    newFace ~= insertSeq;
+    newFace ~= face[idx + 1 .. $];
+    mesh.faces[faceIdx] = newFace;
 }
 
 private void snapshotFace(Mesh* mesh, uint faceIdx,

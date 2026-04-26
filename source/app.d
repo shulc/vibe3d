@@ -588,11 +588,20 @@ void main(string[] args) {
                 if (i > 0) json ~= ",";
                 json ~= format(`{"ehFromIdx":%d,"ehToIdx":%d,"face":%d,`
                                ~ `"isOnEdge":%s,"reusesOrig":%s,`
-                               ~ `"slideDir":[%f,%f,%f]}`,
+                               ~ `"pos":[%f,%f,%f],`
+                               ~ `"slideDir":[%f,%f,%f],`
+                               ~ `"profile":{"superR":%f,"sample":[`,
                                bnd.ehFromIdx, bnd.ehToIdx, cast(int)bnd.face,
                                bnd.isOnEdge   ? "true" : "false",
                                bnd.reusesOrig ? "true" : "false",
-                               bnd.slideDir.x, bnd.slideDir.y, bnd.slideDir.z);
+                               bnd.pos.x, bnd.pos.y, bnd.pos.z,
+                               bnd.slideDir.x, bnd.slideDir.y, bnd.slideDir.z,
+                               bnd.profile.superR);
+                foreach (j, s; bnd.profile.sample) {
+                    if (j > 0) json ~= ",";
+                    json ~= format(`[%f,%f,%f]`, s.x, s.y, s.z);
+                }
+                json ~= "]}}";
             }
             json ~= "]}";
             return json.data;
@@ -629,6 +638,8 @@ void main(string[] args) {
                         if ("widthR" in pj) mb.setWidthR(jsonNumber(pj["widthR"]));
                         if ("mode"   in pj && pj["mode"].type == JSONType.string)
                             mb.setMode(pj["mode"].str);
+                        if ("seg"    in pj) mb.setSeg(cast(int)jsonNumber(pj["seg"]));
+                        if ("superR" in pj) mb.setSuperR(jsonNumber(pj["superR"]));
                     }
                 }
             }

@@ -26,6 +26,8 @@ class MeshBevel : Command {
     private float            width   = 0.0f;
     private float            widthR  = float.nan;   // NaN → fall back to `width`
     private BevelWidthMode   mode    = BevelWidthMode.Offset;
+    private int              seg     = 1;
+    private float            superR  = 2.0f;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -40,6 +42,8 @@ class MeshBevel : Command {
 
     void setWidth(float w)   { width  = (w < 0.0f) ? 0.0f : w; }
     void setWidthR(float w)  { widthR = (w < 0.0f) ? 0.0f : w; }
+    void setSeg(int s)       { seg    = (s < 1) ? 1 : (s > 64 ? 64 : s); }
+    void setSuperR(float r)  { superR = (r < 0.1f) ? 0.1f : r; }
     void setMode(BevelWidthMode m) { mode = m; }
     void setMode(string s) {
         switch (s) {
@@ -60,7 +64,7 @@ class MeshBevel : Command {
         // Slide directions are computed at the (width, wR) widths directly,
         // so the BoundVerts land at their final positions during apply.
         BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
-                                             width, wR);
+                                             width, wR, seg, superR);
         updateEdgeBevelPositions(mesh, op, 1.0f);
 
         mesh.clearEdgeSelection();
