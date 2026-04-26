@@ -627,6 +627,8 @@ void main(string[] args) {
                                                                      : 0.0f;
                             mb.setWidth(wf);
                         }
+                        if ("mode" in pj && pj["mode"].type == JSONType.string)
+                            mb.setMode(pj["mode"].str);
                     }
                 }
             }

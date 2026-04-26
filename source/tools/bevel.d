@@ -75,8 +75,9 @@ private:
     int[]     edgeOrderBeforeBevel;
 
     // ---- Edge bevel parameters ----
-    float   ebWidth = 0.0f;
-    BevelOp ebOp;
+    float          ebWidth = 0.0f;
+    BevelWidthMode ebMode  = BevelWidthMode.Offset;
+    BevelOp        ebOp;
 
     // ---- Drag state ----
     int      dragHandle = -1;   // 0=shift/width, 1=insert, 2=free, -1=none
@@ -311,10 +312,35 @@ public:
 
     override void drawProperties() {
         if (*editMode == EditMode.Edges) {
-            bool changed = false;
+            bool changed   = false;
+            bool modeChanged = false;
             ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, float.max, "%.4f");
             if (ImGui.IsItemActive()) {
                 if (ebWidth < 0.0f) ebWidth = 0.0f;
+                changed = true;
+            }
+
+            int modeIdx = cast(int)ebMode;
+            ImGui.Text("Mode:");
+            if (ImGui.RadioButton("Offset",  modeIdx == 0)) {
+                if (ebMode != BevelWidthMode.Offset)  { ebMode = BevelWidthMode.Offset;  modeChanged = true; }
+            }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Width",   modeIdx == 1)) {
+                if (ebMode != BevelWidthMode.Width)   { ebMode = BevelWidthMode.Width;   modeChanged = true; }
+            }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Depth",   modeIdx == 2)) {
+                if (ebMode != BevelWidthMode.Depth)   { ebMode = BevelWidthMode.Depth;   modeChanged = true; }
+            }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Percent", modeIdx == 3)) {
+                if (ebMode != BevelWidthMode.Percent) { ebMode = BevelWidthMode.Percent; modeChanged = true; }
+            }
+
+            if (modeChanged && bevelApplied) {
+                revertEdgeBevelTopology();
+                applyEdgeBevelTopology();
                 changed = true;
             }
             if (changed && bevelApplied) {
@@ -424,7 +450,7 @@ private:
 
     void applyEdgeBevelTopology() {
         bevelApplied = true;
-        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges);
+        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, ebMode);
 
         // Selection: bevel-quad edges replace the previously selected edge ring.
         mesh.clearEdgeSelection();

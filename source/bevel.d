@@ -1,7 +1,71 @@
 module bevel;
 
+import std.math : sin, cos, acos;
+
 import math;
 import mesh;
+
+// ---------------------------------------------------------------------------
+// BevelWidthMode — controls how the user-facing `width` parameter is mapped
+// to the actual offsetSpec on each beveled edge.
+//
+//   Offset:  offsetSpec = w
+//   Width:   offsetSpec = w / (2 * sin(d/2))     where d = exterior dihedral
+//   Depth:   offsetSpec = w / cos(d/2)
+//   Percent: offsetSpec = edgeLength * w / 100
+//
+// The exterior dihedral d is the angle between the two adjacent face normals;
+// d = 0 for a flat edge (no bevel) and d = π/2 for a 90° cube edge.
+// ---------------------------------------------------------------------------
+
+enum BevelWidthMode {
+    Offset,
+    Width,
+    Depth,
+    Percent,
+}
+
+// Returns the per-unit-user-width offset coefficient for a beveled edge,
+// i.e. the value that should be passed to offsetMeet's wPrev/wNext at user
+// width = 1. The runtime BoundVert position is then origPos + slideDir * w.
+float widthCoefficient(Mesh* mesh, uint edgeIdx, BevelWidthMode mode) {
+    final switch (mode) {
+        case BevelWidthMode.Offset:
+            return 1.0f;
+        case BevelWidthMode.Percent: {
+            float len = (mesh.vertices[mesh.edges[edgeIdx][1]]
+                       - mesh.vertices[mesh.edges[edgeIdx][0]]).length;
+            return len / 100.0f;
+        }
+        case BevelWidthMode.Width: {
+            float ext = exteriorDihedral(mesh, edgeIdx);
+            float s   = sin(ext * 0.5f);
+            if (s < 1e-6f) return 0.0f;     // flat edge — no bevel
+            return 1.0f / (2.0f * s);
+        }
+        case BevelWidthMode.Depth: {
+            float ext = exteriorDihedral(mesh, edgeIdx);
+            float c   = cos(ext * 0.5f);
+            if (c < 1e-6f) return 0.0f;     // 180° dihedral — degenerate
+            return 1.0f / c;
+        }
+    }
+}
+
+private float exteriorDihedral(Mesh* mesh, uint edgeIdx) {
+    uint[2] fs;
+    int n = 0;
+    foreach (fi; mesh.facesAroundEdge(edgeIdx)) {
+        if (n < 2) fs[n++] = fi;
+    }
+    if (n < 2) return 0.0f;     // boundary edge → assume flat
+    Vec3 n1 = mesh.faceNormal(fs[0]);
+    Vec3 n2 = mesh.faceNormal(fs[1]);
+    float c = dot(n1, n2);
+    if (c >  1.0f) c =  1.0f;
+    if (c < -1.0f) c = -1.0f;
+    return acos(c);
+}
 
 // ---------------------------------------------------------------------------
 // Blender-style edge bevel data structures (stage 1).
@@ -114,9 +178,15 @@ struct BevelOp {
 // ---------------------------------------------------------------------------
 // Apply the bevel topology to the mesh. Vertices land at origPos initially;
 // call updateEdgeBevelPositions() to slide BoundVerts outward by `width`.
+//
+// `mode` controls how the user-facing width parameter is mapped to per-edge
+// offsetSpec — see BevelWidthMode. The slideDir computed for each BoundVert
+// already incorporates the mode coefficient at user width = 1, so the
+// runtime update path stays linear.
 // ---------------------------------------------------------------------------
 
-BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges)
+BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
+                                BevelWidthMode mode = BevelWidthMode.Offset)
 {
     BevelOp op;
     op.origVertexCount   = mesh.vertices.length;
@@ -155,8 +225,8 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges)
 
         BevVert bvA = buildBevVert(mesh, va, selectedEdges, loopAB);
         BevVert bvB = buildBevVert(mesh, vb, selectedEdges, loopBA);
-        populateBoundVerts(mesh, bvA);
-        populateBoundVerts(mesh, bvB);
+        populateBoundVerts(mesh, bvA, mode);
+        populateBoundVerts(mesh, bvB, mode);
 
         materializeBevVert(mesh, bvA, faceSnapped, op.faceSnaps);
         materializeBevVert(mesh, bvB, faceSnapped, op.faceSnaps);
@@ -287,20 +357,34 @@ BevVert buildBevVert(Mesh* mesh, uint vert, const(bool)[] selectedEdges,
 // One BoundVert per CCW-adjacent EdgeHalf pair (k, (k+1)%N) where at least
 // one of the two is beveled. The BoundVert lives in the common face
 // `edges[k].fnext` (== `edges[(k+1)%N].fprev`) and its slide direction is
-// (offsetMeet at unit widths) - origPos, so the runtime position is just
-// `origPos + slideDir * width`.
+// (offsetMeet at the mode-adjusted per-edge offsets, evaluated at user
+// width = 1) - origPos, so the runtime position stays linear:
+//     pos = origPos + slideDir * width.
 //
 // Reuse rule: the first BoundVert encountered whose left flanking EdgeHalf
-// is the beveled one (i.e. `edges[k].isBev` and (selCount==1 ⇒ k==bevEdgeIdx))
-// reuses the original vertex; the rest are allocated fresh in materialize.
+// is the beveled one reuses the original vertex; the rest are allocated
+// fresh in materialize.
 //
-// Stage 1 invariant: this matches the previous slide-along-edge behavior for
-// selCount=1 valence-3 endpoints exactly, since offsetMeet of one bev edge
-// (width=1) and one non-bev edge (width=0) lands on the non-bev edge at unit
-// distance from the corner.
-void populateBoundVerts(Mesh* mesh, ref BevVert bv)
+// Stage 1 invariant: with mode==Offset (offset coefficient = 1) this matches
+// the previous slide-along-edge behavior for selCount=1 valence-3 endpoints
+// exactly, since offsetMeet of one bev edge (width=1) and one non-bev edge
+// (width=0) lands on the non-bev edge at unit distance from the corner.
+void populateBoundVerts(Mesh* mesh, ref BevVert bv,
+                        BevelWidthMode mode = BevelWidthMode.Offset)
 {
     if (bv.selCount < 1) return;
+
+    // Resolve per-edge offsetSpec from the chosen width mode.
+    foreach (ref eh; bv.edges) {
+        if (!eh.isBev) {
+            eh.offsetLSpec = 0.0f;
+            eh.offsetRSpec = 0.0f;
+            continue;
+        }
+        float c = widthCoefficient(mesh, eh.edgeIdx, mode);
+        eh.offsetLSpec = c;
+        eh.offsetRSpec = c;
+    }
 
     int N = cast(int)bv.edges.length;
     bool reuseAssigned = false;
@@ -314,8 +398,12 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv)
         Vec3 ePrev = computeSlideDirForEdge(mesh, bv, knext); // toward prevV in face
         Vec3 eNext = computeSlideDirForEdge(mesh, bv, k);     // toward nextV in face
         Vec3 faceN = mesh.faceNormal(eh1.fnext);
-        float wPrev = eh2.isBev ? 1.0f : 0.0f;
-        float wNext = eh1.isBev ? 1.0f : 0.0f;
+        // The corner sits in face `eh1.fnext == eh2.fprev`. From this corner's
+        // viewpoint, eh2 acts as the prev side (use its right offsetSpec) and
+        // eh1 acts as the next side (use its left offsetSpec). Per-side
+        // distinction matters from stage 5 onward — here both sides are equal.
+        float wPrev = eh2.isBev ? eh2.offsetRSpec : 0.0f;
+        float wNext = eh1.isBev ? eh1.offsetLSpec : 0.0f;
         Vec3 meetUnit = offsetMeet(bv.origPos, ePrev, eNext, faceN, wPrev, wNext);
 
         BoundVert bnd;
