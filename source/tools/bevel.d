@@ -315,20 +315,22 @@ public:
 
             int modeIdx = cast(int)ebMode;
             ImGui.Text("Mode:");
+            BevelWidthMode prevMode = ebMode;
+            bool modeJustChanged = false;
             if (ImGui.RadioButton("Offset##mode",  modeIdx == 0)) {
-                if (ebMode != BevelWidthMode.Offset)  { ebMode = BevelWidthMode.Offset;  topologyDirty = true; }
+                if (ebMode != BevelWidthMode.Offset)  { prevMode = ebMode; ebMode = BevelWidthMode.Offset;  topologyDirty = true; modeJustChanged = true; }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Width##mode",   modeIdx == 1)) {
-                if (ebMode != BevelWidthMode.Width)   { ebMode = BevelWidthMode.Width;   topologyDirty = true; }
+                if (ebMode != BevelWidthMode.Width)   { prevMode = ebMode; ebMode = BevelWidthMode.Width;   topologyDirty = true; modeJustChanged = true; }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Depth##mode",   modeIdx == 2)) {
-                if (ebMode != BevelWidthMode.Depth)   { ebMode = BevelWidthMode.Depth;   topologyDirty = true; }
+                if (ebMode != BevelWidthMode.Depth)   { prevMode = ebMode; ebMode = BevelWidthMode.Depth;   topologyDirty = true; modeJustChanged = true; }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Percent##mode", modeIdx == 3)) {
-                if (ebMode != BevelWidthMode.Percent) { ebMode = BevelWidthMode.Percent; topologyDirty = true; }
+                if (ebMode != BevelWidthMode.Percent) { prevMode = ebMode; ebMode = BevelWidthMode.Percent; topologyDirty = true; modeJustChanged = true; }
             }
 
             // Apply lazily on first user input from the property panel: any
@@ -342,6 +344,21 @@ public:
                 applyEdgeBevelTopology();
             } else if (topologyDirty && bevelApplied) {
                 revertEdgeBevelTopology();
+                // After revert the original mesh is restored — remap ebWidth so
+                // the physical bevel size stays constant across mode switches:
+                //   ebWidth_new * c(newMode) = ebWidth_old * c(oldMode).
+                if (modeJustChanged && ebWidth > 0.0f) {
+                    uint repEdge = ~0u;
+                    foreach (i, sel; mesh.selectedEdges)
+                        if (sel) { repEdge = cast(uint)i; break; }
+                    if (repEdge != ~0u) {
+                        import bevel : widthCoefficient;
+                        float cOld = widthCoefficient(mesh, repEdge, prevMode);
+                        float cNew = widthCoefficient(mesh, repEdge, ebMode);
+                        if (cNew > 1e-6f && cOld > 1e-6f)
+                            ebWidth = ebWidth * cOld / cNew;
+                    }
+                }
                 applyEdgeBevelTopology();
             }
             if ((widthChanged || topologyDirty) && bevelApplied) {
