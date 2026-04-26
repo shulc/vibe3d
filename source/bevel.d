@@ -152,12 +152,18 @@ struct BevVert {
     BoundVert[] boundVerts;
     VMesh       vmesh;
     int         bevEdgeIdx = -1;  // index in edges[] of the (single, stage 1) beveled EdgeHalf
-    // M_ADJ cap (selCount == valence, seg ≥ 2): one Catmull-Clark step on the
-    // BoundVert ring produces N corner-quads sharing a single center vertex.
-    // The midpoint of each quad's outer arc is the cap-profile midpoint of
-    // the corresponding BoundVert (already stored in profile.sampleVertIds).
+    // M_ADJ cap canonical grid (selCount == valence, even seg ≥ 2). Indexing
+    // matches Blender's bmesh_bevel.cc:
+    //   adjGridVids[i * (ns2 + 1) * (ns + 1) + j * (ns + 1) + k] for canonical
+    //   (i, j, k); non-canonical (i, j, k) are resolved through `adjCanonVid`.
+    // adjGridDirs[idx] stores (positionAtUnitWidth - origPos) for linear width
+    // scaling in updateEdgeBevelPositions. The center (only canonical at
+    // i=0, j=ns2, k=ns2 for even ns) is stored separately as adjCenterVid /
+    // adjCenterDir for readability.
     int         adjCenterVid = -1;
-    Vec3        adjCenterDir = Vec3(0, 0, 0);  // (centerAtUnitWidth - origPos)
+    Vec3        adjCenterDir = Vec3(0, 0, 0);
+    int[]       adjGridVids;
+    Vec3[]      adjGridDirs;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,21 +275,31 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
             }
             if (capBvs.length >= 3) {
                 if (useMAdj(bv) && bv.adjCenterVid >= 0) {
-                    int N = cast(int)capBvs.length;
-                    foreach (j; 0 .. N) {
-                        int prevJ = (j + N - 1) % N;
-                        // The cap profile of capBvs[j] runs from BV[j] to
-                        // BV[next(j)] and owns the midpoint between them.
-                        // Midpoint preceding BV[j] = profile midpoint of
-                        // capBvs[prevJ].
-                        int midNext = bv.boundVerts[capBvs[j]].profile.sampleVertIds[1];
-                        int midPrev = bv.boundVerts[capBvs[prevJ]].profile.sampleVertIds[1];
-                        mesh.faces ~= [
-                            cast(uint)bv.boundVerts[capBvs[j]].vertId,
-                            cast(uint)midNext,
-                            cast(uint)bv.adjCenterVid,
-                            cast(uint)midPrev,
-                        ];
+                    // M_ADJ cap quads. Per panel i ∈ [0, n), per (j, k) ∈
+                    // [0, ns2-1] × [0, ns2-1+odd]: emit a quad whose corners
+                    // are (i, j, k), (i, j, k+1), (i, j+1, k+1), (i, j+1, k)
+                    // resolved through the canon mapping. For seg=2 this is
+                    // exactly N corner-quads sharing the center; for seg=4
+                    // it is 4N quads forming a one-CC-step grid; etc.
+                    int n   = cast(int)bv.boundVerts.length;
+                    int ns  = bv.vmesh.seg;
+                    int ns2 = ns / 2;
+                    int odd = ns % 2;
+                    foreach (pi; 0 .. n) {
+                        foreach (jj; 0 .. ns2) {
+                            foreach (kk; 0 .. ns2 + odd) {
+                                int v00 = adjCanonVid(bv, pi, jj,     kk);
+                                int v01 = adjCanonVid(bv, pi, jj,     kk + 1);
+                                int v11 = adjCanonVid(bv, pi, jj + 1, kk + 1);
+                                int v10 = adjCanonVid(bv, pi, jj + 1, kk);
+                                if (v00 < 0 || v01 < 0 || v11 < 0 || v10 < 0)
+                                    continue;
+                                mesh.faces ~= [
+                                    cast(uint)v00, cast(uint)v01,
+                                    cast(uint)v11, cast(uint)v10,
+                                ];
+                            }
+                        }
                     }
                 } else {
                     uint[] cap;
@@ -402,18 +418,25 @@ void updateEdgeBevelPositions(Mesh* mesh, ref const BevelOp op, float width)
             if (bnd.vertId >= 0 && bnd.vertId < cast(int)mesh.vertices.length)
                 mesh.vertices[bnd.vertId] = bv.origPos + bnd.slideDir * width;
         }
+        // Non-M_ADJ profile intermediates (selCount==1 leftBV cap profile
+        // splice into F_other). M_ADJ paths route every profile through the
+        // canonical grid below, so their direct sampleVertIds writes would
+        // be redundant — keep them anyway for safety; the grid pass writes
+        // the same position.
         foreach (ref bnd; bv.boundVerts) {
             auto p = &bnd.profile;
             int seg = cast(int)p.sample.length - 1;
             if (seg <= 1) continue;
-            // sample[0] and sample[seg] coincide with their owning BoundVerts
-            // and were updated above. Scale each intermediate by the linear
-            // displacement (sample[k] - origPos) * width.
             foreach (k; 1 .. seg) {
                 int vid = (k < cast(int)p.sampleVertIds.length) ? p.sampleVertIds[k] : -1;
                 if (vid < 0 || vid >= cast(int)mesh.vertices.length) continue;
                 mesh.vertices[vid] = bv.origPos + (p.sample[k] - bv.origPos) * width;
             }
+        }
+        // M_ADJ canonical grid: every interior + boundary canonical position.
+        foreach (idx, vid; bv.adjGridVids) {
+            if (vid < 0 || vid >= cast(int)mesh.vertices.length) continue;
+            mesh.vertices[vid] = bv.origPos + bv.adjGridDirs[idx] * width;
         }
         if (bv.adjCenterVid >= 0
             && bv.adjCenterVid < cast(int)mesh.vertices.length)
@@ -705,13 +728,88 @@ private bool isAllBevAtVert(ref const BevVert bv) {
 }
 
 // True iff this BevVert should use M_ADJ topology in the cap and bev strips.
-// Stage 7 phase 2 supports only seg == 2 (one Catmull-Clark step); higher
-// seg with selCount ≥ 3 falls back to the seg=1 N-gon cap.
+// Stage 7 phase 2a–b supports even seg ≥ 2; odd seg with selCount ≥ 3 falls
+// back to the seg=1 N-gon cap (would need an additional center-polygon
+// emission path à la Blender's `bevel_build_rings` odd branch).
 private bool useMAdj(ref const BevVert bv) {
     return bv.vmesh.kind == VMeshKind.ADJ
-        && bv.vmesh.seg  == 2
+        && bv.vmesh.seg  >= 2
+        && (bv.vmesh.seg % 2) == 0
         && isAllBevAtVert(bv)
         && bv.boundVerts.length >= 3;
+}
+
+// Flat-array stride for the canonical M_ADJ grid: (ns2 + 1) rows × (ns + 1)
+// columns per panel. Includes some non-canonical slots for indexing simplicity.
+private size_t adjFlatIdx(int i, int j, int k, int ns) {
+    return cast(size_t)i * cast(size_t)((ns / 2) + 1) * cast(size_t)(ns + 1)
+         + cast(size_t)j * cast(size_t)(ns + 1)
+         + cast(size_t)k;
+}
+
+// Resolve any (i, j, k) — canonical or not — to its mesh vertex ID via the
+// equivalence rules from Blender's mesh_vert_canon. Recursively rewrites
+// non-canonical positions to their canonical counterpart.
+private int adjCanonVid(ref const BevVert bv, int i, int j, int k) {
+    int n   = cast(int)bv.boundVerts.length;
+    int ns  = bv.vmesh.seg;
+    int ns2 = ns / 2;
+    int odd = ns % 2;
+    if (n == 0) return -1;
+
+    if (!odd && j == ns2 && k == ns2)
+        return bv.adjCenterVid;
+    if (j <= ns2 - 1 + odd && k <= ns2) {
+        size_t idx = adjFlatIdx(i, j, k, ns);
+        if (idx >= bv.adjGridVids.length) return -1;
+        return bv.adjGridVids[idx];
+    }
+    if (k <= ns2)
+        return adjCanonVid(bv, (i + n - 1) % n, k, ns - j);
+    return adjCanonVid(bv, (i + 1) % n, ns - k, j);
+}
+
+// Compute (positionAtUnitWidth - origPos) for canonical (i, j, k). Used
+// during materialize to seed adjGridDirs; updateEdgeBevelPositions later
+// scales these linearly with the user width.
+private Vec3 adjCanonDirAtUnitWidth(ref const BevVert bv, int i, int j, int k) {
+    int n   = cast(int)bv.boundVerts.length;
+    int ns  = bv.vmesh.seg;
+    int ns2 = ns / 2;
+
+    Vec3 origPos = bv.origPos;
+
+    // (i, 0, k) for k in [0, ns2]: on cap arc i, super-ellipse sample.
+    if (j == 0)
+        return bv.boundVerts[i].profile.sample[k] - origPos;
+
+    // (i, j, 0) for j in [1, ns2-1+odd]: equivalent to (i-1, 0, ns-j) — on
+    // cap arc (i-1)'s super-ellipse, NOT a bilinear point. Match the canon
+    // mapping exactly so both panels see the same position for this vertex.
+    if (k == 0)
+        return bv.boundVerts[(i + n - 1) % n].profile.sample[ns - j] - origPos;
+
+    Vec3 center = bv.adjCenterDir;
+
+    // (i, j, ns2) for j in [1, ns2]: on the panel mid-line going from
+    // midpoint(i) (at j=0) to the center (at j=ns2). Linear blend.
+    if (k == ns2) {
+        Vec3 midI = bv.boundVerts[i].profile.sample[ns2] - origPos;
+        float v = cast(float)j / cast(float)ns2;
+        return midI * (1.0f - v) + center * v;
+    }
+
+    // True interior: bilinear over the panel quad (BV_i, midpoint(i),
+    // midpoint(i-1), center).
+    Vec3 BV_i    = bv.boundVerts[i].slideDir;
+    Vec3 mid_i   = bv.boundVerts[i].profile.sample[ns2] - origPos;
+    Vec3 mid_im1 = bv.boundVerts[(i + n - 1) % n].profile.sample[ns2] - origPos;
+    float u = cast(float)k / cast(float)ns2;
+    float v = cast(float)j / cast(float)ns2;
+    return BV_i    * ((1.0f - u) * (1.0f - v))
+         + mid_i   * (u          * (1.0f - v))
+         + mid_im1 * ((1.0f - u) * v)
+         + center  * (u          * v);
 }
 
 // Assign new vertex ids, snapshot faces, patch each face around bv.vert.
@@ -761,47 +859,30 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
     int M = cast(int)bv.boundVerts.length;
     int leftBVidxAlloc = boundVertIdxForEh(bv, bv.bevEdgeIdx);
     bool madj = useMAdj(bv);
-    foreach (i; 0 .. M) {
-        auto p = &bv.boundVerts[i].profile;
-        int seg = (p.sample.length > 0) ? cast(int)p.sample.length - 1 : 1;
-        p.sampleVertIds.length = seg + 1;
-        p.sampleVertIds[0]   = bv.boundVerts[i].vertId;
-        p.sampleVertIds[seg] = bv.boundVerts[(i + 1) % M].vertId;
-        // Allocate intermediate sample vertices when this profile actually
-        // bounds new geometry: the leftBV cap profile (selCount == 1, splices
-        // into F_other) or every profile under M_ADJ (each is shared between
-        // a cap quad and a strip quad).
-        bool needIntermediates = (cast(int)i == leftBVidxAlloc) || madj;
-        if (needIntermediates) {
-            foreach (k; 1 .. seg) {
-                // Seed intermediates at origPos (see addVertex comment above).
-                p.sampleVertIds[k] = cast(int)mesh.addVertex(bv.origPos);
-            }
-        } else {
-            foreach (k; 1 .. seg)
-                p.sampleVertIds[k] = -1;
-        }
-    }
 
-    // M_ADJ center vertex: the Catmull-Clark "face point" of the BoundVert
-    // ring. Computed at unit width as the average of the cap-profile mid
-    // sample positions (sample[seg/2]); updateEdgeBevelPositions scales it
-    // linearly with the user width.
     if (madj) {
-        Vec3 sum = Vec3(0, 0, 0);
-        int  count = 0;
-        int  midK = bv.vmesh.seg / 2;
-        foreach (ref bnd; bv.boundVerts) {
-            if (bnd.aliasOf >= 0) continue;
-            if (midK < cast(int)bnd.profile.sample.length) {
-                sum = sum + bnd.profile.sample[midK];
-                count++;
+        // M_ADJ: build the canonical (i, j, k) grid and route every profile's
+        // sampleVertIds through it. The face-patching loop below still runs
+        // afterwards (every face around bv.vert has a corner BV under M_ADJ —
+        // there is no F_other to splice into).
+        materializeBevVertMAdj(mesh, bv);
+    } else {
+        foreach (i; 0 .. M) {
+            auto p = &bv.boundVerts[i].profile;
+            int seg = (p.sample.length > 0) ? cast(int)p.sample.length - 1 : 1;
+            p.sampleVertIds.length = seg + 1;
+            p.sampleVertIds[0]   = bv.boundVerts[i].vertId;
+            p.sampleVertIds[seg] = bv.boundVerts[(i + 1) % M].vertId;
+            // Allocate intermediate sample vertices only for the leftBV cap
+            // profile (selCount == 1 splices it into F_other).
+            if (cast(int)i == leftBVidxAlloc) {
+                foreach (k; 1 .. seg) {
+                    p.sampleVertIds[k] = cast(int)mesh.addVertex(bv.origPos);
+                }
+            } else {
+                foreach (k; 1 .. seg)
+                    p.sampleVertIds[k] = -1;
             }
-        }
-        if (count > 0) {
-            Vec3 capCenter = sum * (1.0f / cast(float)count);
-            bv.adjCenterVid = cast(int)mesh.addVertex(bv.origPos);
-            bv.adjCenterDir = capCenter - bv.origPos;
         }
     }
 
@@ -841,6 +922,79 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         for (int j = 0; j <= seg; j++)
             toInsert[j] = cast(uint)cap.sampleVertIds[seg - j];
         spliceInManyAtCorner(mesh, faceIdx, bv.vert, toInsert);
+    }
+}
+
+// Allocate the M_ADJ canonical grid for `bv` and wire up profile.sampleVertIds
+// of every cap profile to point into the grid via the canon mapping. New mesh
+// vertices are seeded at bv.origPos; updateEdgeBevelPositions writes the
+// per-vertex final positions later (origPos + adjGridDirs[idx] * width).
+//
+// Storage layout: bv.adjGridVids has length n * (ns2 + 1) * (ns + 1). Only
+// canonical slots are populated; non-canonical lookups go through adjCanonVid
+// which recursively resolves to the canonical (i', j', k').
+private void materializeBevVertMAdj(Mesh* mesh, ref BevVert bv) {
+    int n   = cast(int)bv.boundVerts.length;
+    int ns  = bv.vmesh.seg;
+    int ns2 = ns / 2;
+    int odd = ns % 2;
+    if (n < 3 || ns < 2) return;
+
+    size_t cells = cast(size_t)n * cast(size_t)(ns2 + 1) * cast(size_t)(ns + 1);
+    bv.adjGridVids.length = cells;
+    bv.adjGridDirs.length = cells;
+    bv.adjGridVids[] = -1;
+
+    // Center first (referenced by the bilinear formulas via bv.adjCenterDir).
+    if (!odd) {
+        Vec3 sum = Vec3(0, 0, 0);
+        foreach (ref bnd; bv.boundVerts)
+            sum = sum + bnd.profile.sample[ns2];
+        Vec3 capCenter = sum * (1.0f / cast(float)n);
+        bv.adjCenterDir = capCenter - bv.origPos;
+        bv.adjCenterVid = cast(int)mesh.addVertex(bv.origPos);
+    }
+
+    // Corner BVs occupy (i, 0, 0).
+    foreach (i; 0 .. n) {
+        size_t idx = adjFlatIdx(i, 0, 0, ns);
+        bv.adjGridVids[idx] = bv.boundVerts[i].vertId;
+        bv.adjGridDirs[idx] = bv.boundVerts[i].slideDir;
+    }
+
+    // Boundary cap-arc points (i, 0, k) for k=1..ns2.
+    foreach (i; 0 .. n) {
+        foreach (k; 1 .. ns2 + 1) {
+            size_t idx = adjFlatIdx(i, 0, k, ns);
+            bv.adjGridVids[idx] = cast(int)mesh.addVertex(bv.origPos);
+            bv.adjGridDirs[idx] = adjCanonDirAtUnitWidth(bv, i, 0, k);
+        }
+    }
+
+    // Interior canonical positions (j=1..ns2-1+odd, k=0..ns2). For even ns
+    // jMax = ns2-1; for odd ns also include j=ns2 (the center row before
+    // (i==0, k==ns2) collapses to the center vertex). We currently skip odd
+    // here (useMAdj filters it out).
+    int jMax = ns2 - 1 + odd;
+    foreach (i; 0 .. n) {
+        foreach (j; 1 .. jMax + 1) {
+            foreach (k; 0 .. ns2 + 1) {
+                size_t idx = adjFlatIdx(i, j, k, ns);
+                bv.adjGridVids[idx] = cast(int)mesh.addVertex(bv.origPos);
+                bv.adjGridDirs[idx] = adjCanonDirAtUnitWidth(bv, i, j, k);
+            }
+        }
+    }
+
+    // Wire profile.sampleVertIds through the grid. profile of panel i runs
+    // from (i, 0, 0) at sampleVertIds[0] to (i, 0, ns) at sampleVertIds[ns]
+    // (which is canonical (i+1, 0, 0) — corner BV of the next panel).
+    foreach (i; 0 .. n) {
+        auto p = &bv.boundVerts[i].profile;
+        p.sampleVertIds.length = ns + 1;
+        foreach (kk; 0 .. ns + 1) {
+            p.sampleVertIds[kk] = adjCanonVid(bv, i, 0, kk);
+        }
     }
 }
 

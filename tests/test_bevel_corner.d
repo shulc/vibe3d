@@ -205,6 +205,104 @@ unittest { // CUBE CORNER seg=2: total vertex count = 8 + 6 (at v_0: 2 BV + 3 mi
         ~ m["vertexCount"].integer.to!string);
 }
 
+unittest { // CUBE CORNER seg=4: M_ADJ grid (2 CC steps via topology) — manifold
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 4);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    int bad = countNonManifoldEdges(m);
+    assert(bad == 0,
+        "expected manifold mesh for seg=4 cube corner, got "
+        ~ bad.to!string ~ " non-manifold edges");
+}
+
+unittest { // CUBE CORNER seg=4: total vertex count
+           // v_0:  2 new BVs + 5 grid-canon per panel × 3 panels + 1 ctr = 18
+           // v_1, v_3, v_4: 1 BV + 3 cap-mid (selCount=1 leftBV profile) = 4 each
+           // Total = 8 + 18 + 12 = 38
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 4);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    assert(m["vertexCount"].integer == 38,
+        "expected 38 vertices for seg=4 cube corner, got "
+        ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // CUBE CORNER seg=8: M_ADJ grid generalizes — manifold + face count
+           // Cap quads = ns2 × (ns2 + odd) per panel × N = 4 × 4 × 3 = 48.
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 8);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    int bad = countNonManifoldEdges(m);
+    assert(bad == 0,
+        "expected manifold mesh for seg=8 cube corner, got "
+        ~ bad.to!string ~ " non-manifold edges");
+
+    auto faces = m["faces"].array;
+    auto verts = m["vertices"].array;
+    double[] v0orig = [-0.5, -0.5, -0.5];
+    double dist3(JSONValue v, double[] o) {
+        auto a = v.array;
+        double dx = a[0].floating - o[0];
+        double dy = a[1].floating - o[1];
+        double dz = a[2].floating - o[2];
+        return sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    int capQuads = 0;
+    foreach (f; faces) {
+        auto fv = f.array;
+        if (fv.length != 4) continue;
+        bool allClose = true;
+        foreach (vi; fv) {
+            if (dist3(verts[cast(int)vi.integer], v0orig) > 0.5) {
+                allClose = false; break;
+            }
+        }
+        if (allClose) capQuads++;
+    }
+    assert(capQuads == 48,
+        "expected 48 M_ADJ cap quads at v_0 (seg=8), got "
+        ~ capQuads.to!string);
+}
+
+unittest { // CUBE CORNER seg=4: cap is 12 quads (4 per panel × 3 panels)
+    resetCube();
+    selectEdges([0, 3, 8]);
+    runBevelSeg(0.2f, 4);
+    auto m = parseJSON(get("http://localhost:8080/api/model"));
+    auto faces = m["faces"].array;
+    auto verts = m["vertices"].array;
+
+    double[] v0orig = [-0.5, -0.5, -0.5];
+    double dist3(JSONValue v, double[] o) {
+        auto a = v.array;
+        double dx = a[0].floating - o[0];
+        double dy = a[1].floating - o[1];
+        double dz = a[2].floating - o[2];
+        return sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    // Cap quads sit entirely within ~0.5 of v_0_orig (well below the
+    // ~0.7 distance to v_1 / v_3 / v_4 across the bev edges).
+    int capQuads = 0;
+    foreach (f; faces) {
+        auto fv = f.array;
+        if (fv.length != 4) continue;
+        bool allClose = true;
+        foreach (vi; fv) {
+            if (dist3(verts[cast(int)vi.integer], v0orig) > 0.5) {
+                allClose = false; break;
+            }
+        }
+        if (allClose) capQuads++;
+    }
+    assert(capQuads == 12,
+        "expected 12 M_ADJ cap quads at v_0 (seg=4), got "
+        ~ capQuads.to!string);
+}
+
 unittest { // CUBE CORNER seg=2: cap is 3 quads sharing one center vertex
     resetCube();
     selectEdges([0, 3, 8]);
