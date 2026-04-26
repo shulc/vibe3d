@@ -15,7 +15,7 @@ import bevel;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
-import std.math : sqrt, abs;
+import std.math : sqrt;
 
 // ---------------------------------------------------------------------------
 // BevelTool — polygon bevel (Polygons mode) + edge bevel (Edges mode)
@@ -84,12 +84,9 @@ private:
     BevelOp        ebOp;
 
     // ---- Drag state ----
-    int      dragHandle = -1;   // 0=shift/width, 1=insert, 2=free, -1=none
+    int      dragHandle = -1;   // 0=shift/width handle, 1=insert handle, -1=none
     int      lastMX, lastMY;
     Viewport cachedVp;
-
-    int  freeDragAxis    = -1;
-    int  freeDragStartMX, freeDragStartMY;
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
@@ -122,7 +119,6 @@ public:
         shiftAmount  = 0.0f;
         insertScale  = 1.0f;
         dragHandle   = -1;
-        freeDragAxis = -1;
         ebWidth      = 0.0f;
         ebOp         = BevelOp.init;
         if (*editMode == EditMode.Edges)
@@ -202,16 +198,18 @@ public:
 
         if (edgeMode && !mesh.hasAnySelectedEdges()) return false;
 
+        // Only consume the click when it actually hits one of the gizmo
+        // handles. The previous "free drag anywhere" fallback would steal
+        // clicks from ImGui widgets (Width slider, Mode radios) whenever the
+        // global WantCaptureMouse filter raced with the click — losing the
+        // very first frame of interaction. Users who want to scrub width can
+        // still drag the shift handle.
         if (shiftHandle.hitTest(e.x, e.y, cachedVp))
             dragHandle = 0;
         else if (polyMode && insertHandle.hitTest(e.x, e.y, cachedVp))
             dragHandle = 1;
-        else {
-            dragHandle      = 2;
-            freeDragAxis    = -1;
-            freeDragStartMX = e.x;
-            freeDragStartMY = e.y;
-        }
+        else
+            return false;
 
         lastMX = e.x;
         lastMY = e.y;
@@ -224,8 +222,7 @@ public:
             gpu.upload(*mesh);
             mesh.syncSelection();
         }
-        dragHandle   = -1;
-        freeDragAxis = -1;
+        dragHandle = -1;
         return true;
     }
 
@@ -233,42 +230,6 @@ public:
         if (!active || dragHandle < 0) return false;
 
         bool edgeMode = (*editMode == EditMode.Edges);
-
-        if (dragHandle == 2) {
-            // Free drag: wait for enough movement to determine axis.
-            if (freeDragAxis < 0) {
-                int tdx = e.x - freeDragStartMX;
-                int tdy = e.y - freeDragStartMY;
-                if (tdx*tdx + tdy*tdy < 25) { lastMX = e.x; lastMY = e.y; return true; }
-                freeDragAxis = (abs(tdx) >= abs(tdy)) ? 1 : 0;
-                if (!bevelApplied) applyBevelTopology();
-                lastMX = e.x; lastMY = e.y; return true;
-            }
-
-            if (edgeMode) {
-                // In edge mode, both axes increase width (use the larger absolute delta).
-                float worldScale = gizmoSize(gizmoCenter, cachedVp) * 2.0f / cachedVp.height;
-                float dx = cast(float)(e.x - lastMX);
-                float dy = -(cast(float)(e.y - lastMY));
-                float d  = (abs(dx) >= abs(dy)) ? dx * worldScale : dy * worldScale;
-                ebWidth += d;
-                if (ebWidth < 0.0f) ebWidth = 0.0f;
-            } else if (freeDragAxis == 0) {
-                float worldScale = gizmoSize(gizmoCenter, cachedVp) * 2.0f / cachedVp.height;
-                float d          = -(e.y - lastMY) * worldScale;
-                shiftAmount += d;
-                gizmoCenter  += gizmoNormal * d;
-            } else {
-                float scaleFactor = 1.0f + cast(float)(e.x - lastMX) / 200.0f;
-                if (insertScale * scaleFactor < 0.0f) scaleFactor = 0.0f;
-                insertScale *= scaleFactor;
-            }
-
-            updateBevelVertices();
-            gpu.upload(*mesh);
-            lastMX = e.x; lastMY = e.y;
-            return true;
-        }
 
         // Handle drags (dragHandle 0 or 1) — commit topology on first motion.
         if (!bevelApplied) applyBevelTopology();
@@ -316,12 +277,19 @@ public:
 
     override void drawProperties() {
         if (*editMode == EditMode.Edges) {
-            bool changed       = false;
+            bool widthChanged  = false;
             bool topologyDirty = false;
-            ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, float.max, "%.4f");
-            if (ImGui.IsItemActive()) {
+
+            // NOTE: every label here must be globally unique within this
+            // window — ImGui derives widget IDs from the label hash. Mode
+            // radios use `##mode` suffixes so the visible label can match
+            // the DragFloat/SliderInt names without colliding (in particular,
+            // RadioButton "Width" once collided with DragFloat "Width" and
+            // silently broke the slider's active state).
+
+            if (ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, 0.0f, "%.4f")) {
                 if (ebWidth < 0.0f) ebWidth = 0.0f;
-                changed = true;
+                widthChanged = true;
             }
 
             if (ImGui.Checkbox("Asymmetric", &ebAsymmetric)) {
@@ -329,8 +297,7 @@ public:
                 topologyDirty = true;
             }
             if (ebAsymmetric) {
-                ImGui.DragFloat("Width R", &ebWidthR, 0.005f, 0.0f, float.max, "%.4f");
-                if (ImGui.IsItemActive()) {
+                if (ImGui.DragFloat("Width R", &ebWidthR, 0.005f, 0.0f, 0.0f, "%.4f")) {
                     if (ebWidthR < 0.0f) ebWidthR = 0.0f;
                     topologyDirty = true;
                 }
@@ -342,34 +309,42 @@ public:
                 topologyDirty = true;
             }
             if (ebSeg >= 2) {
-                ImGui.DragFloat("Super R", &ebSuperR, 0.05f, 0.5f, 8.0f, "%.2f");
-                if (ImGui.IsItemActive()) topologyDirty = true;
+                if (ImGui.DragFloat("Super R", &ebSuperR, 0.05f, 0.5f, 8.0f, "%.2f"))
+                    topologyDirty = true;
             }
 
             int modeIdx = cast(int)ebMode;
             ImGui.Text("Mode:");
-            if (ImGui.RadioButton("Offset",  modeIdx == 0)) {
+            if (ImGui.RadioButton("Offset##mode",  modeIdx == 0)) {
                 if (ebMode != BevelWidthMode.Offset)  { ebMode = BevelWidthMode.Offset;  topologyDirty = true; }
             }
             ImGui.SameLine();
-            if (ImGui.RadioButton("Width",   modeIdx == 1)) {
+            if (ImGui.RadioButton("Width##mode",   modeIdx == 1)) {
                 if (ebMode != BevelWidthMode.Width)   { ebMode = BevelWidthMode.Width;   topologyDirty = true; }
             }
             ImGui.SameLine();
-            if (ImGui.RadioButton("Depth",   modeIdx == 2)) {
+            if (ImGui.RadioButton("Depth##mode",   modeIdx == 2)) {
                 if (ebMode != BevelWidthMode.Depth)   { ebMode = BevelWidthMode.Depth;   topologyDirty = true; }
             }
             ImGui.SameLine();
-            if (ImGui.RadioButton("Percent", modeIdx == 3)) {
+            if (ImGui.RadioButton("Percent##mode", modeIdx == 3)) {
                 if (ebMode != BevelWidthMode.Percent) { ebMode = BevelWidthMode.Percent; topologyDirty = true; }
             }
 
-            if (topologyDirty && bevelApplied) {
+            // Apply lazily on first user input from the property panel: any
+            // width / mode / topology change implies "I want this bevel". If
+            // the topology hasn't been built yet we build it now; otherwise
+            // any topology-affecting change reverts and re-applies with the
+            // new parameters.
+            bool needBuild = (widthChanged || topologyDirty) && !bevelApplied
+                              && mesh.hasAnySelectedEdges();
+            if (needBuild) {
+                applyEdgeBevelTopology();
+            } else if (topologyDirty && bevelApplied) {
                 revertEdgeBevelTopology();
                 applyEdgeBevelTopology();
-                changed = true;
             }
-            if (changed && bevelApplied) {
+            if ((widthChanged || topologyDirty) && bevelApplied) {
                 updateBevelVertices();
                 gpu.upload(*mesh);
             }
