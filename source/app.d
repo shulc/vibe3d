@@ -619,15 +619,15 @@ void main(string[] args) {
                         else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
                     }
                     if (auto mb = cast(MeshBevel)cmd) {
-                        if ("width" in pj) {
-                            auto w = pj["width"];
-                            float wf = (w.type == JSONType.integer)  ? cast(float)w.integer
-                                     : (w.type == JSONType.uinteger) ? cast(float)w.uinteger
-                                     : (w.type == JSONType.float_)   ? cast(float)w.floating
-                                                                     : 0.0f;
-                            mb.setWidth(wf);
+                        float jsonNumber(JSONValue v) {
+                            if (v.type == JSONType.integer)  return cast(float)v.integer;
+                            if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
+                            if (v.type == JSONType.float_)   return cast(float)v.floating;
+                            return 0.0f;
                         }
-                        if ("mode" in pj && pj["mode"].type == JSONType.string)
+                        if ("width"  in pj) mb.setWidth (jsonNumber(pj["width"]));
+                        if ("widthR" in pj) mb.setWidthR(jsonNumber(pj["widthR"]));
+                        if ("mode"   in pj && pj["mode"].type == JSONType.string)
                             mb.setMode(pj["mode"].str);
                     }
                 }

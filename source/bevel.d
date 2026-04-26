@@ -186,7 +186,8 @@ struct BevelOp {
 // ---------------------------------------------------------------------------
 
 BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
-                                BevelWidthMode mode = BevelWidthMode.Offset)
+                                BevelWidthMode mode = BevelWidthMode.Offset,
+                                float widthL = 1.0f, float widthR = 1.0f)
 {
     BevelOp op;
     op.origVertexCount   = mesh.vertices.length;
@@ -225,8 +226,8 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
 
         BevVert bvA = buildBevVert(mesh, va, selectedEdges, loopAB);
         BevVert bvB = buildBevVert(mesh, vb, selectedEdges, loopBA);
-        populateBoundVerts(mesh, bvA, mode);
-        populateBoundVerts(mesh, bvB, mode);
+        populateBoundVerts(mesh, bvA, mode, widthL, widthR);
+        populateBoundVerts(mesh, bvB, mode, widthL, widthR);
 
         materializeBevVert(mesh, bvA, faceSnapped, op.faceSnaps);
         materializeBevVert(mesh, bvB, faceSnapped, op.faceSnaps);
@@ -357,24 +358,29 @@ BevVert buildBevVert(Mesh* mesh, uint vert, const(bool)[] selectedEdges,
 // One BoundVert per CCW-adjacent EdgeHalf pair (k, (k+1)%N) where at least
 // one of the two is beveled. The BoundVert lives in the common face
 // `edges[k].fnext` (== `edges[(k+1)%N].fprev`) and its slide direction is
-// (offsetMeet at the mode-adjusted per-edge offsets, evaluated at user
-// width = 1) - origPos, so the runtime position stays linear:
-//     pos = origPos + slideDir * width.
+// (offsetMeet at the resolved per-edge offsets) - origPos.
+//
+// `widthL` / `widthR` are user widths; the actual per-edge offsetSpec is
+// `widthCoefficient(mesh, edgeIdx, mode) * widthSide`. The BoundVert's
+// runtime position stays linear in a uniform scale factor:
+//     pos = origPos + slideDir * scale.
+//
+// Edge-canonical L/R: for each beveled edge we pick a single "canonical L
+// face" (the first face returned by `facesAroundEdge`) so that widthL refers
+// to the same physical side of the edge regardless of which endpoint we are
+// processing. Without this, swapping endpoints would swap L↔R and produce a
+// twisted asymmetric bevel.
 //
 // Reuse rule: the first BoundVert encountered whose left flanking EdgeHalf
 // is the beveled one reuses the original vertex; the rest are allocated
 // fresh in materialize.
-//
-// Stage 1 invariant: with mode==Offset (offset coefficient = 1) this matches
-// the previous slide-along-edge behavior for selCount=1 valence-3 endpoints
-// exactly, since offsetMeet of one bev edge (width=1) and one non-bev edge
-// (width=0) lands on the non-bev edge at unit distance from the corner.
 void populateBoundVerts(Mesh* mesh, ref BevVert bv,
-                        BevelWidthMode mode = BevelWidthMode.Offset)
+                        BevelWidthMode mode = BevelWidthMode.Offset,
+                        float widthL = 1.0f, float widthR = 1.0f)
 {
     if (bv.selCount < 1) return;
 
-    // Resolve per-edge offsetSpec from the chosen width mode.
+    // Resolve per-edge offsetSpec from the chosen width mode + per-side widths.
     foreach (ref eh; bv.edges) {
         if (!eh.isBev) {
             eh.offsetLSpec = 0.0f;
@@ -382,8 +388,13 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
             continue;
         }
         float c = widthCoefficient(mesh, eh.edgeIdx, mode);
-        eh.offsetLSpec = c;
-        eh.offsetRSpec = c;
+        // Determine which of this EdgeHalf's flanking faces is the canonical
+        // L face (the first face from facesAroundEdge).
+        uint canonLFace = ~0u;
+        foreach (fi; mesh.facesAroundEdge(eh.edgeIdx)) { canonLFace = fi; break; }
+        bool nextIsCanonL = (eh.fnext == canonLFace);
+        eh.offsetLSpec = c * (nextIsCanonL ? widthL : widthR);
+        eh.offsetRSpec = c * (nextIsCanonL ? widthR : widthL);
     }
 
     int N = cast(int)bv.edges.length;

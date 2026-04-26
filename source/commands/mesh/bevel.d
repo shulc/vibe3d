@@ -10,20 +10,22 @@ import bevel : applyEdgeBevelTopology, updateEdgeBevelPositions,
                BevelOp, BevelWidthMode;
 
 /// Non-interactive edge bevel — applies the topology change on the currently
-/// selected edges and slides each new BoundVert outward by `width` using the
-/// chosen `mode`. After success the selection is replaced with the
-/// bevel-quad edges.
+/// selected edges and slides each new BoundVert outward by `width` (and
+/// optionally `widthR` for asymmetric bevels) using the chosen `mode`.
+/// After success the selection is replaced with the bevel-quad edges.
 ///
-/// Parameters (set via setWidth/setMode before apply()):
-///   width — user width (>= 0); meaning depends on mode.
-///   mode  — Offset (default), Width, Depth, or Percent.
+/// Parameters (set via setWidth/setWidthR/setMode before apply()):
+///   width   — user width on the L side of every beveled edge (>= 0).
+///   widthR  — user width on the R side; defaults to `width` (symmetric).
+///   mode    — Offset (default), Width, Depth, or Percent.
 class MeshBevel : Command {
     private GpuMesh*         gpu;
     private VertexCache*     vc;
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
-    private float            width = 0.0f;
-    private BevelWidthMode   mode  = BevelWidthMode.Offset;
+    private float            width   = 0.0f;
+    private float            widthR  = float.nan;   // NaN → fall back to `width`
+    private BevelWidthMode   mode    = BevelWidthMode.Offset;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -36,7 +38,8 @@ class MeshBevel : Command {
 
     override string name() const { return "mesh.bevel"; }
 
-    void setWidth(float w) { width = (w < 0.0f) ? 0.0f : w; }
+    void setWidth(float w)   { width  = (w < 0.0f) ? 0.0f : w; }
+    void setWidthR(float w)  { widthR = (w < 0.0f) ? 0.0f : w; }
     void setMode(BevelWidthMode m) { mode = m; }
     void setMode(string s) {
         switch (s) {
@@ -49,12 +52,16 @@ class MeshBevel : Command {
     }
 
     override bool apply() {
+        import std.math : isNaN;
         if (editMode != EditMode.Edges)            return false;
         if (!mesh.hasAnySelectedEdges())           return false;
 
-        BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode);
-        if (width > 0.0f)
-            updateEdgeBevelPositions(mesh, op, width);
+        float wR = isNaN(widthR) ? width : widthR;
+        // Slide directions are computed at the (width, wR) widths directly,
+        // so the BoundVerts land at their final positions during apply.
+        BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
+                                             width, wR);
+        updateEdgeBevelPositions(mesh, op, 1.0f);
 
         mesh.clearEdgeSelection();
         foreach (eidx; op.bevelQuadEdges)

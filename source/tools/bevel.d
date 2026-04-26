@@ -75,8 +75,10 @@ private:
     int[]     edgeOrderBeforeBevel;
 
     // ---- Edge bevel parameters ----
-    float          ebWidth = 0.0f;
-    BevelWidthMode ebMode  = BevelWidthMode.Offset;
+    float          ebWidth   = 0.0f;
+    float          ebWidthR  = 0.0f;
+    bool           ebAsymmetric = false;
+    BevelWidthMode ebMode    = BevelWidthMode.Offset;
     BevelOp        ebOp;
 
     // ---- Drag state ----
@@ -312,33 +314,45 @@ public:
 
     override void drawProperties() {
         if (*editMode == EditMode.Edges) {
-            bool changed   = false;
-            bool modeChanged = false;
+            bool changed       = false;
+            bool topologyDirty = false;
             ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, float.max, "%.4f");
             if (ImGui.IsItemActive()) {
                 if (ebWidth < 0.0f) ebWidth = 0.0f;
                 changed = true;
             }
 
+            if (ImGui.Checkbox("Asymmetric", &ebAsymmetric)) {
+                if (!ebAsymmetric) ebWidthR = ebWidth;
+                topologyDirty = true;
+            }
+            if (ebAsymmetric) {
+                ImGui.DragFloat("Width R", &ebWidthR, 0.005f, 0.0f, float.max, "%.4f");
+                if (ImGui.IsItemActive()) {
+                    if (ebWidthR < 0.0f) ebWidthR = 0.0f;
+                    topologyDirty = true;
+                }
+            }
+
             int modeIdx = cast(int)ebMode;
             ImGui.Text("Mode:");
             if (ImGui.RadioButton("Offset",  modeIdx == 0)) {
-                if (ebMode != BevelWidthMode.Offset)  { ebMode = BevelWidthMode.Offset;  modeChanged = true; }
+                if (ebMode != BevelWidthMode.Offset)  { ebMode = BevelWidthMode.Offset;  topologyDirty = true; }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Width",   modeIdx == 1)) {
-                if (ebMode != BevelWidthMode.Width)   { ebMode = BevelWidthMode.Width;   modeChanged = true; }
+                if (ebMode != BevelWidthMode.Width)   { ebMode = BevelWidthMode.Width;   topologyDirty = true; }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Depth",   modeIdx == 2)) {
-                if (ebMode != BevelWidthMode.Depth)   { ebMode = BevelWidthMode.Depth;   modeChanged = true; }
+                if (ebMode != BevelWidthMode.Depth)   { ebMode = BevelWidthMode.Depth;   topologyDirty = true; }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Percent", modeIdx == 3)) {
-                if (ebMode != BevelWidthMode.Percent) { ebMode = BevelWidthMode.Percent; modeChanged = true; }
+                if (ebMode != BevelWidthMode.Percent) { ebMode = BevelWidthMode.Percent; topologyDirty = true; }
             }
 
-            if (modeChanged && bevelApplied) {
+            if (topologyDirty && bevelApplied) {
                 revertEdgeBevelTopology();
                 applyEdgeBevelTopology();
                 changed = true;
@@ -450,7 +464,13 @@ private:
 
     void applyEdgeBevelTopology() {
         bevelApplied = true;
-        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, ebMode);
+        // For interactive drag we anchor slideDir at unit user widths (or
+        // 1 ↔ ratio when asymmetric). The Width slider then linearly scales
+        // both sides via updateEdgeBevelPositions(ebWidth).
+        float wRRatio = (ebAsymmetric && ebWidth > 0.0f) ? (ebWidthR / ebWidth)
+                                                          : 1.0f;
+        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, ebMode,
+                                             1.0f, wRRatio);
 
         // Selection: bevel-quad edges replace the previously selected edge ring.
         mesh.clearEdgeSelection();
