@@ -79,7 +79,7 @@ private:
     float          ebWidthR  = 0.0f;
     bool           ebAsymmetric = false;
     int            ebSeg     = 1;
-    float          ebSuperR  = 2.0f;
+    float          ebSuperR  = 0.5f;
     BevelWidthMode ebMode    = BevelWidthMode.Offset;
     BevelOp        ebOp;
 
@@ -293,7 +293,9 @@ public:
             }
 
             if (ImGui.Checkbox("Asymmetric", &ebAsymmetric)) {
-                if (!ebAsymmetric) ebWidthR = ebWidth;
+                // Initialize R to match L so toggling ON keeps the current
+                // geometry intact; the user can then dial widthR independently.
+                ebWidthR = ebWidth;
                 topologyDirty = true;
             }
             if (ebAsymmetric) {
@@ -309,7 +311,7 @@ public:
                 topologyDirty = true;
             }
             if (ebSeg >= 2) {
-                if (ImGui.DragFloat("Super R", &ebSuperR, 0.05f, 0.5f, 8.0f, "%.2f"))
+                if (ImGui.DragFloat("Super R", &ebSuperR, 0.05f, 0.3f, 8.0f, "%.2f"))
                     topologyDirty = true;
             }
 
@@ -317,21 +319,20 @@ public:
             ImGui.Text("Mode:");
             BevelWidthMode prevMode = ebMode;
             bool modeJustChanged = false;
-            if (ImGui.RadioButton("Offset##mode",  modeIdx == 0)) {
-                if (ebMode != BevelWidthMode.Offset)  { prevMode = ebMode; ebMode = BevelWidthMode.Offset;  topologyDirty = true; modeJustChanged = true; }
+            void pickMode(BevelWidthMode m) {
+                if (ebMode == m) return;
+                prevMode        = ebMode;
+                ebMode          = m;
+                topologyDirty   = true;
+                modeJustChanged = true;
             }
+            if (ImGui.RadioButton("Offset##mode",  modeIdx == 0)) pickMode(BevelWidthMode.Offset);
             ImGui.SameLine();
-            if (ImGui.RadioButton("Width##mode",   modeIdx == 1)) {
-                if (ebMode != BevelWidthMode.Width)   { prevMode = ebMode; ebMode = BevelWidthMode.Width;   topologyDirty = true; modeJustChanged = true; }
-            }
+            if (ImGui.RadioButton("Width##mode",   modeIdx == 1)) pickMode(BevelWidthMode.Width);
             ImGui.SameLine();
-            if (ImGui.RadioButton("Depth##mode",   modeIdx == 2)) {
-                if (ebMode != BevelWidthMode.Depth)   { prevMode = ebMode; ebMode = BevelWidthMode.Depth;   topologyDirty = true; modeJustChanged = true; }
-            }
+            if (ImGui.RadioButton("Depth##mode",   modeIdx == 2)) pickMode(BevelWidthMode.Depth);
             ImGui.SameLine();
-            if (ImGui.RadioButton("Percent##mode", modeIdx == 3)) {
-                if (ebMode != BevelWidthMode.Percent) { prevMode = ebMode; ebMode = BevelWidthMode.Percent; topologyDirty = true; modeJustChanged = true; }
-            }
+            if (ImGui.RadioButton("Percent##mode", modeIdx == 3)) pickMode(BevelWidthMode.Percent);
 
             // Apply lazily on first user input from the property panel: any
             // width / mode / topology change implies "I want this bevel". If
