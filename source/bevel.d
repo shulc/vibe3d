@@ -728,7 +728,28 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
 
         Vec3 ePrev = computeSlideDirForEdge(mesh, bv, knext); // toward prevV in face
         Vec3 eNext = computeSlideDirForEdge(mesh, bv, k);     // toward nextV in face
-        Vec3 faceN = mesh.faceNormal(eh1.fnext);
+        Vec3 newellN = mesh.faceNormal(eh1.fnext);
+        // Choose the face normal used for the BV's in-plane perpendicular
+        // offset. For a planar n-gon Newell's averaged normal is correct;
+        // for a non-planar n-gon (e.g. cube_skewed_corner with a moved
+        // vertex) the local plane spanned by the corner edges puts the BV
+        // at the geometrically-correct in-face perpendicular height.
+        // Use the local plane when:
+        //   (a) both corner edges are beveled (a "true" bevel-patch corner),
+        //   OR
+        //   (b) the vertex has valence > 2 (selCount=1 valence>=3 cases like
+        //       cube_skewed_corner v_5/v_2/v_7),
+        //   AND the local plane's sign agrees with Newell. Reflex corners
+        //   (e.g. L-shape's 270° vertex) yield a SIGN-FLIPPED local normal
+        //   from cross(eNext, ePrev) because the corner triangle winds the
+        //   opposite way; in that case stay on Newell so the BV offset
+        //   doesn't land on the wrong side of the corner.
+        bool useLocal = (eh1.isBev && eh2.isBev) || bv.edges.length > 2;
+        Vec3 localN = cross(eNext, ePrev);
+        bool localValid = (localN.length > 1e-6f && dot(localN, newellN) > 0.0f);
+        Vec3 faceN = (useLocal && localValid)
+                        ? safeNormalize(localN)
+                        : newellN;
         // The corner sits in face `eh1.fnext == eh2.fprev`. From this corner's
         // viewpoint, eh2 acts as the prev side (use its right offsetSpec) and
         // eh1 acts as the next side (use its left offsetSpec). Per-side
