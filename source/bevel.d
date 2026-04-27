@@ -757,10 +757,28 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
         }
     }
 
+    // Stage 9e Arc miter at reflex (selCount ≥ 2, miterInner=Arc): instead
+    // of collapsing non-BEV-BEV BVs to bv.vert (sharp miter behavior),
+    // reposition them along their face's bev edge by offset. These become
+    // the corners of the (seg+1)² arc patch generated in materializeBevVert
+    // (Step 1 of doc/inner_arc_miter_plan.md).
+    if (bv.selCount >= 2 && bv.miterInner == MiterPattern.Arc
+        && hasAnyReflexBevEdge(mesh, bv)) {
+        foreach (i, ref bnd; bv.boundVerts) {
+            EdgeHalf ehFrom = bv.edges[bnd.ehFromIdx];
+            EdgeHalf ehTo   = bv.edges[bnd.ehToIdx];
+            if (ehFrom.isBev && ehTo.isBev) continue;  // BEV-BEV — keep
+            int bevEhIdx = ehFrom.isBev ? bnd.ehFromIdx : bnd.ehToIdx;
+            float w = bv.edges[bevEhIdx].offsetLSpec;
+            Vec3 bevDir = computeSlideDirForEdge(mesh, bv, bevEhIdx);
+            bnd.pos      = bv.origPos + bevDir * w;
+            bnd.slideDir = bevDir * w;
+        }
+    }
+
     // Stage 9e Sharp miter at reflex (selCount ≥ 2, miterInner=Sharp): when
     // at least one beveled edge has reflex dihedral, force all BVs in
-    // non-BEV-BEV faces to collapse onto bv.vert. Skipped for Arc miter,
-    // which generates patch geometry in materializeBevVert instead.
+    // non-BEV-BEV faces to collapse onto bv.vert.
     if (bv.selCount >= 2 && bv.miterInner == MiterPattern.Sharp
         && hasAnyReflexBevEdge(mesh, bv)) {
         // Pick the earliest non-BEV-BEV BV as the anchor sitting at bv.vert.
@@ -1196,6 +1214,17 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
     {
         materializeTriFanEndpoint(mesh, bv, leftBVidx);
     }
+
+    // Stage 9e Inner arc miter (selCount=2 valence=3, miterInner=Arc + reflex):
+    // Steps 2-5 from doc/inner_arc_miter_plan.md — generate the (seg+1)²
+    // patch grid in the BEV-BEV face plane, emit seg² patch quads, and
+    // splice patch boundary into surrounding faces. Step 1 (BV repositioning)
+    // is already done in populateBoundVerts.
+    if (bv.miterInner == MiterPattern.Arc && bv.selCount == 2
+        && bv.boundVerts.length == 3 && hasAnyReflexBevEdge(mesh, bv))
+    {
+        materializeArcMiterPatch(mesh, bv);
+    }
 }
 
 // TRI_FAN cap for selCount=1 valence=2: allocate the edge-slide TIP, splice
@@ -1263,6 +1292,111 @@ private void materializeTriFanEndpoint(Mesh* mesh, ref BevVert bv, int leftBVidx
         if (a < 0 || b < 0) continue;
         mesh.faces ~= [cast(uint)a, cast(uint)b, tipVid];
     }
+}
+
+// Inner-arc miter patch (Stage 9e Steps 2-5 from doc/inner_arc_miter_plan.md).
+// For selCount=2 valence=3 with at least one reflex bev edge AND
+// miterInner=Arc, generate a (seg+1)² grid of patch verts in the BEV-BEV
+// face plane, emit seg² patch quads, and splice the patch boundary into the
+// 3 surrounding faces.
+//
+// Patch geometry (in (e1, e2)·w coordinates from bv.origPos, where e1/e2
+// are the two bev edge directions identified by the BEV-BEV BoundVert):
+//   - Inner arc (b=0):  quarter-circle radius w around (1, 1)·w from (0, 1)
+//                       (= C00, on bev e2) to (1, 0) (= C20, on bev e1).
+//   - Outer arc (b=N):  same quarter-circle around (N, N)·w from (1, N) to
+//                       (N, 1).
+//   - Interior verts:   bilinear interpolation between the two arcs.
+//
+// This is an APPROXIMATION to Blender's iterative-CC interior — corner verts
+// and the inner/outer arc midpoints match Blender exactly; the b=N "side"
+// arc and the center vert deviate by up to ~25% of width.
+private void materializeArcMiterPatch(Mesh* mesh, ref BevVert bv) {
+    int N = bv.vmesh.seg;
+    if (N < 1) N = 1;
+
+    // Identify the BEV-BEV BoundVert and the 2 non-BEV-BEV BVs (which were
+    // already repositioned to C00/C20 in populateBoundVerts Step 1).
+    int bevBVidx = -1, c00Idx = -1, c20Idx = -1;
+    foreach (i, ref bnd; bv.boundVerts) {
+        EdgeHalf ehFrom = bv.edges[bnd.ehFromIdx];
+        EdgeHalf ehTo   = bv.edges[bnd.ehToIdx];
+        if (ehFrom.isBev && ehTo.isBev) bevBVidx = cast(int)i;
+    }
+    if (bevBVidx < 0) return;
+    int e1EhIdx = bv.boundVerts[bevBVidx].ehFromIdx;
+    int e2EhIdx = bv.boundVerts[bevBVidx].ehToIdx;
+    foreach (i, ref bnd; bv.boundVerts) {
+        if (cast(int)i == bevBVidx) continue;
+        EdgeHalf ehFrom = bv.edges[bnd.ehFromIdx];
+        EdgeHalf ehTo   = bv.edges[bnd.ehToIdx];
+        int bevEhIdx = ehFrom.isBev ? bnd.ehFromIdx : bnd.ehToIdx;
+        if (bevEhIdx == e1EhIdx) c20Idx = cast(int)i;
+        else if (bevEhIdx == e2EhIdx) c00Idx = cast(int)i;
+    }
+    if (c00Idx < 0 || c20Idx < 0) return;
+
+    Vec3 e1 = computeSlideDirForEdge(mesh, bv, e1EhIdx);
+    Vec3 e2 = computeSlideDirForEdge(mesh, bv, e2EhIdx);
+    float w = bv.edges[e1EhIdx].offsetLSpec;
+    Vec3 origPos = bv.origPos;
+
+    // Quarter-circle arc on the (-e1, -e2) sector around a center at
+    // (centerScale, centerScale)·w. ta ∈ [0, 1] sweeps from -e1 axis (ta=0)
+    // to -e2 axis (ta=1), giving point at (ce - cos θ, ce - sin θ)·w.
+    Vec3 arcPos(int centerScale, float ta) {
+        float angle = ta * cast(float)(PI * 0.5);
+        float c = cos(angle), s = sin(angle);
+        float ce = cast(float)centerScale;
+        return origPos + e1 * (w * (ce - c)) + e2 * (w * (ce - s));
+    }
+
+    Vec3 patchPos(int a, int b) {
+        float ta = cast(float)a / cast(float)N;
+        float tb = cast(float)b / cast(float)N;
+        Vec3 inner = arcPos(1, ta);
+        Vec3 outer = arcPos(N, ta);
+        return inner * (1.0f - tb) + outer * tb;
+    }
+
+    // Allocate (or reuse) the (N+1)² grid of vert IDs.
+    // (a=0, b=0) reuses c00Idx's vertId; (a=N, b=0) reuses c20Idx's.
+    int[] gridVids;
+    gridVids.length = (N + 1) * (N + 1);
+    gridVids[] = -1;
+
+    int gv(int a, int b) { return gridVids[b * (N + 1) + a]; }
+    void setGv(int a, int b, int vid) { gridVids[b * (N + 1) + a] = vid; }
+
+    setGv(0, 0, bv.boundVerts[c00Idx].vertId);
+    setGv(N, 0, bv.boundVerts[c20Idx].vertId);
+
+    foreach (b; 0 .. N + 1) {
+        foreach (a; 0 .. N + 1) {
+            if (gv(a, b) >= 0) continue;
+            Vec3 p = patchPos(a, b);
+            setGv(a, b, cast(int)mesh.addVertex(p));
+        }
+    }
+
+    // Emit patch quads. For each (a, b) ∈ [0, N-1]², a quad
+    // [(a, b), (a+1, b), (a+1, b+1), (a, b+1)].
+    // Winding choice: TODO — verify outward orientation via the BEV-BEV
+    // face normal once Step 4 face splicing is in place.
+    foreach (b; 0 .. N) {
+        foreach (a; 0 .. N) {
+            uint v00 = cast(uint)gv(a,     b);
+            uint v10 = cast(uint)gv(a + 1, b);
+            uint v11 = cast(uint)gv(a + 1, b + 1);
+            uint v01 = cast(uint)gv(a,     b + 1);
+            mesh.faces ~= [v00, v10, v11, v01];
+        }
+    }
+    // TODO Steps 4-5: splice patch boundary into the 3 surrounding faces
+    // (inner-side, front-cap, BEV-BEV/inner-bottom) and emit bridging quads
+    // between strip endcaps and the patch outer arc. Without these the
+    // surrounding faces still contain bv.vert and the patch is a floating
+    // island. Topology will be wrong until Step 4-5 are implemented.
 }
 
 // Allocate the M_ADJ canonical grid for `bv` and wire up profile.sampleVertIds
