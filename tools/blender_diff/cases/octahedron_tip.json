@@ -1,5 +1,5 @@
 {
-  "_comment": "Bevel all 4 edges incident to the +Z tip of an octahedron (selCount=4 valence=4 at tip; selCount=1 valence=4 at the 4 equator endpoints). Two known gaps: (1) the tip cap uses 4 BoundVerts but isCubeCornerLike requires exactly 3 — falls through to generic adj_vmesh; (2) at equator vertices the offsetMeet at selCount=1 valence=4 lands BVs on non-bev support directions but Blender slides them along the OPPOSITE-tip direction. Closing this needs the cube-corner cap algorithm generalized to n_bndv=4 (which Blender's adj_vmesh handles via cubic_subdiv — same code we ported, but with n=4 instead of 3 throughout).",
+  "_comment": "Bevel all 4 edges incident to the +Z tip of an octahedron. Tip cap (selCount=4 valence=4) is now EXACT-match Blender via materializeAdjCapGeneric (cubic_subdiv with n=4 + profile sampler that projects (BV_a + BV_b)/2 onto the shared bev edge). Remaining XFAIL is at the 4 equator vertices (selCount=1 valence=4): vibe3d's offsetMeet slides BVs in the face plane while Blender slides them toward the opposite tip — different code path (computeBVPositions / computeSlideDirForEdge), unrelated to the cap algorithm.",
   "primitive": "octahedron",
   "expected_fail": true,
   "ops": [

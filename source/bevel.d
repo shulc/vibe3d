@@ -1653,6 +1653,7 @@ private void materializeBevVertMAdj(Mesh* mesh, ref BevVert bv) {
     // a no-op for non-cube-corner cases (different valence, non-orthogonal
     // bev edges, etc.).
     overrideCubeCornerCap(mesh, bv);
+    materializeAdjCapGeneric(mesh, bv);
 }
 
 // True iff this BevVert is a 3-edge cube-corner candidate: 3 BoundVerts and
@@ -1755,6 +1756,13 @@ private Vec3 canonSnapToSuperellipsoid(Vec3 p, float superR) {
     return p;
 }
 
+// Boundary sampler for the canonical/generic adj_vmesh pipeline. Returns the
+// world position on cap-arc panel `i` at parameter `k/nseg`. The cubic_subdiv
+// + interp_vmesh code calls this through a delegate so the same algorithm
+// serves both the cube-corner case (canonical unit-cube profile arcs) and
+// generic n_bndv ≥ 4 caps (profile arcs through actual BoundVert positions).
+alias BoundarySampler = Vec3 delegate(int i, int k, int nseg);
+
 // Sample the canonical profile arc from (axis i) to (axis (i+1)%3) at
 // k/nseg of the way around. For super_r=2 this is a quarter-circle on the
 // unit sphere; for general super_r it's a superellipse arc.
@@ -1824,8 +1832,11 @@ private float canonSabinGamma(int n) {
 
 // One step of cubic subdivision (Catmull-Clark with Sabin boundary correction)
 // — port of Blender's cubic_subdiv. Doubles seg from nsIn to 2*nsIn.
-// Requires nsIn even and ≥ 2.
-private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
+// Requires nsIn even and ≥ 2. The `sampler` callback supplies the analytic
+// boundary positions at each subdiv level — for the canonical cube-corner
+// case this is canonProfilePoint; for generic n_bndv ≥ 4 caps it samples
+// the actual BoundVert profile arcs.
+private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, BoundarySampler sampler) {
     int nsIn2 = nsIn / 2;
     int nsOut = 2 * nsIn;
 
@@ -1852,7 +1863,7 @@ private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
     // applied to the canonical profile (BV_i → BV_{i+1}). Then smooth.
     foreach (i; 0 .. n) {
         for (int k = 1; k < nsOut; k += 2) {
-            Vec3 co = canonProfilePoint(cast(int)i, k, nsOut, superR);
+            Vec3 co = sampler(cast(int)i, k, nsOut);
             Vec3 co1 = vmOut[canonMeshVert(cast(int)i, 0, k - 1, n, nsOut)];
             Vec3 co2 = vmOut[canonMeshVert(cast(int)i, 0, k + 1, n, nsOut)];
             Vec3 acc = co1 + co2 - co * 2.0f;
@@ -1967,7 +1978,7 @@ private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
     foreach (i; 0 .. n) {
         for (int k = 0; k <= nsOut; k++) {
             vmOut[canonMeshVert(cast(int)i, 0, k, n, nsOut)]
-                = canonProfilePoint(cast(int)i, k, nsOut, superR);
+                = sampler(cast(int)i, k, nsOut);
         }
     }
     canonCopyEquivVerts(vmOut, n, nsOut);
@@ -1991,13 +2002,13 @@ private float[] canonFillVMeshFracs(Vec3[] vm, int ns, int i) {
 }
 
 // Profile arc fractions for `ns` segments, normalized to [0, 1].
-private float[] canonFillProfileFracs(int i, int ns, float superR) {
+private float[] canonFillProfileFracs(int i, int ns, BoundarySampler sampler) {
     float[] frac = new float[](ns + 1);
     frac[0] = 0.0f;
     float total = 0.0f;
-    Vec3 prev = canonProfilePoint(i, 0, ns, superR);
+    Vec3 prev = sampler(i, 0, ns);
     for (int k = 0; k < ns; k++) {
-        Vec3 next = canonProfilePoint(i, k + 1, ns, superR);
+        Vec3 next = sampler(i, k + 1, ns);
         total += (next - prev).length;
         frac[k + 1] = total;
         prev = next;
@@ -2023,18 +2034,18 @@ private int canonInterpRange(const float[] frac, int n, float f, out float rRest
 
 // Linearly blend a canonical cap at nsIn to one at nsegOut. Mirrors
 // Blender's interp_vmesh.
-private Vec3[] canonInterpVMesh(Vec3[] vmIn, int n, int nsIn, int nsegOut, float superR) {
+private Vec3[] canonInterpVMesh(Vec3[] vmIn, int n, int nsIn, int nsegOut, BoundarySampler sampler) {
     int nseg2 = nsegOut / 2;
     int odd = nsegOut % 2;
     Vec3[] vmOut = new Vec3[](cast(size_t)n * cast(size_t)((nsegOut + 1) * (nsegOut + 1)));
     foreach (ref p; vmOut) p = Vec3(0, 0, 0);
 
     float[] prevFrac = canonFillVMeshFracs(vmIn, nsIn, n - 1);
-    float[] prevNewFrac = canonFillProfileFracs((n - 1 + n) % n, nsegOut, superR);
+    float[] prevNewFrac = canonFillProfileFracs((n - 1 + n) % n, nsegOut, sampler);
 
     foreach (i; 0 .. n) {
         float[] frac = canonFillVMeshFracs(vmIn, nsIn, cast(int)i);
-        float[] newFrac = canonFillProfileFracs(cast(int)i, nsegOut, superR);
+        float[] newFrac = canonFillProfileFracs(cast(int)i, nsegOut, sampler);
         for (int j = 0; j <= nseg2 - 1 + odd; j++) {
             for (int k = 0; k <= nseg2; k++) {
                 float restK, restKPrev;
@@ -2092,16 +2103,18 @@ private Vec3[] canonBuildCubeCornerCap(int nseg, float superR) {
     long key = (cast(long)nseg << 32) | cast(uint)cast(int)(superR * 1000.0f);
     if (auto cached = key in _capCacheTLS) return *cached;
 
+    auto sampler = (int i, int k, int ns) => canonProfilePoint(i, k, ns, superR);
+
     Vec3[] vm = canonBuildSeg2(nseg, superR);
     int curSeg = 2;
     int powTarget = 2;
     while (powTarget < nseg) powTarget *= 2;
     while (curSeg < powTarget) {
-        vm = canonCubicSubdiv(vm, 3, curSeg, superR);
+        vm = canonCubicSubdiv(vm, 3, curSeg, sampler);
         curSeg *= 2;
     }
     if (curSeg != nseg) {
-        vm = canonInterpVMesh(vm, 3, curSeg, nseg, superR);
+        vm = canonInterpVMesh(vm, 3, curSeg, nseg, sampler);
         curSeg = nseg;
     }
     int ns2 = nseg / 2;
@@ -2195,6 +2208,129 @@ private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
             centerUnit = canon[canonFlatIdx(0, ns2, ns2, ns)];
         }
         bv.adjCenterDir = unitToWorld(centerUnit) - bv.origPos;
+    }
+}
+
+// Sample world-space position along an arc profile (start, middle, end) at
+// parameter k/nseg ∈ [0, 1]. Mirrors computeProfile's convex-bevel formula
+// but allows nseg ≠ the BoundVert profile's original sample count.
+private Vec3 profileArcSample(Vec3 startV, Vec3 middleV, Vec3 endV,
+                              float superR, int k, int nseg) {
+    if (k == 0)    return startV;
+    if (k == nseg) return endV;
+    float t  = cast(float)k / cast(float)nseg;
+    float th = t * cast(float)(PI * 0.5);
+    float ct = cos(th), st = sin(th);
+    float u  = pow(ct, 2.0f / superR);
+    float v  = pow(st, 2.0f / superR);
+    Vec3 dStart = startV - middleV;
+    Vec3 dEnd   = endV   - middleV;
+    return middleV + dStart * (1.0f - v) + dEnd * (1.0f - u);
+}
+
+// Generic n_bndv ≥ 4 cube-corner-style cap: same cubic_subdiv pipeline as
+// overrideCubeCornerCap (n=3) but driven by the actual BoundVert positions
+// and their profile arcs instead of the canonical unit-cube template. No
+// affine map (the canonical mesh IS the world cap), no superellipsoid snap.
+//
+// Used for cases like the octahedron tip (selCount=valence=4) where all
+// edges around a vertex are beveled but the face normals aren't a clean
+// 3-axis frame so the unit-cube affine map doesn't apply.
+private void materializeAdjCapGeneric(Mesh* mesh, ref BevVert bv) {
+    int n = cast(int)bv.boundVerts.length;
+    if (n < 4) return;                   // n=3 handled by overrideCubeCornerCap
+    if (!isAllBevAtVert(bv)) return;
+    int nseg = bv.vmesh.seg;
+    if (nseg < 2) return;
+
+    float superR = bv.boundVerts[0].profile.superR;
+    if (superR < 1e-3f) superR = 1e-3f;
+
+    // Profile arc sampler — uses each BoundVert's profile (start/middle/end)
+    // to interpolate the cap-arc panel boundary at any (i, k, ns). Mirrors
+    // Blender's get_profile_point on a per-arc profile where:
+    //   start  = BV_i.pos
+    //   end    = BV_{i+1}.pos
+    //   middle = projection of midpoint(start, end) onto the SHARED bev edge
+    //            (the one connecting BV_i and BV_{i+1} in cap-polygon order)
+    // For perpendicular cube corners this reduces to the inscribed-sphere
+    // tangent point; for octahedron-tip-like geometries (60° face angles) it
+    // gives the correct profile.middle that matches Blender's output.
+    auto sampler = (int i, int k, int ns) {
+        int iNext = (i + 1) % n;
+        Vec3 start = bv.boundVerts[i].pos;
+        Vec3 end   = bv.boundVerts[iNext].pos;
+        // Shared bev edge between BV_i (in face F_i) and BV_{i+1} (in F_{i+1}).
+        int sharedEhIdx = bv.boundVerts[i].ehToIdx;
+        EdgeHalf sharedEh = bv.edges[sharedEhIdx];
+        uint other = mesh.edgeOtherVertex(sharedEh.edgeIdx, bv.vert);
+        Vec3 edgeDir = safeNormalize(mesh.vertices[other] - bv.origPos);
+        Vec3 mid = (start + end) * 0.5f;
+        // Project (mid - origPos) onto edgeDir, anchor at origPos.
+        Vec3 middle = bv.origPos + edgeDir * dot(mid - bv.origPos, edgeDir);
+        return profileArcSample(start, middle, end, superR, k, ns);
+    };
+
+    // Build seg=2 base mesh.
+    Vec3[] vm = new Vec3[](cast(size_t)n * cast(size_t)(3 * 3));
+    foreach (ref p; vm) p = Vec3(0, 0, 0);
+    foreach (int i; 0 .. n) {
+        vm[canonFlatIdx(i, 0, 0, 2)] = bv.boundVerts[i].pos;
+        vm[canonFlatIdx(i, 0, 1, 2)] = sampler(i, 1, 2);
+        vm[canonFlatIdx(i, 0, 2, 2)] = bv.boundVerts[(i + 1) % n].pos;
+    }
+    // Center via Blender's fullness blend (already set in materializeBevVertMAdj
+    // as adjCenterDir = bvCenter*(1-fullness); reuse the same world position).
+    Vec3 centerWorld = bv.origPos + bv.adjCenterDir;
+    vm[canonFlatIdx(0, 1, 1, 2)] = centerWorld;
+    canonCopyEquivVerts(vm, n, 2);
+
+    // Subdivide. Mirrors Blender's adj_vmesh do-while: always run at least
+    // one cubic_subdiv (even when nseg == 2) and let interp_vmesh down-sample
+    // if we overshot. For nseg=2 this means seg=2 → cubic_subdiv → seg=4 →
+    // interp down to seg=2; the overshoot+interp produces a smoothed center
+    // that doesn't match the seg=2 base's fullness blend exactly.
+    int curSeg = 2;
+    do {
+        vm = canonCubicSubdiv(vm, n, curSeg, sampler);
+        curSeg *= 2;
+    } while (curSeg < nseg);
+    if (curSeg != nseg) {
+        vm = canonInterpVMesh(vm, n, curSeg, nseg, sampler);
+        curSeg = nseg;
+    }
+
+    // Write canonical positions back into the M_ADJ grid as displacements
+    // from origPos.
+    int ns2 = nseg / 2;
+    int odd = nseg % 2;
+    foreach (int i; 0 .. n) {
+        foreach (int j; 0 .. ns2 + odd) {
+            foreach (int k; 0 .. ns2 + 1) {
+                size_t idx = adjFlatIdx(i, j, k, nseg);
+                if (idx >= bv.adjGridDirs.length) continue;
+                if (bv.adjGridVids[idx] < 0) continue;
+                if (j == 0 && k == 0) {
+                    bv.adjGridDirs[idx] = bv.boundVerts[i].pos - bv.origPos;
+                    continue;
+                }
+                size_t cIdx = canonMeshVert(i, j, k, n, nseg);
+                bv.adjGridDirs[idx] = vm[cIdx] - bv.origPos;
+            }
+        }
+    }
+
+    if (bv.adjCenterVid >= 0) {
+        Vec3 cWorld;
+        if (odd) {
+            cWorld = Vec3(0, 0, 0);
+            foreach (int i; 0 .. n)
+                cWorld = cWorld + vm[canonFlatIdx(i, ns2, ns2, nseg)];
+            cWorld = cWorld * (1.0f / cast(float)n);
+        } else {
+            cWorld = vm[canonFlatIdx(0, ns2, ns2, nseg)];
+        }
+        bv.adjCenterDir = cWorld - bv.origPos;
     }
 }
 
