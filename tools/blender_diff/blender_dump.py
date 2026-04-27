@@ -44,6 +44,21 @@ bpy.ops.object.delete(use_global=False)
 primitive = case.get("primitive", "cube")
 if primitive == "cube":
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
+elif primitive == "diamond":
+    verts = [
+        (-1.0,  0.0,  0.05),
+        ( 0.0, -1.0, -0.05),
+        ( 1.0,  0.0,  0.05),
+        ( 0.0,  1.0, -0.05),
+    ]
+    faces = [(0, 1, 2, 3), (0, 3, 2, 1)]
+    new_mesh = bpy.data.meshes.new("Diamond")
+    new_mesh.from_pydata(verts, [], faces)
+    new_mesh.update()
+    new_obj = bpy.data.objects.new("Diamond", new_mesh)
+    bpy.context.collection.objects.link(new_obj)
+    bpy.context.view_layer.objects.active = new_obj
+    new_obj.select_set(True)
 elif primitive == "lshape":
     # Match vibe3d's makeLShape exactly: 6-vert profile in XY extruded along Z.
     verts = [

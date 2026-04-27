@@ -800,10 +800,11 @@ void main(string[] args) {
 
         httpServer.setResetHandler((string primitiveType) {
             switch (primitiveType) {
-                case "lshape": mesh = makeLShape(); break;
+                case "lshape":  mesh = makeLShape();  break;
+                case "diamond": mesh = makeDiamond(); break;
                 case "":
                 case "cube":
-                default:       mesh = makeCube();   break;
+                default:        mesh = makeCube();    break;
             }
             cameraView.reset();
             mesh.resetSelection();

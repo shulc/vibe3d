@@ -1014,6 +1014,25 @@ Mesh makeCube() {
     return m;
 }
 
+// Double-sided quad: 4 verts in a diamond pattern at slight ±Z offsets so
+// the front and back quads have well-defined non-degenerate normals. Each
+// vertex has valence=2 (only the two adjacent diamond-boundary edges) — a
+// rare manifold configuration that exercises the weld case for bevels at
+// non-collinear angles. Only realistic way to construct this in vibe3d.
+Mesh makeDiamond() {
+    Mesh m;
+    m.vertices = [
+        Vec3(-1.0f,  0.0f,  0.05f),  // 0  left
+        Vec3( 0.0f, -1.0f, -0.05f),  // 1  bottom
+        Vec3( 1.0f,  0.0f,  0.05f),  // 2  right
+        Vec3( 0.0f,  1.0f, -0.05f),  // 3  top
+    ];
+    m.addFace([0, 1, 2, 3]);   // front quad (+Z-ish)
+    m.addFace([0, 3, 2, 1]);   // back quad  (-Z-ish, opposite winding)
+    m.buildLoops();
+    return m;
+}
+
 // L-shaped extrusion in the XY plane, depth 1 along Z. Profile (CCW from +Z):
 //   (-1,-1) → (1,-1) → (1,0) → (0,0) → (0,1) → (-1,1)
 // The vertex at (0, 0, ±0.5) sits at a CONCAVE corner — its interior

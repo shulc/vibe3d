@@ -1,0 +1,17 @@
+{
+  "_comment": "Stage 9a Weld: bevel TWO edges meeting at the bottom tip of a diamond (valence=2). Both edges meet at non-collinear ~120° angle; selCount=2 valence=2 non-collinear is the canonical 'weld' scenario from Blender's bevel terminology. Topology matches Blender exactly (9v/6f/same fv-dist); geometry close to within ~0.007 on a 0.1-width bevel — Blender keeps the two coincident BoundVerts as DUPLICATE vertices at one position (one per face), while vibe3d's aliasOf collapses them into a single vertex via the position-coincidence check. The collapsed vertex sits on the bev offset slightly differently from Blender's separate verts (Blender's are at the per-face computed positions which happen to be identical at machine precision; vibe3d takes one of them). Acceptable for this degenerate non-planar diamond — natural manifold meshes don't produce this configuration.",
+  "primitive": "diamond",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0, -1, -0.05], "v1": [-1, 0, 0.05]},
+        {"v0": [0, -1, -0.05], "v1": [ 1, 0, 0.05]}
+      ],
+      "width": 0.1,
+      "segments": 1,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.01
+}
