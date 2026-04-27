@@ -274,13 +274,16 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                 capBvs ~= cast(int)i;
             }
             if (capBvs.length >= 3) {
-                if (useMAdj(bv) && bv.adjCenterVid >= 0) {
+                if (useMAdj(bv)) {
                     // M_ADJ cap quads. Per panel i ∈ [0, n), per (j, k) ∈
                     // [0, ns2-1] × [0, ns2-1+odd]: emit a quad whose corners
                     // are (i, j, k), (i, j, k+1), (i, j+1, k+1), (i, j+1, k)
-                    // resolved through the canon mapping. For seg=2 this is
-                    // exactly N corner-quads sharing the center; for seg=4
-                    // it is 4N quads forming a one-CC-step grid; etc.
+                    // resolved through the canon mapping.
+                    //   even seg: ns2 × ns2 quads per panel, all sharing the
+                    //             center vertex at (i, ns2, ns2).
+                    //   odd seg:  ns2 × (ns2+1) quads per panel; the n
+                    //             interior verts at (i, ns2, ns2) form a
+                    //             central n-gon emitted below.
                     int n   = cast(int)bv.boundVerts.length;
                     int ns  = bv.vmesh.seg;
                     int ns2 = ns / 2;
@@ -300,6 +303,22 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                                 ];
                             }
                         }
+                    }
+                    // Central n-gon for odd seg: connect interior verts
+                    // (i, ns2, ns2) for i ∈ [0, n) in increasing-i order so
+                    // the polygon's outward normal matches the cap quads
+                    // (each cap edge is shared with exactly one quad whose
+                    // boundary traverses it in the opposite direction).
+                    if (odd) {
+                        uint[] central;
+                        central.reserve(n);
+                        bool ok = true;
+                        foreach (pi; 0 .. n) {
+                            int v = adjCanonVid(bv, cast(int)pi, ns2, ns2);
+                            if (v < 0) { ok = false; break; }
+                            central ~= cast(uint)v;
+                        }
+                        if (ok) mesh.faces ~= central;
                     }
                 } else {
                     uint[] cap;
@@ -768,13 +787,12 @@ private bool isAllBevAtVert(ref const BevVert bv) {
 }
 
 // True iff this BevVert should use M_ADJ topology in the cap and bev strips.
-// Stage 7 phase 2a–b supports even seg ≥ 2; odd seg with selCount ≥ 3 falls
-// back to the seg=1 N-gon cap (would need an additional center-polygon
-// emission path à la Blender's `bevel_build_rings` odd branch).
+// Even ns shares a single center vertex (adjCenterVid); odd ns has no shared
+// center — instead each panel contributes one interior vertex and they form
+// an n-gon "central polygon" emitted alongside the cap quads.
 private bool useMAdj(ref const BevVert bv) {
     return bv.vmesh.kind == VMeshKind.ADJ
         && bv.vmesh.seg  >= 2
-        && (bv.vmesh.seg % 2) == 0
         && isAllBevAtVert(bv)
         && bv.boundVerts.length >= 3;
 }
@@ -1233,8 +1251,18 @@ private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
                     float t = cast(float)(ns - j) / cast(float)ns;
                     world = arcSampleUnit(iprev, cast(int)i, t);
                 } else {
-                    float u = cast(float)k / cast(float)ns2;
-                    float v = cast(float)j / cast(float)ns2;
+                    // Bilinear-in-unit-frame for true interior. For even ns
+                    // the (j=ns2, k=ns2) corner of every panel maps to the
+                    // shared center (1,1,1) which is correct. For odd ns
+                    // there is no shared center — using the same formula
+                    // would collapse all n panel interiors onto (1,1,1)/√3.
+                    // Pull the (j, k) ↔ (u, v) map by 1/(ns) so that
+                    // (j=ns2, k=ns2) odd lands at u = v = 2·ns2/ns < 1, an
+                    // approximation of Blender's iterative-CC interior at
+                    // ~3% on ns=3.
+                    float denom = cast(float)(odd ? (2 * ns2 + 1) : (2 * ns2));
+                    float u = cast(float)(2 * k) / denom;
+                    float v = cast(float)(2 * j) / denom;
                     float[3] uvw = [0, 0, 0];
                     uvw[iprev] = v;
                     uvw[i]     = 1.0f;

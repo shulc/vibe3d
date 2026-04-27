@@ -1,6 +1,5 @@
 {
-  "_comment": "Cube corner bevel: 3 edges meeting at v_0, width 0.2, 3 segments (odd). Expected fail until odd-seg M_ADJ is implemented: vibe3d's useMAdj rejects odd seg, so the cap falls back to a seg=1 N-gon (3 BVs + 2 interior points) instead of Blender's full 12-vert sphere-octant grid with central triangle. See source/bevel.d:777 and the 'bevel_build_rings odd branch' TODO above it.",
-  "expected_fail": true,
+  "_comment": "Cube corner bevel: 3 edges meeting at v_0, width 0.2, 3 segments (odd). Exercises the odd-seg M_ADJ branch in overrideCubeCornerCap (per-panel interior at uvw = (2·ns2/(2·ns2+1)) heuristic + central n-gon).",
   "ops": [
     {
       "op": "bevel",
