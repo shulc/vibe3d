@@ -131,6 +131,16 @@ def run_op(op):
         bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=1, smooth=1.0,
                                   use_smooth_even=True)
         bmesh.update_edit_mesh(mesh)
+    elif op["op"] == "move_vertex":
+        from_co = tuple(op["from"])
+        to_co   = tuple(op["to"])
+        for v in bm.verts:
+            if vmatch(tuple(v.co), from_co):
+                v.co = to_co
+                break
+        else:
+            raise RuntimeError(f"move_vertex: no vert at {from_co}")
+        bmesh.update_edit_mesh(mesh)
     elif op["op"] == "bevel":
         super_r = op.get("superR", 2.0)
         if abs(super_r - 2.0) > 1e-6:

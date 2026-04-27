@@ -95,6 +95,19 @@ void runSubdivide(JSONValue op) {
         throw new Exception("subdivide failed: " ~ resp.toString());
 }
 
+void runMoveVertex(JSONValue op) {
+    auto from = toVec(op["from"]);
+    auto to_  = toVec(op["to"]);
+    string body_ = `{"id":"mesh.move_vertex","params":{"from":[`
+        ~ from[0].to!string ~ `,` ~ from[1].to!string ~ `,` ~ from[2].to!string
+        ~ `],"to":[`
+        ~ to_[0].to!string ~ `,` ~ to_[1].to!string ~ `,` ~ to_[2].to!string
+        ~ `]}}`;
+    auto resp = postJson("/api/command", body_);
+    if (resp["status"].str != "ok")
+        throw new Exception("move_vertex failed: " ~ resp.toString());
+}
+
 void runBevel(JSONValue op) {
     auto model = parseJSON(get(url("/api/model")));
 
@@ -129,9 +142,10 @@ void runBevel(JSONValue op) {
 
 void runOp(JSONValue op) {
     switch (op["op"].str) {
-        case "bevel":      runBevel(op);     break;
-        case "split_edge": runSplitEdge(op); break;
-        case "subdivide":  runSubdivide(op); break;
+        case "bevel":       runBevel(op);      break;
+        case "split_edge":  runSplitEdge(op);  break;
+        case "subdivide":   runSubdivide(op);  break;
+        case "move_vertex": runMoveVertex(op); break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }

@@ -53,6 +53,7 @@ import commands.mesh.subdivide_faceted;
 import commands.mesh.subpatch_toggle;
 import commands.mesh.bevel;
 import commands.mesh.split_edge;
+import commands.mesh.move_vertex;
 
 import command;
 import registry;
@@ -455,6 +456,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh, cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
+        new MeshMoveVertex(&mesh, cameraView, editMode, &gpu,
+                           &vertexCache, &edgeCache, &faceCache);
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -631,13 +635,23 @@ void main(string[] args) {
                         if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
                         else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
                     }
-                    if (auto mb = cast(MeshBevel)cmd) {
-                        float jsonNumber(JSONValue v) {
-                            if (v.type == JSONType.integer)  return cast(float)v.integer;
-                            if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
-                            if (v.type == JSONType.float_)   return cast(float)v.floating;
-                            return 0.0f;
+                    float jsonNumber(JSONValue v) {
+                        if (v.type == JSONType.integer)  return cast(float)v.integer;
+                        if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
+                        if (v.type == JSONType.float_)   return cast(float)v.floating;
+                        return 0.0f;
+                    }
+                    if (auto mv = cast(MeshMoveVertex)cmd) {
+                        if ("from" in pj && pj["from"].type == JSONType.array) {
+                            auto a = pj["from"].array;
+                            mv.setFrom(jsonNumber(a[0]), jsonNumber(a[1]), jsonNumber(a[2]));
                         }
+                        if ("to" in pj && pj["to"].type == JSONType.array) {
+                            auto a = pj["to"].array;
+                            mv.setTo(jsonNumber(a[0]), jsonNumber(a[1]), jsonNumber(a[2]));
+                        }
+                    }
+                    if (auto mb = cast(MeshBevel)cmd) {
                         if ("width"  in pj) mb.setWidth (jsonNumber(pj["width"]));
                         if ("widthR" in pj) mb.setWidthR(jsonNumber(pj["widthR"]));
                         if ("mode"   in pj && pj["mode"].type == JSONType.string)
