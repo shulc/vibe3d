@@ -1,0 +1,22 @@
+{
+  "_comment": "Skewed cube corner with a SMALLER vertex displacement (v_6 moved only slightly off-axis to (0.45, 0.4, 0.42)). Tests the unit-cube affine map degenerates gracefully toward the perpendicular case as the skew shrinks. seg=2 — minimum cap-interior topology.",
+  "preops": [
+    {"op": "move_vertex",
+     "from": [0.5, 0.5, 0.5],
+     "to":   [0.45, 0.4, 0.42]}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5],   "v1": [0.45, 0.4, 0.42]},
+        {"v0": [0.45, 0.4, 0.42],  "v1": [-0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, -0.5],   "v1": [0.45, 0.4, 0.42]}
+      ],
+      "width": 0.2,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

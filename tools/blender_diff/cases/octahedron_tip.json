@@ -1,0 +1,20 @@
+{
+  "_comment": "Bevel all 4 edges incident to the +Z tip of an octahedron (selCount=4 valence=4 at tip; selCount=1 valence=4 at the 4 equator endpoints). Two known gaps: (1) the tip cap uses 4 BoundVerts but isCubeCornerLike requires exactly 3 — falls through to generic adj_vmesh; (2) at equator vertices the offsetMeet at selCount=1 valence=4 lands BVs on non-bev support directions but Blender slides them along the OPPOSITE-tip direction. Closing this needs the cube-corner cap algorithm generalized to n_bndv=4 (which Blender's adj_vmesh handles via cubic_subdiv — same code we ported, but with n=4 instead of 3 throughout).",
+  "primitive": "octahedron",
+  "expected_fail": true,
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0, 0, 1], "v1": [ 1, 0, 0]},
+        {"v0": [0, 0, 1], "v1": [ 0, 1, 0]},
+        {"v0": [0, 0, 1], "v1": [-1, 0, 0]},
+        {"v0": [0, 0, 1], "v1": [ 0,-1, 0]}
+      ],
+      "width": 0.2,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

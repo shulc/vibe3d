@@ -1083,6 +1083,34 @@ Mesh makeDiamond() {
     return m;
 }
 
+// Regular octahedron centered at origin with verts on the unit axes. Every
+// vertex has valence=4, every face is a triangle, and the 3 face normals
+// meeting at any vertex are NON-perpendicular (the dihedral is ~109.47°).
+// Useful for testing the cube-corner cap algorithm on non-orthogonal frame
+// normals (the unit-cube affine map handles any linearly-independent normals).
+Mesh makeOctahedron() {
+    Mesh m;
+    m.vertices = [
+        Vec3( 1, 0, 0),  // 0  +X
+        Vec3(-1, 0, 0),  // 1  -X
+        Vec3( 0, 1, 0),  // 2  +Y
+        Vec3( 0,-1, 0),  // 3  -Y
+        Vec3( 0, 0, 1),  // 4  +Z
+        Vec3( 0, 0,-1),  // 5  -Z
+    ];
+    // 8 triangular faces, one per octant. Winding is CCW from outside.
+    m.addFace([4, 0, 2]);  // +X +Y +Z
+    m.addFace([4, 2, 1]);  // -X +Y +Z
+    m.addFace([4, 1, 3]);  // -X -Y +Z
+    m.addFace([4, 3, 0]);  // +X -Y +Z
+    m.addFace([5, 2, 0]);  // +X +Y -Z
+    m.addFace([5, 1, 2]);  // -X +Y -Z
+    m.addFace([5, 3, 1]);  // -X -Y -Z
+    m.addFace([5, 0, 3]);  // +X -Y -Z
+    m.buildLoops();
+    return m;
+}
+
 // L-shaped extrusion in the XY plane, depth 1 along Z. Profile (CCW from +Z):
 //   (-1,-1) → (1,-1) → (1,0) → (0,0) → (0,1) → (-1,1)
 // The vertex at (0, 0, ±0.5) sits at a CONCAVE corner — its interior

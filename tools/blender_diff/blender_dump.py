@@ -59,6 +59,23 @@ elif primitive == "diamond":
     bpy.context.collection.objects.link(new_obj)
     bpy.context.view_layer.objects.active = new_obj
     new_obj.select_set(True)
+elif primitive == "octahedron":
+    verts = [
+        ( 1.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+        ( 0.0, 1.0, 0.0), ( 0.0,-1.0, 0.0),
+        ( 0.0, 0.0, 1.0), ( 0.0, 0.0,-1.0),
+    ]
+    faces = [
+        (4, 0, 2), (4, 2, 1), (4, 1, 3), (4, 3, 0),
+        (5, 2, 0), (5, 1, 2), (5, 3, 1), (5, 0, 3),
+    ]
+    new_mesh = bpy.data.meshes.new("Octahedron")
+    new_mesh.from_pydata(verts, [], faces)
+    new_mesh.update()
+    new_obj = bpy.data.objects.new("Octahedron", new_mesh)
+    bpy.context.collection.objects.link(new_obj)
+    bpy.context.view_layer.objects.active = new_obj
+    new_obj.select_set(True)
 elif primitive == "lshape":
     # Match vibe3d's makeLShape exactly: 6-vert profile in XY extruded along Z.
     verts = [

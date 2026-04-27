@@ -826,8 +826,9 @@ void main(string[] args) {
 
         httpServer.setResetHandler((string primitiveType) {
             switch (primitiveType) {
-                case "lshape":  mesh = makeLShape();  break;
-                case "diamond": mesh = makeDiamond(); break;
+                case "lshape":     mesh = makeLShape();    break;
+                case "diamond":    mesh = makeDiamond();   break;
+                case "octahedron": mesh = makeOctahedron();break;
                 case "":
                 case "cube":
                 default:        mesh = makeCube();    break;

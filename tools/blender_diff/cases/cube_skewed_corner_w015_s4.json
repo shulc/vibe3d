@@ -1,0 +1,22 @@
+{
+  "_comment": "Skewed cube corner (v_6 moved off-axis), bevel all 3 incident edges with width=0.15 segments=4 (even, power-of-2 seg). Exercises cubic_subdiv from canonical seg=2 → seg=4 (one CC step) plus the unit-cube affine map for non-perpendicular face normals. Companion to cube_skewed_corner (seg=2) and cube_skewed_corner_s5 (seg=5 odd) — covers the 'integer power of 2 above seg=2' path.",
+  "preops": [
+    {"op": "move_vertex",
+     "from": [0.5, 0.5, 0.5],
+     "to":   [0.369063, 0.179467, 0.324163]}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5],          "v1": [0.369063, 0.179467, 0.324163]},
+        {"v0": [0.369063, 0.179467, 0.324163], "v1": [-0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, -0.5],           "v1": [0.369063, 0.179467, 0.324163]}
+      ],
+      "width": 0.15,
+      "segments": 4,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

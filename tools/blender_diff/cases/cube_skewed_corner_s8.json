@@ -1,0 +1,22 @@
+{
+  "_comment": "Skewed cube corner with high segment count (seg=8). Stress-tests cubic_subdiv at log2(8)=3 iterations from the canonical seg=2 base. Catches any drift accumulation over multiple CC subdivisions in the unit-cube cap pipeline.",
+  "preops": [
+    {"op": "move_vertex",
+     "from": [0.5, 0.5, 0.5],
+     "to":   [0.369063, 0.179467, 0.324163]}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5],          "v1": [0.369063, 0.179467, 0.324163]},
+        {"v0": [0.369063, 0.179467, 0.324163], "v1": [-0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, -0.5],           "v1": [0.369063, 0.179467, 0.324163]}
+      ],
+      "width": 0.2,
+      "segments": 8,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}
