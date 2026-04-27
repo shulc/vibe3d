@@ -126,6 +126,11 @@ def run_op(op):
         e = find_edge(bm, tuple(op["v0"]), tuple(op["v1"]))
         bmesh.ops.subdivide_edges(bm, edges=[e], cuts=1)
         bmesh.update_edit_mesh(mesh)
+    elif op["op"] == "subdivide":
+        # Match vibe3d's mesh.subdivide (Catmull-Clark on the whole mesh)
+        bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=1, smooth=1.0,
+                                  use_smooth_even=True)
+        bmesh.update_edit_mesh(mesh)
     elif op["op"] == "bevel":
         super_r = op.get("superR", 2.0)
         if abs(super_r - 2.0) > 1e-6:

@@ -1141,18 +1141,48 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
             continue;
         }
 
-        // F_other (selCount == 1 only): splice the cap profile in reverse,
-        // from prev-side BV through the F_other gap to the next-side BV.
+        // F_other handling depends on valence (selCount == 1):
+        //   valence=3: the unique F_OTHER face spans both sides of bev →
+        //     splice the full cap profile [BV_left, ..., BV_right]
+        //     (face grows by `seg` verts).
+        //   valence ≥ 4: each F_OTHER face is on one specific side of the
+        //     bev edge (closer to either BV_left or BV_right in the CCW
+        //     ring). Replace v.vert with that single side's BV — face
+        //     length is preserved. Without this rule, splicing the full
+        //     cap into every F_OTHER would insert BVs on the WRONG side
+        //     of the vertex (e.g. a +X-side BV ends up in a -X-side face).
+        //   Equidistant F_OTHERs (only at odd valence ≥ 5) sit directly
+        //     opposite the bev edge → full cap splice as in valence=3.
         if (leftBVidx < 0) continue;
-        auto cap = bv.boundVerts[leftBVidx].profile;
-        int seg = cast(int)cap.sampleVertIds.length - 1;
-        if (seg < 1) seg = 1;
-
-        uint[] toInsert;
-        toInsert.length = seg + 1;
-        for (int j = 0; j <= seg; j++)
-            toInsert[j] = cast(uint)cap.sampleVertIds[seg - j];
-        spliceInManyAtCorner(mesh, faceIdx, bv.vert, toInsert);
+        int knext = (cast(int)k + 1) % N;
+        int F_OTHER_count = N - 2;
+        bool fullSplice = (F_OTHER_count <= 1);
+        int chosenBVidx = -1;
+        if (!fullSplice) {
+            int distLeft  = (cast(int)k - bv.bevEdgeIdx + N) % N;
+            int distRight = (bv.bevEdgeIdx - knext + N) % N;
+            if (distLeft < distRight) {
+                chosenBVidx = leftBVidx;
+            } else if (distRight < distLeft) {
+                chosenBVidx = (leftBVidx + 1) % cast(int)bv.boundVerts.length;
+            } else {
+                fullSplice = true;
+            }
+        }
+        if (fullSplice) {
+            auto cap = bv.boundVerts[leftBVidx].profile;
+            int seg = cast(int)cap.sampleVertIds.length - 1;
+            if (seg < 1) seg = 1;
+            uint[] toInsert;
+            toInsert.length = seg + 1;
+            for (int j = 0; j <= seg; j++)
+                toInsert[j] = cast(uint)cap.sampleVertIds[seg - j];
+            spliceInManyAtCorner(mesh, faceIdx, bv.vert, toInsert);
+        } else {
+            uint vid = cast(uint)bv.boundVerts[chosenBVidx].vertId;
+            if (vid != bv.vert)
+                replaceVertInFace(mesh, faceIdx, bv.vert, vid);
+        }
     }
 
     // Stage 9b TRI_FAN cap (Blender's bevel_build_endpoint case for valence=2

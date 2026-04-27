@@ -89,6 +89,12 @@ void runSplitEdge(JSONValue op) {
         throw new Exception("split_edge failed: " ~ resp.toString());
 }
 
+void runSubdivide(JSONValue op) {
+    auto resp = postJson("/api/command", `{"id":"mesh.subdivide"}`);
+    if (resp["status"].str != "ok")
+        throw new Exception("subdivide failed: " ~ resp.toString());
+}
+
 void runBevel(JSONValue op) {
     auto model = parseJSON(get(url("/api/model")));
 
@@ -125,6 +131,7 @@ void runOp(JSONValue op) {
     switch (op["op"].str) {
         case "bevel":      runBevel(op);     break;
         case "split_edge": runSplitEdge(op); break;
+        case "subdivide":  runSubdivide(op); break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }
