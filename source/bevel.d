@@ -1875,6 +1875,49 @@ private void overrideCubeCornerCapSkewed(Mesh* mesh, ref BevVert bv) {
             bv.adjGridDirs[idx] = da * (1.0f - t) + db * t;
         }
     }
+
+    // Center / interior fullness for the non-perpendicular case: pull the cap
+    // center toward origPos by the same ratio as the perpendicular inscribed
+    // sphere (1 - 1/√3 ≈ 0.4226 of the way from bvCenter to origPos). The
+    // tabulated `findCapFullness` value (0.559 for r=2, seg=2) is calibrated
+    // for the bilinear default WITHOUT the sphere override and lands closer
+    // to origPos than the inscribed sphere's true center; for non-perp
+    // corners that ratio is empirically too "deep" — using the inscribed-
+    // sphere ratio matches Blender at cube_skewed_corner exactly.
+    Vec3 bvSum = Vec3(0, 0, 0);
+    foreach (ref bnd; bv.boundVerts) bvSum = bvSum + bnd.slideDir;
+    Vec3 bvCenter = bvSum * (1.0f / cast(float)n);
+    enum float invSqrt3 = 0.57735026919f;
+    bv.adjCenterDir = bvCenter * invSqrt3;
+
+    // Interior canonical positions (i, j, k) for j ∈ [1, ns2-1+odd], k ∈ [1, ns2]:
+    // bilinear of (BV_i, mid_i, mid_im1, center) using the OVERRIDDEN cap-arc
+    // mids (linear interp) and the new center. Writing directly into
+    // adjGridDirs bypasses adjCanonDirAtUnitWidth's lookup of
+    // profile.sample[ns2] (which still holds the convex-bevel formula).
+    int jMax = ns2 - 1 + odd;
+    foreach (i; 0 .. n) {
+        int iprev = (i + n - 1) % n;
+        Vec3 BV_i    = bv.boundVerts[i].slideDir;
+        size_t midI_idx   = adjFlatIdx(cast(int)i,     0, ns2, ns);
+        size_t midIm1_idx = adjFlatIdx(cast(int)iprev, 0, ns2, ns);
+        Vec3 mid_i   = bv.adjGridDirs[midI_idx];
+        Vec3 mid_im1 = bv.adjGridDirs[midIm1_idx];
+        Vec3 center  = bv.adjCenterDir;
+        foreach (j; 1 .. jMax + 1) {
+            foreach (k; 1 .. ns2 + 1) {
+                size_t idx = adjFlatIdx(cast(int)i, cast(int)j, cast(int)k, ns);
+                if (idx >= bv.adjGridDirs.length) continue;
+                if (bv.adjGridVids[idx] < 0) continue;
+                float u = cast(float)k / cast(float)ns2;
+                float v = cast(float)j / cast(float)ns2;
+                bv.adjGridDirs[idx] = BV_i    * ((1.0f - u) * (1.0f - v))
+                                    + mid_i   * (u          * (1.0f - v))
+                                    + mid_im1 * ((1.0f - u) * v)
+                                    + center  * (u          * v);
+            }
+        }
+    }
 }
 
 private void spliceInManyAtCorner(Mesh* mesh, uint faceIdx,
