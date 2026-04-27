@@ -1047,9 +1047,15 @@ private int adjCanonVid(ref const BevVert bv, int i, int j, int k) {
         if (idx >= bv.adjGridVids.length) return -1;
         return bv.adjGridVids[idx];
     }
-    if (k <= ns2)
-        return adjCanonVid(bv, (i + n - 1) % n, k, ns - j);
-    return adjCanonVid(bv, (i + 1) % n, ns - k, j);
+    // Mirror around panel boundary into an adjacent panel — swap (j, k) roles.
+    if (k <= ns2) {
+        int prevI = (i + n - 1) % n;
+        int mirrJ = k, mirrK = ns - j;
+        return adjCanonVid(bv, prevI, mirrJ, mirrK);
+    }
+    int nextI = (i + 1) % n;
+    int mirrJ = ns - k, mirrK = j;
+    return adjCanonVid(bv, nextI, mirrJ, mirrK);
 }
 
 // Compute (positionAtUnitWidth - origPos) for canonical (i, j, k). Used
@@ -1387,7 +1393,6 @@ private void materializeArcMiterPatch(Mesh* mesh, ref BevVert bv) {
     foreach (i, ref bnd; bv.boundVerts) {
         if (cast(int)i == bevBVidx) continue;
         EdgeHalf ehFrom = bv.edges[bnd.ehFromIdx];
-        EdgeHalf ehTo   = bv.edges[bnd.ehToIdx];
         int bevEhIdx = ehFrom.isBev ? bnd.ehFromIdx : bnd.ehToIdx;
         if (bevEhIdx == e1EhIdx) c20Idx = cast(int)i;
         else if (bevEhIdx == e2EhIdx) c00Idx = cast(int)i;
@@ -1713,8 +1718,16 @@ private size_t canonMeshVert(int i, int j, int k, int n, int ns) {
     int odd = ns % 2;
     if (odd == 0 && j == ns2 && k == ns2) return canonFlatIdx(0, j, k, ns);
     if (j <= ns2 - 1 + odd && k <= ns2)   return canonFlatIdx(i, j, k, ns);
-    if (k <= ns2)                          return canonFlatIdx((i + n - 1) % n, k, ns - j, ns);
-    return canonFlatIdx((i + 1) % n, ns - k, j, ns);
+    // Mirror around panel boundary: (i, j, k) maps to a different (j', k') in
+    // an adjacent panel — swap roles to keep the canonical region populated.
+    if (k <= ns2) {
+        int prevI = (i + n - 1) % n;
+        int mirrJ = k, mirrK = ns - j;
+        return canonFlatIdx(prevI, mirrJ, mirrK, ns);
+    }
+    int nextI = (i + 1) % n;
+    int mirrJ = ns - k, mirrK = j;
+    return canonFlatIdx(nextI, mirrJ, mirrK, ns);
 }
 
 // Copy values from canonical positions to all the duplicated equivalent
