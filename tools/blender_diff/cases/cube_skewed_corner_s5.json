@@ -1,6 +1,5 @@
 {
-  "_comment": "Same as cube_skewed_corner but segments=5 (odd). BV positions and cap-arc samples (i, 0, k) match Blender exactly via the unit-cube affine map, but cap interior bilinear (i, j>0, k>0) deviates ~0.018 worst because Blender's canonical unit-cube cap for non-power-of-2 seg uses cubic_subdiv (Catmull-Clark) on the seg=2 mesh subsampled to seg=5, while we still bilinear-interpolate in the unit-frame. Closing this needs a port of Blender's cubic_subdiv + interp_vmesh inside make_cube_corner_adj_vmesh.",
-  "expected_fail": true,
+  "_comment": "Same as cube_skewed_corner but segments=5 (odd). All 49 verts exact-match Blender via the unit-cube affine map + canonBuildCubeCornerCap (which iteratively cubic_subdiv's from seg=2 to seg=8, then interp_vmesh's down to seg=5).",
   "preops": [
     {"op": "move_vertex",
      "from": [0.5, 0.5, 0.5],

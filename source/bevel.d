@@ -1665,31 +1665,446 @@ private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
     return fabs(dot(cross(n0, n1), n2)) > 1e-3f;
 }
 
-// Place every M_ADJ canonical position on the sphere octant centered at the
-// "offset point" — the sphere of radius `width` tangent to all 3 bev-flanking
-// faces — following Blender's tri_corner_adj_vmesh + make_unit_cube_map +
-// snap_to_superellipsoid path.
+// ---------------------------------------------------------------------------
+// Canonical unit-cube cap mesh — port of Blender's make_cube_corner_adj_vmesh
+// + cubic_subdiv + interp_vmesh from bmesh_bevel.cc.
+// ---------------------------------------------------------------------------
+//
+// The canonical mesh lives in unit-cube space: 3 BoundVerts at the cube's
+// axis-aligned corners (1,0,0)/(0,1,0)/(0,0,1), with the cap arcs between
+// them lying on the unit sphere (for super_r=2). Blender builds a seg=2
+// base, iteratively subdivides via cubic_subdiv (Catmull-Clark with Sabin's
+// boundary correction, Levin 1999) up to the next power of 2, then
+// linear-blends to the requested seg via interp_vmesh, and finally snaps
+// every vertex to the unit superellipsoid. The resulting mesh depends only
+// on (nseg, super_r) — the actual world cap is obtained by transforming
+// each canonical position through the affine map (make_unit_cube_map)
+// derived from the BVs and origPos.
+//
+// Storage layout: a flat Vec3 array of size n*(ns+1)*(ns+1) (n=3) indexed
+// via canonFlatIdx(i, j, k, ns). The cells overlap between panels (each
+// panel covers j ∈ [0, ns2], k ∈ [0, ns], so adjacent panels share strips
+// at k=0/k=ns). canonMeshVert resolves any (i, j, k) to its CANONICAL
+// (i', j', k') — the only one that's actually written to in the canonical
+// region; canonCopyEquivVerts then mirrors values to the duplicated cells.
+
+// Flat index for the canonical unit-cube cap: panels of (ns+1) × (ns+1)
+// laid out i-major (j-major within each panel). Wider than adjFlatIdx's
+// (ns2+1) × (ns+1) panels so we can index ALL (j, k) ∈ [0, ns]² — the
+// duplicated cells are needed by the CC neighborhood lookups.
+private size_t canonFlatIdx(int i, int j, int k, int ns) {
+    return cast(size_t)i * cast(size_t)((ns + 1) * (ns + 1))
+         + cast(size_t)j * cast(size_t)(ns + 1)
+         + cast(size_t)k;
+}
+
+// Returns true if (i, j, k) is the CANONICAL position (the one that owns the
+// data); non-canonical positions are mirrors of canonical ones.
+private bool canonIsCanon(int i, int j, int k, int ns) {
+    int ns2 = ns / 2;
+    if (ns % 2 == 1) return (j <= ns2 && k <= ns2);
+    return (j < ns2 && k <= ns2) || (j == ns2 && k == ns2 && i == 0);
+}
+
+// Resolve any (i, j, k) to its canonical equivalent's flat index.
+// Mirrors Blender's mesh_vert_canon.
+private size_t canonMeshVert(int i, int j, int k, int n, int ns) {
+    int ns2 = ns / 2;
+    int odd = ns % 2;
+    if (odd == 0 && j == ns2 && k == ns2) return canonFlatIdx(0, j, k, ns);
+    if (j <= ns2 - 1 + odd && k <= ns2)   return canonFlatIdx(i, j, k, ns);
+    if (k <= ns2)                          return canonFlatIdx((i + n - 1) % n, k, ns - j, ns);
+    return canonFlatIdx((i + 1) % n, ns - k, j, ns);
+}
+
+// Copy values from canonical positions to all the duplicated equivalent
+// positions. Mirrors Blender's vmesh_copy_equiv_verts.
+private void canonCopyEquivVerts(Vec3[] cap, int n, int ns) {
+    int ns2 = ns / 2;
+    foreach (i; 0 .. n) {
+        foreach (j; 0 .. ns2 + 1) {
+            foreach (k; 0 .. ns + 1) {
+                int ii = cast(int)i, jj = cast(int)j, kk = cast(int)k;
+                if (canonIsCanon(ii, jj, kk, ns)) continue;
+                cap[canonFlatIdx(ii, jj, kk, ns)] = cap[canonMeshVert(ii, jj, kk, n, ns)];
+            }
+        }
+    }
+}
+
+// Snap (a0, a1, a2) to the unit superellipsoid |a0|^r + |a1|^r + |a2|^r = 1.
+private Vec3 canonSnapToSuperellipsoid(Vec3 p, float superR) {
+    float aa = fabs(p.x), ab = fabs(p.y), ac = fabs(p.z);
+    float sum = pow(aa, superR) + pow(ab, superR) + pow(ac, superR);
+    if (sum > 1e-10f) {
+        float scale = pow(sum, -1.0f / superR);
+        return Vec3(p.x * scale, p.y * scale, p.z * scale);
+    }
+    return p;
+}
+
+// Sample the canonical profile arc from (axis i) to (axis (i+1)%3) at
+// k/nseg of the way around. For super_r=2 this is a quarter-circle on the
+// unit sphere; for general super_r it's a superellipse arc.
+private Vec3 canonProfilePoint(int i, int k, int nseg, float superR) {
+    float t = cast(float)k / cast(float)nseg;
+    float th = t * cast(float)(PI * 0.5);
+    float c = cos(th), s = sin(th);
+    float u, v;
+    if (superR > 1.99f && superR < 2.01f) {
+        u = c; v = s;  // exact on unit circle
+    } else {
+        // Superellipse: x^r + y^r = 1 parameterized as (c^(2/r), s^(2/r)).
+        u = (c >= 0 ? pow(c, 2.0f / superR) : -pow(-c, 2.0f / superR));
+        v = (s >= 0 ? pow(s, 2.0f / superR) : -pow(-s, 2.0f / superR));
+    }
+    float[3] tmp = [0, 0, 0];
+    tmp[i] = u;
+    tmp[(i + 1) % 3] = v;
+    return Vec3(tmp[0], tmp[1], tmp[2]);
+}
+
+// Build the seg=2 base canonical cap (3 BVs + 3 cap arc midpoints + 1 center).
+// Mirrors the initial setup in make_cube_corner_adj_vmesh.
+private Vec3[] canonBuildSeg2(int targetSeg, float superR) {
+    int n = 3, ns = 2;
+    Vec3[] cap = new Vec3[](cast(size_t)n * cast(size_t)((ns + 1) * (ns + 1)));
+    foreach (ref p; cap) p = Vec3(0, 0, 0);
+    // BVs at unit axes.
+    foreach (i; 0 .. n) {
+        float[3] tmp = [0, 0, 0];
+        tmp[i] = 1.0f;
+        cap[canonFlatIdx(cast(int)i, 0, 0, ns)] = Vec3(tmp[0], tmp[1], tmp[2]);
+    }
+    // Cap arc midpoints at (i, 0, 1).
+    foreach (i; 0 .. n) {
+        cap[canonFlatIdx(cast(int)i, 0, 1, ns)] = canonProfilePoint(cast(int)i, 1, 2, superR);
+    }
+    // Center at (0, 1, 1) = (1/√3) [or scaled for nseg > 2].
+    enum float invSqrt3 = 0.57735026919f;
+    Vec3 center = Vec3(invSqrt3, invSqrt3, invSqrt3);
+    if (targetSeg > 2) {
+        if (superR > 1.5f)        center = center * 1.4f;
+        else if (superR < 0.75f)  center = center * 0.6f;
+    }
+    cap[canonFlatIdx(0, 1, 1, ns)] = center;
+    canonCopyEquivVerts(cap, n, ns);
+    return cap;
+}
+
+// Sabin's gamma factor for the n-sided central polygon's smoothing rule.
+// Blender's sabin_gamma in bmesh_bevel.cc.
+private float canonSabinGamma(int n) {
+    if (n < 3)  return 0.0f;
+    if (n == 3) return 0.065247584f;
+    if (n == 4) return 0.25f;
+    if (n == 5) return 0.401983447f;
+    if (n == 6) return 0.523423277f;
+    double k = cos(cast(double)PI / cast(double)n);
+    double k2 = k * k;
+    double k4 = k2 * k2;
+    double k6 = k4 * k2;
+    double y = pow(1.7320508075688772 * sqrt(64.0 * k6 - 144.0 * k4 + 135.0 * k2 - 27.0)
+                   + 9.0 * k, 1.0 / 3.0);
+    double x = 0.480749856769136 * y - (0.231120424783545 * (12.0 * k2 - 9.0)) / y;
+    return cast(float)((k * x + 2.0 * k2 - 1.0) / (x * x * (k * x + 1.0)));
+}
+
+// One step of cubic subdivision (Catmull-Clark with Sabin boundary correction)
+// — port of Blender's cubic_subdiv. Doubles seg from nsIn to 2*nsIn.
+// Requires nsIn even and ≥ 2.
+private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
+    int nsIn2 = nsIn / 2;
+    int nsOut = 2 * nsIn;
+
+    Vec3[] vmOut = new Vec3[](cast(size_t)n * cast(size_t)((nsOut + 1) * (nsOut + 1)));
+    foreach (ref p; vmOut) p = Vec3(0, 0, 0);
+
+    // Step 1: Smooth the existing boundary (k=0..nsIn) and store at output's
+    // even-indexed boundary positions (2k). Levin 1999 boundary rule:
+    //   co - 1/6 * (co_{k-1} + co_{k+1} - 2·co)
+    foreach (i; 0 .. n) {
+        vmOut[canonFlatIdx(cast(int)i, 0, 0, nsOut)] = vmIn[canonFlatIdx(cast(int)i, 0, 0, nsIn)];
+        for (int k = 1; k < nsIn; k++) {
+            Vec3 co  = vmIn[canonFlatIdx(cast(int)i, 0, k, nsIn)];
+            Vec3 co1 = vmIn[canonFlatIdx(cast(int)i, 0, k - 1, nsIn)];
+            Vec3 co2 = vmIn[canonFlatIdx(cast(int)i, 0, k + 1, nsIn)];
+            Vec3 acc = co1 + co2 - co * 2.0f;
+            Vec3 newCo = co - acc * (1.0f / 6.0f);
+            // Write to canonical position of (i, 0, 2k) in vmOut.
+            vmOut[canonMeshVert(cast(int)i, 0, 2 * k, n, nsOut)] = newCo;
+        }
+    }
+
+    // Step 2: Add new odd-indexed boundary midpoints from get_profile_point
+    // applied to the canonical profile (BV_i → BV_{i+1}). Then smooth.
+    foreach (i; 0 .. n) {
+        for (int k = 1; k < nsOut; k += 2) {
+            Vec3 co = canonProfilePoint(cast(int)i, k, nsOut, superR);
+            Vec3 co1 = vmOut[canonMeshVert(cast(int)i, 0, k - 1, n, nsOut)];
+            Vec3 co2 = vmOut[canonMeshVert(cast(int)i, 0, k + 1, n, nsOut)];
+            Vec3 acc = co1 + co2 - co * 2.0f;
+            co = co - acc * (1.0f / 6.0f);
+            vmOut[canonMeshVert(cast(int)i, 0, k, n, nsOut)] = co;
+        }
+    }
+    canonCopyEquivVerts(vmOut, n, nsOut);
+
+    // Copy the smoothed even boundary back into vmIn (so subsequent face/edge
+    // averages use the smoothed positions, matching Blender).
+    foreach (i; 0 .. n) {
+        for (int k = 0; k < nsIn; k++) {
+            vmIn[canonFlatIdx(cast(int)i, 0, k, nsIn)]
+                = vmOut[canonFlatIdx(cast(int)i, 0, 2 * k, nsOut)];
+        }
+    }
+    canonCopyEquivVerts(vmIn, n, nsIn);
+
+    // Step 3: Internal faces (new face vertex = avg of 4 quad corners).
+    foreach (i; 0 .. n) {
+        for (int j = 0; j < nsIn2; j++) {
+            for (int k = 0; k < nsIn2; k++) {
+                Vec3 a = vmIn[canonFlatIdx(cast(int)i, j,     k,     nsIn)];
+                Vec3 b = vmIn[canonFlatIdx(cast(int)i, j,     k + 1, nsIn)];
+                Vec3 c = vmIn[canonFlatIdx(cast(int)i, j + 1, k,     nsIn)];
+                Vec3 d = vmIn[canonFlatIdx(cast(int)i, j + 1, k + 1, nsIn)];
+                vmOut[canonFlatIdx(cast(int)i, 2 * j + 1, 2 * k + 1, nsOut)]
+                    = (a + b + c + d) * 0.25f;
+            }
+        }
+    }
+
+    // Step 4: New vertical edge vertices.
+    foreach (i; 0 .. n) {
+        for (int j = 0; j < nsIn2; j++) {
+            for (int k = 1; k <= nsIn2; k++) {
+                Vec3 a = vmIn[canonFlatIdx(cast(int)i, j,     k, nsIn)];
+                Vec3 b = vmIn[canonFlatIdx(cast(int)i, j + 1, k, nsIn)];
+                Vec3 c = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k - 1, n, nsOut)];
+                Vec3 d = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)];
+                vmOut[canonFlatIdx(cast(int)i, 2 * j + 1, 2 * k, nsOut)]
+                    = (a + b + c + d) * 0.25f;
+            }
+        }
+    }
+
+    // Step 5: New horizontal edge vertices.
+    foreach (i; 0 .. n) {
+        for (int j = 1; j < nsIn2; j++) {
+            for (int k = 0; k < nsIn2; k++) {
+                Vec3 a = vmIn[canonFlatIdx(cast(int)i, j, k,     nsIn)];
+                Vec3 b = vmIn[canonFlatIdx(cast(int)i, j, k + 1, nsIn)];
+                Vec3 c = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k + 1, n, nsOut)];
+                Vec3 d = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)];
+                vmOut[canonFlatIdx(cast(int)i, 2 * j, 2 * k + 1, nsOut)]
+                    = (a + b + c + d) * 0.25f;
+            }
+        }
+    }
+
+    // Step 6: Updated original vertex positions (interior, not boundary).
+    // Standard CC vertex update: alpha=1 (centroid of edge verts), beta=-gamma
+    // (centroid of face verts), gamma=0.25 (the original vertex weight).
+    {
+        float gamma = 0.25f, beta = -gamma;
+        foreach (i; 0 .. n) {
+            for (int j = 1; j < nsIn2; j++) {
+                for (int k = 1; k <= nsIn2; k++) {
+                    Vec3 e0 = vmOut[canonMeshVert(cast(int)i, 2 * j,     2 * k - 1, n, nsOut)];
+                    Vec3 e1 = vmOut[canonMeshVert(cast(int)i, 2 * j,     2 * k + 1, n, nsOut)];
+                    Vec3 e2 = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k,     n, nsOut)];
+                    Vec3 e3 = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k,     n, nsOut)];
+                    Vec3 co1 = (e0 + e1 + e2 + e3) * 0.25f;
+                    Vec3 f0 = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k - 1, n, nsOut)];
+                    Vec3 f1 = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k - 1, n, nsOut)];
+                    Vec3 f2 = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k + 1, n, nsOut)];
+                    Vec3 f3 = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)];
+                    Vec3 co2 = (f0 + f1 + f2 + f3) * 0.25f;
+                    Vec3 v   = vmIn[canonFlatIdx(cast(int)i, j, k, nsIn)];
+                    Vec3 newV = co1 + co2 * beta + v * gamma;
+                    vmOut[canonFlatIdx(cast(int)i, 2 * j, 2 * k, nsOut)] = newV;
+                }
+            }
+        }
+    }
+    canonCopyEquivVerts(vmOut, n, nsOut);
+
+    // Step 7: Center vertex (special, with Sabin's gamma for n-sided pole).
+    {
+        float gamma = canonSabinGamma(n);
+        float beta = -gamma;
+        Vec3 co1 = Vec3(0, 0, 0), co2 = Vec3(0, 0, 0);
+        foreach (i; 0 .. n) {
+            co1 = co1 + vmOut[canonFlatIdx(cast(int)i, nsIn, nsIn - 1, nsOut)];
+            co2 = co2 + vmOut[canonFlatIdx(cast(int)i, nsIn - 1, nsIn - 1, nsOut)];
+            co2 = co2 + vmOut[canonFlatIdx(cast(int)i, nsIn - 1, nsIn + 1, nsOut)];
+        }
+        Vec3 vCenter = vmIn[canonFlatIdx(0, nsIn2, nsIn2, nsIn)];
+        Vec3 c = co1 * (1.0f / cast(float)n)
+               + co2 * (beta / (2.0f * cast(float)n))
+               + vCenter * gamma;
+        foreach (i; 0 .. n) {
+            vmOut[canonFlatIdx(cast(int)i, nsIn, nsIn, nsOut)] = c;
+        }
+    }
+
+    // Step 8: Re-snap the boundary to the canonical profile arc (overrides
+    // any drift from the smoothing rule). Matches Blender's final boundary
+    // rewrite at the end of cubic_subdiv. Write to the CANONICAL position
+    // so canonCopyEquivVerts can propagate to all the equivalent cells
+    // (including the j>0, k=0 mirror cells of the next panel for k > ns2).
+    foreach (i; 0 .. n) {
+        for (int k = 0; k <= nsOut; k++) {
+            vmOut[canonMeshVert(cast(int)i, 0, k, n, nsOut)]
+                = canonProfilePoint(cast(int)i, k, nsOut, superR);
+        }
+    }
+    canonCopyEquivVerts(vmOut, n, nsOut);
+    return vmOut;
+}
+
+// Distances along ring 0 for panel i, normalized to [0, 1].
+private float[] canonFillVMeshFracs(Vec3[] vm, int ns, int i) {
+    float[] frac = new float[](ns + 1);
+    frac[0] = 0.0f;
+    float total = 0.0f;
+    for (int k = 0; k < ns; k++) {
+        Vec3 a = vm[canonFlatIdx(i, 0, k, ns)];
+        Vec3 b = vm[canonFlatIdx(i, 0, k + 1, ns)];
+        total += (b - a).length;
+        frac[k + 1] = total;
+    }
+    if (total > 0.0f) for (int k = 1; k <= ns; k++) frac[k] /= total;
+    else              frac[ns] = 1.0f;
+    return frac;
+}
+
+// Profile arc fractions for `ns` segments, normalized to [0, 1].
+private float[] canonFillProfileFracs(int i, int ns, float superR) {
+    float[] frac = new float[](ns + 1);
+    frac[0] = 0.0f;
+    float total = 0.0f;
+    Vec3 prev = canonProfilePoint(i, 0, ns, superR);
+    for (int k = 0; k < ns; k++) {
+        Vec3 next = canonProfilePoint(i, k + 1, ns, superR);
+        total += (next - prev).length;
+        frac[k + 1] = total;
+        prev = next;
+    }
+    if (total > 0.0f) for (int k = 1; k <= ns; k++) frac[k] /= total;
+    else              frac[ns] = 1.0f;
+    return frac;
+}
+
+// Find i such that frac[i] <= f <= frac[i+1], and put the rest in *r_rest.
+private int canonInterpRange(const float[] frac, int n, float f, out float rRest) {
+    for (int i = 0; i < n; i++) {
+        if (f <= frac[i + 1]) {
+            float rest = f - frac[i];
+            rRest = (rest == 0) ? 0.0f : rest / (frac[i + 1] - frac[i]);
+            if (i == n - 1 && rRest == 1.0f) { rRest = 0.0f; return n; }
+            return i;
+        }
+    }
+    rRest = 0.0f;
+    return n;
+}
+
+// Linearly blend a canonical cap at nsIn to one at nsegOut. Mirrors
+// Blender's interp_vmesh.
+private Vec3[] canonInterpVMesh(Vec3[] vmIn, int n, int nsIn, int nsegOut, float superR) {
+    int nseg2 = nsegOut / 2;
+    int odd = nsegOut % 2;
+    Vec3[] vmOut = new Vec3[](cast(size_t)n * cast(size_t)((nsegOut + 1) * (nsegOut + 1)));
+    foreach (ref p; vmOut) p = Vec3(0, 0, 0);
+
+    float[] prevFrac = canonFillVMeshFracs(vmIn, nsIn, n - 1);
+    float[] prevNewFrac = canonFillProfileFracs((n - 1 + n) % n, nsegOut, superR);
+
+    foreach (i; 0 .. n) {
+        float[] frac = canonFillVMeshFracs(vmIn, nsIn, cast(int)i);
+        float[] newFrac = canonFillProfileFracs(cast(int)i, nsegOut, superR);
+        for (int j = 0; j <= nseg2 - 1 + odd; j++) {
+            for (int k = 0; k <= nseg2; k++) {
+                float restK, restKPrev;
+                int kIn     = canonInterpRange(frac,     nsIn, newFrac[k],         restK);
+                int kInPrev = canonInterpRange(prevFrac, nsIn, prevNewFrac[nsegOut - j], restKPrev);
+                int jIn = nsIn - kInPrev;
+                float restJ = -restKPrev;
+                if (restJ > -1e-6f) restJ = 0.0f;
+                else { jIn = jIn - 1; restJ = 1.0f + restJ; }
+                Vec3 co;
+                if (restJ < 1e-6f && restK < 1e-6f) {
+                    co = vmIn[canonMeshVert(cast(int)i, jIn, kIn, n, nsIn)];
+                } else {
+                    int j0inc = (restJ < 1e-6f || jIn == nsIn) ? 0 : 1;
+                    int k0inc = (restK < 1e-6f || kIn == nsIn) ? 0 : 1;
+                    Vec3 q0 = vmIn[canonMeshVert(cast(int)i, jIn,         kIn,         n, nsIn)];
+                    Vec3 q1 = vmIn[canonMeshVert(cast(int)i, jIn,         kIn + k0inc, n, nsIn)];
+                    Vec3 q2 = vmIn[canonMeshVert(cast(int)i, jIn + j0inc, kIn + k0inc, n, nsIn)];
+                    Vec3 q3 = vmIn[canonMeshVert(cast(int)i, jIn + j0inc, kIn,         n, nsIn)];
+                    // Bilinear interp inside the source quad.
+                    co = q0 * ((1 - restK) * (1 - restJ))
+                       + q1 * (restK       * (1 - restJ))
+                       + q2 * (restK       * restJ)
+                       + q3 * ((1 - restK) * restJ);
+                }
+                vmOut[canonFlatIdx(cast(int)i, j, k, nsegOut)] = co;
+            }
+        }
+        prevFrac = frac;
+        prevNewFrac = newFrac;
+    }
+    if (!odd) {
+        // Even seg: center is the same canonical point shared by all panels.
+        Vec3 center = vmIn[canonFlatIdx(0, nsIn / 2, nsIn / 2, nsIn)];
+        vmOut[canonFlatIdx(0, nseg2, nseg2, nsegOut)] = center;
+    }
+    canonCopyEquivVerts(vmOut, n, nsegOut);
+    return vmOut;
+}
+
+// Build the canonical unit-cube cap for the requested nseg + super_r.
+// Iteratively cubic_subdiv from seg=2 to the next power of 2 ≥ nseg, then
+// (if needed) interp_vmesh down to nseg, then snap every vertex to the
+// unit superellipsoid. Mirrors Blender's make_cube_corner_adj_vmesh.
+private Vec3[] canonBuildCubeCornerCap(int nseg, float superR) {
+    Vec3[] vm = canonBuildSeg2(nseg, superR);
+    int curSeg = 2;
+    int powTarget = 2;
+    while (powTarget < nseg) powTarget *= 2;
+    while (curSeg < powTarget) {
+        vm = canonCubicSubdiv(vm, 3, curSeg, superR);
+        curSeg *= 2;
+    }
+    if (curSeg != nseg) {
+        vm = canonInterpVMesh(vm, 3, curSeg, nseg, superR);
+        curSeg = nseg;
+    }
+    int ns2 = nseg / 2;
+    foreach (i; 0 .. 3) {
+        foreach (j; 0 .. ns2 + 1) {
+            foreach (k; 0 .. nseg + 1) {
+                size_t idx = canonFlatIdx(cast(int)i, cast(int)j, cast(int)k, nseg);
+                vm[idx] = canonSnapToSuperellipsoid(vm[idx], superR);
+            }
+        }
+    }
+    return vm;
+}
+
+// Place every M_ADJ canonical position by transforming Blender's canonical
+// unit-cube cap through the affine map (make_unit_cube_map). The canonical
+// cap is built via canonBuildCubeCornerCap, which iteratively cubic_subdiv's
+// from a seg=2 base to the next power of 2 ≥ nseg, then interp_vmesh's down
+// to nseg, then snap_to_superellipsoid.
 //
 // Affine map (Blender's `mat`):
-//   position = sphere_center + width · (a · n_0 + b · n_1 + c · n_2)
-// where n_i are the outward face normals of BV[i]'s face, sphere_center
-// satisfies BV[i].pos == sphere_center + width · n_i for any i, and (a, b, c)
-// lies on the unit superellipsoid |a|^r + |b|^r + |c|^r = 1.
+//   (1,0,0) → BV_0,  (0,1,0) → BV_1,  (0,0,1) → BV_2,  (1,1,1) → origPos
 //
-// Canonical position → unit-frame (a_0, a_1, a_2):
-//   (i, 0, 0)         BV_i                  → a_i = 1, others = 0
-//   (i, 0, k)  k>0    cap arc i sample[k]   → (a_i, a_{i+1}) = (cos(t·π/2), sin(t·π/2)),
-//                                              t = k/ns; others = 0
-//   (i, j, 0)  j>0    cap arc (i-1) sample  → mirror of above with t = (ns-j)/ns
-//   (i, j, k)  >0,>0  panel i interior      → (a_{i-1}, a_i, a_{i+1}) = (j/ns2, 1, k/ns2)
-//                                              followed by snap to unit superellipsoid
-//   center            shared (1, 1, 1)      → snap to unit superellipsoid
-//
-// Boundary placement is exact (matches Blender's `get_profile_point` on the
-// inscribed sphere). Interior is bilinear-in-unit-frame + snap; this is an
-// approximation to Blender's iterative Catmull-Clark + snap (~2% off in the
-// interior for ns=4) but coincides on the cap-strip boundary so the strip
-// connects cleanly to the cap.
+// For perpendicular cube corners this matrix is a uniform scale + translate;
+// for non-perpendicular ("skewed") corners it picks up off-diagonal terms
+// that capture the skew exactly.
 private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
     if (!isCubeCornerLike(bv, mesh)) return;
 
@@ -1698,17 +2113,6 @@ private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
     int ns2 = ns / 2;
     int odd = ns % 2;
 
-    // Affine map from canonical unit-cube cap to world cap (Blender's
-    // make_unit_cube_map / tri_corner_adj_vmesh in bmesh_bevel.cc). The
-    // canonical setup sends:
-    //   (1, 0, 0) → BV_0,  (0, 1, 0) → BV_1,  (0, 0, 1) → BV_2,
-    //   (1, 1, 1) → origPos.
-    // For a perpendicular cube corner this matrix is a uniform scale +
-    // translate; for a non-perpendicular ("skewed") corner it picks up
-    // off-diagonal terms that capture the skew exactly. Combined with the
-    // unit-superellipsoid snap, the cap-arc samples and the cap center
-    // match Blender's tri-corner cap exactly for any orientation of the
-    // 3 face normals (as long as they are linearly independent).
     Vec3 va = bv.boundVerts[0].pos;
     Vec3 vb = bv.boundVerts[1].pos;
     Vec3 vc = bv.boundVerts[2].pos;
@@ -1722,94 +2126,52 @@ private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
     float superR = bv.boundVerts[0].profile.superR;
     if (superR < 1e-3f) superR = 1e-3f;
 
-    // Snap (a_0, a_1, a_2) to the unit superellipsoid then map to world via
-    // the affine cube-corner frame. Returns world position (NOT dir).
-    Vec3 mapUnitToWorld(float a0, float a1, float a2) {
-        float aa = fabs(a0), ab = fabs(a1), ac = fabs(a2);
-        float sum = pow(aa, superR) + pow(ab, superR) + pow(ac, superR);
-        if (sum > 1e-10f) {
-            float scale = pow(sum, -1.0f / superR);
-            a0 *= scale; a1 *= scale; a2 *= scale;
-        }
-        return col0 * a0 + col1 * a1 + col2 * a2 + col3;
+    Vec3 unitToWorld(Vec3 unit) {
+        return col0 * unit.x + col1 * unit.y + col2 * unit.z + col3;
     }
 
-    // Cap arc sample at parameter t ∈ [0, 1] from BV_a (a-axis = 1) to BV_b
-    // (b-axis = 1). For r=2 the (cos, sin) pair already lies on the unit
-    // circle so the snap is a no-op.
-    Vec3 arcSampleUnit(int a, int b, float t) {
-        float th = t * cast(float)(PI * 0.5);
-        float[3] uvw = [0, 0, 0];
-        uvw[a] = cos(th);
-        uvw[b] = sin(th);
-        return mapUnitToWorld(uvw[0], uvw[1], uvw[2]);
-    }
+    // Build the canonical unit-cube cap (depends only on (ns, superR)) and
+    // transform every position through the affine map.
+    Vec3[] canon = canonBuildCubeCornerCap(ns, superR);
 
-    if (ns == 2) {
-        // Cap-arc midpoints (i, 0, 1): SLERP midpoint of BV_i and BV_{i+1}.
-        foreach (i; 0 .. n) {
-            int inext = (i + 1) % n;
-            float[3] uvw = [0, 0, 0];
-            uvw[i]     = 1.0f;
-            uvw[inext] = 1.0f;
-            size_t idx = adjFlatIdx(cast(int)i, 0, 1, ns);
-            bv.adjGridDirs[idx] = mapUnitToWorld(uvw[0], uvw[1], uvw[2])
-                                - bv.origPos;
-        }
-        if (bv.adjCenterVid >= 0)
-            bv.adjCenterDir = mapUnitToWorld(1.0f, 1.0f, 1.0f) - bv.origPos;
-        return;
-    }
-
-    // seg ≥ 4: rebuild every canonical (i, j, k) directly from unit-frame
-    // coords. Boundary cap arcs (j=0 or k=0) come from the unit-circle
-    // parameterization — perfect match to Blender. Interior comes from
-    // bilinear-in-unit-frame + superellipsoid snap.
     foreach (i; 0 .. n) {
-        int iprev = (i + n - 1) % n;
-        int inext = (i + 1) % n;
-
         foreach (j; 0 .. ns2 + odd) {
             foreach (k; 0 .. ns2 + 1) {
                 size_t idx = adjFlatIdx(cast(int)i, cast(int)j, cast(int)k, ns);
                 if (idx >= bv.adjGridDirs.length) continue;
                 if (bv.adjGridVids[idx] < 0) continue;
 
-                Vec3 world;
+                Vec3 unit;
                 if (j == 0 && k == 0) {
-                    world = bv.boundVerts[i].pos;
-                } else if (j == 0) {
-                    float t = cast(float)k / cast(float)ns;
-                    world = arcSampleUnit(cast(int)i, inext, t);
-                } else if (k == 0) {
-                    float t = cast(float)(ns - j) / cast(float)ns;
-                    world = arcSampleUnit(iprev, cast(int)i, t);
+                    // Snap the (i, 0, 0) corner exactly to the actual BV
+                    // position (canonical (1,0,0)/(0,1,0)/(0,0,1) round-trip
+                    // through the affine map but float drift can leak in).
+                    bv.adjGridDirs[idx] = bv.boundVerts[i].pos - bv.origPos;
+                    continue;
                 } else {
-                    // Bilinear-in-unit-frame for true interior. For even ns
-                    // the (j=ns2, k=ns2) corner of every panel maps to the
-                    // shared center (1,1,1) which is correct. For odd ns
-                    // there is no shared center — using the same formula
-                    // would collapse all n panel interiors onto (1,1,1)/√3.
-                    // Pull the (j, k) ↔ (u, v) map by 1/(ns) so that
-                    // (j=ns2, k=ns2) odd lands at u = v = 2·ns2/ns < 1, an
-                    // approximation of Blender's iterative-CC interior at
-                    // ~3% on ns=3.
-                    float denom = cast(float)(odd ? (2 * ns2 + 1) : (2 * ns2));
-                    float u = cast(float)(2 * k) / denom;
-                    float v = cast(float)(2 * j) / denom;
-                    float[3] uvw = [0, 0, 0];
-                    uvw[iprev] = v;
-                    uvw[i]     = 1.0f;
-                    uvw[inext] = u;
-                    world = mapUnitToWorld(uvw[0], uvw[1], uvw[2]);
+                    size_t cIdx = canonMeshVert(cast(int)i, cast(int)j, cast(int)k, n, ns);
+                    unit = canon[cIdx];
                 }
-                bv.adjGridDirs[idx] = world - bv.origPos;
+                bv.adjGridDirs[idx] = unitToWorld(unit) - bv.origPos;
             }
         }
     }
 
-    if (bv.adjCenterVid >= 0)
-        bv.adjCenterDir = mapUnitToWorld(1.0f, 1.0f, 1.0f) - bv.origPos;
+    if (bv.adjCenterVid >= 0) {
+        Vec3 centerUnit;
+        if (odd) {
+            // Odd seg: average of the (i, ns2, ns2) cells across all panels.
+            centerUnit = Vec3(0, 0, 0);
+            foreach (i; 0 .. n) {
+                centerUnit = centerUnit
+                    + canon[canonFlatIdx(cast(int)i, ns2, ns2, ns)];
+            }
+            centerUnit = centerUnit * (1.0f / cast(float)n);
+        } else {
+            centerUnit = canon[canonFlatIdx(0, ns2, ns2, ns)];
+        }
+        bv.adjCenterDir = unitToWorld(centerUnit) - bv.origPos;
+    }
 }
 
 private void spliceInManyAtCorner(Mesh* mesh, uint faceIdx,
