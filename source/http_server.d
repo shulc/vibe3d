@@ -34,10 +34,11 @@ class HttpServer {
     private SelectionDataProvider selectionDataProvider;
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
-    private alias ResetHandler = void delegate();
+    private alias ResetHandler = void delegate(string primitiveType);
     private ResetHandler resetHandler;
     private shared long resetSubmittedEpoch;
     private shared long resetCompletedEpoch;
+    private string resetPendingType;     // primitive type for the in-flight reset
     private bool testMode = false;
 
     // ----- /api/command synchronous bridge ---------------------------------
@@ -436,8 +437,9 @@ class HttpServer {
                 response.body = `{"error":"recorded events provider not set"}`;
                 response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/reset" && request.method == "POST") {
+        } else if (request.path.startsWith("/api/reset") && request.method == "POST") {
             if (resetHandler !is null) {
+                resetPendingType = parseQueryString(request.path, "type", "");
                 long my = atomicOp!"+="(resetSubmittedEpoch, 1);
                 enum int maxIters = 2500;
                 int iters = 0;
@@ -644,7 +646,7 @@ class HttpServer {
         long sub = atomicLoad(resetSubmittedEpoch);
         long cmp = atomicLoad(resetCompletedEpoch);
         if (sub <= cmp) return;
-        if (resetHandler !is null) resetHandler();
+        if (resetHandler !is null) resetHandler(resetPendingType);
         atomicStore(resetCompletedEpoch, sub);
     }
 
@@ -774,6 +776,19 @@ private int parseQueryInt(string path, string key, int def) {
             try return kv[eq + 1 .. $].to!int;
             catch (ConvException) return def;
         }
+    }
+    return def;
+}
+
+// Parse `?key=str` (or `&key=str`) from a request path. Returns `def` when
+// the key is missing.
+private string parseQueryString(string path, string key, string def) {
+    auto qi = path.indexOf('?');
+    if (qi < 0) return def;
+    foreach (kv; path[qi + 1 .. $].split('&')) {
+        auto eq = kv.indexOf('=');
+        if (eq < 0) continue;
+        if (kv[0 .. eq] == key) return kv[eq + 1 .. $].idup;
     }
     return def;
 }

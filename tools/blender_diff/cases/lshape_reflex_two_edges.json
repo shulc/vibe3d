@@ -1,0 +1,18 @@
+{
+  "_comment": "Stage 9e Miters (sharp miter at reflex): bevel TWO edges meeting at the L-shape's reflex corner — vertical reflex edge + horizontal edge to (1,0,+0.5). Expected fail until reflex sharp-miter logic lands: vibe3d creates BVs in all 3 faces around v3, including a BV in the BEV-NONBEV face that lands OUTSIDE the bulk (in the L's missing quadrant) at (0,+0.1,+0.5). Blender's sharp miter for reflex skips that BV and reuses v3 itself, giving 15v/10f vs vibe3d's 16v/11f.",
+  "expected_fail": true,
+  "primitive": "lshape",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0, 0, 0.5], "v1": [0, 0, -0.5]},
+        {"v0": [0, 0, 0.5], "v1": [1, 0, 0.5]}
+      ],
+      "width": 0.1,
+      "segments": 1,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

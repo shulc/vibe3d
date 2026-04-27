@@ -1,0 +1,16 @@
+{
+  "_comment": "Stage 9e Miters survey: same L-shape reflex edge but seg=2 — exercises cap profile sampling at the reflex corner.",
+  "primitive": "lshape",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0, 0, 0.5], "v1": [0, 0, -0.5]}
+      ],
+      "width": 0.1,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

@@ -1014,6 +1014,39 @@ Mesh makeCube() {
     return m;
 }
 
+// L-shaped extrusion in the XY plane, depth 1 along Z. Profile (CCW from +Z):
+//   (-1,-1) → (1,-1) → (1,0) → (0,0) → (0,1) → (-1,1)
+// The vertex at (0, 0, ±0.5) sits at a CONCAVE corner — its interior
+// dihedral on the L's bulk side is 270° (reflex), so the vertical edge
+// connecting the two reflex corners is the canonical reflex/miter test edge.
+Mesh makeLShape() {
+    Mesh m;
+    m.vertices = [
+        Vec3(-1.0f, -1.0f,  0.5f), //  0 front: bottom-left
+        Vec3( 1.0f, -1.0f,  0.5f), //  1 front: bottom-right
+        Vec3( 1.0f,  0.0f,  0.5f), //  2 front: inner-bottom
+        Vec3( 0.0f,  0.0f,  0.5f), //  3 front: REFLEX corner
+        Vec3( 0.0f,  1.0f,  0.5f), //  4 front: inner-top
+        Vec3(-1.0f,  1.0f,  0.5f), //  5 front: top-left
+        Vec3(-1.0f, -1.0f, -0.5f), //  6 back: bottom-left
+        Vec3( 1.0f, -1.0f, -0.5f), //  7 back: bottom-right
+        Vec3( 1.0f,  0.0f, -0.5f), //  8 back: inner-bottom
+        Vec3( 0.0f,  0.0f, -0.5f), //  9 back: REFLEX corner
+        Vec3( 0.0f,  1.0f, -0.5f), // 10 back: inner-top
+        Vec3(-1.0f,  1.0f, -0.5f), // 11 back: top-left
+    ];
+    m.addFace([0, 1, 2, 3, 4, 5]);     // front cap (+Z)
+    m.addFace([6, 11, 10, 9, 8, 7]);   // back cap  (-Z)
+    m.addFace([0, 6, 7, 1]);           // bottom side (-Y)
+    m.addFace([1, 7, 8, 2]);           // right side  (+X, lower half)
+    m.addFace([2, 8, 9, 3]);           // inner-bottom side (+Y, inner)
+    m.addFace([3, 9, 10, 4]);          // inner-side       (+X, inner)
+    m.addFace([4, 10, 11, 5]);         // top side    (+Y)
+    m.addFace([5, 11, 6, 0]);          // left side   (-X)
+    m.buildLoops();
+    return m;
+}
+
 // ---------------------------------------------------------------------------
 // Catmull-Clark subdivision
 // ---------------------------------------------------------------------------

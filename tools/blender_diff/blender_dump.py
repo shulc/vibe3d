@@ -41,8 +41,37 @@ out_path = argv[1]
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.object.delete(use_global=False)
 
-# Default cube: size=1 → vertices at ±0.5, matching vibe3d's makeCube().
-bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
+primitive = case.get("primitive", "cube")
+if primitive == "cube":
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
+elif primitive == "lshape":
+    # Match vibe3d's makeLShape exactly: 6-vert profile in XY extruded along Z.
+    verts = [
+        (-1.0, -1.0,  0.5), ( 1.0, -1.0,  0.5), ( 1.0,  0.0,  0.5),
+        ( 0.0,  0.0,  0.5), ( 0.0,  1.0,  0.5), (-1.0,  1.0,  0.5),
+        (-1.0, -1.0, -0.5), ( 1.0, -1.0, -0.5), ( 1.0,  0.0, -0.5),
+        ( 0.0,  0.0, -0.5), ( 0.0,  1.0, -0.5), (-1.0,  1.0, -0.5),
+    ]
+    faces = [
+        (0, 1, 2, 3, 4, 5),         # front cap (+Z)
+        (6, 11, 10, 9, 8, 7),       # back cap  (-Z)
+        (0, 6, 7, 1),
+        (1, 7, 8, 2),
+        (2, 8, 9, 3),
+        (3, 9, 10, 4),
+        (4, 10, 11, 5),
+        (5, 11, 6, 0),
+    ]
+    new_mesh = bpy.data.meshes.new("LShape")
+    new_mesh.from_pydata(verts, [], faces)
+    new_mesh.update()
+    new_obj = bpy.data.objects.new("LShape", new_mesh)
+    bpy.context.collection.objects.link(new_obj)
+    bpy.context.view_layer.objects.active = new_obj
+    new_obj.select_set(True)
+else:
+    raise ValueError(f"unknown primitive: {primitive}")
+
 obj = bpy.context.active_object
 mesh = obj.data
 bpy.ops.object.mode_set(mode='EDIT')

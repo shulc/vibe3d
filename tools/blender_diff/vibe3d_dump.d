@@ -29,8 +29,11 @@ JSONValue postJson(string path, string body_) {
     return parseJSON(post(url(path), body_));
 }
 
-void resetCube() {
-    post(url("/api/reset"), "");
+void resetMesh(string primitiveType) {
+    string path = "/api/reset";
+    if (primitiveType.length > 0 && primitiveType != "cube")
+        path ~= "?type=" ~ primitiveType;
+    post(url(path), "");
 }
 
 // Returns the vibe3d edge index whose endpoints match (v0, v1) in either
@@ -60,7 +63,13 @@ int findEdgeIndex(JSONValue model, double[3] v0, double[3] v1) {
 
 double[3] toVec(JSONValue v) {
     auto a = v.array;
-    return [a[0].floating, a[1].floating, a[2].floating];
+    double f(JSONValue j) {
+        if (j.type == JSONType.float_)   return j.floating;
+        if (j.type == JSONType.integer)  return cast(double)j.integer;
+        if (j.type == JSONType.uinteger) return cast(double)j.uinteger;
+        throw new Exception("expected number, got " ~ j.toString());
+    }
+    return [f(a[0]), f(a[1]), f(a[2])];
 }
 
 // Select the edge whose endpoints match (v0, v1) within tolerance.
@@ -133,7 +142,10 @@ int main(string[] args) {
 
     auto caseJson = parseJSON(readText(casePath));
 
-    resetCube();
+    string primitiveType = "cube";
+    if ("primitive" in caseJson)
+        primitiveType = caseJson["primitive"].str;
+    resetMesh(primitiveType);
     if ("preops" in caseJson)
         foreach (op; caseJson["preops"].array) runOp(op);
     foreach (op; caseJson["ops"].array) runOp(op);

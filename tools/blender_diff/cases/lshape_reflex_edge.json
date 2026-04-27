@@ -1,0 +1,16 @@
+{
+  "_comment": "Stage 9e Miters survey: L-shape with the canonical reflex edge (vertical edge connecting (0,0,+0.5) and (0,0,-0.5) at the L's concave corner). Interior dihedral on the bulk side is 270°; the standard offset_meet would slide BoundVerts INTO the missing space (away from the bulk). Tests how vibe3d handles this without dedicated miter logic.",
+  "primitive": "lshape",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0, 0, 0.5], "v1": [0, 0, -0.5]}
+      ],
+      "width": 0.1,
+      "segments": 1,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

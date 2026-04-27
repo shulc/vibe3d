@@ -798,8 +798,13 @@ void main(string[] args) {
             edgeCache.invalidate();
         });
 
-        httpServer.setResetHandler(() {
-            mesh = makeCube();
+        httpServer.setResetHandler((string primitiveType) {
+            switch (primitiveType) {
+                case "lshape": mesh = makeLShape(); break;
+                case "":
+                case "cube":
+                default:       mesh = makeCube();   break;
+            }
             cameraView.reset();
             mesh.resetSelection();
             editMode = EditMode.Vertices;
