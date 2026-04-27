@@ -1,0 +1,26 @@
+{
+  "_comment": "Stage 10 polygon-rebuild stress test: bevel ALL 12 cube edges with seg=2. Every cube vertex becomes a cube-corner (selCount=3 valence=3); every original cube face has all 4 of its corners replaced by the bevel cap profiles. The original square cube faces become hexagons (4 sides → 4 strips × seg+1 cap-arc samples = ... well, depends on how cap edges merge into the face boundary).",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5,  0.5, -0.5]},
+        {"v0": [-0.5,  0.5, -0.5], "v1": [ 0.5,  0.5, -0.5]},
+        {"v0": [ 0.5,  0.5, -0.5], "v1": [ 0.5, -0.5, -0.5]},
+        {"v0": [ 0.5, -0.5, -0.5], "v1": [-0.5, -0.5, -0.5]},
+        {"v0": [-0.5, -0.5,  0.5], "v1": [ 0.5, -0.5,  0.5]},
+        {"v0": [ 0.5, -0.5,  0.5], "v1": [ 0.5,  0.5,  0.5]},
+        {"v0": [ 0.5,  0.5,  0.5], "v1": [-0.5,  0.5,  0.5]},
+        {"v0": [-0.5,  0.5,  0.5], "v1": [-0.5, -0.5,  0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, -0.5,  0.5]},
+        {"v0": [-0.5,  0.5, -0.5], "v1": [-0.5,  0.5,  0.5]},
+        {"v0": [ 0.5,  0.5, -0.5], "v1": [ 0.5,  0.5,  0.5]},
+        {"v0": [ 0.5, -0.5, -0.5], "v1": [ 0.5, -0.5,  0.5]}
+      ],
+      "width": 0.1,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.01
+}
