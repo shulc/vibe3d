@@ -94,6 +94,32 @@ float computeLimitOffset(Mesh* mesh, bool[] selectedEdges,
     return limit;
 }
 
+// True iff at least one beveled EdgeHalf incident to bv.vert has reflex
+// dihedral (interior angle on the bulk side > 180°). Used to trigger
+// Blender's sharp-miter-at-reflex behavior in populateBoundVerts.
+//
+// Reflex test (for an edge with adjacent faces F1 and F2, where F1 has the
+// edge in its CCW forward direction): cross(n_F1, n_F2) is anti-aligned with
+// the F1-forward edge direction iff the dihedral is reflex. Equivalently, the
+// signed sine of the dihedral angle (about the edge axis) is negative.
+private bool hasAnyReflexBevEdge(Mesh* mesh, ref const BevVert bv) {
+    foreach (ref eh; bv.edges) {
+        if (!eh.isBev || eh.edgeIdx == ~0u) continue;
+        if (eh.fnext >= cast(uint)mesh.faces.length) continue;
+        if (eh.fprev >= cast(uint)mesh.faces.length) continue;
+        // Pick F1 = the face whose CCW winding traverses the edge in the
+        // same direction as a fixed orientation, F2 = the other face. Use
+        // fnext as F1; the edge in fnext goes from bv.vert toward
+        // edgeOtherVertex by construction.
+        Vec3 n1 = mesh.faceNormal(eh.fnext);
+        Vec3 n2 = mesh.faceNormal(eh.fprev);
+        uint other = mesh.edgeOtherVertex(eh.edgeIdx, bv.vert);
+        Vec3 fwd  = safeNormalize(mesh.vertices[other] - bv.origPos);
+        if (dot(cross(n1, n2), fwd) < -1e-4f) return true;
+    }
+    return false;
+}
+
 private float exteriorDihedral(Mesh* mesh, uint edgeIdx) {
     uint[2] fs;
     int n = 0;
@@ -714,6 +740,45 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
                 // Don't propagate reusesOrig — only the canonical alias-target
                 // BV may own bv.vert.
                 break;
+            }
+        }
+    }
+
+    // Stage 9e Sharp miter at reflex (selCount ≥ 2): when at least one of the
+    // beveled edges incident to bv.vert has reflex dihedral, Blender's sharp
+    // miter forces all BVs in non-BEV-BEV faces to collapse onto bv.vert.
+    // Without this, those BVs would slide perpendicular within their faces
+    // INTO the missing concave space (outside the bulk).
+    if (bv.selCount >= 2 && hasAnyReflexBevEdge(mesh, bv)) {
+        // Pick the earliest non-BEV-BEV BV as the anchor sitting at bv.vert.
+        // Subsequent same-class BVs alias to it (aliasOf must point to an
+        // earlier index, so anchor must come first in iteration).
+        int anchor = -1;
+        foreach (i, ref bnd; bv.boundVerts) {
+            if (bnd.aliasOf >= 0) continue;
+            EdgeHalf ehFrom = bv.edges[bnd.ehFromIdx];
+            EdgeHalf ehTo   = bv.edges[bnd.ehToIdx];
+            if (ehFrom.isBev && ehTo.isBev) continue;  // BEV-BEV face — keep
+            anchor = cast(int)i;
+            break;
+        }
+        if (anchor >= 0) {
+            // Move reusesOrig to the anchor so it owns bv.vert.
+            foreach (i, ref bnd; bv.boundVerts)
+                if (cast(int)i != anchor) bnd.reusesOrig = false;
+            bv.boundVerts[anchor].reusesOrig = true;
+            bv.boundVerts[anchor].vertId     = cast(int)bv.vert;
+            bv.boundVerts[anchor].pos        = bv.origPos;
+            bv.boundVerts[anchor].slideDir   = Vec3(0, 0, 0);
+            // Alias every other non-BEV-BEV BV to the anchor.
+            foreach (i, ref bnd; bv.boundVerts) {
+                if (cast(int)i == anchor || bnd.aliasOf >= 0) continue;
+                EdgeHalf ehFrom = bv.edges[bnd.ehFromIdx];
+                EdgeHalf ehTo   = bv.edges[bnd.ehToIdx];
+                if (ehFrom.isBev && ehTo.isBev) continue;
+                bnd.aliasOf  = anchor;
+                bnd.pos      = bv.origPos;
+                bnd.slideDir = Vec3(0, 0, 0);
             }
         }
     }
