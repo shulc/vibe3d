@@ -1,6 +1,5 @@
 {
-  "_comment": "User-found case: cube with v_6 moved off the corner to (0.369, 0.179, 0.324) — non-perpendicular faces around v_6. Bevel all 3 edges incident to v_6 (selCount=3 valence=3 NOT a cube-corner since face normals aren't orthogonal). Topology matches Blender (20v/15f/{4:12,6:3}); 16 of 20 verts (BVs + non-bev endpoints) are exact, but 4 cap-interior verts (the M_ADJ center + 3 cap-arc midpoints at v_6) drift up to 0.137 from Blender. Vibe3d's convex-bevel cap profile and bilinear M_ADJ interior assume perpendicular dStart/dEnd at the BVs; for non-perpendicular faces neither matches Blender's iterative-CC + face-snap algorithm. Closing this is the same Stage 7+ 'honest iterative CC interior' work documented for the cube-corner seg=4 case (which has the same approximation gap, just smaller because cube corners are perpendicular).",
-  "expected_fail": true,
+  "_comment": "Cube with v_6 moved off the corner to (0.369, 0.179, 0.324) — non-perpendicular faces around v_6. Bevel all 3 edges incident to v_6 (selCount=3 valence=3 with skewed face normals). All 20 verts exact-match Blender via the Blender-style affine map (make_unit_cube_map sending the canonical unit-cube cap (1,0,0)/(0,1,0)/(0,0,1) to BV_0/BV_1/BV_2 and (1,1,1) to origPos), then unit-superellipsoid snap.",
   "preops": [
     {"op": "move_vertex",
      "from": [0.5, 0.5, 0.5],
