@@ -1,0 +1,23 @@
+{
+  "_comment": "Same as cube_skewed_corner but segments=5 — exercises the cap interior at higher resolution. The BV positions (12 of them) should still be exact; the M_ADJ cap interior approximation gap (currently bilinear) will produce more interior verts that drift from Blender's iterative-CC + face-snap result.",
+  "expected_fail": true,
+  "preops": [
+    {"op": "move_vertex",
+     "from": [0.5, 0.5, 0.5],
+     "to":   [0.369063, 0.179467, 0.324163]}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5],          "v1": [0.369063, 0.179467, 0.324163]},
+        {"v0": [0.369063, 0.179467, 0.324163], "v1": [-0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, -0.5],           "v1": [0.369063, 0.179467, 0.324163]}
+      ],
+      "width": 0.3,
+      "segments": 5,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}
