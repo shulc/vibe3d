@@ -346,7 +346,13 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
         //     BV, two cap-profile midpoints (which are also strip cross-section
         //     midpoints — see strip emission below), and the center.
         //   - Otherwise: a single N-gon connecting all non-aliased BVs in CCW.
-        if (bv.selCount >= 2 && bv.boundVerts.length >= 3) {
+        // Arc miter at reflex selCount=2 generates a patch in
+        // materializeArcMiterPatch that replaces the legacy N-gon cap polygon
+        // — suppress here.
+        bool arcMiterCap = (bv.miterInner == MiterPattern.Arc
+                            && bv.selCount == 2 && bv.boundVerts.length == 3
+                            && hasAnyReflexBevEdge(mesh, bv));
+        if (bv.selCount >= 2 && bv.boundVerts.length >= 3 && !arcMiterCap) {
             int[] capBvs;
             foreach (i, ref bnd; bv.boundVerts) {
                 if (bnd.aliasOf >= 0) continue;  // collapsed onto an earlier BV
@@ -451,6 +457,31 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                 r.length = p.length;
                 foreach (i, _; p) r[i] = p[$ - 1 - i];
                 return r;
+            }
+            // Arc miter (selCount=2 valence=3 reflex): each non-BEV-BEV BV's
+            // profile was overridden in materializeArcMiterPatch to point
+            // into the patch grid. Use whichever endpoint of this strip is
+            // non-BEV-BEV; its profile contains the correct patch boundary.
+            bool isPatchProfile(int idx) {
+                auto p = bv.boundVerts[idx].profile.sampleVertIds;
+                if (p.length < 2) return false;
+                foreach (vid; p) if (vid < 0) return false;
+                EdgeHalf f = bv.edges[bv.boundVerts[idx].ehFromIdx];
+                EdgeHalf t = bv.edges[bv.boundVerts[idx].ehToIdx];
+                return !(f.isBev && t.isBev);  // not BEV-BEV
+            }
+            if (bv.miterInner == MiterPattern.Arc && bv.selCount == 2
+                && bv.boundVerts.length == 3)
+            {
+                if (isPatchProfile(qR)) {
+                    auto p = bv.boundVerts[qR].profile.sampleVertIds;
+                    int[] r;
+                    r.length = p.length;
+                    foreach (i, _; p) r[i] = p[$ - 1 - i];
+                    return r;
+                }
+                if (isPatchProfile(qL))
+                    return bv.boundVerts[qL].profile.sampleVertIds.dup;
             }
             // selCount ≥ 2 without M_ADJ — typically the alias case with two
             // bev EHs flanking a single non-bev EH (selCount=2 valence=3 etc.).
@@ -1116,6 +1147,12 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         // there is no F_other to splice into).
         materializeBevVertMAdj(mesh, bv);
     } else {
+        // Arc miter generates its own patch grid in materializeArcMiterPatch
+        // and overrides the relevant cap-profile sampleVertIds — the legacy
+        // leftBV cap mid would be orphaned. Skip its allocation.
+        bool arcMiterActive = (bv.miterInner == MiterPattern.Arc
+                               && bv.selCount == 2 && bv.boundVerts.length == 3
+                               && hasAnyReflexBevEdge(mesh, bv));
         foreach (i; 0 .. M) {
             auto p = &bv.boundVerts[i].profile;
             int seg = (p.sample.length > 0) ? cast(int)p.sample.length - 1 : 1;
@@ -1124,7 +1161,7 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
             p.sampleVertIds[seg] = bv.boundVerts[(i + 1) % M].vertId;
             // Allocate intermediate sample vertices only for the leftBV cap
             // profile (selCount == 1 splices it into F_other).
-            if (cast(int)i == leftBVidxAlloc) {
+            if (cast(int)i == leftBVidxAlloc && !arcMiterActive) {
                 foreach (k; 1 .. seg) {
                     p.sampleVertIds[k] = cast(int)mesh.addVertex(bv.origPos);
                 }
@@ -1381,8 +1418,6 @@ private void materializeArcMiterPatch(Mesh* mesh, ref BevVert bv) {
 
     // Emit patch quads. For each (a, b) ∈ [0, N-1]², a quad
     // [(a, b), (a+1, b), (a+1, b+1), (a, b+1)].
-    // Winding choice: TODO — verify outward orientation via the BEV-BEV
-    // face normal once Step 4 face splicing is in place.
     foreach (b; 0 .. N) {
         foreach (a; 0 .. N) {
             uint v00 = cast(uint)gv(a,     b);
@@ -1392,11 +1427,107 @@ private void materializeArcMiterPatch(Mesh* mesh, ref BevVert bv) {
             mesh.faces ~= [v00, v10, v11, v01];
         }
     }
-    // TODO Steps 4-5: splice patch boundary into the 3 surrounding faces
-    // (inner-side, front-cap, BEV-BEV/inner-bottom) and emit bridging quads
-    // between strip endcaps and the patch outer arc. Without these the
-    // surrounding faces still contain bv.vert and the patch is a floating
-    // island. Topology will be wrong until Step 4-5 are implemented.
+
+    // Step 4: override the cap-profile sampleVertIds of the two non-BEV-BEV
+    // BoundVerts to point into the patch grid boundary. The strip emission
+    // in applyEdgeBevelTopology reads these to build the strip cross-section
+    // at this end of the bev edge — so the strip will weave directly into
+    // the patch instead of going through the legacy cap mids.
+    //   bnd[c20Idx]'s profile (front-cap → BEV-BEV transition):
+    //     replace with grid column a=N (= [C20, side_aN_mid, ..., C22])
+    //   bnd[c00Idx]'s profile (inner-side → next):
+    //     replace with grid column a=0 (= [C00, side_a0_mid, ..., C02])
+    {
+        // Note: also override p.sample (the geometric positions) so that
+        // updateEdgeBevelPositions doesn't later overwrite the patch-grid
+        // verts via the convex-bevel cap-profile formula.
+        auto p20 = &bv.boundVerts[c20Idx].profile;
+        p20.sampleVertIds.length = N + 1;
+        p20.sample.length = N + 1;
+        foreach (k; 0 .. N + 1) {
+            int vid = gv(N, k);
+            p20.sampleVertIds[k] = vid;
+            p20.sample[k] = mesh.vertices[vid];
+        }
+
+        auto p00 = &bv.boundVerts[c00Idx].profile;
+        p00.sampleVertIds.length = N + 1;
+        p00.sample.length = N + 1;
+        foreach (k; 0 .. N + 1) {
+            int vid = gv(0, k);
+            p00.sampleVertIds[k] = vid;
+            p00.sample[k] = mesh.vertices[vid];
+        }
+    }
+
+    // Step 4b: splice patch boundary into the 3 surrounding faces.
+    //   front-cap face (BEV-NONBEV around bev e1): currently has C20.vid
+    //     where bv.vert was. Insert inner_arc_mid (= grid(1, 0)) AFTER C20,
+    //     toward the non-bev neighbor in face winding.
+    //   inner-side face (BEV-NONBEV around bev e2): has C00.vid. Insert
+    //     inner_arc_mid BEFORE C00 (= AFTER non-bev neighbor).
+    //   inner-bottom face (BEV-BEV): has bnd[bevBVidx].vertId (which is
+    //     bv.vert via reusesOrig). REPLACE with [C02, outer_arc_mid, C22]
+    //     (the patch outer-arc boundary, going from inner-side direction
+    //     toward front-cap direction).
+    int innerArcMidVid = gv(1, 0);
+    int outerArcMidVid = gv(1, N);
+    int c00Vid = gv(0, 0);
+    int c20Vid = gv(N, 0);
+    int c02Vid = gv(0, N);
+    int c22Vid = gv(N, N);
+
+    // Helper: insert one vert into a face after a target vert.
+    void insertAfter(uint faceIdx, uint targetVid, uint newVid) {
+        auto face = mesh.faces[faceIdx];
+        foreach (i, vi; face) {
+            if (vi == targetVid) {
+                mesh.faces[faceIdx] = face[0 .. i + 1] ~ newVid ~ face[i + 1 .. $];
+                return;
+            }
+        }
+    }
+    // Helper: replace one vert in a face with a sequence of verts.
+    void replaceWithSeq(uint faceIdx, uint targetVid, uint[] seq) {
+        auto face = mesh.faces[faceIdx];
+        foreach (i, vi; face) {
+            if (vi == targetVid) {
+                mesh.faces[faceIdx] = face[0 .. i] ~ seq ~ face[i + 1 .. $];
+                return;
+            }
+        }
+    }
+
+    // Determine which face each BoundVert is in, then splice.
+    // We need to know which face is "BEV-BEV" — bv.boundVerts[bevBVidx].face.
+    uint frontCapFaceIdx = bv.boundVerts[c20Idx].face;
+    uint innerSideFaceIdx = bv.boundVerts[c00Idx].face;
+    uint bevBevFaceIdx = bv.boundVerts[bevBVidx].face;
+    uint bevBevVid = cast(uint)bv.boundVerts[bevBVidx].vertId;
+
+    // Front cap: insert inner_arc_mid AFTER C20 (= bv.boundVerts[c20Idx].vertId)
+    insertAfter(frontCapFaceIdx, cast(uint)c20Vid, cast(uint)innerArcMidVid);
+    // Inner-side: the inner arc midpoint sits between non-bev neighbor and
+    // C00. Inserting AFTER non-bev neighbor is the same as BEFORE C00 in
+    // the face winding. Easier: insert AFTER C00 in the OPPOSITE direction
+    // by detecting winding order.
+    // Simplification: insert AFTER C00 if the next vert is the non-bev far
+    // endpoint v_4 (toward inner-side's interior); else before. For now use
+    // a generic "insert before C00 in face winding" — find C00 and insert
+    // inner_arc_mid at C00's position.
+    {
+        auto face = mesh.faces[innerSideFaceIdx];
+        foreach (i, vi; face) {
+            if (vi == c00Vid) {
+                mesh.faces[innerSideFaceIdx] =
+                    face[0 .. i] ~ cast(uint)innerArcMidVid ~ face[i .. $];
+                break;
+            }
+        }
+    }
+    // Inner-bottom (BEV-BEV): replace BEV-BEV BV's vertId with [C02, outer_arc_mid, C22]
+    replaceWithSeq(bevBevFaceIdx, bevBevVid,
+                   [cast(uint)c02Vid, cast(uint)outerArcMidVid, cast(uint)c22Vid]);
 }
 
 // Allocate the M_ADJ canonical grid for `bv` and wire up profile.sampleVertIds
