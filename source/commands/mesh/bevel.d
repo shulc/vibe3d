@@ -7,7 +7,7 @@ import editmode;
 import shader;
 import viewcache;
 import bevel : applyEdgeBevelTopology, updateEdgeBevelPositions,
-               BevelOp, BevelWidthMode;
+               BevelOp, BevelWidthMode, computeLimitOffset;
 
 /// Non-interactive edge bevel — applies the topology change on the currently
 /// selected edges and slides each new BoundVert outward by `width` (and
@@ -28,6 +28,7 @@ class MeshBevel : Command {
     private BevelWidthMode   mode    = BevelWidthMode.Offset;
     private int              seg     = 1;
     private float            superR  = 2.0f;
+    private bool             limit   = true;        // clamp overlap (Blender default)
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -44,6 +45,7 @@ class MeshBevel : Command {
     void setWidthR(float w)  { widthR = (w < 0.0f) ? 0.0f : w; }
     void setSeg(int s)       { seg    = (s < 1) ? 1 : (s > 64 ? 64 : s); }
     void setSuperR(float r)  { superR = (r < 0.1f) ? 0.1f : r; }
+    void setLimit(bool b)    { limit = b; }
     void setMode(BevelWidthMode m) { mode = m; }
     void setMode(string s) {
         switch (s) {
@@ -60,11 +62,22 @@ class MeshBevel : Command {
         if (editMode != EditMode.Edges)            return false;
         if (!mesh.hasAnySelectedEdges())           return false;
 
-        float wR = isNaN(widthR) ? width : widthR;
-        // Slide directions are computed at the (width, wR) widths directly,
+        // limit_offset: silently clamp user-facing width(s) so no BoundVert
+        // can land past the far end of an adjacent non-bev edge (which would
+        // invert geometry). This matches Blender's "Clamp Overlap" default.
+        // Disable via setLimit(false) / "limit": false in JSON for tests
+        // that need to exercise the unclamped mode-conversion math.
+        float w  = width;
+        float wR = isNaN(widthR) ? w : widthR;
+        if (limit) {
+            float lim = computeLimitOffset(mesh, mesh.selectedEdges, mode);
+            if (w  > lim) w  = lim;
+            if (wR > lim) wR = lim;
+        }
+        // Slide directions are computed at the (w, wR) widths directly,
         // so the BoundVerts land at their final positions during apply.
         BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
-                                             width, wR, seg, superR);
+                                             w, wR, seg, superR);
         updateEdgeBevelPositions(mesh, op, 1.0f);
 
         mesh.clearEdgeSelection();

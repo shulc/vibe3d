@@ -52,6 +52,48 @@ float widthCoefficient(Mesh* mesh, uint edgeIdx, BevelWidthMode mode) {
     }
 }
 
+// Largest user-facing width that won't push any BoundVert past the far end
+// of an adjacent non-bev edge (which would invert geometry).
+//
+// At each endpoint of every beveled edge, the BV slides along each adjacent
+// non-bev edge. For a 90° corner that slide distance equals the offset; for
+// other angles it's offset / sin(angle). A safe conservative bound is half
+// the shortest such adjacent non-bev edge — that handles both 90° corners
+// (BV reaches midpoint) and the case where bev edges sit at both ends of
+// the same non-bev edge (each slides up to half the length).
+//
+// `currentMode` is needed because Width/Depth/Percent modes scale the
+// user width before it becomes the actual offsetSpec; we invert that
+// scaling so the returned limit is in the SAME units as the user's width.
+//
+// Returns float.infinity if no beveled edges have any non-bev neighbors.
+float computeLimitOffset(Mesh* mesh, bool[] selectedEdges,
+                         BevelWidthMode mode = BevelWidthMode.Offset) {
+    float limit = float.infinity;
+    foreach (ei, sel; selectedEdges) {
+        if (!sel || ei >= mesh.edges.length) continue;
+        // The user's width is multiplied by widthCoefficient(ei, mode) to
+        // yield the actual offsetSpec on this edge. Invert the coefficient
+        // so the returned limit applies to the user's width directly.
+        float coef = widthCoefficient(mesh, cast(uint)ei, mode);
+        if (coef < 1e-6f) continue;          // flat / degenerate — no constraint
+        uint[2] endpoints = [mesh.edges[ei][0], mesh.edges[ei][1]];
+        foreach (vi; endpoints) {
+            Vec3 vp = mesh.vertices[vi];
+            foreach (otherEi; mesh.edgesAroundVertex(vi)) {
+                if (otherEi == cast(uint)ei) continue;
+                if (otherEi < selectedEdges.length && selectedEdges[otherEi])
+                    continue;             // other bev edge — both ends pull, handled by its own pass
+                Vec3 op = mesh.vertices[mesh.edgeOtherVertex(otherEi, vi)];
+                float halfLen = (op - vp).length * 0.5f;
+                float perEdge = halfLen / coef;
+                if (perEdge < limit) limit = perEdge;
+            }
+        }
+    }
+    return limit;
+}
+
 private float exteriorDihedral(Mesh* mesh, uint edgeIdx) {
     uint[2] fs;
     int n = 0;

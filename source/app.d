@@ -644,6 +644,8 @@ void main(string[] args) {
                             mb.setMode(pj["mode"].str);
                         if ("seg"    in pj) mb.setSeg(cast(int)jsonNumber(pj["seg"]));
                         if ("superR" in pj) mb.setSuperR(jsonNumber(pj["superR"]));
+                        if ("limit"  in pj && pj["limit"].type == JSONType.false_)
+                            mb.setLimit(false);
                     }
                 }
             }

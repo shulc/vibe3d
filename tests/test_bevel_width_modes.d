@@ -20,9 +20,12 @@ private void selectEdge(int idx) {
 }
 
 private void runBevel(float width, string mode) {
+    // Disable limit_offset so the WIDTH/DEPTH mode tests can verify the
+    // mode-conversion math at slides that would otherwise be clamped
+    // (e.g. DEPTH w=1 → slide 1.414, well past a unit edge's length).
     auto resp = postJson("http://localhost:8080/api/command",
                          `{"id":"mesh.bevel","params":{"width":` ~ width.to!string
-                         ~ `,"mode":"` ~ mode ~ `"}}`);
+                         ~ `,"mode":"` ~ mode ~ `","limit":false}}`);
     assert(resp["status"].str == "ok", "bevel failed: " ~ resp.toString());
 }
 
