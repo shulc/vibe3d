@@ -1650,15 +1650,11 @@ private void materializeBevVertMAdj(Mesh* mesh, ref BevVert bv) {
     overrideCubeCornerCap(mesh, bv);
 }
 
-// True iff this BevVert is a "cube corner" candidate: 3 BoundVerts whose
-// flanking face normals are mutually perpendicular and whose slideDirs are
-// equal length. For a cube vertex with 3 mutually orthogonal bev edges this
-// holds; for other 3-edge corners (e.g. octahedron tip with non-perpendicular
-// face normals) the detection fails and the cap stays on the bilinear
-// approximation.
-private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
-    if (!isAllBevAtVert(bv)) return false;
-    if (bv.boundVerts.length != 3) return false;
+// True iff this BevVert is a perpendicular cube corner: 3 BoundVerts whose
+// flanking face normals are mutually orthogonal and whose slideDirs are
+// equal length. Used to gate the inscribed-sphere-octant cap formula.
+private bool isCubeCornerPerp(ref const BevVert bv, Mesh* mesh) {
+    if (!isCubeCornerLike(bv, mesh)) return false;
     Vec3 d0 = bv.boundVerts[0].slideDir;
     Vec3 d1 = bv.boundVerts[1].slideDir;
     Vec3 d2 = bv.boundVerts[2].slideDir;
@@ -1673,6 +1669,19 @@ private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
     if (fabs(dot(n1, n2)) > 1e-3f) return false;
     if (fabs(dot(n2, n0)) > 1e-3f) return false;
     return true;
+}
+
+// True iff this BevVert is a generic 3-edge corner with all edges beveled
+// (selCount=valence=3). Includes both perpendicular (cube) and non-
+// perpendicular (e.g. cube_skewed_corner with a moved vertex) variants —
+// requires only that the 3 face normals are linearly independent.
+private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
+    if (!isAllBevAtVert(bv)) return false;
+    if (bv.boundVerts.length != 3) return false;
+    Vec3 n0 = mesh.faceNormal(bv.boundVerts[0].face);
+    Vec3 n1 = mesh.faceNormal(bv.boundVerts[1].face);
+    Vec3 n2 = mesh.faceNormal(bv.boundVerts[2].face);
+    return fabs(dot(cross(n0, n1), n2)) > 1e-3f;
 }
 
 // Place every M_ADJ canonical position on the sphere octant centered at the
@@ -1702,6 +1711,10 @@ private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
 // connects cleanly to the cap.
 private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
     if (!isCubeCornerLike(bv, mesh)) return;
+    if (!isCubeCornerPerp(bv, mesh)) {
+        overrideCubeCornerCapSkewed(mesh, bv);
+        return;
+    }
 
     int n   = cast(int)bv.boundVerts.length;
     int ns  = bv.vmesh.seg;
@@ -1811,6 +1824,57 @@ private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
 
     if (bv.adjCenterVid >= 0)
         bv.adjCenterDir = mapUnitToWorld(1.0f, 1.0f, 1.0f) - bv.origPos;
+}
+
+// Non-perpendicular 3-edge corner cap (cube_skewed_corner). The inscribed
+// sphere doesn't pass through the BVs (they sit in their respective LOCAL
+// face planes, not on a sphere tangent to all 3 face medians), so the
+// perpendicular sphere-octant formula doesn't apply. Override the cap arc
+// boundary samples to be linear interpolations between adjacent BVs — an
+// approximation of Blender's iterative-CC + face-snap result that's
+// substantially closer than the convex-bevel super-ellipse formula
+// computeProfile defaults to (which assumes perpendicular slideDirs).
+//
+// Cap interior verts (j>0, k>0) and the center are left as the default
+// bilinear M_ADJ blend (still bilinear, but now reading the corrected
+// boundary samples through profile.sample[ns2]).
+private void overrideCubeCornerCapSkewed(Mesh* mesh, ref BevVert bv) {
+    int n   = cast(int)bv.boundVerts.length;
+    int ns  = bv.vmesh.seg;
+    int ns2 = ns / 2;
+    int odd = ns % 2;
+
+    // Cap arc samples (i, 0, k) for k ∈ [1, ns-1]: linear interp BV_i → BV_{i+1}.
+    foreach (i; 0 .. n) {
+        int inext = (i + 1) % n;
+        Vec3 da = bv.boundVerts[i].slideDir;
+        Vec3 db = bv.boundVerts[inext].slideDir;
+        foreach (k; 1 .. ns) {
+            size_t idx = adjFlatIdx(cast(int)i, 0, cast(int)k, ns);
+            if (idx >= bv.adjGridDirs.length) continue;
+            if (bv.adjGridVids[idx] < 0) continue;
+            float t = cast(float)k / cast(float)ns;
+            bv.adjGridDirs[idx] = da * (1.0f - t) + db * t;
+        }
+    }
+
+    // Mirror (i, j, 0) for j ∈ [1, ns2-1+odd]: equivalent to (i-1, 0, ns-j).
+    // adjCanonDirAtUnitWidth's k==0 branch reads profile.sample[ns-j] of the
+    // PREVIOUS panel, which we haven't overridden — so write the same
+    // linearly-interpolated position directly into adjGridDirs to keep both
+    // canonical references consistent.
+    foreach (i; 0 .. n) {
+        int iprev = (i + n - 1) % n;
+        Vec3 da = bv.boundVerts[iprev].slideDir;
+        Vec3 db = bv.boundVerts[i].slideDir;
+        foreach (j; 1 .. ns2 + odd) {
+            size_t idx = adjFlatIdx(cast(int)i, cast(int)j, 0, ns);
+            if (idx >= bv.adjGridDirs.length) continue;
+            if (bv.adjGridVids[idx] < 0) continue;
+            float t = cast(float)(ns - j) / cast(float)ns;
+            bv.adjGridDirs[idx] = da * (1.0f - t) + db * t;
+        }
+    }
 }
 
 private void spliceInManyAtCorner(Mesh* mesh, uint faceIdx,
