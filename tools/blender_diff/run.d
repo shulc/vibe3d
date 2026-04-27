@@ -20,6 +20,7 @@ import std.algorithm : sort;
 import std.array : array;
 import std.conv : to;
 import std.file;
+import std.json;
 import std.path : absolutePath, baseName, buildPath, dirName, stripExtension;
 import std.process;
 import std.stdio;
@@ -46,37 +47,60 @@ bool waitForServer(string url, int maxMs = 5000) {
     return false;
 }
 
-struct CaseResult { string name; bool ok; int exitCode; }
+// PASS  — diff agreed (within tolerance), case is not expected_fail.
+// FAIL  — diff disagreed; this is a real regression.
+// XFAIL — diff disagreed AND the case is marked expected_fail. Documents a
+//         known feature gap; doesn't count toward the failure tally.
+// XPASS — diff agreed but the case is marked expected_fail. Means the gap
+//         is closed and the marker should be removed; counted as failure.
+// ERROR — blender_dump or vibe3d_dump crashed before diff could run.
+enum Status { PASS, FAIL, XFAIL, XPASS, ERROR }
+
+struct CaseResult { string name; Status status; }
 
 CaseResult runCase(string casePath) {
     auto name = casePath.baseName.stripExtension;
     auto blenderOut = outDir.buildPath(name ~ ".blender.json");
     auto vibe3dOut  = outDir.buildPath(name ~ ".vibe3d.json");
 
-    log("=== " ~ name ~ " ===");
+    bool expectedFail = false;
+    try {
+        auto cj = parseJSON(readText(casePath));
+        if ("expected_fail" in cj && cj["expected_fail"].type == JSONType.true_)
+            expectedFail = true;
+    } catch (Exception e) {
+        stderr.writeln("case JSON parse error: ", e.msg);
+        return CaseResult(name, Status.ERROR);
+    }
+
+    log("=== " ~ name ~ (expectedFail ? " [expected_fail]" : "") ~ " ===");
 
     auto bres = execute(["blender", "--background", "--python",
                          toolDir.buildPath("blender_dump.py"),
                          "--", casePath, blenderOut]);
     if (bres.status != 0) {
         stderr.writeln(bres.output);
-        return CaseResult(name, false, bres.status);
+        return CaseResult(name, Status.ERROR);
     }
 
     auto vres = execute(["rdmd", toolDir.buildPath("vibe3d_dump.d"),
                          casePath, vibe3dOut, "--port", httpPort.to!string]);
     if (vres.status != 0) {
         stderr.writeln(vres.output);
-        return CaseResult(name, false, vres.status);
+        return CaseResult(name, Status.ERROR);
     }
-    // vibe3d_dump prints a one-line summary; surface it.
     foreach (line; vres.output.split("\n"))
         if (line.startsWith("[vibe3d_dump]")) writeln("  ", line);
 
     auto dres = execute(["python3", toolDir.buildPath("diff.py"),
                          blenderOut, vibe3dOut, "--case", casePath]);
     write(dres.output);
-    return CaseResult(name, dres.status == 0, dres.status);
+
+    bool diffOk = (dres.status == 0);
+    Status s;
+    if (expectedFail) s = diffOk ? Status.XPASS : Status.XFAIL;
+    else              s = diffOk ? Status.PASS  : Status.FAIL;
+    return CaseResult(name, s);
 }
 
 int main(string[] args) {
@@ -146,19 +170,33 @@ int main(string[] args) {
     foreach (c; cases) {
         if (!c.exists) {
             stderr.writeln("case not found: ", c);
-            results ~= CaseResult(c.baseName.stripExtension, false, 2);
+            results ~= CaseResult(c.baseName.stripExtension, Status.ERROR);
             continue;
         }
         results ~= runCase(c);
     }
 
     writeln("\n─────────────────────────────────────");
-    int fails = 0;
+    int[Status] tally;
     foreach (r; results) {
-        writefln("  %s  %s", r.ok ? "OK  " : "FAIL", r.name);
-        if (!r.ok) fails++;
+        string tag;
+        final switch (r.status) {
+            case Status.PASS:  tag = "PASS "; break;
+            case Status.FAIL:  tag = "FAIL "; break;
+            case Status.XFAIL: tag = "XFAIL"; break;
+            case Status.XPASS: tag = "XPASS"; break;
+            case Status.ERROR: tag = "ERROR"; break;
+        }
+        writefln("  %s  %s", tag, r.name);
+        tally[r.status] = tally.get(r.status, 0) + 1;
     }
-    writefln("Total: %d  Passed: %d  Failed: %d",
-        results.length, results.length - fails, fails);
-    return fails;
+    int pass  = tally.get(Status.PASS,  0);
+    int fail  = tally.get(Status.FAIL,  0);
+    int xfail = tally.get(Status.XFAIL, 0);
+    int xpass = tally.get(Status.XPASS, 0);
+    int err   = tally.get(Status.ERROR, 0);
+    writefln("Total: %d  Pass: %d  Fail: %d  XFail: %d  XPass: %d  Error: %d",
+        results.length, pass, fail, xfail, xpass, err);
+    // XPASS is a real failure (an expected_fail marker that needs removal).
+    return fail + xpass + err;
 }

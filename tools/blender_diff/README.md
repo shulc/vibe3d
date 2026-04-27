@@ -20,9 +20,18 @@ Blender's reference behavior.
 ./run.d --no-build                 # skip dub build
 ```
 
-Exit code = number of failing cases. A case fails if any vertex has no
+Exit code = `Fail + XPass + Error`. A case `Fail`s if any vertex has no
 counterpart within `tolerance` of the case JSON, or if face counts /
 face-vertex-count distribution disagree.
+
+Per-case status:
+- **PASS** — diff agreed.
+- **FAIL** — diff disagreed; counted toward exit code.
+- **XFAIL** — diff disagreed AND case has `"expected_fail": true`. Documents
+              a known feature gap; doesn't count.
+- **XPASS** — diff agreed but case has `"expected_fail": true`. The gap is
+              closed — remove the marker. Counts as failure.
+- **ERROR** — blender_dump or vibe3d_dump crashed before diff ran.
 
 Output JSONs land in `/tmp/vibe3d_diff/<case>.{blender,vibe3d}.json` for
 post-mortem inspection.
@@ -46,7 +55,9 @@ Drop a new `cases/<name>.json`:
       "superR": 2.0
     }
   ],
-  "tolerance": 0.001
+  "tolerance": 0.001,
+  "expected_fail": false   // optional: mark known gaps so they XFAIL
+                           // instead of breaking the suite
 }
 ```
 
