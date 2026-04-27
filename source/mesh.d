@@ -196,12 +196,24 @@ struct Mesh {
     /// Compute the unit normal of face fi using the first triangle (v0, v1, v2).
     /// Returns (0,1,0) for degenerate or tiny faces.
     Vec3 faceNormal(uint fi) const {
+        // Newell's method: sums signed cross-product contributions from every
+        // consecutive vertex pair. Robust to (a) collinear leading triples
+        // (e.g. after splitting an edge — the inserted midpoint sits on the
+        // line through its two original neighbors) and (b) slightly non-planar
+        // n-gons. The naive "cross of the first two edges" fails on (a) and
+        // produces a poor approximation on (b).
         const uint[] face = faces[fi];
         if (face.length < 3) return Vec3(0, 1, 0);
-        Vec3 v0 = vertices[face[0]], v1 = vertices[face[1]], v2 = vertices[face[2]];
-        Vec3 cr = cross(v1 - v0, v2 - v0);
-        float len = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-        return len > 1e-6f ? cr / len : Vec3(0, 1, 0);
+        float nx = 0, ny = 0, nz = 0;
+        foreach (i; 0 .. face.length) {
+            Vec3 a = vertices[face[i]];
+            Vec3 b = vertices[face[(i + 1) % face.length]];
+            nx += (a.y - b.y) * (a.z + b.z);
+            ny += (a.z - b.z) * (a.x + b.x);
+            nz += (a.x - b.x) * (a.y + b.y);
+        }
+        float len = sqrt(nx*nx + ny*ny + nz*nz);
+        return len > 1e-6f ? Vec3(nx / len, ny / len, nz / len) : Vec3(0, 1, 0);
     }
 
     /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
