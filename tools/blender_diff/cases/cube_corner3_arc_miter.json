@@ -1,0 +1,18 @@
+{
+  "_comment": "Stage 9e Arc miter survey: cube corner with 3 bev edges and miter_outer=ARC. Arc miter typically inserts a curved arc in place of the sharp corner.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5,  0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [ 0.5, -0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, -0.5,  0.5]}
+      ],
+      "width": 0.2,
+      "segments": 2,
+      "superR": 2.0,
+      "miter_outer": "ARC"
+    }
+  ],
+  "tolerance": 0.001
+}

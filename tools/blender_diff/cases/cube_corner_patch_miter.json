@@ -1,0 +1,17 @@
+{
+  "_comment": "Stage 9e Patch miter survey: bevel 2 cube edges sharing v_0 (selCount=2 valence=3 convex), with miter_outer='PATCH' on the Blender side. Patch miter inserts a quadrilateral patch where the two strips meet, instead of the default sharp corner. Vibe3d only does sharp miter — survey expects FAIL with extra patch geometry in Blender.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [0.5, -0.5, -0.5]}
+      ],
+      "width": 0.1,
+      "segments": 2,
+      "superR": 2.0,
+      "miter_outer": "PATCH"
+    }
+  ],
+  "tolerance": 0.001
+}

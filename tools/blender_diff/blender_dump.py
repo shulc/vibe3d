@@ -131,6 +131,8 @@ def run_op(op):
         if abs(super_r - 2.0) > 1e-6:
             raise NotImplementedError(
                 f"superR={super_r}: only circular profile (superR=2.0) supported")
+        miter_outer = op.get("miter_outer", "SHARP").upper()
+        miter_inner = op.get("miter_inner", "SHARP").upper()
         select_edges(bm, op["edges"])
         bmesh.update_edit_mesh(mesh)
         bpy.ops.mesh.bevel(
@@ -139,8 +141,8 @@ def run_op(op):
             segments=op["segments"],
             profile=0.5,
             affect='EDGES',
-            miter_outer='SHARP',
-            miter_inner='SHARP',
+            miter_outer=miter_outer,
+            miter_inner=miter_inner,
         )
     else:
         raise ValueError(f"unknown op: {op['op']}")

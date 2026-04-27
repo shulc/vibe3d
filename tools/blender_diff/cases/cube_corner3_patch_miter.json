@@ -1,0 +1,18 @@
+{
+  "_comment": "Stage 9e Patch miter survey: cube corner with 3 bev edges (selCount=3 valence=3) and miter_outer=PATCH. May insert a triangular/quadrilateral patch in the cap.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5,  0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [ 0.5, -0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, -0.5,  0.5]}
+      ],
+      "width": 0.2,
+      "segments": 2,
+      "superR": 2.0,
+      "miter_outer": "PATCH"
+    }
+  ],
+  "tolerance": 0.001
+}

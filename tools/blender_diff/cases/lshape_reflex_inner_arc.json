@@ -1,0 +1,19 @@
+{
+  "_comment": "Stage 9e Inner arc miter (XFAIL — non-default Blender feature not yet implemented in vibe3d): same setup as lshape_reflex_two_edges but with miter_inner=ARC and seg=2. Blender produces 24v/16f with curved arc geometry inserted at the reflex corner; vibe3d's sharp miter produces 18v/12f. Implementing inner arc miter requires detecting the reflex configuration and emitting an arc-of-cap-profile-samples + extra faces between the strip endcaps and bv.vert. Niche advanced styling — sharp miter (default) is what 99%+ of users want.",
+  "expected_fail": true,
+  "primitive": "lshape",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0, 0, 0.5], "v1": [0, 0, -0.5]},
+        {"v0": [0, 0, 0.5], "v1": [1, 0, 0.5]}
+      ],
+      "width": 0.1,
+      "segments": 2,
+      "superR": 2.0,
+      "miter_inner": "ARC"
+    }
+  ],
+  "tolerance": 0.001
+}
