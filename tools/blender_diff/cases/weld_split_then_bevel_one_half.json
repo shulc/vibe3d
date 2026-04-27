@@ -1,6 +1,5 @@
 {
-  "_comment": "Weld variant (9a-adjacent): split cube edge 0 (v_0 ↔ v_3) at midpoint, then bevel ONLY the half near v_0. The midpoint vertex has valence=2 with selCount=1 — non-bev half-edge ends at the midpoint. Expected fail until valence=2 endpoint handling is added — currently vibe3d under-counts both verts and faces (12/8 vs Blender's 14/10) at the midpoint side.",
-  "expected_fail": true,
+  "_comment": "Stage 9b TRI_FAN endpoint: split cube edge 0 (v_0 ↔ v_3) at midpoint, then bevel ONLY the half near v_0. The midpoint vm has valence=2 selCount=1 — Blender adds an edge-slide TIP on the non-bev half at distance offset from vm and fans triangles from TIP through the cap-profile samples; the TIP also gets spliced into both incident faces between the bev-side BV and v_3.",
   "preops": [
     {"op": "split_edge", "v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.5, -0.5]}
   ],

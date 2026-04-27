@@ -1076,6 +1076,85 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
             toInsert[j] = cast(uint)cap.sampleVertIds[seg - j];
         spliceInManyAtCorner(mesh, faceIdx, bv.vert, toInsert);
     }
+
+    // Stage 9b TRI_FAN cap (Blender's bevel_build_endpoint case for valence=2
+    // selCount=1): exactly one beveled edge with one non-bev "support" edge
+    // on the opposite side. The bev's slide produces one BoundVert per face;
+    // Blender additionally puts an "edge-slide TIP" vertex on the non-bev
+    // edge at distance offset from bv.vert and fans triangles from TIP
+    // through the cap-profile samples.
+    if (bv.selCount == 1 && bv.edges.length == 2 && bv.boundVerts.length == 2
+        && leftBVidx >= 0)
+    {
+        materializeTriFanEndpoint(mesh, bv, leftBVidx);
+    }
+}
+
+// TRI_FAN cap for selCount=1 valence=2: allocate the edge-slide TIP, splice
+// it into both incident faces between the bev BV and the non-bev far end,
+// and emit `seg` fan triangles from TIP through the cap profile.
+private void materializeTriFanEndpoint(Mesh* mesh, ref BevVert bv, int leftBVidx) {
+    int nonBevEh = -1;
+    foreach (i, ref eh; bv.edges) if (!eh.isBev) { nonBevEh = cast(int)i; break; }
+    if (nonBevEh < 0) return;
+    int bevEh = (nonBevEh + 1) % cast(int)bv.edges.length;
+    float w = bv.edges[bevEh].offsetLSpec;
+    if (w < 1e-6f) return;
+
+    Vec3 nonBevDir = computeSlideDirForEdge(mesh, bv, nonBevEh);
+    Vec3 tipPos    = bv.origPos + nonBevDir * w;
+    uint tipVid    = cast(uint)mesh.addVertex(tipPos);
+
+    uint nonBevFar = mesh.edgeOtherVertex(bv.edges[nonBevEh].edgeIdx, bv.vert);
+
+    // Splice TIP into each face between the bev BV (replacement of bv.vert)
+    // and the non-bev far endpoint, in face winding order. Because the two
+    // incident faces traverse the (BV, nonBevFar) edge in opposite directions,
+    // we just locate the consecutive-pair containing both verts and insert
+    // TIP between them.
+    foreach (k; 0 .. cast(int)bv.edges.length) {
+        uint faceIdx = bv.edges[k].fnext;
+        if (faceIdx >= cast(uint)mesh.faces.length) continue;
+        int cornerBVidx = -1;
+        foreach (i, ref bnd; bv.boundVerts)
+            if (bnd.face == faceIdx) { cornerBVidx = cast(int)i; break; }
+        if (cornerBVidx < 0) continue;
+        uint bvVid = cast(uint)bv.boundVerts[cornerBVidx].vertId;
+
+        auto face = mesh.faces[faceIdx];
+        int n = cast(int)face.length;
+        int idxBV = -1, idxFar = -1;
+        foreach (i, vi; face) {
+            if (vi == bvVid)     idxBV  = cast(int)i;
+            if (vi == nonBevFar) idxFar = cast(int)i;
+        }
+        if (idxBV < 0 || idxFar < 0) continue;
+
+        int insertAfter = -1;
+        if ((idxBV  + 1) % n == idxFar) insertAfter = idxBV;
+        else if ((idxFar + 1) % n == idxBV) insertAfter = idxFar;
+        if (insertAfter < 0) continue;
+
+        uint[] newFace;
+        newFace.reserve(n + 1);
+        foreach (i; 0 .. n) {
+            newFace ~= face[i];
+            if (cast(int)i == insertAfter) newFace ~= tipVid;
+        }
+        mesh.faces[faceIdx] = newFace;
+    }
+
+    // Emit fan triangles from TIP through consecutive cap profile samples.
+    // Profile of leftBV runs CCW around the cap; emit triangles with vertex
+    // order [sample[k], sample[k+1], TIP] which gives a CCW outward winding
+    // when the profile itself is laid out CCW from outside.
+    auto p = bv.boundVerts[leftBVidx].profile;
+    foreach (k; 0 .. cast(int)p.sampleVertIds.length - 1) {
+        int a = p.sampleVertIds[k];
+        int b = p.sampleVertIds[k + 1];
+        if (a < 0 || b < 0) continue;
+        mesh.faces ~= [cast(uint)a, cast(uint)b, tipVid];
+    }
 }
 
 // Allocate the M_ADJ canonical grid for `bv` and wire up profile.sampleVertIds
