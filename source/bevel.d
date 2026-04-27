@@ -2066,7 +2066,19 @@ private Vec3[] canonInterpVMesh(Vec3[] vmIn, int n, int nsIn, int nsegOut, float
 // Iteratively cubic_subdiv from seg=2 to the next power of 2 ≥ nseg, then
 // (if needed) interp_vmesh down to nseg, then snap every vertex to the
 // unit superellipsoid. Mirrors Blender's make_cube_corner_adj_vmesh.
+//
+// The result depends only on (nseg, superR) and is treated as read-only by
+// callers — they apply a per-BevVert affine transform on top. We cache it
+// thread-locally so a multi-corner bevel (e.g. all 8 vertices of a cube)
+// pays the CC subdivision cost ONCE per (nseg, superR) combination instead
+// of per-corner. Cache key packs nseg into the high 32 bits and a 1e-3-
+// quantized superR bit pattern into the low 32 bits.
+private Vec3[][long] _capCacheTLS;
+
 private Vec3[] canonBuildCubeCornerCap(int nseg, float superR) {
+    long key = (cast(long)nseg << 32) | cast(uint)cast(int)(superR * 1000.0f);
+    if (auto cached = key in _capCacheTLS) return *cached;
+
     Vec3[] vm = canonBuildSeg2(nseg, superR);
     int curSeg = 2;
     int powTarget = 2;
@@ -2080,14 +2092,15 @@ private Vec3[] canonBuildCubeCornerCap(int nseg, float superR) {
         curSeg = nseg;
     }
     int ns2 = nseg / 2;
-    foreach (i; 0 .. 3) {
-        foreach (j; 0 .. ns2 + 1) {
-            foreach (k; 0 .. nseg + 1) {
-                size_t idx = canonFlatIdx(cast(int)i, cast(int)j, cast(int)k, nseg);
+    foreach (int i; 0 .. 3) {
+        foreach (int j; 0 .. ns2 + 1) {
+            foreach (int k; 0 .. nseg + 1) {
+                size_t idx = canonFlatIdx(i, j, k, nseg);
                 vm[idx] = canonSnapToSuperellipsoid(vm[idx], superR);
             }
         }
     }
+    _capCacheTLS[key] = vm;
     return vm;
 }
 
