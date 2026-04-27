@@ -658,7 +658,14 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
             auto bnd2 = &bv.boundVerts[j];
             if (!bnd2.isOnEdge || bnd2.aliasOf >= 0) continue;
             int slideEh2 = bv.edges[bnd2.ehFromIdx].isBev ? bnd2.ehToIdx : bnd2.ehFromIdx;
-            if (slideEh == slideEh2) {
+            // Same non-bev slide edge AND coincident positions → genuine
+            // weld (selCount ≥ 2 with two BVs landing on the same non-bev
+            // edge from different faces). For selCount=1 valence=2 with
+            // collinear non-bev support the BVs share the slide-edge index
+            // but sit at DIFFERENT perpendicular positions on each face —
+            // those must stay independent.
+            Vec3 d = bnd.pos - bnd2.pos;
+            if (slideEh == slideEh2 && d.length < 1e-4f) {
                 bnd.aliasOf    = j;
                 bnd.pos        = bnd2.pos;
                 bnd.slideDir   = bnd2.slideDir;

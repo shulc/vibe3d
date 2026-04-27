@@ -338,8 +338,15 @@ Vec3 offsetMeetDir(Vec3 e1, Vec3 e2, Vec3 faceNorm) @safe pure nothrow @nogc {
 // Returns the absolute world-space intersection point. Useful when one
 // EdgeHalf is beveled (wEdge = width) and the other is not (wEdge = 0).
 //
-// Falls back to the midpoint of the two offset origins when the edges are
-// parallel inside the face plane.
+// Parallel-edge fallback (the two edges are collinear inside the face):
+//   - Both bev: the perpendicular offsets coincide (p1 ≈ p2) — return
+//     their midpoint, the correct in-face perpendicular displacement
+//     (this is the "pipe" case).
+//   - One bev + one non-bev: return the offset-side position. Blender keeps
+//     the BoundVert at the perpendicular slide (like a normal cube-corner
+//     BV) and adds a separate edge-slide vertex for the TRI_FAN cap; that
+//     extra vertex is materialized higher up, not by offsetMeet.
+//   - Both non-bev: caller shouldn't invoke this (no BV needed).
 Vec3 offsetMeet(Vec3 jv, Vec3 ePrev, Vec3 eNext, Vec3 faceNorm,
                 float wPrev, float wNext) @safe pure nothrow @nogc {
     import std.math : abs;
@@ -347,8 +354,11 @@ Vec3 offsetMeet(Vec3 jv, Vec3 ePrev, Vec3 eNext, Vec3 faceNorm,
     Vec3 p2 = jv + offsetInPlane( eNext, faceNorm) * wNext;
     Vec3 r  = p2 - p1;
     float denom = dot(cross(ePrev, eNext), faceNorm);
-    if (abs(denom) < 1e-6f)
+    if (abs(denom) < 1e-6f) {
+        if (wPrev > 0 && wNext == 0) return p1;
+        if (wNext > 0 && wPrev == 0) return p2;
         return (p1 + p2) * 0.5f;
+    }
     float t = dot(cross(r, eNext), faceNorm) / denom;
     return p1 + ePrev * t;
 }
