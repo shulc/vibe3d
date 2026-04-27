@@ -63,6 +63,23 @@ double[3] toVec(JSONValue v) {
     return [a[0].floating, a[1].floating, a[2].floating];
 }
 
+// Select the edge whose endpoints match (v0, v1) within tolerance.
+void selectEdgeByEndpoints(double[3] v0, double[3] v1) {
+    auto model = parseJSON(get(url("/api/model")));
+    int idx = findEdgeIndex(model, v0, v1);
+    auto sel = postJson("/api/select",
+        `{"mode":"edges","indices":[` ~ idx.to!string ~ `]}`);
+    if (sel["status"].str != "ok")
+        throw new Exception("select failed: " ~ sel.toString());
+}
+
+void runSplitEdge(JSONValue op) {
+    selectEdgeByEndpoints(toVec(op["v0"]), toVec(op["v1"]));
+    auto resp = postJson("/api/command", `{"id":"mesh.split_edge"}`);
+    if (resp["status"].str != "ok")
+        throw new Exception("split_edge failed: " ~ resp.toString());
+}
+
 void runBevel(JSONValue op) {
     auto model = parseJSON(get(url("/api/model")));
 
@@ -93,6 +110,14 @@ void runBevel(JSONValue op) {
         throw new Exception("bevel failed: " ~ resp.toString());
 }
 
+void runOp(JSONValue op) {
+    switch (op["op"].str) {
+        case "bevel":      runBevel(op);     break;
+        case "split_edge": runSplitEdge(op); break;
+        default: throw new Exception("unknown op: " ~ op["op"].str);
+    }
+}
+
 int main(string[] args) {
     if (args.length < 3) {
         stderr.writeln("usage: vibe3d_dump.d <case.json> <out.json> [--port N]");
@@ -109,12 +134,9 @@ int main(string[] args) {
     auto caseJson = parseJSON(readText(casePath));
 
     resetCube();
-    foreach (op; caseJson["ops"].array) {
-        switch (op["op"].str) {
-            case "bevel": runBevel(op); break;
-            default: throw new Exception("unknown op: " ~ op["op"].str);
-        }
-    }
+    if ("preops" in caseJson)
+        foreach (op; caseJson["preops"].array) runOp(op);
+    foreach (op; caseJson["ops"].array) runOp(op);
 
     auto model = parseJSON(get(url("/api/model")));
     JSONValue out_ = JSONValue(["source": JSONValue("vibe3d")]);

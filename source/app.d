@@ -52,6 +52,7 @@ import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.subpatch_toggle;
 import commands.mesh.bevel;
+import commands.mesh.split_edge;
 
 import command;
 import registry;
@@ -451,6 +452,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.bevel"] = () => cast(Command)
         new MeshBevel(&mesh, cameraView, editMode, &gpu,
                       &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.split_edge"] = () => cast(Command)
+        new MeshSplitEdge(&mesh, cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");

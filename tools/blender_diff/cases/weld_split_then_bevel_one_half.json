@@ -1,0 +1,19 @@
+{
+  "_comment": "Weld variant (9a-adjacent): split cube edge 0 (v_0 ↔ v_3) at midpoint, then bevel ONLY the half near v_0. The midpoint vertex has valence=2 with selCount=1 — non-bev half-edge ends at the midpoint. Expected fail until valence=2 endpoint handling is added — currently vibe3d under-counts both verts and faces (12/8 vs Blender's 14/10) at the midpoint side.",
+  "expected_fail": true,
+  "preops": [
+    {"op": "split_edge", "v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.5, -0.5]}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.0, -0.5]}
+      ],
+      "width": 0.1,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

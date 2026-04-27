@@ -1,0 +1,20 @@
+{
+  "_comment": "Pipe (9c) + Weld (9a) overlap: split cube edge 0 (v_0 ↔ v_3) at midpoint, then bevel BOTH resulting collinear halves. The midpoint has selCount=2 valence=2 (weld) AND the two bev edges are collinear (pipe). Expected fail until Weld/Pipe spec cases are implemented in vibe3d/bevel.d — currently vibe3d treats vm as an ordinary bev-endpoint and produces wrong geometry (v_0 and v_3 incorrectly displaced).",
+  "expected_fail": true,
+  "preops": [
+    {"op": "split_edge", "v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.5, -0.5]}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.0, -0.5]},
+        {"v0": [-0.5,  0.0, -0.5], "v1": [-0.5, 0.5, -0.5]}
+      ],
+      "width": 0.1,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

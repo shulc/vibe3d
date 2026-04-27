@@ -5,6 +5,9 @@ Usage:
 
 Case schema:
   {
+    "preops": [              # optional: setup operations before the main ops
+      {"op": "split_edge", "v0": [x,y,z], "v1": [x,y,z]}
+    ],
     "ops": [
       {"op": "bevel",
        "edges": [{"v0": [x,y,z], "v1": [x,y,z]}, ...],
@@ -64,11 +67,22 @@ def select_edges(bm, endpoint_pairs):
     if found != len(endpoint_pairs):
         raise RuntimeError(f"edge match: requested {len(endpoint_pairs)}, found {found}")
 
-for op in case["ops"]:
+def find_edge(bm, v0, v1):
+    for e in bm.edges:
+        a = tuple(e.verts[0].co); b = tuple(e.verts[1].co)
+        if (vmatch(a, v0) and vmatch(b, v1)) or (vmatch(a, v1) and vmatch(b, v0)):
+            return e
+    raise RuntimeError(f"edge not found: {v0} ↔ {v1}")
+
+def run_op(op):
     bm = bmesh.from_edit_mesh(mesh)
     bm.verts.ensure_lookup_table()
     bm.edges.ensure_lookup_table()
-    if op["op"] == "bevel":
+    if op["op"] == "split_edge":
+        e = find_edge(bm, tuple(op["v0"]), tuple(op["v1"]))
+        bmesh.ops.subdivide_edges(bm, edges=[e], cuts=1)
+        bmesh.update_edit_mesh(mesh)
+    elif op["op"] == "bevel":
         super_r = op.get("superR", 2.0)
         if abs(super_r - 2.0) > 1e-6:
             raise NotImplementedError(
@@ -86,6 +100,11 @@ for op in case["ops"]:
         )
     else:
         raise ValueError(f"unknown op: {op['op']}")
+
+for op in case.get("preops", []):
+    run_op(op)
+for op in case["ops"]:
+    run_op(op)
 
 bm = bmesh.from_edit_mesh(mesh)
 bm.verts.ensure_lookup_table()
