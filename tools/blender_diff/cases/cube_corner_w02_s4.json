@@ -1,0 +1,17 @@
+{
+  "_comment": "Cube corner bevel: 3 edges meeting at v_0, width 0.2, 4 segments. Tolerance 0.01 reflects the bilinear-vs-CC interior-grid approximation in overrideCubeCornerCap.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5,  0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [ 0.5, -0.5, -0.5]},
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, -0.5,  0.5]}
+      ],
+      "width": 0.2,
+      "segments": 4,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.01
+}
