@@ -1,5 +1,5 @@
 {
-  "_comment": "Stage 9e Inner arc miter (XFAIL — non-default Blender feature not yet implemented in vibe3d): same setup as lshape_reflex_two_edges but with miter_inner=ARC and seg=2. Blender produces 24v/16f with curved arc geometry inserted at the reflex corner; vibe3d's sharp miter produces 18v/12f. Implementing inner arc miter requires detecting the reflex configuration and emitting an arc-of-cap-profile-samples + extra faces between the strip endcaps and bv.vert. Niche advanced styling — sharp miter (default) is what 99%+ of users want.",
+  "_comment": "Stage 9e Inner arc miter (XFAIL — partial implementation): vibe3d's MeshBevel now accepts miter_inner='arc' and skips the sharp-miter aliasing for reflex selCount=2, but the patch geometry (5 extra grid verts + 4 patch quads + splice into surrounding faces) is not yet generated. With API param wired, vibe3d produces 19v/13f vs Blender's 24v/16f. Closing requires rewriting the materializeBevVert face-patching loop to insert the patch boundary into each surrounding face — substantial work for a niche advanced styling feature that is not Blender's default. See bevel.d MiterPattern.Arc + the hasAnyReflexBevEdge guard in populateBoundVerts.",
   "expected_fail": true,
   "primitive": "lshape",
   "ops": [
@@ -12,7 +12,7 @@
       "width": 0.1,
       "segments": 2,
       "superR": 2.0,
-      "miter_inner": "ARC"
+      "miter_inner": "arc"
     }
   ],
   "tolerance": 0.001

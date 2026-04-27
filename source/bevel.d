@@ -25,6 +25,15 @@ enum BevelWidthMode {
     Percent,
 }
 
+// Miter pattern at corners where the bevel changes direction. Sharp is the
+// default (Blender's "SHARP") — strips meet at the original vertex via
+// existing sharp-miter logic. Arc inserts curved patch geometry at reflex
+// corners (Blender's miter_inner="ARC"), used for stylized bevels.
+enum MiterPattern {
+    Sharp,
+    Arc,
+}
+
 // Returns the per-unit-user-width offset coefficient for a beveled edge,
 // i.e. the value that should be passed to offsetMeet's wPrev/wNext at user
 // width = 1. The runtime BoundVert position is then origPos + slideDir * w.
@@ -232,6 +241,7 @@ struct BevVert {
     Vec3        adjCenterDir = Vec3(0, 0, 0);
     int[]       adjGridVids;
     Vec3[]      adjGridDirs;
+    MiterPattern miterInner = MiterPattern.Sharp;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +285,8 @@ struct BevelOp {
 BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                                 BevelWidthMode mode = BevelWidthMode.Offset,
                                 float widthL = 1.0f, float widthR = 1.0f,
-                                int seg = 1, float superR = 2.0f)
+                                int seg = 1, float superR = 2.0f,
+                                MiterPattern miterInner = MiterPattern.Sharp)
 {
     if (seg < 1)  seg = 1;
     if (seg > 64) seg = 64;
@@ -324,7 +335,7 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
             if (auto p = key in dirLoopMap) { startDart = *p; break; }
         }
         BevVert bv = buildBevVert(mesh, vert, selectedEdges, startDart);
-        populateBoundVerts(mesh, bv, mode, widthL, widthR, seg, superR);
+        populateBoundVerts(mesh, bv, mode, widthL, widthR, seg, superR, miterInner);
         materializeBevVert(mesh, bv, faceSnapped, op.faceSnaps);
 
         // For selCount ≥ 2 there is no F_other left to absorb the BoundVert
@@ -652,8 +663,10 @@ BevVert buildBevVert(Mesh* mesh, uint vert, const(bool)[] selectedEdges,
 void populateBoundVerts(Mesh* mesh, ref BevVert bv,
                         BevelWidthMode mode = BevelWidthMode.Offset,
                         float widthL = 1.0f, float widthR = 1.0f,
-                        int seg = 1, float superR = 2.0f)
+                        int seg = 1, float superR = 2.0f,
+                        MiterPattern miterInner = MiterPattern.Sharp)
 {
+    bv.miterInner = miterInner;
     if (bv.selCount < 1) return;
 
     // Resolve per-edge offsetSpec from the chosen width mode + per-side widths.
@@ -744,12 +757,12 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
         }
     }
 
-    // Stage 9e Sharp miter at reflex (selCount ≥ 2): when at least one of the
-    // beveled edges incident to bv.vert has reflex dihedral, Blender's sharp
-    // miter forces all BVs in non-BEV-BEV faces to collapse onto bv.vert.
-    // Without this, those BVs would slide perpendicular within their faces
-    // INTO the missing concave space (outside the bulk).
-    if (bv.selCount >= 2 && hasAnyReflexBevEdge(mesh, bv)) {
+    // Stage 9e Sharp miter at reflex (selCount ≥ 2, miterInner=Sharp): when
+    // at least one beveled edge has reflex dihedral, force all BVs in
+    // non-BEV-BEV faces to collapse onto bv.vert. Skipped for Arc miter,
+    // which generates patch geometry in materializeBevVert instead.
+    if (bv.selCount >= 2 && bv.miterInner == MiterPattern.Sharp
+        && hasAnyReflexBevEdge(mesh, bv)) {
         // Pick the earliest non-BEV-BEV BV as the anchor sitting at bv.vert.
         // Subsequent same-class BVs alias to it (aliasOf must point to an
         // earlier index, so anchor must come first in iteration).

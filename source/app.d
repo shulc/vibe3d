@@ -646,6 +646,9 @@ void main(string[] args) {
                         if ("superR" in pj) mb.setSuperR(jsonNumber(pj["superR"]));
                         if ("limit"  in pj && pj["limit"].type == JSONType.false_)
                             mb.setLimit(false);
+                        if ("miter_inner" in pj
+                            && pj["miter_inner"].type == JSONType.string)
+                            mb.setMiterInner(pj["miter_inner"].str);
                     }
                 }
             }

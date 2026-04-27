@@ -113,6 +113,8 @@ void runBevel(JSONValue op) {
                   ~ `,"seg":` ~ op["segments"].to!string;
     if ("superR" in op)
         params ~= `,"superR":` ~ op["superR"].floating.to!string;
+    if ("miter_inner" in op)
+        params ~= `,"miter_inner":"` ~ op["miter_inner"].str.to!string ~ `"`;
     auto resp = postJson("/api/command",
         `{"id":"mesh.bevel","params":{` ~ params ~ `}}`);
     if (resp["status"].str != "ok")
