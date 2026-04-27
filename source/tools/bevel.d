@@ -79,7 +79,7 @@ private:
     float          ebWidthR  = 0.0f;
     bool           ebAsymmetric = false;
     int            ebSeg     = 1;
-    float          ebSuperR  = 0.5f;
+    float          ebSuperR  = 2.0f;
     BevelWidthMode ebMode    = BevelWidthMode.Offset;
     BevelOp        ebOp;
 

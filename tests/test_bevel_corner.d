@@ -232,9 +232,12 @@ unittest { // selCount=2 seg=2 with non-bev EH BETWEEN the two bev EHs in
            //
            // Edges 5 (v_5–v_6) and 6 (v_6–v_7) share v_6; the third edge at
            // v_6 (v_6–v_2) is non-bev and falls *between* them in the EH
-           // ring. The cap mid at v_6 must land at the super-ellipse
-           // midpoint of the corner BV (v8 ≈ (0.355, 0.355, 0.5)) and the
-           // alias BV (v6 ≈ (0.5, 0.5, 0.355)) → roughly (0.397, 0.397, 0.397).
+           // ring. The cap mid at v_6 must land on the convex super-ellipse
+           // arc bridging the corner BV (≈ (0.355, 0.355, 0.5)) and the
+           // alias BV (≈ (0.5, 0.5, 0.355)). The convex parameterization
+           // P = origPos + (1-v)·dStart + (1-u)·dEnd places the midpoint
+           // close to origPos (rounding *off* the corner toward the
+           // inscribed sphere), at ≈ (0.458, 0.458, 0.458).
     resetCube();
     selectEdges([5, 6]);
     runBevelSeg(0.145f, 2);
@@ -243,31 +246,19 @@ unittest { // selCount=2 seg=2 with non-bev EH BETWEEN the two bev EHs in
     assert(bad == 0,
         "expected manifold mesh, got " ~ bad.to!string ~ " non-manifold edges");
 
-    // Find the cap mid at v_6 by looking for the unique vertex at distance
-    // ~0.18 (= 0.145 · √(3/2)) from v_6_orig.
-    double[] v6orig = [0.5, 0.5, 0.5];
-    double dist3(JSONValue v, double[] o) {
-        auto a = v.array;
-        double dx = a[0].floating - o[0];
-        double dy = a[1].floating - o[1];
-        double dz = a[2].floating - o[2];
-        return sqrt(dx*dx + dy*dy + dz*dz);
-    }
     int found = 0;
     foreach (i, v; m["vertices"].array) {
-        // The super-ellipse cap midpoint at v_6 sits at (-0.103, -0.103, -0.103)
-        // from origPos (= 0.145·cos(45°) on each axis): coord ≈ 0.397 each.
         auto a = v.array;
-        if (abs(a[0].floating - 0.3975) < 0.005
-         && abs(a[1].floating - 0.3975) < 0.005
-         && abs(a[2].floating - 0.3975) < 0.005) {
+        if (abs(a[0].floating - 0.4575) < 0.005
+         && abs(a[1].floating - 0.4575) < 0.005
+         && abs(a[2].floating - 0.4575) < 0.005) {
             found++;
         }
     }
     assert(found == 1,
-        "expected exactly one cap mid at (0.3975, 0.3975, 0.3975) for v_6 "
+        "expected exactly one cap mid at (0.4575, 0.4575, 0.4575) for v_6 "
         ~ "selCount=2 seg=2; got " ~ found.to!string ~ " — leftBVidxAlloc "
-        ~ "regression?");
+        ~ "regression or convex-bevel formula change?");
 }
 
 unittest { // selCount=2 valence=3 seg=2: total vertex count

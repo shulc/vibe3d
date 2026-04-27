@@ -48,32 +48,38 @@ unittest { // PROFILE seg=4 vert count: 8 cube + (seg new per endpoint) * 2 = 16
         "expected 16 verts for seg=4, got " ~ m["vertexCount"].integer.to!string);
 }
 
-unittest { // PROFILE seg=4 superR=2 (circle): all sample points at distance w from origPos
+unittest { // PROFILE seg=4 superR=2 (circle): all sample points at distance w from offset point
     resetCube();
     selectEdge(0);
     runBevel(0.1f, 4, 2.0f);
 
     auto m = parseJSON(get("http://localhost:8080/api/model"));
     auto verts = m["vertices"].array;
-    double[] v0orig = [-0.5, -0.5, -0.5];
-    double[] v3orig = [-0.5,  0.5, -0.5];
+    // Convex-bevel sphere center for each cap = origPos + dStart + dEnd.
+    // For cube edge 0 (between v_0 and v_3 along +Y), the two flanking faces
+    // at v_0 give dStart=(+w,0,0), dEnd=(0,0,+w) → offset = (-0.4,-0.5,-0.4).
+    // At v_3 (-0.5,+0.5,-0.5) the flanks similarly give offset = (-0.4,+0.5,-0.4).
+    double[] v0off = [-0.4, -0.5, -0.4];
+    double[] v3off = [-0.4,  0.5, -0.4];
 
     // For seg=4 cube edge 0, the new vertices land at indices 8..15:
     //   v_0 cap profile: indices 8 (BV_right), 9, 10, 11 (intermediates,
-    //                    all at distance w from v_0_orig)
+    //                    all at distance w from v_0_offset). v_0 itself
+    //                    (index 0) is one of the bound verts and also lies
+    //                    at distance w from v_0_offset.
     //   v_3 cap profile: indices 12 (BV_right), 13, 14, 15 (intermediates,
-    //                    all at distance w from v_3_orig)
-    // Plus moved originals v_0 (index 0) and v_3 (index 3).
+    //                    all at distance w from v_3_offset). Plus moved
+    //                    v_3 (index 3).
     foreach (i; [0, 8, 9, 10, 11]) {
-        double d = dist(vToD(verts[i]), v0orig);
+        double d = dist(vToD(verts[i]), v0off);
         assert(abs(d - 0.1) < 1e-4,
-            "v[" ~ i.to!string ~ "] dist from v_0_orig = " ~ d.to!string
+            "v[" ~ i.to!string ~ "] dist from v_0_offset = " ~ d.to!string
             ~ ", expected 0.1");
     }
     foreach (i; [3, 12, 13, 14, 15]) {
-        double d = dist(vToD(verts[i]), v3orig);
+        double d = dist(vToD(verts[i]), v3off);
         assert(abs(d - 0.1) < 1e-4,
-            "v[" ~ i.to!string ~ "] dist from v_3_orig = " ~ d.to!string
+            "v[" ~ i.to!string ~ "] dist from v_3_offset = " ~ d.to!string
             ~ ", expected 0.1");
     }
 }

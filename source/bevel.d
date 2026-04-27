@@ -667,9 +667,20 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
 // Sample a quarter super-ellipse curve from `start` to `end` with the curve
 // bulging away from `middle`. The map sends (1, 0) → start, (0, 1) → end,
 // and (u, v) on the unit super-ellipse |u|^r + |v|^r = 1 in the first
-// quadrant onto the curve via P(u, v) = middle + u*(start - middle) +
-// v*(end - middle). For r=2 (circle) and orthogonal start/end vectors of
-// equal length w, every sample lies at distance w from middle.
+// quadrant onto the curve via the CONVEX-bevel parameterization
+//   P(u, v) = origPos + (1 - v) * (start - origPos) + (1 - u) * (end - origPos)
+// equivalent to using `offset = origPos + dStart + dEnd` as the super-ellipse
+// "middle" with axes -dEnd and -dStart. For perpendicular dStart, dEnd of
+// equal length w, every sample lies at distance w from `offset` (NOT from
+// origPos): the cap arcs around the inscribed sphere tangent to the two
+// bev-flanking faces, bulging *toward* the original sharp corner — the
+// rounded-bevel direction Blender uses.
+//
+// Boundary checks:
+//   t=0 → (u, v) = (1, 0) → P = origPos + 0·dStart + 1·dEnd = … wait no:
+//   the formula gives P = origPos + (1-0)·dStart + (1-1)·dEnd = origPos +
+//   dStart = start. ✓
+//   t=1 → (u, v) = (0, 1) → P = origPos + (1-1)·dStart + (1-0)·dEnd = end. ✓
 private Profile computeProfile(Mesh* mesh, ref const BevVert bv,
                                 ref const BoundVert curr, ref const BoundVert next,
                                 int seg, float superR)
@@ -692,11 +703,12 @@ private Profile computeProfile(Mesh* mesh, ref const BevVert bv,
         float t  = cast(float)k / cast(float)seg;
         float th = t * cast(float)(PI * 0.5);
         float ct = cos(th), st = sin(th);
-        // Super-ellipse parameterization in the first quadrant.
-        // r=2 → u=cos(th), v=sin(th); r=1 → linear; r→∞ → square.
+        // Super-ellipse exponents in the unit-quadrant frame.
+        //   r=2 → u=cos(th), v=sin(th);  r=1 → u=cos²(th), v=sin²(th) (linear);
+        //   r→∞ → u, v → 1 (square cap that collapses to origPos at t=0.5).
         float u = pow(ct, 2.0f / superR);
         float v = pow(st, 2.0f / superR);
-        p.sample[k] = p.middle + dStart * u + dEnd * v;
+        p.sample[k] = p.middle + dStart * (1.0f - v) + dEnd * (1.0f - u);
     }
     return p;
 }
@@ -1121,83 +1133,121 @@ private bool isCubeCornerLike(ref const BevVert bv, Mesh* mesh) {
 // satisfies BV[i].pos == sphere_center + width · n_i for any i, and (a, b, c)
 // lies on the unit superellipsoid |a|^r + |b|^r + |c|^r = 1.
 //
-// For the seg=2 control mesh the (a, b, c) coords are explicit (BoundVerts at
-// e_i, cap-arc midpoints at e_i + e_{(i+1)%n}, center at (1, 1, 1)). For
-// seg ≥ 4 we re-decompose the existing bilinear positions and re-snap, which
-// keeps the surface on the correct superellipsoid (true Blender behavior
-// would iterate Catmull-Clark in the unit frame — TODO for stage 7.2b proper).
+// Canonical position → unit-frame (a_0, a_1, a_2):
+//   (i, 0, 0)         BV_i                  → a_i = 1, others = 0
+//   (i, 0, k)  k>0    cap arc i sample[k]   → (a_i, a_{i+1}) = (cos(t·π/2), sin(t·π/2)),
+//                                              t = k/ns; others = 0
+//   (i, j, 0)  j>0    cap arc (i-1) sample  → mirror of above with t = (ns-j)/ns
+//   (i, j, k)  >0,>0  panel i interior      → (a_{i-1}, a_i, a_{i+1}) = (j/ns2, 1, k/ns2)
+//                                              followed by snap to unit superellipsoid
+//   center            shared (1, 1, 1)      → snap to unit superellipsoid
+//
+// Boundary placement is exact (matches Blender's `get_profile_point` on the
+// inscribed sphere). Interior is bilinear-in-unit-frame + snap; this is an
+// approximation to Blender's iterative Catmull-Clark + snap (~2% off in the
+// interior for ns=4) but coincides on the cap-strip boundary so the strip
+// connects cleanly to the cap.
 private void overrideCubeCornerCap(Mesh* mesh, ref BevVert bv) {
     if (!isCubeCornerLike(bv, mesh)) return;
 
-    int n  = cast(int)bv.boundVerts.length;
-    int ns = bv.vmesh.seg;
+    int n   = cast(int)bv.boundVerts.length;
+    int ns  = bv.vmesh.seg;
+    int ns2 = ns / 2;
+    int odd = ns % 2;
 
-    Vec3 n0 = mesh.faceNormal(bv.boundVerts[0].face);
-    Vec3 n1 = mesh.faceNormal(bv.boundVerts[1].face);
-    Vec3 n2 = mesh.faceNormal(bv.boundVerts[2].face);
+    Vec3[3] N;
+    N[0] = mesh.faceNormal(bv.boundVerts[0].face);
+    N[1] = mesh.faceNormal(bv.boundVerts[1].face);
+    N[2] = mesh.faceNormal(bv.boundVerts[2].face);
 
     // For perpendicular face normals, |slideDir| == width · √2 (BV is the
     // offset_meet of two width-offset perpendicular bev edges in the face).
     float width = bv.boundVerts[0].slideDir.length / sqrt(2.0f);
     if (width < 1e-6f) return;
 
-    Vec3 sphereCenter = bv.boundVerts[0].pos - n0 * width;
+    Vec3 sphereCenter = bv.boundVerts[0].pos - N[0] * width;
 
     float superR = bv.boundVerts[0].profile.superR;
     if (superR < 1e-3f) superR = 1e-3f;
 
-    Vec3 mapToWorld(float a, float b, float c) {
-        float aa = fabs(a), ab = fabs(b), ac = fabs(c);
+    // Snap (a_0, a_1, a_2) to the unit superellipsoid then map to world via
+    // the affine cube-corner frame. Returns world position (NOT dir).
+    Vec3 mapUnitToWorld(float a0, float a1, float a2) {
+        float aa = fabs(a0), ab = fabs(a1), ac = fabs(a2);
         float sum = pow(aa, superR) + pow(ab, superR) + pow(ac, superR);
         if (sum > 1e-10f) {
             float scale = pow(sum, -1.0f / superR);
-            a *= scale; b *= scale; c *= scale;
+            a0 *= scale; a1 *= scale; a2 *= scale;
         }
-        Vec3 world = sphereCenter + (n0 * a + n1 * b + n2 * c) * width;
-        return world - bv.origPos;
+        return sphereCenter + (N[0] * a0 + N[1] * a1 + N[2] * a2) * width;
+    }
+
+    // Cap arc sample at parameter t ∈ [0, 1] from BV_a (a-axis = 1) to BV_b
+    // (b-axis = 1). For r=2 the (cos, sin) pair already lies on the unit
+    // circle so the snap is a no-op.
+    Vec3 arcSampleUnit(int a, int b, float t) {
+        float th = t * cast(float)(PI * 0.5);
+        float[3] uvw = [0, 0, 0];
+        uvw[a] = cos(th);
+        uvw[b] = sin(th);
+        return mapUnitToWorld(uvw[0], uvw[1], uvw[2]);
     }
 
     if (ns == 2) {
-        // Cap-arc midpoints (i, 0, 1): unit-frame coord 1 at index i and
-        // (i+1)%n, 0 elsewhere — this is the SLERP midpoint of the two BVs
-        // on the unit sphere (after normalization in mapToWorld).
+        // Cap-arc midpoints (i, 0, 1): SLERP midpoint of BV_i and BV_{i+1}.
         foreach (i; 0 .. n) {
             int inext = (i + 1) % n;
             float[3] uvw = [0, 0, 0];
             uvw[i]     = 1.0f;
             uvw[inext] = 1.0f;
             size_t idx = adjFlatIdx(cast(int)i, 0, 1, ns);
-            bv.adjGridDirs[idx] = mapToWorld(uvw[0], uvw[1], uvw[2]);
+            bv.adjGridDirs[idx] = mapUnitToWorld(uvw[0], uvw[1], uvw[2])
+                                - bv.origPos;
         }
-        // Center (0, 1, 1) — Blender's diagonal point (1, 1, 1) snapped to
-        // the unit superellipsoid.
         if (bv.adjCenterVid >= 0)
-            bv.adjCenterDir = mapToWorld(1.0f, 1.0f, 1.0f);
-    } else {
-        // seg ≥ 4: decompose every canonical position's existing direction
-        // into the cube-corner unit frame, then re-snap to the superellipsoid.
-        // Approximate — a true match to Blender would iterate Catmull-Clark
-        // in the unit frame.
-        foreach (i; 0 .. n) {
-            size_t bvIdx = adjFlatIdx(cast(int)i, 0, 0, ns);
-            foreach (slot, ref dir; bv.adjGridDirs) {
-                if (slot == bvIdx) continue;
-                if (bv.adjGridVids[slot] < 0) continue;
-                Vec3 d = (bv.origPos + dir) - sphereCenter;
-                float a = dot(d, n0) / width;
-                float b = dot(d, n1) / width;
-                float c = dot(d, n2) / width;
-                dir = mapToWorld(a, b, c);
+            bv.adjCenterDir = mapUnitToWorld(1.0f, 1.0f, 1.0f) - bv.origPos;
+        return;
+    }
+
+    // seg ≥ 4: rebuild every canonical (i, j, k) directly from unit-frame
+    // coords. Boundary cap arcs (j=0 or k=0) come from the unit-circle
+    // parameterization — perfect match to Blender. Interior comes from
+    // bilinear-in-unit-frame + superellipsoid snap.
+    foreach (i; 0 .. n) {
+        int iprev = (i + n - 1) % n;
+        int inext = (i + 1) % n;
+
+        foreach (j; 0 .. ns2 + odd) {
+            foreach (k; 0 .. ns2 + 1) {
+                size_t idx = adjFlatIdx(cast(int)i, cast(int)j, cast(int)k, ns);
+                if (idx >= bv.adjGridDirs.length) continue;
+                if (bv.adjGridVids[idx] < 0) continue;
+
+                Vec3 world;
+                if (j == 0 && k == 0) {
+                    world = bv.boundVerts[i].pos;
+                } else if (j == 0) {
+                    float t = cast(float)k / cast(float)ns;
+                    world = arcSampleUnit(cast(int)i, inext, t);
+                } else if (k == 0) {
+                    float t = cast(float)(ns - j) / cast(float)ns;
+                    world = arcSampleUnit(iprev, cast(int)i, t);
+                } else {
+                    float u = cast(float)k / cast(float)ns2;
+                    float v = cast(float)j / cast(float)ns2;
+                    float[3] uvw = [0, 0, 0];
+                    uvw[iprev] = v;
+                    uvw[i]     = 1.0f;
+                    uvw[inext] = u;
+                    world = mapUnitToWorld(uvw[0], uvw[1], uvw[2]);
+                }
+                bv.adjGridDirs[idx] = world - bv.origPos;
             }
         }
-        if (bv.adjCenterVid >= 0) {
-            Vec3 d = (bv.origPos + bv.adjCenterDir) - sphereCenter;
-            float a = dot(d, n0) / width;
-            float b = dot(d, n1) / width;
-            float c = dot(d, n2) / width;
-            bv.adjCenterDir = mapToWorld(a, b, c);
-        }
     }
+
+    if (bv.adjCenterVid >= 0)
+        bv.adjCenterDir = mapUnitToWorld(1.0f, 1.0f, 1.0f) - bv.origPos;
 }
 
 private void spliceInManyAtCorner(Mesh* mesh, uint faceIdx,
