@@ -1721,12 +1721,11 @@ private size_t canonMeshVert(int i, int j, int k, int n, int ns) {
 // positions. Mirrors Blender's vmesh_copy_equiv_verts.
 private void canonCopyEquivVerts(Vec3[] cap, int n, int ns) {
     int ns2 = ns / 2;
-    foreach (i; 0 .. n) {
-        foreach (j; 0 .. ns2 + 1) {
-            foreach (k; 0 .. ns + 1) {
-                int ii = cast(int)i, jj = cast(int)j, kk = cast(int)k;
-                if (canonIsCanon(ii, jj, kk, ns)) continue;
-                cap[canonFlatIdx(ii, jj, kk, ns)] = cap[canonMeshVert(ii, jj, kk, n, ns)];
+    foreach (int i; 0 .. n) {
+        foreach (int j; 0 .. ns2 + 1) {
+            foreach (int k; 0 .. ns + 1) {
+                if (canonIsCanon(i, j, k, ns)) continue;
+                cap[canonFlatIdx(i, j, k, ns)] = cap[canonMeshVert(i, j, k, n, ns)];
             }
         }
     }
@@ -1860,16 +1859,17 @@ private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
     }
     canonCopyEquivVerts(vmIn, n, nsIn);
 
+    Vec3 avg4(Vec3 a, Vec3 b, Vec3 c, Vec3 d) { return (a + b + c + d) * 0.25f; }
+
     // Step 3: Internal faces (new face vertex = avg of 4 quad corners).
     foreach (i; 0 .. n) {
         for (int j = 0; j < nsIn2; j++) {
             for (int k = 0; k < nsIn2; k++) {
-                Vec3 a = vmIn[canonFlatIdx(cast(int)i, j,     k,     nsIn)];
-                Vec3 b = vmIn[canonFlatIdx(cast(int)i, j,     k + 1, nsIn)];
-                Vec3 c = vmIn[canonFlatIdx(cast(int)i, j + 1, k,     nsIn)];
-                Vec3 d = vmIn[canonFlatIdx(cast(int)i, j + 1, k + 1, nsIn)];
-                vmOut[canonFlatIdx(cast(int)i, 2 * j + 1, 2 * k + 1, nsOut)]
-                    = (a + b + c + d) * 0.25f;
+                vmOut[canonFlatIdx(cast(int)i, 2 * j + 1, 2 * k + 1, nsOut)] = avg4(
+                    vmIn[canonFlatIdx(cast(int)i, j,     k,     nsIn)],
+                    vmIn[canonFlatIdx(cast(int)i, j,     k + 1, nsIn)],
+                    vmIn[canonFlatIdx(cast(int)i, j + 1, k,     nsIn)],
+                    vmIn[canonFlatIdx(cast(int)i, j + 1, k + 1, nsIn)]);
             }
         }
     }
@@ -1878,12 +1878,11 @@ private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
     foreach (i; 0 .. n) {
         for (int j = 0; j < nsIn2; j++) {
             for (int k = 1; k <= nsIn2; k++) {
-                Vec3 a = vmIn[canonFlatIdx(cast(int)i, j,     k, nsIn)];
-                Vec3 b = vmIn[canonFlatIdx(cast(int)i, j + 1, k, nsIn)];
-                Vec3 c = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k - 1, n, nsOut)];
-                Vec3 d = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)];
-                vmOut[canonFlatIdx(cast(int)i, 2 * j + 1, 2 * k, nsOut)]
-                    = (a + b + c + d) * 0.25f;
+                vmOut[canonFlatIdx(cast(int)i, 2 * j + 1, 2 * k, nsOut)] = avg4(
+                    vmIn [canonFlatIdx (cast(int)i, j,         k,         nsIn)],
+                    vmIn [canonFlatIdx (cast(int)i, j + 1,     k,         nsIn)],
+                    vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k - 1, n, nsOut)],
+                    vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)]);
             }
         }
     }
@@ -1892,12 +1891,11 @@ private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
     foreach (i; 0 .. n) {
         for (int j = 1; j < nsIn2; j++) {
             for (int k = 0; k < nsIn2; k++) {
-                Vec3 a = vmIn[canonFlatIdx(cast(int)i, j, k,     nsIn)];
-                Vec3 b = vmIn[canonFlatIdx(cast(int)i, j, k + 1, nsIn)];
-                Vec3 c = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k + 1, n, nsOut)];
-                Vec3 d = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)];
-                vmOut[canonFlatIdx(cast(int)i, 2 * j, 2 * k + 1, nsOut)]
-                    = (a + b + c + d) * 0.25f;
+                vmOut[canonFlatIdx(cast(int)i, 2 * j, 2 * k + 1, nsOut)] = avg4(
+                    vmIn [canonFlatIdx (cast(int)i, j,         k,         nsIn)],
+                    vmIn [canonFlatIdx (cast(int)i, j,         k + 1,     nsIn)],
+                    vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k + 1, n, nsOut)],
+                    vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)]);
             }
         }
     }
@@ -1910,19 +1908,19 @@ private Vec3[] canonCubicSubdiv(Vec3[] vmIn, int n, int nsIn, float superR) {
         foreach (i; 0 .. n) {
             for (int j = 1; j < nsIn2; j++) {
                 for (int k = 1; k <= nsIn2; k++) {
-                    Vec3 e0 = vmOut[canonMeshVert(cast(int)i, 2 * j,     2 * k - 1, n, nsOut)];
-                    Vec3 e1 = vmOut[canonMeshVert(cast(int)i, 2 * j,     2 * k + 1, n, nsOut)];
-                    Vec3 e2 = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k,     n, nsOut)];
-                    Vec3 e3 = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k,     n, nsOut)];
-                    Vec3 co1 = (e0 + e1 + e2 + e3) * 0.25f;
-                    Vec3 f0 = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k - 1, n, nsOut)];
-                    Vec3 f1 = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k - 1, n, nsOut)];
-                    Vec3 f2 = vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k + 1, n, nsOut)];
-                    Vec3 f3 = vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)];
-                    Vec3 co2 = (f0 + f1 + f2 + f3) * 0.25f;
-                    Vec3 v   = vmIn[canonFlatIdx(cast(int)i, j, k, nsIn)];
-                    Vec3 newV = co1 + co2 * beta + v * gamma;
-                    vmOut[canonFlatIdx(cast(int)i, 2 * j, 2 * k, nsOut)] = newV;
+                    Vec3 co1 = avg4(
+                        vmOut[canonMeshVert(cast(int)i, 2 * j,     2 * k - 1, n, nsOut)],
+                        vmOut[canonMeshVert(cast(int)i, 2 * j,     2 * k + 1, n, nsOut)],
+                        vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k,     n, nsOut)],
+                        vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k,     n, nsOut)]);
+                    Vec3 co2 = avg4(
+                        vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k - 1, n, nsOut)],
+                        vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k - 1, n, nsOut)],
+                        vmOut[canonMeshVert(cast(int)i, 2 * j - 1, 2 * k + 1, n, nsOut)],
+                        vmOut[canonMeshVert(cast(int)i, 2 * j + 1, 2 * k + 1, n, nsOut)]);
+                    Vec3 v = vmIn[canonFlatIdx(cast(int)i, j, k, nsIn)];
+                    vmOut[canonFlatIdx(cast(int)i, 2 * j, 2 * k, nsOut)]
+                        = co1 + co2 * beta + v * gamma;
                 }
             }
         }
