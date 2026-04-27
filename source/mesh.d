@@ -96,6 +96,56 @@ struct Mesh {
         ++mutationVersion;
         return cast(uint)(vertices.length - 1);
     }
+
+    /// Remove vertices not referenced by any face. Updates all face vertex
+    /// references via a remap table and re-derives the edges array. Returns
+    /// the number of vertices removed.
+    /// Useful after topology mutations (e.g. bevel arc miter) that leave
+    /// stale BoundVerts or cap mids unreferenced.
+    size_t compactUnreferenced() {
+        bool[] referenced;
+        referenced.length = vertices.length;
+        foreach (ref face; faces)
+            foreach (vid; face)
+                if (vid < referenced.length) referenced[vid] = true;
+        // Build old→new index map
+        uint[] remap;
+        remap.length = vertices.length;
+        Vec3[] newVerts;
+        newVerts.reserve(vertices.length);
+        size_t removed = 0;
+        foreach (i, ref v; vertices) {
+            if (referenced[i]) {
+                remap[i] = cast(uint)newVerts.length;
+                newVerts ~= v;
+            } else {
+                remap[i] = cast(uint)~0u;
+                ++removed;
+            }
+        }
+        if (removed == 0) return 0;
+        // Rewrite face vertex IDs
+        foreach (ref face; faces)
+            foreach (ref vid; face)
+                if (vid < remap.length) vid = remap[vid];
+        vertices = newVerts;
+        // Re-derive edges from faces (remap can break edge endpoints).
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref face; faces)
+            foreach (k; 0 .. face.length)
+                addEdge(face[k], face[(k + 1) % face.length]);
+        // Selection arrays follow vertices length; truncate / repack the
+        // simple cases (selected vertices: re-built bool array).
+        selectedVertices.length = vertices.length;
+        vertexSelectionOrder.length = vertices.length;
+        // Edges have changed — clear edge selection for safety.
+        selectedEdges.length = edges.length;
+        selectedEdges[] = false;
+        edgeSelectionOrder.length = edges.length;
+        ++mutationVersion;
+        return removed;
+    }
     void addEdge(uint a, uint b) {
         ulong key = edgeKey(a, b);
         if (key in edgeIndexMap) return;

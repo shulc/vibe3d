@@ -1393,7 +1393,20 @@ private void materializeArcMiterPatch(Mesh* mesh, ref BevVert bv) {
         float tb = cast(float)b / cast(float)N;
         Vec3 inner = arcPos(1, ta);
         Vec3 outer = arcPos(N, ta);
-        return inner * (1.0f - tb) + outer * tb;
+        Vec3 bilinear = inner * (1.0f - tb) + outer * tb;
+        // Side a=N (excluding corners): Blender empirically snaps the
+        // bilinear midpoint to the quarter-circle of radius w around the
+        // C22 corner (= unit (N, 1)·w from origPos). For seg=2 b=1 this
+        // shifts side_aN_mid from (1.5, 0.5)·w (linear) to (1.29, 0.29)·w
+        // (on arc) — diff ~0.03 on width 0.1.
+        if (a == N && b > 0 && b < N) {
+            Vec3 c22 = origPos + e1 * (N * w) + e2 * w;
+            Vec3 dir = bilinear - c22;
+            float len = dir.length;
+            if (len > 1e-6f)
+                return c22 + dir * (w / len);
+        }
+        return bilinear;
     }
 
     // Allocate (or reuse) the (N+1)² grid of vert IDs.

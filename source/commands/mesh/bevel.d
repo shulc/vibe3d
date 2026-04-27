@@ -88,6 +88,11 @@ class MeshBevel : Command {
         BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
                                              w, wR, seg, superR, miterInner);
         updateEdgeBevelPositions(mesh, op, 1.0f);
+        // Remove orphan vertices left by the topology operation (e.g. the
+        // BEV-BEV BoundVert at reflex selCount=2 with arc miter, where the
+        // patch geometry routes around the original vertex).
+        mesh.compactUnreferenced();
+        mesh.buildLoops();
 
         mesh.clearEdgeSelection();
         foreach (eidx; op.bevelQuadEdges)
