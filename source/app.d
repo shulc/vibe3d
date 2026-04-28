@@ -60,6 +60,18 @@ import registry;
 import shortcuts;
 import buttonset;
 
+version (OSX) {
+    import core.attribute : selector;
+    extern (Objective-C) interface NSApplicationClass {
+        NSApplication sharedApplication() @selector("sharedApplication");
+    }
+    extern (Objective-C) interface NSApplication {
+        void setActivationPolicy(int policy) @selector("setActivationPolicy:");
+        void activateIgnoringOtherApps(bool flag) @selector("activateIgnoringOtherApps:");
+    }
+    extern (C) NSApplicationClass objc_getClass(const(char)* name) nothrow @nogc;
+}
+
 
 // Read depth buffer at window position (px, py),
 // accounting for HiDPI framebuffer scale.
@@ -232,14 +244,11 @@ void main(string[] args) {
 
     version (OSX) {
         // Make the app appear in the Dock and Command-Tab switcher when launched from terminal.
-        import core.attribute : selector;
-        extern (Objective-C) interface NSApplication {
-            static NSApplication sharedApplication() @selector("sharedApplication");
-            void setActivationPolicy(int policy) @selector("setActivationPolicy:");
-            void activateIgnoringOtherApps(bool flag) @selector("activateIgnoringOtherApps:");
-        }
-        NSApplication.sharedApplication.setActivationPolicy(0); // NSApplicationActivationPolicyRegular
-        NSApplication.sharedApplication.activateIgnoringOtherApps(true);
+        // Use metaclass interface + objc_getClass instead of static interface methods:
+        // LDC2 dispatches static ObjC interface calls to the Protocol object, not the class.
+        NSApplication app = objc_getClass("NSApplication").sharedApplication();
+        app.setActivationPolicy(0); // NSApplicationActivationPolicyRegular
+        app.activateIgnoringOtherApps(true);
     }
 
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
