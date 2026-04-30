@@ -4,10 +4,42 @@ import mesh;
 import view;
 import editmode;
 
+// ---------------------------------------------------------------------------
+// Command — base class for every user-visible action.
+//
+// MODO-style undo/redo (see doc/undo_redo_plan.md):
+// - apply()    — runs the operation. Mutating commands MUST snapshot
+//                pre-state into instance fields here.
+// - revert()   — restore the pre-apply state (using the snapshot).
+//                Default: no-op (returns false). Mutating commands MUST
+//                override and return true on successful revert.
+// - isUndoable — false for read-only / non-mutating commands; the
+//                dispatcher then skips pushing to the undo stack.
+// - label()    — short human-readable text for the Edit menu / history
+//                viewer ("Bevel edges", "Move 3 verts"). Defaults to
+//                name().
+// ---------------------------------------------------------------------------
+
 class Command {
-    // Human-readable name shown in the UI.
+    // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
     string name() const { return "Command"; }
+
+    // Run the operation. Mutating commands snapshot pre-state into
+    // instance fields here so revert() can restore.
     bool apply() { return true; }
+
+    // Restore the pre-apply mesh/selection/state. Default: not undoable.
+    // Mutating commands override and return true on success.
+    bool revert() { return false; }
+
+    // Whether this command should land on the undo stack after a
+    // successful apply(). Read-only queries / fit-camera / file.save
+    // override to return false.
+    bool isUndoable() const { return true; }
+
+    // Short human-readable label. Defaults to name() — override for a
+    // friendlier menu / history-viewer string.
+    string label() const { return name(); }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         this.mesh = mesh;

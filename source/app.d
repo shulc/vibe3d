@@ -428,6 +428,9 @@ void main(string[] args) {
     // Registry + YAML config
     // -------------------------------------------------------------------------
 
+    import command_history : CommandHistory;
+    auto history = new CommandHistory();
+
     Registry reg;
     reg.toolFactories["move"]   = () => cast(Tool) new MoveTool(&mesh, &gpu, &editMode);
     reg.toolFactories["rotate"] = () => cast(Tool) new RotateTool(&mesh, &gpu, &editMode);
@@ -690,6 +693,48 @@ void main(string[] args) {
 
             if (!cmd.apply())
                 throw new Exception("command '" ~ id ~ "' did not apply");
+
+            // Phase A undo/redo: every successful HTTP-dispatched command
+            // is offered to the history. Non-undoable commands (read-only,
+            // viewport.fit*, etc.) are filtered by isUndoable() inside
+            // record(). Mutating commands MUST snapshot pre-state inside
+            // their apply() so revert() can restore — see
+            // doc/undo_redo_plan.md Phase B for the per-command audit.
+            history.record(cmd);
+        });
+
+        httpServer.setUndoHandler(() {
+            return history.undo();
+        });
+        httpServer.setRedoHandler(() {
+            return history.redo();
+        });
+        httpServer.setHistoryProvider(() {
+            // JSON: { "undo": ["label1", ...], "redo": [...] }
+            import std.array : appender;
+            auto buf = appender!string();
+            buf.put(`{"undo":[`);
+            foreach (i, l; history.undoLabels) {
+                if (i > 0) buf.put(",");
+                buf.put(`"`);
+                foreach (c; l) {
+                    if (c == '"' || c == '\\') buf.put('\\');
+                    buf.put(c);
+                }
+                buf.put(`"`);
+            }
+            buf.put(`],"redo":[`);
+            foreach (i, l; history.redoLabels) {
+                if (i > 0) buf.put(",");
+                buf.put(`"`);
+                foreach (c; l) {
+                    if (c == '"' || c == '\\') buf.put('\\');
+                    buf.put(c);
+                }
+                buf.put(`"`);
+            }
+            buf.put(`]}`);
+            return buf.data;
         });
 
         httpServer.setSelectionHandler((string mode, int[] indices) {
@@ -904,6 +949,21 @@ void main(string[] args) {
                 }
                 return;
             }
+        }
+
+        // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo. Phase A undo/redo;
+        // see doc/undo_redo_plan.md.
+        SDL_Keymod kmods = cast(SDL_Keymod)kev.keysym.mod;
+        bool kctrl  = (kmods & KMOD_CTRL)  != 0;
+        bool kshift = (kmods & KMOD_SHIFT) != 0;
+        if (kctrl && kev.keysym.sym == SDLK_z) {
+            if (kshift) history.redo();
+            else        history.undo();
+            return;
+        }
+        if (kctrl && kev.keysym.sym == SDLK_y) {
+            history.redo();
+            return;
         }
 
         switch (kev.keysym.sym) {
@@ -1809,6 +1869,7 @@ void main(string[] args) {
             httpServer.tickCommand();
             httpServer.tickSelection();
             httpServer.tickTransform();
+            httpServer.tickUndo();
         }
 
         // ---- Events ----

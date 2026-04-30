@@ -71,6 +71,23 @@ class HttpServer {
     private JSONValue pendingXfParams;
     private string    pendingXfError;
 
+    // ----- /api/undo + /api/redo synchronous bridge ------------------------
+    // The handler returns true on success (an entry was undone/redone) or
+    // false on stack-empty / revert-failure. /api/history is a read-only
+    // provider that can be served from the HTTP thread directly (no
+    // main-thread sync) since the labels list is a snapshot at request
+    // time and any race just yields slightly stale labels.
+    private alias UndoRedoHandler = bool delegate();
+    private UndoRedoHandler undoHandler;
+    private UndoRedoHandler redoHandler;
+    private shared long undoSubmittedEpoch;
+    private shared long undoCompletedEpoch;
+    private bool   pendingUndoIsRedo;
+    private bool   pendingUndoResult;
+
+    private alias HistoryProvider = string delegate();   // returns JSON
+    private HistoryProvider historyProvider;
+
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
 
@@ -156,6 +173,23 @@ class HttpServer {
      */
     public void setTransformHandler(TransformHandler handler) {
         this.transformHandler = handler;
+    }
+
+    /**
+     * Set the undo/redo callbacks. Same main-thread sync as the others.
+     * Returns true if a stack entry was applied, false on stack-empty or
+     * revert failure.
+     */
+    public void setUndoHandler(UndoRedoHandler handler) { this.undoHandler = handler; }
+    public void setRedoHandler(UndoRedoHandler handler) { this.redoHandler = handler; }
+
+    /**
+     * Set the /api/history JSON provider. Snapshot-at-request-time; runs
+     * on the HTTP thread — provider must be safe to call concurrently with
+     * apply/revert (or the caller must own a quick mutex).
+     */
+    public void setHistoryProvider(HistoryProvider provider) {
+        this.historyProvider = provider;
     }
 
     /**
@@ -583,6 +617,44 @@ class HttpServer {
                 }
             }
             response.headers["Content-Type"] = "application/json";
+        } else if ((request.path == "/api/undo" || request.path == "/api/redo")
+                   && request.method == "POST") {
+            // Same main-thread sync pattern as /api/command: HTTP thread
+            // sets pendingUndoIsRedo, bumps undoSubmittedEpoch, spins on
+            // undoCompletedEpoch. tickUndo() on main thread invokes the
+            // handler and writes pendingUndoResult.
+            bool isRedo = (request.path == "/api/redo");
+            auto handler = isRedo ? redoHandler : undoHandler;
+            if (handler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ (isRedo ? "redo" : "undo")
+                                ~ ` handler not set"}`;
+            } else {
+                pendingUndoIsRedo = isRedo;
+                pendingUndoResult = false;
+                long my = atomicOp!"+="(undoSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(undoCompletedEpoch) < my) {
+                    if (++iters > maxIters) break;
+                    Thread.sleep(2.msecs);
+                }
+                response.statusCode = 200;
+                response.body = pendingUndoResult
+                    ? `{"status":"ok"}`
+                    : `{"status":"noop","message":"stack empty or revert failed"}`;
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/history" && request.method == "GET") {
+            if (historyProvider is null) {
+                response.statusCode = 200;
+                response.body = `{"undo":[],"redo":[]}`;
+            } else {
+                response.statusCode = 200;
+                response.body = historyProvider();
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/play-events" && request.method == "POST") {
             if (!testMode) {
                 response.statusCode = 403;
@@ -711,6 +783,26 @@ class HttpServer {
             }
         }
         atomicStore(selCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick undo/redo — same main-thread sync pattern as the others.
+     */
+    public void tickUndo() {
+        long sub = atomicLoad(undoSubmittedEpoch);
+        long cmp = atomicLoad(undoCompletedEpoch);
+        if (sub <= cmp) return;
+        auto h = pendingUndoIsRedo ? redoHandler : undoHandler;
+        if (h is null) {
+            pendingUndoResult = false;
+        } else {
+            try {
+                pendingUndoResult = h();
+            } catch (Exception) {
+                pendingUndoResult = false;
+            }
+        }
+        atomicStore(undoCompletedEpoch, sub);
     }
 
     /**
