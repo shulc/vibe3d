@@ -1,0 +1,87 @@
+module commands.mesh.vertex_edit;
+
+import std.conv : to;
+
+import command;
+import mesh;
+import view;
+import editmode;
+import viewcache;
+import math : Vec3;
+
+/// Records a vertex-position edit that has ALREADY happened (the MODO
+/// "Record" flavor — apply already ran via the tool's fast in-place
+/// mutation path). Stores absolute pre/post positions so apply()/revert()
+/// are exact (no FP drift across re-apply cycles).
+///
+/// Used by MoveTool / RotateTool / ScaleTool to land each drag (or each
+/// Tool Properties slider release) on the undo stack as one entry.
+class MeshVertexEdit : Command {
+    private GpuMesh*         gpu;
+    private VertexCache*     vc;
+    private EdgeCache*       ec;
+    private FaceBoundsCache* fc;
+
+    private uint[] indices;
+    private Vec3[] before;
+    private Vec3[] after;
+    private string editLabel;     // "Move", "Rotate", etc.
+
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+        super(mesh, view, editMode);
+        this.gpu = gpu;
+        this.vc  = vc;
+        this.ec  = ec;
+        this.fc  = fc;
+    }
+
+    override string name()  const { return "mesh.vertex_edit"; }
+    override string label() const {
+        return (editLabel.length ? editLabel : "Edit") ~ " "
+             ~ indices.length.to!string ~ " verts";
+    }
+
+    /// Set the edit payload. before/after must be the same length as indices
+    /// — corresponding entry i means mesh.vertices[indices[i]] went from
+    /// before[i] to after[i].
+    void setEdit(uint[] indices_, Vec3[] before_, Vec3[] after_,
+                 string label_ = "Edit") {
+        assert(before_.length == indices_.length,
+            "before/indices length mismatch");
+        assert(after_.length == indices_.length,
+            "after/indices length mismatch");
+        this.indices    = indices_;
+        this.before     = before_;
+        this.after      = after_;
+        this.editLabel  = label_;
+    }
+
+    bool isEmpty() const { return indices.length == 0; }
+
+    override bool apply() {
+        foreach (i, vid; indices) {
+            if (vid < mesh.vertices.length)
+                mesh.vertices[vid] = after[i];
+        }
+        ++mesh.mutationVersion;
+        gpu.upload(*mesh);
+        vc.invalidate();
+        ec.invalidate();
+        fc.invalidate();
+        return true;
+    }
+
+    override bool revert() {
+        foreach (i, vid; indices) {
+            if (vid < mesh.vertices.length)
+                mesh.vertices[vid] = before[i];
+        }
+        ++mesh.mutationVersion;
+        gpu.upload(*mesh);
+        vc.invalidate();
+        ec.invalidate();
+        fc.invalidate();
+        return true;
+    }
+}

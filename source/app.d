@@ -57,6 +57,7 @@ import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
 import commands.mesh.select;
 import commands.mesh.transform;
+import commands.mesh.vertex_edit;
 import commands.scene.reset;
 
 import command;
@@ -434,8 +435,19 @@ void main(string[] args) {
     import command_history : CommandHistory;
     auto history = new CommandHistory();
 
+    // Phase C.2: every transform tool gets the same undo plumbing — the
+    // history stack + a factory that builds a MeshVertexEdit pre-wired to
+    // the same gpu/caches the tool mutates. Tools call beginEdit() at drag
+    // start and commitEdit() at drag end; one undo entry per drag.
+    auto vxEditFactory = () => new MeshVertexEdit(&mesh, cameraView, editMode,
+                                                   &gpu, &vertexCache, &edgeCache, &faceCache);
+
     Registry reg;
-    reg.toolFactories["move"]   = () => cast(Tool) new MoveTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["move"]   = () {
+        auto t = new MoveTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
     reg.toolFactories["rotate"] = () => cast(Tool) new RotateTool(&mesh, &gpu, &editMode);
     reg.toolFactories["scale"]  = () => cast(Tool) new ScaleTool(&mesh, &gpu, &editMode);
     reg.toolFactories["bevel"]  = () => cast(Tool) new BevelTool(&mesh, &gpu, &editMode);
@@ -483,6 +495,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.transform"] = () => cast(Command)
         new MeshTransform(&mesh, cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)
+        new MeshVertexEdit(&mesh, cameraView, editMode, &gpu,
+                           &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["scene.reset"] = () => cast(Command)
         new SceneReset(&mesh, cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache,
@@ -699,6 +714,31 @@ void main(string[] args) {
                         if ("shift"  in pj) mpb.setShift (jsonNumber(pj["shift"]));
                         if ("group"  in pj && pj["group"].type == JSONType.true_)
                             mpb.setGroup(true);
+                    }
+                    // mesh.vertex_edit: indices + before + after arrays
+                    // (each Vec3 as [x,y,z]). Used by tests; tools call
+                    // setEdit() directly.
+                    if (auto vxe = cast(MeshVertexEdit)cmd) {
+                        if ("indices" !in pj || "before" !in pj || "after" !in pj)
+                            throw new Exception(
+                                "mesh.vertex_edit needs indices/before/after");
+                        auto idxA = pj["indices"].array;
+                        auto befA = pj["before"].array;
+                        auto aftA = pj["after"].array;
+                        if (befA.length != idxA.length || aftA.length != idxA.length)
+                            throw new Exception(
+                                "mesh.vertex_edit: indices/before/after length mismatch");
+                        uint[] ids; ids.length = idxA.length;
+                        Vec3[] bef; bef.length = idxA.length;
+                        Vec3[] aft; aft.length = idxA.length;
+                        foreach (i; 0 .. idxA.length) {
+                            ids[i] = cast(uint)jsonNumber(idxA[i]);
+                            auto b = befA[i].array;
+                            auto a = aftA[i].array;
+                            bef[i] = Vec3(jsonNumber(b[0]), jsonNumber(b[1]), jsonNumber(b[2]));
+                            aft[i] = Vec3(jsonNumber(a[0]), jsonNumber(a[1]), jsonNumber(a[2]));
+                        }
+                        vxe.setEdit(ids, bef, aft, "Edit");
                     }
                 }
             }

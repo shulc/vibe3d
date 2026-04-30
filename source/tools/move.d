@@ -122,6 +122,9 @@ public:
         // does not snap it back to the pre-move centroid on the next frame.
         cachedCenter = handler.center;
         lastSelectionHash = computeSelectionHash();
+        // Phase C.2: land this drag as one undo entry. No-op if the drag
+        // didn't actually move any verts.
+        commitEdit("Move");
         return true;
     }
 
@@ -167,6 +170,7 @@ public:
             dragDelta = Vec3(0, 0, 0);
             buildVertexCacheIfNeeded();
             wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
+            beginEdit();   // Phase C.2: snapshot pre-drag positions for undo.
             return true;
         }
 
@@ -193,6 +197,7 @@ public:
             ctrlConstrain = true;
             constrainStartMX = e.x; constrainStartMY = e.y;
         }
+        beginEdit();   // Phase C.2: snapshot pre-drag positions for undo.
         return true;
     }
 
@@ -289,6 +294,10 @@ public:
             if (delta.x != 0 || delta.y != 0 || delta.z != 0) {
                 dragDelta += delta;
                 buildVertexCacheIfNeeded();
+                // Phase C.2: snapshot on the first frame the slider becomes
+                // active, so commitEdit() at the end has the pre-drag
+                // baseline. beginEdit() is idempotent within an open edit.
+                beginEdit();
                 applyDeltaImmediate(delta);
                 handler.setPosition(handler.center + delta);
                 cachedCenter = handler.center;
@@ -300,6 +309,7 @@ public:
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             wholeMeshDrag = false;
+            commitEdit("Move");   // Phase C.2: land slider drag on undo stack.
         }
     }
 
