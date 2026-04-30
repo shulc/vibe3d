@@ -4,13 +4,21 @@ import command;
 import mesh;
 import view;
 import editmode;
+import snapshot : SelectionSnapshot;
 
 class SelectLoop : Command {
+    private SelectionSnapshot snap;
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        return true;
+    }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.loop"; }
 
     override bool apply() {
+        snap = SelectionSnapshot.capture(*mesh);
         // ------------------------------------------------------------------ //
         //  Edge loop                                                           //
         // ------------------------------------------------------------------ //

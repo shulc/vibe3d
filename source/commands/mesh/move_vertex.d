@@ -33,6 +33,9 @@ class MeshMoveVertex : Command {
     void setFrom(float x, float y, float z) { fromX = x; fromY = y; fromZ = z; }
     void setTo(float x, float y, float z)   { toX   = x; toY   = y; toZ   = z; }
 
+    private int  movedIdx = -1;     // vertex that was actually moved
+    private Vec3 origPos;            // its pre-apply position
+
     override bool apply() {
         import std.math : abs;
         enum float EPS = 1e-4f;
@@ -44,8 +47,21 @@ class MeshMoveVertex : Command {
             }
         }
         if (found < 0) return false;
+        movedIdx = found;
+        origPos  = mesh.vertices[found];
         mesh.vertices[found] = Vec3(toX, toY, toZ);
 
+        gpu.upload(*mesh);
+        vc.invalidate();
+        ec.invalidate();
+        fc.invalidate();
+        return true;
+    }
+
+    override bool revert() {
+        if (movedIdx < 0 || movedIdx >= cast(int)mesh.vertices.length) return false;
+        mesh.vertices[movedIdx] = origPos;
+        ++mesh.mutationVersion;
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

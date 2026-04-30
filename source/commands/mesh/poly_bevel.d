@@ -7,6 +7,7 @@ import editmode;
 import shader;
 import viewcache;
 import poly_bevel : applyPolyBevel;
+import snapshot : MeshSnapshot;
 
 /// Non-interactive polygon "bevel" — face inset + extrude on the currently
 /// selected faces (or all faces if nothing is selected).
@@ -28,6 +29,7 @@ class MeshPolyBevel : Command {
     private float            insert = 0.0f;
     private float            shift  = 0.0f;
     private bool             group  = false;
+    private MeshSnapshot     snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -72,9 +74,24 @@ class MeshPolyBevel : Command {
         }
         if (selFaceIdx.length == 0) return false;
 
+        // Snapshot before mutation. applyPolyBevel modifies verts, edges,
+        // faces, selection arrays — full snapshot is the simplest revert.
+        snap = MeshSnapshot.capture(*mesh);
+
         applyPolyBevel(mesh, selFaceIdx, insert, shift, group);
 
         mesh.buildLoops();
+        gpu.upload(*mesh);
+        vc.resize(mesh.vertices.length); vc.invalidate();
+        ec.resize(mesh.edges.length);    ec.invalidate();
+        fc.resize(mesh.vertices.length, mesh.faces.length);
+        fc.invalidate();
+        return true;
+    }
+
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length); vc.invalidate();
         ec.resize(mesh.edges.length);    ec.invalidate();

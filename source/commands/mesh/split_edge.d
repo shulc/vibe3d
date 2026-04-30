@@ -7,6 +7,7 @@ import editmode;
 import shader;
 import viewcache;
 import math : Vec3;
+import snapshot : MeshSnapshot;
 
 /// Split the (first) currently selected edge at its midpoint, inserting a
 /// new vertex and updating every incident face. Edges are re-derived from
@@ -16,6 +17,7 @@ class MeshSplitEdge : Command {
     private VertexCache*     vc;
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
+    private MeshSnapshot     snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -36,6 +38,11 @@ class MeshSplitEdge : Command {
         foreach (i, sel; mesh.selectedEdges)
             if (sel) { ei = cast(int)i; break; }
         if (ei < 0 || ei >= cast(int)mesh.edges.length) return false;
+
+        // Snapshot before mutation. split_edge inserts a new vert and
+        // reshuffles many faces — full mesh snapshot is the simplest
+        // correct revert. Cheap enough at typical mesh sizes.
+        snap = MeshSnapshot.capture(*mesh);
 
         uint va = mesh.edges[ei][0];
         uint vb = mesh.edges[ei][1];
@@ -67,6 +74,16 @@ class MeshSplitEdge : Command {
         mesh.buildLoops();
         mesh.resetSelection();
 
+        gpu.upload(*mesh);
+        vc.resize(mesh.vertices.length); vc.invalidate();
+        ec.resize(mesh.edges.length);    ec.invalidate();
+        fc.resize(mesh.vertices.length, mesh.faces.length); fc.invalidate();
+        return true;
+    }
+
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length); vc.invalidate();
         ec.resize(mesh.edges.length);    ec.invalidate();

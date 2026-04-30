@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import snapshot : SelectionSnapshot;
 
 private void bfsSelect(bool[] selection, int[][] adj, int seed) {
     bool[] visited = new bool[](selection.length);
@@ -29,11 +30,18 @@ private void bfsSelect(bool[] selection, int[][] adj, int seed) {
 
 
 class SelectConnect : Command {
+    private SelectionSnapshot snap;
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        return true;
+    }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.connect"; }
 
     override bool apply() {
+        snap = SelectionSnapshot.capture(*mesh);
         // Connected selection — flood-fill from current selection / hovered element.
         if (editMode == EditMode.Vertices) {
             int[][] vertAdj = new int[][](mesh.vertices.length);

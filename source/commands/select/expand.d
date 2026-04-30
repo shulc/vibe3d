@@ -4,13 +4,22 @@ import command;
 import mesh;
 import view;
 import editmode;
+import snapshot : SelectionSnapshot;
 
 class SelectionExpand : Command {
+    private SelectionSnapshot snap;
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.expand"; }
 
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        return true;
+    }
+
     override bool apply() {
+        snap = SelectionSnapshot.capture(*mesh);
         if (editMode == EditMode.Vertices) {
             bool[] toAdd = new bool[](mesh.vertices.length);
             foreach (i; 0 .. mesh.selectedVertices.length)

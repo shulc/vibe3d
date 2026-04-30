@@ -10,6 +10,9 @@ import editmode;
 /// a Command so it can be invoked through /api/command in tests and through
 /// future UI buttons without duplicating the logic.
 class SubpatchToggle : Command {
+    private bool[] origSubpatch;     // pre-apply isSubpatch[] snapshot
+    private bool   captured;
+
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
     }
@@ -17,6 +20,10 @@ class SubpatchToggle : Command {
     override string name() const { return "mesh.subpatch_toggle"; }
 
     override bool apply() {
+        // Snapshot just isSubpatch[] — only field we mutate.
+        origSubpatch = mesh.isSubpatch.dup;
+        captured     = true;
+
         mesh.syncSelection();
         bool any = mesh.hasAnySelectedFaces();
         foreach (fi; 0 .. mesh.faces.length) {
@@ -25,6 +32,13 @@ class SubpatchToggle : Command {
             bool cur = fi < mesh.isSubpatch.length && mesh.isSubpatch[fi];
             mesh.setSubpatch(fi, !cur);
         }
+        return true;
+    }
+
+    override bool revert() {
+        if (!captured) return false;
+        mesh.isSubpatch = origSubpatch.dup;
+        ++mesh.mutationVersion;
         return true;
     }
 }

@@ -4,15 +4,23 @@ import command;
 import mesh;
 import view;
 import editmode;
+import snapshot : SelectionSnapshot;
 
 // SelectLess: all edit modes.
 // Deselects the most recently selected element (highest *SelectionOrder).
 class SelectLess : Command {
+    private SelectionSnapshot snap;
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        return true;
+    }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.less"; }
 
     override bool apply() {
+        snap = SelectionSnapshot.capture(*mesh);
         if (editMode == EditMode.Polygons) {
             int last = -1, lastOrd = 0;
             foreach (i; 0 .. mesh.selectedFaces.length) {

@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import snapshot : SelectionSnapshot;
 
 // SelectRing: Edges and Vertices modes.
 //
@@ -13,11 +14,18 @@ import editmode;
 // Vertices: if exactly 2 vertices are selected and a mesh edge connects them,
 //           selects the vertices of the corresponding edge ring.
 class SelectRing : Command {
+    private SelectionSnapshot snap;
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        return true;
+    }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.ring"; }
 
     override bool apply() {
+        snap = SelectionSnapshot.capture(*mesh);
         if (editMode != EditMode.Edges && editMode != EditMode.Vertices) return true;
 
         if (editMode == EditMode.Edges) {

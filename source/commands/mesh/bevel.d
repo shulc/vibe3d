@@ -8,6 +8,7 @@ import shader;
 import viewcache;
 import bevel : applyEdgeBevelTopology, updateEdgeBevelPositions,
                BevelOp, BevelWidthMode, MiterPattern, computeLimitOffset;
+import snapshot : MeshSnapshot;
 
 /// Non-interactive edge bevel — applies the topology change on the currently
 /// selected edges and slides each new BoundVert outward by `width` (and
@@ -30,6 +31,7 @@ class MeshBevel : Command {
     private float            superR  = 2.0f;
     private bool             limit   = true;        // clamp overlap (Blender default)
     private MiterPattern     miterInner = MiterPattern.Sharp;
+    private MeshSnapshot     snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -83,6 +85,11 @@ class MeshBevel : Command {
             if (w  > lim) w  = lim;
             if (wR > lim) wR = lim;
         }
+        // Full mesh snapshot for revert. The bevel pipeline runs weld and
+        // compactUnreferenced as post-effects which renumber vertices in
+        // ways revertEdgeBevelTopology(BevelOp) wasn't designed to handle,
+        // so a full snapshot is the simpler/safer revert path here.
+        snap = MeshSnapshot.capture(*mesh);
         // Slide directions are computed at the (w, wR) widths directly,
         // so the BoundVerts land at their final positions during apply.
         BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
@@ -127,6 +134,17 @@ class MeshBevel : Command {
             if (eidx >= 0 && eidx < cast(int)mesh.edges.length)
                 mesh.selectEdge(eidx);
 
+        gpu.upload(*mesh);
+        vc.resize(mesh.vertices.length); vc.invalidate();
+        ec.resize(mesh.edges.length);    ec.invalidate();
+        fc.resize(mesh.vertices.length, mesh.faces.length);
+        fc.invalidate();
+        return true;
+    }
+
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length); vc.invalidate();
         ec.resize(mesh.edges.length);    ec.invalidate();

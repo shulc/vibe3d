@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import viewcache;
+import snapshot : MeshSnapshot;
 
 class Subdivide : Command {
     private GpuMesh*        gpu;
@@ -12,6 +13,7 @@ class Subdivide : Command {
     private EdgeCache*      ec;
     private FaceBoundsCache* fc;
     private void delegate() onTopologyChange;
+    private MeshSnapshot snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
@@ -27,12 +29,27 @@ class Subdivide : Command {
     override string name() const { return "mesh.subdivide"; }
 
     override bool apply() {
+        // Full mesh snapshot — Catmull-Clark replaces the entire mesh
+        // (verts, edges, faces, selection, etc.).
+        snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
         if (mesh.hasAnySelectedFaces())
             *mesh = catmullClarkSelected(*mesh, mesh.selectedFaces);
         else
             *mesh = catmullClark(*mesh);
         mesh.resetSelection();
+        refreshCaches();
+        return true;
+    }
+
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        refreshCaches();
+        return true;
+    }
+
+    private void refreshCaches() {
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length);
         vc.invalidate();
@@ -40,6 +57,5 @@ class Subdivide : Command {
         fc.invalidate();
         ec.resize(mesh.edges.length);
         ec.invalidate();
-        return true;
     }
 }

@@ -16,6 +16,7 @@ class FileSave : Command {
     }
 
     override string name() const { return "File Save"; }
+    override bool isUndoable() const { return false; }   // file output, no mesh state change
 
     /// Skip the native file dialog and save to the given path.
     /// Used by /api/command params; leave unset for normal user flow.

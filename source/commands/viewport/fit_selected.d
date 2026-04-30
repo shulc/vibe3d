@@ -11,6 +11,7 @@ class FitSelected : Command {
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "viewport.fitSelected"; }
+    override bool isUndoable() const { return false; }   // camera-only
 
     override bool apply() {
         // Frame selected (or whole mesh if nothing selected).

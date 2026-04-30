@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import snapshot : SelectionSnapshot;
 
 // SelectBetween: Polygons and Vertices modes.
 //
@@ -19,11 +20,18 @@ import editmode;
 // Vertices: works only when the last 2 selected vertices share a vertex loop.
 // Selects all vertices on the shorter arc between them.
 class SelectBetween : Command {
+    private SelectionSnapshot snap;
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        return true;
+    }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
     override string name() const { return "select.between"; }
 
     override bool apply() {
+        snap = SelectionSnapshot.capture(*mesh);
         if      (editMode == EditMode.Polygons) return applyPolygons();
         else if (editMode == EditMode.Edges)    return applyEdges();
         else if (editMode == EditMode.Vertices) return applyVertices();
