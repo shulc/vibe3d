@@ -49,8 +49,11 @@ private:
     Vec3 gizmoRight;    // unit vector: perpendicular to normal
 
     // ---- Polygon bevel parameters ----
+    // MODO Bevel Polygon: shift extrudes along normal, inset is the
+    // perpendicular distance each face boundary edge moves inward in the
+    // face plane (identity = 0). Negative inset → outset.
     float       shiftAmount   = 0.0f;
-    float       insertScale   = 1.0f;
+    float       insetAmount   = 0.0f;
     bool        groupPolygons = false;
     PolyBevelOp polyOp;
 
@@ -101,7 +104,7 @@ public:
         bevelApplied = false;
         polyOp       = PolyBevelOp.init;
         shiftAmount  = 0.0f;
-        insertScale  = 1.0f;
+        insetAmount  = 0.0f;
         dragHandle   = -1;
         ebWidth      = 0.0f;
         ebOp         = BevelOp.init;
@@ -155,7 +158,11 @@ public:
                 float cubeFixed = size * 0.03f;
                 if (dragHandle != 1)
                     insertScaleArrow.start = insertHandle.start;
-                insertScaleArrow.end           = gizmoCenter + gizmoRight * (size * insertScale);
+                // Visualise the inset amount on the in-plane axis. Identity
+                // (inset=0) keeps the arrow at gizmoCenter; positive inset
+                // shows the arrow pointing inward. Scale arbitrary; the
+                // arrow is just feedback during the drag.
+                insertScaleArrow.end           = gizmoCenter + gizmoRight * (size + insetAmount);
                 insertScaleArrow.fixedDir      = gizmoRight;
                 insertScaleArrow.fixedCubeHalf = cubeFixed;
             }
@@ -164,7 +171,7 @@ public:
         shiftHandle.draw(shader, vp);
         if (anyFace) {
             insertHandle.draw(shader, vp);
-            if (dragHandle == 1 && insertScale != 0.0f)
+            if (dragHandle == 1 && insetAmount != 0.0f)
                 insertScaleArrow.draw(shader, vp);
         }
     }
@@ -235,7 +242,12 @@ public:
                 gpu.upload(*mesh);
             }
         } else {
-            // Insert (polygon mode only).
+            // Inset (polygon mode only). Additive — drag toward gizmoCenter
+            // increases inset (moves boundary edges INWARD by perpendicular
+            // distance). Drag outward decreases (or goes negative → outset).
+            // The unit direction is gizmoRight projected to screen; the
+            // signed scalar projection of (delta_mouse) onto that direction
+            // (in world units) is added to insetAmount.
             float cx, cy, cndcZ, ax_, ay_, andcZ;
             if (!projectToWindowFull(gizmoCenter, cachedVp, cx, cy, cndcZ) ||
                 !projectToWindowFull(gizmoCenter + gizmoRight, cachedVp, ax_, ay_, andcZ))
@@ -245,10 +257,11 @@ public:
             float slen2 = sdx*sdx + sdy*sdy;
             if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
 
-            float delta       = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
-            float scaleFactor = 1.0f + delta;
-            if (insertScale * scaleFactor < 0.0f) scaleFactor = 0.0f;
-            insertScale *= scaleFactor;
+            // Inverse sign — dragging the handle outward (positive screen
+            // projection along gizmoRight) reduces inset; dragging inward
+            // (toward gizmoCenter) increases it. Matches MODO interaction.
+            float deltaWorld = -((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
+            insetAmount += deltaWorld;
 
             updateBevelVertices();
             gpu.upload(*mesh);
@@ -374,11 +387,10 @@ public:
         ImGui.DragFloat("Shift",  &shiftAmount, 0.005f, -float.max, float.max, "%.4f");
         if (ImGui.IsItemActive()) changed = true;
 
-        ImGui.DragFloat("Insert", &insertScale, 0.005f, 0.0f, float.max, "%.4f");
-        if (ImGui.IsItemActive()) {
-            if (insertScale < 0.0f) insertScale = 0.0f;
-            changed = true;
-        }
+        // Inset = perpendicular distance each face boundary edge moves
+        // inward. Negative → outset. Identity = 0.
+        ImGui.DragFloat("Inset", &insetAmount, 0.005f, -float.max, float.max, "%.4f");
+        if (ImGui.IsItemActive()) changed = true;
 
         if (ImGui.Checkbox("Group Polygon", &groupPolygons)) {
             if (bevelApplied) {
@@ -561,23 +573,21 @@ private:
                 selFaceIdx ~= cast(int)fi;
         }
 
-        // Anchor topology with insert=1, shift=0 (= new verts at orig
-        // positions); subsequent updatePolyBevelVertices calls slide them
-        // to the user-selected (insertScale, shiftAmount).
-        polyOp = poly_bevel.applyPolyBevel(mesh, selFaceIdx, 1.0f, 0.0f,
+        // Anchor topology at identity (inset=0, shift=0 → new verts coincide
+        // with originals); subsequent updatePolyBevelVertices calls slide
+        // them to the user-selected (insetAmount, shiftAmount).
+        polyOp = poly_bevel.applyPolyBevel(mesh, selFaceIdx, 0.0f, 0.0f,
                                             groupPolygons);
 
-        // Apply current scrubber values. For a freshly-applied bevel both
-        // are at their identity values, so this is a no-op; but if the
-        // user already moved them before the topology existed, this
-        // reflects those values immediately.
+        // Apply current scrubber values immediately (no-op when freshly
+        // applied at identity).
         poly_bevel.updatePolyBevelPositions(mesh, polyOp,
-                                             insertScale, shiftAmount);
+                                             insetAmount, shiftAmount);
     }
 
     void updatePolyBevelVertices() {
         poly_bevel.updatePolyBevelPositions(mesh, polyOp,
-                                             insertScale, shiftAmount);
+                                             insetAmount, shiftAmount);
     }
 
 }

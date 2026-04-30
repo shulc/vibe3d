@@ -1,0 +1,18 @@
+{
+  "_comment": "Polygon bevel on an IRREGULAR quad (cube top face stretched along x: v_2 and v_6 moved → top face becomes a 1.6×1 trapezoid). Tests perpendicular-edge-offset semantics on a non-square face — every boundary edge moves inward by `insert` distance regardless of edge length. With a multiplicative-scale formula the long edges would move 1.6× as much as the short edges, producing different geometry. The fact that this case PASSES bit-for-bit against Blender (which uses the same offsetMeet formula) confirms the MODO Inset semantics.",
+  "preops": [
+    {"op": "move_vertex", "from": [0.5,  0.5, -0.5], "to": [0.8,  0.5, -0.5]},
+    {"op": "move_vertex", "from": [0.5,  0.5,  0.5], "to": [0.8,  0.5,  0.5]}
+  ],
+  "ops": [
+    {
+      "op": "polygon_bevel",
+      "faces": [
+        [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.8, 0.5, 0.5], [0.8, 0.5, -0.5]]
+      ],
+      "insert": 0.15,
+      "shift":  0.1
+    }
+  ],
+  "tolerance": 0.001
+}

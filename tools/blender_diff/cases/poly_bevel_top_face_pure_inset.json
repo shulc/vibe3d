@@ -1,12 +1,12 @@
 {
-  "_comment": "Pure inset (shift=0): top face of cube shrinks to 60% in-plane, no extrusion. Tests poly_bevel with shift=0 → no normal-direction translation.",
+  "_comment": "Pure inset (shift=0): top face of cube perpendicular-inset 0.2 → new face is 0.6×0.6 (1.0 - 2*0.2). Tests poly_bevel with shift=0 → no normal-direction translation.",
   "ops": [
     {
       "op": "polygon_bevel",
       "faces": [
         [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]]
       ],
-      "insert": 0.6,
+      "insert": 0.2,
       "shift":  0.0
     }
   ],

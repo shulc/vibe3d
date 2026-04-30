@@ -6,29 +6,32 @@ import math;
 import mesh;
 
 // ---------------------------------------------------------------------------
-// Polygon "bevel" — inset + extrude on selected faces.
+// Polygon "bevel" — inset + extrude on selected faces (MODO Bevel Polygon
+// semantics).
 //
 // For each selected face F (with N vertices):
-//   1. Allocate N new mesh vertices, initially at the original face vertex
-//      positions.
+//   1. Allocate N new mesh vertices.
 //   2. Replace F with the new vertex ring (the "top" face).
 //   3. Emit N side-wall quads connecting each old vertex to the corresponding
 //      new vertex: [orig[i], orig[i+1], new[i+1], new[i]].
-//   4. Reposition each new vertex via:
-//        new[i] = center + (orig[i] - center) * insertScale
-//                        + faceNormal * shiftAmount
-//      where center = face centroid and faceNormal = unit cross of the first
-//      two face edges. PER-FACE center/normal is used unconditionally — the
-//      same semantics whether group mode is on or off (matches Blender).
+//   4. Position each new vertex via PERPENDICULAR-EDGE-OFFSET (MODO Inset):
+//        new[i] = offsetMeet(orig[i], ePrev, eNext, faceNormal, inset, inset)
+//                + faceNormal * shift
+//      where ePrev / eNext are unit directions from orig[i] to its prev /
+//      next neighbour in the face, and `inset` is the perpendicular distance
+//      each boundary edge moves inward (in the face plane). Identity = 0.
+//      This is `bmesh.ops.inset` thickness, NOT a multiplicative scale.
+//      For irregular polygons (long-thin, trapezoid, etc.) the per-edge
+//      perpendicular offset preserves edge parallelism — long and short
+//      edges both move inward by `inset` distance, not by a uniform scale
+//      factor toward the centroid.
 //
 // Group mode (groupPolygons=true): adjacent selected faces share new vertices
 // at their shared boundary, AND their internal shared edges are removed
 // (instead of generating side-wall quads). The resulting top region is one
-// connected inset patch matching the union of selected faces.
-//
-// Approximate Blender analogue: bmesh.ops.inset_individual (group=false) or
-// inset_region (group=true), with the new face vertices then moved via the
-// same insertScale/shiftAmount formula.
+// connected inset patch matching the union of selected faces. PER-FACE
+// normal/center is used regardless of group mode (matches MODO; differs
+// from Blender's `inset_region` which computes a unified region boundary).
 //
 // Lifecycle: applyPolyBevel returns a PolyBevelOp that can be passed to:
 //   - updatePolyBevelPositions: re-slide new verts on every drag without
@@ -57,8 +60,26 @@ struct PolyBevelOp {
     bool      groupPolygons;
 }
 
+// Compute the new (inset) corner position for a face vertex i.
+// inset >= 0: perpendicular distance each adjacent edge moves inward
+//             (in the face plane). For a 1×1 square with inset=0.1 the new
+//             corner sits 0.1 in from each edge → (0.1, 0.1) of original.
+// inset <  0: outset (boundary moves outward). offsetMeet handles negative.
+private Vec3 polyInsetCorner(in Vec3[] origPos, int i, Vec3 faceNormal,
+                              float inset, float shift)
+{
+    int N     = cast(int)origPos.length;
+    int prevI = (i + N - 1) % N;
+    int nextI = (i + 1) % N;
+    Vec3 ePrev = safeNormalize(origPos[prevI] - origPos[i]);
+    Vec3 eNext = safeNormalize(origPos[nextI] - origPos[i]);
+    Vec3 inPlane = offsetMeet(origPos[i], ePrev, eNext, faceNormal,
+                               inset, inset);
+    return inPlane + faceNormal * shift;
+}
+
 PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
-                            float insertScale, float shiftAmount,
+                            float inset, float shift,
                             bool groupPolygons)
 {
     PolyBevelOp op;
@@ -142,11 +163,8 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
 
         int[] newVerts = new int[](N);
         foreach (i; 0 .. N) {
-            Vec3 placed = Vec3(
-                center.x + (origPos[i].x - center.x) * insertScale + faceNormal.x * shiftAmount,
-                center.y + (origPos[i].y - center.y) * insertScale + faceNormal.y * shiftAmount,
-                center.z + (origPos[i].z - center.z) * insertScale + faceNormal.z * shiftAmount,
-            );
+            Vec3 placed = polyInsetCorner(origPos, cast(int)i,
+                                           faceNormal, inset, shift);
             if (groupPolygons) {
                 uint ov = origFaceVerts[i];
                 if (auto p = ov in groupVertMap) {
@@ -189,24 +207,20 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
     return op;
 }
 
-// Re-slide every new vertex of an applied poly bevel to (insertScale,
-// shiftAmount) without rebuilding topology. Per-face center/normal are
-// captured at apply time and reused on every update — the user's drag of
-// the gizmo only changes the two scalar parameters.
+// Re-slide every new vertex of an applied poly bevel to (inset, shift)
+// without rebuilding topology. Per-face origPos/normal are captured at
+// apply time and reused on every update — the user's drag of the gizmo
+// only changes the two scalar parameters.
 void updatePolyBevelPositions(Mesh* mesh, ref const PolyBevelOp op,
-                               float insertScale, float shiftAmount)
+                               float inset, float shift)
 {
     foreach (ref fd; op.faces) {
         int N = cast(int)fd.newVerts.length;
         foreach (i; 0 .. N) {
-            Vec3 orig = fd.origPos[i];
-            int  vid  = fd.newVerts[i];
+            int vid = fd.newVerts[i];
             if (vid < 0 || vid >= cast(int)mesh.vertices.length) continue;
-            mesh.vertices[vid] = Vec3(
-                fd.center.x + (orig.x - fd.center.x) * insertScale + fd.normal.x * shiftAmount,
-                fd.center.y + (orig.y - fd.center.y) * insertScale + fd.normal.y * shiftAmount,
-                fd.center.z + (orig.z - fd.center.z) * insertScale + fd.normal.z * shiftAmount,
-            );
+            mesh.vertices[vid] = polyInsetCorner(fd.origPos, cast(int)i,
+                                                  fd.normal, inset, shift);
         }
     }
 }

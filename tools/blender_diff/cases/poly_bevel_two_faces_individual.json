@@ -1,5 +1,5 @@
 {
-  "_comment": "Two adjacent cube faces beveled INDIVIDUALLY (group=false). Each face inset/extruded with its own side-wall ring; the shared cube edge between them stays in place (each face's side wall references the original endpoints).",
+  "_comment": "Two adjacent cube faces beveled INDIVIDUALLY (group=false). Each face inset 0.25 perpendicular + extruded 0.15 along its own normal; the shared cube edge between them stays in place (each face's side wall references the original endpoints, no shared corner verts).",
   "ops": [
     {
       "op": "polygon_bevel",
@@ -7,7 +7,7 @@
         [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]],
         [[-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]
       ],
-      "insert": 0.5,
+      "insert": 0.25,
       "shift":  0.15
     }
   ],

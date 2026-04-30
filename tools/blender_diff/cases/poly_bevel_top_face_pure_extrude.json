@@ -1,12 +1,12 @@
 {
-  "_comment": "Pure extrude (insert=1.0): top face translates 0.3 along its normal with no in-plane scaling. The new top face is a rigid copy at +y=0.8.",
+  "_comment": "Pure extrude (insert=0): top face translates 0.3 along its normal with no in-plane offset. The new top face is a rigid copy at +y=0.8.",
   "ops": [
     {
       "op": "polygon_bevel",
       "faces": [
         [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]]
       ],
-      "insert": 1.0,
+      "insert": 0.0,
       "shift":  0.3
     }
   ],

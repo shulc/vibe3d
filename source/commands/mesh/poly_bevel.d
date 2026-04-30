@@ -12,8 +12,9 @@ import poly_bevel : applyPolyBevel;
 /// selected faces (or all faces if nothing is selected).
 ///
 /// Parameters (set via setInsert/setShift/setGroup before apply()):
-///   insert — center-relative scale factor (1.0 = no inset, 0.5 = 50% inset
-///            toward face centroid, 1.5 = 50% outset). Clamped to >= 0.
+///   insert — perpendicular distance each face boundary edge moves inward
+///            in the face plane (0 = identity, > 0 = inset, < 0 = outset).
+///            MODO Bevel "Inset" / Blender `bmesh.ops.inset.thickness`.
 ///   shift  — translation along face normal (positive = extrude outward).
 ///   group  — when true, adjacent selected faces share new vertices on
 ///            shared boundaries and their internal edges are dropped (one
@@ -24,7 +25,7 @@ class MeshPolyBevel : Command {
     private VertexCache*     vc;
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
-    private float            insert = 1.0f;
+    private float            insert = 0.0f;
     private float            shift  = 0.0f;
     private bool             group  = false;
 
@@ -39,7 +40,7 @@ class MeshPolyBevel : Command {
 
     override string name() const { return "mesh.poly_bevel"; }
 
-    void setInsert(float v) { insert = (v < 0.0f) ? 0.0f : v; }
+    void setInsert(float v) { insert = v; }   // negative → outset, allowed
     void setShift(float v)  { shift  = v; }
     void setGroup(bool b)   { group  = b; }
 

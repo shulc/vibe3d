@@ -300,14 +300,40 @@ def run_op(op):
             clamp_overlap=clamp_overlap,
         )
     elif op["op"] == "polygon_bevel":
-        # Vibe3D's polygon "bevel" = inset + extrude per face. For each
-        # selected face F: allocate N new verts at orig positions, replace F
-        # with the new ring, emit N side-wall quads, then move new verts via
-        #   new[i] = center + (orig[i] - center) * insert + faceNormal * shift
-        # where center = face centroid, faceNormal = unit cross of (v1-v0,
-        # v2-v0). This op manually replicates that topology in Blender so
-        # the diff isolates vibe3d's poly_bevel logic.
+        # Vibe3D's polygon "bevel" = MODO Bevel Polygon (inset + extrude
+        # per face). For each selected face F: allocate N new verts, replace
+        # F with the new ring, emit N side-wall quads, position each new
+        # vert via PERPENDICULAR-EDGE-OFFSET (Blender bmesh.ops.inset
+        # thickness; MODO Inset):
+        #   new[i] = offset_meet(orig[i], ePrev, eNext, faceNormal, inset, inset)
+        #          + faceNormal * shift
+        # where ePrev / eNext are unit directions from orig[i] to its prev /
+        # next neighbour in the face. We replicate manually (rather than
+        # using bmesh.ops.inset_individual / inset_region) so the diff
+        # isolates vibe3d's MODO-group semantic — group mode in Blender's
+        # `inset_region` computes a unified region boundary, which differs
+        # from MODO/vibe3d's per-face center/normal + first-face-wins.
         from mathutils import Vector
+
+        def offset_in_plane(edge_dir, face_norm):
+            p = face_norm.cross(edge_dir)
+            return p.normalized() if p.length > 1e-6 else Vector((0, 1, 0))
+
+        def offset_meet(jv, e_prev, e_next, face_norm, w_prev, w_next):
+            # Mirror of math.d:offsetMeet — perpendicular offset of two
+            # in-face edges from a corner; meets at intersection of offset
+            # lines (or midpoint when edges are collinear).
+            p1 = jv + offset_in_plane(-e_prev, face_norm) * w_prev
+            p2 = jv + offset_in_plane( e_next, face_norm) * w_next
+            r = p2 - p1
+            denom = e_prev.cross(e_next).dot(face_norm)
+            if abs(denom) < 1e-6:
+                if w_prev > 0 and w_next == 0: return p1
+                if w_next > 0 and w_prev == 0: return p2
+                return (p1 + p2) * 0.5
+            t = r.cross(e_next).dot(face_norm) / denom
+            return p1 + e_prev * t
+
         insert    = float(op["insert"])
         shift     = float(op["shift"])
         group     = bool(op.get("group", False))
@@ -354,8 +380,15 @@ def run_op(op):
 
             new_positions = []
             for i in range(N):
-                new_positions.append(
-                    center + (origPos[i] - center) * insert + normal * shift)
+                prev_i = (i + N - 1) % N
+                next_i = (i + 1) % N
+                e_prev = (origPos[prev_i] - origPos[i])
+                e_prev = e_prev.normalized() if e_prev.length > 1e-6 else Vector((1, 0, 0))
+                e_next = (origPos[next_i] - origPos[i])
+                e_next = e_next.normalized() if e_next.length > 1e-6 else Vector((1, 0, 0))
+                in_plane = offset_meet(origPos[i], e_prev, e_next, normal,
+                                        insert, insert)
+                new_positions.append(in_plane + normal * shift)
             per_face.append({
                 "verts":         verts,
                 "origPos":       origPos,
