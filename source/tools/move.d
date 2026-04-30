@@ -52,13 +52,21 @@ public:
     override void update() {
         if (!active) return;
 
-        // Skip hash computation entirely during drag — selection cannot change.
+        // Skip hash computation entirely during drag — selection and mesh
+        // can't change "outside" the tool's own input.
         if (dragAxis >= 0) return;
 
-        uint currentHash = computeSelectionHash();
-        if (currentHash != lastSelectionHash) {
-            lastSelectionHash = currentHash;
-            vertexCacheDirty = true;  // selection changed — rebuild on next drag
+        uint  currentHash   = computeSelectionHash();
+        ulong currentMutVer = mesh.mutationVersion;
+        // Refresh on selection change OR on geometry change (e.g. undo of
+        // a transform shifts the centroid back without touching selection).
+        if (currentHash != lastSelectionHash || currentMutVer != lastMutationVersion) {
+            lastSelectionHash   = currentHash;
+            lastMutationVersion = currentMutVer;
+            vertexCacheDirty    = true;
+            // Geometry changed under our feet — drop manual placement so
+            // the gizmo snaps back to the selection centroid.
+            centerManual = false;
 
             if (*editMode == EditMode.Vertices)
                 cachedCenter = mesh.selectionCentroidVertices();

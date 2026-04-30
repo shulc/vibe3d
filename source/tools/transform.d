@@ -57,6 +57,12 @@ protected:
     bool   vertexCacheDirty = true;
     int    lastSelectionHash;
 
+    // Phase C: track the mesh's mutationVersion so update() can refresh the
+    // gizmo when geometry changes without selection — e.g. after Ctrl+Z
+    // reverts a transform, the selection is identical but the verts moved,
+    // so the gizmo (= selection centroid) must be recomputed.
+    ulong  lastMutationVersion;
+
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         this.mesh     = mesh;
         this.gpu      = gpu;
@@ -126,6 +132,7 @@ protected:
         active = true;
         vertexCacheDirty = true;
         lastSelectionHash = uint.max;
+        lastMutationVersion = ulong.max;
         needsGpuUpdate = false;
         centerManual = false;
         wholeMeshDrag = false;
