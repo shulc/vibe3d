@@ -1,0 +1,15 @@
+{
+  "_comment": "Delete THREE edges meeting at a single corner vertex. Cube corner v6 = (0.5, 0.5, 0.5) is shared by 3 quads (front, right, top); each pair of those quads shares one edge through v6. Selecting all 3 such edges and deleting should fully dissolve v6 (it becomes 0-valent) and merge the 3 quads into one polygon. vibe3d's current removeEdgesByMask processes selected edges sequentially via pairwise face-merge; this case exposes the issue when later merges target a face that already absorbed an earlier neighbor through the same vertex (produces a bowtie polygon).",
+  "ops": [
+    {
+      "op": "delete",
+      "mode": "edges",
+      "edges": [
+        {"v0": [0.5, 0.5, 0.5], "v1": [0.5, -0.5, 0.5]},
+        {"v0": [0.5, 0.5, 0.5], "v1": [-0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, 0.5], "v1": [0.5, 0.5, -0.5]}
+      ]
+    }
+  ],
+  "tolerance": 0.001
+}

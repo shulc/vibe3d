@@ -1,0 +1,13 @@
+{
+  "_comment": "Delete one face of the cube (the back face). Verifies the basic Delete-polygon path: 6 quads → 5 quads, all 8 verts retained (each is shared by 3 faces).",
+  "ops": [
+    {
+      "op": "delete",
+      "mode": "polygons",
+      "faces": [
+        [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5]]
+      ]
+    }
+  ],
+  "tolerance": 0.001
+}

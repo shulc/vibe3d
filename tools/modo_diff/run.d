@@ -20,9 +20,9 @@
 //   MODO_NEXUS_CONTENT    = /home/ashagarov/.luxology/Content
 // (Override via the environment if your install lives elsewhere.)
 //
-// Cases for this suite are in tools/modo_diff/cases/. Currently only
-// `polygon_bevel` ops are supported on the MODO side; cases that use
-// `bevel` (edge bevel) etc. will ERROR.
+// Cases for this suite are in tools/modo_diff/cases/. Supported ops on
+// the MODO side: polygon_bevel, move_vertex, delete, remove. Cases that
+// use unsupported ops (e.g. `bevel` for edge bevel) will ERROR.
 //
 // Exit code: number of failing cases (FAIL + XPASS + ERROR).
 

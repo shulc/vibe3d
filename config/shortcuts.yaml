@@ -20,6 +20,8 @@ commands:
   mesh.subdivide:        "Shift+D"
   history.undo:          "Ctrl+Z"
   history.redo:          "Ctrl+Shift+Z"
+  mesh.delete:           Delete
+  mesh.remove:           Backspace
 
 editmodes:
   vertices: "1"

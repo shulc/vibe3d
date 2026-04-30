@@ -1,0 +1,13 @@
+{
+  "_comment": "Delete-edge via modo_cl `select.delete`: dissolves the edge AND the resulting 2-valent endpoint verts. The back-left vertical edge is shared by the back and left quads; after the merge + endpoint cleanup, the result is 3 quads + 2 tris and 6 verts.",
+  "ops": [
+    {
+      "op": "delete",
+      "mode": "edges",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.5, -0.5]}
+      ]
+    }
+  ],
+  "tolerance": 0.001
+}

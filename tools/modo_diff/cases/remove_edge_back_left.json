@@ -1,0 +1,13 @@
+{
+  "_comment": "Remove-edge via modo_cl `edge.remove false`: dissolves edge + cleanup 2-valent endpoint verts. modo_cl produces the SAME geometry as `select.delete` on the same edge — see delete_edge_back_left.json for the matching Delete case.",
+  "ops": [
+    {
+      "op": "remove",
+      "mode": "edges",
+      "edges": [
+        {"v0": [-0.5, -0.5, -0.5], "v1": [-0.5, 0.5, -0.5]}
+      ]
+    }
+  ],
+  "tolerance": 0.001
+}

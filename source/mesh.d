@@ -233,6 +233,301 @@ struct Mesh {
         ++mutationVersion;
         return removed;
     }
+    /// Drop the faces marked true in `mask`. Edges are rebuilt from the
+    /// surviving faces; orphan vertices (no longer referenced by any
+    /// remaining face) are removed via compactUnreferenced(). Selection
+    /// arrays are resized and cleared (re-selecting after a delete is
+    /// the caller's responsibility — index validity is unstable across
+    /// a compact). Returns the number of faces removed.
+    ///
+    /// This is the unified delete primitive: Tier 1.1 mesh.delete dispatches
+    /// here for every edit mode by translating its selection into a face
+    /// mask (verts → faces incident; edges → faces incident; polys
+    /// directly).
+    size_t deleteFacesByMask(in bool[] mask) {
+        if (mask.length != faces.length) return 0;
+        uint[][] keptFaces;
+        bool[]   keptSubpatch;
+        int[]    keptOrder;
+        size_t   removed = 0;
+        keptFaces.reserve(faces.length);
+        keptSubpatch.reserve(faces.length);
+        keptOrder.reserve(faces.length);
+        foreach (i, ref f; faces) {
+            if (mask[i]) { ++removed; continue; }
+            keptFaces ~= f;
+            keptSubpatch ~= (i < isSubpatch.length        ? isSubpatch[i]        : false);
+            keptOrder    ~= (i < faceSelectionOrder.length ? faceSelectionOrder[i] : 0);
+        }
+        if (removed == 0) return 0;
+        faces              = keptFaces;
+        isSubpatch         = keptSubpatch;
+        faceSelectionOrder = keptOrder;
+        // Selection bits don't survive index changes; clear and let caller
+        // restore as needed.
+        selectedFaces.length = faces.length;
+        selectedFaces[] = false;
+        // Re-derive edges from the surviving faces. Some edges may be gone
+        // entirely (only-touched the deleted faces); others stay. Always
+        // do this even if no verts were orphaned — compactUnreferenced
+        // skips the rebuild when removed==0.
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                addEdge(f[k], f[(k + 1) % f.length]);
+        selectedEdges.length      = edges.length;
+        selectedEdges[]           = false;
+        edgeSelectionOrder.length = edges.length;
+        // Compact orphan vertices (no-op if all verts still referenced).
+        compactUnreferenced();
+        ++mutationVersion;
+        return removed;
+    }
+
+    /// Dissolve the vertices marked true in `mask`: each selected vert
+    /// is dropped from every face's boundary list (a quad becomes a
+    /// triangle, a triangle becomes degenerate and the face is dropped).
+    /// Edges are rebuilt and orphan verts compacted out.
+    ///
+    /// This is MODO's `delete vertex` semantics — it preserves the
+    /// surrounding faces by re-shaping them, rather than killing every
+    /// incident face like a naive "delete incident topology" would.
+    size_t dissolveVerticesByMask(in bool[] mask) {
+        if (mask.length != vertices.length) return 0;
+        size_t dissolved = 0;
+        foreach (vi; 0 .. mask.length) if (mask[vi]) ++dissolved;
+        if (dissolved == 0) return 0;
+
+        // Rebuild faces array, dropping each masked vert from every face's
+        // boundary. Faces shrunk below 3 verts (degenerate) are dropped.
+        uint[][] newFaces;
+        bool[]   newSubpatch;
+        int[]    newOrder;
+        newFaces.reserve(faces.length);
+        newSubpatch.reserve(faces.length);
+        newOrder.reserve(faces.length);
+        foreach (fi, ref f; faces) {
+            uint[] kept;
+            foreach (vid; f) {
+                if (vid < mask.length && mask[vid]) continue;
+                kept ~= vid;
+            }
+            if (kept.length >= 3) {
+                newFaces    ~= kept;
+                newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+            }
+        }
+        faces              = newFaces;
+        isSubpatch         = newSubpatch;
+        faceSelectionOrder = newOrder;
+        selectedFaces.length = faces.length;
+        selectedFaces[]      = false;
+
+        // Rebuild edges from the new faces (some edges are gone, some
+        // boundaries are shorter). compactUnreferenced then removes the
+        // dissolved (now-orphan) verts and re-derives edges yet again.
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                addEdge(f[k], f[(k + 1) % f.length]);
+        selectedEdges.length      = edges.length;
+        selectedEdges[]           = false;
+        edgeSelectionOrder.length = edges.length;
+        compactUnreferenced();
+        ++mutationVersion;
+        return dissolved;
+    }
+
+    /// Dissolve every vertex that is incident to exactly 2 edges. Such
+    /// verts are pinch-points along a chain of edges in the surrounding
+    /// faces — collapsing them merges the two adjacent boundary edges
+    /// into one. Used as a cleanup pass after removeEdgesByMask to match
+    /// modo_cl's `delete` / `remove` behavior on edge selections, which
+    /// dissolves the edge AND drops the now-orphaned 2-valent endpoints.
+    /// Returns the number of verts dissolved.
+    size_t dissolveDegree2Verts() {
+        // Tally the number of edges incident to each vertex.
+        int[] degree;
+        degree.length = vertices.length;
+        foreach (e; edges) {
+            uint a = e[0], b = e[1];
+            if (a < degree.length) ++degree[a];
+            if (b < degree.length) ++degree[b];
+        }
+        bool[] mask;
+        mask.length = vertices.length;
+        size_t cnt = 0;
+        foreach (i, d; degree) {
+            if (d == 2) { mask[i] = true; ++cnt; }
+        }
+        if (cnt == 0) return 0;
+        return dissolveVerticesByMask(mask);
+    }
+
+    /// Dissolve the edges marked true in `mask`: each selected edge is
+    /// removed, and any group of faces transitively connected through
+    /// selected edges is merged into a single polygon along the union's
+    /// outer boundary.
+    ///
+    /// Algorithm: union-find over faces, edges within a component drop
+    /// out, the remaining directed half-edges of the component form a
+    /// closed walk = the merged polygon boundary. Handles fans (multiple
+    /// selected edges sharing a vertex) cleanly — pairwise-merge would
+    /// produce a bowtie polygon in that case. Boundary edges (only one
+    /// adjacent face) are skipped. Returns the number of selected edges
+    /// actually dissolved.
+    size_t removeEdgesByMask(in bool[] mask) {
+        if (mask.length != edges.length) return 0;
+
+        // Snapshot selected edges as undirected keys; edge-array indices
+        // are unstable across compactUnreferenced.
+        bool[ulong] selectedEdgeKeys;
+        foreach (i; 0 .. edges.length)
+            if (mask[i])
+                selectedEdgeKeys[edgeKeyOrdered(edges[i][0], edges[i][1])] = true;
+        if (selectedEdgeKeys.length == 0) return 0;
+
+        // Build face → face union-find via selected edges.
+        size_t nFaces = faces.length;
+        int[] parent;  parent.length = nFaces;
+        int[] rank_;   rank_.length  = nFaces;
+        foreach (i; 0 .. nFaces) parent[i] = cast(int)i;
+        int find(int x) { while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+        void unite(int a, int b) {
+            a = find(a); b = find(b); if (a == b) return;
+            if (rank_[a] < rank_[b]) { int t = a; a = b; b = t; }
+            parent[b] = a;
+            if (rank_[a] == rank_[b]) ++rank_[a];
+        }
+
+        // For each selected edge, find both adjacent faces and unite them.
+        // Boundary edges (only 1 adjacent face) leave their face alone.
+        size_t dissolved = 0;
+        foreach (key; selectedEdgeKeys.byKey) {
+            int fA = -1, fB = -1;
+            foreach (fi; 0 .. nFaces) {
+                auto f = faces[fi];
+                bool has = false;
+                foreach (k; 0 .. f.length) {
+                    if (edgeKeyOrdered(f[k], f[(k + 1) % f.length]) == key) {
+                        has = true; break;
+                    }
+                }
+                if (!has) continue;
+                if      (fA == -1) fA = cast(int)fi;
+                else if (fB == -1) { fB = cast(int)fi; break; }
+            }
+            if (fA != -1 && fB != -1) {
+                unite(fA, fB);
+                ++dissolved;
+            }
+        }
+        if (dissolved == 0) return 0;
+
+        // Group faces by component root.
+        size_t[][int] componentFaces;
+        foreach (fi; 0 .. nFaces) {
+            int r = find(cast(int)fi);
+            componentFaces[r] ~= fi;
+        }
+
+        // For each multi-face component: walk the boundary and produce the
+        // merged polygon. Single-face components are untouched.
+        bool[] dropFace      = new bool[](nFaces);
+        uint[][] newPolyList;
+        bool[]   newPolySubpatch;
+        int[]    newPolyOrder;
+        foreach (root, comp; componentFaces) {
+            if (comp.length < 2) continue;
+
+            // Gather directed half-edges from the component, dropping any
+            // half-edge whose undirected key is in selectedEdgeKeys.
+            uint[][uint] outAt;  // outAt[u] = list of `v` for each surviving u→v
+            foreach (fi; comp) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    uint a = f[k], b = f[(k + 1) % f.length];
+                    if (edgeKeyOrdered(a, b) in selectedEdgeKeys) continue;
+                    outAt[a] ~= b;
+                }
+            }
+
+            // Walk: start at any vertex with an outgoing half-edge, follow
+            // until back to start. A simple connected face fan produces one
+            // closed loop; degenerate inputs may leave half-edges behind
+            // (we accept the first walk).
+            if (outAt.length == 0) continue;
+            uint startV = uint.max;
+            foreach (k; outAt.byKey) { startV = k; break; }
+
+            uint[] poly;
+            uint cur = startV;
+            while (true) {
+                poly ~= cur;
+                auto p = cur in outAt;
+                if (p is null || (*p).length == 0) break;
+                uint nxt = (*p)[0];
+                *p = (*p)[1 .. $];
+                if (nxt == startV) break;
+                cur = nxt;
+            }
+
+            if (poly.length < 3) continue;
+
+            // Mark every face in the component for removal; the new
+            // merged polygon will replace them.
+            foreach (fi; comp) dropFace[fi] = true;
+
+            // Inherit subpatch flag and selection-order from the FIRST
+            // face in the component (arbitrary but deterministic).
+            int firstFi = cast(int)comp[0];
+            newPolyList      ~= poly;
+            newPolySubpatch  ~= (firstFi < cast(int)isSubpatch.length        ? isSubpatch[firstFi]        : false);
+            newPolyOrder     ~= (firstFi < cast(int)faceSelectionOrder.length ? faceSelectionOrder[firstFi] : 0);
+        }
+
+        // Compact: drop faces, append merged polygons.
+        uint[][] keptFaces;
+        bool[]   keptSubpatch;
+        int[]    keptOrder;
+        foreach (fi; 0 .. nFaces) {
+            if (dropFace[fi]) continue;
+            keptFaces ~= faces[fi];
+            keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+            keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+        }
+        foreach (i; 0 .. newPolyList.length) {
+            keptFaces    ~= newPolyList[i];
+            keptSubpatch ~= newPolySubpatch[i];
+            keptOrder    ~= newPolyOrder[i];
+        }
+        faces              = keptFaces;
+        isSubpatch         = keptSubpatch;
+        faceSelectionOrder = keptOrder;
+        selectedFaces.length = faces.length;
+        selectedFaces[]      = false;
+
+        // Rebuild edges + compact orphan verts.
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                addEdge(f[k], f[(k + 1) % f.length]);
+        selectedEdges.length      = edges.length;
+        selectedEdges[]           = false;
+        edgeSelectionOrder.length = edges.length;
+        compactUnreferenced();
+        ++mutationVersion;
+        return dissolved;
+    }
+
+    private static ulong edgeKeyOrdered(uint a, uint b) {
+        return a < b ? (cast(ulong)a << 32) | b : (cast(ulong)b << 32) | a;
+    }
+
     void addEdge(uint a, uint b) {
         ulong key = edgeKey(a, b);
         if (key in edgeIndexMap) return;

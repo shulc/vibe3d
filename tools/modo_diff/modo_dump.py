@@ -82,16 +82,18 @@ def reset_cube():
 
 
 def get_active_mesh():
+    """Pick the largest non-empty mesh in the scene. The first time this
+    runs (before any op) it's the freshly created cube with 8 verts; after
+    a delete/remove op, the cube may have shrunk (e.g. delete-vertex
+    leaves 7), so don't filter on a hard >=8 threshold — just take the
+    biggest one and call it the working mesh."""
     scene = modo.Scene()
     meshes = [m for m in scene.items("mesh") if len(m.geometry.vertices) > 0]
     if not meshes:
         raise RuntimeError("no non-empty mesh in scene")
-    # Cube has 8 verts; use the cube specifically.
-    for m in meshes:
-        if len(m.geometry.vertices) >= 8:
-            m.select(replace=True)
-            return m
-    raise RuntimeError("no cube-like mesh")
+    biggest = max(meshes, key=lambda m: len(m.geometry.vertices))
+    biggest.select(replace=True)
+    return biggest
 
 
 def run_move_vertex(op):
@@ -141,12 +143,110 @@ def run_polygon_bevel(op):
     lx.eval("tool.set poly.bevel off 0")
 
 
+def find_vertex(mesh, target):
+    """Find a vertex whose position matches `target` (within EPS)."""
+    for v in mesh.geometry.vertices:
+        if vmatch(tuple(v.position), tuple(target)):
+            return v
+    raise RuntimeError("vertex not found at %s" % (target,))
+
+
+def select_edge_by_endpoints(mesh, v0, v1):
+    """Select the edge between verts at coords v0 and v1. modo_cl headless
+    forbids iterating mesh.geometry.edges (the "fire and forget" Python
+    interpreter can't poll edge IDs); instead we select the two endpoint
+    verts and convert to edge selection — since a unique edge connects
+    any two distinct cube verts that share one, this picks exactly the
+    desired edge."""
+    va = find_vertex(mesh, v0)
+    vb = find_vertex(mesh, v1)
+    lx.eval("select.typeFrom vertex")
+    lx.eval("select.drop vertex")
+    va.select(replace=True)
+    vb.select()
+    lx.eval("select.convert edge")
+
+
+def run_delete_or_remove(op, kind):
+    """Execute MODO's Delete (`select.delete`) or Remove
+    (`vert.remove` / `edge.remove false` / `poly.remove`) command on a
+    coord-specified selection. `kind` is "delete" or "remove" — Remove
+    dispatches to a per-mode command. Component selection mode is set
+    per the case's `mode` field; selection is dropped first to avoid
+    mode-leakage from prior ops."""
+    mesh = get_active_mesh()
+    mode = op["mode"]
+    if mode == "polygons":
+        lx.eval("select.typeFrom polygon")
+        lx.eval("select.drop polygon")
+        polys = []
+        for fdef in op["faces"]:
+            target = [tuple(v) for v in fdef]
+            polys.append(find_polygon(mesh, target))
+        for i, p in enumerate(polys):
+            if i == 0:
+                p.select(replace=True)
+            else:
+                p.select()
+    elif mode == "edges":
+        # modo_cl forbids iterating mesh.geometry.edges in headless mode,
+        # so edge selection goes through vertex-set + select.convert edge:
+        # collect every edge endpoint, select those verts, convert to
+        # edges. This selects exactly the edges joining any two of the
+        # chosen verts. Cases must be authored so the only such edges are
+        # the desired ones (no spurious "diagonal" edges between picked
+        # verts).
+        lx.eval("select.typeFrom vertex")
+        lx.eval("select.drop vertex")
+        seen = []
+        for spec in op["edges"]:
+            for ep in (spec["v0"], spec["v1"]):
+                key = tuple(round(c, 6) for c in ep)
+                if key in seen:
+                    continue
+                seen.append(key)
+                v = find_vertex(mesh, ep)
+                if len(seen) == 1:
+                    v.select(replace=True)
+                else:
+                    v.select()
+        lx.eval("select.convert edge")
+    elif mode == "vertices":
+        lx.eval("select.typeFrom vertex")
+        lx.eval("select.drop vertex")
+        verts = [find_vertex(mesh, v) for v in op["vertices"]]
+        for i, v in enumerate(verts):
+            if i == 0:
+                v.select(replace=True)
+            else:
+                v.select()
+    else:
+        raise NotImplementedError("delete/remove mode: %s" % mode)
+
+    if kind == "delete":
+        lx.eval("select.delete")
+    elif kind == "remove":
+        if mode == "polygons":
+            lx.eval("poly.remove")
+        elif mode == "edges":
+            # `edge.remove false`: the second arg is a boolean for "force"
+            # / "keep" depending on MODO version. False = standard remove
+            # (dissolve edge, merge faces).
+            lx.eval("edge.remove false")
+        elif mode == "vertices":
+            lx.eval("vert.remove")
+    else:
+        raise NotImplementedError("delete/remove kind: %s" % kind)
+
+
 def run_op(op):
     kind = op["op"]
     if kind == "polygon_bevel":
         run_polygon_bevel(op)
     elif kind == "move_vertex":
         run_move_vertex(op)
+    elif kind == "delete" or kind == "remove":
+        run_delete_or_remove(op, kind)
     else:
         raise NotImplementedError("modo_dump: unsupported op '%s'" % kind)
 

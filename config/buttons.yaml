@@ -24,6 +24,10 @@ panels:
         buttons:
           - { label: Subdivide, action: { kind: command, id: mesh.subdivide } }
           - { label: Faceted,   action: { kind: command, id: mesh.subdivide_faceted } }
+      - title: Edit
+        buttons:
+          - { label: Delete, action: { kind: command, id: mesh.delete } }
+          - { label: Remove, action: { kind: command, id: mesh.remove } }
   - title: Selection
     items:
       - title: Grow / Shrink

@@ -103,6 +103,7 @@ private SDL_Keycode parseKeyToken(string tok, string fullShortcut) {
         case "return":    return SDLK_RETURN;
         case "tab":       return SDLK_TAB;
         case "backspace": return SDLK_BACKSPACE;
+        case "delete":    return SDLK_DELETE;
         default:
             throw new Exception(
                 format("Unknown key token '%s' in shortcut '%s'", tok, fullShortcut));
@@ -125,6 +126,7 @@ private string keycodeSpelling(SDL_Keycode k) {
         case SDLK_RETURN:        return "return";
         case SDLK_TAB:           return "tab";
         case SDLK_BACKSPACE:     return "backspace";
+        case SDLK_DELETE:        return "delete";
         case SDLK_LEFTBRACKET:   return "[";
         case SDLK_RIGHTBRACKET:  return "]";
         case SDLK_MINUS:         return "-";
@@ -149,6 +151,7 @@ private string keycodeDisplaySpelling(SDL_Keycode k) {
         case SDLK_RETURN:        return "Return";
         case SDLK_TAB:           return "Tab";
         case SDLK_BACKSPACE:     return "Backspace";
+        case SDLK_DELETE:        return "Delete";
         case SDLK_LEFTBRACKET:   return "[";
         case SDLK_RIGHTBRACKET:  return "]";
         case SDLK_MINUS:         return "-";
@@ -171,6 +174,7 @@ string canonFromEvent(SDL_Keycode sym, SDL_Keymod mod) {
         switch (sym) {
             case SDLK_UP: case SDLK_DOWN: case SDLK_LEFT: case SDLK_RIGHT:
             case SDLK_SPACE: case SDLK_RETURN: case SDLK_TAB: case SDLK_BACKSPACE:
+            case SDLK_DELETE:
             case SDLK_LEFTBRACKET: case SDLK_RIGHTBRACKET:
             case SDLK_MINUS: case SDLK_EQUALS:
                 mappable = true;

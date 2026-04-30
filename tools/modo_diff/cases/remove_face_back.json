@@ -1,0 +1,13 @@
+{
+  "_comment": "Remove-polygon: identical to delete-polygon (per MODO docs, Remove and Delete differ only on EDGE selections). Pinned as a sanity case so the Remove path is also exercised on faces.",
+  "ops": [
+    {
+      "op": "remove",
+      "mode": "polygons",
+      "faces": [
+        [[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5]]
+      ]
+    }
+  ],
+  "tolerance": 0.001
+}

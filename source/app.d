@@ -56,6 +56,8 @@ import commands.mesh.poly_bevel;
 import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
+import commands.mesh.delete_ : MeshDelete;
+import commands.mesh.remove_ : MeshRemove;
 import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
@@ -526,6 +528,12 @@ void main(string[] args) {
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh, cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.delete"] = () => cast(Command)
+        new MeshDelete(&mesh, cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.remove"] = () => cast(Command)
+        new MeshRemove(&mesh, cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.select"] = () => cast(Command)
         new MeshSelect(&mesh, cameraView, editMode, &editMode);
     reg.commandFactories["mesh.transform"] = () => cast(Command)

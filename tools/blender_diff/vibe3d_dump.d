@@ -213,6 +213,57 @@ void runPolyBevel(JSONValue op) {
         throw new Exception("poly_bevel failed: " ~ resp.toString());
 }
 
+// Locate the vertex index whose position matches the given coordinates
+// (within EPS). Throws on no match.
+int findVertexIndex(JSONValue model, double[3] target) {
+    auto verts = model["vertices"].array;
+    foreach (i, v; verts) {
+        auto a = v.array;
+        if (abs(a[0].floating - target[0]) < 1e-4
+         && abs(a[1].floating - target[1]) < 1e-4
+         && abs(a[2].floating - target[2]) < 1e-4)
+            return cast(int)i;
+    }
+    throw new Exception("vertex not found: ("
+        ~ target[0].to!string ~ "," ~ target[1].to!string ~ "," ~ target[2].to!string ~ ")");
+}
+
+void runDeleteOrRemove(JSONValue op, string commandId) {
+    string mode = op["mode"].str;
+    auto model = parseJSON(get(url("/api/model")));
+
+    int[] indices;
+    if (mode == "polygons") {
+        foreach (f; op["faces"].array) {
+            double[3][] fv;
+            foreach (v; f.array) fv ~= toVec(v);
+            indices ~= findFaceIndex(model, fv);
+        }
+    } else if (mode == "edges") {
+        foreach (e; op["edges"].array)
+            indices ~= findEdgeIndex(model, toVec(e["v0"]), toVec(e["v1"]));
+    } else if (mode == "vertices") {
+        foreach (v; op["vertices"].array)
+            indices ~= findVertexIndex(model, toVec(v));
+    } else {
+        throw new Exception("unknown delete/remove mode: " ~ mode);
+    }
+
+    string idxStr;
+    foreach (i, idx; indices) {
+        if (i > 0) idxStr ~= ",";
+        idxStr ~= idx.to!string;
+    }
+    auto sel = postJson("/api/select",
+        `{"mode":"` ~ mode ~ `","indices":[` ~ idxStr ~ `]}`);
+    if (sel["status"].str != "ok")
+        throw new Exception("select " ~ mode ~ " failed: " ~ sel.toString());
+
+    auto resp = postJson("/api/command", `{"id":"` ~ commandId ~ `"}`);
+    if (resp["status"].str != "ok")
+        throw new Exception(commandId ~ " failed: " ~ resp.toString());
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
         case "bevel":         runBevel(op);      break;
@@ -220,6 +271,8 @@ void runOp(JSONValue op) {
         case "subdivide":     runSubdivide(op);  break;
         case "move_vertex":   runMoveVertex(op); break;
         case "polygon_bevel": runPolyBevel(op);  break;
+        case "delete":        runDeleteOrRemove(op, "mesh.delete"); break;
+        case "remove":        runDeleteOrRemove(op, "mesh.remove"); break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }

@@ -1,0 +1,11 @@
+{
+  "_comment": "Delete one corner vertex of the cube. The 3 faces incident to that corner (back/left/bottom) all die; 3 quads remain, 7 verts (the corner vert is orphaned and compacted out).",
+  "ops": [
+    {
+      "op": "delete",
+      "mode": "vertices",
+      "vertices": [[-0.5, -0.5, -0.5]]
+    }
+  ],
+  "tolerance": 0.001
+}
