@@ -88,6 +88,17 @@ class HttpServer {
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
 
+    // ----- /api/refire synchronous bridge ----------------------------------
+    // POST /api/refire {"action":"begin"|"end"} opens or closes a refire
+    // block on the history. Tools call refireBegin/refireEnd directly on
+    // the main thread; this endpoint exists for HTTP-driven tests.
+    private alias RefireHandler = void delegate(string action);
+    private RefireHandler refireHandler;
+    private shared long refireSubmittedEpoch;
+    private shared long refireCompletedEpoch;
+    private string pendingRefireAction;
+    private string pendingRefireError;
+
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
 
@@ -190,6 +201,14 @@ class HttpServer {
      */
     public void setHistoryProvider(HistoryProvider provider) {
         this.historyProvider = provider;
+    }
+
+    /**
+     * Set the refire handler — main-thread callback that opens/closes a
+     * refire block on the command history. action is "begin" or "end".
+     */
+    public void setRefireHandler(RefireHandler handler) {
+        this.refireHandler = handler;
     }
 
     /**
@@ -646,6 +665,45 @@ class HttpServer {
                     : `{"status":"noop","message":"stack empty or revert failed"}`;
             }
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/refire" && request.method == "POST") {
+            if (refireHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"refire handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if ("action" !in j || j["action"].type != JSONType.string)
+                        throw new Exception("missing 'action' string field");
+                    string action = j["action"].str;
+                    if (action != "begin" && action != "end")
+                        throw new Exception("'action' must be 'begin' or 'end'");
+                    pendingRefireAction = action;
+                    pendingRefireError  = "";
+                    long my = atomicOp!"+="(refireSubmittedEpoch, 1);
+                    enum int maxIters = 2500;
+                    int iters = 0;
+                    while (atomicLoad(refireCompletedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingRefireError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingRefireError.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingRefireError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/history" && request.method == "GET") {
             if (historyProvider is null) {
                 response.statusCode = 200;
@@ -783,6 +841,26 @@ class HttpServer {
             }
         }
         atomicStore(selCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick refire — same main-thread sync pattern as the others.
+     */
+    public void tickRefire() {
+        long sub = atomicLoad(refireSubmittedEpoch);
+        long cmp = atomicLoad(refireCompletedEpoch);
+        if (sub <= cmp) return;
+        if (refireHandler is null) {
+            pendingRefireError = "refire handler not set";
+        } else {
+            try {
+                refireHandler(pendingRefireAction);
+                pendingRefireError = "";
+            } catch (Exception e) {
+                pendingRefireError = e.msg;
+            }
+        }
+        atomicStore(refireCompletedEpoch, sub);
     }
 
     /**

@@ -19,9 +19,12 @@ import command;
 //   - Invalid  — record() refuses; treated as a programming error in
 //                debug builds.
 //
-// Refire blocks (interactive tool drag / slider edit cycle) are deferred to
-// Phase C of the plan; this Phase A implementation tracks individual
-// records only.
+// Refire blocks (Phase C) — direct port of MODO's CmdRefireBegin/End pattern
+// (LXSDK_661446/include/lxcommand.h:2406-2423). Inside a refire block, each
+// fire() reverts the previous live command before applying the new one.
+// refireEnd() commits the latest live command as a single undo entry — the
+// net effect of an interactive drag is one stack entry, regardless of how
+// many sub-fires happened.
 // ---------------------------------------------------------------------------
 
 enum UndoState { Invalid, Active, Suspend }
@@ -37,6 +40,12 @@ final class CommandHistory {
     private HistoryEntry[] redoStack;
     private size_t maxDepth = 50;
     private UndoState _state = UndoState.Active;
+
+    // Refire block state. One slot — refire blocks don't nest. fire()
+    // checks `refireOpen` to decide whether to revert the previous live
+    // command before applying the new one.
+    private bool    refireOpen = false;
+    private Command liveCmd;
 
     // ----- state -----------------------------------------------------------
 
@@ -131,5 +140,70 @@ final class CommandHistory {
     void clear() {
         undoStack.length = 0;
         redoStack.length = 0;
+    }
+
+    // ----- refire ----------------------------------------------------------
+    // refireBegin / fire / refireEnd model an interactive edit cycle:
+    //   begin, fire, fire, fire, ..., end.
+    // Each fire reverts the previous one and applies the new (so the mesh
+    // walks "from pre-cycle state → newest params" without accumulation).
+    // refireEnd pushes the latest live command onto the undo stack as one
+    // entry. Outside a refire block, callers should use record() for the
+    // post-mutation Record-flavor or apply()+record() for the standard path.
+
+    bool refireActive() const { return refireOpen; }
+
+    void refireBegin() {
+        // Defensive: if a prior refire block was left dangling (e.g. tool
+        // crashed mid-drag), commit it first so we don't lose the entry.
+        if (refireOpen && liveCmd !is null) {
+            HistoryEntry e = { label: liveCmd.label,
+                               commandName: liveCmd.name,
+                               cmd: liveCmd };
+            undoStack ~= e;
+            if (undoStack.length > maxDepth)
+                undoStack = undoStack[$ - maxDepth .. $];
+            redoStack.length = 0;
+        }
+        refireOpen = true;
+        liveCmd    = null;
+    }
+
+    // Apply cmd. If a live command from a previous fire() is present, its
+    // revert() runs first so the mesh walks back to the pre-block state
+    // before the new command lays down its mutation. Sub-commands fired
+    // during apply()/revert() are suspended so they don't pollute history.
+    bool fire(Command cmd) {
+        if (cmd is null) return false;
+        if (!refireOpen) {
+            // Caller forgot refireBegin(); treat as a plain apply+record.
+            if (!cmd.apply()) return false;
+            record(cmd);
+            return true;
+        }
+        auto prev = _state;
+        _state = UndoState.Suspend;
+        scope(exit) _state = prev;
+
+        if (liveCmd !is null) {
+            if (!liveCmd.revert()) return false;
+        }
+        if (!cmd.apply()) {
+            liveCmd = null;
+            return false;
+        }
+        liveCmd = cmd;
+        return true;
+    }
+
+    // Closes the refire block. The latest live command (if any) lands on
+    // the undo stack as ONE entry. record()'s flag-and-state checks
+    // (isUndoable, _state) apply: a non-undoable live command is dropped.
+    void refireEnd() {
+        if (!refireOpen) return;
+        Command final_ = liveCmd;
+        refireOpen = false;
+        liveCmd    = null;
+        if (final_ !is null) record(final_);
     }
 }

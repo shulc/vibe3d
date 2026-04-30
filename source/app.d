@@ -703,16 +703,19 @@ void main(string[] args) {
                 }
             }
 
-            if (!cmd.apply())
-                throw new Exception("command '" ~ id ~ "' did not apply");
-
-            // Phase A undo/redo: every successful HTTP-dispatched command
-            // is offered to the history. Non-undoable commands (read-only,
-            // viewport.fit*, etc.) are filtered by isUndoable() inside
-            // record(). Mutating commands MUST snapshot pre-state inside
-            // their apply() so revert() can restore — see
-            // doc/undo_redo_plan.md Phase B for the per-command audit.
-            history.record(cmd);
+            // Phase C: while a refire block is open, fire() reverts the
+            // previous live command before applying the new one — net stack
+            // effect = 1 entry per drag/edit cycle. Outside refire, fire()
+            // falls through to plain apply()+record(), preserving Phase A
+            // semantics.
+            if (history.refireActive) {
+                if (!history.fire(cmd))
+                    throw new Exception("command '" ~ id ~ "' did not apply");
+            } else {
+                if (!cmd.apply())
+                    throw new Exception("command '" ~ id ~ "' did not apply");
+                history.record(cmd);
+            }
         });
 
         httpServer.setUndoHandler(() {
@@ -749,6 +752,16 @@ void main(string[] args) {
             return buf.data;
         });
 
+        // Phase C: /api/refire opens/closes a refire block on the history.
+        // Tools call refireBegin/refireEnd directly; this endpoint exists
+        // for HTTP-driven tests that want to verify the refire-coalescing
+        // behavior without going through SDL.
+        httpServer.setRefireHandler((string action) {
+            if (action == "begin")     history.refireBegin();
+            else if (action == "end")  history.refireEnd();
+            else throw new Exception("invalid refire action '" ~ action ~ "'");
+        });
+
         // Phase A.5: dispatch /api/select through the unified Command path
         // (MeshSelect) so selection changes land on the undo stack and
         // share the same snapshot/revert mechanism as everything else.
@@ -756,9 +769,14 @@ void main(string[] args) {
             auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
             cmd.setMode(mode);
             cmd.setIndices(indices);
-            if (!cmd.apply())
-                throw new Exception("mesh.select did not apply");
-            history.record(cmd);
+            if (history.refireActive) {
+                if (!history.fire(cmd))
+                    throw new Exception("mesh.select did not apply");
+            } else {
+                if (!cmd.apply())
+                    throw new Exception("mesh.select did not apply");
+                history.record(cmd);
+            }
         });
 
         // Phase A.5: dispatch /api/transform through MeshTransform command.
@@ -803,9 +821,14 @@ void main(string[] args) {
             cmd.setAngle (floatFrom("angle", 0.0f));
             cmd.setFactor(vec3From("factor", Vec3(1, 1, 1)));
             cmd.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            if (!cmd.apply())
-                throw new Exception("mesh.transform did not apply");
-            history.record(cmd);
+            if (history.refireActive) {
+                if (!history.fire(cmd))
+                    throw new Exception("mesh.transform did not apply");
+            } else {
+                if (!cmd.apply())
+                    throw new Exception("mesh.transform did not apply");
+                history.record(cmd);
+            }
         });
 
         // Phase A.5: dispatch /api/reset through SceneReset command.
@@ -1787,6 +1810,7 @@ void main(string[] args) {
             httpServer.tickCommand();
             httpServer.tickSelection();
             httpServer.tickTransform();
+            httpServer.tickRefire();
             httpServer.tickUndo();
         }
 
