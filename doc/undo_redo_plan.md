@@ -4,8 +4,9 @@ Detailed implementation plan for Tier 0 of `feature_roadmap.md`.
 
 ## What we're modeling
 
-MODO's behavior (from `Modo902/help/pages/modo_interface/standard_tool_controls.html`
-and `modo_interface/viewports/list_info/command_history.html`):
+MODO's behavior (from `Modo902/help/pages/modo_interface/standard_tool_controls.html`,
+`modo_interface/viewports/list_info/command_history.html`, and the
+official SDK at `LXSDK_661446/include/lxundo.h` / `lxcommand.h`):
 
 - **Command history**: every user-visible action (`tool.attr poly.bevel
   inset 0.15`, `select.element`, `mesh.subdivide`, etc.) is logged as
@@ -31,6 +32,196 @@ Translated to vibe3d:
   go on the stack as one entry each.
 - Selection / edit-mode changes — separate path with their own
   small snapshot (lighter than mesh snapshot).
+
+## Validation against the MODO SDK
+
+Reading `LXSDK_661446/include/lxundo.h` and `lxcommand.h` confirms
+the design above and adds three concrete refinements:
+
+### MODO's "Refire" pattern == our "live command"
+
+`lxcommand.h:2406-2423`:
+
+> "Some commands are fired many times over and over again as the
+> user changes a value. An example of this is the the Move Tool;
+> each time the users drags the mouse, the Move Tool fires a new
+> AddPosition command... Instead, the Move Tool should fire the
+> AddPosition command effectively once with the final value, thus
+> resulting in a single entry in the command history."
+>
+> "This process has been dubbed **Refiring**. On mouse down, a tool
+> calls `CmdRefireBegin()`, and on mouse up calls `CmdRefireEnd()`.
+> In between it fires commands using `CmdEntryFireArgs()`. **When a
+> command is refired, the previous execution is undone just before
+> the command is re-executed.**"
+>
+> "Each successive time `CmdEntryFire...()` is called within a
+> refire block, the previously fired command is undone."
+
+So MODO doesn't keep a "snapshot held by the live command" in the
+sense I described — instead, each fire UNDOES the previous one and
+RE-EXECUTES with the new params. Net stack effect = ONE undo entry
+per refire block.
+
+For vibe3d, this maps cleanly onto BevelTool's existing
+`revertBevelTopology() + applyBevelTopology()` cycle. Wrap that pair
+in a "refire" abstraction:
+
+```d
+class CommandHistory {
+    private bool refireOpen = false;
+    private Command pending;
+
+    void refireBegin() { refireOpen = true; pending = null; }
+
+    void fireRefire(Command cmd) {
+        if (refireOpen && pending !is null) pending.revert();
+        cmd.apply();
+        pending = cmd;
+    }
+
+    void refireEnd() {
+        if (pending !is null) {
+            undoStack ~= pending;
+            redoStack.length = 0;
+        }
+        refireOpen = false;
+        pending = null;
+    }
+}
+```
+
+For Tool Properties slider edits (each ImGui DragFloat with
+`IsItemDeactivatedAfterEdit`), wrap each edit cycle in
+refireBegin/refireEnd. For viewport gizmo drags, wrap in
+mousedown/mouseup. Result: each user-perceivable edit cycle = ONE
+undo entry, regardless of how many internal `revert+reapply`
+oscillations happened.
+
+### Undo state machine (from `lxundo.h`)
+
+MODO has three undo states:
+
+- **`LXiUNDO_INVALID`** — system not accepting undos. State changes
+  here are "not generally valid" (= app startup, file load, certain
+  internal reconfigurations).
+- **`LXiUNDO_ACTIVE`** — normal operation. New undo objects added to
+  the stack.
+- **`LXiUNDO_SUSPEND`** — state changes happen but are NOT
+  recorded. For previews, internal cleanup, animation playback, etc.
+
+Vibe3d should mirror this. Concrete uses:
+
+- **SUSPEND during file load**: loading an LXO replaces the entire
+  mesh; undoing the load itself is one entry, but every internal
+  step inside the load (vert add, face add) shouldn't be.
+- **SUSPEND during apply()-internal mutations**: when a complex
+  command does subcommands internally (e.g., `mesh.bevel` calls
+  `mesh.weldCoincidentVertices` after-effect), those subcommands
+  shouldn't push their own entries.
+- **INVALID until ready**: pre-window-shown init pass; suppress any
+  accidental command firing.
+
+Add to `CommandHistory`:
+
+```d
+enum UndoState { Invalid, Active, Suspend }
+UndoState state = UndoState.Active;
+
+// Scoped helpers
+struct UndoSuspend { ... } // RAII: state = Suspend on ctor, restore on dtor
+```
+
+### Two recording flavors: Apply vs Record (from `lxundo.h:79-89`)
+
+```c
+ILxUndoService.Apply(undo_obj):
+    fires Forward() to apply the change
+    if state==ACTIVE: record it on the stack
+    if state==SUSPEND: release without recording
+
+ILxUndoService.Record(undo_obj):
+    assumes the change has ALREADY happened
+    just registers Reverse() for if user undoes
+```
+
+Translation to vibe3d's `Command`:
+
+- `apply()` → MODO's Forward (the operation runs, then the dispatcher
+  decides whether to record based on `state`).
+- `revert()` → MODO's Reverse.
+- `record()` (NEW) → registers a Command that already ran (= the
+  legacy bevel command pattern: it mutates `mesh` directly and
+  hands a snapshot back to the dispatcher post-fact).
+
+Both paths land at the same `undoStack.push`. The choice is
+who runs `apply()`: the dispatcher (`Apply` flavor) or the caller
+(`Record` flavor).
+
+### Command flag taxonomy (from `lxcommand.h:3458-3466`)
+
+MODO classifies every command by orthogonal flags:
+
+| Flag | Meaning |
+|---|---|
+| `LXfCMD_MODEL` | Changes mesh state (geometry, topology, attributes). |
+| `LXfCMD_UI` | Changes UI state only (panel layout, selection mode). |
+| `LXfCMD_UNDO` = `MODEL \| UNDO_INTERNAL` | Model command, undoable. |
+| `LXfCMD_UNDO_UI` = `UI \| UNDO_INTERNAL` | UI command, undoable. |
+| `LXfCMD_SANDBOXED` | Runs in sandbox; **never undoable**. |
+| `LXfCMD_UNDO_AFTER_EXEC` | Block flag: "undo actions are undone on completion" (post-mode). |
+
+Vibe3d's existing `Command` should grow analogous flags:
+
+```d
+abstract class Command {
+    enum Flag {
+        Mutates        = 1 << 0,  // LXfCMD_MODEL — changes mesh
+        Undoable       = 1 << 1,  // LXfCMD_UNDO  — push to stack
+        UI             = 1 << 2,  // LXfCMD_UI    — UI-only change
+        Sandboxed      = 1 << 3,  // never undoable
+    }
+    int flags() const { return Flag.Mutates | Flag.Undoable; }
+    // existing isUndoable() == (flags & Undoable) != 0
+}
+```
+
+### Plug-in vs application state separation (`lxundo.h:42-46`)
+
+> "These undo objects should perform changes to the **internal
+> plug-in state only**, not the application system state.
+> **Application state changes are made with commands which undo
+> themselves.**"
+
+For vibe3d this maps to a clean layer separation:
+
+- **Commands undo themselves**: every command's `revert()` is
+  responsible for restoring whatever state the command's `apply()`
+  changed. The history just calls `revert()` — it doesn't manage
+  the snapshot itself.
+- **Plugin internal state**: irrelevant for our codebase (no
+  plug-in system yet).
+
+So we can drop the idea of a generic "revertPayload" stored opaquely
+in the history entry — every command holds its own snapshot
+internally and exposes only `apply()` / `revert()`.
+
+### Command blocks (grouping) — from `lxcommand.h:2461-2498`
+
+MODO supports `BlockBegin(name, flags)` / `BlockEnd()` to bundle
+multiple sub-commands into ONE undo entry. Useful flags:
+
+- `PRESERVE_SELECTION`: snapshot the selection before the block,
+  restore after — block can mutate selection freely without leaking.
+- `UI`: block is allowed during refire without disrupting it.
+- `UNDO_AFTER_EXEC`: undo actions are undone on completion (used
+  by post-mode tools — actions are previews, undone unless
+  explicitly committed).
+
+Defer this for vibe3d — useful but Tier 0.4 work. Linear stack +
+refire is enough for the first iteration. Add command blocks when
+we have a feature that needs atomic composition (e.g., a Symmetry
+tool that fires N parallel commands that must all undo together).
 
 ## Architecture
 
@@ -113,93 +304,102 @@ class CommandHistory {
 
 Owned by `app.d` alongside the command registry.
 
-### Tool integration (the tricky part)
+### Tool integration: refire blocks
 
-Tools have a "session" model: while active, the user adjusts state
-(via gizmo drag or Tool Properties); on commit (drag end OR tool
-drop OR Apply), the change is finalized as ONE undo entry.
+Direct port of MODO's "refiring" pattern (see `lxcommand.h:2406`).
+While a tool is interacting with the user (drag in viewport, drag
+in Tool Properties slider), every fresh state IS its own command —
+but each new fire UNDOES the previous one before re-executing.
+Net stack effect: ONE undo entry per refire block, regardless of
+how many sub-fires happened.
 
-Naive approach: each `applyEdgeBevelTopology()` / `revert+reapply`
-cycle inside the tool fires a command. For a slider drag that's 60
-entries per second — stack explodes.
-
-**Coalescing model**:
-
-A tool keeps a **live command** during a session — a `Command`
-instance whose `apply()` is run on first interaction (snapshot
-taken), and whose params are mutated on each subsequent change.
-The mesh shows the latest state continuously. The command is NOT
-on the history stack while live.
-
-The live command commits to the history stack on:
-
-1. **Mouse button up** of a drag handle (one command per drag
-   cycle).
-2. **Slider release** in Tool Properties (`ImGui.IsItemDeactivatedAfterEdit()`
-   returns true the frame after the drag ends).
-3. **Tool deactivation** (Q / Space / select another tool / Apply
-   button / edit-mode change).
-
-Within a session, user actions of the SAME KIND coalesce:
-
-- Dragging the Width slider with the mouse → one entry per
-  release.
-- Then dragging Inset → another entry.
-- Then dragging Width again → another entry (separate from the
-  first).
-
-Different SESSIONS never coalesce (each tool activation cycle is
-its own boundary).
-
-Concrete API on `Tool`:
+**API**:
 
 ```d
-abstract class Tool {
-    // ... existing
-    
-    // NEW — for tools that produce undoable state changes. Tools
-    // like SelectTool that don't produce mesh state may return
-    // null. The returned Command is owned by the tool while live;
-    // ownership transfers to CommandHistory on commit.
-    Command activeLiveCommand() { return null; }
-    
-    // NEW — called by the host when the live command should be
-    // finalized (drag end, tool drop, mode switch). Default impl:
-    // no-op.
-    void commitLiveCommand() {}
+class CommandHistory {
+    void refireBegin();           // open a refire block
+    void fire(Command cmd);       // inside refire: undo prev + apply cmd
+    void refireEnd();             // close: latest cmd lands on stack
 }
 ```
 
-BevelTool's implementation:
+Outside a refire block, `fire(cmd)` behaves like a plain HTTP
+command: apply, push to undo stack.
+
+**Refire boundary triggers** (when tools call refireBegin/End):
+
+1. **Mouse button down** on a drag handle → `refireBegin`.
+   **Mouse button up** → `refireEnd`.
+2. **Tool Properties slider edit start** (first frame the value
+   changes) → `refireBegin`. **Slider release**
+   (`ImGui.IsItemDeactivatedAfterEdit()` returns true) → `refireEnd`.
+3. **Checkbox / radio button change** in Tool Properties (single
+   discrete event) → fire-with-no-block (= 1 command, 1 entry).
+4. **Tool deactivation** while a refire block is open (= drag
+   abandoned by switching tool / mode) → `refireEnd` first to
+   commit the in-progress entry.
+
+Within a session, user actions of the SAME KIND DO NOT coalesce
+into one entry across multiple slider releases:
+
+- Drag Width slider, release: 1 entry.
+- Drag Inset slider, release: 2nd entry.
+- Drag Width again, release: 3rd entry.
+
+This matches MODO's command-history-per-edit-cycle behavior and the
+user-stated requirement that each Tool Properties change be its
+own undo step.
+
+BevelTool's implementation (refire-based):
 
 ```d
 class BevelTool : Tool {
-    private MeshBevel liveBevelCmd;       // or MeshPolyBevel
-    
-    // On first edit:
-    if (liveBevelCmd is null) {
-        liveBevelCmd = new MeshBevel(...);
-        liveBevelCmd.setWidth(ebWidth);
-        liveBevelCmd.apply();             // snapshot taken inside
+    private CommandHistory history;
+    private bool refireActive = false;
+
+    // onMouseButtonDown on a drag handle:
+    if (!refireActive) {
+        history.refireBegin();
+        refireActive = true;
     }
-    
-    // On parameter change (in onMouseMotion or drawProperties):
-    liveBevelCmd.setWidth(ebWidth);
-    liveBevelCmd.revertAndReapply();      // mesh updated, no stack push
-    
-    // On commit boundary:
-    history.record(liveBevelCmd);
-    liveBevelCmd = null;
+
+    // onMouseMotion (each pixel):
+    auto cmd = new MeshBevel(...);
+    cmd.setWidth(ebWidth);   // updated value
+    history.fire(cmd);       // refire: undo previous, apply new
+
+    // onMouseButtonUp:
+    history.refireEnd();
+    refireActive = false;
 }
 ```
 
-The `revertAndReapply` helper is internal — it restores the
-pre-apply snapshot, then re-runs apply with the new params. The
-snapshot is taken ONCE (at the first apply); each
-revert+reapply rolls back to the SAME snapshot and applies the
-NEW params. So at commit time, the command's snapshot is the
-"start of session" and its current params are the "end of
-session" — perfect for one undo entry.
+Inside `history.fire` while the refire block is open, the previous
+`MeshBevel` instance's `revert()` is invoked (restoring the
+pre-bevel mesh) before the new one's `apply()` runs. So the mesh
+moves directly from "state before this drag" → "state with newest
+params" — never accumulates multiple bevels. At `refireEnd`, the
+latest `MeshBevel` instance lands on the undo stack as the single
+entry for this drag.
+
+For Tool Properties slider edits in `drawProperties()`:
+
+```d
+ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, 0.0f, "%.4f");
+bool active   = ImGui.IsItemActive();
+bool deactive = ImGui.IsItemDeactivatedAfterEdit();
+bool changed  = active && (ebWidth != prevWidth);
+if (active && !refireActive) { history.refireBegin(); refireActive = true; }
+if (changed)                  { history.fire(makeBevelCmd()); }
+if (deactive)                 { history.refireEnd(); refireActive = false; }
+```
+
+Same pattern for every slider; pure cut-and-paste for new tools.
+
+Note: the existing `applyEdgeBevelTopology` / `revertEdgeBevelTopology`
++ `BevelOp` snapshot becomes `MeshBevel.apply()` / `revert()`. The
+command instance OWNS the snapshot for the duration of its lifetime
+on the undo stack.
 
 ### Tool Properties: per-edit granularity
 
