@@ -135,6 +135,30 @@ def find_edge(bm, v0, v1):
             return e
     raise RuntimeError(f"edge not found: {v0} ↔ {v1}")
 
+def find_face(bm, target_verts):
+    # Match a face by SET of vertex coordinates (winding/start ignored).
+    for f in bm.faces:
+        if len(f.verts) != len(target_verts):
+            continue
+        face_coords = [tuple(v.co) for v in f.verts]
+        used = [False] * len(target_verts)
+        ok = True
+        for fc in face_coords:
+            found = False
+            for j, t in enumerate(target_verts):
+                if used[j]:
+                    continue
+                if vmatch(fc, t):
+                    used[j] = True
+                    found   = True
+                    break
+            if not found:
+                ok = False
+                break
+        if ok:
+            return f
+    raise RuntimeError(f"face not found with {len(target_verts)} verts at {target_verts}")
+
 def run_op(op):
     bm = bmesh.from_edit_mesh(mesh)
     bm.verts.ensure_lookup_table()
@@ -275,6 +299,138 @@ def run_op(op):
             miter_inner=miter_inner,
             clamp_overlap=clamp_overlap,
         )
+    elif op["op"] == "polygon_bevel":
+        # Vibe3D's polygon "bevel" = inset + extrude per face. For each
+        # selected face F: allocate N new verts at orig positions, replace F
+        # with the new ring, emit N side-wall quads, then move new verts via
+        #   new[i] = center + (orig[i] - center) * insert + faceNormal * shift
+        # where center = face centroid, faceNormal = unit cross of (v1-v0,
+        # v2-v0). This op manually replicates that topology in Blender so
+        # the diff isolates vibe3d's poly_bevel logic.
+        from mathutils import Vector
+        insert    = float(op["insert"])
+        shift     = float(op["shift"])
+        group     = bool(op.get("group", False))
+
+        # Process faces in JSON listing order (matches vibe3d, which sorts
+        # selFaceIdx by faceSelectionOrder — vibe3d_dump selects faces in
+        # JSON order, so JSON order = selection order = processing order).
+        # This determines which face's inset position is used at shared
+        # corners under group=true.
+        target_faces = []
+        for fdef in op["faces"]:
+            target = [tuple(v) for v in fdef]
+            target_faces.append(find_face(bm, target))
+
+        # Internal edges (shared between two selected faces) — only for group.
+        internal_edges = set()
+        if group:
+            sel_face_set = set(f.index for f in target_faces)
+            for f in target_faces:
+                for e in f.edges:
+                    other = [lf for lf in e.link_faces if lf.index in sel_face_set
+                             and lf.index != f.index]
+                    if other:
+                        # Undirected key
+                        a, b = e.verts[0].index, e.verts[1].index
+                        internal_edges.add((min(a, b), max(a, b)))
+
+        # Snapshot per-face data BEFORE topology mutation (vert references
+        # invalidate after we delete/replace faces).
+        per_face = []
+        group_vert_map = {}  # orig vert idx → new vert (for group mode)
+        for f in target_faces:
+            verts = list(f.verts)
+            origPos = [Vector(v.co) for v in verts]
+            N = len(verts)
+            center = Vector((0, 0, 0))
+            for p in origPos: center += p
+            center /= N
+            e1 = origPos[1] - origPos[0]
+            e2 = origPos[2] - origPos[0]
+            cr = e1.cross(e2)
+            clen = cr.length
+            normal = cr / clen if clen > 1e-6 else Vector((0, 1, 0))
+
+            new_positions = []
+            for i in range(N):
+                new_positions.append(
+                    center + (origPos[i] - center) * insert + normal * shift)
+            per_face.append({
+                "verts":         verts,
+                "origPos":       origPos,
+                "newPositions":  new_positions,
+                "N":             N,
+                "origFaceIdx":   f.index,
+            })
+
+        # Drop internal mesh edges (group mode only). Doing this BEFORE
+        # face creation keeps the new top region one connected polygon.
+        if group and internal_edges:
+            edges_to_remove = []
+            for e in bm.edges:
+                a, b = e.verts[0].index, e.verts[1].index
+                if (min(a, b), max(a, b)) in internal_edges:
+                    edges_to_remove.append(e)
+            bmesh.ops.delete(bm, geom=edges_to_remove, context='EDGES')
+            bm.faces.ensure_lookup_table()
+
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        # Create the inset top + side walls per face.
+        for pfd in per_face:
+            origVerts = pfd["verts"]
+            N = pfd["N"]
+            newVerts = []
+            for i in range(N):
+                if group:
+                    ov = origVerts[i].index
+                    if ov in group_vert_map:
+                        newVerts.append(group_vert_map[ov])
+                    else:
+                        nv = bm.verts.new(pfd["newPositions"][i])
+                        newVerts.append(nv)
+                        group_vert_map[ov] = nv
+                else:
+                    nv = bm.verts.new(pfd["newPositions"][i])
+                    newVerts.append(nv)
+            bm.verts.ensure_lookup_table()
+
+            # Remove the old face (we replace it with the new top). Re-find
+            # by vert set: face indices may have shifted after prior face
+            # creation/deletion AND the lookup table can be stale.
+            bm.faces.ensure_lookup_table()
+            old_face = None
+            origVertIdxSet = set(v.index for v in origVerts)
+            for f in bm.faces:
+                if set(v.index for v in f.verts) == origVertIdxSet:
+                    old_face = f
+                    break
+            if old_face is not None:
+                bm.faces.remove(old_face)
+                bm.faces.ensure_lookup_table()
+
+            try:
+                bm.faces.new(newVerts)
+            except ValueError:
+                pass  # face may already exist in group mode (duplicate corners)
+
+            # Side-wall quads (skip internal edges in group mode).
+            for i in range(N):
+                ni = (i + 1) % N
+                if group:
+                    a, b = origVerts[i].index, origVerts[ni].index
+                    if (min(a, b), max(a, b)) in internal_edges:
+                        continue
+                try:
+                    bm.faces.new([origVerts[i], origVerts[ni],
+                                  newVerts[ni],  newVerts[i]])
+                except ValueError:
+                    pass
+
+        bm.normal_update()
+        bmesh.update_edit_mesh(mesh)
     else:
         raise ValueError(f"unknown op: {op['op']}")
 

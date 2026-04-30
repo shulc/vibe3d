@@ -52,6 +52,7 @@ import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.subpatch_toggle;
 import commands.mesh.bevel;
+import commands.mesh.poly_bevel;
 import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
 
@@ -462,6 +463,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.bevel"] = () => cast(Command)
         new MeshBevel(&mesh, cameraView, editMode, &gpu,
                       &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.poly_bevel"] = () => cast(Command)
+        new MeshPolyBevel(&mesh, cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh, cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
@@ -674,6 +678,12 @@ void main(string[] args) {
                         if ("miter_inner" in pj
                             && pj["miter_inner"].type == JSONType.string)
                             mb.setMiterInner(pj["miter_inner"].str);
+                    }
+                    if (auto mpb = cast(MeshPolyBevel)cmd) {
+                        if ("insert" in pj) mpb.setInsert(jsonNumber(pj["insert"]));
+                        if ("shift"  in pj) mpb.setShift (jsonNumber(pj["shift"]));
+                        if ("group"  in pj && pj["group"].type == JSONType.true_)
+                            mpb.setGroup(true);
                     }
                 }
             }

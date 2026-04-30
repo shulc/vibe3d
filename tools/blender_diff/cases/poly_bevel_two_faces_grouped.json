@@ -1,0 +1,16 @@
+{
+  "_comment": "Two adjacent cube faces beveled with group=true. Adjacent selected faces share new vertices on their shared boundary, AND their internal shared edge is removed → one connected inset L-shaped region. No side-wall quad on the shared internal edge.",
+  "ops": [
+    {
+      "op": "polygon_bevel",
+      "faces": [
+        [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]],
+        [[-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]
+      ],
+      "insert": 0.5,
+      "shift":  0.15,
+      "group":  true
+    }
+  ],
+  "tolerance": 0.001
+}

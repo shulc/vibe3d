@@ -146,12 +146,80 @@ void runBevel(JSONValue op) {
         throw new Exception("bevel failed: " ~ resp.toString());
 }
 
+// Locate the face whose vertex set matches the given vertex coordinates
+// (within EPS). Faces are matched by SET of vertex positions, ignoring
+// winding/start; this lets a case identify a face by listing its corners
+// in any order.
+int findFaceIndex(JSONValue model, double[3][] faceVerts) {
+    auto verts = model["vertices"].array;
+    auto faces = model["faces"].array;
+
+    bool vmatch(JSONValue v, double[3] target) {
+        auto a = v.array;
+        return abs(a[0].floating - target[0]) < 1e-4
+            && abs(a[1].floating - target[1]) < 1e-4
+            && abs(a[2].floating - target[2]) < 1e-4;
+    }
+
+    foreach (fi, f; faces) {
+        auto fv = f.array;
+        if (fv.length != faceVerts.length) continue;
+        bool[] matched = new bool[](faceVerts.length);
+        bool allOk = true;
+        foreach (target; faceVerts) {
+            bool found = false;
+            foreach (j, vi; fv) {
+                if (matched[j]) continue;
+                if (vmatch(verts[vi.integer], target)) {
+                    matched[j] = true;
+                    found      = true;
+                    break;
+                }
+            }
+            if (!found) { allOk = false; break; }
+        }
+        if (allOk) return cast(int)fi;
+    }
+    throw new Exception("face not found with " ~ faceVerts.length.to!string ~ " verts");
+}
+
+void runPolyBevel(JSONValue op) {
+    auto model = parseJSON(get(url("/api/model")));
+
+    int[] faceIndices;
+    foreach (f; op["faces"].array) {
+        double[3][] fv;
+        foreach (v; f.array) fv ~= toVec(v);
+        faceIndices ~= findFaceIndex(model, fv);
+    }
+
+    string idxStr;
+    foreach (i, idx; faceIndices) {
+        if (i > 0) idxStr ~= ",";
+        idxStr ~= idx.to!string;
+    }
+    auto sel = postJson("/api/select",
+        `{"mode":"polygons","indices":[` ~ idxStr ~ `]}`);
+    if (sel["status"].str != "ok")
+        throw new Exception("select faces failed: " ~ sel.toString());
+
+    string params = `"insert":` ~ op["insert"].floating.to!string
+                  ~ `,"shift":`  ~ op["shift"].floating.to!string;
+    if ("group" in op && op["group"].type == JSONType.true_)
+        params ~= `,"group":true`;
+    auto resp = postJson("/api/command",
+        `{"id":"mesh.poly_bevel","params":{` ~ params ~ `}}`);
+    if (resp["status"].str != "ok")
+        throw new Exception("poly_bevel failed: " ~ resp.toString());
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
-        case "bevel":       runBevel(op);      break;
-        case "split_edge":  runSplitEdge(op);  break;
-        case "subdivide":   runSubdivide(op);  break;
-        case "move_vertex": runMoveVertex(op); break;
+        case "bevel":         runBevel(op);      break;
+        case "split_edge":    runSplitEdge(op);  break;
+        case "subdivide":     runSubdivide(op);  break;
+        case "move_vertex":   runMoveVertex(op); break;
+        case "polygon_bevel": runPolyBevel(op);  break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }

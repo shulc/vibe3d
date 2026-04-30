@@ -1,0 +1,14 @@
+{
+  "_comment": "Polygon bevel of a single cube face (top, +y): inset to 50% of original size + extrude 0.2 along face normal. Vibe3D's poly_bevel formula: new[i] = center + (orig[i] - center) * insert + normal * shift. The Blender side replicates this manually via inset topology + explicit vertex placement so the diff isolates poly_bevel logic.",
+  "ops": [
+    {
+      "op": "polygon_bevel",
+      "faces": [
+        [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]]
+      ],
+      "insert": 0.5,
+      "shift":  0.2
+    }
+  ],
+  "tolerance": 0.001
+}

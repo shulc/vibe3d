@@ -1,0 +1,14 @@
+{
+  "_comment": "Pure inset (shift=0): top face of cube shrinks to 60% in-plane, no extrusion. Tests poly_bevel with shift=0 → no normal-direction translation.",
+  "ops": [
+    {
+      "op": "polygon_bevel",
+      "faces": [
+        [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]]
+      ],
+      "insert": 0.6,
+      "shift":  0.0
+    }
+  ],
+  "tolerance": 0.001
+}
