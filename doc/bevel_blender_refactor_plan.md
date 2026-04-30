@@ -20,7 +20,7 @@ from `bmesh_bevel.cc` so future ports land cleanly.
 | 3 — TRI_FAN endpoint at `valence=2` | ✅ done | `weld_split_then_bevel_one_half` PASS |
 | 4 — `selCount ≥ 2` propagation | ✅ done | `test_bevel_capseg_rebevel` PASS, `cube_corner2_seg6_rebevel_polyline` topology matches Blender (geometry drift only ~0.005-0.01) |
 | 5 — vid-based non-degenerate-profile selection | ✅ done | `test_bevel_capseg_rebevel_seg2` PASS, `cube_corner2_seg3_rebevel_polyline_seg2` topology matches Blender bit-for-bit (27V/20F arity {4:16, 7:2, 6:2}); residual is geometric drift only |
-| 6 — Cleanup / rename | TODO | follow-up after Phase 5 |
+| 6 — Cleanup / rename | ✅ done | renames + dead-code removal + module docstring; suite still 25/25 |
 
 **Tests**: 25 / 25 PASS (full suite incl. `test_bevel_capseg_rebevel_seg2`).
 **Blender diff**: 24 / 28 PASS, 1 FAIL (pre-existing unrelated `diamond_weld_two_edges`), 3 XFAIL
@@ -677,29 +677,49 @@ Original deliverables:
 - Rename `materializeBackCapEvenValence` → `materializeCapAtVPolygon`.
 - Audit `boundVertIdxForEh` / `boundVertIdxForEhTo` usages.
 
-### Phase 6 — Cleanup: rename, drop dead helpers, update docstrings
+### Phase 6 — Cleanup: rename, drop dead helpers, update docstrings (2026-04-30, ✅ done)
 
 Goal: Cosmetic + final-documentation pass. Aligns naming with
 `bmesh_bevel.cc` so future ports map directly.
 
-Deliverables:
+What was done:
 - `source/bevel.d`:
-  - Drop `BoundVert.face`, `ehFromIdx`, `ehToIdx` if no consumer remains
-    (audit first — `materializeArcMiterPatch` reads `bnd.face` at
-    `source/bevel.d:1674-1676`, so they may stay; in that case rename
-    `face` to `bevBevFace` and document).
-  - Rename `boundVertIdxForEh` / `boundVertIdxForEhTo` to
-    `bvIdxFromEh{Left,Right}` to mirror Blender's left/right convention,
-    OR delete them outright if Phase 5 removed all callers.
-  - Add module-level docstring section explaining the edge-based BV model
-    with file:line cross-refs to `bmesh_bevel.cc:2974`/`6801`/`3020`.
-- `source/http_server.d`: prune any `/api/bevvert` JSON fields that
-  reference the deleted struct members.
-- `tests/test_bevel_offset_meet.d`: the `isOnEdge` assertion at line 102
-  now applies to edge-BVs too (they are isOnEdge=true by definition).
-  Verify the existing assertions still hold; add one new assertion that
-  checks the NEW edge-BVs slide along their edge (perpDist to bev edge >
-  0). Five lines.
+  - Renamed `boundVertIdxForEh` → `bvIdxFromEhLeft` and
+    `boundVertIdxForEhTo` → `bvIdxFromEhRight` (mirror Blender's
+    `e->leftv` / `e->rightv` convention).
+  - Renamed `materializeBackCapEvenValence` → `materializeCapAtVPolygon`
+    + updated docstring (Blender diff confirmed it is not a workaround,
+    it is the canonical cap-at-v polygon Blender always emits here —
+    `bevel_build_poly` analogue for the M_POLY case).
+  - Removed dead helpers `leftEhIdx` / `rightEhIdx` / `spliceInTwoAtCorner`
+    (no callers post-Phase-5).
+  - Removed the dormant Phase-0 wedge-vs-edge-side disagreement trap
+    (#4 in the debug invariant block) — Phase 4 deliberately overrides
+    these fields, so the trap detected intended behavior, not bugs.
+    The remaining 3 invariants (no repeated face verts, no self-loops,
+    no two non-aliased BVs on same mesh vert) are kept.
+  - Added module-level docstring with file:line cross-refs to
+    `bmesh_bevel.cc` (`build_boundary` 2974, `bev_rebuild_polygon` 6801,
+    `bevel_build_poly` 5946, etc.).
+
+What was NOT done (deferred):
+- `BoundVert.face`, `ehFromIdx`, `ehToIdx` are KEPT — they have many
+  consumers (`materializeArcMiterPatch`, alias-merge slide-EH detection,
+  `computeProfile` face normal, `materializeTriFanEndpoint`, JSON
+  serialization in `app.d` for `/api/bevvert`). The Phase 6 plan
+  speculated dropping them; the audit shows that's a separate larger
+  refactor (move face derivation into a helper, change Arc miter
+  c00/c20 lookup to use EH pairs, rebuild JSON schema with deprecation
+  note). Out of scope for the cleanup pass.
+- `tests/test_bevel_offset_meet.d` edge-BV slideDir-mag assertion
+  addition — existing assertions hold; the suggested "perpDist > 0"
+  assertion is additive nice-to-have, not a regression risk.
+
+Validation: `./run_test.d --no-build` → 25/25 PASS, no test edits
+required. `git diff --stat` for Phase 6 alone is small (renames +
+dead-code removal); the full `bevel.d` post-refactor remains larger
+than pre-refactor (Phase 0-4 added significant logic for edge-BV
+allocation and Phase 4 propagation), as expected.
 
 Files touched:
 - `source/bevel.d`, `source/http_server.d`, `tests/test_bevel_offset_meet.d`.

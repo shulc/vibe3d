@@ -1,5 +1,38 @@
 module bevel;
 
+// ---------------------------------------------------------------------------
+// Edge-bevel module (Vibe3D).
+//
+// This module is a partial port of Blender's `bmesh_bevel.cc`, with vibe3d's
+// half-edge mesh standing in for BMesh. The data model is edge-keyed (each
+// `EdgeHalf` carries `leftBV` / `rightBV` indices into the BoundVert ring,
+// mirroring Blender's `e->leftv` / `e->rightv`). The pipeline:
+//
+//   1. `applyEdgeBevelTopology` — entry point; per-vertex BevVert build,
+//      per-edge strip emission, cap polygon emission, edge rebuild.
+//   2. `buildBevVert` — assemble the EdgeHalf CCW ring around a vertex.
+//   3. `populateBoundVerts` — compute BoundVert positions via offset_meet,
+//      run alias-merge for selCount ≥ 2, populate `eh.leftBV` / `rightBV`,
+//      allocate edge-BVs at the configurations Blender does (Phase 2-3 in
+//      doc/bevel_blender_refactor_plan.md).
+//   4. `materializeBevVert` — allocate mesh vertex IDs, replace each face's
+//      bv.vert corner with the appropriate corner BV (or full cap splice
+//      for F_OTHER), emit cap-at-v polygon / TRI_FAN / Arc miter patch.
+//   5. `updateEdgeBevelPositions` — re-evaluate per-frame at a given width.
+//
+// Cross-references to `bmesh_bevel.cc` (Blender 4.x):
+//   - `build_boundary` / `build_boundary_terminal_edge`: ~line 2974, 3204
+//   - `bev_rebuild_polygon`: ~line 6801 (vibe3d does this in
+//     `materializeBevVert` per-face, not as a separate pass)
+//   - `bevel_build_poly` / `bevel_build_trifan`: ~line 5946, 6025
+//   - `mesh_vert(vm, i, 0, k)` lookup: cap-arc samples; vibe3d stores
+//     these in `BoundVert.profile.sampleVertIds`.
+//
+// Phase notes: see `doc/bevel_blender_refactor_plan.md` for the
+// phase-by-phase refactor that brought the wedge-based original
+// implementation into edge-keyed alignment with Blender.
+// ---------------------------------------------------------------------------
+
 import std.math : sin, cos, acos, pow, fabs, sqrt, PI;
 
 import math;
@@ -436,7 +469,7 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
 
         // Phase 4 (doc/bevel_blender_refactor_plan.md): read q*_l / q*_r from
         // EdgeHalf.leftBV / rightBV instead of the wedge-keyed
-        // boundVertIdxForEh{,To}. For Phase-1 wedge population on bev EHs
+        // bvIdxFromEhLeft{,To}. For Phase-1 wedge population on bev EHs
         // these resolve identically (bev EHs always have both wedge BVs);
         // the swap matters when Phase 4+ overrides a non-bev side via
         // alias-merge propagation or edge-BV allocation.
@@ -509,7 +542,7 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
                 break;
             }
             if (leftBV < 0)
-                leftBV = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+                leftBV = bvIdxFromEhLeft(bv, bv.bevEdgeIdx);
             if (leftBV < 0) return null;
             // After Phase 5 the leftBV may not coincide with qL or qR
             // directly (e.g. valence=4 selCount=2 alternating where qL/qR
@@ -646,34 +679,14 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
             }
         }
 
-        // (4) Phase-0 DORMANT trap (see doc/bevel_blender_refactor_plan.md).
-        //     Once Phase 1 populates EdgeHalf.leftBV / rightBV, every
-        //     populated entry must agree with the wedge-side lookup
-        //     (boundVertIdxForEh{,To}) currently used by strip emission.
-        //     Today every leftBV/rightBV is still -1 (default) so this
-        //     loop is silent — it activates as Phase 1 turns the fields
-        //     on, catching drift between the new edge-keyed ownership and
-        //     today's wedge-keyed semantics.
-        foreach (vert, ref bv; bvByVert) {
-            foreach (k, ref eh; bv.edges) {
-                if (eh.leftBV >= 0) {
-                    int expected = boundVertIdxForEh(bv, cast(int)k);
-                    if (expected >= 0 && eh.leftBV != expected)
-                        stderr.writefln("[bevel-violation] BevVert v%d EH[%d]"
-                                        ~ " leftBV=%d disagrees with wedge"
-                                        ~ " boundVertIdxForEh=%d",
-                                        vert, k, eh.leftBV, expected);
-                }
-                if (eh.rightBV >= 0) {
-                    int expected = boundVertIdxForEhTo(bv, cast(int)k);
-                    if (expected >= 0 && eh.rightBV != expected)
-                        stderr.writefln("[bevel-violation] BevVert v%d EH[%d]"
-                                        ~ " rightBV=%d disagrees with wedge"
-                                        ~ " boundVertIdxForEhTo=%d",
-                                        vert, k, eh.rightBV, expected);
-                }
-            }
-        }
+        // The Phase-0 wedge-vs-edge-side disagreement trap was REMOVED
+        // post-Phase-4: Phase 4's alias-merge propagation deliberately
+        // overrides eh.leftBV / eh.rightBV to point at the canonical
+        // alias-target (so the manifold splice through the shared
+        // non-bev EH reads the SAME BV from both sides). The trap
+        // detected this intended override as a "violation" and produced
+        // noise without catching real bugs. See
+        // doc/bevel_blender_refactor_plan.md Phase 6.
 
         stderr.flush();
     }
@@ -1009,8 +1022,8 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
     // the refactor plan will populate the gaps with edge-BVs allocated on
     // the non-bev edge itself.
     foreach (k, ref eh; bv.edges) {
-        eh.leftBV  = boundVertIdxForEh  (bv, cast(int)k);
-        eh.rightBV = boundVertIdxForEhTo(bv, cast(int)k);
+        eh.leftBV  = bvIdxFromEhLeft  (bv, cast(int)k);
+        eh.rightBV = bvIdxFromEhRight(bv, cast(int)k);
     }
 
     // Phase 2 (doc/bevel_blender_refactor_plan.md REVISED v2): edge-keyed
@@ -1110,8 +1123,8 @@ void populateBoundVerts(Mesh* mesh, ref BevVert bv,
         // Wedge BV between flankPrev and bevK = "leftBV of bev" (Blender).
         //   Phase 1 already set bv.edges[flankPrev].leftBV to it via the
         //   ehFromIdx lookup; we now set rightBV too.
-        int leftOfBev  = boundVertIdxForEh  (bv, bevK);    // ehFromIdx==bevK → between bevK and bevK+1
-        int rightOfBev = boundVertIdxForEhTo(bv, bevK);    // ehToIdx==bevK → between bevK-1 and bevK
+        int leftOfBev  = bvIdxFromEhLeft  (bv, bevK);    // ehFromIdx==bevK → between bevK and bevK+1
+        int rightOfBev = bvIdxFromEhRight(bv, bevK);    // ehToIdx==bevK → between bevK-1 and bevK
         // NOTE: with bev=EH bevK, the wedge bv.boundVerts on its CCW-prev
         // side (between flankPrev and bevK) is the one with ehToIdx==bevK
         // — that's `rightOfBev` in our naming. Blender calls it "leftBV
@@ -1210,25 +1223,19 @@ private Vec3 computeSlideDirForEdge(Mesh* mesh, ref const BevVert bv, int ehIdx)
     return safeNormalize(mesh.vertices[other] - bv.origPos);
 }
 
-private int leftEhIdx(ref const BevVert bv) {
-    int N = cast(int)bv.edges.length;
-    return (bv.bevEdgeIdx + 1) % N;
-}
-
-private int rightEhIdx(ref const BevVert bv) {
-    int N = cast(int)bv.edges.length;
-    return (bv.bevEdgeIdx + N - 1) % N;
-}
-
-// Find the BoundVert whose left flanking EdgeHalf (ehFromIdx) is `ehIdx`.
-private int boundVertIdxForEh(ref const BevVert bv, int ehIdx) {
+// Find the BoundVert whose left flanking EdgeHalf (ehFromIdx) is `ehIdx`,
+// i.e. the BV in the wedge starting at `ehIdx` and ending at `(ehIdx+1)%N`.
+// Mirrors Blender's `e->leftv` lookup on a single EH (bmesh_bevel.cc).
+private int bvIdxFromEhLeft(ref const BevVert bv, int ehIdx) {
     foreach (i, ref bnd; bv.boundVerts)
         if (bnd.ehFromIdx == ehIdx) return cast(int)i;
     return -1;
 }
 
-// Find the BoundVert whose right flanking EdgeHalf (ehToIdx) is `ehIdx`.
-private int boundVertIdxForEhTo(ref const BevVert bv, int ehIdx) {
+// Find the BoundVert whose right flanking EdgeHalf (ehToIdx) is `ehIdx`,
+// i.e. the BV in the wedge starting at `(ehIdx-1+N)%N` and ending at `ehIdx`.
+// Mirrors Blender's `e->rightv` lookup on a single EH.
+private int bvIdxFromEhRight(ref const BevVert bv, int ehIdx) {
     foreach (i, ref bnd; bv.boundVerts)
         if (bnd.ehToIdx == ehIdx) return cast(int)i;
     return -1;
@@ -1433,7 +1440,7 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         break;
     }
     if (leftBVidxAlloc < 0)
-        leftBVidxAlloc = boundVertIdxForEh(bv, bv.bevEdgeIdx);
+        leftBVidxAlloc = bvIdxFromEhLeft(bv, bv.bevEdgeIdx);
     bool madj = useMAdj(bv);
 
     if (madj) {
@@ -1598,21 +1605,20 @@ private void materializeBevVert(Mesh* mesh, ref BevVert bv,
         materializeTriFanEndpoint(mesh, bv, leftBVidx);
     }
 
-    // Stage 9c BACK_CAP for selCount=1 with even valence ≥ 4. Odd valences
+    // Cap-at-v polygon for selCount=1 with even valence ≥ 4. Odd valences
     // have an F_OTHER face directly opposite the bev edge that absorbs the
     // full cap-profile splice (handled in the F_OTHER loop above). Even
     // valences have NO equidistant F_OTHER — the two halves of the F_OTHER
     // group meet at a single non-bev edge ("EH_b") that previously shared
-    // bv.vert. After single-BV replacement, leftBV-side faces keep bv.vert
-    // (via reusesOrig) while rightBV-side faces have it swapped for rightBV
-    // — so the once-shared edge through EH_b becomes two distinct edges,
-    // leaving a triangular hole at (leftBV, EH_b's other endpoint, rightBV).
-    // Emit that cap face here. For seg > 1 the cap chain has interior
-    // samples; the resulting face is (seg + 2)-gon.
+    // bv.vert. The cap-at-v polygon closes that gap. Blender's diff
+    // confirmed this is a real face (Blender emits an equivalent triangle
+    // for selCount=1 valence=4); see doc/bevel_blender_refactor_plan.md.
+    // For seg > 1 the cap chain has interior samples; resulting face is
+    // a (seg + 2)-gon.
     if (bv.selCount == 1 && bv.edges.length >= 4 && (bv.edges.length & 1) == 0
         && bv.boundVerts.length >= 2 && leftBVidx >= 0)
     {
-        materializeBackCapEvenValence(mesh, bv, leftBVidx);
+        materializeCapAtVPolygon(mesh, bv, leftBVidx);
     }
 
     // Stage 9e Inner arc miter (selCount=2 valence=3, miterInner=Arc + reflex):
@@ -1726,19 +1732,25 @@ private void materializeTriFanEndpoint(Mesh* mesh, ref BevVert bv, int leftBVidx
 // This is an APPROXIMATION to Blender's iterative-CC interior — corner verts
 // and the inner/outer arc midpoints match Blender exactly; the b=N "side"
 // arc and the center vert deviate by up to ~25% of width.
-// BACK_CAP for selCount=1 with even valence ≥ 4 (see call site for context).
-// Emits a (seg + 2)-gon at the back of bv.vert: the cap profile in reverse
-// (rightBV ← interior samples ← leftBV) joined by `oppNbr`, the other end
-// of the EH directly opposite the bev edge in the BvVert ring.
+// Cap-at-v polygon for selCount=1 with even valence ≥ 4 (see call site for
+// context). Emits a (seg + 2)-gon at the cap-side of bv.vert: the cap profile
+// in reverse (rightBV ← interior samples ← leftBV) joined by `thirdVid`,
+// either the edge-BV on the opposite EH (Phase 2 path) or the cube neighbour
+// at the opposite EH's far end.
+//
+// Mirrors Blender's `bevel_build_poly` for the M_POLY case at this vertex
+// configuration (bmesh_bevel.cc). The function name `materializeCapAtVPolygon`
+// reflects this — it is NOT a workaround for missing F_OTHER, but the
+// canonical cap face Blender always emits here.
 //
 // Winding: cap profile is leftBV → ... → rightBV in CCW; reversing gives
 // the CCW sequence on this back-cap so the (rightBV, ..., leftBV) chain has
 // opposite winding to the strip's cap edge (manifold sharing with the
 // bevel-quad strip emitted later in applyEdgeBevelTopology). The trailing
-// (leftBV, oppNbr) and (oppNbr, rightBV) edges face F_OTHER's left-group
+// (leftBV, thirdVid) and (thirdVid, rightBV) edges face F_OTHER's left-group
 // last face (kept v.vert) and right-group first face (uses rightBV)
 // respectively — opposite winding to those F_OTHERs' shared edges.
-private void materializeBackCapEvenValence(Mesh* mesh, ref BevVert bv, int leftBVidx)
+private void materializeCapAtVPolygon(Mesh* mesh, ref BevVert bv, int leftBVidx)
 {
     int M = cast(int)bv.boundVerts.length;
     if (M < 2) return;
@@ -2778,23 +2790,6 @@ private void replaceVertInFace(Mesh* mesh, uint faceIdx, uint oldV, uint newV)
 {
     foreach (ref vi; mesh.faces[faceIdx])
         if (vi == oldV) { vi = newV; return; }
-}
-
-private void spliceInTwoAtCorner(Mesh* mesh, uint faceIdx,
-                                 uint corner, uint bvPrev, uint bvNext)
-{
-    auto face = mesh.faces[faceIdx];
-    int idx = -1;
-    foreach (i, vi; face) if (vi == corner) { idx = cast(int)i; break; }
-    if (idx < 0) return;
-
-    uint[] newFace;
-    newFace.reserve(face.length + 1);
-    newFace ~= face[0 .. idx];
-    newFace ~= bvPrev;
-    newFace ~= bvNext;
-    newFace ~= face[idx + 1 .. $];
-    mesh.faces[faceIdx] = newFace;
 }
 
 private void rebuildEdgesFromFaces(Mesh* mesh)
