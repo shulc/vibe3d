@@ -33,6 +33,11 @@ private:
 
     Vec3   dragStartScaleAccum;  // scaleAccum at the start of the current drag
 
+    // Phase C.3: Tool Properties state at the start of the current edit
+    // session, restored by hooks on undo of the matching MeshVertexEdit.
+    Vec3   preEditScaleAccum;
+    Vec3   preEditPropScale;
+
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
@@ -59,28 +64,60 @@ public:
 
         uint  currentHash   = computeSelectionHash();
         ulong currentMutVer = mesh.mutationVersion;
-        // Refresh on selection change OR on geometry change (e.g. undo of
-        // a transform shifts the centroid back without touching selection).
-        if (currentHash == lastSelectionHash && currentMutVer == lastMutationVersion)
-            return;
+        bool selChanged = (currentHash   != lastSelectionHash);
+        bool mutChanged = (currentMutVer != lastMutationVersion);
+        if (!selChanged && !mutChanged) return;
+
         lastSelectionHash   = currentHash;
         lastMutationVersion = currentMutVer;
         vertexCacheDirty    = true;
-        // Geometry changed under our feet — drop manual placement so the
-        // gizmo snaps back to the selection centroid.
-        centerManual = false;
 
-        if (*editMode == EditMode.Vertices)
-            cachedCenter = mesh.selectionCentroidVertices();
-        else if (*editMode == EditMode.Edges)
-            cachedCenter = mesh.selectionCentroidEdges();
-        else if (*editMode == EditMode.Polygons)
-            cachedCenter = mesh.selectionCentroidFaces();
-        else
-            cachedCenter = Vec3(0, 0, 0);
+        // Geometry-only change: per-edit hooks have already restored
+        // scaleAccum / propScale. activationVertices stays at the
+        // activate-time baseline — applying scaleAccum to activationVertices
+        // around activationCenter always reproduces current mesh state.
+
+        // Selection change: zero accumulators and refresh everything.
+        if (selChanged) {
+            scaleAccum         = Vec3(1, 1, 1);
+            propScale          = Vec3(1, 1, 1);
+            activationVertices = mesh.vertices.dup;
+            centerManual       = false;
+            if (*editMode == EditMode.Vertices)
+                cachedCenter = mesh.selectionCentroidVertices();
+            else if (*editMode == EditMode.Edges)
+                cachedCenter = mesh.selectionCentroidEdges();
+            else if (*editMode == EditMode.Polygons)
+                cachedCenter = mesh.selectionCentroidFaces();
+            else
+                cachedCenter = Vec3(0, 0, 0);
+            activationCenter = cachedCenter;
+        }
+        // On geometry-only change, cachedCenter / activationCenter stay
+        // at the same pivot the user grabbed.
 
         if (!centerManual && dragAxis == -1)
             handler.setPosition(cachedCenter);
+    }
+
+    private void snapshotEditState() {
+        preEditScaleAccum = scaleAccum;
+        preEditPropScale  = propScale;
+    }
+
+    protected override void commitEdit(string label) {
+        auto cmd = buildEditCmd(label);
+        if (cmd is null) return;
+
+        Vec3 accBefore  = preEditScaleAccum;
+        Vec3 propBefore = preEditPropScale;
+        Vec3 accAfter   = scaleAccum;
+        Vec3 propAfter  = propScale;
+        cmd.setHooks(
+            () { scaleAccum = accAfter;  propScale = propAfter;  },
+            () { scaleAccum = accBefore; propScale = propBefore; }
+        );
+        history.record(cmd);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -126,6 +163,8 @@ public:
                 dragStartVertices  = mesh.vertices.dup;
                 dragStartScaleAccum = scaleAccum;
             }
+            snapshotEditState();   // capture pre-drag Tool-Properties state.
+            beginEdit();           // Phase C.3: snapshot pre-drag positions for undo.
             return true;
         }
 
@@ -165,6 +204,7 @@ public:
         propScale = scaleAccum;
         activationVertices = mesh.vertices.dup;
         activationCenter   = handler.center;
+        commitEdit("Scale");   // Phase C.3: land this drag as one undo entry.
         return true;
     }
 
@@ -282,6 +322,16 @@ public:
         buildVertexCacheIfNeeded();
         bool wholeMesh = (vertexProcessCount == cast(int)mesh.vertices.length);
 
+        // Phase C.3: snapshot pre-drag state on the FIRST active frame
+        // only (before beginEdit() opens the session); subsequent frames
+        // are no-ops on both calls.
+        if (anyActive && !editIsOpen()) {
+            snapshotEditState();
+            beginEdit();
+        } else if (anyActive) {
+            beginEdit();   // idempotent
+        }
+
         // Update CPU vertices from activationVertices (fast, no GPU).
         applyScaleFromActivationCpuOnly();
 
@@ -306,6 +356,7 @@ public:
             } else {
                 needsGpuUpdate = true;
             }
+            commitEdit("Scale");   // Phase C.3: land slider drag on undo stack.
         }
     }
 

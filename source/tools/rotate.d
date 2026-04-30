@@ -34,6 +34,14 @@ private:
     Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
     Vec3[]   origVertices;                // snapshot of vertex positions at activate()
 
+    // Phase C.3: Tool Properties state at the START of the current edit
+    // session, captured by snapshotEditState() and restored on undo via
+    // hooks attached to the recorded MeshVertexEdit. Lets undo of a single
+    // slider release peel back ONLY that drag's contribution to propDeg /
+    // angleAccum without zeroing the other axes.
+    Vec3     preEditAngleAccum;
+    Vec3     preEditPropDeg;
+
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
@@ -59,28 +67,71 @@ public:
 
         uint  currentHash   = computeSelectionHash();
         ulong currentMutVer = mesh.mutationVersion;
-        // Refresh on selection change OR on geometry change (e.g. undo of
-        // a transform shifts the centroid back without touching selection).
-        if (currentHash == lastSelectionHash && currentMutVer == lastMutationVersion)
-            return;
+        bool selChanged = (currentHash   != lastSelectionHash);
+        bool mutChanged = (currentMutVer != lastMutationVersion);
+        if (!selChanged && !mutChanged) return;
+
         lastSelectionHash   = currentHash;
         lastMutationVersion = currentMutVer;
         vertexCacheDirty    = true;
-        // Geometry changed under our feet — drop manual placement so the
-        // gizmo snaps back to the selection centroid.
-        centerManual = false;
 
-        if (*editMode == EditMode.Vertices)
-            cachedCenter = mesh.selectionCentroidVertices();
-        else if (*editMode == EditMode.Edges)
-            cachedCenter = mesh.selectionCentroidEdges();
-        else if (*editMode == EditMode.Polygons)
-            cachedCenter = mesh.selectionCentroidFaces();
-        else
-            cachedCenter = Vec3(0, 0, 0);
+        // Geometry-only change: the per-edit hook on the (un)applied
+        // MeshVertexEdit has already restored angleAccum / propDeg to the
+        // value they held at that edit's boundary. origVertices stays at
+        // its activate-time value — the (origVertices, angleAccum)
+        // contract is invariant: applying angleAccum to origVertices
+        // always reproduces the current mesh state, even across undo/redo.
+
+        // Selection change: zero the accumulators and refresh everything.
+        // The per-edit hooks for now-stale entries on the stack still
+        // reference the OLD (origVertices, angleAccum) tuple — they'll
+        // misfire if undone after re-selection, but that's an acceptable
+        // edge case (cross-selection undo rarely makes sense anyway).
+        if (selChanged) {
+            angleAccum   = Vec3(0, 0, 0);
+            propDeg      = Vec3(0, 0, 0);
+            origVertices = mesh.vertices.dup;
+            centerManual = false;
+            if (*editMode == EditMode.Vertices)
+                cachedCenter = mesh.selectionCentroidVertices();
+            else if (*editMode == EditMode.Edges)
+                cachedCenter = mesh.selectionCentroidEdges();
+            else if (*editMode == EditMode.Polygons)
+                cachedCenter = mesh.selectionCentroidFaces();
+            else
+                cachedCenter = Vec3(0, 0, 0);
+        }
 
         if (!centerManual)
             handler.setPosition(cachedCenter);
+    }
+
+    // Snapshot Tool-Properties state at the start of an edit session, so
+    // the matching commitEdit can attach an undo-restore hook holding
+    // these values. Called from beginEdit-adjacent sites (mouseButtonDown,
+    // first slider-active frame).
+    private void snapshotEditState() {
+        preEditAngleAccum = angleAccum;
+        preEditPropDeg    = propDeg;
+    }
+
+    protected override void commitEdit(string label) {
+        auto cmd = buildEditCmd(label);
+        if (cmd is null) return;
+
+        // Closure-capture the before/after Tool-Properties state. After
+        // recording, history.undo() runs revert (vert positions revert,
+        // then angleAccum/propDeg snap back to the pre-edit values);
+        // history.redo() does the opposite.
+        Vec3 accBefore  = preEditAngleAccum;
+        Vec3 propBefore = preEditPropDeg;
+        Vec3 accAfter   = angleAccum;
+        Vec3 propAfter  = propDeg;
+        cmd.setHooks(
+            () { angleAccum = accAfter;  propDeg = propAfter;  },
+            () { angleAccum = accBefore; propDeg = propBefore; }
+        );
+        history.record(cmd);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -149,6 +200,8 @@ public:
             // Snapshot current vertex positions — GPU is in sync with these.
             dragStartVertices = mesh.vertices.dup;
         }
+        snapshotEditState();   // capture pre-drag Tool-Properties state.
+        beginEdit();           // Phase C.3: snapshot pre-drag positions for undo.
 
         // Cache the axis vector for the duration of this drag.
         if (dragAxis == 3) {
@@ -203,6 +256,7 @@ public:
         propDeg = Vec3(angleAccum.x * 180.0f / PI,
                        angleAccum.y * 180.0f / PI,
                        angleAccum.z * 180.0f / PI);
+        commitEdit("Rotate");   // Phase C.3: land this drag as one undo entry.
         return true;
     }
 
@@ -302,6 +356,17 @@ public:
         buildVertexCacheIfNeeded();
         bool wholeMesh = (vertexProcessCount == cast(int)mesh.vertices.length);
 
+        // Phase C.3: snapshot pre-drag positions on first active frame so
+        // commitEdit at slider release has a baseline. beginEdit is
+        // idempotent within an open edit; snapshotEditState too if we
+        // gate it on the same edit-not-yet-open check.
+        if (anyActive && !editIsOpen()) {
+            snapshotEditState();
+            beginEdit();
+        } else if (anyActive) {
+            beginEdit();   // idempotent
+        }
+
         // Update CPU vertices from origVertices (fast, no GPU).
         applyAbsoluteFromOrigCpuOnly();
 
@@ -326,6 +391,7 @@ public:
             } else {
                 needsGpuUpdate = true;
             }
+            commitEdit("Rotate");   // Phase C.3: land slider drag on undo stack.
         }
     }
 

@@ -27,6 +27,14 @@ class MeshVertexEdit : Command {
     private Vec3[] after;
     private string editLabel;     // "Move", "Rotate", etc.
 
+    // Optional hooks for tool-specific state restoration. RotateTool /
+    // ScaleTool / MoveTool use these to push/pop their Tool Properties
+    // accumulators (propDeg, scaleAccum, dragDelta) and origVertices /
+    // activationVertices baselines alongside the vert mutation so that
+    // after undo the slider readout matches the visible mesh state.
+    private void delegate() onApplyHook;
+    private void delegate() onRevertHook;
+
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
         super(mesh, view, editMode);
@@ -59,6 +67,15 @@ class MeshVertexEdit : Command {
 
     bool isEmpty() const { return indices.length == 0; }
 
+    /// Optional callbacks that fire after the vert mutation in apply() /
+    /// revert() — used by tools to restore their Tool Properties state
+    /// (propDeg, scaleAccum, dragDelta) and origVertices/activationVertices
+    /// baselines to the value they had at the corresponding edit boundary.
+    void setHooks(void delegate() onApply, void delegate() onRevert) {
+        this.onApplyHook  = onApply;
+        this.onRevertHook = onRevert;
+    }
+
     override bool apply() {
         foreach (i, vid; indices) {
             if (vid < mesh.vertices.length)
@@ -69,6 +86,7 @@ class MeshVertexEdit : Command {
         vc.invalidate();
         ec.invalidate();
         fc.invalidate();
+        if (onApplyHook !is null) onApplyHook();
         return true;
     }
 
@@ -82,6 +100,7 @@ class MeshVertexEdit : Command {
         vc.invalidate();
         ec.invalidate();
         fc.invalidate();
+        if (onRevertHook !is null) onRevertHook();
         return true;
     }
 }

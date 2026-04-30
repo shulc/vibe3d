@@ -460,8 +460,16 @@ void main(string[] args) {
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
-    reg.toolFactories["rotate"] = () => cast(Tool) new RotateTool(&mesh, &gpu, &editMode);
-    reg.toolFactories["scale"]  = () => cast(Tool) new ScaleTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["rotate"] = () {
+        auto t = new RotateTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
+    reg.toolFactories["scale"]  = () {
+        auto t = new ScaleTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
     reg.toolFactories["bevel"]  = () => cast(Tool) new BevelTool(&mesh, &gpu, &editMode);
     reg.toolFactories["box"]    = () => cast(Tool) new BoxTool(&mesh, &gpu, litShader);
 
@@ -1274,6 +1282,11 @@ void main(string[] args) {
         }
     }
 
+    // Delegate is forward-declared here and assigned after pickVertices /
+    // pickEdges / pickFaces are defined further down. handleMouseMotion
+    // captures it by reference; at call time the delegate is bound.
+    void delegate(int mx, int my) doSelectPickAt;
+
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
         if (rmbDragging)
             rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
@@ -1301,6 +1314,18 @@ void main(string[] args) {
         else if (dragMode == DragMode.Zoom)  cameraView.zoom(dx);
         else if (dragMode == DragMode.Pan)   cameraView.pan(dx, dy);
 
+        // Select-drag: run the appropriate picker on EVERY motion event.
+        // Without this, picks only happen once per render frame; in fast
+        // event-playback scenarios (and any rapid drag) intermediate cursor
+        // positions get skipped, missing verts/edges the cursor passed over.
+        // The delegate is bound after the pickers are declared (see below).
+        if ((dragMode == DragMode.Select
+          || dragMode == DragMode.SelectAdd
+          || dragMode == DragMode.SelectRemove)
+            && doSelectPickAt !is null) {
+            doSelectPickAt(mot.x, mot.y);
+        }
+
         lastMouseX = mot.x;
         lastMouseY = mot.y;
     }
@@ -1320,7 +1345,7 @@ void main(string[] args) {
         if (subpatchPreview.active) {
             const pv = &subpatchPreview.mesh;
             bool[] visible = pv.visibleVertices(cameraView.eye);
-            float closestSqS = 9.0f;
+            float closestSqS = 16.0f;
             int   best      = -1;
             foreach_reverse (pi; 0 .. pv.vertices.length) {
                 uint origin = subpatchPreview.trace.vertOrigin[pi];
@@ -1344,7 +1369,7 @@ void main(string[] args) {
             return;
         }
 
-        float closestSq = 9.0f;  // 3.0f^2
+        float closestSq = 16.0f;  // 4.0f^2
         int candidate = -1;
 
         // A vertex is visible if at least one adjacent face is front-facing.
@@ -1389,7 +1414,7 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
-        float closest   = 4.0f;
+        float closest   = 6.0f;
         float closestSq = closest * closest;
 
         // In subpatch mode, iterate preview segments that trace back to cage
@@ -1615,6 +1640,20 @@ void main(string[] args) {
                 mesh.deselectFace(hoveredFace);
         }
     }
+
+    // Bind the picker delegate forward-declared at handleMouseMotion's
+    // scope. queryMouse() pulls from the global override which the event
+    // player updates in batch (per tickEventPlayer call); the override is
+    // already at the LAST event's position by the time this delegate runs
+    // for the FIRST event in the batch — so reset the override to (mx, my)
+    // before each pick so the picker sees the right cursor.
+    doSelectPickAt = (int mx, int my) {
+        setOverrideMouse(mx, my);
+        Viewport vp = cameraView.viewport();
+        if (editMode == EditMode.Vertices)      pickVertices(vp, false);
+        else if (editMode == EditMode.Edges)    pickEdges   (vp, false);
+        else if (editMode == EditMode.Polygons) pickFaces   (vp, false);
+    };
 
     // 1-px black outline around the last ImGui item.
     // Right and bottom edges are drawn ON rmax so adjacent buttons' top/left

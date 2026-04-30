@@ -77,6 +77,12 @@ protected:
         this.vertexEditFactory = factory;
     }
 
+    // True iff a beginEdit() / commitEdit() pair is currently open.
+    // Used by subclasses (RotateTool, ScaleTool) to decide whether to
+    // snapshot tool-specific Tool-Properties state — only on the FIRST
+    // active frame of a slider drag, not on subsequent frames.
+    protected bool editIsOpen() const { return editCapturing; }
+
     // Begin recording an edit session. Captures the current positions of
     // the verts in vertexIndicesToProcess (must be filled by the caller —
     // typically via buildVertexCacheIfNeeded() right before this call).
@@ -101,16 +107,17 @@ protected:
         editCapturing     = false;
     }
 
-    // Commit the captured edit as one undo entry. Builds a MeshVertexEdit
-    // with after = current vertex positions of the captured indices, drops
-    // the entry if no positions actually changed, then records it on the
-    // history stack as one atomic step.
-    protected void commitEdit(string label) {
-        if (!editCapturing) return;
+    // Build a MeshVertexEdit from the captured snapshot + current state.
+    // Returns null when no positions actually changed (no-op drag) or when
+    // no edit session is open / undo plumbing is missing. Always closes the
+    // capture session via cancelEdit() before returning. Subclasses can
+    // call this from their own commitEdit override to attach tool-specific
+    // state hooks before recording on history.
+    protected MeshVertexEdit buildEditCmd(string label) {
+        if (!editCapturing) return null;
         scope(exit) cancelEdit();
-        if (history is null || vertexEditFactory is null) return;
+        if (history is null || vertexEditFactory is null) return null;
 
-        // Build "after" snapshot from current state and check for any change.
         Vec3[] after_;
         after_.length = editIdx.length;
         bool changed = false;
@@ -121,10 +128,18 @@ protected:
              || after_[i].z != editBefore[i].z)
                 changed = true;
         }
-        if (!changed) return;  // no-op drag, don't pollute history
+        if (!changed) return null;
 
         auto cmd = vertexEditFactory();
         cmd.setEdit(editIdx.dup, editBefore.dup, after_, label);
+        return cmd;
+    }
+
+    // Default commit: build cmd, record on history. Subclasses override to
+    // attach hooks before recording (RotateTool, ScaleTool, MoveTool).
+    protected void commitEdit(string label) {
+        auto cmd = buildEditCmd(label);
+        if (cmd is null) return;
         history.record(cmd);
     }
 

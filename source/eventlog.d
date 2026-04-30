@@ -45,6 +45,17 @@ void mouseOverride() {
     g_mouseOverride = true;
 }
 
+/// Update the override-mouse position. The EventPlayer calls this as it
+/// dispatches motion events. handleMouseMotion in app.d also calls it so
+/// queryMouse() reports the position of the CURRENTLY-being-processed
+/// motion event (not the latest dispatched one) — needed for picking
+/// during select-drag, where intermediate cursor positions matter.
+void setOverrideMouse(int x, int y) {
+    g_mouseX        = x;
+    g_mouseY        = y;
+    g_mouseOverride = true;
+}
+
 void queryMouse(out int mx, out int my) {
     if (g_mouseOverride) { mx = g_mouseX; my = g_mouseY; }
     else _getMouseState(&mx, &my);
