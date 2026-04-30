@@ -55,6 +55,9 @@ import commands.mesh.bevel;
 import commands.mesh.poly_bevel;
 import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
+import commands.mesh.select;
+import commands.mesh.transform;
+import commands.scene.reset;
 
 import command;
 import registry;
@@ -475,6 +478,15 @@ void main(string[] args) {
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh, cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.select"] = () => cast(Command)
+        new MeshSelect(&mesh, cameraView, editMode, &editMode);
+    reg.commandFactories["mesh.transform"] = () => cast(Command)
+        new MeshTransform(&mesh, cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["scene.reset"] = () => cast(Command)
+        new SceneReset(&mesh, cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache,
+                       &editMode, &cameraView, () => setActiveTool(null));
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -737,67 +749,21 @@ void main(string[] args) {
             return buf.data;
         });
 
+        // Phase A.5: dispatch /api/select through the unified Command path
+        // (MeshSelect) so selection changes land on the undo stack and
+        // share the same snapshot/revert mechanism as everything else.
         httpServer.setSelectionHandler((string mode, int[] indices) {
-            mesh.syncSelection();
-            int max;
-            switch (mode) {
-                case "vertices":
-                    editMode = EditMode.Vertices;
-                    mesh.clearVertexSelection();
-                    max = cast(int)mesh.vertices.length;
-                    foreach (i; indices) {
-                        if (i < 0 || i >= max)
-                            throw new Exception("vertex index out of range");
-                        mesh.selectVertex(i);
-                    }
-                    break;
-                case "edges":
-                    editMode = EditMode.Edges;
-                    mesh.clearEdgeSelection();
-                    max = cast(int)mesh.edges.length;
-                    foreach (i; indices) {
-                        if (i < 0 || i >= max)
-                            throw new Exception("edge index out of range");
-                        mesh.selectEdge(i);
-                    }
-                    break;
-                case "polygons":
-                    editMode = EditMode.Polygons;
-                    mesh.clearFaceSelection();
-                    max = cast(int)mesh.faces.length;
-                    foreach (i; indices) {
-                        if (i < 0 || i >= max)
-                            throw new Exception("face index out of range");
-                        mesh.selectFace(i);
-                    }
-                    break;
-                default:
-                    throw new Exception("invalid mode '" ~ mode ~
-                                        "', expected vertices/edges/polygons");
-            }
+            auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
+            cmd.setMode(mode);
+            cmd.setIndices(indices);
+            if (!cmd.apply())
+                throw new Exception("mesh.select did not apply");
+            history.record(cmd);
         });
 
+        // Phase A.5: dispatch /api/transform through MeshTransform command.
         httpServer.setTransformHandler((string kind, JSONValue params) {
-            import std.math : sin, cos;
-            import math    : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
-
-            // Resolve which vertex indices to transform from current selection
-            // and edit mode. Match the tools' behaviour: selected verts in
-            // Vertices mode, verts of selected edges/faces otherwise. Empty
-            // selection => no-op (matches tools' "nothing selected" path).
-            bool[] vmask = new bool[](mesh.vertices.length);
-            if (editMode == EditMode.Vertices) {
-                foreach (i; 0 .. mesh.selectedVertices.length)
-                    if (mesh.selectedVertices[i]) vmask[i] = true;
-            } else if (editMode == EditMode.Edges) {
-                foreach (i; 0 .. mesh.selectedEdges.length)
-                    if (mesh.selectedEdges[i])
-                        foreach (vi; mesh.edges[i]) vmask[vi] = true;
-            } else if (editMode == EditMode.Polygons) {
-                foreach (i; 0 .. mesh.selectedFaces.length)
-                    if (mesh.selectedFaces[i])
-                        foreach (vi; mesh.faces[i]) vmask[vi] = true;
-            }
+            import math : Vec3;
 
             // Helper to read a 3-vector field with default value.
             Vec3 vec3From(string field, Vec3 def) {
@@ -830,77 +796,29 @@ void main(string[] args) {
                 }
             }
 
-            switch (kind) {
-                case "translate": {
-                    Vec3 d = vec3From("delta", Vec3(0, 0, 0));
-                    foreach (i; 0 .. mesh.vertices.length)
-                        if (vmask[i]) {
-                            mesh.vertices[i].x += d.x;
-                            mesh.vertices[i].y += d.y;
-                            mesh.vertices[i].z += d.z;
-                        }
-                    break;
-                }
-                case "rotate": {
-                    Vec3 axis  = vec3From("axis",  Vec3(0, 1, 0));
-                    Vec3 pivot = vec3From("pivot", Vec3(0, 0, 0));
-                    float angle = floatFrom("angle", 0);
-                    auto m = pivotRotationMatrix(pivot, axis, angle);
-                    foreach (i; 0 .. mesh.vertices.length)
-                        if (vmask[i]) {
-                            auto v0 = Vec4(mesh.vertices[i].x,
-                                           mesh.vertices[i].y,
-                                           mesh.vertices[i].z, 1.0f);
-                            auto v1 = mulMV(m, v0);
-                            mesh.vertices[i] = Vec3(v1.x, v1.y, v1.z);
-                        }
-                    break;
-                }
-                case "scale": {
-                    Vec3 f     = vec3From("factor", Vec3(1, 1, 1));
-                    Vec3 pivot = vec3From("pivot",  Vec3(0, 0, 0));
-                    auto m = pivotScaleMatrix(pivot, f.x, f.y, f.z);
-                    foreach (i; 0 .. mesh.vertices.length)
-                        if (vmask[i]) {
-                            auto v0 = Vec4(mesh.vertices[i].x,
-                                           mesh.vertices[i].y,
-                                           mesh.vertices[i].z, 1.0f);
-                            auto v1 = mulMV(m, v0);
-                            mesh.vertices[i] = Vec3(v1.x, v1.y, v1.z);
-                        }
-                    break;
-                }
-                default:
-                    throw new Exception("invalid kind '" ~ kind ~
-                                        "', expected translate/rotate/scale");
-            }
-
-            gpu.upload(mesh);
-            vertexCache.invalidate();
-            faceCache.invalidate();
-            edgeCache.invalidate();
+            auto cmd = cast(MeshTransform)reg.commandFactories["mesh.transform"]();
+            cmd.setKind(kind);
+            cmd.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
+            cmd.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
+            cmd.setAngle (floatFrom("angle", 0.0f));
+            cmd.setFactor(vec3From("factor", Vec3(1, 1, 1)));
+            cmd.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
+            if (!cmd.apply())
+                throw new Exception("mesh.transform did not apply");
+            history.record(cmd);
         });
 
+        // Phase A.5: dispatch /api/reset through SceneReset command.
+        // Note: scene.reset is undoable but since /api/reset is also used
+        // by tests to bring vibe3d to a fresh state, we may want a way
+        // to NOT push it onto the stack — handled via cmd.isUndoable in
+        // future if needed.
         httpServer.setResetHandler((string primitiveType) {
-            switch (primitiveType) {
-                case "lshape":     mesh = makeLShape();    break;
-                case "diamond":    mesh = makeDiamond();   break;
-                case "octahedron": mesh = makeOctahedron();break;
-                case "":
-                case "cube":
-                default:        mesh = makeCube();    break;
-            }
-            cameraView.reset();
-            mesh.resetSelection();
-            editMode = EditMode.Vertices;
-            setActiveTool(null);
-            gpu.upload(mesh);
-            vertexCache.resize(mesh.vertices.length);
-            vertexCache.invalidate();
-            faceCache.resize(mesh.vertices.length, mesh.faces.length);
-            faceCache.invalidate();
-            edgeCache.resize(mesh.edges.length);
-            edgeCache.invalidate();
+            auto cmd = cast(SceneReset)reg.commandFactories["scene.reset"]();
+            cmd.setPrimitive(primitiveType);
+            if (!cmd.apply())
+                throw new Exception("scene.reset did not apply");
+            history.record(cmd);
         });
     }
 
