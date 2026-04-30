@@ -466,6 +466,99 @@ NEW endpoints:
 - `GET /api/history` → list of (label, timestamp) for current undo
   stack. Useful for tests + Edit menu rendering.
 
+### Refactor: legacy HTTP handlers → Command system
+
+Current state of HTTP endpoints in `source/http_server.d` /
+`source/app.d`:
+
+| Endpoint | Path | Goes through Command? |
+|---|---|---|
+| `/api/command` | dispatch by `id` → `commandFactories[id]` → `apply()` | ✅ yes |
+| `/api/select` | direct `setSelectionHandler` callback | ❌ no |
+| `/api/transform` | direct `setTransformHandler` callback | ❌ no |
+| `/api/reset` | direct `setResetHandler` callback | ❌ no |
+| `/api/play-events*` | event log replay (separate concern) | n/a — meta |
+| `/api/model`, `/api/selection`, `/api/camera`, `/api/bevvert`, `/api/recorded-events` | read-only queries | n/a — non-mutating |
+
+The three direct-callback endpoints (`/api/select`, `/api/transform`,
+`/api/reset`) bypass the Command system entirely. Each has its own
+ad-hoc dispatch + main-thread synchronization (`pendingXfKind`,
+`pendingSelMode`, `resetPendingType`) — duplicating the bookkeeping
+that `commandHandler` already does for `/api/command`.
+
+For undo/redo to be uniform, every mutating endpoint must produce a
+Command instance that lands on the history stack. **Phase A.1**
+unifies them by:
+
+1. **`mesh.select`** command (replaces `/api/select` direct path):
+   - Params: `mode` (vertices/edges/polygons), `indices`, optional
+     `additive`, `replace`, `toggle` flags.
+   - `apply()`: snapshot prior selection (already the
+     `SelectionSnapshot` struct from §"Selection / edit-mode undo"),
+     change editMode + selection arrays.
+   - `revert()`: restore from snapshot.
+   - `/api/select` HTTP endpoint becomes a thin shim that builds
+     `MeshSelect` from the JSON and dispatches via the same
+     command pipeline as `/api/command`.
+
+2. **`transform.move` / `transform.rotate` / `transform.scale`**
+   commands (replace `/api/transform` direct path):
+   - Currently `transformHandler` switches on `kind` ∈ {move, rotate,
+     scale}. Each becomes its own Command.
+   - `apply()` snapshots the affected vertices (or the transform
+     deltas, since transforms are reversible by inversion).
+   - `revert()` applies the inverse transform.
+   - `/api/transform` becomes a shim too.
+
+3. **`scene.reset`** command (replaces `/api/reset` direct path):
+   - Params: `primitive` (cube/diamond/octahedron/lshape/...)
+   - `apply()`: snapshot the entire pre-reset mesh + selection +
+     edit-mode + camera; replace with the chosen primitive.
+   - `revert()`: restore from full snapshot. (Heavy — but reset is
+     a discrete user action, not a continuous edit, so the snapshot
+     cost is paid once.)
+   - `/api/reset` becomes a shim.
+   - **Note**: optional flag `clear_history: true` to make a reset
+     ALSO wipe the undo stack — useful for tests and "fresh start"
+     UX. Default false.
+
+Benefits:
+
+- **Single audit surface**: Phase B walks one command set, not three
+  parallel dispatch paths.
+- **Uniform undo**: every HTTP-driven action is undoable by default.
+  Tests can do `select → bevel → undo → undo → assert original`
+  without special-casing the selection step.
+- **Less duplicated synchronization**: the
+  `pendingXfKind` / `pendingSelMode` / `resetPendingType` fields
+  collapse into the existing `pendingCmdId` + `pendingCmdParams`
+  mechanism that `/api/command` already uses.
+- **Cleaner test harness**: `vibe3d_dump.d` (in
+  `tools/blender_diff/` and `tools/modo_diff/`) currently uses two
+  different request shapes — `/api/select` for selection, then
+  `/api/command` for the operation. With the refactor, both go
+  through `/api/command`, simplifying the helper.
+
+Implementation cost:
+
+- `mesh.select`: ~1 day (logic exists in `selectionHandler` callback;
+  wrap as Command).
+- `transform.{move,rotate,scale}`: ~2 days (depends on what
+  `transformHandler` does — likely a delta-based math helper plus
+  three thin Commands).
+- `scene.reset`: ~1 day (snapshot the whole state).
+- HTTP shim updates: ~0.5 day.
+- Update `tools/*/vibe3d_dump.d` to use the unified path: ~0.5 day.
+
+**Total: ~5 days, runs IN PARALLEL with Phase A or just before
+Phase B.** Without it, Phase B's per-command audit needs to special-
+case three legacy paths AND deal with the duplicated synchronization.
+With it, Phase B audits one uniform set of commands.
+
+This refactor doesn't change the wire protocol (`/api/select`
+JSON body stays the same; the endpoint just dispatches differently
+internally). Existing tests keep passing without edits.
+
 ### Memory & performance
 
 Concerns:
@@ -506,7 +599,30 @@ Concerns:
    `revert()`), `source/app.d` (dispatcher + key bindings),
    `source/http_server.d` (3 endpoints).
 
-2. **Phase B — Per-command snapshot/revert audit.** Walk every
+2. **Phase A.5 — Unify legacy HTTP handlers as Commands.** Refactor
+   `/api/select`, `/api/transform`, `/api/reset` from direct callbacks
+   into Command-system shims (see §"Refactor: legacy HTTP handlers
+   → Command system" above). Three new commands:
+   - `mesh.select` (replaces `selectionHandler`)
+   - `transform.move` / `transform.rotate` / `transform.scale`
+     (replaces `transformHandler`)
+   - `scene.reset` (replaces `resetHandler`)
+
+   The existing HTTP endpoints stay (same wire protocol) but
+   internally dispatch through the unified Command path. Collapses
+   3 duplicated main-thread synchronization mechanisms
+   (`pendingXfKind`, `pendingSelMode`, `resetPendingType`) into the
+   one already used by `/api/command` (`pendingCmdId` /
+   `pendingCmdParams`).
+
+   Test: existing tests keep passing unchanged (wire protocol
+   unchanged); new `tests/test_select_undo.d` etc. verify undo
+   round-trip for the unified commands.
+
+   Effort: 5 days. **Run BEFORE Phase B**, otherwise Phase B has to
+   special-case three legacy paths.
+
+3. **Phase B — Per-command snapshot/revert audit.** Walk every
    existing command:
 
    - `mesh.bevel` (`MeshBevel`): snapshot is BevelOp; revert calls
@@ -552,8 +668,18 @@ Concerns:
 
    Effort: 2 days.
 
-**Total: ~2 weeks**, dominated by per-command audit + tool
-refactor.
+**Total: ~3 weeks**, dominated by Phase A.5 (HTTP unification),
+Phase B (per-command audit), and Phase C (BevelTool refire
+integration). Each phase is independently testable.
+
+| Phase | Effort | Gating |
+|---|---|---|
+| A. Command.revert() + CommandHistory + HTTP undo/redo | 2 days | none |
+| A.5. Legacy HTTP handlers → Commands | 5 days | needs A |
+| B. Per-command snapshot/revert audit | 3 days | needs A.5 |
+| C. Tool refire integration (BevelTool + transform tools) | 6 days | needs B |
+| D. Selection coalescing | 2 days | needs A.5 |
+| E. UI polish (Edit menu, History panel) | 2 days | needs C |
 
 ## Test strategy
 
