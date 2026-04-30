@@ -28,6 +28,8 @@ panels:
         buttons:
           - { label: Delete, action: { kind: command, id: mesh.delete } }
           - { label: Remove, action: { kind: command, id: mesh.remove } }
+          - { label: Merge, action: { kind: command, id: vert.merge } }
+          - { label: Join,  action: { kind: command, id: vert.join } }
   - title: Selection
     items:
       - title: Grow / Shrink

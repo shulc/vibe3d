@@ -1,0 +1,15 @@
+{
+  "_comment": "vert.merge range:fixed dist:0.2 on two NEARBY verts. Preop moves v0 to (0.4,-0.5,-0.5) so it's 0.1 away from v1=(0.5,-0.5,-0.5); selecting both and running vert.merge with dist:0.2 welds them. Result: 7 verts; faces using both v0 and v1 (back, bottom) lose one boundary vert each → quad → triangle.",
+  "preops": [
+    {"op": "move_vertex", "from": [-0.5, -0.5, -0.5], "to": [0.4, -0.5, -0.5]}
+  ],
+  "ops": [
+    {
+      "op": "vert.merge",
+      "range": "fixed",
+      "dist": 0.2,
+      "vertices": [[0.4, -0.5, -0.5], [0.5, -0.5, -0.5]]
+    }
+  ],
+  "tolerance": 0.001
+}

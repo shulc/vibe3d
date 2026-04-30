@@ -245,6 +245,40 @@ def run_delete_or_remove(op, kind):
     # parity work needed.
 
 
+def run_vert_merge(op):
+    """vert.merge — collects the case's `vertices` (coord list), selects
+    them, and runs MODO's vert.merge with the same `range`/`dist`/`keep`
+    arguments the case specifies."""
+    mesh = get_active_mesh()
+    lx.eval("select.typeFrom vertex")
+    lx.eval("select.drop vertex")
+    for i, vc in enumerate(op["vertices"]):
+        v = find_vertex(mesh, vc)
+        if i == 0: v.select(replace=True)
+        else:      v.select()
+    range_  = op.get("range", "auto")
+    dist    = float(op.get("dist", 0.001))
+    keep    = bool(op.get("keep", False))
+    lx.eval("vert.merge range:%s dist:%f keep:%s" %
+            (range_, dist, "true" if keep else "false"))
+
+
+def run_vert_join(op):
+    """vert.join — same selection scheme, MODO command honors `average`
+    and `keep`."""
+    mesh = get_active_mesh()
+    lx.eval("select.typeFrom vertex")
+    lx.eval("select.drop vertex")
+    for i, vc in enumerate(op["vertices"]):
+        v = find_vertex(mesh, vc)
+        if i == 0: v.select(replace=True)
+        else:      v.select()
+    avg  = bool(op.get("average", True))
+    keep = bool(op.get("keep", False))
+    lx.eval("vert.join average:%s keep:%s" %
+            ("true" if avg else "false", "true" if keep else "false"))
+
+
 def run_op(op):
     kind = op["op"]
     if kind == "polygon_bevel":
@@ -253,6 +287,10 @@ def run_op(op):
         run_move_vertex(op)
     elif kind == "delete" or kind == "remove":
         run_delete_or_remove(op, kind)
+    elif kind == "vert.merge":
+        run_vert_merge(op)
+    elif kind == "vert.join":
+        run_vert_join(op)
     else:
         raise NotImplementedError("modo_dump: unsupported op '%s'" % kind)
 

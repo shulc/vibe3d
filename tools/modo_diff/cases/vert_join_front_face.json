@@ -1,0 +1,16 @@
+{
+  "_comment": "vert.join average:true on the 4 corners of the front face. They collapse to the front-face centroid (0,0,0.5). The front face becomes 1-vertex (degenerate) and is dropped; the 4 side faces (right/top/left/bottom) each lose 2 corners to the centroid → become triangles. Back face untouched. Result: 5 verts, 5 faces (1 quad + 4 tris).",
+  "ops": [
+    {
+      "op": "vert.join",
+      "average": true,
+      "vertices": [
+        [-0.5, -0.5,  0.5],
+        [ 0.5, -0.5,  0.5],
+        [ 0.5,  0.5,  0.5],
+        [-0.5,  0.5,  0.5]
+      ]
+    }
+  ],
+  "tolerance": 0.001
+}

@@ -130,6 +130,90 @@ struct Mesh {
     /// vertices that two BoundVerts (in possibly different BevVerts)
     /// happen to slide onto the same world-space point — the natural
     /// outcome when re-beveling on top of an already-overshot cap.
+    /// Weld vertices marked true in `mask` whose pairwise squared distance
+    /// is below `epsSq`. Verts outside the mask are not candidates for
+    /// either side of a weld pair. Faces that collapse to fewer than 3
+    /// unique verts are dropped (degenerate). Edge list rebuilt; selection
+    /// arrays cleared. Returns the number of verts welded into another.
+    ///
+    /// MODO equivalent: `vert.merge range:fixed dist:eps keep:false` on
+    /// the selected verts. epsSq=1e-12 + all-true mask matches the
+    /// existing weldCoincidentVertices() behavior (used by edge bevel).
+    size_t weldVerticesByMask(in bool[] mask, double epsSq) {
+        if (vertices.length < 2) return 0;
+        if (mask.length != vertices.length) return 0;
+        int[] remap;
+        remap.length = vertices.length;
+        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
+        foreach (i; 0 .. vertices.length) {
+            if (!mask[i]) continue;
+            if (remap[i] != cast(int)i) continue;
+            foreach (j; i + 1 .. vertices.length) {
+                if (!mask[j]) continue;
+                if (remap[j] != cast(int)j) continue;
+                Vec3 d = vertices[i] - vertices[j];
+                if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
+                    remap[j] = cast(int)i;
+            }
+        }
+        size_t welded = 0;
+        foreach (i; 0 .. vertices.length)
+            if (remap[i] != cast(int)i) ++welded;
+        if (welded == 0) return 0;
+
+        uint[][] newFaces;
+        bool[]   newSubpatch;
+        int[]    newOrder;
+        newFaces.reserve(faces.length);
+        foreach (fi, ref face; faces) {
+            uint[] f;
+            f.reserve(face.length);
+            foreach (vid; face) {
+                uint mapped = (vid < remap.length) ? cast(uint)remap[vid] : vid;
+                if (f.length == 0 || f[$ - 1] != mapped) f ~= mapped;
+            }
+            if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
+            if (f.length >= 3) {
+                newFaces    ~= f;
+                newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
+                newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+            }
+        }
+        faces              = newFaces;
+        isSubpatch         = newSubpatch;
+        faceSelectionOrder = newOrder;
+        selectedFaces.length = faces.length;
+        selectedFaces[]      = false;
+
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref face; faces)
+            foreach (k; 0 .. face.length)
+                addEdge(face[k], face[(k + 1) % face.length]);
+        selectedEdges.length      = edges.length;
+        selectedEdges[]           = false;
+        edgeSelectionOrder.length = edges.length;
+        compactUnreferenced();
+        ++mutationVersion;
+        return welded;
+    }
+
+    /// Move every vertex marked true in `mask` to `target`. No welding
+    /// happens here; the verts merely coincide in space. Combine with
+    /// weldVerticesByMask() to collapse them into one. Used by
+    /// `vert.join` (set target = centroid or first-selected) before the
+    /// weld pass.
+    void collapseVerticesByMask(in bool[] mask, Vec3 target) {
+        if (mask.length != vertices.length) return;
+        bool any = false;
+        foreach (i; 0 .. mask.length) {
+            if (!mask[i]) continue;
+            vertices[i] = target;
+            any = true;
+        }
+        if (any) ++mutationVersion;
+    }
+
     size_t weldCoincidentVertices(double epsSq = 1e-12) {
         if (vertices.length < 2) return 0;
         int[] remap;

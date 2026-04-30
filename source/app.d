@@ -58,6 +58,8 @@ import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
+import commands.mesh.vert_merge : MeshVertMerge;
+import commands.mesh.vert_join  : MeshVertJoin;
 import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
@@ -455,6 +457,21 @@ void main(string[] args) {
     // render loop). Toggled by the history.show command, wired below.
     bool showHistoryPanel = false;
 
+    // ----- Per-command argument dialogs -----------------------------------
+    // MODO surfaces an options panel when the user invokes a command via
+    // the menu / button without explicit args. We mirror that for vert.merge
+    // and vert.join: clicking the button opens a modal dialog where the
+    // user picks args, then OK fires the command. Cancel does nothing.
+    // Persistent across frames so values stick between invocations.
+    bool   pendingVertMergeDialog = false;
+    string vmRange  = "auto";        // "auto" or "fixed"
+    float  vmDist   = 0.001f;
+    bool   vmKeep   = false;
+
+    bool pendingVertJoinDialog = false;
+    bool vjAverage = true;
+    bool vjKeep    = false;
+
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to
     // the same gpu/caches the tool mutates. Tools call beginEdit() at drag
@@ -534,6 +551,12 @@ void main(string[] args) {
     reg.commandFactories["mesh.remove"] = () => cast(Command)
         new MeshRemove(&mesh, cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["vert.merge"] = () => cast(Command)
+        new MeshVertMerge(&mesh, cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["vert.join"] = () => cast(Command)
+        new MeshVertJoin(&mesh, cameraView, editMode, &gpu,
+                         &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.select"] = () => cast(Command)
         new MeshSelect(&mesh, cameraView, editMode, &editMode);
     reg.commandFactories["mesh.transform"] = () => cast(Command)
@@ -794,6 +817,18 @@ void main(string[] args) {
                         }
                         vxe.setEdit(ids, bef, aft, "Edit");
                     }
+                    // vert.merge — params: range ("auto"|"fixed"), dist (float), keep (bool)
+                    if (auto vm = cast(MeshVertMerge)cmd) {
+                        if ("range" in pj && pj["range"].type == JSONType.string)
+                            vm.setRange(pj["range"].str);
+                        if ("dist"  in pj) vm.setDist(jsonNumber(pj["dist"]));
+                        if ("keep"  in pj) vm.setKeep(pj["keep"].type == JSONType.true_);
+                    }
+                    // vert.join — params: average (bool), keep (bool)
+                    if (auto vj = cast(MeshVertJoin)cmd) {
+                        if ("average" in pj) vj.setAverage(pj["average"].type == JSONType.true_);
+                        if ("keep"    in pj) vj.setKeep   (pj["keep"]   .type == JSONType.true_);
+                    }
                 }
             }
 
@@ -978,6 +1013,19 @@ void main(string[] args) {
         }
     }
 
+    // Intercept commands that surface an args dialog (MODO equivalent: the
+    // popup that appears when invoking a command from a menu/button without
+    // explicit arguments). Returns true if the dialog has been opened — the
+    // caller then SKIPS its normal runCommand path. Returns false for all
+    // other commands.
+    bool tryOpenArgsDialog(string commandId) {
+        switch (commandId) {
+            case "vert.merge": pendingVertMergeDialog = true; return true;
+            case "vert.join":  pendingVertJoinDialog  = true; return true;
+            default: return false;
+        }
+    }
+
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // YAML-driven shortcut lookup (tool, command, editmode).
         string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
@@ -987,7 +1035,8 @@ void main(string[] args) {
                 return;
             }
             if (auto id = canon in shortcuts.commandIdByCanon) {
-                runCommand(reg.commandFactories[*id]());
+                if (!tryOpenArgsDialog(*id))
+                    runCommand(reg.commandFactories[*id]());
                 return;
             }
             if (auto id = canon in shortcuts.editModeByCanon) {
@@ -1876,7 +1925,7 @@ void main(string[] args) {
                 if (renderStyledButton(btn.label, sc, on, isCommand, ImVec2(-1, 0))) {
                     if (btn.action.kind == ActionKind.tool)
                         activateToolById(btn.action.id);
-                    else
+                    else if (!tryOpenArgsDialog(btn.action.id))
                         runCommand(reg.commandFactories[btn.action.id]());
                 }
             }
@@ -2078,6 +2127,68 @@ void main(string[] args) {
             // Honor the [x] close button on the window.
             if (!open) showHistoryPanel = false;
             popPanelChromeStyle();
+        }
+
+        // ---- vert.merge args dialog ----
+        // Triggered by clicking the Merge button (or pressing the keyboard
+        // shortcut) — same args MODO surfaces in its modal popup: range
+        // (Automatic / Fixed), distance (visible only with Fixed), and
+        // Keep 1-Vertex Polygons. OK fires the command via runCommand;
+        // Cancel closes without doing anything.
+        if (pendingVertMergeDialog) {
+            ImGui.OpenPopup("Merge Vertices");
+            pendingVertMergeDialog = false;
+        }
+        if (ImGui.BeginPopupModal("Merge Vertices", null,
+                                   ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.Text("Range:");
+            if (ImGui.RadioButton("Automatic", vmRange == "auto"))  vmRange = "auto";
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Fixed",     vmRange == "fixed")) vmRange = "fixed";
+
+            // Distance only meaningful for Fixed; gray it out otherwise so
+            // the user sees the value but can't edit (matches MODO).
+            if (vmRange != "fixed") ImGui.BeginDisabled();
+            ImGui.DragFloat("Distance", &vmDist, 0.001f, 0.0001f, 100.0f, "%.4f");
+            if (vmRange != "fixed") ImGui.EndDisabled();
+
+            ImGui.Checkbox("Keep 1-Vertex Polygons", &vmKeep);
+
+            if (ImGui.Button("OK")) {
+                auto cmd = cast(MeshVertMerge)reg.commandFactories["vert.merge"]();
+                cmd.setRange(vmRange);
+                cmd.setDist (vmDist);
+                cmd.setKeep (vmKeep);
+                runCommand(cmd);
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel")) ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+        }
+
+        // ---- vert.join args dialog ----
+        if (pendingVertJoinDialog) {
+            ImGui.OpenPopup("Join Vertices");
+            pendingVertJoinDialog = false;
+        }
+        if (ImGui.BeginPopupModal("Join Vertices", null,
+                                   ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.Checkbox("Average", &vjAverage);
+            ImGui.Checkbox("Keep 1-Vertex Polygons", &vjKeep);
+
+            if (ImGui.Button("OK")) {
+                auto cmd = cast(MeshVertJoin)reg.commandFactories["vert.join"]();
+                cmd.setAverage(vjAverage);
+                cmd.setKeep   (vjKeep);
+                runCommand(cmd);
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel")) ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
         }
 
         // ShowDemoWindow();

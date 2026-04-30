@@ -264,6 +264,43 @@ void runDeleteOrRemove(JSONValue op, string commandId) {
         throw new Exception(commandId ~ " failed: " ~ resp.toString());
 }
 
+// Select verts by coord list and dispatch a vert.* command. Used by
+// vert.merge / vert.join cases — the `params` JSON mirrors the
+// command's argument schema.
+void runVertCommand(JSONValue op, string commandId) {
+    auto model = parseJSON(get(url("/api/model")));
+    int[] indices;
+    foreach (v; op["vertices"].array)
+        indices ~= findVertexIndex(model, toVec(v));
+    string idxStr;
+    foreach (i, idx; indices) {
+        if (i > 0) idxStr ~= ",";
+        idxStr ~= idx.to!string;
+    }
+    auto sel = postJson("/api/select",
+        `{"mode":"vertices","indices":[` ~ idxStr ~ `]}`);
+    if (sel["status"].str != "ok")
+        throw new Exception("select verts failed: " ~ sel.toString());
+
+    string params;
+    if (commandId == "vert.merge") {
+        string range_ = ("range" in op) ? op["range"].str : "auto";
+        double dist   = ("dist"  in op) ? op["dist"].floating : 0.001;
+        bool   keep   = ("keep"  in op) ? (op["keep"].type == JSONType.true_) : false;
+        params = `"range":"` ~ range_ ~ `","dist":` ~ dist.to!string
+               ~ `,"keep":` ~ (keep ? "true" : "false");
+    } else if (commandId == "vert.join") {
+        bool avg   = ("average" in op) ? (op["average"].type == JSONType.true_) : true;
+        bool keep  = ("keep"    in op) ? (op["keep"]   .type == JSONType.true_) : false;
+        params = `"average":` ~ (avg  ? "true" : "false")
+               ~ `,"keep":`   ~ (keep ? "true" : "false");
+    }
+    auto resp = postJson("/api/command",
+        `{"id":"` ~ commandId ~ `","params":{` ~ params ~ `}}`);
+    if (resp["status"].str != "ok")
+        throw new Exception(commandId ~ " failed: " ~ resp.toString());
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
         case "bevel":         runBevel(op);      break;
@@ -273,6 +310,8 @@ void runOp(JSONValue op) {
         case "polygon_bevel": runPolyBevel(op);  break;
         case "delete":        runDeleteOrRemove(op, "mesh.delete"); break;
         case "remove":        runDeleteOrRemove(op, "mesh.remove"); break;
+        case "vert.merge":    runVertCommand(op, "vert.merge"); break;
+        case "vert.join":     runVertCommand(op, "vert.join");  break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }
