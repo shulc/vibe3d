@@ -238,6 +238,12 @@ def run_delete_or_remove(op, kind):
     else:
         raise NotImplementedError("delete/remove kind: %s" % kind)
 
+    # Verified empirically (query layerservice {verts,edges,polys} ?
+    # selected all return None after delete/remove): MODO clears the
+    # entire selection across every component type. vibe3d's
+    # deleteFacesByMask + removeEdgesByMask do the same — no extra
+    # parity work needed.
+
 
 def run_op(op):
     kind = op["op"]
