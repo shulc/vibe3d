@@ -18,7 +18,8 @@ import mesh;
 //        new[i] = center + (orig[i] - center) * insertScale
 //                        + faceNormal * shiftAmount
 //      where center = face centroid and faceNormal = unit cross of the first
-//      two face edges.
+//      two face edges. PER-FACE center/normal is used unconditionally — the
+//      same semantics whether group mode is on or off (matches Blender).
 //
 // Group mode (groupPolygons=true): adjacent selected faces share new vertices
 // at their shared boundary, AND their internal shared edges are removed
@@ -28,11 +29,32 @@ import mesh;
 // Approximate Blender analogue: bmesh.ops.inset_individual (group=false) or
 // inset_region (group=true), with the new face vertices then moved via the
 // same insertScale/shiftAmount formula.
+//
+// Lifecycle: applyPolyBevel returns a PolyBevelOp that can be passed to:
+//   - updatePolyBevelPositions: re-slide new verts on every drag without
+//     rebuilding topology (interactive tool path).
+//   - revertPolyBevel: restore the mesh to its pre-apply state (interactive
+//     tool path on tool deactivate or parameter reset).
 // ---------------------------------------------------------------------------
 
 struct PolyBevelOp {
-    int[][] perFaceNewVerts;   // per-original-face new mesh vertex IDs
-    int[]   perFaceOrigIdx;    // index into mesh.faces of the (now top) face
+    struct FaceData {
+        Vec3   center;          // face centroid (pre-apply)
+        Vec3   normal;          // unit face normal (pre-apply)
+        Vec3[] origPos;         // pre-apply positions of the N face corners
+        int[]  newVerts;        // mesh vertex IDs of the new (top) ring
+        int    origFaceIdx;     // index in mesh.faces of the (now top) face
+        uint[] origFaceVerts;   // pre-apply vertex IDs of the face's corners
+    }
+    FaceData[] faces;
+
+    // Pre-apply mesh state for revert.
+    size_t    origVertCount;
+    size_t    origFaceCount;
+    uint[2][] origEdges;
+    bool[]    origSelectedEdges;
+    int[]     origEdgeOrder;
+    bool      groupPolygons;
 }
 
 PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
@@ -40,6 +62,12 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
                             bool groupPolygons)
 {
     PolyBevelOp op;
+    op.origVertCount     = mesh.vertices.length;
+    op.origFaceCount     = mesh.faces.length;
+    op.origEdges         = mesh.edges.dup;
+    op.origSelectedEdges = mesh.selectedEdges.dup;
+    op.origEdgeOrder     = mesh.edgeSelectionOrder.dup;
+    op.groupPolygons     = groupPolygons;
     if (selFaceIdx.length == 0) return op;
 
     bool[ulong] internalEdgeSet;
@@ -147,10 +175,53 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
                           cast(uint)newVerts[next], cast(uint)newVerts[i]]);
         }
 
-        op.perFaceNewVerts ~= newVerts;
-        op.perFaceOrigIdx  ~= origFi;
+        PolyBevelOp.FaceData fd;
+        fd.center        = center;
+        fd.normal        = faceNormal;
+        fd.origPos       = origPos;
+        fd.newVerts      = newVerts;
+        fd.origFaceIdx   = origFi;
+        fd.origFaceVerts = origFaceVerts;
+        op.faces ~= fd;
     }
 
     mesh.syncSelection();
     return op;
+}
+
+// Re-slide every new vertex of an applied poly bevel to (insertScale,
+// shiftAmount) without rebuilding topology. Per-face center/normal are
+// captured at apply time and reused on every update — the user's drag of
+// the gizmo only changes the two scalar parameters.
+void updatePolyBevelPositions(Mesh* mesh, ref const PolyBevelOp op,
+                               float insertScale, float shiftAmount)
+{
+    foreach (ref fd; op.faces) {
+        int N = cast(int)fd.newVerts.length;
+        foreach (i; 0 .. N) {
+            Vec3 orig = fd.origPos[i];
+            int  vid  = fd.newVerts[i];
+            if (vid < 0 || vid >= cast(int)mesh.vertices.length) continue;
+            mesh.vertices[vid] = Vec3(
+                fd.center.x + (orig.x - fd.center.x) * insertScale + fd.normal.x * shiftAmount,
+                fd.center.y + (orig.y - fd.center.y) * insertScale + fd.normal.y * shiftAmount,
+                fd.center.z + (orig.z - fd.center.z) * insertScale + fd.normal.z * shiftAmount,
+            );
+        }
+    }
+}
+
+// Restore the mesh to its pre-apply state.
+void revertPolyBevel(Mesh* mesh, ref const PolyBevelOp op)
+{
+    foreach (ref fd; op.faces) {
+        if (fd.origFaceIdx >= 0 && fd.origFaceIdx < cast(int)mesh.faces.length)
+            mesh.faces[fd.origFaceIdx] = fd.origFaceVerts.dup;
+    }
+    mesh.vertices.length    = op.origVertCount;
+    mesh.faces.length       = op.origFaceCount;
+    mesh.edges              = op.origEdges.dup;
+    mesh.selectedEdges      = op.origSelectedEdges.dup;
+    mesh.edgeSelectionOrder = op.origEdgeOrder.dup;
+    mesh.syncSelection();
 }

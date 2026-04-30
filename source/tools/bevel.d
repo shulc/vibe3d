@@ -11,6 +11,7 @@ import math;
 import shader;
 import drag;
 import bevel;
+import poly_bevel;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -48,31 +49,13 @@ private:
     Vec3 gizmoRight;    // unit vector: perpendicular to normal
 
     // ---- Polygon bevel parameters ----
-    float shiftAmount   = 0.0f;
-    float insertScale   = 1.0f;
-    bool  groupPolygons = false;
-
-    Vec3 groupCenter;
-    Vec3 groupNormal;
+    float       shiftAmount   = 0.0f;
+    float       insertScale   = 1.0f;
+    bool        groupPolygons = false;
+    PolyBevelOp polyOp;
 
     // ---- Topology snapshot (shared by polygon and edge bevel) ----
     bool bevelApplied = false;
-
-    struct BevelFaceData {
-        Vec3[]  origPos;
-        int[]   newVerts;
-        Vec3    center;
-        Vec3    normal;
-        int     origFaceIdx;
-        uint[]  origFaceVerts;
-    }
-    BevelFaceData[] bevelFaces;
-
-    size_t    bevelVertStart;
-    size_t    bevelFaceStart;
-    uint[2][] edgesBeforeBevel;
-    bool[]    selEdgesBeforeBevel;
-    int[]     edgeOrderBeforeBevel;
 
     // ---- Edge bevel parameters ----
     float          ebWidth      = 0.0f;
@@ -116,7 +99,7 @@ public:
     override void activate() {
         active       = true;
         bevelApplied = false;
-        bevelFaces   = [];
+        polyOp       = PolyBevelOp.init;
         shiftAmount  = 0.0f;
         insertScale  = 1.0f;
         dragHandle   = -1;
@@ -517,16 +500,9 @@ private:
     }
 
     void revertPolyBevelTopology() {
-        foreach (ref bfd; bevelFaces)
-            mesh.faces[bfd.origFaceIdx] = bfd.origFaceVerts;
-        mesh.vertices.length    = bevelVertStart;
-        mesh.faces.length       = bevelFaceStart;
-        mesh.edges              = edgesBeforeBevel;
-        mesh.selectedEdges      = selEdgesBeforeBevel;
-        mesh.edgeSelectionOrder = edgeOrderBeforeBevel;
+        poly_bevel.revertPolyBevel(mesh, polyOp);
+        polyOp       = PolyBevelOp.init;
         bevelApplied = false;
-        bevelFaces   = [];
-        mesh.syncSelection();
     }
 
     void recomputeCenter() {
@@ -565,151 +541,43 @@ private:
     }
 
     void applyPolyBevelTopology() {
-        bevelFaces     = [];
-        bevelApplied   = true;
-        groupCenter    = gizmoCenter;
-        groupNormal    = gizmoNormal;
-        bevelVertStart = mesh.vertices.length;
-        bevelFaceStart = mesh.faces.length;
+        bevelApplied = true;
 
-        edgesBeforeBevel     = mesh.edges.dup;
-        selEdgesBeforeBevel  = mesh.selectedEdges.dup;
-        edgeOrderBeforeBevel = mesh.edgeSelectionOrder.dup;
-
+        // Use mesh's faceSelectionOrder so the user's selection order
+        // controls which face "wins" at shared corners under group=true
+        // (first-face-wins via groupVertMap inside applyPolyBevel).
+        import std.algorithm.sorting : sort;
         int[] selFaceIdx;
         if (mesh.hasAnySelectedFaces()) {
             foreach (fi, sel; mesh.selectedFaces)
                 if (sel && fi < mesh.faces.length) selFaceIdx ~= cast(int)fi;
+            int orderOf(int fi) {
+                return (fi < cast(int)mesh.faceSelectionOrder.length)
+                    ? mesh.faceSelectionOrder[fi] : 0;
+            }
+            sort!((a, b) => orderOf(a) < orderOf(b))(selFaceIdx);
         } else {
             foreach (fi; 0 .. mesh.faces.length)
                 selFaceIdx ~= cast(int)fi;
         }
 
-        bool[ulong] internalEdgeSet;
-        int[uint]   groupVertMap;
+        // Anchor topology with insert=1, shift=0 (= new verts at orig
+        // positions); subsequent updatePolyBevelVertices calls slide them
+        // to the user-selected (insertScale, shiftAmount).
+        polyOp = poly_bevel.applyPolyBevel(mesh, selFaceIdx, 1.0f, 0.0f,
+                                            groupPolygons);
 
-        if (groupPolygons) {
-            bool[ulong] selEdges;
-            foreach (fi; selFaceIdx) {
-                auto face = mesh.faces[fi];
-                int M = cast(int)face.length;
-                foreach (i; 0 .. M) {
-                    ulong key = (cast(ulong)face[i] << 32) | face[(i + 1) % M];
-                    selEdges[key] = true;
-                }
-            }
-            foreach (key; selEdges.byKey()) {
-                uint a = cast(uint)(key >> 32);
-                uint b = cast(uint)(key & 0xFFFF_FFFF);
-                ulong rev = (cast(ulong)b << 32) | a;
-                if (rev in selEdges)
-                    internalEdgeSet[key] = true;
-            }
-
-            if (internalEdgeSet.length > 0) {
-                bool[ulong] internalPairs;
-                foreach (key; internalEdgeSet.byKey()) {
-                    uint a = cast(uint)(key >> 32);
-                    uint b = cast(uint)(key & 0xFFFF_FFFF);
-                    uint mn = a < b ? a : b, mx = a < b ? b : a;
-                    internalPairs[(cast(ulong)mn << 32) | mx] = true;
-                }
-                uint[2][] kept;
-                bool[]    keptSel;
-                int[]     keptOrd;
-                foreach (ei, e; mesh.edges) {
-                    uint mn = e[0] < e[1] ? e[0] : e[1];
-                    uint mx = e[0] < e[1] ? e[1] : e[0];
-                    if (((cast(ulong)mn << 32) | mx) in internalPairs) continue;
-                    kept    ~= e;
-                    keptSel ~= ei < mesh.selectedEdges.length     ? mesh.selectedEdges[ei]      : false;
-                    keptOrd ~= ei < mesh.edgeSelectionOrder.length ? mesh.edgeSelectionOrder[ei] : 0;
-                }
-                mesh.edges              = kept;
-                mesh.selectedEdges      = keptSel;
-                mesh.edgeSelectionOrder = keptOrd;
-            }
-        }
-
-        foreach (origFi; selFaceIdx) {
-            uint[] origFaceVerts = mesh.faces[origFi].dup;
-            int N = cast(int)origFaceVerts.length;
-            if (N < 3) continue;
-
-            Vec3[] origPos = new Vec3[](N);
-            foreach (i; 0 .. N)
-                origPos[i] = mesh.vertices[origFaceVerts[i]];
-
-            Vec3 center = Vec3(0, 0, 0);
-            foreach (p; origPos) center += p;
-            float invN = 1.0f / cast(float)N;
-            center = center * invN;
-
-            Vec3 e1 = origPos[1] - origPos[0];
-            Vec3 e2 = origPos[2] - origPos[0];
-            Vec3 cr = cross(e1, e2);
-            float clen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-            Vec3 faceNormal = clen > 1e-6f
-                ? cr / clen
-                : Vec3(0, 1, 0);
-
-            int[] newVerts = new int[](N);
-            foreach (i; 0 .. N) {
-                if (groupPolygons) {
-                    uint ov = origFaceVerts[i];
-                    if (auto p = ov in groupVertMap) {
-                        newVerts[i] = *p;
-                    } else {
-                        int nv = cast(int)mesh.addVertex(origPos[i]);
-                        newVerts[i]      = nv;
-                        groupVertMap[ov] = nv;
-                    }
-                } else {
-                    newVerts[i] = cast(int)mesh.addVertex(origPos[i]);
-                }
-            }
-
-            uint[] topFace = new uint[](N);
-            foreach (i; 0 .. N) topFace[i] = cast(uint)newVerts[i];
-            mesh.faces[origFi] = topFace;
-
-            foreach (i; 0 .. N) {
-                int next = (i + 1) % N;
-                if (groupPolygons) {
-                    ulong key = (cast(ulong)origFaceVerts[i] << 32) | origFaceVerts[next];
-                    if (key in internalEdgeSet) continue;
-                }
-                mesh.addFace([origFaceVerts[i],        origFaceVerts[next],
-                              cast(uint)newVerts[next], cast(uint)newVerts[i]]);
-            }
-
-            BevelFaceData bfd;
-            bfd.origPos       = origPos;
-            bfd.newVerts      = newVerts;
-            bfd.center        = center;
-            bfd.normal        = faceNormal;
-            bfd.origFaceIdx   = origFi;
-            bfd.origFaceVerts = origFaceVerts;
-            bevelFaces       ~= bfd;
-        }
-
-        mesh.syncSelection();
+        // Apply current scrubber values. For a freshly-applied bevel both
+        // are at their identity values, so this is a no-op; but if the
+        // user already moved them before the topology existed, this
+        // reflects those values immediately.
+        poly_bevel.updatePolyBevelPositions(mesh, polyOp,
+                                             insertScale, shiftAmount);
     }
 
     void updatePolyBevelVertices() {
-        foreach (ref bfd; bevelFaces) {
-            Vec3 useCenter = groupPolygons ? groupCenter : bfd.center;
-            Vec3 useNormal = groupPolygons ? groupNormal : bfd.normal;
-            int N = cast(int)bfd.newVerts.length;
-            foreach (i; 0 .. N) {
-                Vec3 orig = bfd.origPos[i];
-                mesh.vertices[bfd.newVerts[i]] = Vec3(
-                    useCenter.x + (orig.x - useCenter.x) * insertScale + useNormal.x * shiftAmount,
-                    useCenter.y + (orig.y - useCenter.y) * insertScale + useNormal.y * shiftAmount,
-                    useCenter.z + (orig.z - useCenter.z) * insertScale + useNormal.z * shiftAmount,
-                );
-            }
-        }
+        poly_bevel.updatePolyBevelPositions(mesh, polyOp,
+                                             insertScale, shiftAmount);
     }
 
 }
