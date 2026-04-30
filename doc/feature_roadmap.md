@@ -79,6 +79,8 @@ revert logic explicitly — many already have it as a private helper);
 
 ### 0.2 Undo / redo
 
+**See `doc/undo_redo_plan.md` for the detailed design.**
+
 Two stacks (`undo`, `redo`). On `apply()` push to undo + clear redo.
 On `Ctrl+Z`: pop undo entry, run its `revert(mesh, payload)`, push to
 redo. On `Ctrl+Y` / `Ctrl+Shift+Z`: pop redo, re-apply, push to undo.
