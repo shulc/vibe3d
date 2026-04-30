@@ -362,6 +362,11 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
         else                                      sc.newVid = -1;
     }
 
+    // Side-wall quads + the new top inset face introduce edges that aren't
+    // in mesh.edges. Without this rebuild, edge-mode selection / picking /
+    // edge-bevel can't see the new edges. Mirror what edge bevel does at
+    // the end of applyEdgeBevelTopology.
+    mesh.rebuildEdgesFromFaces();
     mesh.syncSelection();
     return op;
 }

@@ -615,7 +615,7 @@ BevelOp applyEdgeBevelTopology(Mesh* mesh, const(bool)[] selectedEdges,
     foreach (vert; bvByVert.keys)
         op.bevVerts ~= bvByVert[vert];
 
-    rebuildEdgesFromFaces(mesh);
+    mesh.rebuildEdgesFromFaces();
     mesh.buildLoops();
     mesh.syncSelection();
 
@@ -2792,19 +2792,5 @@ private void replaceVertInFace(Mesh* mesh, uint faceIdx, uint oldV, uint newV)
         if (vi == oldV) { vi = newV; return; }
 }
 
-private void rebuildEdgesFromFaces(Mesh* mesh)
-{
-    mesh.edges = [];
-    bool[ulong] seen;
-    foreach (face; mesh.faces) {
-        foreach (i, _; face) {
-            uint u = face[i];
-            uint w = face[(i + 1) % face.length];
-            ulong key = edgeKey(u, w);
-            if (key !in seen) {
-                seen[key] = true;
-                mesh.edges ~= [u, w];
-            }
-        }
-    }
-}
+// rebuildEdgesFromFaces moved to source/mesh.d as a public Mesh method
+// (Mesh.rebuildEdgesFromFaces). Used by both edge bevel and poly bevel.

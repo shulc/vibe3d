@@ -91,6 +91,26 @@ struct Mesh {
         if (isSubpatch.length           < faces.length)    isSubpatch.length           = faces.length;
     }
 
+    // Rebuild the deduplicated `edges` array from the current `faces`.
+    // Call after any topology op that adds/removes faces (poly bevel, edge
+    // bevel) so the edge list stays in sync. Selection arrays are resized
+    // afterward via syncSelection.
+    void rebuildEdgesFromFaces() {
+        edges = [];
+        bool[ulong] seen;
+        foreach (face; faces) {
+            foreach (i, _; face) {
+                uint u = face[i];
+                uint w = face[(i + 1) % face.length];
+                ulong key = edgeKey(u, w);
+                if (key !in seen) {
+                    seen[key] = true;
+                    edges ~= [u, w];
+                }
+            }
+        }
+    }
+
     uint addVertex(Vec3 v) {
         vertices ~= v;
         ++mutationVersion;
