@@ -367,6 +367,11 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
     // edge-bevel can't see the new edges. Mirror what edge bevel does at
     // the end of applyEdgeBevelTopology.
     mesh.rebuildEdgesFromFaces();
+    // Loops (half-edge structure) drive face-loop walks, edge twin lookup,
+    // and many selection/picking helpers. Without rebuilding, post-bevel
+    // mesh has stale loop indices → select.loop on selected faces walks
+    // the OLD topology. Same convention as edge bevel.
+    mesh.buildLoops();
     mesh.syncSelection();
     return op;
 }
