@@ -105,9 +105,15 @@ unittest { // WIDTH/OFFSET equivalence: WIDTH at √2 ≈ same offset as OFFSET=
     selectEdge(0);
     runBevel(sqrt(2.0f), "width");
     auto m = parseJSON(get("http://localhost:8080/api/model"));
-    foreach (i; [0, 8])
-        assert(abs(sliceDist0(m, i) - 1.0) < 1e-4,
-            "WIDTH=√2 should give offset 1.0, got " ~ sliceDist0(m, i).to!string);
+    // Slide=1.0 lands the BV at v_0 exactly on cube v_1 (and the BV at v_3
+    // on cube v_2). MeshBevel's coincident-vertex weld then folds those
+    // pairs, so we can't index a fixed BV slot. v_0 (index 0) is the
+    // reused-orig endpoint and is the canonical (lowest-indexed) survivor
+    // of its weld cluster — it sits at v_1's position, distance 1.0 from
+    // v_0_orig. That alone confirms slide==1.0.
+    assert(abs(sliceDist0(m, 0) - 1.0) < 1e-4,
+        "WIDTH=√2 should slide v_0 by 1.0, got "
+        ~ sliceDist0(m, 0).to!string);
 }
 
 unittest { // unknown mode string returns error

@@ -1,0 +1,29 @@
+{
+  "_comment": "Sister to cube_corner2_seg6_rebevel_polyline.json but with seg=3 in 1st bevel and seg=2 in 2nd. Mirrors test_bevel_capseg_rebevel_seg2.d. Post-Phase-5: topology matches Blender bit-for-bit (27V/20F, arity {4:16, 7:2, 6:2}). Remaining XFAIL is geometric drift only (~0.005-0.012 worst position diff), same residual as cube_corner2_seg6_rebevel_polyline — a non-topological bevel-position issue.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5], "v1": [0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, 0.5], "v1": [-0.5, 0.5, 0.5]}
+      ],
+      "width": 0.165,
+      "segments": 3,
+      "superR": 2.0
+    },
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, 0.5, -0.5], "v1": [0.5, 0.5, 0.335]},
+        {"v0": [0.5, 0.5, 0.335], "v1": [0.477894, 0.477894, 0.4175]},
+        {"v0": [0.477894, 0.477894, 0.4175], "v1": [0.4175, 0.4175, 0.477894]},
+        {"v0": [0.4175, 0.4175, 0.477894], "v1": [0.335, 0.335, 0.5]}
+      ],
+      "width": 0.05,
+      "segments": 2,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001,
+  "expected_fail": true
+}

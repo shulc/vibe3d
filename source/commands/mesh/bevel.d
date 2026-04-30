@@ -88,6 +88,34 @@ class MeshBevel : Command {
         BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
                                              w, wR, seg, superR, miterInner);
         updateEdgeBevelPositions(mesh, op, 1.0f);
+        // Fold any vertices that slid onto the same world-space point — the
+        // typical outcome of re-beveling cap edges of an earlier bevel that
+        // overshot the clamp limit (see test_bevel_rebevel.d). Without this
+        // pass two coincident verts persist; faces around them no longer
+        // share edges, leaving boundary holes in the surface.
+        // Skip when the user requested a width=0 bevel (pure topology, no
+        // slide): every new BoundVert sits at origPos by definition, and
+        // weld'ing it onto the original corner would collapse the bevel
+        // quad we just emitted — breaking width=0 test fixtures.
+        float effW = (w > wR) ? w : wR;
+        if (effW > 1e-4f && mesh.weldCoincidentVertices(1e-6) > 0) {
+            // Weld preserves face indices when no face collapses below 3
+            // distinct verts (the only realistic case for bevel output),
+            // so op.bevelQuadFaces is still valid. Edges were rebuilt from
+            // remapped face content, so recompute mesh-edge indices.
+            op.bevelQuadEdges.length = 0;
+            foreach (fi; op.bevelQuadFaces) {
+                if (fi < 0 || fi >= cast(int)mesh.faces.length) continue;
+                auto face = mesh.faces[fi];
+                if (face.length < 3) continue;
+                foreach (i, _; face) {
+                    uint a = face[i];
+                    uint b = face[(i + 1) % face.length];
+                    uint eidx = mesh.edgeIndex(a, b);
+                    if (eidx != ~0u) op.bevelQuadEdges ~= cast(int)eidx;
+                }
+            }
+        }
         // Remove orphan vertices left by the topology operation (e.g. the
         // BEV-BEV BoundVert at reflex selCount=2 with arc miter, where the
         // patch geometry routes around the original vertex).

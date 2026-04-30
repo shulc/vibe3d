@@ -1,0 +1,18 @@
+{
+  "_comment": "CC subdivide cube once, then bevel a single edge between two valence-4 verts (face point of +Z face to +Y/+Z edge midpoint). Mirrors test_bevel_valence4.d. Phase 2 of doc/bevel_blender_refactor_plan.md closed the geometric gap — vibe3d now allocates 1 edge-BV per endpoint at slide-distance `width` along the back-EH (Blender's bmesh_bevel.cc:3064 analogue), splices through F_OTHERs face-walking-keyed (bmesh_bevel.cc:6850), and routes the cap-at-v triangle through the edge-BV.",
+  "preops": [
+    {"op": "subdivide"}
+  ],
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.0, 0.375, 0.375], "v1": [0.0, 0.0, 0.5]}
+      ],
+      "width": 0.15,
+      "segments": 1,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

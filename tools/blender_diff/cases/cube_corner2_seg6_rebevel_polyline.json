@@ -1,0 +1,32 @@
+{
+  "_comment": "After bevel(corner+seg=6), re-bevel a 7-edge polyline running from cube vertex v_2 down through the cap arc to v_8. Mirrors test_bevel_capseg_rebevel.d. EXPECTED FAIL: vibe3d leaves 30 boundary edges (open holes) on the second pass; Blender's edge-keyed BoundVert ownership closes the topology. Documents Phase 4 of doc/bevel_blender_refactor_plan.md.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5], "v1": [0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, 0.5], "v1": [-0.5, 0.5, 0.5]}
+      ],
+      "width": 0.165,
+      "segments": 6,
+      "superR": 2.0
+    },
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, 0.5, -0.5],          "v1": [0.5, 0.5, 0.335]},
+        {"v0": [0.5, 0.5, 0.335],         "v1": [0.494378, 0.494378, 0.377705]},
+        {"v0": [0.494378, 0.494378, 0.377705], "v1": [0.477894, 0.477894, 0.4175]},
+        {"v0": [0.477894, 0.477894, 0.4175],   "v1": [0.451673, 0.451673, 0.451673]},
+        {"v0": [0.451673, 0.451673, 0.451673], "v1": [0.4175, 0.4175, 0.477894]},
+        {"v0": [0.4175, 0.4175, 0.477894],     "v1": [0.377705, 0.377705, 0.494378]},
+        {"v0": [0.377705, 0.377705, 0.494378], "v1": [0.335, 0.335, 0.5]}
+      ],
+      "width": 0.05,
+      "segments": 1,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001,
+  "expected_fail": true
+}

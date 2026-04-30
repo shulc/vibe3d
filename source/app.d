@@ -594,11 +594,13 @@ void main(string[] args) {
                            bv.origPos.x, bv.origPos.y, bv.origPos.z);
             foreach (i, eh; bv.edges) {
                 if (i > 0) json ~= ",";
-                json ~= format(`{"edgeIdx":%d,"isBev":%s,"fnext":%d,"fprev":%d}`,
+                json ~= format(`{"edgeIdx":%d,"isBev":%s,"fnext":%d,"fprev":%d`
+                               ~ `,"leftBV":%d,"rightBV":%d}`,
                                cast(int)eh.edgeIdx,
                                eh.isBev ? "true" : "false",
                                cast(int)eh.fnext,
-                               cast(int)eh.fprev);
+                               cast(int)eh.fprev,
+                               eh.leftBV, eh.rightBV);
             }
             json ~= `],"boundVerts":[`;
             foreach (i, bnd; bv.boundVerts) {

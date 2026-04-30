@@ -144,9 +144,106 @@ def run_op(op):
         bmesh.ops.subdivide_edges(bm, edges=[e], cuts=1)
         bmesh.update_edit_mesh(mesh)
     elif op["op"] == "subdivide":
-        # Match vibe3d's mesh.subdivide (Catmull-Clark on the whole mesh)
-        bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=1, smooth=1.0,
-                                  use_smooth_even=True)
+        # Match vibe3d's mesh.subdivide (Catmull-Clark via source/mesh.d:catmullClark).
+        # Blender's bmesh.ops.subdivide_edges and bpy.ops.mesh.subdivide both
+        # produce different vertex placements (corners stay or get pushed
+        # onto a sphere). The Subsurf modifier is closer but uses limit-
+        # surface positions. Vibe3D's CC is the textbook formulation:
+        #   face point      = face centroid
+        #   edge point      = (a + b + f0 + f1) / 4   (interior)
+        #                   = (a + b) / 2             (boundary)
+        #   updated vertex  = (F + 2R + (n-3)v) / n   (interior, valence n)
+        # We reproduce it manually below; see source/mesh.d:1220 for the
+        # reference D implementation.
+        from mathutils import Vector
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        old_verts_pos = [Vector(v.co) for v in bm.verts]
+        old_face_verts = [[v.index for v in f.verts] for f in bm.faces]
+        old_edges = [(e.verts[0].index, e.verts[1].index) for e in bm.edges]
+        old_edge_face_count = [len(e.link_faces) for e in bm.edges]
+        old_vert_faces = [[f.index for f in v.link_faces] for v in bm.verts]
+        old_vert_edges = [[e.index for e in v.link_edges] for v in bm.verts]
+        old_face_edges = [[e.index for e in f.edges] for f in bm.faces]
+
+        nV = len(old_verts_pos); nE = len(old_edges); nF = len(old_face_verts)
+
+        face_pts = []
+        for f in old_face_verts:
+            c = Vector()
+            for vi in f: c += old_verts_pos[vi]
+            face_pts.append(c / len(f))
+
+        edge_to_faces = [[] for _ in range(nE)]
+        for fi, fe in enumerate(old_face_edges):
+            for ei in fe: edge_to_faces[ei].append(fi)
+        edge_pts = []
+        for ei, (a, b) in enumerate(old_edges):
+            if old_edge_face_count[ei] == 2:
+                f0, f1 = edge_to_faces[ei][0], edge_to_faces[ei][1]
+                edge_pts.append((old_verts_pos[a] + old_verts_pos[b]
+                                 + face_pts[f0] + face_pts[f1]) / 4)
+            else:
+                edge_pts.append((old_verts_pos[a] + old_verts_pos[b]) / 2)
+
+        new_orig = []
+        for vi in range(nV):
+            n = len(old_vert_faces[vi])
+            v_co = old_verts_pos[vi]
+            if n == 0:
+                new_orig.append(v_co); continue
+            boundary = any(old_edge_face_count[ei] < 2 for ei in old_vert_edges[vi])
+            if boundary:
+                sum_v = Vector(v_co); cnt = 1
+                for ei in old_vert_edges[vi]:
+                    if old_edge_face_count[ei] >= 2: continue
+                    a, b = old_edges[ei]
+                    sum_v += (old_verts_pos[a] + old_verts_pos[b]) / 2; cnt += 1
+                new_orig.append(sum_v / cnt)
+            else:
+                F = Vector()
+                for fi in old_vert_faces[vi]: F += face_pts[fi]
+                F /= n
+                R = Vector()
+                m = len(old_vert_edges[vi])
+                for ei in old_vert_edges[vi]:
+                    a, b = old_edges[ei]
+                    R += (old_verts_pos[a] + old_verts_pos[b]) / 2
+                R /= m
+                new_orig.append((F + 2*R + (n - 3) * v_co) / n)
+
+        bm.clear()
+        new_verts = []
+        for p in new_orig:    new_verts.append(bm.verts.new(p))
+        fp_offset = nV
+        for p in face_pts:    new_verts.append(bm.verts.new(p))
+        ep_offset = nV + nF
+        for p in edge_pts:    new_verts.append(bm.verts.new(p))
+        bm.verts.ensure_lookup_table()
+
+        for fi, fv in enumerate(old_face_verts):
+            fe = old_face_edges[fi]
+            k = len(fv)
+            ev_to_e = {}
+            for ei in fe:
+                a, b = old_edges[ei]
+                ev_to_e[(min(a, b), max(a, b))] = ei
+            for i in range(k):
+                v_curr = fv[i]
+                v_next = fv[(i + 1) % k]
+                v_prev = fv[(i - 1) % k]
+                e_next = ev_to_e[(min(v_curr, v_next), max(v_curr, v_next))]
+                e_prev = ev_to_e[(min(v_prev, v_curr), max(v_prev, v_curr))]
+                quad = [
+                    new_verts[v_curr],
+                    new_verts[ep_offset + e_next],
+                    new_verts[fp_offset + fi],
+                    new_verts[ep_offset + e_prev],
+                ]
+                try: bm.faces.new(quad)
+                except ValueError: pass
         bmesh.update_edit_mesh(mesh)
     elif op["op"] == "move_vertex":
         from_co = tuple(op["from"])
@@ -165,6 +262,7 @@ def run_op(op):
                 f"superR={super_r}: only circular profile (superR=2.0) supported")
         miter_outer = op.get("miter_outer", "SHARP").upper()
         miter_inner = op.get("miter_inner", "SHARP").upper()
+        clamp_overlap = bool(op.get("clamp_overlap", True))
         select_edges(bm, op["edges"])
         bmesh.update_edit_mesh(mesh)
         bpy.ops.mesh.bevel(
@@ -175,6 +273,7 @@ def run_op(op):
             affect='EDGES',
             miter_outer=miter_outer,
             miter_inner=miter_inner,
+            clamp_overlap=clamp_overlap,
         )
     else:
         raise ValueError(f"unknown op: {op['op']}")

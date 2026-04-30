@@ -66,6 +66,34 @@ unittest { // BEVVERT: every EdgeHalf points to two distinct face indices
     }
 }
 
+unittest { // Phase 1: bev EH carries both leftBV/rightBV, indexing valid BoundVerts
+    // doc/bevel_blender_refactor_plan.md — Phase 1 deliverable. populateBoundVerts
+    // populates EdgeHalf.leftBV/rightBV from the wedge ring; the bev EH is the
+    // one configuration where both are guaranteed to resolve (the BV pair
+    // flanking the bev edge always exists). Once Phase 4 wires these into
+    // strip emission this test guards the channel that replaces
+    // boundVertIdxForEh{,To}.
+    resetCube();
+    selectEdges([0]);
+    foreach (v; [0, 3]) {
+        auto bv = bevvert(v);
+        long bevIdx = bv["bevEdgeIdx"].integer;
+        assert(bevIdx >= 0);
+        auto eh = bv["edges"].array[bevIdx];
+        long lBV = eh["leftBV"].integer;
+        long rBV = eh["rightBV"].integer;
+        long M  = bv["boundVerts"].array.length;
+        assert(lBV >= 0 && lBV < M,
+            "v=" ~ v.to!string ~ " bev EH leftBV=" ~ lBV.to!string
+            ~ " out of range [0, " ~ M.to!string ~ ")");
+        assert(rBV >= 0 && rBV < M,
+            "v=" ~ v.to!string ~ " bev EH rightBV=" ~ rBV.to!string
+            ~ " out of range [0, " ~ M.to!string ~ ")");
+        assert(lBV != rBV,
+            "v=" ~ v.to!string ~ " bev EH must have distinct left/right BVs");
+    }
+}
+
 unittest { // BEVVERT: ring is CCW — e[i].fnext == e[(i+1)%N].fprev
     resetCube();
     selectEdges([0]);

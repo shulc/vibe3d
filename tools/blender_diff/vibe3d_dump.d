@@ -134,6 +134,12 @@ void runBevel(JSONValue op) {
         params ~= `,"superR":` ~ op["superR"].floating.to!string;
     if ("miter_inner" in op)
         params ~= `,"miter_inner":"` ~ op["miter_inner"].str.to!string ~ `"`;
+    // Honor `clamp_overlap` (Blender's default = false / interactive bevel
+    // doesn't clamp; vibe3d's MeshBevel.apply default = true). When the case
+    // pins it, mirror to vibe3d's `limit` parameter.
+    if ("clamp_overlap" in op)
+        params ~= `,"limit":` ~ (op["clamp_overlap"].type == JSONType.true_
+                                  ? "true" : "false");
     auto resp = postJson("/api/command",
         `{"id":"mesh.bevel","params":{` ~ params ~ `}}`);
     if (resp["status"].str != "ok")

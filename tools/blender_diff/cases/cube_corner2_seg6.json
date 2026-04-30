@@ -1,0 +1,16 @@
+{
+  "_comment": "Two cube edges meeting at corner v_6 (+X+Y+Z), beveled with seg=6 width=0.165. Mirrors the 1st bevel of test_bevel_capseg_rebevel.d. Tests selCount=2 valence=3 with multi-segment cap profile.",
+  "ops": [
+    {
+      "op": "bevel",
+      "edges": [
+        {"v0": [0.5, -0.5, 0.5], "v1": [0.5, 0.5, 0.5]},
+        {"v0": [0.5, 0.5, 0.5], "v1": [-0.5, 0.5, 0.5]}
+      ],
+      "width": 0.165,
+      "segments": 6,
+      "superR": 2.0
+    }
+  ],
+  "tolerance": 0.001
+}

@@ -97,6 +97,73 @@ struct Mesh {
         return cast(uint)(vertices.length - 1);
     }
 
+    /// Merge coincident vertices (within `epsSq` squared distance) by
+    /// remapping each later-indexed coincident vert onto the lowest-indexed
+    /// vert at that position. Face vertex references are rewritten;
+    /// consecutive duplicates that arise post-remap are dropped (so a quad
+    /// whose two adjacent corners merged becomes a triangle); faces that
+    /// fall below 3 distinct verts are removed entirely. The edge array is
+    /// rebuilt; edge selection is cleared. Welded vertices are left in
+    /// `vertices` (call `compactUnreferenced` afterwards to compact).
+    /// Returns the number of vertex remaps performed.
+    /// Used by edge bevel after `updateEdgeBevelPositions` to fold cap
+    /// vertices that two BoundVerts (in possibly different BevVerts)
+    /// happen to slide onto the same world-space point — the natural
+    /// outcome when re-beveling on top of an already-overshot cap.
+    size_t weldCoincidentVertices(double epsSq = 1e-12) {
+        if (vertices.length < 2) return 0;
+        int[] remap;
+        remap.length = vertices.length;
+        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
+        foreach (i; 0 .. vertices.length) {
+            if (remap[i] != cast(int)i) continue;
+            foreach (j; i + 1 .. vertices.length) {
+                if (remap[j] != cast(int)j) continue;
+                Vec3 d = vertices[i] - vertices[j];
+                if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
+                    remap[j] = cast(int)i;
+            }
+        }
+        size_t welded = 0;
+        foreach (i; 0 .. vertices.length)
+            if (remap[i] != cast(int)i) ++welded;
+        if (welded == 0) return 0;
+
+        uint[][] newFaces;
+        newFaces.reserve(faces.length);
+        foreach (ref face; faces) {
+            uint[] f;
+            f.reserve(face.length);
+            foreach (vid; face) {
+                uint mapped = (vid < remap.length) ? cast(uint)remap[vid] : vid;
+                if (f.length == 0 || f[$ - 1] != mapped) f ~= mapped;
+            }
+            // Wrap-around dup: last == first means the face cycles back to
+            // its start through a remapped corner.
+            if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
+            if (f.length >= 3) newFaces ~= f;
+        }
+        faces = newFaces;
+
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref face; faces)
+            foreach (k; 0 .. face.length)
+                addEdge(face[k], face[(k + 1) % face.length]);
+
+        selectedEdges.length = edges.length;
+        selectedEdges[] = false;
+        edgeSelectionOrder.length = edges.length;
+        // Face selection is potentially invalidated (face indices changed
+        // since collapsed faces are removed). Caller may re-derive.
+        if (selectedFaces.length > faces.length) selectedFaces.length = faces.length;
+        if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
+        if (isSubpatch.length > faces.length) isSubpatch.length = faces.length;
+
+        ++mutationVersion;
+        return welded;
+    }
+
     /// Remove vertices not referenced by any face. Updates all face vertex
     /// references via a remap table and re-derives the edges array. Returns
     /// the number of vertices removed.
