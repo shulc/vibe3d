@@ -9,11 +9,20 @@ import math;
 import handler : MoveHandler, BoxHandler, getGizmoScreenFraction, gizmoSize;
 import drag;
 import shader : Shader, LitShader;
+import command_history : CommandHistory;
+import commands.mesh.bevel_edit : MeshBevelEdit;
+import snapshot : MeshSnapshot;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import std.math : abs, sqrt;
+
+// Reuses the BevelTool factory type — both tools record a generic
+// (pre, post) MeshSnapshot pair via MeshBevelEdit, just with a different
+// label. The class is bevel-named for legacy reasons; rename once a third
+// caller appears.
+alias BoxEditFactory = MeshBevelEdit delegate();
 
 // ---------------------------------------------------------------------------
 // BoxTool — two-drag 3-D cuboid creation
@@ -70,6 +79,13 @@ private:
     int           heightHDragIdx  = -1;  // -1 = none, 0/1 = which handle is dragging
     bool          heightHHovered  = false;
 
+    // Phase C-followup: undo plumbing. Pre-commit mesh state is captured
+    // in deactivate() right before commitBase / commitCuboid mutates the
+    // cage; post-state is captured immediately after, and one
+    // MeshBevelEdit lands on history. Both nullable for legacy / tests.
+    CommandHistory  history;
+    BoxEditFactory  boxEditFactory;
+
 public:
     bool meshChanged;
 
@@ -93,6 +109,13 @@ public:
         foreach (h; heightH) h.destroy();
     }
 
+    /// Inject undo plumbing — called by app.d after construction.
+    /// commitBoxEdit() is a no-op when these aren't bound.
+    void setUndoBindings(CommandHistory h, BoxEditFactory factory) {
+        this.history        = h;
+        this.boxEditFactory = factory;
+    }
+
     override string name() const { return "Box"; }
 
     override void activate() {
@@ -107,12 +130,32 @@ public:
     }
 
     override void deactivate() {
+        // Decide what (if anything) is going to be committed; capture the
+        // pre-commit snapshot ONLY when we're about to mutate the cage,
+        // so an empty Idle deactivate doesn't pollute the undo stack.
+        bool willCommit = (state == BoxState.BaseSet)
+                       || (state >= BoxState.DrawingHeight && abs(height) > 1e-5f);
+
+        MeshSnapshot pre;
+        if (willCommit) pre = MeshSnapshot.capture(*mesh);
+
         if (state == BoxState.BaseSet)
             commitBase();
         else if (state >= BoxState.DrawingHeight && abs(height) > 1e-5f)
             commitCuboid();
         state = BoxState.Idle;
         previewGpu.destroy();
+
+        if (willCommit) commitBoxEdit(pre);
+    }
+
+    private void commitBoxEdit(MeshSnapshot pre) {
+        if (history is null || boxEditFactory is null) return;
+        if (!pre.filled) return;
+        auto cmd  = boxEditFactory();
+        auto post = MeshSnapshot.capture(*mesh);
+        cmd.setSnapshots(pre, post, "Create Box");
+        history.record(cmd);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {

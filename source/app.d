@@ -483,7 +483,11 @@ void main(string[] args) {
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
-    reg.toolFactories["box"]    = () => cast(Tool) new BoxTool(&mesh, &gpu, litShader);
+    reg.toolFactories["box"]    = () {
+        auto t = new BoxTool(&mesh, &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
 
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
