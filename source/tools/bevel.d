@@ -75,12 +75,13 @@ private:
     int[]     edgeOrderBeforeBevel;
 
     // ---- Edge bevel parameters ----
-    float          ebWidth   = 0.0f;
-    float          ebWidthR  = 0.0f;
+    float          ebWidth      = 0.0f;
+    float          ebWidthR     = 0.0f;
     bool           ebAsymmetric = false;
-    int            ebSeg     = 1;
-    float          ebSuperR  = 2.0f;
-    BevelWidthMode ebMode    = BevelWidthMode.Offset;
+    int            ebSeg        = 1;
+    float          ebSuperR     = 2.0f;
+    BevelWidthMode ebMode       = BevelWidthMode.Offset;
+    MiterPattern   ebMiterInner = MiterPattern.Sharp;
     BevelOp        ebOp;
 
     // ---- Drag state ----
@@ -334,6 +335,22 @@ public:
             ImGui.SameLine();
             if (ImGui.RadioButton("Percent##mode", modeIdx == 3)) pickMode(BevelWidthMode.Percent);
 
+            int miterIdx = cast(int)ebMiterInner;
+            ImGui.Text("Miter Inner:");
+            if (ImGui.RadioButton("Sharp##miter", miterIdx == 0)) {
+                if (ebMiterInner != MiterPattern.Sharp) {
+                    ebMiterInner = MiterPattern.Sharp;
+                    topologyDirty = true;
+                }
+            }
+            ImGui.SameLine();
+            if (ImGui.RadioButton("Arc##miter",   miterIdx == 1)) {
+                if (ebMiterInner != MiterPattern.Arc) {
+                    ebMiterInner = MiterPattern.Arc;
+                    topologyDirty = true;
+                }
+            }
+
             // Apply lazily on first user input from the property panel: any
             // width / mode / topology change implies "I want this bevel". If
             // the topology hasn't been built yet we build it now; otherwise
@@ -475,7 +492,8 @@ private:
         float wRRatio = (ebAsymmetric && ebWidth > 0.0f) ? (ebWidthR / ebWidth)
                                                           : 1.0f;
         ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, ebMode,
-                                             1.0f, wRRatio, ebSeg, ebSuperR);
+                                             1.0f, wRRatio, ebSeg, ebSuperR,
+                                             ebMiterInner);
 
         // Selection: bevel-quad edges replace the previously selected edge ring.
         mesh.clearEdgeSelection();
