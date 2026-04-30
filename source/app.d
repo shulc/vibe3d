@@ -925,6 +925,21 @@ void main(string[] args) {
         }
     }
 
+    // Run a Command through the same dispatch the HTTP /api/command path
+    // uses: refire-aware apply, history.record on success. Used by both
+    // keyboard shortcut and UI-button click sites so they're uniformly
+    // undoable. Silently no-ops on null / apply()-failure (e.g. file.load
+    // when the user cancels the native dialog).
+    void runCommand(Command cmd) {
+        if (cmd is null) return;
+        if (history.refireActive) {
+            history.fire(cmd);
+        } else {
+            if (cmd.apply())
+                history.record(cmd);
+        }
+    }
+
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // YAML-driven shortcut lookup (tool, command, editmode).
         string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
@@ -934,7 +949,7 @@ void main(string[] args) {
                 return;
             }
             if (auto id = canon in shortcuts.commandIdByCanon) {
-                reg.commandFactories[*id]().apply();
+                runCommand(reg.commandFactories[*id]());
                 return;
             }
             if (auto id = canon in shortcuts.editModeByCanon) {
@@ -1793,7 +1808,7 @@ void main(string[] args) {
                     if (btn.action.kind == ActionKind.tool)
                         activateToolById(btn.action.id);
                     else
-                        reg.commandFactories[btn.action.id]().apply();
+                        runCommand(reg.commandFactories[btn.action.id]());
                 }
             }
 

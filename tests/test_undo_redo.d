@@ -280,6 +280,31 @@ unittest { // mesh.subdivide: subdivides cube to 26 verts; undo → back to 8
         "verts not re-subdivided after redo");
 }
 
+unittest { // mesh.subdivide_faceted: same shape as Catmull-Clark, no smoothing
+    resetCube();
+    auto m = getModel();
+    int origVertCount = cast(int)m["vertices"].array.length;
+    int origFaceCount = cast(int)m["faces"].array.length;
+
+    postCommand(`{"id":"mesh.subdivide_faceted"}`);
+    m = getModel();
+    int subdVertCount = cast(int)m["vertices"].array.length;
+    assert(subdVertCount > origVertCount,
+        "faceted subdivide should grow verts");
+
+    assert(postUndo()["status"].str == "ok");
+    m = getModel();
+    assert(cast(int)m["vertices"].array.length == origVertCount,
+        "verts not restored after undo of faceted subdivide");
+    assert(cast(int)m["faces"].array.length == origFaceCount,
+        "faces not restored after undo of faceted subdivide");
+
+    assert(postRedo()["status"].str == "ok");
+    m = getModel();
+    assert(cast(int)m["vertices"].array.length == subdVertCount,
+        "verts not re-subdivided after redo");
+}
+
 unittest { // mesh.poly_bevel: select a face, bevel it, undo → cube restored
     resetCube();
     postSelect("polygons", [0]);  // back face
