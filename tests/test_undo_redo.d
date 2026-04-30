@@ -377,6 +377,59 @@ unittest { // /api/history returns {undo:[...], redo:[...]} with labels
 // Mixed sequence: select → transform → command → multiple undo/redo
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// history.undo / history.redo as commands (Ctrl+Z / Ctrl+Shift+Z dispatch
+// path: shortcuts.yaml maps to commandFactories[id]().apply()).
+// ---------------------------------------------------------------------------
+
+unittest { // history.undo via /api/command performs an undo
+    resetCube();
+    postSelect("vertices", [3, 4, 5]);
+    auto sel = getSelection();
+    assert(sel["selectedVertices"].array.length == 3,
+        "expected 3 selected verts before undo");
+
+    postCommand(`{"id":"history.undo"}`);
+    sel = getSelection();
+    assert(sel["selectedVertices"].array.length == 0,
+        "expected empty selection after history.undo command");
+}
+
+unittest { // history.redo via /api/command performs a redo
+    resetCube();
+    postSelect("vertices", [7]);
+    postCommand(`{"id":"history.undo"}`);   // undo the select
+    auto sel = getSelection();
+    assert(sel["selectedVertices"].array.length == 0, "post-undo state");
+
+    postCommand(`{"id":"history.redo"}`);
+    sel = getSelection();
+    assert(sel["selectedVertices"].array.length == 1
+        && sel["selectedVertices"].array[0].integer == 7,
+        "expected v7 selected after history.redo");
+}
+
+unittest { // history.undo doesn't push itself onto the stack
+    resetCube();
+    postSelect("vertices", [0]);
+    postSelect("vertices", [1]);  // top entry
+    int beforeRedo = redoStackSize();
+    assert(beforeRedo == 0, "fresh push clears redo");
+
+    // Undo via command — this should pop one entry, not create a new one.
+    postCommand(`{"id":"history.undo"}`);
+    auto sel = getSelection();
+    assert(sel["selectedVertices"].array.length == 1
+        && sel["selectedVertices"].array[0].integer == 0,
+        "should be back at v0 after one undo");
+
+    // The undo'd select.[1] is now on the redo stack — exactly 1 entry.
+    // If history.undo had pushed itself onto the undo stack, the redo
+    // would have been cleared and we'd see 0.
+    assert(redoStackSize() == 1,
+        "history.undo command must not pollute history; redo size should be 1");
+}
+
 unittest { // mixed: select v0, translate, subdivide, undo×3, redo×3
     resetCube();
     postSelect("vertices", [0]);

@@ -5,6 +5,10 @@ panels:
         buttons:
           - { label: Load, action: { kind: command, id: file.load } }
           - { label: Save, action: { kind: command, id: file.save } }
+      - title: History
+        buttons:
+          - { label: Redo, action: { kind: command, id: history.redo } }
+          - { label: Undo, action: { kind: command, id: history.undo } }
       - title: Transform
         buttons:
           - { label: Move,   action: { kind: tool, id: move } }

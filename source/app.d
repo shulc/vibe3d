@@ -56,9 +56,13 @@ import commands.mesh.poly_bevel;
 import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
 import commands.mesh.select;
+import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
+import commands.history.undo : HistoryUndo;
+import commands.history.redo : HistoryRedo;
+import snapshot : SelectionSnapshot;
 
 import command;
 import registry;
@@ -398,6 +402,14 @@ void main(string[] args) {
     bool    rmbDragging = false;
     ImVec2[] rmbPath;
 
+    // Phase C.x: interactive selection edit session. handleMouseButtonDown
+    // captures the selection-snapshot before any picking/lasso/clear happens;
+    // handleMouseButtonUp captures after, builds a MeshSelectionEdit, and
+    // records on history if anything actually changed.
+    SelectionSnapshot pendingSelBefore;
+    EditMode          pendingSelBeforeMode;
+    bool              pendingSelOpen = false;
+
     // Gizmo size: 9 levels linearly spaced from 0.1 to 1.0; default = middle (index 4).
     enum float[9] gizmoLevels = [0.10f, 0.2125f, 0.325f, 0.4375f, 0.55f,
                                   0.6625f, 0.775f, 0.8875f, 1.0f];
@@ -502,6 +514,10 @@ void main(string[] args) {
         new SceneReset(&mesh, cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache,
                        &editMode, &cameraView, () => setActiveTool(null));
+    reg.commandFactories["history.undo"] = () => cast(Command)
+        new HistoryUndo(&mesh, cameraView, editMode, history);
+    reg.commandFactories["history.redo"] = () => cast(Command)
+        new HistoryRedo(&mesh, cameraView, editMode, history);
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -932,20 +948,9 @@ void main(string[] args) {
             }
         }
 
-        // Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo. Phase A undo/redo;
-        // see doc/undo_redo_plan.md.
-        SDL_Keymod kmods = cast(SDL_Keymod)kev.keysym.mod;
-        bool kctrl  = (kmods & KMOD_CTRL)  != 0;
-        bool kshift = (kmods & KMOD_SHIFT) != 0;
-        if (kctrl && kev.keysym.sym == SDLK_z) {
-            if (kshift) history.redo();
-            else        history.undo();
-            return;
-        }
-        if (kctrl && kev.keysym.sym == SDLK_y) {
-            history.redo();
-            return;
-        }
+        // Ctrl+Z / Ctrl+Shift+Z are dispatched via shortcuts.yaml as the
+        // history.undo / history.redo commands (registered in commandFactories
+        // above) — see config/shortcuts.yaml.
 
         switch (kev.keysym.sym) {
             case SDLK_F1:
@@ -994,18 +999,57 @@ void main(string[] args) {
         }
     }
 
+    // Open an interactive selection edit session. Idempotent — repeated
+    // calls before commitInteractiveSelEdit() are no-ops. Snapshot must be
+    // captured BEFORE any pick/lasso/clear mutates the selection.
+    void beginInteractiveSelEdit() {
+        if (pendingSelOpen) return;
+        mesh.syncSelection();
+        pendingSelBefore     = SelectionSnapshot.capture(mesh);
+        pendingSelBeforeMode = editMode;
+        pendingSelOpen       = true;
+    }
+
+    // Close the session: capture post-state, build a MeshSelectionEdit and
+    // record it if anything actually changed (selection arrays differ or
+    // edit mode flipped). No-op when no session is open.
+    void commitInteractiveSelEdit() {
+        if (!pendingSelOpen) return;
+        scope(exit) pendingSelOpen = false;
+
+        mesh.syncSelection();
+        auto after = SelectionSnapshot.capture(mesh);
+
+        bool changed = (editMode != pendingSelBeforeMode)
+                    || pendingSelBefore.selectedVertices != after.selectedVertices
+                    || pendingSelBefore.selectedEdges    != after.selectedEdges
+                    || pendingSelBefore.selectedFaces    != after.selectedFaces;
+        if (!changed) return;
+
+        auto cmd = new MeshSelectionEdit(&mesh, cameraView, editMode, &editMode);
+        cmd.setBefore(pendingSelBefore, pendingSelBeforeMode);
+        cmd.setAfter (after,            editMode);
+        history.record(cmd);
+    }
+
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
             rmbDragging = true;
             rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
+            // RMB lasso mutates selection on mouseUp; snapshot now.
+            beginInteractiveSelEdit();
             return;
         }
         if (activeTool && activeTool.onMouseButtonDown(btn)) return;
         if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && activeTool is null) {
+            // Double-click loop / connect — these mutate selection. Wrap as
+            // an interactive edit so undo restores the prior selection.
+            beginInteractiveSelEdit();
             if (editMode == EditMode.Edges)
                 new SelectLoop(&mesh, cameraView, editMode).apply();
             else
                 new SelectConnect(&mesh, cameraView, editMode).apply();
+            commitInteractiveSelEdit();
             return;
         }
         if (btn.button == SDL_BUTTON_LEFT) {
@@ -1014,6 +1058,14 @@ void main(string[] args) {
             bool alt   = (mods & KMOD_ALT)   != 0;
             bool shift = (mods & KMOD_SHIFT)  != 0;
             bool anyToolActive = activeTool !is null;
+
+            // Capture pre-LMB selection snapshot now — BEFORE the bare-LMB
+            // clear-selection branch below could mutate. If LMB ends up
+            // being a camera drag (Alt / Ctrl+Alt / Alt+Shift), commit will
+            // see no change and skip recording. Tool-driven LMB doesn't
+            // need it (tools own their own undo plumbing).
+            if (!anyToolActive && !alt)
+                beginInteractiveSelEdit();
 
             if      (ctrl && alt)  dragMode = DragMode.Zoom;
             else if (alt && shift) dragMode = DragMode.Pan;
@@ -1180,6 +1232,8 @@ void main(string[] args) {
             }
             rmbDragging = false;
             rmbPath = null;
+            // RMB lasso commit — close the selection edit session.
+            commitInteractiveSelEdit();
             return;
         }
         if (activeTool) activeTool.onMouseButtonUp(btn);
@@ -1197,8 +1251,12 @@ void main(string[] args) {
                 edgeCache.invalidate();
             }
         }
-        if (btn.button == SDL_BUTTON_LEFT)
+        if (btn.button == SDL_BUTTON_LEFT) {
             dragMode = DragMode.None;
+            // LMB up — close any open selection edit session. If the LMB
+            // was a camera drag (no selection touched), commit is a no-op.
+            commitInteractiveSelEdit();
+        }
     }
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {

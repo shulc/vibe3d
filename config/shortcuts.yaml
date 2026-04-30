@@ -18,6 +18,8 @@ commands:
   viewport.fit:          A
   viewport.fit_selected: "Shift+A"
   mesh.subdivide:        "Shift+D"
+  history.undo:          "Ctrl+Z"
+  history.redo:          "Ctrl+Shift+Z"
 
 editmodes:
   vertices: "1"
