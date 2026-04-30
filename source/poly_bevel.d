@@ -51,6 +51,20 @@ struct PolyBevelOp {
     }
     FaceData[] faces;
 
+    // Multi-face shared corners (group mode only). Per shared origVid, the
+    // new mesh vertex ID + the constraint geometry (face normals and
+    // non-shared adjacent edges' inward perpendiculars). Recomputed once
+    // at apply time; updatePolyBevelPositions solves the 3×3 LSQ system
+    // per call so interactive insetAmount/shiftAmount drag-update produces
+    // the same MODO-style accumulated-shift placement as the initial apply.
+    struct SharedCornerData {
+        int    newVid;
+        Vec3   origV;
+        Vec3[] normals;
+        Vec3[] perps;
+    }
+    SharedCornerData[] sharedCorners;
+
     // Pre-apply mesh state for revert.
     size_t    origVertCount;
     size_t    origFaceCount;
@@ -230,6 +244,14 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
                 }
             }
             sharedNewPos[ov] = sharedCornerPos(V, normals, perps, inset, shift);
+            // Stash the constraint geometry keyed by origVid; resolve to
+            // newVid after the face-emission loop populates groupVertMap.
+            PolyBevelOp.SharedCornerData sc;
+            sc.newVid  = cast(int)ov;   // temporarily holds origVid
+            sc.origV   = V;
+            sc.normals = normals;
+            sc.perps   = perps;
+            op.sharedCorners ~= sc;
         }
 
         // Drop internal mesh edges (undirected) so the inset top is one
@@ -329,6 +351,17 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
         op.faces ~= fd;
     }
 
+    // Resolve sharedCorners' temporary origVid (in newVid field) to the
+    // actual newVid via groupVertMap, now that the face emission loop has
+    // populated it. updatePolyBevelPositions reads sharedCorners.newVid
+    // directly to overwrite the per-face polyInsetCorner result with the
+    // multi-face MODO-style accumulated position.
+    foreach (ref sc; op.sharedCorners) {
+        uint origVid = cast(uint)sc.newVid;
+        if (auto pNew = origVid in groupVertMap) sc.newVid = *pNew;
+        else                                      sc.newVid = -1;
+    }
+
     mesh.syncSelection();
     return op;
 }
@@ -337,6 +370,13 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
 // without rebuilding topology. Per-face origPos/normal are captured at
 // apply time and reused on every update — the user's drag of the gizmo
 // only changes the two scalar parameters.
+//
+// In group mode, vertices shared between 2+ selected faces are repositioned
+// AFTER the per-face pass by re-solving the multi-face least-squares system
+// stored in op.sharedCorners. This keeps interactive insetAmount/shiftAmount
+// drag-update consistent with the initial apply (MODO accumulated-shift
+// semantics) — without it, last-face-wins per-face polyInsetCorner gives
+// per-face shifts at shared corners instead of accumulated.
 void updatePolyBevelPositions(Mesh* mesh, ref const PolyBevelOp op,
                                float inset, float shift)
 {
@@ -348,6 +388,17 @@ void updatePolyBevelPositions(Mesh* mesh, ref const PolyBevelOp op,
             mesh.vertices[vid] = polyInsetCorner(fd.origPos, cast(int)i,
                                                   fd.normal, inset, shift);
         }
+    }
+    // Overwrite shared corners with the multi-face accumulated solution.
+    foreach (ref sc; op.sharedCorners) {
+        if (sc.newVid < 0 || sc.newVid >= cast(int)mesh.vertices.length)
+            continue;
+        Vec3[] rows;
+        float[] targets;
+        foreach (n; sc.normals) { rows ~= n; targets ~= shift; }
+        foreach (p; sc.perps)   { rows ~= p; targets ~= inset; }
+        Vec3 d = solve3x3LeastSquares(rows, targets, Vec3(0, 0, 0));
+        mesh.vertices[sc.newVid] = sc.origV + d;
     }
 }
 
