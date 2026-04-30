@@ -7,8 +7,9 @@ panels:
           - { label: Save, action: { kind: command, id: file.save } }
       - title: History
         buttons:
-          - { label: Redo, action: { kind: command, id: history.redo } }
-          - { label: Undo, action: { kind: command, id: history.undo } }
+          - { label: Redo,    action: { kind: command, id: history.redo } }
+          - { label: Undo,    action: { kind: command, id: history.undo } }
+          - { label: History, action: { kind: command, id: history.show } }
       - title: Transform
         buttons:
           - { label: Move,   action: { kind: tool, id: move } }

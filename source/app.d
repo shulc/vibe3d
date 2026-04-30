@@ -63,6 +63,7 @@ import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
+import commands.history.show : HistoryShow;
 import snapshot : SelectionSnapshot;
 
 import command;
@@ -448,6 +449,10 @@ void main(string[] args) {
     import command_history : CommandHistory;
     auto history = new CommandHistory();
 
+    // Visibility of the floating Command-History panel (drawn in the main
+    // render loop). Toggled by the history.show command, wired below.
+    bool showHistoryPanel = false;
+
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to
     // the same gpu/caches the tool mutates. Tools call beginEdit() at drag
@@ -536,6 +541,9 @@ void main(string[] args) {
         new HistoryUndo(&mesh, cameraView, editMode, history);
     reg.commandFactories["history.redo"] = () => cast(Command)
         new HistoryRedo(&mesh, cameraView, editMode, history);
+    reg.commandFactories["history.show"] = () => cast(Command)
+        new HistoryShow(&mesh, cameraView, editMode,
+                        () { showHistoryPanel = !showHistoryPanel; });
 
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
@@ -2029,6 +2037,34 @@ void main(string[] args) {
             if (ImGui.Begin("Tool Properties"))
                 activeTool.drawProperties();
             ImGui.End();
+            popPanelChromeStyle();
+        }
+
+        // ---- Command History (floating) ----
+        // Toggled by the history.show command. Lists undo entries (top
+        // = most recent) and redo entries below a separator. Read-only
+        // for now; click-to-jump is an obvious follow-up.
+        if (showHistoryPanel) {
+            pushPanelChromeStyle();
+            ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 130), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowSize(ImVec2(240, 320), ImGuiCond.FirstUseEver);
+            bool open = showHistoryPanel;
+            if (ImGui.Begin("Command History", &open)) {
+                auto undos = history.undoLabels;
+                auto redos = history.redoLabels;
+                ImGui.TextDisabled("Undo (%d)", cast(int)undos.length);
+                // Most-recent first — iterate in reverse so the top of the
+                // stack is at the top of the list.
+                foreach_reverse (l; undos)
+                    ImGui.BulletText("%s", l);
+                ImGui.Separator();
+                ImGui.TextDisabled("Redo (%d)", cast(int)redos.length);
+                foreach_reverse (l; redos)
+                    ImGui.BulletText("%s", l);
+            }
+            ImGui.End();
+            // Honor the [x] close button on the window.
+            if (!open) showHistoryPanel = false;
             popPanelChromeStyle();
         }
 
