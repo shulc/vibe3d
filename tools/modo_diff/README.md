@@ -55,8 +55,10 @@ MODO_NEXUS_CONTENT=/home/ashagarov/.luxology/Content
 | poly_bevel_top_face_pure_inset    | PASS | bit-for-bit |
 | poly_bevel_top_face_pure_extrude  | PASS | bit-for-bit |
 | poly_bevel_two_faces_individual   | PASS | bit-for-bit |
-| poly_bevel_two_faces_grouped      | XFAIL | vibe3d first-face-wins ≠ MODO accumulated-shift at shared corners |
+| poly_bevel_two_faces_grouped      | PASS | bit-for-bit (MODO-style accumulated shift) |
 | poly_bevel_irregular_quad         | PASS | bit-for-bit (non-square trapezoid) |
+
+**6/6 PASS** as of the shared-corner accumulator commit.
 
 ## Implementation notes
 
@@ -90,14 +92,19 @@ MODO 9 / `modo_cl` in headless mode has several quirks worth recording:
    accumulate over multiple runs — periodically `pkill -9 foundrycrashhandler`
    or accept them as harmless (they exit when the parent shell does).
 
-### Group mode divergence
+### Group mode shared-corner accumulator
 
-Vibe3D's `group=true` is **MODO-INSPIRED but not MODO-equivalent**.
-- Vibe3D: per-face center/normal + first-face-wins at shared corners.
-- MODO: per-face center/normal + **accumulated shift** from all faces
-  touching the shared corner.
+Vibe3D's `group=true` matches MODO 9 bit-for-bit. At every vertex shared
+between 2+ selected faces, the new position is the simultaneous
+(least-squares) solution of:
 
-The two-faces-grouped case is the simplest scenario where this
-diverges. To close that XFAIL we'd need a region-aware shared-corner
-solver (similar to Blender's `bmesh.ops.inset_region`). For now the
-single-face and individual-mode cases all pass bit-for-bit.
+```
+(P − V) · n_k = shift     for each face F_k incident to V
+(P − V) · p_j = inset     for each non-shared adjacent edge,
+                          where p_j is its inward perpendicular in
+                          the face plane.
+```
+
+This is solved via the 3×3 normal equations in `solve3x3LeastSquares`.
+For non-shared corners (single-face) the solver reduces to
+`offsetMeet` + face-normal shift (same result as polyInsetCorner).

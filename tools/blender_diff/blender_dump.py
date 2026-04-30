@@ -349,17 +349,95 @@ def run_op(op):
             target_faces.append(find_face(bm, target))
 
         # Internal edges (shared between two selected faces) — only for group.
-        internal_edges = set()
+        # Build under DIRECTED keys so we can ask "is the prev→V edge in F
+        # shared with another selected face?" by looking up F's winding.
+        internal_directed = set()
+        internal_undirected = set()
         if group:
             sel_face_set = set(f.index for f in target_faces)
+            sel_directed = set()
             for f in target_faces:
-                for e in f.edges:
-                    other = [lf for lf in e.link_faces if lf.index in sel_face_set
-                             and lf.index != f.index]
-                    if other:
-                        # Undirected key
-                        a, b = e.verts[0].index, e.verts[1].index
-                        internal_edges.add((min(a, b), max(a, b)))
+                fv = list(f.verts)
+                M = len(fv)
+                for i in range(M):
+                    sel_directed.add((fv[i].index, fv[(i + 1) % M].index))
+            for (a, b) in sel_directed:
+                if (b, a) in sel_directed:
+                    internal_directed.add((a, b))
+                    internal_undirected.add((min(a, b), max(a, b)))
+
+        # Build per-vertex adjacency among selected faces for MODO-style
+        # shared-corner accumulation (only for group=true).
+        vert_to_faces = {}  # vert_index → list of (face_obj, corner_idx)
+        if group:
+            for f in target_faces:
+                fv = list(f.verts)
+                for i, v in enumerate(fv):
+                    vert_to_faces.setdefault(v.index, []).append((f, i))
+
+        def solve3x3_lsq(rows, targets, fallback):
+            """Solve A·d = b in least-squares sense via 3×3 normal equations."""
+            AtA = [[0.0]*3 for _ in range(3)]
+            Atb = [0.0]*3
+            for row, t in zip(rows, targets):
+                for i in range(3):
+                    for j in range(3):
+                        AtA[i][j] += row[i] * row[j]
+                    Atb[i] += row[i] * t
+            det = (AtA[0][0]*(AtA[1][1]*AtA[2][2] - AtA[1][2]*AtA[2][1])
+                 - AtA[0][1]*(AtA[1][0]*AtA[2][2] - AtA[1][2]*AtA[2][0])
+                 + AtA[0][2]*(AtA[1][0]*AtA[2][1] - AtA[1][1]*AtA[2][0]))
+            if abs(det) < 1e-9:
+                return fallback
+            inv = 1.0 / det
+            dx = (Atb[0]*(AtA[1][1]*AtA[2][2] - AtA[1][2]*AtA[2][1])
+                - AtA[0][1]*(Atb[1]*AtA[2][2] - AtA[1][2]*Atb[2])
+                + AtA[0][2]*(Atb[1]*AtA[2][1] - AtA[1][1]*Atb[2]))
+            dy = (AtA[0][0]*(Atb[1]*AtA[2][2] - AtA[1][2]*Atb[2])
+                - Atb[0]*(AtA[1][0]*AtA[2][2] - AtA[1][2]*AtA[2][0])
+                + AtA[0][2]*(AtA[1][0]*Atb[2] - Atb[1]*AtA[2][0]))
+            dz = (AtA[0][0]*(AtA[1][1]*Atb[2] - Atb[1]*AtA[2][1])
+                - AtA[0][1]*(AtA[1][0]*Atb[2] - Atb[1]*AtA[2][0])
+                + Atb[0]*(AtA[1][0]*AtA[2][1] - AtA[1][1]*AtA[2][0]))
+            return Vector((dx*inv, dy*inv, dz*inv))
+
+        def shared_corner_pos(V_pos, faces_at_V, insert, shift):
+            """MODO-style accumulated shift at vertices shared between
+            multiple selected faces. Each face contributes a shift along
+            its normal; each non-shared adjacent edge contributes an
+            inset along its inward perpendicular."""
+            rows = []
+            targets = []
+            for (f, ci) in faces_at_V:
+                fv = list(f.verts)
+                N = len(fv)
+                e1 = fv[1].co - fv[0].co
+                e2 = fv[2].co - fv[0].co
+                cr = e1.cross(e2)
+                fn = cr.normalized() if cr.length > 1e-6 else Vector((0, 1, 0))
+                rows.append(fn); targets.append(shift)
+                prev_i = (ci - 1 + N) % N
+                next_i = (ci + 1) % N
+                v_idx = fv[ci].index
+                prev_v = fv[prev_i].index
+                next_v = fv[next_i].index
+                # Edge prev→V (winding direction = V - prev). Non-shared if
+                # not in internal_directed under that key.
+                if (prev_v, v_idx) not in internal_directed:
+                    wd = (fv[ci].co - fv[prev_i].co)
+                    if wd.length > 1e-6:
+                        wd = wd.normalized()
+                        rows.append(fn.cross(wd))
+                        targets.append(insert)
+                # Edge V→next.
+                if (v_idx, next_v) not in internal_directed:
+                    wd = (fv[next_i].co - fv[ci].co)
+                    if wd.length > 1e-6:
+                        wd = wd.normalized()
+                        rows.append(fn.cross(wd))
+                        targets.append(insert)
+            d = solve3x3_lsq(rows, targets, Vector((0, 0, 0)))
+            return V_pos + d
 
         # Snapshot per-face data BEFORE topology mutation (vert references
         # invalidate after we delete/replace faces).
@@ -380,15 +458,23 @@ def run_op(op):
 
             new_positions = []
             for i in range(N):
-                prev_i = (i + N - 1) % N
-                next_i = (i + 1) % N
-                e_prev = (origPos[prev_i] - origPos[i])
-                e_prev = e_prev.normalized() if e_prev.length > 1e-6 else Vector((1, 0, 0))
-                e_next = (origPos[next_i] - origPos[i])
-                e_next = e_next.normalized() if e_next.length > 1e-6 else Vector((1, 0, 0))
-                in_plane = offset_meet(origPos[i], e_prev, e_next, normal,
-                                        insert, insert)
-                new_positions.append(in_plane + normal * shift)
+                v_idx = verts[i].index
+                if group and len(vert_to_faces.get(v_idx, [])) >= 2:
+                    # Shared corner — use MODO-style accumulated shift.
+                    new_positions.append(
+                        shared_corner_pos(origPos[i],
+                                          vert_to_faces[v_idx],
+                                          insert, shift))
+                else:
+                    prev_i = (i + N - 1) % N
+                    next_i = (i + 1) % N
+                    e_prev = (origPos[prev_i] - origPos[i])
+                    e_prev = e_prev.normalized() if e_prev.length > 1e-6 else Vector((1, 0, 0))
+                    e_next = (origPos[next_i] - origPos[i])
+                    e_next = e_next.normalized() if e_next.length > 1e-6 else Vector((1, 0, 0))
+                    in_plane = offset_meet(origPos[i], e_prev, e_next, normal,
+                                            insert, insert)
+                    new_positions.append(in_plane + normal * shift)
             per_face.append({
                 "verts":         verts,
                 "origPos":       origPos,
@@ -399,11 +485,11 @@ def run_op(op):
 
         # Drop internal mesh edges (group mode only). Doing this BEFORE
         # face creation keeps the new top region one connected polygon.
-        if group and internal_edges:
+        if group and internal_undirected:
             edges_to_remove = []
             for e in bm.edges:
                 a, b = e.verts[0].index, e.verts[1].index
-                if (min(a, b), max(a, b)) in internal_edges:
+                if (min(a, b), max(a, b)) in internal_undirected:
                     edges_to_remove.append(e)
             bmesh.ops.delete(bm, geom=edges_to_remove, context='EDGES')
             bm.faces.ensure_lookup_table()
@@ -454,7 +540,7 @@ def run_op(op):
                 ni = (i + 1) % N
                 if group:
                     a, b = origVerts[i].index, origVerts[ni].index
-                    if (min(a, b), max(a, b)) in internal_edges:
+                    if (min(a, b), max(a, b)) in internal_undirected:
                         continue
                 try:
                     bm.faces.new([origVerts[i], origVerts[ni],

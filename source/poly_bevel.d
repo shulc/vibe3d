@@ -1,6 +1,6 @@
 module poly_bevel;
 
-import std.math : sqrt;
+import std.math : abs, sqrt;
 
 import math;
 import mesh;
@@ -78,6 +78,66 @@ private Vec3 polyInsetCorner(in Vec3[] origPos, int i, Vec3 faceNormal,
     return inPlane + faceNormal * shift;
 }
 
+// Solve A·d = b in the least-squares sense via the 3×3 normal equations.
+// `rows`/`targets` define A (k×3) and b (k-vector). When AtA is singular
+// (degenerate constraint geometry), returns `fallback`.
+private Vec3 solve3x3LeastSquares(const(Vec3)[] rows, const(float)[] targets,
+                                    Vec3 fallback)
+{
+    // AtA (3×3) and Atb (3-vec).
+    float[9] AtA = 0;
+    Vec3 Atb = Vec3(0, 0, 0);
+    foreach (i, row; rows) {
+        float t = targets[i];
+        AtA[0] += row.x * row.x; AtA[1] += row.x * row.y; AtA[2] += row.x * row.z;
+        AtA[3] += row.y * row.x; AtA[4] += row.y * row.y; AtA[5] += row.y * row.z;
+        AtA[6] += row.z * row.x; AtA[7] += row.z * row.y; AtA[8] += row.z * row.z;
+        Atb.x += row.x * t;
+        Atb.y += row.y * t;
+        Atb.z += row.z * t;
+    }
+    float det = AtA[0] * (AtA[4] * AtA[8] - AtA[5] * AtA[7])
+              - AtA[1] * (AtA[3] * AtA[8] - AtA[5] * AtA[6])
+              + AtA[2] * (AtA[3] * AtA[7] - AtA[4] * AtA[6]);
+    if (abs(det) < 1e-9f) return fallback;
+    float invDet = 1.0f / det;
+    // Cramer's rule on AtA · d = Atb.
+    float dx = Atb.x * (AtA[4] * AtA[8] - AtA[5] * AtA[7])
+             - AtA[1] * (Atb.y * AtA[8] - AtA[5] * Atb.z)
+             + AtA[2] * (Atb.y * AtA[7] - AtA[4] * Atb.z);
+    float dy = AtA[0] * (Atb.y * AtA[8] - AtA[5] * Atb.z)
+             - Atb.x * (AtA[3] * AtA[8] - AtA[5] * AtA[6])
+             + AtA[2] * (AtA[3] * Atb.z - Atb.y * AtA[6]);
+    float dz = AtA[0] * (AtA[4] * Atb.z - Atb.y * AtA[7])
+             - AtA[1] * (AtA[3] * Atb.z - Atb.y * AtA[6])
+             + Atb.x * (AtA[3] * AtA[7] - AtA[4] * AtA[6]);
+    return Vec3(dx * invDet, dy * invDet, dz * invDet);
+}
+
+// MODO-style group-mode shared-corner placement. Vertex V is shared between
+// 2+ selected faces; its new position is the simultaneous solution of:
+//   (P - V) · n_k = shift   for each face F_k incident to V
+//   (P - V) · p_j = inset   for each non-shared adjacent boundary edge,
+//                            where p_j is its inward perpendicular in the
+//                            face plane.
+//
+// Differs from `polyInsetCorner` (which uses per-face inset+shift) by
+// accumulating shifts from ALL faces that share V — see MODO Bevel
+// "Group Polygons" semantics. For a non-shared corner (V in 1 face with
+// 2 non-shared adjacent edges) this reduces to polyInsetCorner.
+private Vec3 sharedCornerPos(in Vec3 V,
+                              const(Vec3)[] faceNormals,
+                              const(Vec3)[] nonSharedInwardPerps,
+                              float inset, float shift)
+{
+    Vec3[] rows;
+    float[] targets;
+    foreach (n; faceNormals) { rows ~= n; targets ~= shift; }
+    foreach (p; nonSharedInwardPerps) { rows ~= p; targets ~= inset; }
+    Vec3 d = solve3x3LeastSquares(rows, targets, Vec3(0, 0, 0));
+    return V + d;
+}
+
 PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
                             float inset, float shift,
                             bool groupPolygons)
@@ -93,6 +153,7 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
 
     bool[ulong] internalEdgeSet;
     int[uint]   groupVertMap;
+    Vec3[uint]  sharedNewPos;     // origVertId → MODO-style multi-face new pos
 
     if (groupPolygons) {
         // Identify internal edges (shared between two selected faces). Used
@@ -114,6 +175,63 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
             if (rev in selEdges)
                 internalEdgeSet[key] = true;
         }
+
+        // MODO-style group semantics: at each vertex shared between 2+
+        // selected faces, accumulate shifts from ALL faces and inset only
+        // along NON-SHARED adjacent edges. See sharedCornerPos. Build the
+        // per-vertex new position now so the per-face emission loop just
+        // looks them up. Non-shared (single-face) verts keep using
+        // polyInsetCorner inside the loop.
+        int[][uint] vertToFaces;
+        foreach (origFi; selFaceIdx) {
+            auto face = mesh.faces[origFi];
+            foreach (i, ov; face) vertToFaces[ov] ~= origFi;
+        }
+        foreach (ov, fis; vertToFaces) {
+            if (fis.length < 2) continue;
+            Vec3 V = mesh.vertices[ov];
+            Vec3[] normals;
+            Vec3[] perps;
+            foreach (origFi; fis) {
+                auto face = mesh.faces[origFi];
+                int N = cast(int)face.length;
+                int cIdx = -1;
+                foreach (k, fv; face) if (fv == ov) { cIdx = cast(int)k; break; }
+                if (cIdx < 0) continue;
+                int prevI = (cIdx - 1 + N) % N;
+                int nextI = (cIdx + 1) % N;
+                uint prevV = face[prevI];
+                uint nextV = face[nextI];
+                Vec3 fn;
+                {
+                    Vec3 a = mesh.vertices[face[1]] - mesh.vertices[face[0]];
+                    Vec3 b = mesh.vertices[face[2]] - mesh.vertices[face[0]];
+                    Vec3 cr = cross(a, b);
+                    float l = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
+                    fn = l > 1e-6f ? cr / l : Vec3(0, 1, 0);
+                }
+                normals ~= fn;
+                // Edge prev→V (winding direction: V - prev). Inward perp =
+                // cross(faceNormal, windingDir) — see polyInsetCorner /
+                // edge bevel offsetMeet conventions. Add as inset
+                // constraint iff this edge is NOT shared with another
+                // selected face (= not in internalEdgeSet under the
+                // winding key).
+                ulong keyIn = (cast(ulong)prevV << 32) | ov;
+                if (keyIn !in internalEdgeSet) {
+                    Vec3 wd = safeNormalize(V - mesh.vertices[prevV]);
+                    perps ~= safeNormalize(cross(fn, wd));
+                }
+                // Edge V→next (winding direction: next - V).
+                ulong keyOut = (cast(ulong)ov << 32) | nextV;
+                if (keyOut !in internalEdgeSet) {
+                    Vec3 wd = safeNormalize(mesh.vertices[nextV] - V);
+                    perps ~= safeNormalize(cross(fn, wd));
+                }
+            }
+            sharedNewPos[ov] = sharedCornerPos(V, normals, perps, inset, shift);
+        }
+
         // Drop internal mesh edges (undirected) so the inset top is one
         // contiguous polygon group.
         if (internalEdgeSet.length > 0) {
@@ -163,10 +281,18 @@ PolyBevelOp applyPolyBevel(Mesh* mesh, const(int)[] selFaceIdx,
 
         int[] newVerts = new int[](N);
         foreach (i; 0 .. N) {
-            Vec3 placed = polyInsetCorner(origPos, cast(int)i,
-                                           faceNormal, inset, shift);
+            uint ov = origFaceVerts[i];
+            // For shared corners under group mode, use the precomputed
+            // multi-face accumulated position (MODO-style); otherwise
+            // fall back to per-face perpendicular inset+shift.
+            Vec3 placed;
+            if (groupPolygons && (ov in sharedNewPos)) {
+                placed = sharedNewPos[ov];
+            } else {
+                placed = polyInsetCorner(origPos, cast(int)i,
+                                          faceNormal, inset, shift);
+            }
             if (groupPolygons) {
-                uint ov = origFaceVerts[i];
                 if (auto p = ov in groupVertMap) {
                     newVerts[i] = *p;
                 } else {
