@@ -21,6 +21,8 @@ dub build            # Build the project
 
 ## Running Tests
 
+### Unit tests (`./run_test.d`)
+
 Tests are D programs compiled with `dmd -unittest` and exercised via an HTTP API against a running vibe3d instance. The runner (`run_test.d`, an `rdmd` script) handles `dub build`, test compilation, vibe3d lifecycle, and reports pass/fail counts:
 
 ```bash
@@ -35,6 +37,49 @@ Tests are D programs compiled with `dmd -unittest` and exercised via an HTTP API
 The runner kills any stale `vibe3d --test` before starting, waits for the HTTP server to become responsive, and tears vibe3d down on exit (including SIGINT).
 
 Test files live in `tests/test_*.d`. Pre-recorded event logs (JSON Lines) are in `tests/events/*.log`.
+
+### Reference comparison: `tools/blender_diff/`
+
+Compares vibe3d's geometry output against Blender for the same JSON case. Each case lists ops (`bevel`, `polygon_bevel`, `subdivide`, `split_edge`, `move_vertex`, `polygon_bevel`); the orchestrator runs both engines headless and reports per-vertex distance.
+
+```bash
+rdmd tools/blender_diff/run.d                              # all cases
+rdmd tools/blender_diff/run.d --no-build                   # skip dub build
+rdmd tools/blender_diff/run.d cube_corner_w02_s4           # one case
+rdmd tools/blender_diff/run.d --keep                       # leave vibe3d alive after
+```
+
+Per-case status: `PASS` (within tolerance), `FAIL` (regression), `XFAIL` (`expected_fail: true` in the JSON, gap is documented), `XPASS` (XFAIL closed — remove the marker), `ERROR` (dump or diff crashed). Exit code is `FAIL + XPASS + ERROR`.
+
+Requires `blender` on PATH. Cases live in `tools/blender_diff/cases/*.json`.
+
+### Reference comparison: `tools/modo_diff/`
+
+Sister suite for MODO 9 (`modo_cl` headless). Same case schema, currently scoped to `polygon_bevel` ops.
+
+```bash
+rdmd tools/modo_diff/run.d                                 # all cases
+rdmd tools/modo_diff/run.d --no-build poly_bevel_top_face  # subset
+```
+
+Default MODO paths assume the local install at `/home/ashagarov/Program/Modo902/modo_cl`. Override via env if needed:
+
+```bash
+MODO_BIN=/path/to/modo_cl \
+MODO_LD_LIBRARY_PATH=/path/to/libidn-stub-dir \
+MODO_NEXUS_CONTENT=~/.luxology/Content \
+rdmd tools/modo_diff/run.d
+```
+
+Headless MODO quirks (foundrycrashhandler pipe-deadlock, Python script invocation via `#python` shebang + `@filename`, selection via `modo.Polygon.select()` not `select.element`) are documented in `tools/modo_diff/README.md`. Workflow for capturing a new case from an interactive MODO session is in `doc/modo_diff_capture_workflow.md`.
+
+### Recommended order before commit
+
+1. `./run_test.d --no-build` (unit, ~10s).
+2. `rdmd tools/blender_diff/run.d --no-build` (Blender, ~2 min).
+3. `rdmd tools/modo_diff/run.d --no-build` (MODO, ~30s; only if MODO is installed).
+
+A clean change should keep all three suites at their previous PASS / XFAIL counts. New XPASS means an `expected_fail` marker can be cleaned up; new FAIL is a regression.
 
 ## Architecture
 
