@@ -1,0 +1,17 @@
+{
+  "_comment": "Two adjacent cube faces beveled with group=true. EXPECTED FAIL against MODO: vibe3d's group mode places shared corner verts on the FIRST processed face's inset plane (first-face-wins), while MODO 9 accumulates shifts from BOTH faces at the shared corner — placing it at the geometric intersection of the two inset boundaries (e.g. corner offset 0.15 along +y AND 0.15 along +z, not just along +y). Vibe3D's behavior matches my Blender-side manual replication (see blender_diff/cases/poly_bevel_two_faces_grouped.json) but NOT MODO's actual region-inset geometry. Closing this XFAIL would require implementing accumulated-shift at shared corners, similar to Blender's `bmesh.ops.inset_region`.",
+  "expected_fail": true,
+  "ops": [
+    {
+      "op": "polygon_bevel",
+      "faces": [
+        [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]],
+        [[-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]]
+      ],
+      "insert": 0.25,
+      "shift":  0.15,
+      "group":  true
+    }
+  ],
+  "tolerance": 0.001
+}
