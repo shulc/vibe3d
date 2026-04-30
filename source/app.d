@@ -55,6 +55,7 @@ import commands.mesh.bevel;
 import commands.mesh.poly_bevel;
 import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
+import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
@@ -453,6 +454,8 @@ void main(string[] args) {
     // start and commitEdit() at drag end; one undo entry per drag.
     auto vxEditFactory = () => new MeshVertexEdit(&mesh, cameraView, editMode,
                                                    &gpu, &vertexCache, &edgeCache, &faceCache);
+    auto bevelEditFactory = () => new MeshBevelEdit(&mesh, cameraView, editMode,
+                                                     &gpu, &vertexCache, &edgeCache, &faceCache);
 
     Registry reg;
     reg.toolFactories["move"]   = () {
@@ -470,7 +473,11 @@ void main(string[] args) {
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
-    reg.toolFactories["bevel"]  = () => cast(Tool) new BevelTool(&mesh, &gpu, &editMode);
+    reg.toolFactories["bevel"]  = () {
+        auto t = new BevelTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
     reg.toolFactories["box"]    = () => cast(Tool) new BoxTool(&mesh, &gpu, litShader);
 
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
@@ -518,6 +525,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)
         new MeshVertexEdit(&mesh, cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
+        new MeshBevelEdit(&mesh, cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["scene.reset"] = () => cast(Command)
         new SceneReset(&mesh, cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache,

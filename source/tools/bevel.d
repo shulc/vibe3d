@@ -12,11 +12,19 @@ import shader;
 import drag;
 import bevel;
 import poly_bevel;
+import command_history : CommandHistory;
+import commands.mesh.bevel_edit : MeshBevelEdit;
+import snapshot : MeshSnapshot;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import std.math : sqrt;
+
+// Factory: builds a fresh MeshBevelEdit pre-wired to the same gpu/caches
+// the tool mutates (the registry creates BevelTool with a closure that
+// has access to those globals).
+alias BevelEditFactory = MeshBevelEdit delegate();
 
 // ---------------------------------------------------------------------------
 // BevelTool — polygon bevel (Polygons mode) + edge bevel (Edges mode)
@@ -75,6 +83,17 @@ private:
     int      lastMX, lastMY;
     Viewport cachedVp;
 
+    // ---- Phase C.4: undo plumbing ----
+    // history is the global stack; bevelEditFactory builds a MeshBevelEdit
+    // pre-wired to the same caches the tool mutates. Both nullable for
+    // legacy / test callers — commitBevelEdit() is a no-op then.
+    // preBevelSnap is captured at the moment bevel topology is first built
+    // (bevelApplied: false → true); held until deactivate() pairs it with
+    // a fresh post-snap and records the edit on history.
+    CommandHistory   history;
+    BevelEditFactory bevelEditFactory;
+    MeshSnapshot     preBevelSnap;
+
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         this.mesh     = mesh;
@@ -95,6 +114,14 @@ public:
         shiftHandle.destroy();
         insertHandle.destroy();
         insertScaleArrow.destroy();
+    }
+
+    /// Inject undo plumbing — called by app.d after construction. Tools
+    /// built without this skip undo recording (commitBevelEdit becomes
+    /// a no-op).
+    void setUndoBindings(CommandHistory h, BevelEditFactory factory) {
+        this.history          = h;
+        this.bevelEditFactory = factory;
     }
 
     override string name() const { return "Bevel"; }
@@ -119,6 +146,10 @@ public:
         if (bevelApplied) {
             gpu.upload(*mesh);
             mesh.syncSelection();
+            // Phase C.4: land the entire bevel session as one undo entry.
+            // preBevelSnap was captured when bevel topology was first built;
+            // pair it with the current mesh state as the "after" snapshot.
+            commitBevelEdit();
         }
         dragHandle = -1;
     }
@@ -412,10 +443,29 @@ private:
     // ------------------------------------------------------------------
 
     void applyBevelTopology() {
+        // Phase C.4: snapshot pre-bevel mesh state at the moment topology
+        // is first built. Subsequent revert+rebuild cycles within the
+        // session (param tweaks) recapture nothing — the snapshot is
+        // anchored to the original state. commitBevelEdit() at deactivate
+        // pairs this with the post-state as one undo entry.
+        if (!bevelApplied)
+            preBevelSnap = MeshSnapshot.capture(*mesh);
+
         if (*editMode == EditMode.Edges)
             applyEdgeBevelTopology();
         else
             applyPolyBevelTopology();
+    }
+
+    void commitBevelEdit() {
+        if (history is null || bevelEditFactory is null) return;
+        if (!preBevelSnap.filled) return;
+        auto cmd = bevelEditFactory();
+        auto post = MeshSnapshot.capture(*mesh);
+        cmd.setSnapshots(preBevelSnap, post,
+                         (*editMode == EditMode.Edges) ? "Edge Bevel" : "Polygon Bevel");
+        history.record(cmd);
+        preBevelSnap = MeshSnapshot.init;   // disarm, in case deactivate runs twice
     }
 
     void revertBevelTopology() {
