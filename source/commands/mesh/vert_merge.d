@@ -6,6 +6,7 @@ import view;
 import editmode;
 import viewcache;
 import snapshot : MeshSnapshot;
+import params : Param;
 
 /// Tier 1.2: MODO `vert.merge`. Welds selected vertices that are within
 /// `dist` of each other (range=fixed) or coincident (range=auto, eps≈0).
@@ -35,9 +36,21 @@ class MeshVertMerge : Command {
     override string name()  const { return "vert.merge"; }
     override string label() const { return "Merge Vertices"; }
 
-    void setRange(string r) { range_ = r; }
-    void setDist (float  d) { dist_  = d; }
-    void setKeep (bool   k) { keep_  = k; }
+    override Param[] params() {
+        return [
+            Param.enum_("range", "Range", &range_,
+                        [["auto", "Automatic"], ["fixed", "Fixed"]],
+                        "auto"),
+            Param.float_("dist", "Distance", &dist_, 0.001f)
+                 .min(0.0001f).max(100.0f).fmt("%.4f"),
+            Param.bool_ ("keep", "Keep 1-Vertex Polygons", &keep_, false),
+        ];
+    }
+
+    override bool paramEnabled(string name) const {
+        if (name == "dist") return range_ == "fixed";
+        return true;
+    }
 
     override bool apply() {
         if (!mesh.hasAnySelectedVertices()) return false;

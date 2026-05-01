@@ -74,6 +74,8 @@ import command;
 import registry;
 import shortcuts;
 import buttonset;
+import args_dialog    : ArgsDialog;
+import property_panel : PropertyPanel;
 
 version (OSX) {
     import core.attribute : selector;
@@ -458,19 +460,12 @@ void main(string[] args) {
     bool showHistoryPanel = false;
 
     // ----- Per-command argument dialogs -----------------------------------
-    // MODO surfaces an options panel when the user invokes a command via
-    // the menu / button without explicit args. We mirror that for vert.merge
-    // and vert.join: clicking the button opens a modal dialog where the
-    // user picks args, then OK fires the command. Cancel does nothing.
-    // Persistent across frames so values stick between invocations.
-    bool   pendingVertMergeDialog = false;
-    string vmRange  = "auto";        // "auto" or "fixed"
-    float  vmDist   = 0.001f;
-    bool   vmKeep   = false;
-
-    bool pendingVertJoinDialog = false;
-    bool vjAverage = true;
-    bool vjKeep    = false;
+    // Universal schema-driven modal dialog. open(cmd) queues a popup;
+    // draw(&runCommand) renders it each frame. Replaces per-command state
+    // fields. Any Command whose params() returns non-empty automatically
+    // gets a dialog — no further app.d changes needed for new commands.
+    auto argsDialog    = new ArgsDialog();
+    auto propertyPanel = new PropertyPanel();
 
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to
@@ -740,38 +735,37 @@ void main(string[] args) {
             import std.json : parseJSON, JSONType;
             import commands.file.load : FileLoad;
             import commands.file.save : FileSave;
+            import params : injectParamsInto;
 
             auto factory = id in reg.commandFactories;
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
             auto cmd = (*factory)();
 
-            // Inject params into commands that accept them. Currently only
-            // file.load/file.save use the `path` field — extend here as
-            // more commands grow JSON-driven inputs.
             if (paramsJson.length > 0) {
                 auto pj = parseJSON(paramsJson);
                 if (pj.type == JSONType.object) {
+                    // Path special-case for file.load/file.save (OS-native
+                    // dialog quirk — schema-based migration deferred to phase 4).
                     if ("path" in pj && pj["path"].type == JSONType.string) {
                         string path = pj["path"].str;
                         if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
                         else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
                     }
+
+                    // Schema-driven injection — works for any command with a
+                    // non-empty params() schema (currently vert.merge,
+                    // vert.join, mesh.move_vertex).
+                    if (cmd.params().length > 0)
+                        injectParamsInto(cmd.params(), pj);
+
+                    // Legacy manual casts — these commands have rich/array
+                    // schemas not yet expressed via Param. Migration in phase 4.
                     float jsonNumber(JSONValue v) {
                         if (v.type == JSONType.integer)  return cast(float)v.integer;
                         if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
                         if (v.type == JSONType.float_)   return cast(float)v.floating;
                         return 0.0f;
-                    }
-                    if (auto mv = cast(MeshMoveVertex)cmd) {
-                        if ("from" in pj && pj["from"].type == JSONType.array) {
-                            auto a = pj["from"].array;
-                            mv.setFrom(jsonNumber(a[0]), jsonNumber(a[1]), jsonNumber(a[2]));
-                        }
-                        if ("to" in pj && pj["to"].type == JSONType.array) {
-                            auto a = pj["to"].array;
-                            mv.setTo(jsonNumber(a[0]), jsonNumber(a[1]), jsonNumber(a[2]));
-                        }
                     }
                     if (auto mb = cast(MeshBevel)cmd) {
                         if ("width"  in pj) mb.setWidth (jsonNumber(pj["width"]));
@@ -816,18 +810,6 @@ void main(string[] args) {
                             aft[i] = Vec3(jsonNumber(a[0]), jsonNumber(a[1]), jsonNumber(a[2]));
                         }
                         vxe.setEdit(ids, bef, aft, "Edit");
-                    }
-                    // vert.merge — params: range ("auto"|"fixed"), dist (float), keep (bool)
-                    if (auto vm = cast(MeshVertMerge)cmd) {
-                        if ("range" in pj && pj["range"].type == JSONType.string)
-                            vm.setRange(pj["range"].str);
-                        if ("dist"  in pj) vm.setDist(jsonNumber(pj["dist"]));
-                        if ("keep"  in pj) vm.setKeep(pj["keep"].type == JSONType.true_);
-                    }
-                    // vert.join — params: average (bool), keep (bool)
-                    if (auto vj = cast(MeshVertJoin)cmd) {
-                        if ("average" in pj) vj.setAverage(pj["average"].type == JSONType.true_);
-                        if ("keep"    in pj) vj.setKeep   (pj["keep"]   .type == JSONType.true_);
                     }
                 }
             }
@@ -1017,13 +999,14 @@ void main(string[] args) {
     // popup that appears when invoking a command from a menu/button without
     // explicit arguments). Returns true if the dialog has been opened — the
     // caller then SKIPS its normal runCommand path. Returns false for all
-    // other commands.
+    // other commands (no params, or id not found).
     bool tryOpenArgsDialog(string commandId) {
-        switch (commandId) {
-            case "vert.merge": pendingVertMergeDialog = true; return true;
-            case "vert.join":  pendingVertJoinDialog  = true; return true;
-            default: return false;
-        }
+        auto factory = commandId in reg.commandFactories;
+        if (factory is null) return false;
+        auto cmd = (*factory)();
+        if (cmd.params().length == 0) return false;
+        argsDialog.open(cmd);
+        return true;
     }
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
@@ -2095,8 +2078,10 @@ void main(string[] args) {
             pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
-            if (ImGui.Begin("Tool Properties"))
-                activeTool.drawProperties();
+            if (ImGui.Begin("Tool Properties")) {
+                propertyPanel.draw(activeTool);   // schema-driven params first
+                activeTool.drawProperties();      // tool-specific custom UI after
+            }
             ImGui.End();
             popPanelChromeStyle();
         }
@@ -2129,67 +2114,11 @@ void main(string[] args) {
             popPanelChromeStyle();
         }
 
-        // ---- vert.merge args dialog ----
-        // Triggered by clicking the Merge button (or pressing the keyboard
-        // shortcut) — same args MODO surfaces in its modal popup: range
-        // (Automatic / Fixed), distance (visible only with Fixed), and
-        // Keep 1-Vertex Polygons. OK fires the command via runCommand;
-        // Cancel closes without doing anything.
-        if (pendingVertMergeDialog) {
-            ImGui.OpenPopup("Merge Vertices");
-            pendingVertMergeDialog = false;
-        }
-        if (ImGui.BeginPopupModal("Merge Vertices", null,
-                                   ImGuiWindowFlags.AlwaysAutoResize))
-        {
-            ImGui.Text("Range:");
-            if (ImGui.RadioButton("Automatic", vmRange == "auto"))  vmRange = "auto";
-            ImGui.SameLine();
-            if (ImGui.RadioButton("Fixed",     vmRange == "fixed")) vmRange = "fixed";
-
-            // Distance only meaningful for Fixed; gray it out otherwise so
-            // the user sees the value but can't edit (matches MODO).
-            if (vmRange != "fixed") ImGui.BeginDisabled();
-            ImGui.DragFloat("Distance", &vmDist, 0.001f, 0.0001f, 100.0f, "%.4f");
-            if (vmRange != "fixed") ImGui.EndDisabled();
-
-            ImGui.Checkbox("Keep 1-Vertex Polygons", &vmKeep);
-
-            if (ImGui.Button("OK")) {
-                auto cmd = cast(MeshVertMerge)reg.commandFactories["vert.merge"]();
-                cmd.setRange(vmRange);
-                cmd.setDist (vmDist);
-                cmd.setKeep (vmKeep);
-                runCommand(cmd);
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel")) ImGui.CloseCurrentPopup();
-            ImGui.EndPopup();
-        }
-
-        // ---- vert.join args dialog ----
-        if (pendingVertJoinDialog) {
-            ImGui.OpenPopup("Join Vertices");
-            pendingVertJoinDialog = false;
-        }
-        if (ImGui.BeginPopupModal("Join Vertices", null,
-                                   ImGuiWindowFlags.AlwaysAutoResize))
-        {
-            ImGui.Checkbox("Average", &vjAverage);
-            ImGui.Checkbox("Keep 1-Vertex Polygons", &vjKeep);
-
-            if (ImGui.Button("OK")) {
-                auto cmd = cast(MeshVertJoin)reg.commandFactories["vert.join"]();
-                cmd.setAverage(vjAverage);
-                cmd.setKeep   (vjKeep);
-                runCommand(cmd);
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel")) ImGui.CloseCurrentPopup();
-            ImGui.EndPopup();
-        }
+        // ---- Universal args dialog ----
+        // Any command whose params() returns non-empty gets a modal dialog
+        // rendered here. tryOpenArgsDialog() queues the command; draw()
+        // renders the popup and runs the command on OK.
+        argsDialog.draw(&runCommand);
 
         // ShowDemoWindow();
 

@@ -5,6 +5,7 @@ import bindbc.opengl;
 
 import math;
 import shader;
+import params : Param, ParamHints;
 
 // ---------------------------------------------------------------------------
 // Tool — base class for all editing tools
@@ -42,4 +43,32 @@ class Tool {
     // Called inside the floating "Tool Properties" ImGui window.
     // Override to show/edit tool-specific properties.
     void drawProperties() {}
+
+    // Schema: list of parameters. Default: none. Tools that surface a
+    // numeric properties panel override this.
+    Param[] params() { return []; }
+
+    // Called before opening an args dialog (rare for tools, kept for
+    // symmetry with Command).
+    void dialogInit() {}
+
+    // Called after a parameter value changes. Tools override to drive
+    // their preview re-evaluation.
+    void onParamChanged(string name) {}
+
+    // Whether the named parameter widget should be enabled.
+    bool paramEnabled(string name) const { return true; }
+
+    // Per-parameter hint overrides at runtime.
+    void paramHints(string name, ref ParamHints hints) {}
+
+    // Re-apply the tool's preview after a parameter change. Default
+    // no-op (tools without params don't need this).
+    void evaluate() {}
+
+    // Whether the previous evaluation can be incrementally patched given
+    // new attribute values, or must be rebuilt from scratch. Default:
+    // always rebuild. (Renderer in phase 3+ will start using this for
+    // big meshes / heavy tools.)
+    bool canIncrementalUpdate() const { return false; }
 }

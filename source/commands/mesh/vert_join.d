@@ -7,6 +7,7 @@ import editmode;
 import viewcache;
 import math : Vec3;
 import snapshot : MeshSnapshot;
+import params : Param;
 
 /// Tier 1.2: MODO `vert.join`. Collapses the selected vertices to a
 /// single point — the centroid (`average=true`) or the first selected
@@ -35,8 +36,12 @@ class MeshVertJoin : Command {
     override string name()  const { return "vert.join"; }
     override string label() const { return "Join Vertices"; }
 
-    void setAverage(bool a) { average_ = a; }
-    void setKeep   (bool k) { keep_    = k; }
+    override Param[] params() {
+        return [
+            Param.bool_("average", "Average", &average_, true),
+            Param.bool_("keep",    "Keep 1-Vertex Polygons", &keep_, false),
+        ];
+    }
 
     override bool apply() {
         if (!mesh.hasAnySelectedVertices()) return false;

@@ -3,6 +3,7 @@ module command;
 import mesh;
 import view;
 import editmode;
+import params : Param, ParamHints;
 
 // ---------------------------------------------------------------------------
 // Command — base class for every user-visible action.
@@ -40,6 +41,26 @@ class Command {
     // Short human-readable label. Defaults to name() — override for a
     // friendlier menu / history-viewer string.
     string label() const { return name(); }
+
+    // Schema: list of parameters. Default: none. Commands that surface
+    // an args dialog or accept JSON params via /api/command override this.
+    Param[] params() { return []; }
+
+    // Called immediately before opening an args dialog. Override to set
+    // defaults that depend on the current selection / scene state.
+    void dialogInit() {}
+
+    // Called by the renderer after a parameter value changes. Override
+    // to recompute dependent parameters (cross-field rules).
+    void onParamChanged(string name) {}
+
+    // Whether the named parameter widget should be enabled. Override for
+    // cross-field graying (MODO-style cmd_ArgEnable).
+    bool paramEnabled(string name) const { return true; }
+
+    // Per-parameter hint overrides at runtime (e.g. cap a range to mesh
+    // size).
+    void paramHints(string name, ref ParamHints hints) {}
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         this.mesh = mesh;

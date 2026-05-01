@@ -4,6 +4,7 @@ import bindbc.opengl;
 import bindbc.sdl;
 
 import tool;
+import params : Param;
 import handler;
 import mesh;
 import editmode;
@@ -125,6 +126,38 @@ public:
     }
 
     override string name() const { return "Bevel"; }
+
+    // Schema-driven params — only exposed in polygon mode. Edge mode retains
+    // its full custom drawProperties() UI and is migrated in a later phase.
+    override Param[] params() {
+        if (*editMode != EditMode.Polygons) return [];
+        return [
+            Param.float_("shift", "Shift", &shiftAmount, 0.0f)
+                 .min(-float.max).max(float.max).step(0.005f).fmt("%.4f"),
+            Param.float_("inset", "Inset", &insetAmount, 0.0f)
+                 .min(-float.max).max(float.max).step(0.005f).fmt("%.4f"),
+            Param.bool_("group", "Group Polygon", &groupPolygons, false),
+        ];
+    }
+
+    // Called by PropertyPanel when any param value changes.
+    // "group" changes topology — revert and rebuild. "shift"/"inset" only
+    // move vertices, handled by evaluate() below.
+    override void onParamChanged(string name) {
+        if (name == "group" && bevelApplied) {
+            revertBevelTopology();
+            applyBevelTopology();
+        }
+    }
+
+    // Re-position bevel vertices using current shiftAmount/insetAmount.
+    // Called by PropertyPanel after onParamChanged (and after "group" rebuild).
+    override void evaluate() {
+        if (bevelApplied) {
+            updateBevelVertices();
+            gpu.upload(*mesh);
+        }
+    }
 
     override void activate() {
         active       = true;
@@ -413,28 +446,9 @@ public:
             return;
         }
 
-        bool changed = false;
-
-        ImGui.DragFloat("Shift",  &shiftAmount, 0.005f, -float.max, float.max, "%.4f");
-        if (ImGui.IsItemActive()) changed = true;
-
-        // Inset = perpendicular distance each face boundary edge moves
-        // inward. Negative → outset. Identity = 0.
-        ImGui.DragFloat("Inset", &insetAmount, 0.005f, -float.max, float.max, "%.4f");
-        if (ImGui.IsItemActive()) changed = true;
-
-        if (ImGui.Checkbox("Group Polygon", &groupPolygons)) {
-            if (bevelApplied) {
-                revertBevelTopology();
-                applyBevelTopology();
-                changed = true;
-            }
-        }
-
-        if (changed && bevelApplied) {
-            updateBevelVertices();
-            gpu.upload(*mesh);
-        }
+        // Polygon mode: Shift / Inset / Group Polygon are rendered via
+        // params() + PropertyPanel (schema-driven inline renderer). Nothing
+        // custom to add here.
     }
 
 private:
