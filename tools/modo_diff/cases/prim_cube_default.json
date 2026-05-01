@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.cube default 1x1x1 unit cube — 8v/12e/6f",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

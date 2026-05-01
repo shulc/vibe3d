@@ -17,7 +17,7 @@ panels:
           - { label: Scale,  action: { kind: tool, id: scale } }
       - title: Create
         buttons:
-          - { label: Box,    action: { kind: tool, id: box } }
+          - { label: Box,    action: { kind: tool, id: prim.cube } }
   - title: Multiply
     items:
       - title: Subdivide

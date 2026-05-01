@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.cube 1x1x1 with segments 2/2/2 — 26v / 24f surface",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 2, "segmentsY": 2, "segmentsZ": 2,
+      "radius": 0.0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

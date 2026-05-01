@@ -13,6 +13,7 @@ import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickMostFacingPlane, BuildPlane;
+import params : Param;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -24,6 +25,258 @@ import std.math : abs, sqrt;
 // label. The class is bevel-named for legacy reasons; rename once a third
 // caller appears.
 alias BoxEditFactory = MeshBevelEdit delegate();
+
+// ---------------------------------------------------------------------------
+// BoxParams — MODO-aligned wire schema for prim.cube headless invocation.
+//
+// Field names match cmdhelptools.cfg <hash type="Tool" key="prim.cube">
+// attribute keys verbatim. Phase 6.1a covers 9 core attrs; rounded
+// edges (radius/segmentsR/sharp/axis), min/max alternative spec, patch
+// (subpatch), and flip (plane normal) are added in 6.1b-e.
+// ---------------------------------------------------------------------------
+struct BoxParams {
+    float cenX  = 0.0f, cenY  = 0.0f, cenZ  = 0.0f;
+    float sizeX = 1.0f, sizeY = 1.0f, sizeZ = 1.0f;
+    int   segmentsX = 1, segmentsY = 1, segmentsZ = 1;
+}
+
+// ---------------------------------------------------------------------------
+// buildCuboidParametric — pure free function: build an axis-aligned cuboid
+// into `dst` according to `p`.
+//
+// Caller is responsible for calling dst.buildLoops() after this returns.
+//
+// Plane mode: if any of sizeX/Y/Z is 0 (within 1e-9), emits a single quad
+// on the degenerate axis (4 verts / 1 face). MODO's prim.cube does the same
+// — verified on the modo_diff side.
+//
+// Full cuboid with segments: builds a vertex map keyed by (i,j,k) in
+// [0..segX] × [0..segY] × [0..segZ] space, emitting surface vertices only
+// (those with at least one index == 0 or N), and emitting one quad per cell
+// on each of the 6 cube faces. Winding is consistent: outward normals on all
+// 6 faces.
+// ---------------------------------------------------------------------------
+void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
+{
+    import std.typecons : Tuple, tuple;
+
+    // Plane mode detection — any zero-size axis collapses to a single face.
+    if (abs(p.sizeY) < 1e-9f) {
+        // XZ plane at cenY
+        Vec3 c = Vec3(p.cenX, p.cenY, p.cenZ);
+        Vec3 a = Vec3(p.sizeX * 0.5f, 0.0f, 0.0f);
+        Vec3 b = Vec3(0.0f, 0.0f, p.sizeZ * 0.5f);
+        uint v0 = dst.addVertex(c - a - b);
+        uint v1 = dst.addVertex(c + a - b);
+        uint v2 = dst.addVertex(c + a + b);
+        uint v3 = dst.addVertex(c - a + b);
+        // Winding: outward normal is +Y for XZ plane.
+        // Cross((v1-v0),(v3-v0)) = cross(+2a, +2b) = 4*(a×b).
+        // a=(sx,0,0), b=(0,0,sz): a×b = (0*sz-0*0, 0*0-sx*sz, sx*0-0*0)
+        //   = (0, -sx*sz, 0) → points -Y.
+        // So v0,v1,v2,v3 gives -Y normal; reverse to v0,v3,v2,v1 for +Y.
+        dst.addFace([v0, v3, v2, v1]);
+        return;
+    }
+    if (abs(p.sizeX) < 1e-9f) {
+        // YZ plane at cenX
+        Vec3 c = Vec3(p.cenX, p.cenY, p.cenZ);
+        Vec3 a = Vec3(0.0f, p.sizeY * 0.5f, 0.0f);
+        Vec3 b = Vec3(0.0f, 0.0f, p.sizeZ * 0.5f);
+        uint v0 = dst.addVertex(c - a - b);
+        uint v1 = dst.addVertex(c + a - b);
+        uint v2 = dst.addVertex(c + a + b);
+        uint v3 = dst.addVertex(c - a + b);
+        // a=(0,sy,0), b=(0,0,sz): a×b=(sy*sz-0,0-0,0-0)=(sy*sz,0,0) → +X.
+        // Cross((v1-v0),(v3-v0)) = cross(+2a,+2b) → +X. OK as-is.
+        dst.addFace([v0, v1, v2, v3]);
+        return;
+    }
+    if (abs(p.sizeZ) < 1e-9f) {
+        // XY plane at cenZ
+        Vec3 c = Vec3(p.cenX, p.cenY, p.cenZ);
+        Vec3 a = Vec3(p.sizeX * 0.5f, 0.0f, 0.0f);
+        Vec3 b = Vec3(0.0f, p.sizeY * 0.5f, 0.0f);
+        uint v0 = dst.addVertex(c - a - b);
+        uint v1 = dst.addVertex(c + a - b);
+        uint v2 = dst.addVertex(c + a + b);
+        uint v3 = dst.addVertex(c - a + b);
+        // a=(sx,0,0), b=(0,sy,0): a×b=(0,0,sx*sy) → +Z.
+        dst.addFace([v0, v1, v2, v3]);
+        return;
+    }
+
+    // Full cuboid with segments.
+    int nx = p.segmentsX < 1 ? 1 : p.segmentsX;
+    int ny = p.segmentsY < 1 ? 1 : p.segmentsY;
+    int nz = p.segmentsZ < 1 ? 1 : p.segmentsZ;
+
+    // Vertex map: (i,j,k) → vertex index in dst.
+    // Only surface vertices are added; interior vertices (all three indices
+    // strictly between 0 and N) are never emitted.
+    uint[Tuple!(int,int,int)] vMap;
+
+    uint vert(int i, int j, int k) {
+        auto key = tuple(i, j, k);
+        if (auto pp = key in vMap) return *pp;
+        Vec3 pos = Vec3(
+            p.cenX + (cast(float)i / nx - 0.5f) * p.sizeX,
+            p.cenY + (cast(float)j / ny - 0.5f) * p.sizeY,
+            p.cenZ + (cast(float)k / nz - 0.5f) * p.sizeZ);
+        uint id = dst.addVertex(pos);
+        vMap[key] = id;
+        return id;
+    }
+
+    // Emit 6 cube faces, each subdivided into a (segA × segB) grid of quads.
+    // Winding rule: the four corners of each quad are ordered so that the
+    // cross product of (c1-c0)×(c3-c0) points outward. Verified by the
+    // unittest below using face normals vs. face centroid vs. cube center.
+
+    // -X face (i=0): normal −X. Grid over (j,k).
+    // Quad corners: (0,j,k), (0,j,k+1), (0,j+1,k+1), (0,j+1,k).
+    // Normal: cross((0,0,sz_step)×(0,sy_step,0)) = (-sy*sz,0,0) → −X. Good.
+    foreach (j; 0 .. ny) foreach (k; 0 .. nz) {
+        uint c0 = vert(0, j,   k  );
+        uint c1 = vert(0, j,   k+1);
+        uint c2 = vert(0, j+1, k+1);
+        uint c3 = vert(0, j+1, k  );
+        dst.addFace([c0, c1, c2, c3]);
+    }
+
+    // +X face (i=nx): normal +X. Grid over (j,k), opposite winding.
+    // Quad corners: (nx,j,k), (nx,j+1,k), (nx,j+1,k+1), (nx,j,k+1).
+    // Normal: cross((sy_step,0,0)×(0,0,sz_step)) = ... actually let's use
+    // (c1-c0)×(c3-c0) where c0=(nx,j,k), c1=(nx,j+1,k), c3=(nx,j,k+1).
+    // c1-c0 = (0,+sy,0), c3-c0 = (0,0,+sz) → cross = (+sy*sz, 0, 0) → +X. Good.
+    foreach (j; 0 .. ny) foreach (k; 0 .. nz) {
+        uint c0 = vert(nx, j,   k  );
+        uint c1 = vert(nx, j+1, k  );
+        uint c2 = vert(nx, j+1, k+1);
+        uint c3 = vert(nx, j,   k+1);
+        dst.addFace([c0, c1, c2, c3]);
+    }
+
+    // -Y face (j=0): normal −Y. Grid over (i,k).
+    // c0=(i,0,k), c1=(i+1,0,k), c2=(i+1,0,k+1), c3=(i,0,k+1).
+    // (c1-c0)×(c3-c0) = (sx,0,0)×(0,0,sz) = (0*sz-0*0, 0*sx-sx*sz, sx*0-0*0)
+    //                 = (0, -sx*sz, 0) → −Y. Good.
+    foreach (i; 0 .. nx) foreach (k; 0 .. nz) {
+        uint c0 = vert(i,   0, k  );
+        uint c1 = vert(i+1, 0, k  );
+        uint c2 = vert(i+1, 0, k+1);
+        uint c3 = vert(i,   0, k+1);
+        dst.addFace([c0, c1, c2, c3]);
+    }
+
+    // +Y face (j=ny): normal +Y. Grid over (i,k), opposite winding.
+    // c0=(i,ny,k), c1=(i,ny,k+1), c2=(i+1,ny,k+1), c3=(i+1,ny,k).
+    // (c1-c0)×(c3-c0) = (0,0,sz)×(sx,0,0) = (0*0-sz*0, sz*sx-0*0, 0*0-0*sx)
+    //                 = (0, sz*sx, 0) → +Y. Good.
+    foreach (i; 0 .. nx) foreach (k; 0 .. nz) {
+        uint c0 = vert(i,   ny, k  );
+        uint c1 = vert(i,   ny, k+1);
+        uint c2 = vert(i+1, ny, k+1);
+        uint c3 = vert(i+1, ny, k  );
+        dst.addFace([c0, c1, c2, c3]);
+    }
+
+    // -Z face (k=0): normal −Z. Grid over (i,j).
+    // c0=(i,j,0), c1=(i,j+1,0), c2=(i+1,j+1,0), c3=(i+1,j,0).
+    // (c1-c0)×(c3-c0) = (0,sy,0)×(sx,0,0) = (sy*0-0*0, 0*sx-0*0, 0*0-sy*sx)
+    //                 = (0, 0, -sy*sx) → −Z. Good.
+    foreach (i; 0 .. nx) foreach (j; 0 .. ny) {
+        uint c0 = vert(i,   j,   0);
+        uint c1 = vert(i,   j+1, 0);
+        uint c2 = vert(i+1, j+1, 0);
+        uint c3 = vert(i+1, j,   0);
+        dst.addFace([c0, c1, c2, c3]);
+    }
+
+    // +Z face (k=nz): normal +Z. Grid over (i,j), opposite winding.
+    // c0=(i,j,nz), c1=(i+1,j,nz), c2=(i+1,j+1,nz), c3=(i,j+1,nz).
+    // (c1-c0)×(c3-c0) = (sx,0,0)×(0,sy,0) = (0,0,sx*sy) → +Z. Good.
+    foreach (i; 0 .. nx) foreach (j; 0 .. ny) {
+        uint c0 = vert(i,   j,   nz);
+        uint c1 = vert(i+1, j,   nz);
+        uint c2 = vert(i+1, j+1, nz);
+        uint c3 = vert(i,   j+1, nz);
+        dst.addFace([c0, c1, c2, c3]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// unittest: winding correctness — each face's normal points away from center.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+    import std.conv : to;
+
+    // Default unit cube — 8 verts / 6 faces.
+    {
+        Mesh m;
+        BoxParams p;  // defaults: 1x1x1 at origin, 1 segment
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 8,  "default: expected 8 verts");
+        assert(m.faces.length    == 6,  "default: expected 6 faces");
+
+        Vec3 cen = Vec3(0, 0, 0);
+        foreach (fi; 0 .. cast(uint)m.faces.length) {
+            Vec3 n  = m.faceNormal(fi);
+            // Compute face centroid
+            Vec3 fc = Vec3(0, 0, 0);
+            foreach (vi; m.faces[fi]) fc = fc + m.vertices[vi];
+            fc = fc * (1.0f / m.faces[fi].length);
+            float d = dot(n, fc - cen);
+            assert(d > 0.0f, "face " ~ fi.to!string ~ " has inward/degenerate normal");
+        }
+    }
+
+    // 2/2/2 segments — 26 verts / 24 faces.
+    {
+        Mesh m;
+        BoxParams p;
+        p.segmentsX = 2; p.segmentsY = 2; p.segmentsZ = 2;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 26, "2/2/2: expected 26 verts");
+        assert(m.faces.length    == 24, "2/2/2: expected 24 faces");
+
+        Vec3 cen = Vec3(0, 0, 0);
+        foreach (fi; 0 .. cast(uint)m.faces.length) {
+            Vec3 n  = m.faceNormal(fi);
+            Vec3 fc = Vec3(0, 0, 0);
+            foreach (vi; m.faces[fi]) fc = fc + m.vertices[vi];
+            fc = fc * (1.0f / m.faces[fi].length);
+            float d = dot(n, fc - cen);
+            assert(d > 0.0f, "2/2/2 face " ~ fi.to!string ~ " has inward/degenerate normal");
+        }
+    }
+
+    // sizeY=0 → XZ plane, 4 verts / 1 face.
+    {
+        Mesh m;
+        BoxParams p;
+        p.sizeY = 0.0f;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 4, "plane: expected 4 verts");
+        assert(m.faces.length    == 1, "plane: expected 1 face");
+    }
+
+    // Non-uniform segments 3/1/2 — faces = 2*(3+1*3+3*2) nope, count properly:
+    // -X face: ny*nz = 1*2 = 2; +X: 2; -Y: nx*nz = 3*2 = 6; +Y: 6; -Z: nx*ny = 3*1 = 3; +Z: 3
+    // Total = 2+2+6+6+3+3 = 22
+    {
+        Mesh m;
+        BoxParams p;
+        p.segmentsX = 3; p.segmentsY = 1; p.segmentsZ = 2;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.faces.length == 22, "3/1/2: expected 22 faces");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // BoxTool — two-drag 3-D cuboid creation
@@ -44,7 +297,12 @@ private:
     Mesh    previewMesh;
     GpuMesh previewGpu;
 
-    BoxState state;
+    BoxState  state;
+
+    // Headless/scripted invocation parameters (phase 6.1a).
+    // Not automatically synced with the interactive drag state — these are
+    // the MODO-aligned schema fields used by applyHeadless() only.
+    BoxParams params_;
 
     // Base rectangle (axis-aligned on the most-facing plane)
     Vec3    startPoint;
@@ -446,6 +704,35 @@ public:
     }
 
     override bool drawImGui() { return false; }
+
+    /// MODO-aligned schema for prim.cube headless invocation (phase 6.1a).
+    /// 9 core attributes: position (3) + size (3) + segments (3).
+    override Param[] params() {
+        return [
+            Param.float_("cenX",  "Position X", &params_.cenX,  0.0f),
+            Param.float_("cenY",  "Position Y", &params_.cenY,  0.0f),
+            Param.float_("cenZ",  "Position Z", &params_.cenZ,  0.0f),
+            Param.float_("sizeX", "Size X",     &params_.sizeX, 1.0f).min(0.0f),
+            Param.float_("sizeY", "Size Y",     &params_.sizeY, 1.0f).min(0.0f),
+            Param.float_("sizeZ", "Size Z",     &params_.sizeZ, 1.0f).min(0.0f),
+            Param.int_("segmentsX", "Segments X", &params_.segmentsX, 1).min(1).max(64),
+            Param.int_("segmentsY", "Segments Y", &params_.segmentsY, 1).min(1).max(64),
+            Param.int_("segmentsZ", "Segments Z", &params_.segmentsZ, 1).min(1).max(64),
+        ];
+    }
+
+    /// Headless one-shot: build a cuboid from params_ and replace the scene mesh.
+    /// Called by ToolHeadlessCommand.apply(); the command wraps this with a
+    /// snapshot pair for undo. GPU upload + cache refresh are handled by the caller.
+    override bool applyHeadless() {
+        Mesh fresh;
+        buildCuboidParametric(&fresh, params_);
+        fresh.buildLoops();
+        fresh.resetSelection();
+        *mesh = fresh;
+        gpu.upload(*mesh);
+        return true;
+    }
 
     override void drawProperties() {
         if (state == BoxState.Idle) {

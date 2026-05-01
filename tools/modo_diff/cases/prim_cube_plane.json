@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.cube with sizeY=0 collapses to XZ plane — 4v/4e/1f",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 0.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

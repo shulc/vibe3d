@@ -506,11 +506,15 @@ void main(string[] args) {
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
-    reg.toolFactories["box"]    = () {
+    reg.toolFactories["prim.cube"] = () {
         auto t = new BoxTool(&mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
+    reg.commandFactories["prim.cube"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh, cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.cube", reg.toolFactories["prim.cube"]);
 
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands

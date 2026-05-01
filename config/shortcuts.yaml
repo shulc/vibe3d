@@ -2,7 +2,7 @@ tools:
   move:   W
   rotate: E
   scale:  R
-  box:    ""
+  prim.cube: ""
   bevel:  B
 
 commands:
