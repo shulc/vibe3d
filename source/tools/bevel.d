@@ -60,6 +60,9 @@ private:
     // ---- All bevel parameters (edge + polygon) ----
     BevelParams params_;
 
+    // ---- UI-only asymmetric toggle (not a wire field — derived from widthR != NaN) ----
+    bool        ebAsymmetric;
+
     // ---- Polygon bevel op state ----
     PolyBevelOp polyOp;
 
@@ -126,8 +129,10 @@ public:
             return [
                 Param.float_("width", "Width", &params_.width, 0.0f)
                      .min(0.0f).max(float.max).step(0.005f).fmt("%.4f"),
+                Param.float_("widthR", "Width R", &params_.widthR, float.nan)
+                     .min(0.0f).max(float.max).step(0.005f).fmt("%.4f"),
                 Param.int_("seg", "Segments", &params_.seg, 1)
-                     .min(1).max(16),
+                     .min(1).max(64),
                 Param.float_("superR", "Super R", &params_.superR, 2.0f)
                      .min(0.3f).max(8.0f).step(0.05f).fmt("%.2f"),
                 Param.intEnum_("mode", "Mode",
@@ -137,13 +142,19 @@ public:
                                 IntEnumEntry(cast(int)BevelWidthMode.Depth,   "depth",   "Depth"),
                                 IntEnumEntry(cast(int)BevelWidthMode.Percent, "percent", "Percent")],
                                cast(int)BevelWidthMode.Offset),
+                Param.intEnum_("miter_inner", "Miter Inner",
+                               cast(int*)&params_.miterInner,
+                               [IntEnumEntry(cast(int)MiterPattern.Sharp, "sharp", "Sharp"),
+                                IntEnumEntry(cast(int)MiterPattern.Arc,   "arc",   "Arc")],
+                               cast(int)MiterPattern.Sharp),
+                Param.bool_("limit", "Limit", &params_.limit, true),
             ];
         }
         if (*editMode != EditMode.Polygons) return [];
         return [
             Param.float_("shift", "Shift", &params_.shiftAmount, 0.0f)
                  .min(-float.max).max(float.max).step(0.005f).fmt("%.4f"),
-            Param.float_("inset", "Inset", &params_.insertAmount, 0.0f)
+            Param.float_("insert", "Inset", &params_.insertAmount, 0.0f)
                  .min(-float.max).max(float.max).step(0.005f).fmt("%.4f"),
             Param.bool_("group", "Group Polygon", &params_.groupPolygons, false),
         ];
@@ -177,12 +188,13 @@ public:
     }
 
     override void activate() {
-        active       = true;
-        bevelApplied = false;
-        polyOp       = PolyBevelOp.init;
-        params_      = BevelParams.init;
-        dragHandle   = -1;
-        ebOp         = BevelOp.init;
+        active          = true;
+        bevelApplied    = false;
+        polyOp          = PolyBevelOp.init;
+        params_         = BevelParams.init;
+        ebAsymmetric    = false;
+        dragHandle      = -1;
+        ebOp            = BevelOp.init;
         if (*editMode == EditMode.Edges)
             recomputeEdgeCenter();
         else
@@ -368,13 +380,19 @@ public:
                 widthChanged = true;
             }
 
-            if (ImGui.Checkbox("Asymmetric", &params_.asymmetric)) {
-                // Initialize R to match L so toggling ON keeps the current
-                // geometry intact; the user can then dial widthR independently.
-                params_.widthR = params_.width;
+            if (ImGui.Checkbox("Asymmetric", &ebAsymmetric)) {
+                import std.math : isNaN;
+                if (ebAsymmetric) {
+                    // Toggle ON: initialize R to match L so the current geometry
+                    // stays intact; user can then dial widthR independently.
+                    params_.widthR = params_.width;
+                } else {
+                    // Toggle OFF: NaN sentinel → symmetric
+                    params_.widthR = float.nan;
+                }
                 topologyDirty = true;
             }
-            if (params_.asymmetric) {
+            if (ebAsymmetric) {
                 if (ImGui.DragFloat("Width R", &params_.widthR, 0.005f, 0.0f, 0.0f, "%.4f")) {
                     if (params_.widthR < 0.0f) params_.widthR = 0.0f;
                     topologyDirty = true;
@@ -588,12 +606,14 @@ private:
     // ------------------------------------------------------------------
 
     void applyEdgeBevelTopology() {
+        import std.math : isNaN;
         bevelApplied = true;
         // For interactive drag we anchor slideDir at unit user widths (or
         // 1 ↔ ratio when asymmetric). The Width slider then linearly scales
         // both sides via updateEdgeBevelPositions(params_.width).
-        float wRRatio = (params_.asymmetric && params_.width > 0.0f)
-                        ? (params_.widthR / params_.width) : 1.0f;
+        float effectiveWR = isNaN(params_.widthR) ? params_.width : params_.widthR;
+        float wRRatio = (params_.width > 0.0f && effectiveWR != params_.width)
+                        ? (effectiveWR / params_.width) : 1.0f;
         ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, params_.mode,
                                              1.0f, wRRatio, params_.seg, params_.superR,
                                              params_.miterInner);

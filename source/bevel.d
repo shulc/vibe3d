@@ -71,14 +71,15 @@ enum MiterPattern {
 // BevelParams — all parameters for BevelTool (both edge and polygon modes).
 //
 // Stored as a single struct in BevelTool rather than scattered loose fields.
-// widthR = 0.0f default (not NaN); fall-back to width when !asymmetric is
-// handled at the call site so Param/JSON round-trips cleanly.
+// widthR = float.nan means "symmetric" (fall back to width); any finite value
+// means asymmetric with that user width on the R side. This NaN-sentinel
+// preserves the old MeshBevel wire semantics: sending {"widthR":0.05} without
+// an explicit asymmetric flag automatically enables asymmetric mode.
 // ---------------------------------------------------------------------------
 struct BevelParams {
     // Edge-mode parameters
     float          width      = 0.0f;
-    float          widthR     = 0.0f;
-    bool           asymmetric = false;
+    float          widthR     = float.nan;   // NaN → fall back to width (symmetric)
     int            seg        = 1;
     float          superR     = 2.0f;
     BevelWidthMode mode       = BevelWidthMode.Offset;
@@ -2836,9 +2837,9 @@ private void replaceVertInFace(Mesh* mesh, uint faceIdx, uint oldV, uint newV)
 // (no-op, mesh is untouched). On success the mesh is fully mutated, bevel-quad
 // edges are selected, and result.op holds the BevelOp for the caller.
 //
-// params.widthR / params.asymmetric semantics:
-//   If params.asymmetric == true  →  wL = params.width, wR = params.widthR.
-//   If params.asymmetric == false →  wL = wR = params.width (symmetric).
+// params.widthR NaN-sentinel semantics:
+//   If isNaN(params.widthR)  →  wL = wR = params.width (symmetric).
+//   If !isNaN(params.widthR) →  wL = params.width, wR = params.widthR (asymmetric).
 // ---------------------------------------------------------------------------
 
 struct EdgeBevelResult {
@@ -2852,8 +2853,9 @@ EdgeBevelResult runEdgeBevel(Mesh* mesh, const ref bool[] selectedEdges,
     import std.math : isNaN;
     if (!mesh.hasAnySelectedEdges()) return EdgeBevelResult(false);
 
+    import std.math : isNaN;
     float w  = params.width;
-    float wR = params.asymmetric ? params.widthR : params.width;
+    float wR = isNaN(params.widthR) ? params.width : params.widthR;
 
     if (params.limit) {
         float lim = computeLimitOffset(mesh, cast(bool[])selectedEdges, params.mode);

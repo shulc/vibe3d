@@ -78,7 +78,7 @@ unittest { // tool.set bevel → tool.attr (shift/inset) → tool.doApply → to
 
     string script =
         "tool.set bevel\n" ~
-        "tool.attr bevel inset 0.25\n" ~
+        "tool.attr bevel insert 0.25\n" ~
         "tool.attr bevel shift 0.2\n" ~
         "tool.doApply\n" ~
         "tool.set bevel off";
@@ -142,7 +142,7 @@ unittest { // tool.set with unknown tool id returns error
 }
 
 // ---------------------------------------------------------------------------
-// 5. Mixed positional + named: tool.set bevel inset:0.1
+// 5. Mixed positional + named: tool.set bevel insert:0.1
 // ---------------------------------------------------------------------------
 
 unittest { // tool.set with positional toolId and named param
@@ -152,7 +152,7 @@ unittest { // tool.set with positional toolId and named param
     // tool.set with positional "bevel" + named "inset:0.1" activates bevel
     // and sets the inset param in one command.
     string script =
-        "tool.set bevel inset:0.1\n" ~
+        "tool.set bevel insert:0.1\n" ~
         "tool.doApply\n" ~
         "tool.set bevel off";
 
@@ -174,7 +174,7 @@ unittest { // undo after tool.doApply reverts to 8 vertices
 
     string script =
         "tool.set bevel\n" ~
-        "tool.attr bevel inset 0.15\n" ~
+        "tool.attr bevel insert 0.15\n" ~
         "tool.doApply\n" ~
         "tool.set bevel off";
 

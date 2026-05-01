@@ -51,8 +51,7 @@ import commands.file.save;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.subpatch_toggle;
-import commands.mesh.bevel;
-import commands.mesh.poly_bevel;
+import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
 import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
@@ -565,11 +564,13 @@ void main(string[] args) {
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh, cameraView, editMode);
     reg.commandFactories["mesh.bevel"] = () => cast(Command)
-        new MeshBevel(&mesh, cameraView, editMode, &gpu,
-                      &vertexCache, &edgeCache, &faceCache);
+        new ToolHeadlessCommand(&mesh, cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "mesh.bevel", reg.toolFactories["bevel"]);
     reg.commandFactories["mesh.poly_bevel"] = () => cast(Command)
-        new MeshPolyBevel(&mesh, cameraView, editMode, &gpu,
-                          &vertexCache, &edgeCache, &faceCache);
+        new ToolHeadlessCommand(&mesh, cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "mesh.poly_bevel", reg.toolFactories["bevel"]);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh, cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
@@ -852,25 +853,6 @@ void main(string[] args) {
                         if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
                         if (v.type == JSONType.float_)   return cast(float)v.floating;
                         return 0.0f;
-                    }
-                    if (auto mb = cast(MeshBevel)cmd) {
-                        if ("width"  in pj) mb.setWidth (jsonNumber(pj["width"]));
-                        if ("widthR" in pj) mb.setWidthR(jsonNumber(pj["widthR"]));
-                        if ("mode"   in pj && pj["mode"].type == JSONType.string)
-                            mb.setMode(pj["mode"].str);
-                        if ("seg"    in pj) mb.setSeg(cast(int)jsonNumber(pj["seg"]));
-                        if ("superR" in pj) mb.setSuperR(jsonNumber(pj["superR"]));
-                        if ("limit"  in pj && pj["limit"].type == JSONType.false_)
-                            mb.setLimit(false);
-                        if ("miter_inner" in pj
-                            && pj["miter_inner"].type == JSONType.string)
-                            mb.setMiterInner(pj["miter_inner"].str);
-                    }
-                    if (auto mpb = cast(MeshPolyBevel)cmd) {
-                        if ("insert" in pj) mpb.setInsert(jsonNumber(pj["insert"]));
-                        if ("shift"  in pj) mpb.setShift (jsonNumber(pj["shift"]));
-                        if ("group"  in pj && pj["group"].type == JSONType.true_)
-                            mpb.setGroup(true);
                     }
                     // mesh.vertex_edit: indices + before + after arrays
                     // (each Vec3 as [x,y,z]). Used by tests; tools call
