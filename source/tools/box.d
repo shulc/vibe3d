@@ -735,64 +735,24 @@ public:
     }
 
     override void drawProperties() {
-        if (state == BoxState.Idle) {
-            ImGui.TextDisabled("No active shape");
-            return;
-        }
-        computeBaseCorners();
-        Vec3  cen = baseCentroid();
-        float d1  = dot(currentPoint - startPoint, planeAxis1);
-        float d2  = dot(currentPoint - startPoint, planeAxis2);
+        if (state == BoxState.Idle)
+            ImGui.TextDisabled("Drag in viewport to draw a base.");
+        // Schema panel (property_panel.d) handles all param widgets.
+    }
 
-        // World-space size: axis1/axis2 cover the base; planeNormal covers height.
-        Vec3 sizeVec = planeAxis1 * abs(d1) + planeAxis2 * abs(d2);
-        if (state >= BoxState.DrawingHeight)
-            sizeVec = sizeVec + planeNormal * abs(height);
+    /// Re-evaluate the preview from params_ after a schema slider change.
+    /// Called by PropertyPanel immediately after onParamChanged().
+    override void evaluate() {
+        // No preview exists yet in Idle — nothing to update.
+        if (state == BoxState.Idle) return;
 
-        // ---- Center ----
-        float cx = cen.x, cy = cen.y, cz = cen.z;
-        ImGui.Text("Center");
-        bool cChanged = false;
-        cChanged |= ImGui.DragFloat("X##cenX", &cx, 0.01f, 0, 0, "%.3f");
-        cChanged |= ImGui.DragFloat("Y##cenY", &cy, 0.01f, 0, 0, "%.3f");
-        cChanged |= ImGui.DragFloat("Z##cenZ", &cz, 0.01f, 0, 0, "%.3f");
-        if (cChanged) {
-            Vec3 delta  = Vec3(cx - cen.x, cy - cen.y, cz - cen.z);
-            startPoint   = startPoint   + delta;
-            currentPoint = currentPoint + delta;
-            uploadPreview();
-        }
-
-        // ---- Size ----
-        float sx = sizeVec.x, sy = sizeVec.y, sz = sizeVec.z;
-        ImGui.Text("Size");
-        bool sxC = ImGui.DragFloat("X##szX", &sx, 0.01f, 0.001f, float.max, "%.3f");
-        bool syC = ImGui.DragFloat("Y##szY", &sy, 0.01f, 0.001f, float.max, "%.3f");
-        bool szC = ImGui.DragFloat("Z##szZ", &sz, 0.01f, 0.001f, float.max, "%.3f");
-        if (sxC || syC || szC) {
-            float sign1 = d1 < 0 ? -1.0f : 1.0f;
-            float sign2 = d2 < 0 ? -1.0f : 1.0f;
-            float signH = height < 0 ? -1.0f : 1.0f;
-            if (sxC) {
-                if      (abs(planeAxis1.x)  > 0.5f) d1     = sx * sign1;
-                else if (abs(planeAxis2.x)  > 0.5f) d2     = sx * sign2;
-                else if (abs(planeNormal.x) > 0.5f) height = sx * signH;
-            }
-            if (syC) {
-                if      (abs(planeAxis1.y)  > 0.5f) d1     = sy * sign1;
-                else if (abs(planeAxis2.y)  > 0.5f) d2     = sy * sign2;
-                else if (abs(planeNormal.y) > 0.5f) height = sy * signH;
-            }
-            if (szC) {
-                if      (abs(planeAxis1.z)  > 0.5f) d1     = sz * sign1;
-                else if (abs(planeAxis2.z)  > 0.5f) d2     = sz * sign2;
-                else if (abs(planeNormal.z) > 0.5f) height = sz * signH;
-            }
-            // Reconstruct startPoint/currentPoint from center + new d1/d2.
-            startPoint   = cen - planeAxis1 * (d1 * 0.5f) - planeAxis2 * (d2 * 0.5f);
-            currentPoint = cen + planeAxis1 * (d1 * 0.5f) + planeAxis2 * (d2 * 0.5f);
-            uploadPreview();
-        }
+        // Schema is the source of truth for tweaks made via property panel.
+        // Rebuild preview directly from params_, bypassing the interactive
+        // drag-state mapping in buildCuboid().
+        previewMesh.clear();
+        buildCuboidParametric(&previewMesh, params_);
+        previewMesh.buildLoops();
+        previewGpu.upload(previewMesh);
     }
 
 private:
@@ -961,38 +921,39 @@ private:
     }
 
     void buildCuboid(Mesh* m) {
-        Vec3 H = planeNormal * height;
-        Vec3[8] pts = [
-            baseCorners[0], baseCorners[1], baseCorners[2], baseCorners[3],
-            baseCorners[0] + H, baseCorners[1] + H,
-            baseCorners[2] + H, baseCorners[3] + H,
-        ];
-        Vec3 cen = Vec3(0,0,0);
-        foreach (p; pts) cen = cen + p * 0.125f;
+        // Map interactive drag state → axis-aligned BoxParams so the
+        // parametric builder handles segments correctly.
+        // pickMostFacingPlane guarantees each axis is one of ±X/Y/Z.
+        computeBaseCorners();
+        Vec3  d  = currentPoint - startPoint;
+        float d1 = dot(d, planeAxis1);
+        float d2 = dot(d, planeAxis2);
 
-        static immutable int[24] faceIdx = [
-            0,1,2,3,   // bottom
-            4,7,6,5,   // top
-            0,4,5,1,   // side 0-1
-            1,5,6,2,   // side 1-2
-            2,6,7,3,   // side 2-3
-            3,7,4,0,   // side 3-0
-        ];
+        Vec3 cen = baseCentroid();
+        if (state >= BoxState.DrawingHeight)
+            cen = cen + planeNormal * (height * 0.5f);
 
-        uint[8] vi;
-        foreach (i; 0..8) vi[i] = m.addVertex(pts[i]);
+        // Snapshot: keeps user-set segmentsX/Y/Z, overwrites pos/size below.
+        BoxParams p = params_;
+        p.cenX = cen.x; p.cenY = cen.y; p.cenZ = cen.z;
+        p.sizeX = 0.0f; p.sizeY = 0.0f; p.sizeZ = 0.0f;
 
-        for (int fi = 0; fi < 6; fi++) {
-            int b  = fi * 4;
-            int i0 = faceIdx[b], i1 = faceIdx[b+1],
-                i2 = faceIdx[b+2], i3 = faceIdx[b+3];
-            Vec3 n  = cross(pts[i1] - pts[i0], pts[i2] - pts[i0]);
-            Vec3 fc = (pts[i0] + pts[i1] + pts[i2] + pts[i3]) * 0.25f;
-            if (dot(n, fc - cen) > 0)
-                m.addFace([vi[i0], vi[i1], vi[i2], vi[i3]]);
-            else
-                m.addFace([vi[i0], vi[i3], vi[i2], vi[i1]]);
+        // Write each drag magnitude into the matching world axis size slot.
+        void writeSize(Vec3 axisVec, float magnitude) {
+            if      (abs(axisVec.x) > 0.5f) p.sizeX = abs(magnitude);
+            else if (abs(axisVec.y) > 0.5f) p.sizeY = abs(magnitude);
+            else if (abs(axisVec.z) > 0.5f) p.sizeZ = abs(magnitude);
         }
+        writeSize(planeAxis1, d1);
+        writeSize(planeAxis2, d2);
+        if (state >= BoxState.DrawingHeight)
+            writeSize(planeNormal, height);
+
+        // Sync back so the schema panel reflects the current drag state.
+        params_.cenX  = p.cenX;  params_.cenY  = p.cenY;  params_.cenZ  = p.cenZ;
+        params_.sizeX = p.sizeX; params_.sizeY = p.sizeY; params_.sizeZ = p.sizeZ;
+
+        buildCuboidParametric(m, p);
     }
 
     void uploadCuboid() {
