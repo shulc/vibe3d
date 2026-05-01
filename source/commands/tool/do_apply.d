@@ -25,6 +25,7 @@ class ToolDoApplyCommand : Command {
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
+    private string           appliedToolId;   // captured at apply() for label()
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc)
@@ -38,7 +39,9 @@ class ToolDoApplyCommand : Command {
     }
 
     override string name()  const { return "tool.doApply"; }
-    override string label() const { return "Apply Tool"; }
+    override string label() const {
+        return appliedToolId.length > 0 ? "Apply " ~ appliedToolId : "Apply Tool";
+    }
 
     override bool apply() {
         auto t = toolHost.getActiveTool();
@@ -49,6 +52,7 @@ class ToolDoApplyCommand : Command {
             snap = MeshSnapshot.init;
             return false;
         }
+        appliedToolId = toolHost.getActiveToolId();
         refreshCaches();
         return true;
     }

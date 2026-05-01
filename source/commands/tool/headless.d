@@ -52,6 +52,17 @@ public:
 
     override string name() const { return toolId_; }
 
+    /// Human-readable label for the history panel. For "bevel" the label
+    /// reflects the current EditMode (matches the legacy MeshBevelEdit
+    /// snapshot label "Edge Bevel" / "Polygon Bevel"). Other tool ids
+    /// fall back to "Apply <toolId>".
+    override string label() const {
+        if (toolId_ == "bevel") {
+            return (editMode == EditMode.Edges) ? "Edge Bevel" : "Polygon Bevel";
+        }
+        return "Apply " ~ toolId_;
+    }
+
     /// Returns the schema of a freshly-built tool instance. Used by the
     /// HTTP injector (injectParamsInto) before apply() runs. The same
     /// toolInstance is reused in apply(), so injected values persist.

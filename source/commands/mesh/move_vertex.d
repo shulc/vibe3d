@@ -29,7 +29,8 @@ class MeshMoveVertex : Command {
         this.fc  = fc;
     }
 
-    override string name() const { return "mesh.move_vertex"; }
+    override string name()  const { return "mesh.move_vertex"; }
+    override string label() const { return "Move Vertex"; }
 
     override Param[] params() {
         return [
