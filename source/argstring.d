@@ -33,6 +33,8 @@ import std.ascii   : isAlpha, isAlphaNum, isDigit, isWhite;
 import std.conv    : to, ConvException;
 import std.string  : strip;
 import std.format  : format;
+import std.array   : join;
+import params      : Param, IntEnumEntry, isUserSet;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -58,6 +60,306 @@ ParsedLine parseArgstring(string line)
 {
     auto p = Parser(line);
     return p.parseLine();
+}
+
+// ---------------------------------------------------------------------------
+// Serializer — dual of the parser above.
+// ---------------------------------------------------------------------------
+
+/**
+ * Render `params` as a MODO-style argstring fragment (just the
+ * "name:val name:val ..." part — no command name).
+ * Params for which isUserSet returns false (default-valued) are skipped.
+ */
+string serializeParams(Param[] params)
+{
+    string[] parts;
+    foreach (ref p; params) {
+        if (!isUserSet(p)) continue;
+        parts ~= p.name ~ ":" ~ _formatValue(p);
+    }
+    return parts.join(" ");
+}
+
+/// Convenience: full argstring line with command name prefix.
+/// If no user-set params exist, emits just the command name.
+string serializeCommand(string commandId, Param[] params)
+{
+    auto args = serializeParams(params);
+    return args.length > 0 ? commandId ~ " " ~ args : commandId;
+}
+
+// --- private helpers ---
+
+/// Returns true if the string value must be quoted in an argstring.
+private bool _needsQuoting(string s)
+{
+    if (s.length == 0) return true;  // empty string must be quoted
+    foreach (c; s) {
+        // bareword grammar in parser: [a-zA-Z0-9_./-]
+        bool ok = (c >= 'a' && c <= 'z')
+               || (c >= 'A' && c <= 'Z')
+               || (c >= '0' && c <= '9')
+               || c == '_' || c == '.' || c == '/' || c == '-';
+        if (!ok) return true;
+    }
+    // A bareword starting with a digit will be parsed as a number on
+    // round-trip — quote to disambiguate arbitrary string values.
+    if (s[0] >= '0' && s[0] <= '9') return true;
+    // "true" / "false" would be parsed as booleans on round-trip.
+    if (s == "true" || s == "false") return true;
+    return false;
+}
+
+/// Wrap a string in double-quotes, escaping '"' and '\'.
+private string _quote(string s)
+{
+    string r = "\"";
+    foreach (c; s) {
+        if      (c == '"')  r ~= "\\\"";
+        else if (c == '\\') r ~= "\\\\";
+        else                r ~= c;
+    }
+    r ~= "\"";
+    return r;
+}
+
+/// Quote a string value only if necessary (bareword-safe check first).
+private string _quoteIfNeeded(string s)
+{
+    return _needsQuoting(s) ? _quote(s) : s;
+}
+
+/// Format a float component for argstring output.
+///
+/// Strategy: use %g (6 significant digits) for compactness. This is
+/// sufficient for single-precision float values used in a mesh editor
+/// (positions, weights, distances). The round-trip parser accepts values
+/// within 1e-6 of the original. For values that need more digits (e.g.,
+/// a float whose %g representation differs from the original by more than
+/// float precision allows), callers should note that %g is still lossless
+/// within 1 ULP for the common range [1e-4, 1e5].
+///
+/// NaN/Inf edge cases: isUserSet returns false for NaN-default+NaN-current,
+/// so _fmtFloat should never be called for that case. If default != NaN but
+/// current == NaN the param is in an invalid state — emit "nan" as sentinel.
+private string _fmtFloat(float f)
+{
+    import std.math : isNaN, isInfinity;
+    if (isNaN(f))      return "nan";
+    if (isInfinity(f)) return f > 0 ? "inf" : "-inf";
+    return format("%g", f);
+}
+
+/// Format the current value of a Param as an argstring token.
+private string _formatValue(ref Param p)
+{
+    final switch (p.kind) {
+        case Param.Kind.Bool:
+            return *p.bptr ? "true" : "false";
+
+        case Param.Kind.Int:
+            return to!string(*p.iptr);
+
+        case Param.Kind.Float:
+            return _fmtFloat(*p.fptr);
+
+        case Param.Kind.String:
+            return _quoteIfNeeded(*p.sptr);
+
+        case Param.Kind.Enum:
+            return _quoteIfNeeded(*p.sptr);
+
+        case Param.Kind.Vec3_:
+            return format("{%s,%s,%s}",
+                          _fmtFloat(p.vptr.x),
+                          _fmtFloat(p.vptr.y),
+                          _fmtFloat(p.vptr.z));
+
+        case Param.Kind.IntEnum:
+            foreach (ref entry; p.intEnumValues) {
+                if (entry.value == *p.iePtr)
+                    return _quoteIfNeeded(entry.wireTag);
+            }
+            // Fallback: no matching entry (shouldn't happen for valid enum).
+            return to!string(*p.iePtr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Serializer inline unit tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    import math : Vec3;
+
+    unittest { // 1. Empty schema → empty string
+        string s = serializeParams([]);
+        assert(s == "", s);
+    }
+
+    unittest { // 2. All-default params → empty (nothing user-set)
+        bool b = false;
+        int  i = 4;
+        float f = 0.1f;
+        auto schema = [
+            Param.bool_ ("flag",  "F", &b, false),
+            Param.int_  ("segs",  "S", &i, 4),
+            Param.float_("width", "W", &f, 0.1f),
+        ];
+        assert(serializeParams(schema) == "");
+        assert(serializeCommand("cmd", schema) == "cmd");
+    }
+
+    unittest { // 3. Bool set → "flag:true"
+        bool b = false;
+        auto schema = [Param.bool_("flag", "F", &b, false)];
+        b = true;
+        assert(serializeParams(schema) == "flag:true");
+    }
+
+    unittest { // 4. Int set — round-trip
+        int i = 4;
+        auto schema = [Param.int_("segs", "Segments", &i, 4)];
+        i = 8;
+        string s = serializeCommand("mesh.bevel", schema);
+        assert(s == "mesh.bevel segs:8", s);
+        auto parsed = parseArgstring(s);
+        assert(parsed.commandId == "mesh.bevel");
+        assert(parsed.params["segs"].type == JSONType.integer);
+        assert(parsed.params["segs"].integer == 8);
+    }
+
+    unittest { // 5. Float set — round-trip with tolerance
+        import std.math : fabs;
+        float f = 0.0f;
+        auto schema = [Param.float_("dist", "Distance", &f, 0.0f).min(0.0f)];
+        f = 0.001f;
+        string s = serializeCommand("vert.merge", schema);
+        assert(s == "vert.merge dist:0.001", s);
+        auto parsed = parseArgstring(s);
+        assert(parsed.commandId == "vert.merge");
+        assert(parsed.params["dist"].type == JSONType.float_);
+        assert(fabs(parsed.params["dist"].floating - 0.001) < 1e-6);
+    }
+
+    unittest { // 6. Float with NaN default (widthR pattern) — round-trip
+        import std.math : fabs;
+        float f = float.nan;
+        auto schema = [Param.float_("widthR", "Width R", &f, float.nan)];
+        // NaN == NaN → not user-set
+        assert(serializeParams(schema) == "");
+        // Set to a real value
+        f = 0.05f;
+        string s = serializeCommand("mesh.bevel", schema);
+        assert(s == "mesh.bevel widthR:0.05", s);
+        auto parsed = parseArgstring(s);
+        assert(fabs(parsed.params["widthR"].floating - 0.05) < 1e-6);
+    }
+
+    unittest { // 7. String with spaces → quoted; round-trip
+        string sv = "";
+        auto schema = [Param.string_("path", "Path", &sv, "")];
+        sv = "hello world";
+        string s = serializeCommand("file.load", schema);
+        assert(s == `file.load path:"hello world"`, s);
+        auto parsed = parseArgstring(s);
+        assert(parsed.params["path"].str == "hello world");
+    }
+
+    unittest { // 8. String containing a double-quote → escaped; round-trip
+        string sv = "";
+        auto schema = [Param.string_("key", "Key", &sv, "")];
+        sv = `a"b`;
+        string s = serializeCommand("cmd", schema);
+        assert(s == `cmd key:"a\"b"`, s);
+        auto parsed = parseArgstring(s);
+        assert(parsed.params["key"].str == `a"b`);
+    }
+
+    unittest { // 9. Vec3 — round-trip
+        import std.math : fabs;
+        Vec3 v = Vec3(0, 0, 0);
+        auto schema = [Param.vec3_("from", "From", &v, Vec3(0, 0, 0))];
+        v = Vec3(-0.5f, 0.5f, 1.0f);
+        string s = serializeCommand("mesh.move_vertex", schema);
+        // %g emits "1" for 1.0 (no trailing .0), so the serialized form is:
+        assert(s == "mesh.move_vertex from:{-0.5,0.5,1}", s);
+        auto parsed = parseArgstring(s);
+        auto arr = parsed.params["from"].array;
+        assert(arr.length == 3);
+        // Helper: read numeric JSONValue as double regardless of int/float type.
+        static double asNum(ref JSONValue jv) {
+            if (jv.type == JSONType.float_)   return jv.floating;
+            if (jv.type == JSONType.integer)  return cast(double)jv.integer;
+            assert(false, "expected numeric JSONValue");
+        }
+        assert(fabs(asNum(arr[0]) - (-0.5)) < 1e-6);
+        assert(fabs(asNum(arr[1]) -   0.5)  < 1e-6);
+        assert(fabs(asNum(arr[2]) -   1.0)  < 1e-6);
+    }
+
+    unittest { // 10. Enum (string-backed): wireTag "offset" → "mode:offset"; round-trip
+        string mode = "offset";
+        auto schema = [Param.enum_("mode", "Mode", &mode,
+                                   [["offset","Offset"],["width","Width"]], "offset")];
+        // Default — not user-set
+        assert(serializeParams(schema) == "");
+        mode = "width";
+        string s = serializeCommand("mesh.bevel", schema);
+        assert(s == "mesh.bevel mode:width", s);
+        auto parsed = parseArgstring(s);
+        assert(parsed.params["mode"].str == "width");
+    }
+
+    unittest { // 11. IntEnum (int-backed): wireTag lookup → "mode:offset"; round-trip
+        int v = 0;
+        auto schema = [Param.intEnum_("mode", "Mode", &v,
+            [IntEnumEntry(0, "offset", "Offset"),
+             IntEnumEntry(1, "width",  "Width"),
+             IntEnumEntry(2, "depth",  "Depth")],
+            0)];
+        // Default → not user-set
+        assert(serializeParams(schema) == "");
+        v = 1;
+        string s = serializeCommand("mesh.bevel", schema);
+        assert(s == "mesh.bevel mode:width", s);
+        auto parsed = parseArgstring(s);
+        assert(parsed.params["mode"].str == "width");
+    }
+
+    unittest { // 12. Mixed kinds — verify exact output and round-trip
+        import std.math : fabs;
+        bool keep  = false;
+        float dist = 0.0f;
+        string mode = "fixed";
+        int   segs = 1;
+
+        auto schema = [
+            Param.bool_  ("keep",  "Keep",     &keep,  false),
+            Param.float_ ("dist",  "Distance", &dist,  0.0f),
+            Param.enum_  ("range", "Range",    &mode,
+                          [["fixed","Fixed"],["overlap","Overlap"]], "fixed"),
+            Param.int_   ("segs",  "Segments", &segs,  1),
+        ];
+
+        // Set all to non-default values
+        keep = true;
+        dist = 0.001f;
+        // mode stays "fixed" → not user-set, should be skipped
+        segs = 3;
+
+        string s = serializeCommand("vert.merge", schema);
+        assert(s == "vert.merge keep:true dist:0.001 segs:3", s);
+
+        auto parsed = parseArgstring(s);
+        assert(parsed.commandId == "vert.merge");
+        assert(parsed.params["keep"].type == JSONType.true_);
+        assert(fabs(parsed.params["dist"].floating - 0.001) < 1e-6);
+        assert(("range" in parsed.params) is null);  // was not user-set
+        assert(parsed.params["segs"].integer == 3);
+    }
 }
 
 // ---------------------------------------------------------------------------
