@@ -671,6 +671,13 @@ void main(string[] args) {
         }
     }
 
+    // Declared at outer scope so that the main-loop UI (History panel replay
+    // button) can call them regardless of whether httpServer is non-null.
+    // Both are assigned inside the `if (httpServer !is null)` block below;
+    // when httpServer is null they remain null and the replay path is a no-op.
+    void delegate(string, string) commandHandlerDelegate;
+    void delegate(size_t) replayUndoEntry;
+
     // Set up HTTP server model data provider
     if (httpServer !is null) {
         // Convert mesh vertices to flat float array for HTTP server
@@ -884,7 +891,9 @@ void main(string[] args) {
             }
         }
 
-        httpServer.setCommandHandler((string id, string paramsJson) {
+        // Assign the named delegate declared in outer scope so that the UI
+        // replay button calls the same dispatch path as /api/command.
+        commandHandlerDelegate = (string id, string paramsJson) {
             import std.json : parseJSON, JSONType;
             import commands.file.load : FileLoad;
             import commands.file.save : FileSave;
@@ -967,7 +976,23 @@ void main(string[] args) {
                     throw new Exception("command '" ~ id ~ "' did not apply");
                 history.record(cmd);
             }
-        });
+        };
+        httpServer.setCommandHandler(commandHandlerDelegate);
+
+        // Phase 5.6: assign the outer-scope replayUndoEntry delegate so the
+        // History panel replay button can call it from the main-loop render.
+        replayUndoEntry = (size_t index) {
+            import argstring : parseArgstring;
+            string line = history.undoEntryCommandLine(index);
+            if (line.length == 0) return;
+            auto parsed = parseArgstring(line);
+            if (parsed.isEmpty) return;
+            try {
+                commandHandlerDelegate(parsed.commandId, parsed.params.toString());
+            } catch (Exception) {
+                // Replay is best-effort; the panel has no error-reporting UI.
+            }
+        };
 
         httpServer.setUndoHandler(() {
             return history.undo();
@@ -2232,25 +2257,60 @@ void main(string[] args) {
 
         // ---- Command History (floating) ----
         // Toggled by the history.show command. Lists undo entries (top
-        // = most recent) and redo entries below a separator. Read-only
-        // for now; click-to-jump is an obvious follow-up.
+        // = most recent) and redo entries below a separator.
+        // Each undo entry shows label (regular) + args (dimmed) + a small
+        // replay button (">") that re-executes the entry against the current
+        // mesh state via commandHandlerDelegate.
         if (showHistoryPanel) {
             pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 130), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSize(ImVec2(240, 320), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowSize(ImVec2(280, 340), ImGuiCond.FirstUseEver);
             bool open = showHistoryPanel;
             if (ImGui.Begin("Command History", &open)) {
-                auto undos = history.undoLabels;
-                auto redos = history.redoLabels;
-                ImGui.TextDisabled("Undo (%d)", cast(int)undos.length);
+                auto undoArr = history.undoEntries();
+                auto redoArr = history.redoEntries();
+
+                ImGui.TextDisabled("Undo (%d)", cast(int)undoArr.length);
                 // Most-recent first — iterate in reverse so the top of the
-                // stack is at the top of the list.
-                foreach_reverse (l; undos)
-                    ImGui.BulletText("%s", l);
+                // stack appears at the top of the list.
+                foreach_reverse (i, ref e; undoArr) {
+                    ImGui.PushID(cast(int)i);
+
+                    // Small replay button — re-executes this entry's argstring
+                    // against the current mesh state (best-effort).
+                    // replayUndoEntry is null when httpServer was not started
+                    // (--no-http); hide the button in that case.
+                    if (replayUndoEntry !is null) {
+                        if (ImGui.SmallButton(">"))
+                            replayUndoEntry(i);
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Replay this entry");
+                        ImGui.SameLine();
+                    }
+
+                    ImGui.Text("%s", e.label);
+                    if (e.args.length > 0) {
+                        ImGui.SameLine();
+                        ImGui.TextDisabled("%s", e.args);
+                    }
+
+                    ImGui.PopID();
+                }
+
                 ImGui.Separator();
-                ImGui.TextDisabled("Redo (%d)", cast(int)redos.length);
-                foreach_reverse (l; redos)
-                    ImGui.BulletText("%s", l);
+                ImGui.TextDisabled("Redo (%d)", cast(int)redoArr.length);
+                // Redo entries: no replay button (use /api/redo for that).
+                foreach_reverse (i, ref e; redoArr) {
+                    ImGui.PushID(cast(int)(undoArr.length + i));
+                    ImGui.Bullet();
+                    ImGui.SameLine();
+                    ImGui.Text("%s", e.label);
+                    if (e.args.length > 0) {
+                        ImGui.SameLine();
+                        ImGui.TextDisabled("%s", e.args);
+                    }
+                    ImGui.PopID();
+                }
             }
             ImGui.End();
             // Honor the [x] close button on the window.
