@@ -1,14 +1,15 @@
 /**
  * argstring.d — MODO-style argstring parser for Vibe3D.
  *
- * Grammar (subphase 4.1 — named pairs only; positional args deferred to 4.3):
+ * Grammar (subphase 4.3 — positional args allowed before named pairs):
  *
  *   line       = empty | comment | command
  *   empty      = whitespace*
  *   comment    = whitespace* '#' .*
- *   command    = identifier (whitespace+ pair)*
+ *   command    = identifier positional* pair*
+ *   positional = whitespace+ value      (token that is NOT identifier ':')
+ *   pair       = whitespace+ identifier ':' value
  *   identifier = [a-zA-Z_][a-zA-Z0-9_.]*
- *   pair       = identifier ':' value
  *   value      = bool | number | quoted | vec_array | bareword
  *   bool       = 'true' | 'false'
  *   number     = '-'? [0-9]+ ('.' [0-9]+)?
@@ -20,6 +21,10 @@
  * integers as JSONType.integer.  Booleans as JSONType.true_/false_.
  * Bare identifiers and quoted strings as JSONType.string.
  * Vec arrays as JSONType.array.
+ *
+ * If positional args were collected, they are stored in params["_positional"]
+ * as a JSONType.array. Commands without positional args do not see this key.
+ * Positional args after a named pair are a syntax error.
  */
 module argstring;
 
@@ -100,33 +105,63 @@ private struct Parser
         if (cmdId.length == 0)
             throw err("expected command identifier");
 
-        // Named pairs
+        // Positional args (before named pairs), then named pairs.
+        // Lookahead: if next non-WS token looks like identifier ':' → named pair.
+        //            Otherwise → positional.
         JSONValue params = JSONValue(cast(JSONValue[string]) null); // empty object
+        JSONValue[] positionalArgs;
+        bool namedStarted = false;
 
         while (true) {
             skipWS();
             if (atEnd || cur == '#') break;
 
-            // Must be identifier ':' value
-            size_t savedPos = pos;
-            string name = parseIdentifier();
-            if (name.length == 0)
-                throw err("expected 'name:value' pair");
-
-            skipWS();
-            if (atEnd || cur != ':')
-                throw err(format("expected ':' after '%s'", name));
-            advance(); // consume ':'
-
-            JSONValue val = parseValue();
-            params[name] = val;
+            // Peek: is this token an identifier followed immediately by ':'?
+            if (isNamedPairAhead()) {
+                namedStarted = true;
+                string name = parseIdentifier();
+                if (name.length == 0)
+                    throw err("expected 'name:value' pair");
+                // isNamedPairAhead verified ':' follows immediately (no WS).
+                if (atEnd || cur != ':')
+                    throw err(format("expected ':' after '%s'", name));
+                advance(); // consume ':'
+                JSONValue val = parseValue();
+                params[name] = val;
+            } else {
+                // Positional value
+                if (namedStarted)
+                    throw err("positional arg after named pair not allowed");
+                positionalArgs ~= parseValue();
+            }
         }
+
+        if (positionalArgs.length > 0)
+            params["_positional"] = JSONValue(positionalArgs);
 
         ParsedLine r;
         r.isEmpty   = false;
         r.commandId = cmdId;
         r.params    = params;
         return r;
+    }
+
+    // --- lookahead: is the next token an identifier followed by ':' ? ---
+    // This determines whether the current position starts a named pair or
+    // a positional value. Does not advance pos.
+
+    bool isNamedPairAhead() const {
+        // Must start with identifier-start char
+        if (atEnd || (!isAlpha(cur) && cur != '_')) return false;
+        // Scan forward over identifier chars
+        size_t i = pos;
+        while (i < src.length && (isAlphaNum(src[i]) || src[i] == '_' || src[i] == '.'))
+            ++i;
+        // If we consumed at least one char and the next char is ':', it's a pair.
+        // Note: no whitespace between identifier and ':' in named pairs.
+        if (i > pos && i < src.length && src[i] == ':')
+            return true;
+        return false;
     }
 
     // --- identifier: [a-zA-Z_][a-zA-Z0-9_.]* ---
@@ -380,8 +415,16 @@ version (unittest)
         assertThrown!Exception(parseArgstring("cmd key:"));
     }
 
-    unittest { // syntax error: missing ':'
-        assertThrown!Exception(parseArgstring("cmd key value"));
+    unittest { // syntax error: missing ':' (two bare words that look like named pair attempt)
+        // "cmd key value" — "key" starts an identifier but "value" follows without ':'
+        // so "key" is treated as positional, then "value" is also positional. No error.
+        auto r = parseArgstring("cmd key value");
+        assert(!r.isEmpty);
+        assert(r.commandId == "cmd");
+        assert("_positional" in r.params);
+        assert(r.params["_positional"].array.length == 2);
+        assert(r.params["_positional"].array[0].str == "key");
+        assert(r.params["_positional"].array[1].str == "value");
     }
 
     unittest { // identifier with dot
@@ -389,5 +432,64 @@ version (unittest)
         assert(r.commandId == "mesh.bevel");
         assert(r.params["mode"].str == "offset");
         assert(r.params["seg"].integer == 3);
+    }
+
+    // --- positional arg tests (4.3) ---
+
+    unittest { // single positional arg
+        auto r = parseArgstring("tool.set bevel");
+        assert(!r.isEmpty);
+        assert(r.commandId == "tool.set");
+        assert("_positional" in r.params);
+        assert(r.params["_positional"].array.length == 1);
+        assert(r.params["_positional"].array[0].str == "bevel");
+    }
+
+    unittest { // two positional args
+        auto r = parseArgstring("tool.set bevel off");
+        assert(r.commandId == "tool.set");
+        auto pos = r.params["_positional"].array;
+        assert(pos.length == 2);
+        assert(pos[0].str == "bevel");
+        assert(pos[1].str == "off");
+    }
+
+    unittest { // three positional args (tool.attr toolId name value)
+        auto r = parseArgstring("tool.attr bevel width 0.1");
+        assert(r.commandId == "tool.attr");
+        auto pos = r.params["_positional"].array;
+        assert(pos.length == 3);
+        assert(pos[0].str == "bevel");
+        assert(pos[1].str == "width");
+        import std.math : fabs;
+        assert(pos[2].type == JSONType.float_);
+        assert(fabs(pos[2].floating - 0.1) < 1e-9);
+    }
+
+    unittest { // mixed: positional + named
+        auto r = parseArgstring("tool.set bevel width:0.1");
+        assert(r.commandId == "tool.set");
+        auto pos = r.params["_positional"].array;
+        assert(pos.length == 1);
+        assert(pos[0].str == "bevel");
+        import std.math : fabs;
+        assert(fabs(r.params["width"].floating - 0.1) < 1e-9);
+    }
+
+    unittest { // positional integer value
+        auto r = parseArgstring("cmd 42");
+        auto pos = r.params["_positional"].array;
+        assert(pos.length == 1);
+        assert(pos[0].type == JSONType.integer);
+        assert(pos[0].integer == 42);
+    }
+
+    unittest { // positional after named is an error
+        assertThrown!Exception(parseArgstring("cmd name:val positional"));
+    }
+
+    unittest { // no _positional key when no positional args
+        auto r = parseArgstring("cmd name:val");
+        assert(("_positional" in r.params) is null);
     }
 }

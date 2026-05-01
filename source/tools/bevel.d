@@ -4,7 +4,7 @@ import bindbc.opengl;
 import bindbc.sdl;
 
 import tool;
-import params : Param;
+import params : Param, IntEnumEntry;
 import handler;
 import mesh;
 import editmode;
@@ -117,9 +117,28 @@ public:
 
     override string name() const { return "Bevel"; }
 
-    // Schema-driven params — only exposed in polygon mode. Edge mode retains
-    // its full custom drawProperties() UI and is migrated in a later phase.
+    // Schema-driven params.
+    // Polygon mode: shift/inset/group (migrated in 4.2).
+    // Edge mode:   width/seg/superR/mode (exposed here for tool.attr headless
+    //              path; the interactive drawProperties() UI remains custom).
     override Param[] params() {
+        if (*editMode == EditMode.Edges) {
+            return [
+                Param.float_("width", "Width", &params_.width, 0.0f)
+                     .min(0.0f).max(float.max).step(0.005f).fmt("%.4f"),
+                Param.int_("seg", "Segments", &params_.seg, 1)
+                     .min(1).max(16),
+                Param.float_("superR", "Super R", &params_.superR, 2.0f)
+                     .min(0.3f).max(8.0f).step(0.05f).fmt("%.2f"),
+                Param.intEnum_("mode", "Mode",
+                               cast(int*)&params_.mode,
+                               [IntEnumEntry(cast(int)BevelWidthMode.Offset,  "offset",  "Offset"),
+                                IntEnumEntry(cast(int)BevelWidthMode.Width,   "width",   "Width"),
+                                IntEnumEntry(cast(int)BevelWidthMode.Depth,   "depth",   "Depth"),
+                                IntEnumEntry(cast(int)BevelWidthMode.Percent, "percent", "Percent")],
+                               cast(int)BevelWidthMode.Offset),
+            ];
+        }
         if (*editMode != EditMode.Polygons) return [];
         return [
             Param.float_("shift", "Shift", &params_.shiftAmount, 0.0f)
@@ -138,6 +157,14 @@ public:
             revertBevelTopology();
             applyBevelTopology();
         }
+    }
+
+    // Edge-mode params() exists for the headless tool.attr path, but
+    // drawProperties() owns the interactive UI (Width/Asymmetric/Width R/
+    // Segments/Mode/Miter Inner — 7 widgets vs 4 in schema). Skip schema
+    // render in edge mode to avoid duplicate widgets.
+    override bool renderParamsAsPanel() const {
+        return *editMode != EditMode.Edges;
     }
 
     // Re-position bevel vertices using current shiftAmount/insetAmount.

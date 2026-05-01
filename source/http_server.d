@@ -382,7 +382,11 @@ class HttpServer {
                            "<li>/info - Get application information</li>" ~
                            "<li>/api/model - Get current model state</li>" ~
                            "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
-                           "<li>/api/script - Execute multi-line script (line-by-line argstring)</li></ul>" ~
+                           "<li>/api/script - Execute multi-line script (line-by-line argstring)</li>" ~
+                           "<li>tool.set &lt;toolId&gt; [off] [name:val ...] - activate/deactivate a tool</li>" ~
+                           "<li>tool.attr &lt;toolId&gt; &lt;name&gt; &lt;value&gt; - set parameter on active tool</li>" ~
+                           "<li>tool.doApply - apply active tool one-shot (snapshot-based undo)</li>" ~
+                           "<li>tool.reset [&lt;toolId&gt;] - reset active tool's parameters</li></ul>" ~
                            "</body></html>";
             response.headers["Content-Type"] = "text/html";
         } else if (request.path == "/status") {

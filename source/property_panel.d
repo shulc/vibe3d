@@ -27,8 +27,12 @@ import d_imgui.imgui_h;
 class PropertyPanel {
     /// Render the schema-driven params for `tool` inline.
     /// Safe to call when tool is null (draws nothing).
+    /// Tools whose `renderParamsAsPanel()` returns false are skipped — those
+    /// expose params() purely for the headless tool.attr path and own UI
+    /// rendering via their drawProperties() override.
     void draw(Tool tool) {
         if (tool is null) return;
+        if (!tool.renderParamsAsPanel()) return;
         foreach (ref p; tool.params()) {
             bool enabled = tool.paramEnabled(p.name);
             if (!enabled) ImGui.BeginDisabled();

@@ -70,6 +70,12 @@ import commands.history.redo : HistoryRedo;
 import commands.history.show : HistoryShow;
 import snapshot : SelectionSnapshot;
 
+import commands.tool.host     : ToolHost;
+import commands.tool.set      : ToolSetCommand;
+import commands.tool.attr     : ToolAttrCommand;
+import commands.tool.do_apply : ToolDoApplyCommand;
+import commands.tool.reset    : ToolResetCommand;
+
 import command;
 import registry;
 import shortcuts;
@@ -503,6 +509,36 @@ void main(string[] args) {
         return cast(Tool)t;
     };
 
+    // -------------------------------------------------------------------------
+    // ToolHost — delegate bridge for tool.* commands
+    // -------------------------------------------------------------------------
+
+    ToolHost toolHost;
+    toolHost.getActiveTool   = () => activeTool;
+    toolHost.getActiveToolId = () => activeToolId;
+    toolHost.activate = (string id) {
+        auto factory = id in reg.toolFactories;
+        if (factory is null)
+            throw new Exception("unknown tool '" ~ id ~ "'");
+        auto t = (*factory)();
+        setActiveTool(t);
+        activeToolId = id;
+    };
+    toolHost.deactivate = () {
+        setActiveTool(null);
+        activeToolId = "";
+    };
+
+    reg.commandFactories["tool.set"] = () => cast(Command)
+        new ToolSetCommand(&mesh, cameraView, editMode, toolHost);
+    reg.commandFactories["tool.attr"] = () => cast(Command)
+        new ToolAttrCommand(&mesh, cameraView, editMode, toolHost);
+    reg.commandFactories["tool.doApply"] = () => cast(Command)
+        new ToolDoApplyCommand(&mesh, cameraView, editMode, toolHost,
+                               &gpu, &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["tool.reset"] = () => cast(Command)
+        new ToolResetCommand(&mesh, cameraView, editMode, toolHost);
+
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
     reg.commandFactories["select.more"]           = () => cast(Command) new SelectMore(&mesh, cameraView, editMode);
@@ -731,6 +767,56 @@ void main(string[] args) {
             json ~= "]}";
             return json.data;
         });
+        // Helper: inject _positional args from the argstring pipeline into
+        // tool.* commands. Called from inside setCommandHandler after the
+        // generic injectParamsInto pass. Extracted to keep the handler tidy.
+        void injectToolCommandPositional(Command cmd, ref JSONValue pj)
+        {
+            import std.json : JSONType;
+            if (auto ts = cast(ToolSetCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            ts.setToolId(pos[0].str);
+                        if (pos.length >= 2 && pos[1].type == JSONType.string
+                            && pos[1].str == "off")
+                            ts.setTurnOff(true);
+                    }
+                }
+                // Collect named args (everything except _positional key).
+                import std.json : JSONValue;
+                JSONValue named = JSONValue(cast(JSONValue[string]) null);
+                if (pj.type == JSONType.object) {
+                    foreach (string k, ref v; pj.object) {
+                        if (k != "_positional") named[k] = v;
+                    }
+                }
+                ts.setNamedArgs(named);
+            } else if (auto ta = cast(ToolAttrCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            ta.setToolId(pos[0].str);
+                        if (pos.length >= 2 && pos[1].type == JSONType.string)
+                            ta.setAttrName(pos[1].str);
+                        if (pos.length >= 3)
+                            ta.setAttrValue(pos[2]);
+                    }
+                }
+            } else if (auto tr = cast(ToolResetCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            tr.setToolId(pos[0].str);
+                    }
+                }
+            }
+            // tool.doApply has no params.
+        }
+
         httpServer.setCommandHandler((string id, string paramsJson) {
             import std.json : parseJSON, JSONType;
             import commands.file.load : FileLoad;
@@ -811,6 +897,9 @@ void main(string[] args) {
                         }
                         vxe.setEdit(ids, bef, aft, "Edit");
                     }
+
+                    // tool.* commands: inject _positional args and named args.
+                    injectToolCommandPositional(cmd, pj);
                 }
             }
 

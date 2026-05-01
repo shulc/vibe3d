@@ -79,4 +79,11 @@ class Tool {
     //
     // Currently unused; renderer in phase 4.4+ will start dispatching to it.
     bool applyHeadless() { return false; }
+
+    // Whether `params()` should be rendered by the inline PropertyPanel.
+    // Tools that expose params() purely for the headless tool.attr path,
+    // while drawProperties() handles the interactive UI (e.g. BevelTool
+    // edge-mode), override this to false and let drawProperties() own
+    // rendering — preventing duplicate widgets.
+    bool renderParamsAsPanel() const { return true; }
 }
