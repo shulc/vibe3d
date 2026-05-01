@@ -12,6 +12,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
+import tools.create_common : pickMostFacingPlane, BuildPlane;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -605,22 +606,10 @@ private:
     }
 
     void choosePlane(const ref Viewport vp) {
-        float avx = abs(vp.view[2]);
-        float avy = abs(vp.view[6]);
-        float avz = abs(vp.view[10]);
-        if (avx >= avy && avx >= avz) {
-            planeNormal = Vec3(1, 0, 0);
-            planeAxis1  = Vec3(0, 1, 0);
-            planeAxis2  = Vec3(0, 0, 1);
-        } else if (avy >= avx && avy >= avz) {
-            planeNormal = Vec3(0, 1, 0);
-            planeAxis1  = Vec3(1, 0, 0);
-            planeAxis2  = Vec3(0, 0, 1);
-        } else {
-            planeNormal = Vec3(0, 0, 1);
-            planeAxis1  = Vec3(1, 0, 0);
-            planeAxis2  = Vec3(0, 1, 0);
-        }
+        auto bp    = pickMostFacingPlane(vp);
+        planeNormal = bp.normal;
+        planeAxis1  = bp.axis1;
+        planeAxis2  = bp.axis2;
     }
 
     void computeBaseCorners() {

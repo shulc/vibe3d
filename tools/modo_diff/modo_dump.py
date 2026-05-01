@@ -68,7 +68,13 @@ def find_polygon(mesh, target_verts):
 
 
 def reset_cube():
-    """Reset to a single-mesh scene with a unit cube at origin."""
+    """Reset to a single-mesh scene with a unit cube at origin.
+
+    MODO's prim.cube tool caches its previous attributes between sessions
+    (~/.luxology/.modo902rc <ToolCache key="prim.cube">). If a prior run
+    set radius>0, the next default activation would produce a rounded
+    cube (~248 verts, not 8). We explicitly set radius=0 + segmentsX/Y/Z=1
+    to be defensive against any cached state."""
     lx.eval("scene.new")
     lx.eval('tool.set "prim.cube" on 0')
     lx.eval('tool.attr prim.cube cenX 0.0')
@@ -77,6 +83,10 @@ def reset_cube():
     lx.eval('tool.attr prim.cube sizeX 1.0')
     lx.eval('tool.attr prim.cube sizeY 1.0')
     lx.eval('tool.attr prim.cube sizeZ 1.0')
+    lx.eval('tool.attr prim.cube segmentsX 1')
+    lx.eval('tool.attr prim.cube segmentsY 1')
+    lx.eval('tool.attr prim.cube segmentsZ 1')
+    lx.eval('tool.attr prim.cube radius 0.0')
     lx.eval("tool.doApply")
     lx.eval('tool.set "prim.cube" off 0')
 
@@ -321,11 +331,34 @@ def main():
     with open(CASE_PATH) as f:
         case = json.load(f)
 
-    primitive = case.get("primitive", "cube")
-    if primitive != "cube":
-        raise NotImplementedError("modo_dump: only 'cube' primitive supported")
-
-    reset_cube()
+    setup = case.get("setup")
+    if setup is not None:
+        # setup block takes precedence over `primitive` field.
+        kind = setup.get("kind")
+        if kind == "primitive":
+            # Start from an empty scene and build the primitive via MODO tool commands.
+            lx.eval("scene.new")
+            tool = setup["tool"]
+            params = setup.get("params", {})
+            lx.eval('tool.set "%s" on 0' % tool)
+            for k, v in params.items():
+                if isinstance(v, bool):
+                    lx.eval('tool.attr %s %s %s' % (tool, k, "true" if v else "false"))
+                elif isinstance(v, (int, float)):
+                    lx.eval('tool.attr %s %s %g' % (tool, k, v))
+                else:
+                    lx.eval('tool.attr %s %s "%s"' % (tool, k, v))
+            lx.eval("tool.doApply")
+            lx.eval('tool.set "%s" off 0' % tool)
+        else:
+            raise NotImplementedError("modo_dump: unsupported setup kind '%s'" % kind)
+        # Future: kind == "lwo" → load from file; "macro" → run script; etc.
+    else:
+        # Legacy path: use `primitive` field (default: cube).
+        primitive = case.get("primitive", "cube")
+        if primitive != "cube":
+            raise NotImplementedError("modo_dump: only 'cube' primitive supported")
+        reset_cube()
 
     for op in case.get("preops", []):
         log("preop:", op["op"])

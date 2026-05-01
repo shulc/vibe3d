@@ -331,10 +331,47 @@ int main(string[] args) {
 
     auto caseJson = parseJSON(readText(casePath));
 
-    string primitiveType = "cube";
-    if ("primitive" in caseJson)
-        primitiveType = caseJson["primitive"].str;
-    resetMesh(primitiveType);
+    // Optional setup block — takes precedence over `primitive` field.
+    if ("setup" in caseJson) {
+        auto setup = caseJson["setup"];
+        if ("kind" in setup && setup["kind"].str == "primitive") {
+            // Reset to empty scene first, then build the primitive via /api/command.
+            auto resetResp = postJson("/api/reset?empty=true", "");
+            if (resetResp["status"].str != "ok")
+                throw new Exception("reset(empty) failed: " ~ resetResp.toString());
+
+            // Build argstring: "<tool> <name>:<value> ..."
+            string toolName = setup["tool"].str;
+            string argstr;
+            if ("params" in setup && setup["params"].type == JSONType.object) {
+                import std.conv : to;
+                foreach (string k, ref v; setup["params"].objectNoRef) {
+                    argstr ~= " " ~ k ~ ":";
+                    if      (v.type == JSONType.string)   argstr ~= v.str;
+                    else if (v.type == JSONType.integer)  argstr ~= v.integer.to!string;
+                    else if (v.type == JSONType.uinteger) argstr ~= v.uinteger.to!string;
+                    else if (v.type == JSONType.float_)   argstr ~= v.floating.to!string;
+                    else if (v.type == JSONType.true_)    argstr ~= "true";
+                    else if (v.type == JSONType.false_)   argstr ~= "false";
+                    // Vec3 and other compound types are not handled in 6.0;
+                    // phase-6 primitives use scalar params only.
+                }
+            }
+            string line = toolName ~ argstr;
+            auto cmdResp = postJson("/api/command", line);
+            if (cmdResp["status"].str != "ok")
+                throw new Exception("primitive setup '" ~ toolName ~ "' failed: "
+                                    ~ cmdResp.toString());
+        }
+        // Future: setup.kind == "lwo" → load from file; "macro" → run script; etc.
+    } else {
+        // Legacy path: use `primitive` field (default: cube).
+        string primitiveType = "cube";
+        if ("primitive" in caseJson)
+            primitiveType = caseJson["primitive"].str;
+        resetMesh(primitiveType);
+    }
+
     if ("preops" in caseJson)
         foreach (op; caseJson["preops"].array) runOp(op);
     foreach (op; caseJson["ops"].array) runOp(op);

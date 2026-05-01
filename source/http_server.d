@@ -35,11 +35,12 @@ class HttpServer {
     private SelectionDataProvider selectionDataProvider;
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
-    private alias ResetHandler = void delegate(string primitiveType);
+    private alias ResetHandler = void delegate(string primitiveType, bool empty);
     private ResetHandler resetHandler;
     private shared long resetSubmittedEpoch;
     private shared long resetCompletedEpoch;
     private string resetPendingType;     // primitive type for the in-flight reset
+    private bool   resetPendingEmpty;    // true → empty scene, ignore primitiveType
     private bool testMode = false;
 
     // ----- /api/command synchronous bridge ---------------------------------
@@ -516,7 +517,9 @@ class HttpServer {
             }
         } else if (request.path.startsWith("/api/reset") && request.method == "POST") {
             if (resetHandler !is null) {
-                resetPendingType = parseQueryString(request.path, "type", "");
+                resetPendingType  = parseQueryString(request.path, "type", "");
+                string emptyParam = parseQueryString(request.path, "empty", "");
+                resetPendingEmpty = (emptyParam == "true" || emptyParam == "1");
                 long my = atomicOp!"+="(resetSubmittedEpoch, 1);
                 enum int maxIters = 2500;
                 int iters = 0;
@@ -978,7 +981,7 @@ class HttpServer {
         long sub = atomicLoad(resetSubmittedEpoch);
         long cmp = atomicLoad(resetCompletedEpoch);
         if (sub <= cmp) return;
-        if (resetHandler !is null) resetHandler(resetPendingType);
+        if (resetHandler !is null) resetHandler(resetPendingType, resetPendingEmpty);
         atomicStore(resetCompletedEpoch, sub);
     }
 

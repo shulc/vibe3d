@@ -1082,9 +1082,12 @@ void main(string[] args) {
         // by tests to bring vibe3d to a fresh state, we may want a way
         // to NOT push it onto the stack — handled via cmd.isUndoable in
         // future if needed.
-        httpServer.setResetHandler((string primitiveType) {
+        httpServer.setResetHandler((string primitiveType, bool empty) {
             auto cmd = cast(SceneReset)reg.commandFactories["scene.reset"]();
-            cmd.setPrimitive(primitiveType);
+            if (empty)
+                cmd.setEmpty(true);
+            else
+                cmd.setPrimitive(primitiveType);
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
             history.record(cmd);

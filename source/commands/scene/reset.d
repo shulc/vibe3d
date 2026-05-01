@@ -21,6 +21,7 @@ class SceneReset : Command {
     private void delegate()  onResetTool;
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape"
+    private bool         emptyScene;    // true → reset to empty mesh (no primitive)
     private MeshSnapshot snap;
     private EditMode     prevEditMode;
     private bool         captured;
@@ -40,16 +41,21 @@ class SceneReset : Command {
     }
 
     override string name() const { return "scene.reset"; }
-    override string label() const { return "Reset to " ~ primitive; }
+    override string label() const {
+        return emptyScene ? "Reset to empty" : "Reset to " ~ primitive;
+    }
 
-    void setPrimitive(string p) { primitive = p; }
+    void setPrimitive(string p) { primitive = p; emptyScene = false; }
+    void setEmpty(bool b) { emptyScene = b; }
 
     override bool apply() {
         snap         = MeshSnapshot.capture(*mesh);
         prevEditMode = *editModePtr;
         captured     = true;
 
-        switch (primitive) {
+        if (emptyScene) {
+            *mesh = Mesh.init;
+        } else switch (primitive) {
             case "lshape":     *mesh = makeLShape();    break;
             case "diamond":    *mesh = makeDiamond();   break;
             case "octahedron": *mesh = makeOctahedron();break;
