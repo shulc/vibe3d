@@ -187,6 +187,128 @@ struct Param {
 }
 
 // ---------------------------------------------------------------------------
+// isUserSet — returns true when the parameter's live storage value differs
+// from the default recorded by the factory. Used by toArgstring (phase 5.2)
+// to decide which params to emit; default-equal params are omitted, matching
+// MODO's VALUE_SET semantics.
+// ---------------------------------------------------------------------------
+
+bool isUserSet(const ref Param p)
+{
+    import std.math : isNaN;
+
+    final switch (p.kind) {
+        case Param.Kind.Bool:
+            return *p.bptr != p.default_.b;
+        case Param.Kind.Int:
+            return *p.iptr != p.default_.i;
+        case Param.Kind.Float: {
+            // NaN-aware: "NaN default + NaN current" → not user-set.
+            if (isNaN(*p.fptr) && isNaN(p.default_.f)) return false;
+            return *p.fptr != p.default_.f;
+        }
+        case Param.Kind.Enum:
+            return *p.sptr != p.default_.s;
+        case Param.Kind.String:
+            return *p.sptr != p.default_.s;
+        case Param.Kind.Vec3_: {
+            // Component-wise compare, NaN-aware.
+            static bool eq(float a, float b) {
+                if (isNaN(a) && isNaN(b)) return true;
+                return a == b;
+            }
+            return !(eq(p.vptr.x, p.default_.v3.x)
+                  && eq(p.vptr.y, p.default_.v3.y)
+                  && eq(p.vptr.z, p.default_.v3.z));
+        }
+        case Param.Kind.IntEnum:
+            return *p.iePtr != p.default_.i;
+    }
+}
+
+unittest {
+    // Bool — set when value differs from default
+    bool b = false;
+    auto p = Param.bool_("flag", "Flag", &b, false);
+    assert(!isUserSet(p));
+    b = true;
+    assert(isUserSet(p));
+}
+
+unittest {
+    // Int — set when value differs from default
+    int i = 4;
+    auto p = Param.int_("segs", "Segments", &i, 4);
+    assert(!isUserSet(p));
+    i = 8;
+    assert(isUserSet(p));
+}
+
+unittest {
+    // Float — NaN-vs-NaN treated as not user-set (e.g. widthR default NaN)
+    float f = float.nan;
+    auto p = Param.float_("widthR", "Width R", &f, float.nan);
+    assert(!isUserSet(p));   // NaN equals NaN here
+    f = 0.05f;
+    assert(isUserSet(p));    // explicit value
+    f = float.nan;
+    assert(!isUserSet(p));   // back to NaN, not user-set again
+}
+
+unittest {
+    // Float — standard numeric compare (no epsilon, any delta counts)
+    float f = 0.1f;
+    auto p = Param.float_("width", "Width", &f, 0.1f);
+    assert(!isUserSet(p));
+    f = 0.10001f;
+    assert(isUserSet(p));
+}
+
+unittest {
+    // Enum — string-tag compare
+    string mode = "offset";
+    auto p = Param.enum_("mode", "Mode", &mode,
+                         [["offset","Offset"],["width","Width"]], "offset");
+    assert(!isUserSet(p));
+    mode = "width";
+    assert(isUserSet(p));
+}
+
+unittest {
+    // String — empty-string default is not user-set
+    string s = "";
+    auto p = Param.string_("label", "Label", &s, "");
+    assert(!isUserSet(p));
+    s = "hello";
+    assert(isUserSet(p));
+    s = "";
+    assert(!isUserSet(p));
+}
+
+unittest {
+    // IntEnum — int-tag compare
+    int v = 0;
+    auto p = Param.intEnum_("mode", "Mode", &v,
+        [IntEnumEntry(0, "offset", "Offset"),
+         IntEnumEntry(1, "width",  "Width")],
+        0);
+    assert(!isUserSet(p));
+    v = 1;
+    assert(isUserSet(p));
+}
+
+unittest {
+    // Vec3 — component-wise compare
+    Vec3 v = Vec3(0, 0, 0);
+    auto p = Param.vec3_("from", "From", &v, Vec3(0, 0, 0));
+    assert(!isUserSet(p));
+    v.x = 0.5f;
+    assert(isUserSet(p));
+    v = Vec3(0, 0, 0);
+    assert(!isUserSet(p));
+}
+
+// ---------------------------------------------------------------------------
 // injectParamsInto — generic JSON → Param[] injector.
 //
 // For each Param in `params`:
