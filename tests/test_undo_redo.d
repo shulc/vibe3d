@@ -380,10 +380,10 @@ unittest { // /api/history returns {undo:[...], redo:[...]} with labels
     assert(h["redo"].type == JSONType.array);
 
     // Top of stack should be subdivide (most recent), then select.
-    auto labels = h["undo"].array;
-    assert(labels.length >= 2, "expected at least 2 entries");
-    string topLabel = labels[$ - 1].str;
-    string mid      = labels[$ - 2].str;
+    auto entries = h["undo"].array;
+    assert(entries.length >= 2, "expected at least 2 entries");
+    string topLabel = entries[$ - 1]["label"].str;
+    string mid      = entries[$ - 2]["label"].str;
     assert(topLabel.canFind("Subdiv") || topLabel.canFind("subdiv"),
         "top label should mention subdivide, got: " ~ topLabel);
     assert(mid == "Select",
@@ -394,7 +394,7 @@ unittest { // /api/history returns {undo:[...], redo:[...]} with labels
     auto h2 = getHistory();
     assert(h2["redo"].array.length == 1,
         "redo should have 1 entry after one undo");
-    assert(h2["redo"].array[0].str == topLabel,
+    assert(h2["redo"].array[0]["label"].str == topLabel,
         "redo label should match the undone command's label");
 }
 

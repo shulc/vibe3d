@@ -976,31 +976,28 @@ void main(string[] args) {
             return history.redo();
         });
         httpServer.setHistoryProvider(() {
-            // JSON: { "undo": ["label1", ...], "redo": [...] }
-            import std.array : appender;
-            auto buf = appender!string();
-            buf.put(`{"undo":[`);
-            foreach (i, l; history.undoLabels) {
-                if (i > 0) buf.put(",");
-                buf.put(`"`);
-                foreach (c; l) {
-                    if (c == '"' || c == '\\') buf.put('\\');
-                    buf.put(c);
-                }
-                buf.put(`"`);
+            // JSON: { "undo": [{"label":..,"args":..,"command":..}, ...], "redo":[..] }
+            import std.json : JSONValue;
+            JSONValue[] undoArr;
+            foreach (ref e; history.undoEntries()) {
+                auto obj = JSONValue.emptyObject;
+                obj["label"]   = JSONValue(e.label);
+                obj["args"]    = JSONValue(e.args);
+                obj["command"] = JSONValue(e.commandName);
+                undoArr ~= obj;
             }
-            buf.put(`],"redo":[`);
-            foreach (i, l; history.redoLabels) {
-                if (i > 0) buf.put(",");
-                buf.put(`"`);
-                foreach (c; l) {
-                    if (c == '"' || c == '\\') buf.put('\\');
-                    buf.put(c);
-                }
-                buf.put(`"`);
+            JSONValue[] redoArr;
+            foreach (ref e; history.redoEntries()) {
+                auto obj = JSONValue.emptyObject;
+                obj["label"]   = JSONValue(e.label);
+                obj["args"]    = JSONValue(e.args);
+                obj["command"] = JSONValue(e.commandName);
+                redoArr ~= obj;
             }
-            buf.put(`]}`);
-            return buf.data;
+            JSONValue payload = JSONValue.emptyObject;
+            payload["undo"] = JSONValue(undoArr);
+            payload["redo"] = JSONValue(redoArr);
+            return payload.toString();
         });
 
         // Phase C: /api/refire opens/closes a refire block on the history.

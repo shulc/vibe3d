@@ -1,6 +1,7 @@
 module command_history;
 
 import command;
+import argstring : serializeParams;
 
 // ---------------------------------------------------------------------------
 // CommandHistory — linear undo/redo stack of Command instances.
@@ -31,6 +32,7 @@ enum UndoState { Invalid, Active, Suspend }
 
 struct HistoryEntry {
     string  label;          // human-readable
+    string  args;           // serialized argstring (user-set params only)
     string  commandName;    // internal id (e.g. "mesh.bevel")
     Command cmd;            // owns the snapshot via instance fields
 }
@@ -74,7 +76,10 @@ final class CommandHistory {
         if (!cmd.isUndoable) return;
         if (_state != UndoState.Active) return;
 
-        HistoryEntry e = { label: cmd.label, commandName: cmd.name, cmd: cmd };
+        HistoryEntry e = { label: cmd.label,
+                           args:  serializeParams(cmd.params()),
+                           commandName: cmd.name,
+                           cmd: cmd };
         undoStack ~= e;
         if (undoStack.length > maxDepth) {
             undoStack = undoStack[$ - maxDepth .. $];
@@ -123,19 +128,27 @@ final class CommandHistory {
 
     // ----- inspection (Edit menu, /api/history) ---------------------------
 
+    // Composed format: "Label  args" (two spaces) for non-empty args,
+    // or just "Label" when args is empty. Used by the UI history panel.
     string[] undoLabels() const {
         string[] out_;
         out_.reserve(undoStack.length);
-        foreach (e; undoStack) out_ ~= e.label;
+        foreach (e; undoStack)
+            out_ ~= e.args.length > 0 ? (e.label ~ "  " ~ e.args) : e.label;
         return out_;
     }
 
     string[] redoLabels() const {
         string[] out_;
         out_.reserve(redoStack.length);
-        foreach (e; redoStack) out_ ~= e.label;
+        foreach (e; redoStack)
+            out_ ~= e.args.length > 0 ? (e.label ~ "  " ~ e.args) : e.label;
         return out_;
     }
+
+    // Structured access — used by /api/history JSON serializer.
+    const(HistoryEntry)[] undoEntries() const { return undoStack; }
+    const(HistoryEntry)[] redoEntries() const { return redoStack; }
 
     void clear() {
         undoStack.length = 0;
@@ -158,6 +171,7 @@ final class CommandHistory {
         // crashed mid-drag), commit it first so we don't lose the entry.
         if (refireOpen && liveCmd !is null) {
             HistoryEntry e = { label: liveCmd.label,
+                               args:  serializeParams(liveCmd.params()),
                                commandName: liveCmd.name,
                                cmd: liveCmd };
             undoStack ~= e;
