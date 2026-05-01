@@ -421,9 +421,27 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                 *p.vptr = Vec3(_jsonFloat(a[0]), _jsonFloat(a[1]), _jsonFloat(a[2]));
                 break;
             case Param.Kind.IntEnum:
+                if (jp.type == JSONType.integer || jp.type == JSONType.uinteger) {
+                    // Accept raw integer value (e.g. axis:1 from argstring parser).
+                    int ival = (jp.type == JSONType.uinteger)
+                        ? cast(int)jp.uinteger : cast(int)jp.integer;
+                    bool iok2 = false;
+                    foreach (ref e; p.intEnumValues) {
+                        if (e.value == ival) {
+                            *p.iePtr = e.value;
+                            iok2 = true;
+                            break;
+                        }
+                    }
+                    if (!iok2)
+                        throw new Exception(
+                            "unknown enum value " ~ jp.toString()
+                            ~ " for param '" ~ p.name ~ "'");
+                    break;
+                }
                 if (jp.type != JSONType.string)
                     throw new Exception(
-                        "param '" ~ p.name ~ "' expected string (enum tag)");
+                        "param '" ~ p.name ~ "' expected string (enum tag) or integer");
                 string itag = jp.str;
                 bool iok = false;
                 foreach (ref e; p.intEnumValues) {
