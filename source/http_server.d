@@ -14,6 +14,7 @@ import core.atomic;
 // For event player functionality
 import bindbc.sdl;
 import eventlog;
+import argstring : parseArgstring, ParsedLine;
 
 /**
  * Simple HTTP server implementation for D applications
@@ -379,7 +380,9 @@ class HttpServer {
                            "<p>Available endpoints:</p>" ~
                            "<ul><li>/status - Get application status</li>" ~
                            "<li>/info - Get application information</li>" ~
-                           "<li>/api/model - Get current model state</li></ul>" ~
+                           "<li>/api/model - Get current model state</li>" ~
+                           "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
+                           "<li>/api/script - Execute multi-line script (line-by-line argstring)</li></ul>" ~
                            "</body></html>";
             response.headers["Content-Type"] = "text/html";
         } else if (request.path == "/status") {
@@ -604,11 +607,30 @@ class HttpServer {
                 response.body = `{"status":"error","message":"command handler not set"}`;
             } else {
                 try {
-                    auto j = parseJSON(request.body);
-                    if ("id" !in j || j["id"].type != JSONType.string)
-                        throw new Exception("missing 'id' string field");
-                    pendingCmdId     = j["id"].str;
-                    pendingCmdParams = ("params" in j) ? j["params"].toString : "";
+                    string body_ = request.body;
+                    // Detect JSON vs argstring by first non-whitespace character.
+                    size_t bi = 0;
+                    while (bi < body_.length &&
+                           (body_[bi] == ' '  || body_[bi] == '\t' ||
+                            body_[bi] == '\n'  || body_[bi] == '\r')) bi++;
+                    if (bi >= body_.length)
+                        throw new Exception("empty body");
+                    bool isJson = (body_[bi] == '{');
+
+                    if (isJson) {
+                        auto j = parseJSON(body_);
+                        if ("id" !in j || j["id"].type != JSONType.string)
+                            throw new Exception("missing 'id' string field");
+                        pendingCmdId     = j["id"].str;
+                        pendingCmdParams = ("params" in j) ? j["params"].toString : "";
+                    } else {
+                        auto parsed = parseArgstring(body_);
+                        if (parsed.isEmpty)
+                            throw new Exception("empty argstring");
+                        pendingCmdId     = parsed.commandId;
+                        pendingCmdParams = parsed.params.toString();
+                    }
+
                     pendingCmdError  = "";
                     long my = atomicOp!"+="(submittedEpoch, 1);
                     // Wait for main thread to drain — bounded at ~5s.
@@ -634,6 +656,93 @@ class HttpServer {
                     response.body = `{"status":"error","message":"`
                                     ~ e.msg.replace("\"", "\\\"") ~ `"}`;
                 }
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path.startsWith("/api/script") && request.method == "POST") {
+            // Multi-line argstring script: execute each non-empty/non-comment
+            // line through the same main-thread bridge as /api/command.
+            // ?continue=true keeps running after errors; default stops on first.
+            bool continueOnError =
+                (parseQueryString(request.path, "continue", "") == "true");
+
+            if (commandHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"command handler not set"}`;
+            } else {
+                import std.array  : Appender;
+                import std.format : format;
+
+                struct LineResult {
+                    int    lineNo;
+                    string command;
+                    bool   ok;
+                    string message; // non-empty on error
+                }
+
+                LineResult[] results;
+                bool anyError = false;
+
+                auto lines_ = request.body.split('\n');
+                int lineNo  = 0;
+
+                outer: foreach (rawLine; lines_) {
+                    ++lineNo;
+                    try {
+                        auto parsed = parseArgstring(rawLine);
+                        if (parsed.isEmpty) continue; // blank / comment
+
+                        pendingCmdId     = parsed.commandId;
+                        pendingCmdParams = parsed.params.toString();
+                        pendingCmdError  = "";
+
+                        long my = atomicOp!"+="(submittedEpoch, 1);
+                        enum int maxIters = 2500; // 2500 * 2ms = 5s per line
+                        int iters = 0;
+                        while (atomicLoad(completedEpoch) < my) {
+                            if (++iters > maxIters) {
+                                pendingCmdError = "timeout waiting for main thread";
+                                break;
+                            }
+                            Thread.sleep(2.msecs);
+                        }
+
+                        if (pendingCmdError.length == 0) {
+                            results ~= LineResult(lineNo, parsed.commandId, true, "");
+                        } else {
+                            anyError = true;
+                            results ~= LineResult(lineNo, parsed.commandId, false,
+                                                  pendingCmdError);
+                            if (!continueOnError) break outer;
+                        }
+                    } catch (Exception e) {
+                        anyError = true;
+                        results ~= LineResult(lineNo, "", false, e.msg);
+                        if (!continueOnError) break outer;
+                    }
+                }
+
+                // Build JSON response
+                Appender!string sb;
+                sb.put(`{"status":"`);
+                sb.put(anyError ? "error" : "ok");
+                sb.put(`","results":[`);
+                foreach (i, r; results) {
+                    if (i > 0) sb.put(',');
+                    sb.put(format(`{"line":%d,"command":"%s","status":"%s"`,
+                                  r.lineNo,
+                                  r.command.replace("\"", "\\\""),
+                                  r.ok ? "ok" : "error"));
+                    if (!r.ok && r.message.length > 0) {
+                        sb.put(`,"message":"`);
+                        sb.put(r.message.replace("\\", "\\\\").replace("\"", "\\\""));
+                        sb.put('"');
+                    }
+                    sb.put('}');
+                }
+                sb.put("]}");
+
+                response.statusCode = 200;
+                response.body = sb.data;
             }
             response.headers["Content-Type"] = "application/json";
         } else if ((request.path == "/api/undo" || request.path == "/api/redo")
