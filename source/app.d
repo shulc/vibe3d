@@ -44,6 +44,10 @@ import commands.select.invert;
 import commands.select.more;
 import commands.select.less;
 import commands.select.between;
+import commands.select.type_from : SelectTypeFromCommand;
+import commands.select.drop     : SelectDropCommand;
+import commands.select.element  : SelectElementCommand;
+import commands.select.convert  : SelectConvertCommand;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.file.load;
@@ -547,6 +551,14 @@ void main(string[] args) {
     reg.commandFactories["select.invert"]         = () => cast(Command) new SelectInvert(&mesh, cameraView, editMode);
     reg.commandFactories["select.connect"]        = () => cast(Command) new SelectConnect(&mesh, cameraView, editMode);
     reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh, cameraView, editMode);
+    reg.commandFactories["select.typeFrom"]  = () => cast(Command)
+        new SelectTypeFromCommand(&mesh, cameraView, editMode, &editMode);
+    reg.commandFactories["select.drop"]      = () => cast(Command)
+        new SelectDropCommand(&mesh, cameraView, editMode);
+    reg.commandFactories["select.element"]   = () => cast(Command)
+        new SelectElementCommand(&mesh, cameraView, editMode);
+    reg.commandFactories["select.convert"]   = () => cast(Command)
+        new SelectConvertCommand(&mesh, cameraView, editMode, &editMode);
     reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh, cameraView, editMode);
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh, cameraView, editMode);
     reg.commandFactories["file.load"] = () => cast(Command)
@@ -583,6 +595,10 @@ void main(string[] args) {
     reg.commandFactories["mesh.remove"] = () => cast(Command)
         new MeshRemove(&mesh, cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    // MODO-compat aliases — select.delete and select.remove delegate to the
+    // same factory delegates as mesh.delete / mesh.remove respectively.
+    reg.commandFactories["select.delete"] = reg.commandFactories["mesh.delete"];
+    reg.commandFactories["select.remove"] = reg.commandFactories["mesh.remove"];
     reg.commandFactories["vert.merge"] = () => cast(Command)
         new MeshVertMerge(&mesh, cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
@@ -818,6 +834,56 @@ void main(string[] args) {
             // tool.doApply has no params.
         }
 
+        // Helper: inject _positional args for MODO-compat select.* commands.
+        // Called from setCommandHandler after injectToolCommandPositional.
+        void injectSelectCommandPositional(Command cmd, ref JSONValue pj)
+        {
+            import std.json : JSONType;
+            if (auto stf = cast(SelectTypeFromCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            stf.setTargetType(pos[0].str);
+                    }
+                }
+            } else if (auto sd = cast(SelectDropCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            sd.setTargetType(pos[0].str);
+                    }
+                }
+            } else if (auto se = cast(SelectElementCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            se.setTargetType(pos[0].str);
+                        if (pos.length >= 2 && pos[1].type == JSONType.string)
+                            se.setAction(pos[1].str);
+                        int[] idx;
+                        foreach (pi; 2 .. pos.length) {
+                            if (pos[pi].type == JSONType.integer)
+                                idx ~= cast(int)pos[pi].integer;
+                            else if (pos[pi].type == JSONType.uinteger)
+                                idx ~= cast(int)pos[pi].uinteger;
+                        }
+                        se.setIndices(idx);
+                    }
+                }
+            } else if (auto sc = cast(SelectConvertCommand)cmd) {
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            sc.setTargetType(pos[0].str);
+                    }
+                }
+            }
+        }
+
         httpServer.setCommandHandler((string id, string paramsJson) {
             import std.json : parseJSON, JSONType;
             import commands.file.load : FileLoad;
@@ -882,6 +948,9 @@ void main(string[] args) {
 
                     // tool.* commands: inject _positional args and named args.
                     injectToolCommandPositional(cmd, pj);
+
+                    // select.* MODO-compat commands: inject positional args.
+                    injectSelectCommandPositional(cmd, pj);
                 }
             }
 
