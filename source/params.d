@@ -38,8 +38,18 @@ struct ParamHints {
 //        .widget(ParamHints.Widget.Drag)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// IntEnumEntry — maps a D enum integer value to a wire tag and UI label.
+// Used by Param.Kind.IntEnum for native D enums without string storage.
+// ---------------------------------------------------------------------------
+struct IntEnumEntry {
+    int    value;      // cast(int) of the D enum member
+    string wireTag;    // for JSON/argstring: "offset", "width", ...
+    string userLabel;  // for UI: "Offset", "Width", ...
+}
+
 struct Param {
-    enum Kind { Bool, Int, Float, Enum, String, Vec3_ }
+    enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum }
 
     string name;          // internal id — matches JSON wire key
     string label;         // UI label
@@ -53,11 +63,15 @@ struct Param {
         float*  fptr;
         string* sptr;
         Vec3*   vptr;
+        int*    iePtr;  // backing field for IntEnum kind (cast from D enum*)
     }
 
     // For Kind.Enum: list of [internal_tag, user_label] pairs.
     // internal_tag is what is stored in *sptr and sent over the wire.
     string[2][] enumValues;
+
+    // For Kind.IntEnum: list of (value, wireTag, userLabel) entries.
+    IntEnumEntry[] intEnumValues;
 
     // Default value metadata — for HTTP injector fallback (phase 2).
     // Not written to storage by the factory; the field initialiser on the
@@ -143,6 +157,22 @@ struct Param {
         return p;
     }
 
+    // Int-backed enum: the D enum is stored as int in *storage; wire format
+    // and UI use the wireTag / userLabel from each IntEnumEntry.
+    // Cast: `cast(int*)&myEnumField` works for any int-backed D enum.
+    static Param intEnum_(string name, string label, int* storage,
+                          IntEnumEntry[] values, int default_)
+    {
+        Param p;
+        p.name           = name;
+        p.label          = label;
+        p.kind           = Kind.IntEnum;
+        p.iePtr          = storage;
+        p.intEnumValues  = values;
+        p.default_.i     = default_;
+        return p;
+    }
+
     // -----------------------------------------------------------------------
     // Chainable hint setters (return by value for literal chaining)
     // -----------------------------------------------------------------------
@@ -214,6 +244,23 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                         "param '" ~ p.name ~ "' must be [x,y,z]");
                 auto a = jp.array;
                 *p.vptr = Vec3(_jsonFloat(a[0]), _jsonFloat(a[1]), _jsonFloat(a[2]));
+                break;
+            case Param.Kind.IntEnum:
+                if (jp.type != JSONType.string)
+                    throw new Exception(
+                        "param '" ~ p.name ~ "' expected string (enum tag)");
+                string itag = jp.str;
+                bool iok = false;
+                foreach (ref e; p.intEnumValues) {
+                    if (e.wireTag == itag) {
+                        *p.iePtr = e.value;
+                        iok = true;
+                        break;
+                    }
+                }
+                if (!iok)
+                    throw new Exception(
+                        "unknown enum value '" ~ itag ~ "' for param '" ~ p.name ~ "'");
                 break;
         }
     }

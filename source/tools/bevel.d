@@ -57,27 +57,17 @@ private:
     Vec3 gizmoNormal;   // unit vector: average face/edge-adjacent normal
     Vec3 gizmoRight;    // unit vector: perpendicular to normal
 
-    // ---- Polygon bevel parameters ----
-    // MODO Bevel Polygon: shift extrudes along normal, inset is the
-    // perpendicular distance each face boundary edge moves inward in the
-    // face plane (identity = 0). Negative inset → outset.
-    float       shiftAmount   = 0.0f;
-    float       insetAmount   = 0.0f;
-    bool        groupPolygons = false;
+    // ---- All bevel parameters (edge + polygon) ----
+    BevelParams params_;
+
+    // ---- Polygon bevel op state ----
     PolyBevelOp polyOp;
 
     // ---- Topology snapshot (shared by polygon and edge bevel) ----
     bool bevelApplied = false;
 
-    // ---- Edge bevel parameters ----
-    float          ebWidth      = 0.0f;
-    float          ebWidthR     = 0.0f;
-    bool           ebAsymmetric = false;
-    int            ebSeg        = 1;
-    float          ebSuperR     = 2.0f;
-    BevelWidthMode ebMode       = BevelWidthMode.Offset;
-    MiterPattern   ebMiterInner = MiterPattern.Sharp;
-    BevelOp        ebOp;
+    // ---- Edge bevel op state ----
+    BevelOp ebOp;
 
     // ---- Drag state ----
     int      dragHandle = -1;   // 0=shift/width handle, 1=insert handle, -1=none
@@ -132,11 +122,11 @@ public:
     override Param[] params() {
         if (*editMode != EditMode.Polygons) return [];
         return [
-            Param.float_("shift", "Shift", &shiftAmount, 0.0f)
+            Param.float_("shift", "Shift", &params_.shiftAmount, 0.0f)
                  .min(-float.max).max(float.max).step(0.005f).fmt("%.4f"),
-            Param.float_("inset", "Inset", &insetAmount, 0.0f)
+            Param.float_("inset", "Inset", &params_.insertAmount, 0.0f)
                  .min(-float.max).max(float.max).step(0.005f).fmt("%.4f"),
-            Param.bool_("group", "Group Polygon", &groupPolygons, false),
+            Param.bool_("group", "Group Polygon", &params_.groupPolygons, false),
         ];
     }
 
@@ -163,10 +153,8 @@ public:
         active       = true;
         bevelApplied = false;
         polyOp       = PolyBevelOp.init;
-        shiftAmount  = 0.0f;
-        insetAmount  = 0.0f;
+        params_      = BevelParams.init;
         dragHandle   = -1;
-        ebWidth      = 0.0f;
         ebOp         = BevelOp.init;
         if (*editMode == EditMode.Edges)
             recomputeEdgeCenter();
@@ -226,7 +214,7 @@ public:
                 // (inset=0) keeps the arrow at gizmoCenter; positive inset
                 // shows the arrow pointing inward. Scale arbitrary; the
                 // arrow is just feedback during the drag.
-                insertScaleArrow.end           = gizmoCenter + gizmoRight * (size + insetAmount);
+                insertScaleArrow.end           = gizmoCenter + gizmoRight * (size + params_.insertAmount);
                 insertScaleArrow.fixedDir      = gizmoRight;
                 insertScaleArrow.fixedCubeHalf = cubeFixed;
             }
@@ -235,7 +223,7 @@ public:
         shiftHandle.draw(shader, vp);
         if (anyFace) {
             insertHandle.draw(shader, vp);
-            if (dragHandle == 1 && insetAmount != 0.0f)
+            if (dragHandle == 1 && params_.insertAmount != 0.0f)
                 insertScaleArrow.draw(shader, vp);
         }
     }
@@ -296,10 +284,10 @@ public:
             if (!skip) {
                 if (edgeMode) {
                     float d = dot(delta, gizmoNormal);
-                    ebWidth += d;
-                    if (ebWidth < 0.0f) ebWidth = 0.0f;
+                    params_.width += d;
+                    if (params_.width < 0.0f) params_.width = 0.0f;
                 } else {
-                    shiftAmount += dot(delta, gizmoNormal);
+                    params_.shiftAmount += dot(delta, gizmoNormal);
                     gizmoCenter  += delta;
                 }
                 updateBevelVertices();
@@ -311,7 +299,7 @@ public:
             // distance). Drag outward decreases (or goes negative → outset).
             // The unit direction is gizmoRight projected to screen; the
             // signed scalar projection of (delta_mouse) onto that direction
-            // (in world units) is added to insetAmount.
+            // (in world units) is added to insertAmount.
             float cx, cy, cndcZ, ax_, ay_, andcZ;
             if (!projectToWindowFull(gizmoCenter, cachedVp, cx, cy, cndcZ) ||
                 !projectToWindowFull(gizmoCenter + gizmoRight, cachedVp, ax_, ay_, andcZ))
@@ -325,7 +313,7 @@ public:
             // projection along gizmoRight) reduces inset; dragging inward
             // (toward gizmoCenter) increases it. Matches MODO interaction.
             float deltaWorld = -((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
-            insetAmount += deltaWorld;
+            params_.insertAmount += deltaWorld;
 
             updateBevelVertices();
             gpu.upload(*mesh);
@@ -348,42 +336,42 @@ public:
             // RadioButton "Width" once collided with DragFloat "Width" and
             // silently broke the slider's active state).
 
-            if (ImGui.DragFloat("Width", &ebWidth, 0.005f, 0.0f, 0.0f, "%.4f")) {
-                if (ebWidth < 0.0f) ebWidth = 0.0f;
+            if (ImGui.DragFloat("Width", &params_.width, 0.005f, 0.0f, 0.0f, "%.4f")) {
+                if (params_.width < 0.0f) params_.width = 0.0f;
                 widthChanged = true;
             }
 
-            if (ImGui.Checkbox("Asymmetric", &ebAsymmetric)) {
+            if (ImGui.Checkbox("Asymmetric", &params_.asymmetric)) {
                 // Initialize R to match L so toggling ON keeps the current
                 // geometry intact; the user can then dial widthR independently.
-                ebWidthR = ebWidth;
+                params_.widthR = params_.width;
                 topologyDirty = true;
             }
-            if (ebAsymmetric) {
-                if (ImGui.DragFloat("Width R", &ebWidthR, 0.005f, 0.0f, 0.0f, "%.4f")) {
-                    if (ebWidthR < 0.0f) ebWidthR = 0.0f;
+            if (params_.asymmetric) {
+                if (ImGui.DragFloat("Width R", &params_.widthR, 0.005f, 0.0f, 0.0f, "%.4f")) {
+                    if (params_.widthR < 0.0f) params_.widthR = 0.0f;
                     topologyDirty = true;
                 }
             }
 
-            if (ImGui.SliderInt("Segments", &ebSeg, 1, 16)) {
-                if (ebSeg < 1)  ebSeg = 1;
-                if (ebSeg > 16) ebSeg = 16;
+            if (ImGui.SliderInt("Segments", &params_.seg, 1, 16)) {
+                if (params_.seg < 1)  params_.seg = 1;
+                if (params_.seg > 16) params_.seg = 16;
                 topologyDirty = true;
             }
-            if (ebSeg >= 2) {
-                if (ImGui.DragFloat("Super R", &ebSuperR, 0.05f, 0.3f, 8.0f, "%.2f"))
+            if (params_.seg >= 2) {
+                if (ImGui.DragFloat("Super R", &params_.superR, 0.05f, 0.3f, 8.0f, "%.2f"))
                     topologyDirty = true;
             }
 
-            int modeIdx = cast(int)ebMode;
+            int modeIdx = cast(int)params_.mode;
             ImGui.Text("Mode:");
-            BevelWidthMode prevMode = ebMode;
+            BevelWidthMode prevMode = params_.mode;
             bool modeJustChanged = false;
             void pickMode(BevelWidthMode m) {
-                if (ebMode == m) return;
-                prevMode        = ebMode;
-                ebMode          = m;
+                if (params_.mode == m) return;
+                prevMode        = params_.mode;
+                params_.mode    = m;
                 topologyDirty   = true;
                 modeJustChanged = true;
             }
@@ -395,18 +383,18 @@ public:
             ImGui.SameLine();
             if (ImGui.RadioButton("Percent##mode", modeIdx == 3)) pickMode(BevelWidthMode.Percent);
 
-            int miterIdx = cast(int)ebMiterInner;
+            int miterIdx = cast(int)params_.miterInner;
             ImGui.Text("Miter Inner:");
             if (ImGui.RadioButton("Sharp##miter", miterIdx == 0)) {
-                if (ebMiterInner != MiterPattern.Sharp) {
-                    ebMiterInner = MiterPattern.Sharp;
+                if (params_.miterInner != MiterPattern.Sharp) {
+                    params_.miterInner = MiterPattern.Sharp;
                     topologyDirty = true;
                 }
             }
             ImGui.SameLine();
             if (ImGui.RadioButton("Arc##miter",   miterIdx == 1)) {
-                if (ebMiterInner != MiterPattern.Arc) {
-                    ebMiterInner = MiterPattern.Arc;
+                if (params_.miterInner != MiterPattern.Arc) {
+                    params_.miterInner = MiterPattern.Arc;
                     topologyDirty = true;
                 }
             }
@@ -422,19 +410,19 @@ public:
                 applyEdgeBevelTopology();
             } else if (topologyDirty && bevelApplied) {
                 revertEdgeBevelTopology();
-                // After revert the original mesh is restored — remap ebWidth so
-                // the physical bevel size stays constant across mode switches:
-                //   ebWidth_new * c(newMode) = ebWidth_old * c(oldMode).
-                if (modeJustChanged && ebWidth > 0.0f) {
+                // After revert the original mesh is restored — remap params_.width
+                // so the physical bevel size stays constant across mode switches:
+                //   width_new * c(newMode) = width_old * c(oldMode).
+                if (modeJustChanged && params_.width > 0.0f) {
                     uint repEdge = ~0u;
                     foreach (i, sel; mesh.selectedEdges)
                         if (sel) { repEdge = cast(uint)i; break; }
                     if (repEdge != ~0u) {
                         import bevel : widthCoefficient;
                         float cOld = widthCoefficient(mesh, repEdge, prevMode);
-                        float cNew = widthCoefficient(mesh, repEdge, ebMode);
+                        float cNew = widthCoefficient(mesh, repEdge, params_.mode);
                         if (cNew > 1e-6f && cOld > 1e-6f)
-                            ebWidth = ebWidth * cOld / cNew;
+                            params_.width = params_.width * cOld / cNew;
                     }
                 }
                 applyEdgeBevelTopology();
@@ -449,6 +437,29 @@ public:
         // Polygon mode: Shift / Inset / Group Polygon are rendered via
         // params() + PropertyPanel (schema-driven inline renderer). Nothing
         // custom to add here.
+    }
+
+    // Apply bevel one-shot without interactive gizmo. Caller is responsible
+    // for snapshot pair (phase 4.4 ToolHeadlessCommand). Does NOT activate
+    // the gizmo or set up drag state. Sets bevelApplied so state is consistent.
+    override bool applyHeadless() {
+        if (*editMode == EditMode.Edges) {
+            if (!mesh.hasAnySelectedEdges()) return false;
+            applyEdgeBevelTopology();
+            // applyEdgeBevelTopology anchors slideDir at width=1; re-apply the
+            // actual user width to land BoundVerts at the correct positions.
+            bevel.updateEdgeBevelPositions(mesh, ebOp, params_.width);
+            gpu.upload(*mesh);
+            return true;
+        } else if (*editMode == EditMode.Polygons) {
+            if (mesh.faces.length == 0) return false;
+            // applyPolyBevelTopology already applies params_.insertAmount /
+            // params_.shiftAmount via updatePolyBevelPositions internally.
+            applyPolyBevelTopology();
+            gpu.upload(*mesh);
+            return true;
+        }
+        return false;
     }
 
 private:
@@ -547,12 +558,12 @@ private:
         bevelApplied = true;
         // For interactive drag we anchor slideDir at unit user widths (or
         // 1 ↔ ratio when asymmetric). The Width slider then linearly scales
-        // both sides via updateEdgeBevelPositions(ebWidth).
-        float wRRatio = (ebAsymmetric && ebWidth > 0.0f) ? (ebWidthR / ebWidth)
-                                                          : 1.0f;
-        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, ebMode,
-                                             1.0f, wRRatio, ebSeg, ebSuperR,
-                                             ebMiterInner);
+        // both sides via updateEdgeBevelPositions(params_.width).
+        float wRRatio = (params_.asymmetric && params_.width > 0.0f)
+                        ? (params_.widthR / params_.width) : 1.0f;
+        ebOp = bevel.applyEdgeBevelTopology(mesh, mesh.selectedEdges, params_.mode,
+                                             1.0f, wRRatio, params_.seg, params_.superR,
+                                             params_.miterInner);
 
         // Selection: bevel-quad edges replace the previously selected edge ring.
         mesh.clearEdgeSelection();
@@ -572,7 +583,7 @@ private:
     // ------------------------------------------------------------------
 
     void updateEdgeBevelVertices() {
-        bevel.updateEdgeBevelPositions(mesh, ebOp, ebWidth);
+        bevel.updateEdgeBevelPositions(mesh, ebOp, params_.width);
     }
 
     void revertPolyBevelTopology() {
@@ -641,17 +652,17 @@ private:
         // with originals); subsequent updatePolyBevelVertices calls slide
         // them to the user-selected (insetAmount, shiftAmount).
         polyOp = poly_bevel.applyPolyBevel(mesh, selFaceIdx, 0.0f, 0.0f,
-                                            groupPolygons);
+                                            params_.groupPolygons);
 
         // Apply current scrubber values immediately (no-op when freshly
         // applied at identity).
         poly_bevel.updatePolyBevelPositions(mesh, polyOp,
-                                             insetAmount, shiftAmount);
+                                             params_.insertAmount, params_.shiftAmount);
     }
 
     void updatePolyBevelVertices() {
         poly_bevel.updatePolyBevelPositions(mesh, polyOp,
-                                             insetAmount, shiftAmount);
+                                             params_.insertAmount, params_.shiftAmount);
     }
 
 }

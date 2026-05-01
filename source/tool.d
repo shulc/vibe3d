@@ -71,4 +71,12 @@ class Tool {
     // always rebuild. (Renderer in phase 3+ will start using this for
     // big meshes / heavy tools.)
     bool canIncrementalUpdate() const { return false; }
+
+    // Apply tool one-shot (headless / scripted path). Default no-op returns
+    // false. Implementations run business logic with current attribute
+    // state — they MUST NOT snapshot themselves; the caller (eventual
+    // ToolHeadlessCommand in phase 4.4) wraps with snapshot pair for undo.
+    //
+    // Currently unused; renderer in phase 4.4+ will start dispatching to it.
+    bool applyHeadless() { return false; }
 }

@@ -15,12 +15,13 @@ import d_imgui.imgui_h;
 
 bool drawParamWidget(ref Param p) {
     final switch (p.kind) {
-        case Param.Kind.Bool:   return drawBool(p);
-        case Param.Kind.Int:    return drawInt(p);
-        case Param.Kind.Float:  return drawFloat(p);
-        case Param.Kind.Enum:   return drawEnum(p);
-        case Param.Kind.String: return drawString(p);
-        case Param.Kind.Vec3_:  return drawVec3(p);
+        case Param.Kind.Bool:    return drawBool(p);
+        case Param.Kind.Int:     return drawInt(p);
+        case Param.Kind.Float:   return drawFloat(p);
+        case Param.Kind.Enum:    return drawEnum(p);
+        case Param.Kind.String:  return drawString(p);
+        case Param.Kind.Vec3_:   return drawVec3(p);
+        case Param.Kind.IntEnum: return drawIntEnum(p);
     }
 }
 
@@ -102,6 +103,48 @@ bool drawString(ref Param p) {
         return true;
     }
     return false;
+}
+
+bool drawIntEnum(ref Param p) {
+    import params : IntEnumEntry;
+    if (p.hints.widget == ParamHints.Widget.Combo)
+        return drawIntEnumCombo(p);
+    return drawIntEnumRadio(p);
+}
+
+private bool drawIntEnumRadio(ref Param p) {
+    bool changed = false;
+    ImGui.Text(p.label);
+    foreach (i, ref e; p.intEnumValues) {
+        bool active = (*p.iePtr == e.value);
+        if (ImGui.RadioButton(e.userLabel, active)) {
+            *p.iePtr = e.value;
+            changed = true;
+        }
+        if (i + 1 < p.intEnumValues.length && p.intEnumValues.length <= 3)
+            ImGui.SameLine();
+    }
+    return changed;
+}
+
+private bool drawIntEnumCombo(ref Param p) {
+    string preview = "?";
+    foreach (ref e; p.intEnumValues)
+        if (*p.iePtr == e.value) { preview = e.userLabel; break; }
+
+    bool changed = false;
+    if (ImGui.BeginCombo(p.label, preview)) {
+        foreach (ref e; p.intEnumValues) {
+            bool selected = (*p.iePtr == e.value);
+            if (ImGui.Selectable(e.userLabel, selected)) {
+                *p.iePtr = e.value;
+                changed = true;
+            }
+            if (selected) ImGui.SetItemDefaultFocus();
+        }
+        ImGui.EndCombo();
+    }
+    return changed;
 }
 
 bool drawVec3(ref Param p) {

@@ -67,6 +67,30 @@ enum MiterPattern {
     Arc,
 }
 
+// ---------------------------------------------------------------------------
+// BevelParams — all parameters for BevelTool (both edge and polygon modes).
+//
+// Stored as a single struct in BevelTool rather than scattered loose fields.
+// widthR = 0.0f default (not NaN); fall-back to width when !asymmetric is
+// handled at the call site so Param/JSON round-trips cleanly.
+// ---------------------------------------------------------------------------
+struct BevelParams {
+    // Edge-mode parameters
+    float          width      = 0.0f;
+    float          widthR     = 0.0f;
+    bool           asymmetric = false;
+    int            seg        = 1;
+    float          superR     = 2.0f;
+    BevelWidthMode mode       = BevelWidthMode.Offset;
+    MiterPattern   miterInner = MiterPattern.Sharp;
+    bool           limit      = true;
+
+    // Polygon-mode parameters
+    float          insertAmount  = 0.0f;
+    float          shiftAmount   = 0.0f;
+    bool           groupPolygons = false;
+}
+
 // Returns the per-unit-user-width offset coefficient for a beveled edge,
 // i.e. the value that should be passed to offsetMeet's wPrev/wNext at user
 // width = 1. The runtime BoundVert position is then origPos + slideDir * w.
