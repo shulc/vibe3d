@@ -183,6 +183,15 @@ private string _formatValue(ref Param p)
             }
             // Fallback: no matching entry (shouldn't happen for valid enum).
             return to!string(*p.iePtr);
+
+        // Arrays serialize as <N> placeholder — round-trip not supported.
+        // Replay of array-parameter commands via argstring is best-effort only;
+        // the canonical path for mesh.vertex_edit is JSON injection, not argstring.
+        case Param.Kind.IntArray:
+            return format("<%d>", (*p.uiaPtr).length);
+
+        case Param.Kind.Vec3Array:
+            return format("<%d>", (*p.v3aPtr).length);
     }
 }
 
@@ -359,6 +368,31 @@ version (unittest)
         assert(fabs(parsed.params["dist"].floating - 0.001) < 1e-6);
         assert(("range" in parsed.params) is null);  // was not user-set
         assert(parsed.params["segs"].integer == 3);
+    }
+
+    unittest { // 13. IntArray serializes as <N> placeholder (not round-trip-safe)
+        uint[] idx = [0u, 5u, 7u];
+        auto schema = [Param.intArray_("indices", "Indices", &idx)];
+        string s = serializeParams(schema);
+        assert(s == "indices:<3>", s);
+    }
+
+    unittest { // 14. Vec3Array serializes as <N> placeholder (not round-trip-safe)
+        import math : Vec3;
+        Vec3[] pts = [Vec3(1, 2, 3), Vec3(4, 5, 6)];
+        auto schema = [Param.vec3Array_("before", "Before", &pts)];
+        string s = serializeParams(schema);
+        assert(s == "before:<2>", s);
+    }
+
+    unittest { // 15. Empty arrays → not user-set → not emitted
+        uint[]  idx;
+        Vec3[]  pts;
+        auto schema = [
+            Param.intArray_ ("indices", "Indices", &idx),
+            Param.vec3Array_("before",  "Before",  &pts),
+        ];
+        assert(serializeParams(schema) == "");
     }
 }
 

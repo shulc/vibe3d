@@ -22,6 +22,19 @@ bool drawParamWidget(ref Param p) {
         case Param.Kind.String:  return drawString(p);
         case Param.Kind.Vec3_:   return drawVec3(p);
         case Param.Kind.IntEnum: return drawIntEnum(p);
+        case Param.Kind.IntArray: {
+            // No interactive widget — display a read-only count label.
+            import std.format : format;
+            ImGui.TextDisabled(format("%s: <%d items>", p.label,
+                                     (*p.uiaPtr).length));
+            return false;
+        }
+        case Param.Kind.Vec3Array: {
+            import std.format : format;
+            ImGui.TextDisabled(format("%s: <%d items>", p.label,
+                                     (*p.v3aPtr).length));
+            return false;
+        }
     }
 }
 

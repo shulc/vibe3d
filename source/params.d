@@ -49,7 +49,7 @@ struct IntEnumEntry {
 }
 
 struct Param {
-    enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum }
+    enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum, IntArray, Vec3Array }
 
     string name;          // internal id — matches JSON wire key
     string label;         // UI label
@@ -58,12 +58,14 @@ struct Param {
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
-        bool*   bptr;
-        int*    iptr;
-        float*  fptr;
-        string* sptr;
-        Vec3*   vptr;
-        int*    iePtr;  // backing field for IntEnum kind (cast from D enum*)
+        bool*    bptr;
+        int*     iptr;
+        float*   fptr;
+        string*  sptr;
+        Vec3*    vptr;
+        int*     iePtr;   // backing field for IntEnum kind (cast from D enum*)
+        uint[]*  uiaPtr;  // IntArray:  pointer to a uint[] slice header
+        Vec3[]*  v3aPtr;  // Vec3Array: pointer to a Vec3[] slice header
     }
 
     // For Kind.Enum: list of [internal_tag, user_label] pairs.
@@ -173,6 +175,31 @@ struct Param {
         return p;
     }
 
+    // Array kinds — no default tracking (length==0 means not user-set).
+    // These are used for commands like mesh.vertex_edit that carry parallel
+    // arrays (indices / before / after) injected via JSON; tools call
+    // setEdit() directly and never go through the schema path.
+
+    static Param intArray_(string name, string label, uint[]* storage)
+    {
+        Param p;
+        p.name   = name;
+        p.label  = label;
+        p.kind   = Kind.IntArray;
+        p.uiaPtr = storage;
+        return p;
+    }
+
+    static Param vec3Array_(string name, string label, Vec3[]* storage)
+    {
+        Param p;
+        p.name   = name;
+        p.label  = label;
+        p.kind   = Kind.Vec3Array;
+        p.v3aPtr = storage;
+        return p;
+    }
+
     // -----------------------------------------------------------------------
     // Chainable hint setters (return by value for literal chaining)
     // -----------------------------------------------------------------------
@@ -223,6 +250,10 @@ bool isUserSet(const ref Param p)
         }
         case Param.Kind.IntEnum:
             return *p.iePtr != p.default_.i;
+        case Param.Kind.IntArray:
+            return (*p.uiaPtr).length > 0;
+        case Param.Kind.Vec3Array:
+            return (*p.v3aPtr).length > 0;
     }
 }
 
@@ -308,6 +339,28 @@ unittest {
     assert(!isUserSet(p));
 }
 
+unittest {
+    // IntArray — empty slice is not user-set; non-empty is.
+    uint[] arr;
+    auto p = Param.intArray_("indices", "Indices", &arr);
+    assert(!isUserSet(p));
+    arr = [0u, 5u, 7u];
+    assert(isUserSet(p));
+    arr = [];
+    assert(!isUserSet(p));
+}
+
+unittest {
+    // Vec3Array — empty slice is not user-set; non-empty is.
+    Vec3[] arr;
+    auto p = Param.vec3Array_("before", "Before", &arr);
+    assert(!isUserSet(p));
+    arr = [Vec3(0, 0, 0), Vec3(1, 2, 3)];
+    assert(isUserSet(p));
+    arr = [];
+    assert(!isUserSet(p));
+}
+
 // ---------------------------------------------------------------------------
 // injectParamsInto — generic JSON → Param[] injector.
 //
@@ -384,6 +437,41 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                     throw new Exception(
                         "unknown enum value '" ~ itag ~ "' for param '" ~ p.name ~ "'");
                 break;
+            case Param.Kind.IntArray: {
+                if (jp.type != JSONType.array)
+                    throw new Exception(
+                        "param '" ~ p.name ~ "' must be an array");
+                import std.conv : to;
+                uint[] result;
+                result.length = jp.array.length;
+                foreach (i, ref v; jp.array) {
+                    if (v.type == JSONType.integer)       result[i] = cast(uint)v.integer;
+                    else if (v.type == JSONType.uinteger) result[i] = cast(uint)v.uinteger;
+                    else if (v.type == JSONType.float_)   result[i] = cast(uint)v.floating;
+                    else throw new Exception(
+                        "param '" ~ p.name ~ "[" ~ i.to!string ~ "]' must be a number");
+                }
+                *p.uiaPtr = result;
+                break;
+            }
+            case Param.Kind.Vec3Array: {
+                if (jp.type != JSONType.array)
+                    throw new Exception(
+                        "param '" ~ p.name ~ "' must be an array of [x,y,z]");
+                import std.conv : to;
+                Vec3[] result;
+                result.length = jp.array.length;
+                foreach (i, ref vJson; jp.array) {
+                    if (vJson.type != JSONType.array || vJson.array.length != 3)
+                        throw new Exception(
+                            "param '" ~ p.name ~ "[" ~ i.to!string ~ "]' must be [x,y,z]");
+                    result[i] = Vec3(_jsonFloat(vJson.array[0]),
+                                     _jsonFloat(vJson.array[1]),
+                                     _jsonFloat(vJson.array[2]));
+                }
+                *p.v3aPtr = result;
+                break;
+            }
         }
     }
 }

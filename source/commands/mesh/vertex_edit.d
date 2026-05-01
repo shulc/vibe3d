@@ -4,6 +4,7 @@ import std.conv : to;
 
 import command;
 import mesh;
+import params : Param;
 import view;
 import editmode;
 import viewcache;
@@ -50,6 +51,17 @@ class MeshVertexEdit : Command {
              ~ indices.length.to!string ~ " verts";
     }
 
+    /// Schema used by the generic HTTP injector (injectParamsInto).
+    /// editLabel is intentionally excluded — tools set it via setEdit()
+    /// directly; it is not part of the JSON wire format.
+    override Param[] params() {
+        return [
+            Param.intArray_ ("indices", "Indices", &indices),
+            Param.vec3Array_("before",  "Before",  &before),
+            Param.vec3Array_("after",   "After",   &after),
+        ];
+    }
+
     /// Set the edit payload. before/after must be the same length as indices
     /// — corresponding entry i means mesh.vertices[indices[i]] went from
     /// before[i] to after[i].
@@ -77,6 +89,12 @@ class MeshVertexEdit : Command {
     }
 
     override bool apply() {
+        if (before.length != indices.length || after.length != indices.length)
+            throw new Exception(
+                "mesh.vertex_edit: indices/before/after length mismatch "
+                ~ "(indices=" ~ indices.length.to!string
+                ~ " before=" ~ before.length.to!string
+                ~ " after=" ~ after.length.to!string ~ ")");
         foreach (i, vid; indices) {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = after[i];
