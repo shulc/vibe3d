@@ -7,7 +7,7 @@ import editmode;
 import shader;
 import viewcache;
 import bevel : BevelOp, BevelParams, BevelWidthMode, MiterPattern,
-               computeLimitOffset, runEdgeBevel;
+               computeLimitOffset, runEdgeBevel, EdgeBevelResult;
 import snapshot : MeshSnapshot;
 
 /// Non-interactive edge bevel — applies the topology change on the currently
@@ -89,7 +89,8 @@ class MeshBevel : Command {
         // ways revertEdgeBevelTopology(BevelOp) wasn't designed to handle).
         snap = MeshSnapshot.capture(*mesh);
 
-        if (!runEdgeBevel(mesh, mesh.selectedEdges, p)) {
+        auto r = runEdgeBevel(mesh, mesh.selectedEdges, p);
+        if (!r.success) {
             snap = MeshSnapshot.init;
             return false;
         }

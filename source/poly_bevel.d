@@ -424,12 +424,20 @@ void updatePolyBevelPositions(Mesh* mesh, ref const PolyBevelOp op,
 //   2. applyPolyBevel (which internally calls buildLoops + syncSelection).
 //   3. buildLoops again (matches the extra outer call in MeshPolyBevel.apply).
 //
-// Returns false when the mesh has no faces. On success the mesh is mutated.
+// Returns PolyBevelResult with success=false when the mesh has no faces.
+// On success the mesh is mutated and result.op holds the PolyBevelOp for
+// the caller.
 // ---------------------------------------------------------------------------
-bool runPolyBevel(Mesh* mesh, float insert, float shift, bool groupPolygons)
+
+struct PolyBevelResult {
+    bool        success;
+    PolyBevelOp op;
+}
+
+PolyBevelResult runPolyBevel(Mesh* mesh, float insert, float shift, bool groupPolygons)
 {
     import std.algorithm.sorting : sort;
-    if (mesh.faces.length == 0) return false;
+    if (mesh.faces.length == 0) return PolyBevelResult(false);
 
     int[] selFaceIdx;
     if (mesh.hasAnySelectedFaces()) {
@@ -444,11 +452,11 @@ bool runPolyBevel(Mesh* mesh, float insert, float shift, bool groupPolygons)
         foreach (fi; 0 .. mesh.faces.length)
             selFaceIdx ~= cast(int)fi;
     }
-    if (selFaceIdx.length == 0) return false;
+    if (selFaceIdx.length == 0) return PolyBevelResult(false);
 
-    applyPolyBevel(mesh, selFaceIdx, insert, shift, groupPolygons);
+    PolyBevelOp op = applyPolyBevel(mesh, selFaceIdx, insert, shift, groupPolygons);
     mesh.buildLoops();
-    return true;
+    return PolyBevelResult(true, op);
 }
 
 // Restore the mesh to its pre-apply state.

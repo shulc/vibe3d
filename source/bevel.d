@@ -2832,18 +2832,25 @@ private void replaceVertInFace(Mesh* mesh, uint faceIdx, uint oldV, uint newV)
 //   5. compactUnreferenced + buildLoops.
 //   6. clearEdgeSelection + select bevel-quad edges.
 //
-// Returns false when there are no selected edges (no-op); mesh is untouched.
-// On success the mesh is fully mutated and bevel-quad edges are selected.
+// Returns EdgeBevelResult with success=false when there are no selected edges
+// (no-op, mesh is untouched). On success the mesh is fully mutated, bevel-quad
+// edges are selected, and result.op holds the BevelOp for the caller.
 //
 // params.widthR / params.asymmetric semantics:
 //   If params.asymmetric == true  →  wL = params.width, wR = params.widthR.
 //   If params.asymmetric == false →  wL = wR = params.width (symmetric).
 // ---------------------------------------------------------------------------
-bool runEdgeBevel(Mesh* mesh, const ref bool[] selectedEdges,
-                  const ref BevelParams params)
+
+struct EdgeBevelResult {
+    bool    success;
+    BevelOp op;
+}
+
+EdgeBevelResult runEdgeBevel(Mesh* mesh, const ref bool[] selectedEdges,
+                              const ref BevelParams params)
 {
     import std.math : isNaN;
-    if (!mesh.hasAnySelectedEdges()) return false;
+    if (!mesh.hasAnySelectedEdges()) return EdgeBevelResult(false);
 
     float w  = params.width;
     float wR = params.asymmetric ? params.widthR : params.width;
@@ -2886,6 +2893,6 @@ bool runEdgeBevel(Mesh* mesh, const ref bool[] selectedEdges,
         if (eidx >= 0 && eidx < cast(int)mesh.edges.length)
             mesh.selectEdge(eidx);
 
-    return true;
+    return EdgeBevelResult(true, op);
 }
 // (Mesh.rebuildEdgesFromFaces). Used by both edge bevel and poly bevel.

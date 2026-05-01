@@ -6,7 +6,7 @@ import view;
 import editmode;
 import shader;
 import viewcache;
-import poly_bevel : runPolyBevel;
+import poly_bevel : runPolyBevel, PolyBevelResult;
 import snapshot : MeshSnapshot;
 
 /// Non-interactive polygon "bevel" — face inset + extrude on the currently
@@ -54,7 +54,8 @@ class MeshPolyBevel : Command {
         // faces, selection arrays — full snapshot is the simplest revert.
         snap = MeshSnapshot.capture(*mesh);
 
-        if (!runPolyBevel(mesh, insert, shift, group)) {
+        auto r = runPolyBevel(mesh, insert, shift, group);
+        if (!r.success) {
             snap = MeshSnapshot.init;
             return false;
         }

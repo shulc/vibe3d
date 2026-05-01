@@ -466,23 +466,29 @@ public:
         // custom to add here.
     }
 
-    // Apply bevel one-shot without interactive gizmo. Caller is responsible
-    // for snapshot pair (phase 4.4 ToolHeadlessCommand). Does NOT activate
-    // the gizmo or set up drag state. Sets bevelApplied so state is consistent.
+    // Apply bevel one-shot without interactive gizmo. Uses the canonical
+    // runEdgeBevel / runPolyBevel path (same as MeshBevel.apply /
+    // MeshPolyBevel.apply) so headless and mesh.* commands produce identical
+    // geometry. Captures ebOp / polyOp so a subsequent interactive drag
+    // (edge case: tool.doApply then continue drag) has a valid op.
+    // Caller is responsible for snapshot pair.
     override bool applyHeadless() {
         if (*editMode == EditMode.Edges) {
             if (!mesh.hasAnySelectedEdges()) return false;
-            applyEdgeBevelTopology();
-            // applyEdgeBevelTopology anchors slideDir at width=1; re-apply the
-            // actual user width to land BoundVerts at the correct positions.
-            bevel.updateEdgeBevelPositions(mesh, ebOp, params_.width);
+            auto r = bevel.runEdgeBevel(mesh, mesh.selectedEdges, params_);
+            if (!r.success) return false;
+            ebOp         = r.op;
+            bevelApplied = true;
             gpu.upload(*mesh);
             return true;
         } else if (*editMode == EditMode.Polygons) {
             if (mesh.faces.length == 0) return false;
-            // applyPolyBevelTopology already applies params_.insertAmount /
-            // params_.shiftAmount via updatePolyBevelPositions internally.
-            applyPolyBevelTopology();
+            auto r = poly_bevel.runPolyBevel(mesh, params_.insertAmount,
+                                              params_.shiftAmount,
+                                              params_.groupPolygons);
+            if (!r.success) return false;
+            polyOp       = r.op;
+            bevelApplied = true;
             gpu.upload(*mesh);
             return true;
         }
