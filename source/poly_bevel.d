@@ -412,6 +412,45 @@ void updatePolyBevelPositions(Mesh* mesh, ref const PolyBevelOp op,
     }
 }
 
+// ---------------------------------------------------------------------------
+// runPolyBevel — headless polygon bevel one-shot.
+//
+// Encapsulates all mutation steps that MeshPolyBevel.apply performs, without
+// snapshot / gpu / cache concerns — the caller wraps those.
+//
+// Steps mirrored from MeshPolyBevel.apply (commands/mesh/poly_bevel.d):
+//   1. Collect and sort selected face indices (or all faces if none selected),
+//      honouring faceSelectionOrder for group-mode determinism.
+//   2. applyPolyBevel (which internally calls buildLoops + syncSelection).
+//   3. buildLoops again (matches the extra outer call in MeshPolyBevel.apply).
+//
+// Returns false when the mesh has no faces. On success the mesh is mutated.
+// ---------------------------------------------------------------------------
+bool runPolyBevel(Mesh* mesh, float insert, float shift, bool groupPolygons)
+{
+    import std.algorithm.sorting : sort;
+    if (mesh.faces.length == 0) return false;
+
+    int[] selFaceIdx;
+    if (mesh.hasAnySelectedFaces()) {
+        foreach (fi, sel; mesh.selectedFaces)
+            if (sel && fi < mesh.faces.length) selFaceIdx ~= cast(int)fi;
+        int orderOf(int fi) {
+            return (fi < cast(int)mesh.faceSelectionOrder.length)
+                ? mesh.faceSelectionOrder[fi] : 0;
+        }
+        sort!((a, b) => orderOf(a) < orderOf(b))(selFaceIdx);
+    } else {
+        foreach (fi; 0 .. mesh.faces.length)
+            selFaceIdx ~= cast(int)fi;
+    }
+    if (selFaceIdx.length == 0) return false;
+
+    applyPolyBevel(mesh, selFaceIdx, insert, shift, groupPolygons);
+    mesh.buildLoops();
+    return true;
+}
+
 // Restore the mesh to its pre-apply state.
 void revertPolyBevel(Mesh* mesh, ref const PolyBevelOp op)
 {

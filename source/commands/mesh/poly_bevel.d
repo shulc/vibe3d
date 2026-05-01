@@ -6,7 +6,7 @@ import view;
 import editmode;
 import shader;
 import viewcache;
-import poly_bevel : applyPolyBevel;
+import poly_bevel : runPolyBevel;
 import snapshot : MeshSnapshot;
 
 /// Non-interactive polygon "bevel" — face inset + extrude on the currently
@@ -50,37 +50,15 @@ class MeshPolyBevel : Command {
         if (editMode != EditMode.Polygons) return false;
         if (mesh.faces.length == 0)        return false;
 
-        // For grouped poly bevel with shared corners between selected faces,
-        // the processing order determines which face's inset position is
-        // used at the shared corner (first-face-wins via groupVertMap).
-        // Honor explicit user selection order (via faceSelectionOrder
-        // counter) so the test JSON's `faces` listing controls which face
-        // "wins" the shared corner. Faces without an explicit selection
-        // counter (i.e. all-faces fallback when nothing is selected) fall
-        // back to face-index order.
-        import std.algorithm.sorting : sort;
-        int[] selFaceIdx;
-        if (mesh.hasAnySelectedFaces()) {
-            foreach (fi, sel; mesh.selectedFaces)
-                if (sel && fi < mesh.faces.length) selFaceIdx ~= cast(int)fi;
-            int orderOf(int fi) {
-                return (fi < cast(int)mesh.faceSelectionOrder.length)
-                    ? mesh.faceSelectionOrder[fi] : 0;
-            }
-            sort!((a, b) => orderOf(a) < orderOf(b))(selFaceIdx);
-        } else {
-            foreach (fi; 0 .. mesh.faces.length)
-                selFaceIdx ~= cast(int)fi;
-        }
-        if (selFaceIdx.length == 0) return false;
-
-        // Snapshot before mutation. applyPolyBevel modifies verts, edges,
+        // Snapshot before mutation. runPolyBevel modifies verts, edges,
         // faces, selection arrays — full snapshot is the simplest revert.
         snap = MeshSnapshot.capture(*mesh);
 
-        applyPolyBevel(mesh, selFaceIdx, insert, shift, group);
+        if (!runPolyBevel(mesh, insert, shift, group)) {
+            snap = MeshSnapshot.init;
+            return false;
+        }
 
-        mesh.buildLoops();
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length); vc.invalidate();
         ec.resize(mesh.edges.length);    ec.invalidate();

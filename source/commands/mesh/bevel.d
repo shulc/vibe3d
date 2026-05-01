@@ -6,8 +6,8 @@ import view;
 import editmode;
 import shader;
 import viewcache;
-import bevel : applyEdgeBevelTopology, updateEdgeBevelPositions,
-               BevelOp, BevelWidthMode, MiterPattern, computeLimitOffset;
+import bevel : BevelOp, BevelParams, BevelWidthMode, MiterPattern,
+               computeLimitOffset, runEdgeBevel;
 import snapshot : MeshSnapshot;
 
 /// Non-interactive edge bevel — applies the topology change on the currently
@@ -70,69 +70,29 @@ class MeshBevel : Command {
 
     override bool apply() {
         import std.math : isNaN;
-        if (editMode != EditMode.Edges)            return false;
-        if (!mesh.hasAnySelectedEdges())           return false;
+        if (editMode != EditMode.Edges) return false;
+        if (!mesh.hasAnySelectedEdges()) return false;
 
-        // limit_offset: silently clamp user-facing width(s) so no BoundVert
-        // can land past the far end of an adjacent non-bev edge (which would
-        // invert geometry). This matches Blender's "Clamp Overlap" default.
-        // Disable via setLimit(false) / "limit": false in JSON for tests
-        // that need to exercise the unclamped mode-conversion math.
-        float w  = width;
-        float wR = isNaN(widthR) ? w : widthR;
-        if (limit) {
-            float lim = computeLimitOffset(mesh, mesh.selectedEdges, mode);
-            if (w  > lim) w  = lim;
-            if (wR > lim) wR = lim;
-        }
-        // Full mesh snapshot for revert. The bevel pipeline runs weld and
-        // compactUnreferenced as post-effects which renumber vertices in
-        // ways revertEdgeBevelTopology(BevelOp) wasn't designed to handle,
-        // so a full snapshot is the simpler/safer revert path here.
+        // Translate this command's NaN-sentinel widthR into BevelParams.
+        // NaN means "not set" → symmetric (asymmetric=false, widthR unused).
+        BevelParams p;
+        p.width      = width;
+        p.widthR     = isNaN(widthR) ? width : widthR;
+        p.asymmetric = !isNaN(widthR);
+        p.mode       = mode;
+        p.seg        = seg;
+        p.superR     = superR;
+        p.miterInner = miterInner;
+        p.limit      = limit;
+
+        // Full mesh snapshot for revert (weld + compact renumber vertices in
+        // ways revertEdgeBevelTopology(BevelOp) wasn't designed to handle).
         snap = MeshSnapshot.capture(*mesh);
-        // Slide directions are computed at the (w, wR) widths directly,
-        // so the BoundVerts land at their final positions during apply.
-        BevelOp op = applyEdgeBevelTopology(mesh, mesh.selectedEdges, mode,
-                                             w, wR, seg, superR, miterInner);
-        updateEdgeBevelPositions(mesh, op, 1.0f);
-        // Fold any vertices that slid onto the same world-space point — the
-        // typical outcome of re-beveling cap edges of an earlier bevel that
-        // overshot the clamp limit (see test_bevel_rebevel.d). Without this
-        // pass two coincident verts persist; faces around them no longer
-        // share edges, leaving boundary holes in the surface.
-        // Skip when the user requested a width=0 bevel (pure topology, no
-        // slide): every new BoundVert sits at origPos by definition, and
-        // weld'ing it onto the original corner would collapse the bevel
-        // quad we just emitted — breaking width=0 test fixtures.
-        float effW = (w > wR) ? w : wR;
-        if (effW > 1e-4f && mesh.weldCoincidentVertices(1e-6) > 0) {
-            // Weld preserves face indices when no face collapses below 3
-            // distinct verts (the only realistic case for bevel output),
-            // so op.bevelQuadFaces is still valid. Edges were rebuilt from
-            // remapped face content, so recompute mesh-edge indices.
-            op.bevelQuadEdges.length = 0;
-            foreach (fi; op.bevelQuadFaces) {
-                if (fi < 0 || fi >= cast(int)mesh.faces.length) continue;
-                auto face = mesh.faces[fi];
-                if (face.length < 3) continue;
-                foreach (i, _; face) {
-                    uint a = face[i];
-                    uint b = face[(i + 1) % face.length];
-                    uint eidx = mesh.edgeIndex(a, b);
-                    if (eidx != ~0u) op.bevelQuadEdges ~= cast(int)eidx;
-                }
-            }
-        }
-        // Remove orphan vertices left by the topology operation (e.g. the
-        // BEV-BEV BoundVert at reflex selCount=2 with arc miter, where the
-        // patch geometry routes around the original vertex).
-        mesh.compactUnreferenced();
-        mesh.buildLoops();
 
-        mesh.clearEdgeSelection();
-        foreach (eidx; op.bevelQuadEdges)
-            if (eidx >= 0 && eidx < cast(int)mesh.edges.length)
-                mesh.selectEdge(eidx);
+        if (!runEdgeBevel(mesh, mesh.selectedEdges, p)) {
+            snap = MeshSnapshot.init;
+            return false;
+        }
 
         gpu.upload(*mesh);
         vc.resize(mesh.vertices.length); vc.invalidate();

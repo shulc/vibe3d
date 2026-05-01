@@ -2817,4 +2817,75 @@ private void replaceVertInFace(Mesh* mesh, uint faceIdx, uint oldV, uint newV)
 }
 
 // rebuildEdgesFromFaces moved to source/mesh.d as a public Mesh method
+
+// ---------------------------------------------------------------------------
+// runEdgeBevel — headless edge bevel one-shot.
+//
+// Encapsulates all mutation steps that MeshBevel.apply performs, without any
+// snapshot / gpu / cache concerns — the caller wraps those.
+//
+// Steps mirrored from MeshBevel.apply (commands/mesh/bevel.d):
+//   1. Compute limit offset and clamp w / wR when params.limit = true.
+//   2. applyEdgeBevelTopology at the (possibly clamped) final widths.
+//   3. updateEdgeBevelPositions with multiplier = 1.0f.
+//   4. weldCoincidentVertices + rebuild bevelQuadEdges from faces (when w > 0).
+//   5. compactUnreferenced + buildLoops.
+//   6. clearEdgeSelection + select bevel-quad edges.
+//
+// Returns false when there are no selected edges (no-op); mesh is untouched.
+// On success the mesh is fully mutated and bevel-quad edges are selected.
+//
+// params.widthR / params.asymmetric semantics:
+//   If params.asymmetric == true  →  wL = params.width, wR = params.widthR.
+//   If params.asymmetric == false →  wL = wR = params.width (symmetric).
+// ---------------------------------------------------------------------------
+bool runEdgeBevel(Mesh* mesh, const ref bool[] selectedEdges,
+                  const ref BevelParams params)
+{
+    import std.math : isNaN;
+    if (!mesh.hasAnySelectedEdges()) return false;
+
+    float w  = params.width;
+    float wR = params.asymmetric ? params.widthR : params.width;
+
+    if (params.limit) {
+        float lim = computeLimitOffset(mesh, cast(bool[])selectedEdges, params.mode);
+        if (w  > lim) w  = lim;
+        if (wR > lim) wR = lim;
+    }
+
+    BevelOp op = applyEdgeBevelTopology(mesh, cast(bool[])selectedEdges,
+                                         params.mode, w, wR,
+                                         params.seg, params.superR,
+                                         params.miterInner);
+    updateEdgeBevelPositions(mesh, op, 1.0f);
+
+    // Weld coincident vertices (e.g. re-bevel cap edges that overshot clamp).
+    // Skip at width=0 to avoid collapsing bevel quads onto the original corner.
+    float effW = (w > wR) ? w : wR;
+    if (effW > 1e-4f && mesh.weldCoincidentVertices(1e-6) > 0) {
+        op.bevelQuadEdges.length = 0;
+        foreach (fi; op.bevelQuadFaces) {
+            if (fi < 0 || fi >= cast(int)mesh.faces.length) continue;
+            auto face = mesh.faces[fi];
+            if (face.length < 3) continue;
+            foreach (i, _; face) {
+                uint a = face[i];
+                uint b = face[(i + 1) % face.length];
+                uint eidx = mesh.edgeIndex(a, b);
+                if (eidx != ~0u) op.bevelQuadEdges ~= cast(int)eidx;
+            }
+        }
+    }
+
+    mesh.compactUnreferenced();
+    mesh.buildLoops();
+
+    mesh.clearEdgeSelection();
+    foreach (eidx; op.bevelQuadEdges)
+        if (eidx >= 0 && eidx < cast(int)mesh.edges.length)
+            mesh.selectEdge(eidx);
+
+    return true;
+}
 // (Mesh.rebuildEdgesFromFaces). Used by both edge bevel and poly bevel.
