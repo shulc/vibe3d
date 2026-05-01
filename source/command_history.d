@@ -150,6 +150,17 @@ final class CommandHistory {
     const(HistoryEntry)[] undoEntries() const { return undoStack; }
     const(HistoryEntry)[] redoEntries() const { return redoStack; }
 
+    /// Returns the canonical argstring line for undoStack[index]:
+    /// `commandName + " " + args` if args is non-empty, else `commandName`.
+    /// Returns "" when index is out of range.
+    /// Used by /api/history/replay to re-execute past commands through the
+    /// same dispatch path as /api/command without modifying the original entry.
+    string undoEntryCommandLine(size_t index) const {
+        if (index >= undoStack.length) return "";
+        auto e = undoStack[index];
+        return e.args.length > 0 ? (e.commandName ~ " " ~ e.args) : e.commandName;
+    }
+
     void clear() {
         undoStack.length = 0;
         redoStack.length = 0;

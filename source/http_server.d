@@ -89,6 +89,12 @@ class HttpServer {
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
 
+    // ----- /api/history/replay provider ------------------------------------
+    // Returns the canonical argstring line for undoStack[index], or "" when
+    // the index is out of range. Runs on the HTTP thread (read-only snapshot).
+    private alias ReplayProvider = string delegate(size_t index);
+    private ReplayProvider replayProvider;
+
     // ----- /api/refire synchronous bridge ----------------------------------
     // POST /api/refire {"action":"begin"|"end"} opens or closes a refire
     // block on the history. Tools call refireBegin/refireEnd directly on
@@ -202,6 +208,16 @@ class HttpServer {
      */
     public void setHistoryProvider(HistoryProvider provider) {
         this.historyProvider = provider;
+    }
+
+    /**
+     * Set the replay provider — returns the canonical argstring line for
+     * undoStack[index], or "" when the index is out of range. The provider
+     * runs on the HTTP thread and must be safe to call concurrently with the
+     * main thread (reading a snapshot is sufficient).
+     */
+    public void setReplayProvider(ReplayProvider provider) {
+        this.replayProvider = provider;
     }
 
     /**
@@ -386,7 +402,8 @@ class HttpServer {
                            "<li>tool.set &lt;toolId&gt; [off] [name:val ...] - activate/deactivate a tool</li>" ~
                            "<li>tool.attr &lt;toolId&gt; &lt;name&gt; &lt;value&gt; - set parameter on active tool</li>" ~
                            "<li>tool.doApply - apply active tool one-shot (snapshot-based undo)</li>" ~
-                           "<li>tool.reset [&lt;toolId&gt;] - reset active tool's parameters</li></ul>" ~
+                           "<li>tool.reset [&lt;toolId&gt;] - reset active tool's parameters</li>" ~
+                           "<li>/api/history/replay - POST {\"index\":N} — re-execute undoStack[N] against current state</li></ul>" ~
                            "</body></html>";
             response.headers["Content-Type"] = "text/html";
         } else if (request.path == "/status") {
@@ -826,6 +843,78 @@ class HttpServer {
                 response.body = historyProvider();
             }
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/history/replay" && request.method == "POST") {
+            // Re-execute the argstring of undoStack[index] against the current
+            // mesh state. Reuses the same main-thread bridge as /api/command —
+            // the result is a brand-new history entry; the original is untouched.
+            //
+            // Caveats (by design, not bugs):
+            //  - Replay executes against the CURRENT mesh/selection state, not
+            //    the state at the time the original command ran. If the original
+            //    bevel targeted edge 5 but the selection has since changed, the
+            //    replay hits the current selection. This matches MODO behaviour.
+            //  - Selection state is not stored per entry; if the replayed command
+            //    depends on selection (e.g. vert.merge), the caller must re-select
+            //    before calling this endpoint.
+            if (replayProvider is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"replay provider not set"}`;
+                response.headers["Content-Type"] = "application/json";
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if ("index" !in j ||
+                        (j["index"].type != JSONType.integer &&
+                         j["index"].type != JSONType.uinteger))
+                        throw new Exception("missing 'index' integer field");
+
+                    long idx = (j["index"].type == JSONType.integer)
+                               ? j["index"].integer
+                               : cast(long)j["index"].uinteger;
+                    if (idx < 0) throw new Exception("'index' must be non-negative");
+
+                    string line = replayProvider(cast(size_t)idx);
+                    if (line.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"no entry at given index"}`;
+                    } else {
+                        // Parse the line and dispatch through the existing
+                        // main-thread bridge — identical path to argstring /api/command.
+                        auto parsed = parseArgstring(line);
+                        if (parsed.isEmpty)
+                            throw new Exception("entry parsed as empty");
+                        pendingCmdId     = parsed.commandId;
+                        pendingCmdParams = parsed.params.toString();
+                        pendingCmdError  = "";
+                        long my = atomicOp!"+="(submittedEpoch, 1);
+                        enum int maxIters = 2500;  // 2500 * 2ms = ~5s
+                        int iters = 0;
+                        while (atomicLoad(completedEpoch) < my) {
+                            if (++iters > maxIters) {
+                                pendingCmdError = "timeout waiting for main thread";
+                                break;
+                            }
+                            Thread.sleep(2.msecs);
+                        }
+                        if (pendingCmdError.length == 0) {
+                            response.statusCode = 200;
+                            response.body = `{"status":"ok","line":"`
+                                          ~ line.replace("\\", "\\\\").replace("\"", "\\\"")
+                                          ~ `"}`;
+                        } else {
+                            response.statusCode = 200;
+                            response.body = `{"status":"error","message":"`
+                                          ~ pendingCmdError.replace("\\", "\\\\").replace("\"", "\\\"")
+                                          ~ `"}`;
+                        }
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                  ~ e.msg.replace("\\", "\\\\").replace("\"", "\\\"") ~ `"}`;
+                }
+                response.headers["Content-Type"] = "application/json";
+            }
         } else if (request.path == "/api/play-events" && request.method == "POST") {
             if (!testMode) {
                 response.statusCode = 403;

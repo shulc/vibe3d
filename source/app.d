@@ -1000,6 +1000,13 @@ void main(string[] args) {
             return payload.toString();
         });
 
+        // Phase 5.5: re-execute the argstring of any undo stack entry against
+        // the current mesh state.  The original entry is not modified; a new
+        // history entry is created by the normal apply()+record() path.
+        httpServer.setReplayProvider((size_t i) {
+            return history.undoEntryCommandLine(i);
+        });
+
         // Phase C: /api/refire opens/closes a refire block on the history.
         // Tools call refireBegin/refireEnd directly; this endpoint exists
         // for HTTP-driven tests that want to verify the refire-coalescing
