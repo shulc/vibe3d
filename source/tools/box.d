@@ -1437,14 +1437,17 @@ private:
 
     void buildBase(Mesh* m) {
         computeBaseCorners();
-        foreach (c; baseCorners) m.addVertex(c);
+        // Capture the indices addVertex returns — the dst mesh may already
+        // have geometry (preview or scene), so we cannot assume verts 0..3.
+        uint[4] vi;
+        foreach (i, c; baseCorners) vi[i] = m.addVertex(c);
         Vec3 n     = cross(baseCorners[1] - baseCorners[0],
                            baseCorners[2] - baseCorners[0]);
         Vec3 toEye = cachedVp.eye - baseCentroid();
         if (dot(n, toEye) >= 0)
-            m.addFace([0u, 1u, 2u, 3u]);
+            m.addFace([vi[0], vi[1], vi[2], vi[3]]);
         else
-            m.addFace([0u, 3u, 2u, 1u]);
+            m.addFace([vi[0], vi[3], vi[2], vi[1]]);
     }
 
     void uploadBase() {
