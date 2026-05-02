@@ -1437,18 +1437,35 @@ private:
     }
 
     void buildBase(Mesh* m) {
+        // Map interactive base drag → axis-aligned BoxParams with the
+        // plane-normal axis size left at 0 (plane mode). Then delegate to
+        // buildCuboidParametric so the same subdivision/segments path
+        // applies to base preview as to evaluate() (segments slider).
+        // Without this sync, evaluate() during BaseSet would build from
+        // default params_ (1×1×1 at origin) instead of the drag rectangle.
         computeBaseCorners();
-        // Capture the indices addVertex returns — the dst mesh may already
-        // have geometry (preview or scene), so we cannot assume verts 0..3.
-        uint[4] vi;
-        foreach (i, c; baseCorners) vi[i] = m.addVertex(c);
-        Vec3 n     = cross(baseCorners[1] - baseCorners[0],
-                           baseCorners[2] - baseCorners[0]);
-        Vec3 toEye = cachedVp.eye - baseCentroid();
-        if (dot(n, toEye) >= 0)
-            m.addFace([vi[0], vi[1], vi[2], vi[3]]);
-        else
-            m.addFace([vi[0], vi[3], vi[2], vi[1]]);
+        Vec3  d  = currentPoint - startPoint;
+        float d1 = dot(d, planeAxis1);
+        float d2 = dot(d, planeAxis2);
+        Vec3  cen = baseCentroid();
+
+        BoxParams p = params_;
+        p.cenX = cen.x; p.cenY = cen.y; p.cenZ = cen.z;
+        p.sizeX = 0.0f; p.sizeY = 0.0f; p.sizeZ = 0.0f;
+        void writeSize(Vec3 axisVec, float magnitude) {
+            if      (abs(axisVec.x) > 0.5f) p.sizeX = abs(magnitude);
+            else if (abs(axisVec.y) > 0.5f) p.sizeY = abs(magnitude);
+            else if (abs(axisVec.z) > 0.5f) p.sizeZ = abs(magnitude);
+        }
+        writeSize(planeAxis1, d1);
+        writeSize(planeAxis2, d2);
+        // planeNormal axis intentionally NOT written — stays 0 → plane mode.
+
+        // Sync back so the schema panel reflects the drag rectangle.
+        params_.cenX  = p.cenX;  params_.cenY  = p.cenY;  params_.cenZ  = p.cenZ;
+        params_.sizeX = p.sizeX; params_.sizeY = p.sizeY; params_.sizeZ = p.sizeZ;
+
+        buildCuboidParametric(m, p);
     }
 
     void uploadBase() {
