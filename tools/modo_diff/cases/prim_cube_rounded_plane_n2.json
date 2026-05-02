@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.cube XZ plane (sizeY=0) radius=0.1 segmentsR=2 — 16v/13f rounded plane",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 0.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.1,
+      "segmentsR": 2,
+      "sharp": 0,
+      "axis": 1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

@@ -427,6 +427,316 @@ private void buildRoundedCubeAxisY(Mesh* dst, const ref BoxParams p)
 
 
 // ---------------------------------------------------------------------------
+// buildRoundedPlane — generate a rounded-corner planar panel.
+//
+// Called when radius > 0 AND exactly one of sizeX/Y/Z is zero.
+// Produces the MODO prim.cube topology for plane mode with rounded edges:
+//
+//   Vertex layout (segA, segB = segments along the two non-zero axes;
+//                  sR = segmentsR):
+//     [0 .. outerRingSize-1]          outer ring (CCW from above/outward)
+//     [outerRingSize .. outerRingSize + (segA+1)*(segB+1) - 1]  inner panel grid
+//
+//   Outer ring (total = 2*(segA+1) + 2*(segB+1) + 4*(sR-1)):
+//     bottom section (+A direction): segA+1 verts at -halfB
+//     bottom-right arc:              sR-1 intermediate verts
+//     right section (+B direction):  segB+1 verts at +halfA
+//     top-right arc:                 sR-1 intermediate verts
+//     top section (-A direction):    segA+1 verts at +halfB (reversed)
+//     top-left arc:                  sR-1 intermediate verts
+//     left section (-B direction):   segB+1 verts at -halfA (reversed)
+//     bottom-left arc:               sR-1 intermediate verts
+//
+//   Inner panel: (segA+1)*(segB+1) grid, index = iA*(segB+1)+iB.
+//
+//   Faces (total = segA*segB + 2*segA + 2*segB + 4*sR):
+//     segA*segB inner panel quads (CCW outward winding)
+//     2*segA + 2*segB side strip quads (4 edge strips)
+//     4*sR corner triangle fans
+//
+// Verified bit-for-bit against MODO 9 probe data for:
+//   XZ plane (sizeY=0) sR=1 seg=(1,1): 12v/9f
+//   XZ plane (sizeY=0) sR=2 seg=(1,1): 16v/13f
+//   XZ plane (sizeY=0) sR=1 seg=(2,2): 21v/16f
+//   YZ plane (sizeX=0) sR=1 seg=(1,1): 12v/9f
+//   XY plane (sizeZ=0) sR=1 seg=(1,1): 12v/9f
+// ---------------------------------------------------------------------------
+private void buildRoundedPlane(Mesh* dst, const ref BoxParams p)
+{
+    import std.typecons : Tuple, tuple;
+    import std.math : round;
+    import std.conv : to;
+
+    int    sR   = p.segmentsR < 1 ? 1 : p.segmentsR;
+    float  r    = abs(p.radius);
+
+    // Determine which axis is degenerate and set up effective (A, B, N) axes.
+    //
+    // MODO ring/panel ordering varies by orientation:
+    //
+    //   sizeY=0 → XZ plane (+Y outward):
+    //     Ring starts at bottom section (b=-halfZ, a from -innerX to +innerX).
+    //     Panel is A-major: panel[iA*(segB+1)+iB].  (A=X, B=Z)
+    //
+    //   sizeX=0 → YZ plane (+X outward):
+    //     MODO ring starts at what is the "left" section in the XZ frame.
+    //     Equivalent to swapping A↔B of an XZ ring: A_eff=Z, B_eff=Y.
+    //     Panel is B-major (in original AB): panel[iB*(segA+1)+iA]
+    //     = A_eff-major: panel_eff[iAe*(segBe+1)+iBe] with Ae=Z, Be=Y.
+    //
+    //   sizeZ=0 → XY plane (+Z outward):
+    //     Same swap pattern as YZ: A_eff=Y, B_eff=X.
+    //     Panel is B-major: panel[iB*(segA+1)+iA].
+    //
+    // Unified: we always run the XZ-frame ring/face logic with effective
+    // (segAe, segBe, halfAe, halfBe, cenAe, cenBe), and provide a coordinate
+    // transform addV(ae, be) → world (x,y,z).
+
+    float halfAe, halfBe;
+    int   segAe,  segBe;
+    float cenAe,  cenBe, cenN;
+    // Orientation tag for addV.
+    int orient; // 0=XZ, 1=YZ(swapped), 2=XY(swapped)
+
+    if (abs(p.sizeY) < 1e-9f) {
+        // XZ: A=X, B=Z. No swap needed.
+        halfAe = abs(p.sizeX) * 0.5f;
+        halfBe = abs(p.sizeZ) * 0.5f;
+        segAe  = p.segmentsX < 1 ? 1 : p.segmentsX;
+        segBe  = p.segmentsZ < 1 ? 1 : p.segmentsZ;
+        cenAe  = p.cenX;  cenBe = p.cenZ;  cenN = p.cenY;
+        orient = 0;
+    } else if (abs(p.sizeX) < 1e-9f) {
+        // YZ: effective A=Z, effective B=Y (A↔B swap vs natural Y,Z order).
+        // Swapping makes the ring start at what MODO calls "bottom" (a=-halfZ).
+        halfAe = abs(p.sizeZ) * 0.5f;
+        halfBe = abs(p.sizeY) * 0.5f;
+        segAe  = p.segmentsZ < 1 ? 1 : p.segmentsZ;
+        segBe  = p.segmentsY < 1 ? 1 : p.segmentsY;
+        cenAe  = p.cenZ;  cenBe = p.cenY;  cenN = p.cenX;
+        orient = 1;
+    } else {
+        // XY (sizeZ=0): effective A=Y, effective B=X.
+        // Swapping matches MODO's ring start at a=-halfY.
+        halfAe = abs(p.sizeY) * 0.5f;
+        halfBe = abs(p.sizeX) * 0.5f;
+        segAe  = p.segmentsY < 1 ? 1 : p.segmentsY;
+        segBe  = p.segmentsX < 1 ? 1 : p.segmentsX;
+        cenAe  = p.cenY;  cenBe = p.cenX;  cenN = p.cenZ;
+        orient = 2;
+    }
+
+    // Clamp radius so corners don't degenerate.
+    if (r > halfAe) r = halfAe;
+    if (r > halfBe) r = halfBe;
+
+    float innerAe = halfAe - r;
+    float innerBe = halfBe - r;
+
+    // -----------------------------------------------------------------------
+    // Vertex emission.
+    // addV(ae, be) → world vertex, deduplicating via rounded key.
+    // Coordinate mapping (verified against MODO probe data):
+    //   XZ (orient=0): ae→x,  be→z,  n→y
+    //   YZ (orient=1): ae→z,  be→y,  n→x  (effective A=Z, effective B=Y)
+    //   XY (orient=2): ae→y,  be→x,  n→z  (effective A=Y, effective B=X)
+    // -----------------------------------------------------------------------
+    uint[Tuple!(float,float,float)] vmap;
+
+    uint addV(float ae, float be) {
+        Vec3 pos;
+        final switch (orient) {
+            case 0: pos = Vec3(cenAe + ae, cenN,       cenBe + be); break;
+            case 1: pos = Vec3(cenN,       cenBe + be, cenAe + ae); break;
+            case 2: pos = Vec3(cenBe + be, cenAe + ae, cenN);       break;
+        }
+        float kx = round(pos.x * 1_000_000.0f) / 1_000_000.0f;
+        float ky = round(pos.y * 1_000_000.0f) / 1_000_000.0f;
+        float kz = round(pos.z * 1_000_000.0f) / 1_000_000.0f;
+        auto key = tuple(kx, ky, kz);
+        if (auto pp = key in vmap) return *pp;
+        uint id = dst.addVertex(pos);
+        vmap[key] = id;
+        return id;
+    }
+
+    // -----------------------------------------------------------------------
+    // Outer ring.
+    //
+    // In effective (Ae, Be) coordinates the ring follows the XZ-frame order:
+    //   sec 0 (bottom, be=-halfBe): ae from -innerAe to +innerAe  [segAe+1 verts]
+    //   arc BR (inner corner +innerAe,-innerBe): arc -π/2 to 0    [sR-1 verts]
+    //   sec 1 (right, ae=+halfAe):  be from -innerBe to +innerBe  [segBe+1 verts]
+    //   arc TR (inner corner +innerAe,+innerBe): arc 0 to π/2     [sR-1 verts]
+    //   sec 2 (top, be=+halfBe):    ae from +innerAe to -innerAe  [segAe+1 verts]
+    //   arc TL (inner corner -innerAe,+innerBe): arc π/2 to π     [sR-1 verts]
+    //   sec 3 (left, ae=-halfAe):   be from +innerBe to -innerBe  [segBe+1 verts]
+    //   arc BL (inner corner -innerAe,-innerBe): arc π to 3π/2    [sR-1 verts]
+    //
+    // Ring size = 2*(segAe+1) + 2*(segBe+1) + 4*(sR-1).
+    // -----------------------------------------------------------------------
+    int ringSize = 2 * (segAe + 1) + 2 * (segBe + 1) + 4 * (sR - 1);
+    uint[] ring;
+    ring.reserve(ringSize);
+
+    immutable float dtheta = (PI * 0.5f) / sR;
+
+    // sec 0: bottom (be=-halfBe), ae from -innerAe to +innerAe
+    for (int i = 0; i <= segAe; ++i) {
+        float ae = (segAe == 0) ? 0.0f : (-innerAe + 2.0f * innerAe * (cast(float)i / segAe));
+        ring ~= addV(ae, -halfBe);
+    }
+    // arc BR: +innerAe,-innerBe, angles -π/2 .. 0
+    for (int m = 1; m < sR; ++m) {
+        float angle = -PI * 0.5f + m * dtheta;
+        ring ~= addV(innerAe + r * cos(angle), -innerBe + r * sin(angle));
+    }
+    // sec 1: right (ae=+halfAe), be from -innerBe to +innerBe
+    for (int i = 0; i <= segBe; ++i) {
+        float be = (segBe == 0) ? 0.0f : (-innerBe + 2.0f * innerBe * (cast(float)i / segBe));
+        ring ~= addV(+halfAe, be);
+    }
+    // arc TR: +innerAe,+innerBe, angles 0 .. π/2
+    for (int m = 1; m < sR; ++m) {
+        float angle = m * dtheta;
+        ring ~= addV(innerAe + r * cos(angle), innerBe + r * sin(angle));
+    }
+    // sec 2: top (be=+halfBe), ae from +innerAe to -innerAe (reversed)
+    for (int i = 0; i <= segAe; ++i) {
+        float ae = (segAe == 0) ? 0.0f : (innerAe - 2.0f * innerAe * (cast(float)i / segAe));
+        ring ~= addV(ae, +halfBe);
+    }
+    // arc TL: -innerAe,+innerBe, angles π/2 .. π
+    for (int m = 1; m < sR; ++m) {
+        float angle = PI * 0.5f + m * dtheta;
+        ring ~= addV(-innerAe + r * cos(angle), innerBe + r * sin(angle));
+    }
+    // sec 3: left (ae=-halfAe), be from +innerBe to -innerBe (reversed)
+    for (int i = 0; i <= segBe; ++i) {
+        float be = (segBe == 0) ? 0.0f : (innerBe - 2.0f * innerBe * (cast(float)i / segBe));
+        ring ~= addV(-halfAe, be);
+    }
+    // arc BL: -innerAe,-innerBe, angles π .. 3π/2
+    for (int m = 1; m < sR; ++m) {
+        float angle = PI + m * dtheta;
+        ring ~= addV(-innerAe + r * cos(angle), -innerBe + r * sin(angle));
+    }
+
+    assert(ring.length == ringSize,
+           "buildRoundedPlane: ring.length=" ~ ring.length.to!string
+           ~ " != " ~ ringSize.to!string);
+
+    // -----------------------------------------------------------------------
+    // Inner panel: (segAe+1) × (segBe+1) grid.
+    // panel[iAe*(segBe+1)+iBe]  at  (ae_iAe, be_iBe)
+    // -----------------------------------------------------------------------
+    int panelSize = (segAe + 1) * (segBe + 1);
+    uint[] panel;
+    panel.reserve(panelSize);
+    for (int iAe = 0; iAe <= segAe; ++iAe) {
+        float ae = (segAe == 0) ? 0.0f : (-innerAe + 2.0f * innerAe * (cast(float)iAe / segAe));
+        for (int iBe = 0; iBe <= segBe; ++iBe) {
+            float be = (segBe == 0) ? 0.0f : (-innerBe + 2.0f * innerBe * (cast(float)iBe / segBe));
+            panel ~= addV(ae, be);
+        }
+    }
+
+    // Helper: panel vertex index in effective (Ae, Be) coordinates.
+    uint pv(int iAe, int iBe) { return panel[iAe * (segBe + 1) + iBe]; }
+
+    // -----------------------------------------------------------------------
+    // Ring section start offsets.
+    // -----------------------------------------------------------------------
+    int rBotStart   = 0;
+    int rArcBR      = segAe + 1;
+    int rRightStart = rArcBR + (sR - 1);
+    int rArcTR      = rRightStart + segBe + 1;
+    int rTopStart   = rArcTR + (sR - 1);
+    int rArcTL      = rTopStart + segAe + 1;
+    int rLeftStart  = rArcTL + (sR - 1);
+    // rArcBL starts at rLeftStart + segBe + 1, wraps to ring[0].
+
+    // -----------------------------------------------------------------------
+    // Emit faces.
+    //
+    // All faces follow the XZ-frame (effective) winding. The coordinate
+    // transform in addV() ensures the outward normal is correct for each
+    // orientation:
+    //   XZ: panel winding [iAe,iBe],[iAe,iBe+1],[iAe+1,iBe+1],[iAe+1,iBe]
+    //       → cross product points +Y (outward for sizeY=0) ✓
+    //   YZ: same winding, addV maps ae→z, be→y → cross product points +X ✓
+    //   XY: same winding, addV maps ae→y, be→x → cross product points +Z ✓
+    // -----------------------------------------------------------------------
+
+    // --- Inner panel quads ---
+    for (int iAe = 0; iAe < segAe; ++iAe) {
+        for (int iBe = 0; iBe < segBe; ++iBe) {
+            dst.addFace([pv(iAe, iBe), pv(iAe, iBe+1),
+                         pv(iAe+1, iBe+1), pv(iAe+1, iBe)]);
+        }
+    }
+
+    // --- Bottom strip (ring bottom section ↔ inner panel bottom edge) ---
+    for (int i = 0; i < segAe; ++i) {
+        dst.addFace([ring[rBotStart + i],     pv(i, 0),
+                     pv(i+1, 0),              ring[rBotStart + i + 1]]);
+    }
+
+    // --- Bottom-right corner fan (sR triangles) ---
+    // Inner corner = pv(segAe, 0).  Arc spans ring[segAe .. segAe+sR].
+    for (int m = 0; m < sR; ++m) {
+        dst.addFace([ring[rBotStart + segAe + m],
+                     pv(segAe, 0),
+                     ring[rBotStart + segAe + m + 1]]);
+    }
+
+    // --- Right strip (ring right section ↔ inner panel right edge) ---
+    for (int i = 0; i < segBe; ++i) {
+        dst.addFace([ring[rRightStart + i],   pv(segAe, i),
+                     pv(segAe, i+1),          ring[rRightStart + i + 1]]);
+    }
+
+    // --- Top-right corner fan ---
+    // Inner corner = pv(segAe, segBe).
+    for (int m = 0; m < sR; ++m) {
+        dst.addFace([ring[rRightStart + segBe + m],
+                     pv(segAe, segBe),
+                     ring[rRightStart + segBe + m + 1]]);
+    }
+
+    // --- Top strip (ring top section ↔ inner panel top edge, reversed A) ---
+    for (int i = 0; i < segAe; ++i) {
+        dst.addFace([ring[rTopStart + i],
+                     pv(segAe - i, segBe), pv(segAe - i - 1, segBe),
+                     ring[rTopStart + i + 1]]);
+    }
+
+    // --- Top-left corner fan ---
+    // Inner corner = pv(0, segBe).
+    for (int m = 0; m < sR; ++m) {
+        dst.addFace([ring[rTopStart + segAe + m],
+                     pv(0, segBe),
+                     ring[rTopStart + segAe + m + 1]]);
+    }
+
+    // --- Left strip (ring left section ↔ inner panel left edge, reversed B) ---
+    for (int i = 0; i < segBe; ++i) {
+        dst.addFace([ring[rLeftStart + i],
+                     pv(0, segBe - i), pv(0, segBe - i - 1),
+                     ring[rLeftStart + i + 1]]);
+    }
+
+    // --- Bottom-left corner fan ---
+    // Inner corner = pv(0, 0).
+    // Last arc vert wraps to ring[0] (start of bottom section).
+    for (int m = 0; m < sR; ++m) {
+        int rA = rLeftStart + segBe + m;
+        int rB = (m < sR - 1) ? (rLeftStart + segBe + m + 1) : 0;
+        dst.addFace([ring[rA], pv(0, 0), ring[rB]]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // buildCuboidParametric — pure free function: build an axis-aligned cuboid
 // into `dst` according to `p`.
 //
@@ -445,13 +755,16 @@ private void buildRoundedCubeAxisY(Mesh* dst, const ref BoxParams p)
 // Rounded cube (radius > 0): routes to buildRoundedCubeAxisY (or a permuted
 // version for axis=X/Z). Phase 6.1b — generates rounded edges with spherical
 // corner caps, MODO prim.cube parity verified for axis=Y, segmentsR=1..4.
+// Rounded plane (radius > 0, any size = 0): routes to buildRoundedPlane.
+// Phase 6.1d — MODO prim.cube parity verified for XZ/YZ/XY planes.
 // ---------------------------------------------------------------------------
 void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
 {
     import std.typecons : Tuple, tuple;
 
     // Rounded cube path: radius > epsilon → delegate to rounded generator.
-    // Plane mode (any size = 0) ignores radius — flat face always sharp.
+    // Rounded plane (any size = 0) also delegates when radius > epsilon.
+    bool anyZeroSize = abs(p.sizeX) < 1e-9f || abs(p.sizeY) < 1e-9f || abs(p.sizeZ) < 1e-9f;
     if (p.radius > 1e-9f
         && abs(p.sizeX) >= 1e-9f && abs(p.sizeY) >= 1e-9f && abs(p.sizeZ) >= 1e-9f)
     {
@@ -513,6 +826,12 @@ void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
             // axis=1 (Y) — default, exact MODO parity.
             buildRoundedCubeAxisY(dst, rp);
         }
+        return;
+    }
+
+    // Rounded plane: radius > 0 but one axis is zero → delegate to rounded plane generator.
+    if (p.radius > 1e-9f && anyZeroSize) {
+        buildRoundedPlane(dst, p);
         return;
     }
 
@@ -833,6 +1152,107 @@ unittest {
             float d = dot(fn_, fc - cen);
             assert(d > 0.0f, "rounded (2,2,2) sR=2 face " ~ fi.to!string ~ " has inward/degenerate normal");
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Rounded plane topology — MODO-probed counts (Phase 6.1d).
+    // Formula: verts = ringSize + (segAe+1)*(segBe+1)
+    //          where ringSize = 2*(segAe+1) + 2*(segBe+1) + 4*(sR-1)
+    //          faces = segAe*segBe + 2*segAe + 2*segBe + 4*sR
+    // ---------------------------------------------------------------------------
+
+    // Helper: check all face normals point toward the given outward direction.
+    void checkPlaneNormals(ref Mesh m, Vec3 outwardDir, string tag) {
+        foreach (fi; 0 .. cast(uint)m.faces.length) {
+            Vec3 fn_ = m.faceNormal(fi);
+            float d = dot(fn_, outwardDir);
+            assert(d > 0.0f, tag ~ ": face " ~ fi.to!string ~ " has wrong normal");
+        }
+    }
+
+    // XZ plane (sizeY=0), sR=1, seg=(1,1) → 12v/9f
+    {
+        Mesh m;
+        BoxParams p;
+        p.sizeX = 1.0f; p.sizeY = 0.0f; p.sizeZ = 1.0f;
+        p.radius = 0.1f; p.segmentsR = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 12, "rounded plane XZ sR=1 seg(1,1): expected 12 verts, got " ~ m.vertices.length.to!string);
+        assert(m.faces.length    ==  9, "rounded plane XZ sR=1 seg(1,1): expected 9 faces, got "  ~ m.faces.length.to!string);
+        checkPlaneNormals(m, Vec3(0, 1, 0), "XZ sR=1 seg(1,1)");
+    }
+
+    // XZ plane, sR=2, seg=(1,1) → 16v/13f
+    {
+        Mesh m;
+        BoxParams p;
+        p.sizeX = 1.0f; p.sizeY = 0.0f; p.sizeZ = 1.0f;
+        p.radius = 0.1f; p.segmentsR = 2;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 16, "rounded plane XZ sR=2 seg(1,1): expected 16 verts, got " ~ m.vertices.length.to!string);
+        assert(m.faces.length    == 13, "rounded plane XZ sR=2 seg(1,1): expected 13 faces, got "  ~ m.faces.length.to!string);
+        checkPlaneNormals(m, Vec3(0, 1, 0), "XZ sR=2 seg(1,1)");
+    }
+
+    // XZ plane, sR=1, seg=(2,1,2) → 21v/16f
+    {
+        Mesh m;
+        BoxParams p;
+        p.sizeX = 1.0f; p.sizeY = 0.0f; p.sizeZ = 1.0f;
+        p.radius = 0.1f; p.segmentsR = 1;
+        p.segmentsX = 2; p.segmentsZ = 2;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 21, "rounded plane XZ sR=1 seg(2,2): expected 21 verts, got " ~ m.vertices.length.to!string);
+        assert(m.faces.length    == 16, "rounded plane XZ sR=1 seg(2,2): expected 16 faces, got "  ~ m.faces.length.to!string);
+        checkPlaneNormals(m, Vec3(0, 1, 0), "XZ sR=1 seg(2,2)");
+    }
+
+    // YZ plane (sizeX=0), sR=1, seg=(1,1) → 12v/9f, outward=+X
+    {
+        Mesh m;
+        BoxParams p;
+        p.sizeX = 0.0f; p.sizeY = 1.0f; p.sizeZ = 1.0f;
+        p.radius = 0.1f; p.segmentsR = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 12, "rounded plane YZ sR=1 seg(1,1): expected 12 verts, got " ~ m.vertices.length.to!string);
+        assert(m.faces.length    ==  9, "rounded plane YZ sR=1 seg(1,1): expected 9 faces, got "  ~ m.faces.length.to!string);
+        checkPlaneNormals(m, Vec3(1, 0, 0), "YZ sR=1 seg(1,1)");
+    }
+
+    // XY plane (sizeZ=0), sR=1, seg=(1,1) → 12v/9f, outward=+Z
+    {
+        Mesh m;
+        BoxParams p;
+        p.sizeX = 1.0f; p.sizeY = 1.0f; p.sizeZ = 0.0f;
+        p.radius = 0.1f; p.segmentsR = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 12, "rounded plane XY sR=1 seg(1,1): expected 12 verts, got " ~ m.vertices.length.to!string);
+        assert(m.faces.length    ==  9, "rounded plane XY sR=1 seg(1,1): expected 9 faces, got "  ~ m.faces.length.to!string);
+        checkPlaneNormals(m, Vec3(0, 0, 1), "XY sR=1 seg(1,1)");
+    }
+
+    // General topology formula check: faces = segAe*segBe + 2*segAe + 2*segBe + 4*sR
+    // verts = 2*(segAe+1)+2*(segBe+1)+4*(sR-1) + (segAe+1)*(segBe+1)
+    {
+        // XZ plane, sR=3, seg=(2,1,3): segAe=2, segBe=3
+        Mesh m;
+        BoxParams p;
+        p.sizeX = 1.0f; p.sizeY = 0.0f; p.sizeZ = 1.0f;
+        p.radius = 0.1f; p.segmentsR = 3;
+        p.segmentsX = 2; p.segmentsZ = 3;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        int segAe = 2, segBe = 3, sR3 = 3;
+        size_t expV = 2*(segAe+1)+2*(segBe+1)+4*(sR3-1) + (segAe+1)*(segBe+1);
+        size_t expF = segAe*segBe + 2*segAe + 2*segBe + 4*sR3;
+        assert(m.vertices.length == expV, "rounded plane formula verts: expected " ~ expV.to!string ~ " got " ~ m.vertices.length.to!string);
+        assert(m.faces.length    == expF, "rounded plane formula faces: expected " ~ expF.to!string ~ " got " ~ m.faces.length.to!string);
+        checkPlaneNormals(m, Vec3(0, 1, 0), "XZ sR=3 seg(2,3)");
     }
 }
 
