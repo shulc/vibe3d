@@ -707,6 +707,7 @@ struct Mesh {
     void clear() {
         vertices = []; edges = []; faces = [];
         loops = []; faceLoop = []; vertLoop = [];
+        edgeIndexMap.clear();   // stale keys would shadow new addEdge calls
     }
 
     /// Compute the unit normal of face fi using the first triangle (v0, v1, v2).
