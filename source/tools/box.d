@@ -1093,6 +1093,19 @@ public:
         ];
     }
 
+    /// segmentsX/Y/Z subdivide the flat cube faces, but the rounded-cube
+    /// generator (buildRoundedCubeAxisY) does not yet honor them. Gray the
+    /// sliders out when radius>0 so Tool Properties doesn't show values
+    /// that have no effect on the preview. TODO: implement face-panel
+    /// subdivision in the rounded path to match MODO's behavior
+    /// (verified: r=0.1 + segments=2/2/2 → 54v/56f).
+    override bool paramEnabled(string name) const {
+        if (params_.radius > 1e-9f &&
+            (name == "segmentsX" || name == "segmentsY" || name == "segmentsZ"))
+            return false;
+        return true;
+    }
+
     /// Headless one-shot: build a cuboid from params_ and replace the scene mesh.
     /// Called by ToolHeadlessCommand.apply(); the command wraps this with a
     /// snapshot pair for undo. GPU upload + cache refresh are handled by the caller.
