@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.cube radius=0.1 segmentsR=1 segments=2,2,2 axis=y — 54v/56f rounded cube with full subdivision",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 2, "segmentsY": 2, "segmentsZ": 2,
+      "radius": 0.1,
+      "segmentsR": 1,
+      "sharp": 0,
+      "axis": 1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

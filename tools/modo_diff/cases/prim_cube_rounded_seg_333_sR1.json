@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.cube radius=0.1 segmentsR=1 segments=3,3,3 axis=y — 96v/98f rounded cube with 3x3x3 subdivision",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 3, "segmentsY": 3, "segmentsZ": 3,
+      "radius": 0.1,
+      "segmentsR": 1,
+      "sharp": 0,
+      "axis": 1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

@@ -48,47 +48,48 @@ struct BoxParams {
 // ---------------------------------------------------------------------------
 // buildRoundedCubeAxisY — generate a rounded-cube for axis=Y (primary axis).
 //
-// Probed algorithm (verified bit-for-bit against MODO 9 for n=1..2):
+// Phase 6.1c: now honours segmentsX/Y/Z for face-panel and chamfer-length
+// subdivision (MODO prim.cube parity verified bit-for-bit for all table cases).
 //
-// Vertex layout (n = segmentsR, half = size/2, r = radius, inner = half - r):
+// Vertex layout overview (n = segmentsR, nx/ny/nz = segmentsX/Y/Z):
 //
-//   Bottom cap  (4 verts at y = -halfY):
-//     (sx*innerX, -halfY, sz*innerZ) for (sx,sz) ∈ {(-1,-1),(+1,-1),(+1,+1),(-1,+1)}
+//   Bottom cap  ((nx+1)*(nz+1) verts at y = -halfY):
+//     Full 2D grid in XZ spanning [-innerX..+innerX] x [-innerZ..+innerZ].
 //
-//   n rings in lower half (k=1..n, phi_k = k/n * π/2, 4*(n+1) verts each):
-//     Each ring is arranged in CCW order around the Y axis (viewed from -Y).
-//     Sections: −Z face pair, then each clockwise corner arc, then +X pair,
-//     corner arc, +Z pair, corner arc, −X pair, corner arc.
-//     Corner vertex position (from corner center (sx*innerX, sy*innerY, sz*innerZ)):
-//       dir(phi_k, theta_m) = (sx*sin(phi_k)*sin(theta_m),
-//                              sy*cos(phi_k),
-//                              sz*sin(phi_k)*cos(theta_m))
-//       where theta_m = m/n * π/2 sweeps from the Z-face side (m=0) to the X-face side (m=n).
-//     pos = corner_center + r * dir(phi_k, theta_m)
+//   2*n corner rings + (ny-1) flat Y-subdivision rings:
+//     ring_size = 2*(nx+1) + 2*(nz+1) + 4*(n-1)
+//     Bottom corner rings: k=1..n at phi = k/n * pi/2, sy=-1
+//     Flat rings: j=1..ny-1 at y = -innerY + 2*innerY*j/ny, phi=pi/2
+//     Top corner rings: k=n..1 (built outer-to-inner for monotonic vertex indices)
 //
-//   n rings in upper half (k=n..1, same phi values as lower half, sy=+1):
-//     Added in reverse-k order (mid-band first, innermost last) so vertex
-//     indices increase monotonically from bottom cap to top cap.
+//   Top cap ((nx+1)*(nz+1) verts at y = +halfY).
 //
-//   Top cap (4 verts at y = +halfY):
-//     (sx*innerX, +halfY, sz*innerZ) — same (sx,sz) corner order as bottom cap.
+//   Total verts = 2*(nx+1)*(nz+1) + (2*n + ny-1) * ring_size
+//   Total faces = 2*nx*nz  (caps)
+//               + 8*n*(ring_size)  (half-sphere transitions and adjacent rings: approx)
+//               + (ny-1+1)*ring_size  (equatorial strips)
 //
-// Face winding:
-//   Bottom/top cap:            outward normal points ±Y.
-//   Bottom half transitions:   [ring[i], ring[i+1], cap_next, cap_cur]
-//   Adjacent bottom half rings: [outer[i], outer[i+1], inner[i+1], inner[i]]
-//   Middle band (bot ↔ top):   [topRing[i], topRing[i+1], botRing[i+1], botRing[i]]
-//   Adjacent top half rings:   [inner[i], inner[i+1], outer[i+1], outer[i]]  (reversed vs bot)
-//   Top half transitions:      [cap_cur, cap_next, ring[i+1], ring[i]]
+// Ring layout (CCW from -Y for sy=-1):
+//   sec -Z: (nx+1) verts, x from -innerX to +innerX, z=-halfZ
+//   c1 arc: (n-1) interior verts
+//   sec +X: (nz+1) verts, z from -innerZ to +innerZ, x=+halfX
+//   c2 arc: (n-1) interior verts (reversed theta)
+//   sec +Z: (nx+1) verts, x from +innerX to -innerX (reversed), z=+halfZ
+//   c3 arc: (n-1) interior verts
+//   sec -X: (nz+1) verts, z from +innerZ to -innerZ (reversed), x=-halfX
+//   c0 arc: (n-1) interior verts (reversed)
 //
-// Topology formulas (probed from MODO):
-//   verts = 8(n²+n+1)     faces = 8n²+12n+6
+// (Verified bit-for-bit against MODO 9 for n=1..4, nx/ny/nz=1..3.)
 // ---------------------------------------------------------------------------
 private void buildRoundedCubeAxisY(Mesh* dst, const ref BoxParams p)
 {
+    import std.conv : to;
     import std.typecons : Tuple, tuple;
 
     int    n    = p.segmentsR < 1 ? 1 : p.segmentsR;
+    int    nx   = p.segmentsX < 1 ? 1 : p.segmentsX;
+    int    ny   = p.segmentsY < 1 ? 1 : p.segmentsY;
+    int    nz   = p.segmentsZ < 1 ? 1 : p.segmentsZ;
     float  r    = abs(p.radius);
     float  hx   = p.sizeX * 0.5f;
     float  hy   = p.sizeY * 0.5f;
@@ -97,13 +98,23 @@ private void buildRoundedCubeAxisY(Mesh* dst, const ref BoxParams p)
     float  iy   = hy - r;   // inner half-extent Y
     float  iz   = hz - r;   // inner half-extent Z
     Vec3   cen  = Vec3(p.cenX, p.cenY, p.cenZ);
-    int    rs   = 4 * (n + 1);   // verts per ring
 
-    // Deduplication map: canonical position → mesh vertex id.
+    // Ring size: 4 face sections + 4 corner arcs.
+    // -Z: nx+1, +X: nz+1, +Z: nx+1, -X: nz+1, arcs: 4*(n-1)
+    int rs = 2 * (nx + 1) + 2 * (nz + 1) + 4 * (n - 1);
+
+    // Section start offsets within a ring.
+    // Layout: -Z(nx+1), c1arc(n-1), +X(nz+1), c2arc(n-1), +Z(nx+1), c3arc(n-1), -X(nz+1), c0arc(n-1)
+    int[4] off_sec;
+    off_sec[0] = 0;
+    off_sec[1] = nx + n;                        // after -Z section + c1 arc
+    off_sec[2] = off_sec[1] + nz + n;           // after +X section + c2 arc
+    off_sec[3] = off_sec[2] + nx + n;           // after +Z section + c3 arc
+    // end of -X section = rs (wraps)
+
+    // Deduplication map: canonical position -> mesh vertex id.
     uint[Tuple!(float,float,float)] vmap;
 
-    // Add a vertex at the canonical position, deduplicating.
-    // We round to 6 decimal places (same as MODO float32 precision) for the key.
     uint addV(float x, float y, float z) {
         import std.math : round;
         float kx = round(x * 1_000_000.0f) / 1_000_000.0f;
@@ -116,12 +127,10 @@ private void buildRoundedCubeAxisY(Mesh* dst, const ref BoxParams p)
         return id;
     }
 
-    // Corner vertex position for corner (sx, sy, sz) with arc angles (phi, theta).
-    // phi: polar angle from the cap-face normal (0=cap, π/2=equator).
-    // theta: azimuthal angle from Z-face (0) toward X-face (π/2).
-    // dir(phi, theta) = (sx*sin(phi)*sin(theta), sy*cos(phi), sz*sin(phi)*cos(theta))
-    // Vertex = corner_center + r * dir
-    // corner_center = (sx*ix, sy*iy, sz*iz)
+    // Corner vertex on the spherical bevel at corner (sx, sy, sz).
+    // pos = (sx*ix + r*sx*sin(phi)*sin(theta),
+    //        sy*iy + r*sy*cos(phi),
+    //        sz*iz + r*sz*sin(phi)*cos(theta))
     uint cornerVert(int sx, int sy, int sz, float phi, float theta) {
         float sp = sin(phi);
         float cp = cos(phi);
@@ -133,171 +142,289 @@ private void buildRoundedCubeAxisY(Mesh* dst, const ref BoxParams p)
         return addV(x, y, z);
     }
 
-    // Build one ring at polar angle phi for the primary sign sy (−1=bottom, +1=top).
-    // Returns array of 4*(n+1) vertex indices in CCW order (viewed from −Y for sy=−1).
-    // Layout: for each of the 4 face-sections going around (−Z, +X, +Z, −X):
-    //   2 face-boundary verts (from the adjacent corners at theta=0 of each arc)
-    //   followed by (n−1) diagonal corner arc verts (theta=1..n−1)
-    // Specifically the ring is laid out as follows (c0=(-1,sy,-1) to c3=(-1,sy,+1)):
-    //   c0-theta=0, c1-theta=0,  [c1 theta=1..n-1],  c1-theta=n, c2-theta=n,
-    //   [c2 theta=n-1..1], c2-theta=0, c3-theta=0,  [c3 theta=1..n-1],
-    //   c3-theta=n, c0-theta=n,  [c0 theta=n-1..1]
-    // This produces exactly the MODO vertex ordering (verified for n=1,2).
-    uint[] buildRing(float phi, int sy) {
+    // Face-section interior vert at step t/segs along section sec.
+    // For corner rings (flat=false): the face-normal offset from the bevel boundary
+    //   depends on phi: z_offset = r*sin(phi) (not r for phi<pi/2!).
+    // For flat rings (flat=true, phi=pi/2): z_offset = r*sin(pi/2) = r, so z = ±(iz+r) = ±hz.
+    //
+    // sec 0 (-Z): x from -ix to +ix, z = -(iz + r*sin(phi))
+    // sec 1 (+X): z from -iz to +iz, x = +(ix + r*sin(phi))
+    // sec 2 (+Z): x from +ix to -ix (reversed), z = +(iz + r*sin(phi))
+    // sec 3 (-X): z from +iz to -iz (reversed), x = -(ix + r*sin(phi))
+    uint faceEdgeVert(int sec, int t, int segs, float y_val, float phi) {
+        float ft     = cast(float)t / cast(float)segs;
+        float sp     = sin(phi);       // sin(phi): 1.0 at equator, r*sp = correct face offset
+        float x, z;
+        switch (sec) {
+            case 0:  x = -ix + 2.0f * ix * ft;  z = -(iz + r * sp);  break;
+            case 1:  x = +(ix + r * sp);          z = -iz + 2.0f * iz * ft;  break;
+            case 2:  x = ix - 2.0f * ix * ft;    z = +(iz + r * sp);  break;
+            default: x = -(ix + r * sp);          z = iz - 2.0f * iz * ft;   break;
+        }
+        return addV(x, y_val, z);
+    }
+
+    // Build one ring. Two modes:
+    //   Corner ring (flat=false): phi and sy determine the y-position via sy*(iy+r*cos(phi)).
+    //   Flat Y ring (flat=true):  y is fixed at y_flat; phi=pi/2 implicitly.
+    //     Corner-arc verts at phi=pi/2 have y=y_flat, with x/z from the bevel circle:
+    //     (sx*(ix + r*sin(theta)), y_flat, sz*(iz + r*cos(theta)))
+    uint[] buildRing(float phi, int sy, bool flat = false, float y_flat = 0.0f) {
         uint[] ring;
         ring.reserve(rs);
         immutable float dtheta = (PI * 0.5f) / n;
 
-        // corners in order: (-1,-1),  (+1,-1), (+1,+1), (-1,+1)
-        // arc theta direction: forward for c1,c3; backward for c0,c2
-        // Ring traversal:
-        //  face −Z: c0(theta=0), c1(theta=0)
-        //  corner c1 interior: theta=1..n-1
-        //  face +X: c1(theta=n), c2(theta=n)
-        //  corner c2 interior: theta=n-1..1
-        //  face +Z: c2(theta=0), c3(theta=0)
-        //  corner c3 interior: theta=1..n-1
-        //  face −X: c3(theta=n), c0(theta=n)
-        //  corner c0 interior: theta=n-1..1
-        static immutable int[2][4] cxz = [[-1, -1], [1, -1], [1, 1], [-1, 1]]; // (sx, sz) per corner
+        // y value for face-section edge verts
+        float ph_y = flat ? y_flat : sy * (iy + r * cos(phi));
 
-        // Section 0 (−Z face): c0 at theta=0, c1 at theta=0
-        ring ~= cornerVert(cxz[0][0], sy, cxz[0][1], phi, 0.0f);
-        ring ~= cornerVert(cxz[1][0], sy, cxz[1][1], phi, 0.0f);
-        // Corner c1 interior: theta = dtheta .. (n-1)*dtheta
-        for (int m = 1; m < n; ++m)
-            ring ~= cornerVert(cxz[1][0], sy, cxz[1][1], phi, m * dtheta);
-        // Section 1 (+X face): c1 at theta=n, c2 at theta=n
-        ring ~= cornerVert(cxz[1][0], sy, cxz[1][1], phi, PI * 0.5f);
-        ring ~= cornerVert(cxz[2][0], sy, cxz[2][1], phi, PI * 0.5f);
-        // Corner c2 interior: theta = (n-1)*dtheta .. dtheta (backward)
-        for (int m = n - 1; m >= 1; --m)
-            ring ~= cornerVert(cxz[2][0], sy, cxz[2][1], phi, m * dtheta);
-        // Section 2 (+Z face): c2 at theta=0, c3 at theta=0
-        ring ~= cornerVert(cxz[2][0], sy, cxz[2][1], phi, 0.0f);
-        ring ~= cornerVert(cxz[3][0], sy, cxz[3][1], phi, 0.0f);
-        // Corner c3 interior: theta = dtheta .. (n-1)*dtheta
-        for (int m = 1; m < n; ++m)
-            ring ~= cornerVert(cxz[3][0], sy, cxz[3][1], phi, m * dtheta);
-        // Section 3 (−X face): c3 at theta=n, c0 at theta=n
-        ring ~= cornerVert(cxz[3][0], sy, cxz[3][1], phi, PI * 0.5f);
-        ring ~= cornerVert(cxz[0][0], sy, cxz[0][1], phi, PI * 0.5f);
-        // Corner c0 interior: theta = (n-1)*dtheta .. dtheta (backward)
-        for (int m = n - 1; m >= 1; --m)
-            ring ~= cornerVert(cxz[0][0], sy, cxz[0][1], phi, m * dtheta);
+        // Sections/corners in order:
+        //   sec 0 (-Z): first=c0(-1,sy,-1) at theta=0, last=c1(+1,sy,-1) at theta=0
+        //   arc after sec 0: c1, forward (theta=dtheta..(n-1)*dtheta)
+        //   sec 1 (+X): first=c1(+1,sy,-1) at theta=pi/2, last=c2(+1,sy,+1) at theta=pi/2
+        //   arc after sec 1: c2, backward
+        //   sec 2 (+Z): first=c2(+1,sy,+1) at theta=0, last=c3(-1,sy,+1) at theta=0
+        //   arc after sec 2: c3, forward
+        //   sec 3 (-X): first=c3(-1,sy,+1) at theta=pi/2, last=c0(-1,sy,-1) at theta=pi/2
+        //   arc after sec 3: c0, backward
+        static immutable int[2][4] cxz = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+        static immutable int[4] sec_segs_x = [1, 0, 1, 0]; // 1=use nx, 0=use nz
+        // theta of first vert in each section (sec 0,2 at theta=0; sec 1,3 at theta=pi/2)
+        static immutable float[4] sec_theta0 = [0.0f, PI * 0.5f, 0.0f, PI * 0.5f];
 
-        assert(ring.length == rs);
+        foreach (sec; 0 .. 4) {
+            int segs = (sec_segs_x[sec] == 1) ? nx : nz;
+            int sx0  = cxz[sec][0],          sz0 = cxz[sec][1];
+            int sx1  = cxz[(sec+1)&3][0],    sz1 = cxz[(sec+1)&3][1];
+            float th0 = sec_theta0[sec];
+
+            // --- Face section verts (t=0..segs) ---
+            foreach (t; 0 .. segs + 1) {
+                if (flat) {
+                    // Flat ring: all verts on the box face surface (phi=pi/2).
+                    ring ~= faceEdgeVert(sec, t, segs, ph_y, PI * 0.5f);
+                } else {
+                    // Corner ring: endpoints are cornerVerts, interiors on face.
+                    if (t == 0) {
+                        ring ~= cornerVert(sx0, sy, sz0, phi, th0);
+                    } else if (t == segs) {
+                        ring ~= cornerVert(sx1, sy, sz1, phi, th0);
+                    } else {
+                        ring ~= faceEdgeVert(sec, t, segs, ph_y, phi);
+                    }
+                }
+            }
+
+            // --- Corner arc verts after this section ---
+            // arc corners: c1 (sec 0), c2 (sec 1), c3 (sec 2), c0 (sec 3)
+            // c1,c3: forward;  c2,c0: backward
+            bool arc_forward = (sec == 0 || sec == 2);
+            if (flat) {
+                // At phi=pi/2: arc vert = (sx*(ix+r*sin(theta)), y_flat, sz*(iz+r*cos(theta)))
+                if (arc_forward) {
+                    for (int m = 1; m < n; ++m) {
+                        float st = sin(m * dtheta);
+                        float ct = cos(m * dtheta);
+                        ring ~= addV(sx1 * ix + r * sx1 * st,
+                                     y_flat,
+                                     sz1 * iz + r * sz1 * ct);
+                    }
+                } else {
+                    for (int m = n - 1; m >= 1; --m) {
+                        float st = sin(m * dtheta);
+                        float ct = cos(m * dtheta);
+                        ring ~= addV(sx1 * ix + r * sx1 * st,
+                                     y_flat,
+                                     sz1 * iz + r * sz1 * ct);
+                    }
+                }
+            } else {
+                if (arc_forward) {
+                    for (int m = 1; m < n; ++m)
+                        ring ~= cornerVert(sx1, sy, sz1, phi, m * dtheta);
+                } else {
+                    for (int m = n - 1; m >= 1; --m)
+                        ring ~= cornerVert(sx1, sy, sz1, phi, m * dtheta);
+                }
+            }
+        }
+
+        assert(ring.length == rs,
+               "ring length " ~ to!string(ring.length) ~ " != expected " ~ to!string(rs));
         return ring;
     }
 
-    // Bottom cap (4 verts, CCW from −Y).
-    uint[4] capBot;
-    {
-        static immutable int[2][4] cxz = [[-1,-1],[1,-1],[1,1],[-1,1]];
-        foreach (i; 0 .. 4)
-            capBot[i] = cornerVert(cxz[i][0], -1, cxz[i][1], 0.0f, 0.0f);
+    // -----------------------------------------------------------------------
+    // Caps: (nx+1)*(nz+1) grid at y = -hy / +hy.
+    // cap[i + j*(nx+1)] = vert at (xi, y, zj)
+    //   xi = -ix + 2*ix*i/nx,  zj = -iz + 2*iz*j/nz
+    // -----------------------------------------------------------------------
+    int capSize = (nx + 1) * (nz + 1);
+    uint[] capBot = new uint[capSize];
+    uint[] capTop = new uint[capSize];
+    for (int j = 0; j <= nz; ++j) {
+        float zj = (nz == 0) ? 0.0f : (-iz + 2.0f * iz * (cast(float)j / nz));
+        for (int i = 0; i <= nx; ++i) {
+            float xi = (nx == 0) ? 0.0f : (-ix + 2.0f * ix * (cast(float)i / nx));
+            int idx = i + j * (nx + 1);
+            capBot[idx] = addV(xi, -hy, zj);
+            capTop[idx] = addV(xi, +hy, zj);
+        }
     }
 
-    // Bottom half rings: k=1..n, phi=k/n*π/2, added innermost (k=1) first.
+    // -----------------------------------------------------------------------
+    // Build rings.
+    // -----------------------------------------------------------------------
+    immutable float dphi = (PI * 0.5f) / n;
+    immutable float diy  = (ny > 1) ? (2.0f * iy / ny) : 0.0f;
+
+    // Bottom corner rings: k=1..n (innermost first)
     uint[][] ringsBot;
     ringsBot.reserve(n);
-    immutable float dphi = (PI * 0.5f) / n;
     foreach (k; 1 .. n + 1)
         ringsBot ~= buildRing(k * dphi, -1);
 
-    // Top half rings: added from mid-band (k=n) down to innermost (k=1)
-    // so vertex indices increase monotonically toward the top cap.
+    // Middle flat Y-subdivision rings: j=1..ny-1
+    uint[][] ringsMid;
+    ringsMid.reserve(ny - 1);
+    foreach (j; 1 .. ny) {
+        float yj = -iy + diy * j;
+        ringsMid ~= buildRing(PI * 0.5f, 1, true, yj);
+    }
+
+    // Top corner rings: built k=n..1 (outer-to-inner) for monotonic vertex indices.
     uint[][] ringsTop;
     ringsTop.reserve(n);
-    foreach (k; 1 .. n + 1)          // placeholder in order
+    foreach (k; 1 .. n + 1)
         ringsTop ~= null;
-    for (int k = n; k >= 1; --k)     // fill from k=n to k=1
+    for (int k = n; k >= 1; --k)
         ringsTop[k - 1] = buildRing(k * dphi, +1);
-
-    // Top cap (4 verts).
-    uint[4] capTop;
-    {
-        static immutable int[2][4] cxz = [[-1,-1],[1,-1],[1,1],[-1,1]];
-        foreach (i; 0 .. 4)
-            capTop[i] = cornerVert(cxz[i][0], +1, cxz[i][1], 0.0f, 0.0f);
-    }
 
     // -----------------------------------------------------------------------
     // Emit faces.
     // -----------------------------------------------------------------------
 
-    // Helper: section start indices in a ring of size rs = 4*(n+1).
-    // Sections: 0→−Z (index 0), 1→+X (n+1), 2→+Z (2n+2), 3→−X (3n+3).
-    int sectionStart(int sec) {
-        return sec * (n + 1);
+    int sectionStart(int sec)    { return off_sec[sec]; }
+    int sectionSize(int sec)     { return (sec == 0 || sec == 2) ? (nx + 1) : (nz + 1); }
+
+    // Cap boundary vert: maps section + step-along-section to cap grid vert.
+    //   sec 0 (-Z edge): i=t, j=0
+    //   sec 1 (+X edge): i=nx, j=t
+    //   sec 2 (+Z edge): i=nx-t, j=nz  (reversed along X)
+    //   sec 3 (-X edge): i=0, j=nz-t   (reversed along Z)
+    uint capBoundaryVert(int sec, int t, const uint[] cap) {
+        switch (sec) {
+            case 0: return cap[t];
+            case 1: return cap[nx + t * (nx + 1)];
+            case 2: return cap[(nx - t) + nz * (nx + 1)];
+            default: return cap[0 + (nz - t) * (nx + 1)];
+        }
     }
 
-    // Bottom cap face (outward normal = −Y).
-    dst.addFace([capBot[0], capBot[1], capBot[2], capBot[3]]);
+    // --- Bottom cap quads (outward normal = -Y) ---
+    // Winding: [c00, c10, c11, c01] gives -Y normal.
+    for (int j = 0; j < nz; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            uint c00 = capBot[i   +  j    * (nx + 1)];
+            uint c10 = capBot[i+1 +  j    * (nx + 1)];
+            uint c11 = capBot[i+1 + (j+1) * (nx + 1)];
+            uint c01 = capBot[i   + (j+1) * (nx + 1)];
+            dst.addFace([c00, c10, c11, c01]);
+        }
+    }
 
-    // Transition from cap to innermost bottom ring.
+    // --- Bottom cap -> innermost bottom ring (transition) ---
     {
         const uint[] inner = ringsBot[0];
         foreach (sec; 0 .. 4) {
-            int fs       = sectionStart(sec);
-            int fn       = sectionStart((sec + 1) % 4);
-            if (fn == 0) fn = rs;           // wrap for last section
-            uint capCur  = capBot[sec];
-            uint capNext = capBot[(sec + 1) % 4];
-            // Face quad (ring side → cap).
-            dst.addFace([inner[fs], inner[fs + 1], capNext, capCur]);
-            // Corner triangle fan between ring[fs+1] and ring[fn−1..0]:
-            for (int k = fs + 1; k < fn; ++k)
-                dst.addFace([inner[k % rs], inner[(k + 1) % rs], capNext]);
+            int fs   = sectionStart(sec);
+            int segs = sectionSize(sec) - 1;   // quads in this flat section
+            // Flat-section quads: ring[fs..fs+segs] <-> cap boundary edge
+            foreach (t; 0 .. segs) {
+                uint r0 = inner[fs + t];
+                uint r1 = inner[fs + t + 1];
+                uint c0 = capBoundaryVert(sec, t,     capBot);
+                uint c1 = capBoundaryVert(sec, t + 1, capBot);
+                dst.addFace([r0, r1, c1, c0]);
+            }
+            // Corner triangle fan: from last section vert through arc verts to
+            // first vert of next section, all meeting at the shared cap corner.
+            uint capCorner = capBoundaryVert(sec, segs, capBot);
+            int arcStart = fs + segs;
+            int arcEnd   = sectionStart((sec + 1) & 3);
+            for (int k = arcStart; k != arcEnd; k = (k + 1) % rs)
+                dst.addFace([inner[k % rs], inner[(k + 1) % rs], capCorner]);
         }
     }
 
-    // Adjacent rings in bottom half (innermost→mid-band).
+    // --- Adjacent rings in bottom half (innermost -> mid-band) ---
     foreach (k; 1 .. n) {
-        const uint[] innerRing = ringsBot[k - 1];  // closer to cap
-        const uint[] outerRing = ringsBot[k];       // closer to mid-band
+        const uint[] innerRing = ringsBot[k - 1];
+        const uint[] outerRing = ringsBot[k];
         for (int i = 0; i < rs; ++i)
-            dst.addFace([outerRing[i], outerRing[(i + 1) % rs],
-                         innerRing[(i + 1) % rs], innerRing[i]]);
+            dst.addFace([outerRing[i], outerRing[(i+1)%rs],
+                         innerRing[(i+1)%rs], innerRing[i]]);
     }
 
-    // Middle band (bot mid-band ↔ top mid-band).
+    // --- Equatorial band: bottom mid-band -> (Y-subdivision rings) -> top mid-band ---
+    // Collect all equatorial rings in bottom-to-top order.
     {
-        const uint[] rb = ringsBot[n - 1];
-        const uint[] rt = ringsTop[n - 1];
-        for (int i = 0; i < rs; ++i)
-            dst.addFace([rt[i], rt[(i + 1) % rs], rb[(i + 1) % rs], rb[i]]);
+        uint[][] equatorial;
+        equatorial.reserve(ny + 1);
+        equatorial ~= ringsBot[n - 1];
+        foreach (rm; ringsMid) equatorial ~= rm;
+        equatorial ~= ringsTop[n - 1];
+
+        foreach (bi; 0 .. ny) {
+            const uint[] rb = equatorial[bi];
+            const uint[] rt = equatorial[bi + 1];
+            for (int i = 0; i < rs; ++i)
+                dst.addFace([rt[i], rt[(i+1)%rs], rb[(i+1)%rs], rb[i]]);
+        }
     }
 
-    // Adjacent rings in top half (mid-band→innermost, reversed winding vs bot).
+    // --- Adjacent rings in top half (mid-band -> innermost, reversed winding) ---
     for (int k = n - 1; k >= 1; --k) {
-        const uint[] innerRing = ringsTop[k - 1];  // closer to cap
-        const uint[] outerRing = ringsTop[k];       // closer to mid-band
+        const uint[] innerRing = ringsTop[k - 1];
+        const uint[] outerRing = ringsTop[k];
         for (int i = 0; i < rs; ++i)
-            dst.addFace([innerRing[i], innerRing[(i + 1) % rs],
-                         outerRing[(i + 1) % rs], outerRing[i]]);
+            dst.addFace([innerRing[i], innerRing[(i+1)%rs],
+                         outerRing[(i+1)%rs], outerRing[i]]);
     }
 
-    // Transition from innermost top ring to cap.
+    // --- Innermost top ring -> top cap (transition, reversed winding vs bottom) ---
     {
         const uint[] inner = ringsTop[0];
         foreach (sec; 0 .. 4) {
-            int fs       = sectionStart(sec);
-            int fn       = sectionStart((sec + 1) % 4);
-            if (fn == 0) fn = rs;
-            uint capCur  = capTop[sec];
-            uint capNext = capTop[(sec + 1) % 4];
-            // Face quad (cap → ring side, reversed winding vs bottom).
-            dst.addFace([capCur, capNext, inner[fs + 1], inner[fs]]);
-            // Corner triangle fan.
-            for (int k = fs + 1; k < fn; ++k)
-                dst.addFace([capNext, inner[(k + 1) % rs], inner[k % rs]]);
+            int fs   = sectionStart(sec);
+            int segs = sectionSize(sec) - 1;
+            foreach (t; 0 .. segs) {
+                uint r0 = inner[fs + t];
+                uint r1 = inner[fs + t + 1];
+                uint c0 = capBoundaryVert(sec, t,     capTop);
+                uint c1 = capBoundaryVert(sec, t + 1, capTop);
+                dst.addFace([c0, c1, r1, r0]);
+            }
+            // Corner triangle fan (reversed winding).
+            uint capCorner = capBoundaryVert(sec, segs, capTop);
+            int arcStart = fs + segs;
+            int arcEnd   = sectionStart((sec + 1) & 3);
+            for (int k = arcStart; k != arcEnd; k = (k + 1) % rs)
+                dst.addFace([capCorner, inner[(k + 1) % rs], inner[k % rs]]);
         }
     }
 
-    // Top cap face (outward normal = +Y, reversed vs bottom cap).
-    dst.addFace([capTop[0], capTop[3], capTop[2], capTop[1]]);
+    // --- Top cap quads (outward normal = +Y, reversed vs bottom) ---
+    for (int j = 0; j < nz; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            uint c00 = capTop[i   +  j    * (nx + 1)];
+            uint c10 = capTop[i+1 +  j    * (nx + 1)];
+            uint c11 = capTop[i+1 + (j+1) * (nx + 1)];
+            uint c01 = capTop[i   + (j+1) * (nx + 1)];
+            dst.addFace([c00, c01, c11, c10]);
+        }
+    }
 }
+
 
 // ---------------------------------------------------------------------------
 // buildCuboidParametric — pure free function: build an axis-aligned cuboid
@@ -606,7 +733,7 @@ unittest {
         assert(m.faces.length == 22, "3/1/2: expected 22 faces");
     }
 
-    // Rounded cube topology counts — MODO formula: verts=8(n²+n+1), faces=8n²+12n+6.
+    // Rounded cube topology — segments=1,1,1 baseline (MODO formula: verts=8(n²+n+1)).
     // All faces must have outward normals (dot(normal, centroid - origin) > 0).
     foreach (n; [1, 2, 3, 4]) {
         Mesh m;
@@ -637,6 +764,73 @@ unittest {
             float d = dot(fn_, fc - cen);
             assert(d > 0.0f, "rounded n=" ~ n.to!string
                    ~ " face " ~ fi.to!string ~ " has inward/degenerate normal");
+        }
+    }
+
+    // Rounded cube with segments > 1 — MODO-probed topology counts (Phase 6.1c).
+    // Formula: ring_size = 2*(nx+1)+2*(nz+1)+4*(sR-1)
+    //          verts = 2*(nx+1)*(nz+1) + (2*sR + ny-1) * ring_size
+    import std.conv : to;
+    {
+        // (2,1,1) sR=1: 32v/34f
+        Mesh m;
+        BoxParams p;
+        p.radius = 0.1f; p.segmentsR = 1; p.segmentsX = 2;
+        p.axis = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 32, "rounded (2,1,1) sR=1: expected 32 verts, got " ~ m.vertices.length.to!string);
+    }
+    {
+        // (2,2,2) sR=1: 54v/56f
+        Mesh m;
+        BoxParams p;
+        p.radius = 0.1f; p.segmentsR = 1;
+        p.segmentsX = 2; p.segmentsY = 2; p.segmentsZ = 2;
+        p.axis = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 54, "rounded (2,2,2) sR=1: expected 54 verts, got " ~ m.vertices.length.to!string);
+    }
+    {
+        // (2,2,2) sR=2: 98v/104f
+        Mesh m;
+        BoxParams p;
+        p.radius = 0.1f; p.segmentsR = 2;
+        p.segmentsX = 2; p.segmentsY = 2; p.segmentsZ = 2;
+        p.axis = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 98, "rounded (2,2,2) sR=2: expected 98 verts, got " ~ m.vertices.length.to!string);
+    }
+    {
+        // (3,3,3) sR=1: 96v/98f
+        Mesh m;
+        BoxParams p;
+        p.radius = 0.1f; p.segmentsR = 1;
+        p.segmentsX = 3; p.segmentsY = 3; p.segmentsZ = 3;
+        p.axis = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        assert(m.vertices.length == 96, "rounded (3,3,3) sR=1: expected 96 verts, got " ~ m.vertices.length.to!string);
+    }
+    // All face normals outward for rounded segments case.
+    {
+        Mesh m;
+        BoxParams p;
+        p.radius = 0.1f; p.segmentsR = 2;
+        p.segmentsX = 2; p.segmentsY = 2; p.segmentsZ = 2;
+        p.axis = 1;
+        buildCuboidParametric(&m, p);
+        m.buildLoops();
+        Vec3 cen = Vec3(0, 0, 0);
+        foreach (fi; 0 .. cast(uint)m.faces.length) {
+            Vec3 fn_ = m.faceNormal(fi);
+            Vec3 fc  = Vec3(0, 0, 0);
+            foreach (vi; m.faces[fi]) fc = fc + m.vertices[vi];
+            fc = fc * (1.0f / cast(float)m.faces[fi].length);
+            float d = dot(fn_, fc - cen);
+            assert(d > 0.0f, "rounded (2,2,2) sR=2 face " ~ fi.to!string ~ " has inward/degenerate normal");
         }
     }
 }
@@ -1091,19 +1285,6 @@ public:
                  IntEnumEntry(2, "z", "Z")],
                 1),
         ];
-    }
-
-    /// segmentsX/Y/Z subdivide the flat cube faces, but the rounded-cube
-    /// generator (buildRoundedCubeAxisY) does not yet honor them. Gray the
-    /// sliders out when radius>0 so Tool Properties doesn't show values
-    /// that have no effect on the preview. TODO: implement face-panel
-    /// subdivision in the rounded path to match MODO's behavior
-    /// (verified: r=0.1 + segments=2/2/2 → 54v/56f).
-    override bool paramEnabled(string name) const {
-        if (params_.radius > 1e-9f &&
-            (name == "segmentsX" || name == "segmentsY" || name == "segmentsZ"))
-            return false;
-        return true;
     }
 
     /// Headless one-shot: build a cuboid from params_ and replace the scene mesh.
