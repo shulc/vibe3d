@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.cube sizeX=0 plane mode (YZ plane) with segmentsY=2 segmentsZ=2 → 9v/4f",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 0.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 2, "segmentsZ": 2,
+      "radius": 0.0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

@@ -516,49 +516,50 @@ void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
         return;
     }
 
-    // Plane mode detection — any zero-size axis collapses to a single face.
+    // Plane mode detection — any zero-size axis collapses to a flat panel
+    // subdivided by the segment counts of the two non-degenerate axes.
+    // MODO emits (segA+1)×(segB+1) verts and segA×segB quads (verified).
+    void emitPlane(Vec3 origin, Vec3 da, Vec3 db, int na, int nb, bool reverseWinding)
+    {
+        if (na < 1) na = 1;
+        if (nb < 1) nb = 1;
+        uint[] grid;
+        grid.length = (na + 1) * (nb + 1);
+        foreach (j; 0 .. nb + 1) foreach (i; 0 .. na + 1) {
+            float u = cast(float)i / na - 0.5f;
+            float v = cast(float)j / nb - 0.5f;
+            grid[j * (na + 1) + i] = dst.addVertex(origin + da * u + db * v);
+        }
+        foreach (j; 0 .. nb) foreach (i; 0 .. na) {
+            uint v00 = grid[ j      * (na + 1) + i    ];
+            uint v10 = grid[ j      * (na + 1) + i + 1];
+            uint v11 = grid[(j + 1) * (na + 1) + i + 1];
+            uint v01 = grid[(j + 1) * (na + 1) + i    ];
+            if (reverseWinding) dst.addFace([v00, v01, v11, v10]);
+            else                dst.addFace([v00, v10, v11, v01]);
+        }
+    }
+
     if (abs(p.sizeY) < 1e-9f) {
-        // XZ plane at cenY
-        Vec3 c = Vec3(p.cenX, p.cenY, p.cenZ);
-        Vec3 a = Vec3(p.sizeX * 0.5f, 0.0f, 0.0f);
-        Vec3 b = Vec3(0.0f, 0.0f, p.sizeZ * 0.5f);
-        uint v0 = dst.addVertex(c - a - b);
-        uint v1 = dst.addVertex(c + a - b);
-        uint v2 = dst.addVertex(c + a + b);
-        uint v3 = dst.addVertex(c - a + b);
-        // Winding: outward normal is +Y for XZ plane.
-        // Cross((v1-v0),(v3-v0)) = cross(+2a, +2b) = 4*(a×b).
-        // a=(sx,0,0), b=(0,0,sz): a×b = (0*sz-0*0, 0*0-sx*sz, sx*0-0*0)
-        //   = (0, -sx*sz, 0) → points -Y.
-        // So v0,v1,v2,v3 gives -Y normal; reverse to v0,v3,v2,v1 for +Y.
-        dst.addFace([v0, v3, v2, v1]);
+        // XZ plane at cenY. da=+X, db=+Z. cross(da,db)=(0,-sx*sz,0) → -Y.
+        // Reverse winding so outward normal is +Y.
+        emitPlane(Vec3(p.cenX, p.cenY, p.cenZ),
+                  Vec3(p.sizeX, 0, 0), Vec3(0, 0, p.sizeZ),
+                  p.segmentsX, p.segmentsZ, /*reverse=*/ true);
         return;
     }
     if (abs(p.sizeX) < 1e-9f) {
-        // YZ plane at cenX
-        Vec3 c = Vec3(p.cenX, p.cenY, p.cenZ);
-        Vec3 a = Vec3(0.0f, p.sizeY * 0.5f, 0.0f);
-        Vec3 b = Vec3(0.0f, 0.0f, p.sizeZ * 0.5f);
-        uint v0 = dst.addVertex(c - a - b);
-        uint v1 = dst.addVertex(c + a - b);
-        uint v2 = dst.addVertex(c + a + b);
-        uint v3 = dst.addVertex(c - a + b);
-        // a=(0,sy,0), b=(0,0,sz): a×b=(sy*sz-0,0-0,0-0)=(sy*sz,0,0) → +X.
-        // Cross((v1-v0),(v3-v0)) = cross(+2a,+2b) → +X. OK as-is.
-        dst.addFace([v0, v1, v2, v3]);
+        // YZ plane at cenX. da=+Y, db=+Z. cross(da,db)=(sy*sz,0,0) → +X. Direct.
+        emitPlane(Vec3(p.cenX, p.cenY, p.cenZ),
+                  Vec3(0, p.sizeY, 0), Vec3(0, 0, p.sizeZ),
+                  p.segmentsY, p.segmentsZ, /*reverse=*/ false);
         return;
     }
     if (abs(p.sizeZ) < 1e-9f) {
-        // XY plane at cenZ
-        Vec3 c = Vec3(p.cenX, p.cenY, p.cenZ);
-        Vec3 a = Vec3(p.sizeX * 0.5f, 0.0f, 0.0f);
-        Vec3 b = Vec3(0.0f, p.sizeY * 0.5f, 0.0f);
-        uint v0 = dst.addVertex(c - a - b);
-        uint v1 = dst.addVertex(c + a - b);
-        uint v2 = dst.addVertex(c + a + b);
-        uint v3 = dst.addVertex(c - a + b);
-        // a=(sx,0,0), b=(0,sy,0): a×b=(0,0,sx*sy) → +Z.
-        dst.addFace([v0, v1, v2, v3]);
+        // XY plane at cenZ. da=+X, db=+Y. cross(da,db)=(0,0,sx*sy) → +Z. Direct.
+        emitPlane(Vec3(p.cenX, p.cenY, p.cenZ),
+                  Vec3(p.sizeX, 0, 0), Vec3(0, p.sizeY, 0),
+                  p.segmentsX, p.segmentsY, /*reverse=*/ false);
         return;
     }
 
