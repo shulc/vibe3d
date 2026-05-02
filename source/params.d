@@ -386,7 +386,18 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
         if (jp is null) continue;
         final switch (p.kind) {
             case Param.Kind.Bool:
-                *p.bptr = (jp.type == JSONType.true_);
+                // Accept true, false, and integer 0/1 (argstring serialises bools
+                // as "true"/"false" but JSON schema may carry integer 0/1).
+                if (jp.type == JSONType.true_)
+                    *p.bptr = true;
+                else if (jp.type == JSONType.false_)
+                    *p.bptr = false;
+                else if (jp.type == JSONType.integer)
+                    *p.bptr = (jp.integer != 0);
+                else if (jp.type == JSONType.uinteger)
+                    *p.bptr = (jp.uinteger != 0);
+                else
+                    *p.bptr = false;
                 break;
             case Param.Kind.Int:
                 *p.iptr = cast(int)_jsonFloat(*jp);
