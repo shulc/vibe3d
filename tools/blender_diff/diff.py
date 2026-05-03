@@ -28,6 +28,62 @@ def nearest_match(srcs, dsts):
         out.append((best, bestd))
     return out
 
+def face_centroid(face, verts):
+    cx = cy = cz = 0.0
+    for vi in face:
+        v = verts[vi]; cx += v[0]; cy += v[1]; cz += v[2]
+    n = len(face)
+    return (cx / n, cy / n, cz / n)
+
+def face_normal(face, verts):
+    """Newell's method — stable polygon normal regardless of convexity."""
+    nx = ny = nz = 0.0
+    n = len(face)
+    for i in range(n):
+        a = verts[face[i]]; b = verts[face[(i + 1) % n]]
+        nx += (a[1] - b[1]) * (a[2] + b[2])
+        ny += (a[2] - b[2]) * (a[0] + b[0])
+        nz += (a[0] - b[0]) * (a[1] + b[1])
+    L = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if L < 1e-12: return (0.0, 0.0, 0.0)
+    return (nx / L, ny / L, nz / L)
+
+def check_winding(A, B, matches_ab):
+    """Translate each A face's vertex indices through matches_ab into B's
+    index space, look up the matching B face by sorted-vertex-set, and
+    compare cyclic order. If A's index sequence appears reversed (rather
+    than rotated) in B, that face's winding is flipped.
+
+    Centroid-nearest matching is unreliable when faces are close together
+    (e.g. tight bevel rings), so we lean on the position-based vertex
+    mapping that diff.py has already computed."""
+    b_lookup = {}
+    for bi, f in enumerate(B['faces']):
+        b_lookup.setdefault(tuple(sorted(f)), []).append((bi, f))
+
+    flipped = []
+    for ai, af in enumerate(A['faces']):
+        b_indices = [matches_ab[v][0] for v in af]
+        if len(set(b_indices)) != len(b_indices):
+            continue  # ambiguous — multiple A verts mapped to same B vert
+        key = tuple(sorted(b_indices))
+        if key not in b_lookup:
+            continue  # topology divergence — vertex-count diff already caught it
+
+        for bi, bf in b_lookup[key]:
+            try:
+                start = bf.index(b_indices[0])
+            except ValueError:
+                continue
+            n = len(bf)
+            fwd = all(bf[(start + i) % n] == b_indices[i] for i in range(n))
+            rev = all(bf[(start - i) % n] == b_indices[i] for i in range(n))
+            if rev and not fwd:
+                ca = face_centroid(af, A['vertices'])
+                flipped.append((ai, bi, ca))
+            break
+    return flipped
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("reference")
@@ -78,7 +134,15 @@ def main():
     same_topo = (A['vertexCount'] == B['vertexCount']
                  and A['faceCount'] == B['faceCount']
                  and fvdist(A['faces']) == fvdist(B['faces']))
-    ok = (fail_ab == 0 and fail_ba == 0 and same_topo)
+
+    flipped = check_winding(A, B, matches_ab) if same_topo else []
+    if flipped:
+        print(f"\n  Winding: {len(flipped)} face(s) with reversed vertex order")
+        for ai, bi, c in flipped[:5]:
+            print(f"    A face {ai} ↔ B face {bi}  centroid=({c[0]:+.3f},"
+                  f"{c[1]:+.3f},{c[2]:+.3f})")
+
+    ok = (fail_ab == 0 and fail_ba == 0 and same_topo and not flipped)
     print(f"\n  RESULT: {'OK' if ok else 'FAIL'}")
     return 0 if ok else 1
 
