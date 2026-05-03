@@ -1200,44 +1200,47 @@ void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
         // axis=0 (X) and axis=2 (Z): swap coordinates so Y is always primary.
         if (p.axis == 0) {
             // X is primary: swap sizeX↔sizeY so the generator sees Y as primary.
-            // Then rotate each emitted vertex: (x_gen, y_gen, z_gen) → (y_gen, x_gen, z_gen).
+            // Build at origin, then swap (x,y) and translate to p.cen — building
+            // at p.cen directly would put the swapped center at (cenY,cenX,cenZ).
+            // The (x,y) swap is a reflection, so reverse face winding to keep
+            // normals pointing outward.
             rp.sizeX = p.sizeY;
             rp.sizeY = p.sizeX;
+            rp.cenX = 0; rp.cenY = 0; rp.cenZ = 0;
             Mesh tmp;
             buildRoundedCubeAxisY(&tmp, rp);
-            // Re-add vertices with X↔Y swap.
             foreach (ref v; tmp.vertices) {
                 import std.algorithm.mutation : swap;
                 swap(v.x, v.y);
-                v = v + Vec3(p.cenX, p.cenY, p.cenZ) - Vec3(rp.cenX, rp.cenY, rp.cenZ);
+                v = v + Vec3(p.cenX, p.cenY, p.cenZ);
             }
-            // Copy into dst.
             uint base = cast(uint)dst.vertices.length;
             foreach (v; tmp.vertices) dst.addVertex(v);
             foreach (ref f; tmp.faces) {
                 uint[] fi;
                 fi.length = f.length;
-                foreach (i, vi; f) fi[i] = vi + base;
+                foreach (i, vi; f) fi[$ - 1 - i] = vi + base;
                 dst.addFace(fi);
             }
         } else if (p.axis == 2) {
             // Z is primary: swap sizeZ↔sizeY so the generator sees Y as primary.
+            // Reverse face winding for the same reflection-parity reason.
             rp.sizeZ = p.sizeY;
             rp.sizeY = p.sizeZ;
+            rp.cenX = 0; rp.cenY = 0; rp.cenZ = 0;
             Mesh tmp;
             buildRoundedCubeAxisY(&tmp, rp);
-            // Re-add vertices with Y↔Z swap.
             foreach (ref v; tmp.vertices) {
                 import std.algorithm.mutation : swap;
                 swap(v.y, v.z);
-                v = v + Vec3(p.cenX, p.cenY, p.cenZ) - Vec3(rp.cenX, rp.cenY, rp.cenZ);
+                v = v + Vec3(p.cenX, p.cenY, p.cenZ);
             }
             uint base = cast(uint)dst.vertices.length;
             foreach (v; tmp.vertices) dst.addVertex(v);
             foreach (ref f; tmp.faces) {
                 uint[] fi;
                 fi.length = f.length;
-                foreach (i, vi; f) fi[i] = vi + base;
+                foreach (i, vi; f) fi[$ - 1 - i] = vi + base;
                 dst.addFace(fi);
             }
         } else {

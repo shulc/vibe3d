@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.cube offset (cen=1,2,3), sharp (radius=0). Tests cenX/Y/Z handling.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 1.0, "cenY": 2.0, "cenZ": 3.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
