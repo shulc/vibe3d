@@ -1,5 +1,6 @@
 {
-  "_comment": "prim.sphere tess off-center + ellipsoidal radii — verifies cen translation and per-axis size scaling.",
+  "_comment": "prim.sphere tess off-center + ellipsoidal radii at order=2. EXPECTED_FAIL: vibe3d intentionally diverges from MODO at order≥2 (see prim_sphere_tess_o2 note).",
+  "expected_fail": true,
   "setup": {
     "kind": "primitive",
     "tool": "prim.sphere",

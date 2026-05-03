@@ -1,5 +1,6 @@
 {
-  "_comment": "prim.sphere tess order=3 — 162v/320f.",
+  "_comment": "prim.sphere tess order=3 — 162v/320f. EXPECTED_FAIL: vibe3d intentionally diverges from MODO at order≥2 to keep edge lengths uniform (see prim_sphere_tess_o2 note).",
+  "expected_fail": true,
   "setup": {
     "kind": "primitive",
     "tool": "prim.sphere",

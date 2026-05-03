@@ -1,5 +1,6 @@
 {
-  "_comment": "prim.sphere tess order=2 — 92v/180f.",
+  "_comment": "prim.sphere tess order=2 — 92v/180f. EXPECTED_FAIL: vibe3d uses SLERP-of-SLERP spherical barycentric subdivision (uniform edge lengths) instead of MODO's LERP-centroid+project for interior verts. MODO's choice causes >2× edge ratio at order≥3; uniformity matters more than bit-parity for icosphere.",
+  "expected_fail": true,
   "setup": {
     "kind": "primitive",
     "tool": "prim.sphere",

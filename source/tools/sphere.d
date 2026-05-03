@@ -334,8 +334,7 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
             cast(long)(q.z * QUANT + (q.z >= 0 ? 0.5f : -0.5f)));
     }
 
-    // SLERP between two unit vectors (verified MODO uses this for edge
-    // subdivisions: at t=1/3, t=2/3 SLERP and LERP+project differ).
+    // SLERP between two unit vectors. Both endpoints assumed unit length.
     Vec3 slerp(Vec3 a, Vec3 b, float t) {
         float d = a.x*b.x + a.y*b.y + a.z*b.z;
         if (d >  1.0f) d =  1.0f;
@@ -348,11 +347,16 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
     }
 
     // For each base face, generate the (S+1)-row grid and emit S²
-    // sub-triangles preserving the base CCW winding. MODO interpolation:
-    //   - on edge (one bary coord = 0): SLERP between the two endpoint icosa
-    //     verts, so adjacent face neighbours produce identical edge points
-    //     (matches MODO bit-for-bit; LERP+project diverges at t=1/3, 2/3).
-    //   - interior (all bary > 0): LERP+project from the icosa vertex sum.
+    // sub-triangles preserving the base CCW winding. Spherical barycentric
+    // subdivision via SLERP-of-SLERP gives near-uniform edge lengths at any
+    // order. (LERP+project for interior — MODO's choice — clusters interior
+    // verts toward the icosa-face centroid, blowing up edge-length ratio
+    // to >2× at order=3 and >4× at order=5.)
+    //   row parameter ρ = (i + j) / S       — 0 at V0, 1 along V1-V2 edge
+    //   L = SLERP(V0, V1, ρ), R = SLERP(V0, V2, ρ) — endpoints of the row
+    //   point at column j: SLERP(L, R, j / (i + j))
+    // Adjacent base-faces produce identical points along shared edges
+    // because slerp(a, b, t) == slerp(b, a, 1−t).
     foreach (ref face; ICOSA_FACES) {
         Vec3 V0 = base[face[0]];
         Vec3 V1 = base[face[1]];
@@ -365,15 +369,15 @@ void buildSphereTess(Mesh* dst, const ref SphereParams p)
             foreach (j; 0 .. S + 1 - i) {
                 int k_ = S - i - j;
                 Vec3 onSphere;
-                if (k_ == 0)        onSphere = slerp(V0, V1, cast(float)j / S);  // edge V0-V1
-                else if (i == 0)    onSphere = slerp(V1, V2, cast(float)k_ / S); // edge V1-V2
-                else if (j == 0)    onSphere = slerp(V0, V2, cast(float)k_ / S); // edge V0-V2
-                else {
-                    Vec3 raw = (V0 * cast(float)k_
-                              + V1 * cast(float)i
-                              + V2 * cast(float)j) / cast(float)S;
-                    float r = sqrt(raw.x*raw.x + raw.y*raw.y + raw.z*raw.z);
-                    onSphere = (r > 1e-9f) ? raw / r : raw;
+                if (k_ == S) {
+                    onSphere = V0;
+                } else {
+                    int rowLen = S - k_;       // i + j
+                    float rho  = cast(float)rowLen / cast(float)S;
+                    Vec3 L = slerp(V0, V1, rho);
+                    Vec3 R = slerp(V0, V2, rho);
+                    float beta = cast(float)j / cast(float)rowLen;
+                    onSphere = slerp(L, R, beta);
                 }
                 Key3 key = makeKey(onSphere);
                 if (auto idx = key in lookup) {
