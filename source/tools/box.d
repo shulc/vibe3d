@@ -2066,30 +2066,51 @@ public:
                                   hpOrigin, hpn, hit))
             {
                 if (heightHDragIdx == 1) {
-                    // Top handle: move top face, base stays (non-incremental).
-                    // baseAnchor holds the base centroid captured at drag start.
-                    float newH = dot(hit - heightDragStart, planeNormal);
-                    if (newH < 0.0f) newH = 0.0f;
-                    Vec3 newCen = baseAnchor + planeNormal * (newH * 0.5f);
+                    // Top handle (non-incremental). Top follows cursor, base
+                    // stays at baseAnchor. signedH < 0 ⇒ top crossed below
+                    // base ⇒ cuboid flips. After flip the visual top handle
+                    // is on baseAnchor's side (not where cursor is); swap
+                    // to bottom-handle drag so the handle on the cursor
+                    // side continues following.
+                    float signedH = dot(hit - heightDragStart, planeNormal);
+                    float newH    = abs(signedH);
+                    Vec3 newCen   = baseAnchor + planeNormal * (signedH * 0.5f);
                     params_.cenX = newCen.x;
                     params_.cenY = newCen.y;
                     params_.cenZ = newCen.z;
                     writeSizeParam(planeNormal, newH);
+                    if (signedH < 0.0f) {
+                        // After flip: baseAnchor is now the upper face.
+                        // Switch to bottom-handle mode: incremental delta
+                        // anchored at the current hit. baseAnchor stays.
+                        heightHDragIdx = 0;
+                        heightDragStart = hit;
+                        hpOrigin = baseAnchor + planeNormal * (signedH); // = newBase
+                    }
                 } else {
-                    // Bottom handle: move base, top face stays (incremental).
+                    // Bottom handle (incremental). Base follows cursor, top
+                    // stays. signedH = oldH - delta < 0 ⇒ base crosses top
+                    // ⇒ cuboid flips; same swap logic as top handle.
                     float delta = dot(hit - heightDragStart, planeNormal);
                     float oldH  = currentHeight();
-                    float newH  = oldH - delta;
-                    if (newH < 0.0f) { delta = oldH; newH = 0.0f; }
-                    // cen' = cen + planeNormal*(delta/2); size' = size - delta.
+                    float signedH = oldH - delta;
+                    float newH    = abs(signedH);
                     Vec3 cenDelta = planeNormal * (delta * 0.5f);
                     params_.cenX += cenDelta.x;
                     params_.cenY += cenDelta.y;
                     params_.cenZ += cenDelta.z;
                     writeSizeParam(planeNormal, newH);
-                    // Advance height plane origin along with the base.
                     hpOrigin     += planeNormal * delta;
-                    heightDragStart = hit; // incremental: advance anchor each frame
+                    heightDragStart = hit; // incremental: advance anchor
+                    if (signedH < 0.0f) {
+                        // After flip: roles swap. Switch to top-handle mode.
+                        // Re-anchor: top handle is non-incremental; set
+                        // baseAnchor to the current top (formerly base) and
+                        // heightDragStart so projection gives current height.
+                        heightHDragIdx = 1;
+                        baseAnchor = cenVec() - planeNormal * (newH * 0.5f);
+                        heightDragStart = hit - planeNormal * newH;
+                    }
                 }
                 uploadCuboid();
             }
@@ -2458,18 +2479,31 @@ private:
             case 3: moveAxis = planeAxis1; sign = -1.0f; break;
         }
 
-        float d       = dot(delta, moveAxis) * sign;
-        float oldSize = sizeAlong(moveAxis);
-        float newSize = oldSize + d;
-        if (newSize < 0.0f) newSize = 0.0f;
-        float actualD = (newSize - oldSize) * sign; // may be clamped
+        float d        = dot(delta, moveAxis) * sign;
+        float oldSize  = sizeAlong(moveAxis);
+        float signedSz = oldSize + d;
+        // signedSz < 0 ⇒ dragged edge crossed the opposite edge ⇒
+        // rectangle flips. Size is |signedSz|; cen shifts by the FULL
+        // signed drag distance (always equals dot(delta, moveAxis), no
+        // matter the sign), so the rectangle stays anchored at the
+        // un-dragged opposite edge.
+        float newSize = abs(signedSz);
+        float fullD   = dot(delta, moveAxis);
 
         writeSizeParam(moveAxis, newSize);
-        // Center shifts by half the actual edge movement.
-        Vec3 cenShift = moveAxis * (actualD * 0.5f);
+        Vec3 cenShift = moveAxis * (fullD * 0.5f);
         params_.cenX += cenShift.x;
         params_.cenY += cenShift.y;
         params_.cenZ += cenShift.z;
+
+        // Flip detected: swap drag index so the handle on the cursor's
+        // new side becomes "the dragged one" for next frame. Without
+        // this, the handle would visually stay anchored to the un-dragged
+        // edge (the original opposite face that's now on the cursor's
+        // SIDE post-flip would have NO handle being dragged). XOR with 2
+        // toggles 0↔2 (south↔north) and 1↔3 (east↔west).
+        if (signedSz < 0.0f)
+            edgeDragIdx ^= 2;
 
         uploadPreview();
     }
