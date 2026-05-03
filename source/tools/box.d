@@ -2128,9 +2128,12 @@ public:
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
             {
-                float newH = dot(hit - heightDragStart, planeNormal);
-                if (newH < 0.0f) newH = 0.0f;
-                Vec3 newCen = baseAnchor + planeNormal * (newH * 0.5f);
+                // Signed projection of drag onto planeNormal — sign decides
+                // which side of the base the cuboid grows on; size is always
+                // positive (|signedH|).
+                float signedH = dot(hit - heightDragStart, planeNormal);
+                float newH    = abs(signedH);
+                Vec3 newCen   = baseAnchor + planeNormal * (signedH * 0.5f);
                 params_.cenX = newCen.x;
                 params_.cenY = newCen.y;
                 params_.cenZ = newCen.z;
