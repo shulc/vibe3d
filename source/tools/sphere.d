@@ -484,6 +484,11 @@ private:
     Vec3 heightDragStart;  // DrawingHeight: world hit at second LMB press
     Vec3 baseAnchor;       // DrawingHeight: sphere center captured at start
 
+    // Sticky modifier captured at LMB-down: Ctrl held at first click forces
+    // an equal-radius circle during DrawingBase; Ctrl held at second click
+    // forces all three world radii equal during DrawingHeight.
+    bool dragUniform;
+
     Viewport cachedVp;
 
     // Move gizmo (axis-only).
@@ -643,7 +648,10 @@ public:
         }
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;
+        // Alt / Shift remain reserved for camera. Ctrl is consumed by this
+        // tool to mean "constrain the drag to a uniform sphere".
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+        bool ctrlAtClick = (mods & KMOD_CTRL) != 0;
 
         // Radius handles take priority once a base/sphere exists.
         if (state >= SphereState.BaseSet) {
@@ -677,12 +685,38 @@ public:
             // (world X = sizeY for axis=X, etc.) which makes the world-axis
             // handles point at the wrong sizes after the sphere is committed.
             params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
+            // Ctrl at the first click jumps straight into a 3D uniform sphere
+            // (center = click point, drag = radius applied to all three world
+            // axes), skipping the flat ellipse phase entirely. LMB-up then
+            // commits as if the height drag had also completed.
+            dragUniform = ctrlAtClick;
             state = SphereState.DrawingBase;
             uploadPreview();
             return true;
         }
 
         if (state == SphereState.BaseSet) {
+            // Ctrl at the second click keeps the existing sphere center and
+            // re-drives ALL three world radii from the cursor's distance to
+            // that center. Drag in/out grows or shrinks the sphere uniformly;
+            // the in-plane ellipse from the first drag is replaced.
+            if (ctrlAtClick) {
+                baseAnchor = sphereCenter();
+                Vec3 hit;
+                if (!rayPlaneIntersect(cachedVp.eye,
+                                       screenRay(e.x, e.y, cachedVp),
+                                       baseAnchor, planeNormal, hit))
+                    return false;
+                Vec3  d = hit - baseAnchor;
+                float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                setWorldRadius(0, r);
+                setWorldRadius(1, r);
+                setWorldRadius(2, r);
+                dragUniform = true;
+                state = SphereState.DrawingHeight;
+                uploadPreview();
+                return true;
+            }
             // Plane-normal radius is already 0; second drag adds it.
             setupHeightPlane();
             baseAnchor = sphereCenter();
@@ -692,6 +726,7 @@ public:
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
+            dragUniform = false;
             state = SphereState.DrawingHeight;
             uploadPreview();
             return true;
@@ -706,7 +741,20 @@ public:
         if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
 
         if (state == SphereState.DrawingBase) {
-            // Reject degenerate ellipses (one radius collapsed).
+            // Ctrl-uniform mode: the drag fully defined a 3D sphere on its
+            // own — reject only zero-radius drags, then jump straight to
+            // the finalized state (skip the BaseSet → DrawingHeight stage).
+            if (dragUniform) {
+                if (!(sizeOnAxis(planeAxis1) > 1e-5f)) {
+                    state = SphereState.Idle;
+                    return true;
+                }
+                state = SphereState.HeightSet;
+                uploadPreview();
+                return true;
+            }
+            // Normal ellipse-then-extrude flow: reject degenerate ellipses
+            // (one radius collapsed) and otherwise wait for the second drag.
             float r1 = sizeOnAxis(planeAxis1);
             float r2 = sizeOnAxis(planeAxis2);
             if (!(r1 > 1e-5f) || !(r2 > 1e-5f)) {
@@ -758,12 +806,35 @@ public:
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
                 currentPoint = hit;
-                syncParamsFromBaseDrag();
+                if (dragUniform) syncParamsFromUniformDrag();
+                else             syncParamsFromBaseDrag();
                 uploadPreview();
             }
             return true;
         }
         if (state == SphereState.DrawingHeight) {
+            // Ctrl-uniform: project the cursor onto the construction plane
+            // through the sphere center; cursor distance from baseAnchor
+            // becomes the new radius along all three world axes. Center
+            // stays put (Ctrl-second-click never moves it).
+            if (dragUniform) {
+                Vec3 hit;
+                if (rayPlaneIntersect(cachedVp.eye,
+                                      screenRay(e.x, e.y, cachedVp),
+                                      baseAnchor, planeNormal, hit))
+                {
+                    Vec3  d = hit - baseAnchor;
+                    float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                    params_.cenX = baseAnchor.x;
+                    params_.cenY = baseAnchor.y;
+                    params_.cenZ = baseAnchor.z;
+                    setWorldRadius(0, r);
+                    setWorldRadius(1, r);
+                    setWorldRadius(2, r);
+                    uploadPreview();
+                }
+                return true;
+            }
             Vec3 hit;
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
@@ -927,17 +998,35 @@ private:
     }
 
     // Update params_ from startPoint/currentPoint while drawing the base.
-    // sizeX/Y/Z on the plane axes get half the bbox extent (radii); the
-    // plane-normal radius stays 0 (flat ellipse).
+    // First click anchors the sphere center; the cursor traces a point on
+    // the ellipse perimeter, so each in-plane radius equals the absolute
+    // projection of the drag onto that plane axis (no /2). Plane-normal
+    // radius stays 0 (flat ellipse).
     void syncParamsFromBaseDrag() {
-        Vec3  d   = currentPoint - startPoint;
-        float d1  = dot(d, planeAxis1);
-        float d2  = dot(d, planeAxis2);
-        Vec3  cen = (startPoint + currentPoint) * 0.5f;
-        params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
+        Vec3  d  = currentPoint - startPoint;
+        float d1 = dot(d, planeAxis1);
+        float d2 = dot(d, planeAxis2);
+        params_.cenX = startPoint.x;
+        params_.cenY = startPoint.y;
+        params_.cenZ = startPoint.z;
         params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
-        writeSizeOnAxis(planeAxis1, abs(d1) * 0.5f);
-        writeSizeOnAxis(planeAxis2, abs(d2) * 0.5f);
+        writeSizeOnAxis(planeAxis1, abs(d1));
+        writeSizeOnAxis(planeAxis2, abs(d2));
+    }
+
+    // Ctrl-at-first-click shortcut: center stays at the click point, and the
+    // distance from start to current on the construction plane becomes the
+    // radius along all three world axes — fully volumetric uniform sphere
+    // in one drag.
+    void syncParamsFromUniformDrag() {
+        Vec3  d = currentPoint - startPoint;
+        float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        params_.cenX = startPoint.x;
+        params_.cenY = startPoint.y;
+        params_.cenZ = startPoint.z;
+        setWorldRadius(0, r);
+        setWorldRadius(1, r);
+        setWorldRadius(2, r);
     }
 
     void setupHeightPlane() {
@@ -950,7 +1039,12 @@ private:
 
     void rebuildPreview() {
         previewMesh.clear();
-        if (sizeOnAxis(planeNormal) > 1e-9f && state >= SphereState.DrawingHeight)
+        // Volumetric preview as soon as any normal-axis radius is set, OR
+        // when Ctrl-uniform mode kicked in at the first click (in which
+        // case all three radii are equal and the sphere is 3D from frame 1).
+        bool volumetric = sizeOnAxis(planeNormal) > 1e-9f
+                       && (state >= SphereState.DrawingHeight || dragUniform);
+        if (volumetric)
             buildByMethod(&previewMesh);
         else
             buildEllipseBase(&previewMesh, ellipsePreviewSides(), sphereCenter(),
