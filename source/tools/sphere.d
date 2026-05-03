@@ -632,11 +632,16 @@ public:
     }
 
     override bool applyHeadless() {
-        Mesh fresh;
-        if (!buildByMethod(&fresh)) return false;
-        fresh.buildLoops();
-        fresh.resetSelection();
-        *mesh = fresh;
+        // Append into the scene mesh (same convention as the interactive
+        // commitSphere). Replacing would wipe any geometry the user already
+        // has — this hits scripted paths like the Ctrl-click Unit Sphere
+        // shortcut where the user expects the new sphere to be added, not
+        // to replace the scene.
+        if (params_.method == 0)      buildSphereGlobe(mesh, params_);
+        else if (params_.method == 1) buildSphereQuadBall(mesh, params_);
+        else if (params_.method == 2) buildSphereTess(mesh, params_);
+        else                          return false;
+        mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
     }

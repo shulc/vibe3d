@@ -17,8 +17,22 @@ panels:
           - { label: Scale,  action: { kind: tool, id: scale } }
       - title: Create
         buttons:
-          - { label: Box,    action: { kind: tool, id: prim.cube } }
-          - { label: Sphere, action: { kind: tool, id: prim.sphere } }
+          - label: Box
+            action: { kind: tool, id: prim.cube }
+            ctrl:
+              label: "Unit Box"
+              action:
+                kind: script
+                lines:
+                  - "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:1 segmentsZ:1 radius:0"
+          - label: Sphere
+            action: { kind: tool, id: prim.sphere }
+            ctrl:
+              label: "Unit Sphere"
+              action:
+                kind: script
+                lines:
+                  - "prim.sphere method:globe cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:24 axis:1"
   - title: Multiply
     items:
       - title: Subdivide

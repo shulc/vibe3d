@@ -2355,15 +2355,15 @@ public:
         return true;
     }
 
-    /// Headless one-shot: build a cuboid from params_ and replace the scene mesh.
-    /// Called by ToolHeadlessCommand.apply(); the command wraps this with a
-    /// snapshot pair for undo. GPU upload + cache refresh are handled by the caller.
+    /// Headless one-shot: append a cuboid built from params_ into the scene
+    /// mesh. Called by ToolHeadlessCommand.apply(); the command wraps this
+    /// with a snapshot pair for undo. GPU upload + cache refresh are handled
+    /// by the caller. Append matches commitCuboid's interactive convention —
+    /// scripted callers (Ctrl-click "Unit Box", etc.) expect existing
+    /// geometry to survive.
     override bool applyHeadless() {
-        Mesh fresh;
-        buildCuboidParametric(&fresh, params_);
-        fresh.buildLoops();
-        fresh.resetSelection();
-        *mesh = fresh;
+        buildCuboidParametric(mesh, params_);
+        mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
     }
