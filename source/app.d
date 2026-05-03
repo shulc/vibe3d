@@ -518,7 +518,7 @@ void main(string[] args) {
                                 "prim.cube", reg.toolFactories["prim.cube"]);
 
     reg.toolFactories["prim.sphere"] = () {
-        auto t = new SphereTool(&mesh, &gpu);
+        auto t = new SphereTool(&mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
