@@ -214,3 +214,47 @@ unittest { // QuadBall vertex/face counts across orders 0..3
             ~ oc.faces.to!string ~ " faces");
     }
 }
+
+// -------------------------------------------------------------------------
+// 8. Tesselation (icosphere) counts at order 0..3
+//    verts = 10n² + 20n + 12, faces = 20(n+1)², all triangles.
+// -------------------------------------------------------------------------
+
+unittest { // Tess vertex/face counts and all-triangle invariant
+    static struct TessCase { int order; size_t verts; size_t faces; }
+    TessCase[] cases = [
+        TessCase(0,  12,  20),
+        TessCase(1,  42,  80),
+        TessCase(2,  92, 180),
+        TessCase(3, 162, 320),
+    ];
+    foreach (tc; cases) {
+        resetEmpty();
+        auto resp = primSphereArg("method:tess order:" ~ tc.order.to!string
+            ~ " sizeX:1.0 sizeY:1.0 sizeZ:1.0");
+        assert(resp["status"].str == "ok",
+            "tess order=" ~ tc.order.to!string ~ ": " ~ resp.toString);
+        auto m = getModel();
+        assert(m["vertices"].array.length == tc.verts,
+            "tess order=" ~ tc.order.to!string ~ ": expected "
+            ~ tc.verts.to!string ~ " verts, got "
+            ~ m["vertices"].array.length.to!string);
+        assert(m["faces"].array.length == tc.faces,
+            "tess order=" ~ tc.order.to!string ~ ": expected "
+            ~ tc.faces.to!string ~ " faces");
+        // All faces are triangles.
+        foreach (f; m["faces"].array)
+            assert(f.array.length == 3,
+                "tess order=" ~ tc.order.to!string ~ ": non-tri face");
+        // All verts on unit sphere.
+        foreach (v; m["vertices"].array) {
+            double x = v.array[0].floating;
+            double y = v.array[1].floating;
+            double z = v.array[2].floating;
+            double r = sqrt(x * x + y * y + z * z);
+            assert(fabs(r - 1.0) < 1e-3,
+                "tess order=" ~ tc.order.to!string ~ ": vert off unit shell, r="
+                ~ r.to!string);
+        }
+    }
+}

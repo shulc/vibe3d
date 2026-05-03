@@ -15,7 +15,7 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickMostFacingPlane, BuildPlane;
 
-import std.math : sin, cos, PI, abs, sqrt;
+import std.math : sin, cos, acos, PI, abs, sqrt;
 
 // Reuses the generic snapshot-pair edit factory used by BoxTool / BevelTool.
 alias SphereEditFactory = MeshBevelEdit delegate();
@@ -253,6 +253,151 @@ void buildSphereQuadBall(Mesh* dst, const ref SphereParams p)
             foreach (j; 0 .. nseg)
                 dst.addFace([grid[i][j], grid[i + 1][j],
                              grid[i + 1][j + 1], grid[i][j + 1]]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// buildSphereTess — icosphere primitive (MODO `prim.sphere method:tess`).
+//
+// Topology: each of the 20 icosahedron faces is subdivided into (order+1)²
+// triangles via a barycentric grid (NOT the recursive 4-split — MODO uses
+// linear subdivision). All grid points are projected radially onto the
+// unit sphere, then scaled per-axis.
+//   verts = 10·n² + 20·n + 12
+//   faces = 20·(n+1)²
+//
+// Unlike qball, MODO's tess always lands on a unit sphere when size=1 — no
+// per-order empirical scaling.
+//
+// `axis` is rejected by MODO for tess (Globe-only); we ignore it too.
+// ---------------------------------------------------------------------------
+
+// 12 icosahedron vertices on the unit sphere, ordered CCW around each pole.
+//   v0          : north pole
+//   v1..v5      : upper ring at y=+1/√5, theta = 18° + 72°·k
+//   v6          : south pole
+//   v7..v11     : lower ring at y=-1/√5, theta = 54° + 72°·k
+private void icosahedronVerts(out Vec3[12] verts) {
+    import std.math : sqrt;
+    enum float invSqrt5 = 0.447213595499957939f;   // 1/sqrt(5)
+    enum float ringR    = 0.894427190999915878f;   // 2/sqrt(5)
+    verts[0] = Vec3(0,  1, 0);
+    foreach (k; 0 .. 5) {
+        float theta = (18.0f + 72.0f * cast(float)k) * (PI / 180.0f);
+        verts[1 + k] = Vec3(ringR * cos(theta), invSqrt5, ringR * sin(theta));
+    }
+    verts[6] = Vec3(0, -1, 0);
+    foreach (k; 0 .. 5) {
+        float theta = (54.0f + 72.0f * cast(float)k) * (PI / 180.0f);
+        verts[7 + k] = Vec3(ringR * cos(theta), -invSqrt5, ringR * sin(theta));
+    }
+}
+
+// 20 icosahedron faces, all wound CCW outward.
+//   north fan (5 tris)         — apex at v0
+//   south fan (5 tris)         — apex at v6
+//   belt down-pointing  (5)    — base on upper edge, vertex on lower ring
+//   belt up-pointing    (5)    — base on lower edge, vertex on upper ring
+private static immutable int[3][20] ICOSA_FACES = [
+    // North fan: [upper(k), v0, upper((k+1)%5)]
+    [1, 0, 2], [2, 0, 3], [3, 0, 4], [4, 0, 5], [5, 0, 1],
+    // South fan: [v6, lower(k), lower((k+1)%5)]
+    [6, 7, 8], [6, 8, 9], [6, 9, 10], [6, 10, 11], [6, 11, 7],
+    // Belt down-pointing: [upper(k), upper((k+1)%5), lower(k)]
+    [1, 2, 7], [2, 3, 8], [3, 4, 9], [4, 5, 10], [5, 1, 11],
+    // Belt up-pointing:   [lower(k), upper((k+1)%5), lower((k+1)%5)]
+    [7, 2, 8], [8, 3, 9], [9, 4, 10], [10, 5, 11], [11, 1, 7],
+];
+
+void buildSphereTess(Mesh* dst, const ref SphereParams p)
+{
+    int n = p.order;
+    if (n < 0) n = 0;
+    int S = n + 1;     // subdivisions per edge
+
+    Vec3[12] base;
+    icosahedronVerts(base);
+
+    Vec3 cen = Vec3(p.cenX, p.cenY, p.cenZ);
+
+    // Dedupe shared boundary verts. Adjacent base faces produce identical
+    // pre-projection interpolated points along their shared edge — collapse
+    // them by integer-quantized 3-tuple so the icosphere stays a closed
+    // manifold.
+    static struct Key3 { long x, y, z; }
+    uint[Key3] lookup;
+    enum float QUANT = 1e5f;
+    Key3 makeKey(Vec3 q) {
+        return Key3(
+            cast(long)(q.x * QUANT + (q.x >= 0 ? 0.5f : -0.5f)),
+            cast(long)(q.y * QUANT + (q.y >= 0 ? 0.5f : -0.5f)),
+            cast(long)(q.z * QUANT + (q.z >= 0 ? 0.5f : -0.5f)));
+    }
+
+    // SLERP between two unit vectors (verified MODO uses this for edge
+    // subdivisions: at t=1/3, t=2/3 SLERP and LERP+project differ).
+    Vec3 slerp(Vec3 a, Vec3 b, float t) {
+        float d = a.x*b.x + a.y*b.y + a.z*b.z;
+        if (d >  1.0f) d =  1.0f;
+        if (d < -1.0f) d = -1.0f;
+        float omega = acos(d);
+        float so    = sin(omega);
+        if (so < 1e-6f) return a;
+        return a * (sin((1.0f - t) * omega) / so)
+             + b * (sin(t * omega) / so);
+    }
+
+    // For each base face, generate the (S+1)-row grid and emit S²
+    // sub-triangles preserving the base CCW winding. MODO interpolation:
+    //   - on edge (one bary coord = 0): SLERP between the two endpoint icosa
+    //     verts, so adjacent face neighbours produce identical edge points
+    //     (matches MODO bit-for-bit; LERP+project diverges at t=1/3, 2/3).
+    //   - interior (all bary > 0): LERP+project from the icosa vertex sum.
+    foreach (ref face; ICOSA_FACES) {
+        Vec3 V0 = base[face[0]];
+        Vec3 V1 = base[face[1]];
+        Vec3 V2 = base[face[2]];
+
+        uint[][] grid;
+        grid.length = S + 1;
+        foreach (i; 0 .. S + 1) {
+            grid[i].length = S + 1 - i;
+            foreach (j; 0 .. S + 1 - i) {
+                int k_ = S - i - j;
+                Vec3 onSphere;
+                if (k_ == 0)        onSphere = slerp(V0, V1, cast(float)j / S);  // edge V0-V1
+                else if (i == 0)    onSphere = slerp(V1, V2, cast(float)k_ / S); // edge V1-V2
+                else if (j == 0)    onSphere = slerp(V0, V2, cast(float)k_ / S); // edge V0-V2
+                else {
+                    Vec3 raw = (V0 * cast(float)k_
+                              + V1 * cast(float)i
+                              + V2 * cast(float)j) / cast(float)S;
+                    float r = sqrt(raw.x*raw.x + raw.y*raw.y + raw.z*raw.z);
+                    onSphere = (r > 1e-9f) ? raw / r : raw;
+                }
+                Key3 key = makeKey(onSphere);
+                if (auto idx = key in lookup) {
+                    grid[i][j] = *idx;
+                    continue;
+                }
+                Vec3 pos = Vec3(onSphere.x * p.sizeX,
+                                onSphere.y * p.sizeY,
+                                onSphere.z * p.sizeZ) + cen;
+                uint vi = dst.addVertex(pos);
+                lookup[key] = vi;
+                grid[i][j] = vi;
+            }
+        }
+
+        // Up-pointing sub-triangle for each (i, j) with i+j ≤ S-1.
+        // Down-pointing sub-triangle for each (i, j) with i+j ≤ S-2.
+        foreach (i; 0 .. S) {
+            foreach (j; 0 .. S - i) {
+                dst.addFace([grid[i][j], grid[i + 1][j], grid[i][j + 1]]);
+                if (i + j < S - 1)
+                    dst.addFace([grid[i + 1][j + 1], grid[i][j + 1], grid[i + 1][j]]);
+            }
+        }
     }
 }
 
@@ -834,6 +979,7 @@ private:
         switch (params_.method) {
             case 0: buildSphereGlobe(dst, params_);    return true;
             case 1: buildSphereQuadBall(dst, params_); return true;
+            case 2: buildSphereTess(dst, params_);     return true;
             default:                                   return false;
         }
     }

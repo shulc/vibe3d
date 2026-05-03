@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.sphere tess order=1 — 42v/80f. Each icosa face split into 4 sub-tris.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method": "tess",
+      "cenX":   0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":  1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "order":  1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

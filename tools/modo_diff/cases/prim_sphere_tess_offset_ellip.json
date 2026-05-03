@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.sphere tess off-center + ellipsoidal radii — verifies cen translation and per-axis size scaling.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method": "tess",
+      "cenX":   1.0, "cenY": 2.0, "cenZ": -1.0,
+      "sizeX":  0.5, "sizeY": 1.0, "sizeZ": 0.7,
+      "order":  2
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
