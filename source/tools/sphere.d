@@ -142,22 +142,17 @@ void buildSphereGlobe(Mesh* dst, const ref SphereParams p)
     }
 }
 
-// Flat ellipse preview for the DrawingBase phase: a single n-gon laid in
-// the construction plane with per-axis radii (sizeOnAxis1, sizeOnAxis2).
-// Used during "draw a circle on the floor" before extruding into a sphere.
-private void buildEllipseBase(Mesh* dst, const ref SphereParams p,
-                              Vec3 axis1, Vec3 axis2)
+// Flat ellipse preview for the DrawingBase phase: a single n-gon centered
+// at cen, laid in the plane spanned by axis1/axis2 with explicit per-axis
+// radii r1/r2. Caller is responsible for resolving radii from params_
+// (taking the axis permutation into account).
+private void buildEllipseBase(Mesh* dst, int sides,
+                              Vec3 cen,
+                              Vec3 axis1, float r1,
+                              Vec3 axis2, float r2)
 {
-    int S = p.sides;
+    int S = sides;
     if (S < 3) S = 3;
-
-    float r1 = abs(axis1.x) > 0.5f ? p.sizeX
-             : abs(axis1.y) > 0.5f ? p.sizeY
-                                   : p.sizeZ;
-    float r2 = abs(axis2.x) > 0.5f ? p.sizeX
-             : abs(axis2.y) > 0.5f ? p.sizeY
-                                   : p.sizeZ;
-    Vec3 cen = Vec3(p.cenX, p.cenY, p.cenZ);
 
     uint[] ring;
     ring.length = S;
@@ -377,11 +372,11 @@ public:
                 return false;
             startPoint   = hit;
             currentPoint = hit;
-            // Reset all radii; pole axis matches the construction plane normal
-            // so the equator lies on the plane the user clicked.
+            // Keep params_.axis at its default (Y). Auto-rotating it to the
+            // construction-plane normal would re-permute sizeX/Y/Z meanings
+            // (world X = sizeY for axis=X, etc.) which makes the world-axis
+            // handles point at the wrong sizes after the sphere is committed.
             params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
-            params_.axis  = abs(planeNormal.x) > 0.5f ? 0
-                          : abs(planeNormal.y) > 0.5f ? 1 : 2;
             state = SphereState.DrawingBase;
             uploadPreview();
             return true;
@@ -473,16 +468,15 @@ public:
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
             {
-                // Signed projection of drag onto planeNormal.
-                // Sphere extends from baseAnchor by signedH along normal,
-                // so radius (half-extent) = |signedH|/2 and center sits at
-                // baseAnchor + signedH/2.
+                // Sphere center stays at baseAnchor; only the radius along
+                // planeNormal grows symmetrically as the user drags. Drag
+                // distance projected on normal == radius (sphere extends
+                // ±r above and below the disk plane).
                 float signedH = dot(hit - heightDragStart, planeNormal);
-                float r       = abs(signedH) * 0.5f;
-                Vec3  newCen  = baseAnchor + planeNormal * (signedH * 0.5f);
-                params_.cenX = newCen.x;
-                params_.cenY = newCen.y;
-                params_.cenZ = newCen.z;
+                float r = abs(signedH);
+                params_.cenX = baseAnchor.x;
+                params_.cenY = baseAnchor.y;
+                params_.cenZ = baseAnchor.z;
                 writeSizeOnAxis(planeNormal, r);
                 uploadPreview();
             }
@@ -559,17 +553,53 @@ private:
 
     Vec3 sphereCenter() const { return Vec3(params_.cenX, params_.cenY, params_.cenZ); }
 
+    // ---- axis-aware world↔orig radius mapping ----
+    //
+    // buildSphereGlobe first builds a sphere in the axisY frame, then
+    // permutes coordinates: axis=X sends (x,y,z)→(y,z,x); axis=Z sends
+    // (x,y,z)→(z,x,y). So the world extent along world axis i comes from
+    // the orig-frame size at index (i + offset) % 3, where offset = 1 / 0 / 2
+    // for axis = 0 (X) / 1 (Y) / 2 (Z).
+    //
+    // Without this mapping the radius handles & drag math would manipulate
+    // sizeX when the user dragged a +X handle, but the sphere's actual world
+    // X extent comes from sizeY (axis=X) or sizeZ (axis=Z) — visually the
+    // handles ended up "controlling the wrong axis".
+    int worldAxisToOrig(int worldIdx) const {
+        if (params_.axis == 1) return worldIdx;
+        if (params_.axis == 0) return (worldIdx + 1) % 3;
+        return (worldIdx + 2) % 3;
+    }
+
+    float worldRadius(int worldIdx) const {
+        final switch (worldAxisToOrig(worldIdx)) {
+            case 0: return params_.sizeX;
+            case 1: return params_.sizeY;
+            case 2: return params_.sizeZ;
+        }
+    }
+
+    void setWorldRadius(int worldIdx, float v) {
+        float a = abs(v);
+        final switch (worldAxisToOrig(worldIdx)) {
+            case 0: params_.sizeX = a; break;
+            case 1: params_.sizeY = a; break;
+            case 2: params_.sizeZ = a; break;
+        }
+    }
+
+    static int worldAxisIdxOf(Vec3 v) {
+        if (abs(v.x) > 0.5f) return 0;
+        if (abs(v.y) > 0.5f) return 1;
+        return 2;
+    }
+
     float sizeOnAxis(Vec3 axisVec) const {
-        if (abs(axisVec.x) > 0.5f) return params_.sizeX;
-        if (abs(axisVec.y) > 0.5f) return params_.sizeY;
-        return params_.sizeZ;
+        return worldRadius(worldAxisIdxOf(axisVec));
     }
 
     void writeSizeOnAxis(Vec3 axisVec, float radius) {
-        float v = abs(radius);
-        if      (abs(axisVec.x) > 0.5f) params_.sizeX = v;
-        else if (abs(axisVec.y) > 0.5f) params_.sizeY = v;
-        else                             params_.sizeZ = v;
+        setWorldRadius(worldAxisIdxOf(axisVec), radius);
     }
 
     float currentHeight() const { return sizeOnAxis(planeNormal) * 2.0f; }
@@ -608,7 +638,9 @@ private:
         if (sizeOnAxis(planeNormal) > 1e-9f && state >= SphereState.DrawingHeight)
             buildSphereGlobe(&previewMesh, params_);
         else
-            buildEllipseBase(&previewMesh, params_, planeAxis1, planeAxis2);
+            buildEllipseBase(&previewMesh, params_.sides, sphereCenter(),
+                             planeAxis1, sizeOnAxis(planeAxis1),
+                             planeAxis2, sizeOnAxis(planeAxis2));
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
@@ -619,7 +651,9 @@ private:
     // BoxTool.commitBase / commitCuboid. Replacing would wipe any existing
     // geometry the user already built.
     void commitBase() {
-        buildEllipseBase(mesh, params_, planeAxis1, planeAxis2);
+        buildEllipseBase(mesh, params_.sides, sphereCenter(),
+                         planeAxis1, sizeOnAxis(planeAxis1),
+                         planeAxis2, sizeOnAxis(planeAxis2));
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -643,13 +677,13 @@ private:
 
     void updateRadHandlers(const ref Viewport vp) {
         Vec3 cen = sphereCenter();
+        float rx = worldRadius(0);
+        float ry = worldRadius(1);
+        float rz = worldRadius(2);
         Vec3[6] pts = [
-            cen + Vec3( params_.sizeX, 0, 0),
-            cen + Vec3(-params_.sizeX, 0, 0),
-            cen + Vec3(0,  params_.sizeY, 0),
-            cen + Vec3(0, -params_.sizeY, 0),
-            cen + Vec3(0, 0,  params_.sizeZ),
-            cen + Vec3(0, 0, -params_.sizeZ),
+            cen + Vec3( rx, 0, 0), cen + Vec3(-rx, 0, 0),
+            cen + Vec3(0,  ry, 0), cen + Vec3(0, -ry, 0),
+            cen + Vec3(0, 0,  rz), cen + Vec3(0, 0, -rz),
         ];
         foreach (i; 0 .. 6) {
             radH[i].pos  = pts[i];
@@ -660,21 +694,10 @@ private:
     void applyRadiusDelta(int idx, Vec3 delta) {
         Vec3 axisDir = RAD_AXES[idx];
         float d = delta.x * axisDir.x + delta.y * axisDir.y + delta.z * axisDir.z;
-        switch (idx / 2) {
-            case 0:
-                params_.sizeX += d;
-                if (params_.sizeX < 0.0f) params_.sizeX = 0.0f;
-                break;
-            case 1:
-                params_.sizeY += d;
-                if (params_.sizeY < 0.0f) params_.sizeY = 0.0f;
-                break;
-            case 2:
-                params_.sizeZ += d;
-                if (params_.sizeZ < 0.0f) params_.sizeZ = 0.0f;
-                break;
-            default: assert(0);
-        }
+        int worldIdx = idx / 2;
+        float r = worldRadius(worldIdx) + d;
+        if (r < 0.0f) r = 0.0f;
+        setWorldRadius(worldIdx, r);
         rebuildPreview();
     }
 
