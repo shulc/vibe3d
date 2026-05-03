@@ -517,8 +517,11 @@ void main(string[] args) {
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.cube", reg.toolFactories["prim.cube"]);
 
-    reg.toolFactories["prim.sphere"] = () => cast(Tool)
-        new SphereTool(&mesh, &gpu);
+    reg.toolFactories["prim.sphere"] = () {
+        auto t = new SphereTool(&mesh, &gpu);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
     reg.commandFactories["prim.sphere"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh, cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,

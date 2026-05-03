@@ -4,8 +4,14 @@ import tool;
 import mesh;
 import math;
 import params : Param;
+import command_history : CommandHistory;
+import commands.mesh.bevel_edit : MeshBevelEdit;
+import snapshot : MeshSnapshot;
 
 import std.math : sin, cos, PI, abs;
+
+// Reuses the generic snapshot-pair edit factory used by BoxTool / BevelTool.
+alias SphereEditFactory = MeshBevelEdit delegate();
 
 // ---------------------------------------------------------------------------
 // SphereParams — MODO-aligned wire schema for prim.sphere headless invocation.
@@ -156,26 +162,36 @@ void buildSphereGlobe(Mesh* dst, const ref SphereParams p)
 }
 
 // ---------------------------------------------------------------------------
-// SphereTool — phase 6.2 headless-only Create-tool for prim.sphere.
+// SphereTool — Create-tool for prim.sphere.
 //
 // Wire schema matches MODO `prim.sphere` cmdhelptools.cfg. Only `method:globe`
-// is implemented in 6.2; qball/tess parametrizations come in 6.3/6.4.
+// is implemented; qball/tess parametrizations come in 6.3/6.4.
 //
-// Interactive draw (single-drag center+radius) is not yet implemented —
-// this tool is exercised through the headless path (HTTP /api/command and
-// modo_diff). Activating it via `tool.set` and tweaking attrs in the panel
-// works; the model rebuilds via applyHeadless when invoked.
+// Interaction model (panel-driven, no viewport drag):
+//   - activate()   : take pre-snapshot, build default sphere, upload to GPU
+//   - evaluate()   : rebuild from current params_ on every slider change
+//   - deactivate() : commit (pre, post) snapshot pair to history for undo
+//
+// Headless path (applyHeadless) is the same generator, used by HTTP/modo_diff.
 // ---------------------------------------------------------------------------
 class SphereTool : Tool {
 private:
-    Mesh*         mesh;
-    GpuMesh*      gpu;
-    SphereParams  params_;
+    Mesh*              mesh;
+    GpuMesh*           gpu;
+    SphereParams       params_;
+    CommandHistory     history;
+    SphereEditFactory  factory;
+    MeshSnapshot       pre;
 
 public:
     this(Mesh* mesh, GpuMesh* gpu) {
         this.mesh = mesh;
         this.gpu  = gpu;
+    }
+
+    void setUndoBindings(CommandHistory history, SphereEditFactory factory) {
+        this.history = history;
+        this.factory = factory;
     }
 
     override string name() const { return "Sphere"; }
@@ -204,20 +220,43 @@ public:
         ];
     }
 
-    override bool applyHeadless() {
-        // Only Globe is wired up in 6.2.
-        if (params_.method != 0) return false;
+    override void activate() {
+        pre = MeshSnapshot.capture(*mesh);
+        rebuildAndUpload();
+    }
 
+    override void deactivate() {
+        if (history is null || factory is null) return;
+        if (!pre.filled) return;
+        auto cmd  = factory();
+        auto post = MeshSnapshot.capture(*mesh);
+        cmd.setSnapshots(pre, post, "Create Sphere");
+        history.record(cmd);
+        pre = MeshSnapshot.init;
+    }
+
+    override void evaluate() {
+        rebuildAndUpload();
+    }
+
+    override bool applyHeadless() {
+        // Only Globe is wired up so far.
+        if (params_.method != 0) return false;
+        rebuildAndUpload();
+        return true;
+    }
+
+    override void drawProperties() {
+        // Schema panel handles all widgets.
+    }
+
+private:
+    void rebuildAndUpload() {
         Mesh fresh;
         buildSphereGlobe(&fresh, params_);
         fresh.buildLoops();
         fresh.resetSelection();
         *mesh = fresh;
         gpu.upload(*mesh);
-        return true;
-    }
-
-    override void drawProperties() {
-        // Schema panel handles all widgets.
     }
 }
