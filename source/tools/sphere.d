@@ -1,9 +1,15 @@
 module tools.sphere;
 
+import bindbc.opengl;
+import bindbc.sdl;
+
 import tool;
 import mesh;
 import math;
 import params : Param;
+import handler : MoveHandler, BoxHandler, gizmoSize;
+import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
+import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
@@ -167,8 +173,10 @@ void buildSphereGlobe(Mesh* dst, const ref SphereParams p)
 // Wire schema matches MODO `prim.sphere` cmdhelptools.cfg. Only `method:globe`
 // is implemented; qball/tess parametrizations come in 6.3/6.4.
 //
-// Interaction model (panel-driven, no viewport drag):
+// Interaction model:
 //   - activate()   : take pre-snapshot, build default sphere, upload to GPU
+//   - drag handles : MoveHandler arrows translate; 6 surface handles (±X/Y/Z)
+//                    grow / shrink the corresponding sizeX/Y/Z radius
 //   - evaluate()   : rebuild from current params_ on every slider change
 //   - deactivate() : commit (pre, post) snapshot pair to history for undo
 //
@@ -183,10 +191,45 @@ private:
     SphereEditFactory  factory;
     MeshSnapshot       pre;
 
+    // Move gizmo (3 axis arrows + center plane handle).
+    MoveHandler mover;
+    int         moverDragAxis = -1;   // 0/1/2 = X/Y/Z arrow, 3 = center plane
+    int         moverLastMX, moverLastMY;
+
+    // Six radius handles on the sphere surface — outward axes:
+    //   0:+X  1:-X  2:+Y  3:-Y  4:+Z  5:-Z
+    BoxHandler[6] radH;
+    int           radDragIdx    = -1;
+    int           radHoveredIdx = -1;
+    int           radLastMX, radLastMY;
+
+    Viewport cachedVp;
+
+    static immutable Vec3[6] RAD_AXES = [
+        Vec3( 1, 0, 0), Vec3(-1, 0, 0),
+        Vec3( 0, 1, 0), Vec3( 0,-1, 0),
+        Vec3( 0, 0, 1), Vec3( 0, 0,-1),
+    ];
+
 public:
     this(Mesh* mesh, GpuMesh* gpu) {
         this.mesh = mesh;
         this.gpu  = gpu;
+        mover = new MoveHandler(Vec3(0, 0, 0));
+        mover.circleXY.setVisible(false);
+        mover.circleYZ.setVisible(false);
+        mover.circleXZ.setVisible(false);
+        foreach (i; 0 .. 6) {
+            Vec3 col = (i < 2) ? Vec3(0.9f, 0.2f, 0.2f)
+                     : (i < 4) ? Vec3(0.2f, 0.9f, 0.2f)
+                               : Vec3(0.2f, 0.2f, 0.9f);
+            radH[i] = new BoxHandler(Vec3(0, 0, 0), col);
+        }
+    }
+
+    void destroy() {
+        mover.destroy();
+        foreach (h; radH) h.destroy();
     }
 
     void setUndoBindings(CommandHistory history, SphereEditFactory factory) {
@@ -222,6 +265,8 @@ public:
 
     override void activate() {
         pre = MeshSnapshot.capture(*mesh);
+        moverDragAxis = -1;
+        radDragIdx    = -1;
         rebuildAndUpload();
     }
 
@@ -246,6 +291,109 @@ public:
         return true;
     }
 
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;
+
+        // Radius handles take priority — they sit on the surface, often visible
+        // even when the move gizmo is occluded by the sphere.
+        foreach (i; 0 .. 6) {
+            if (radH[i].hitTest(e.x, e.y, cachedVp)) {
+                radDragIdx = cast(int)i;
+                radLastMX  = e.x;
+                radLastMY  = e.y;
+                return true;
+            }
+        }
+
+        int hit = moverHitTest(e.x, e.y);
+        if (hit >= 0) {
+            moverDragAxis = hit;
+            moverLastMX   = e.x;
+            moverLastMY   = e.y;
+            return true;
+        }
+        return false;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (radDragIdx >= 0)    { radDragIdx = -1;    return true; }
+        if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
+        return false;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        if (radDragIdx >= 0) {
+            Vec3 outward = RAD_AXES[radDragIdx];
+            bool skip;
+            Vec3 delta = screenAxisDelta(e.x, e.y, radLastMX, radLastMY,
+                                         radH[radDragIdx].pos, outward,
+                                         cachedVp, skip);
+            if (!skip) applyRadiusDelta(radDragIdx, delta);
+            radLastMX = e.x;
+            radLastMY = e.y;
+            return true;
+        }
+        if (moverDragAxis >= 0) {
+            bool skip;
+            Vec3 delta = moverDragAxis <= 2
+                ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
+                                 moverDragAxis, mover, cachedVp, skip)
+                : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
+                                 moverDragAxis, mover.center, cachedVp, skip);
+            if (!skip) {
+                params_.cenX += delta.x;
+                params_.cenY += delta.y;
+                params_.cenZ += delta.z;
+                rebuildAndUpload();
+            }
+            moverLastMX = e.x;
+            moverLastMY = e.y;
+            return true;
+        }
+        return false;
+    }
+
+    override void draw(const ref Shader shader, const ref Viewport vp) {
+        cachedVp = vp;
+
+        // Radius handles on the six surface points.
+        Vec3 cen = Vec3(params_.cenX, params_.cenY, params_.cenZ);
+        Vec3[6] pts = [
+            cen + Vec3( params_.sizeX, 0, 0),
+            cen + Vec3(-params_.sizeX, 0, 0),
+            cen + Vec3(0,  params_.sizeY, 0),
+            cen + Vec3(0, -params_.sizeY, 0),
+            cen + Vec3(0, 0,  params_.sizeZ),
+            cen + Vec3(0, 0, -params_.sizeZ),
+        ];
+        radHoveredIdx = -1;
+        bool radBusy = radDragIdx >= 0;
+        foreach (i; 0 .. 6) {
+            radH[i].pos  = pts[i];
+            radH[i].size = gizmoSize(pts[i], vp, 0.04f);
+            radH[i].setForceHovered(radDragIdx == cast(int)i);
+            radH[i].setHoverBlocked(radBusy && radDragIdx != cast(int)i);
+            radH[i].draw(shader, vp);
+            if (radH[i].isHovered()) radHoveredIdx = cast(int)i;
+        }
+
+        // Move gizmo at sphere center.
+        mover.setPosition(cen);
+        mover.arrowX.setForceHovered(moverDragAxis == 0);
+        mover.arrowY.setForceHovered(moverDragAxis == 1);
+        mover.arrowZ.setForceHovered(moverDragAxis == 2);
+        mover.centerBox.setForceHovered(moverDragAxis == 3);
+        bool radPriority = radDragIdx >= 0 || radHoveredIdx >= 0;
+        mover.arrowX.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 0));
+        mover.arrowY.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 1));
+        mover.arrowZ.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 2));
+        mover.centerBox.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 3));
+        mover.draw(shader, vp);
+    }
+
     override void drawProperties() {
         // Schema panel handles all widgets.
     }
@@ -258,5 +406,50 @@ private:
         fresh.resetSelection();
         *mesh = fresh;
         gpu.upload(*mesh);
+    }
+
+    // Apply a world-space drag delta (along the handle's outward axis) to
+    // the corresponding sizeX/Y/Z radius. Drag outward grows the sphere;
+    // dragging inward past the center clamps to 0.
+    void applyRadiusDelta(int idx, Vec3 delta) {
+        // Project delta onto the outward axis (handles 0/2/4 along +axis,
+        // 1/3/5 along -axis). screenAxisDelta already returns a vector
+        // along RAD_AXES[idx], so the dot is essentially a signed scalar.
+        Vec3 axisDir = RAD_AXES[idx];
+        float d = delta.x * axisDir.x + delta.y * axisDir.y + delta.z * axisDir.z;
+
+        switch (idx / 2) {
+            case 0:
+                params_.sizeX += d;
+                if (params_.sizeX < 0.0f) params_.sizeX = 0.0f;
+                break;
+            case 1:
+                params_.sizeY += d;
+                if (params_.sizeY < 0.0f) params_.sizeY = 0.0f;
+                break;
+            case 2:
+                params_.sizeZ += d;
+                if (params_.sizeZ < 0.0f) params_.sizeZ = 0.0f;
+                break;
+            default: assert(0);
+        }
+        rebuildAndUpload();
+    }
+
+    int moverHitTest(int mx, int my) {
+        import handler : Arrow;
+        if (mover.centerBox.hitTest(mx, my, cachedVp)) return 3;
+        Arrow[3] arrows = [mover.arrowX, mover.arrowY, mover.arrowZ];
+        foreach (i, arrow; arrows) {
+            if (!arrow.isVisible()) continue;
+            float sax, say, ndcZa, sbx, sby, ndcZb;
+            if (!projectToWindowFull(arrow.start, cachedVp, sax, say, ndcZa)) continue;
+            if (!projectToWindowFull(arrow.end,   cachedVp, sbx, sby, ndcZb)) continue;
+            float t;
+            if (closestOnSegment2D(cast(float)mx, cast(float)my,
+                                   sax, say, sbx, sby, t) < 8.0f)
+                return cast(int)i;
+        }
+        return -1;
     }
 }
