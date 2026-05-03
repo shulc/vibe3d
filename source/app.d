@@ -647,17 +647,34 @@ void main(string[] args) {
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
 
     // Validate: every action id (including modifier variants) must exist in
-    // the registry.
+    // the registry. For script actions, validate the first token of each
+    // line — it must name a registered command.
     {
         import std.array : appender;
+        import argstring : parseArgstring;
         auto missing = appender!string();
         void check(Action a) {
-            if (a.kind == ActionKind.tool) {
-                if ((a.id in reg.toolFactories) is null)
-                    missing ~= " tool:" ~ a.id;
-            } else {
-                if ((a.id in reg.commandFactories) is null)
-                    missing ~= " command:" ~ a.id;
+            final switch (a.kind) {
+                case ActionKind.tool:
+                    if ((a.id in reg.toolFactories) is null)
+                        missing ~= " tool:" ~ a.id;
+                    break;
+                case ActionKind.command:
+                    if ((a.id in reg.commandFactories) is null)
+                        missing ~= " command:" ~ a.id;
+                    break;
+                case ActionKind.script:
+                    foreach (line; a.scriptLines) {
+                        try {
+                            auto parsed = parseArgstring(line);
+                            if (parsed.isEmpty) continue;
+                            if ((parsed.commandId in reg.commandFactories) is null)
+                                missing ~= " script-cmd:" ~ parsed.commandId;
+                        } catch (Exception e) {
+                            missing ~= " script-parse-err:[" ~ line ~ "]";
+                        }
+                    }
+                    break;
             }
         }
         foreach (ref p; panels) {
@@ -2074,18 +2091,38 @@ void main(string[] args) {
                 if (action.kind == ActionKind.tool) {
                     if (auto sp = action.id in shortcuts.byToolId)
                         sc = sp.display();
-                } else {
+                } else if (action.kind == ActionKind.command) {
                     if (auto sp = action.id in shortcuts.byCommandId)
                         sc = sp.display();
                 }
                 bool on = (action.kind == ActionKind.tool &&
                            activeToolId == action.id);
-                bool isCommand = action.kind == ActionKind.command;
+                // Scripts share the command's pale-blue palette (they're a
+                // sequence of commands, not a sticky-tool activation).
+                bool isCommand = (action.kind == ActionKind.command
+                               || action.kind == ActionKind.script);
                 if (renderStyledButton(label, sc, on, isCommand, ImVec2(-1, 0))) {
-                    if (action.kind == ActionKind.tool)
-                        activateToolById(action.id);
-                    else if (!tryOpenArgsDialog(action.id))
-                        runCommand(reg.commandFactories[action.id]());
+                    final switch (action.kind) {
+                        case ActionKind.tool:
+                            activateToolById(action.id);
+                            break;
+                        case ActionKind.command:
+                            if (!tryOpenArgsDialog(action.id))
+                                runCommand(reg.commandFactories[action.id]());
+                            break;
+                        case ActionKind.script:
+                            // Run each argstring line through the same
+                            // dispatcher /api/command uses.
+                            import argstring : parseArgstring;
+                            foreach (line; action.scriptLines) {
+                                auto parsed = parseArgstring(line);
+                                if (parsed.isEmpty) continue;
+                                if (commandHandlerDelegate !is null)
+                                    commandHandlerDelegate(parsed.commandId,
+                                                            parsed.params.toString());
+                            }
+                            break;
+                    }
                 }
             }
 

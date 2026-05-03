@@ -6,11 +6,15 @@ import std.format : format;
 // Types
 // ---------------------------------------------------------------------------
 
-enum ActionKind { tool, command }
+enum ActionKind { tool, command, script }
 
 struct Action {
     ActionKind kind;
-    string     id;
+    string     id;            // empty for kind == script
+    // For kind == script: each entry is a MODO-style argstring line that
+    // gets dispatched through the same path as /api/command. Empty for
+    // kind == tool / command.
+    string[]   scriptLines;
 }
 
 // One-modifier override: when the corresponding key is held, the button
@@ -120,7 +124,7 @@ Panel[] loadButtons(string path) {
 // Helper: flatten all buttons in a panel (used by startup validation).
 // ---------------------------------------------------------------------------
 
-Button[] allButtons(const ref Panel p) {
+Button[] allButtons(ref Panel p) {
     Button[] result;
     foreach (ref item; p.items) {
         if (item.isGroup) {
@@ -142,18 +146,40 @@ private Action parseAction(NodeT)(NodeT actionNode, string ctxLabel, string path
         throw new Exception(
             format("buttonset: action for '%s' ('%s') is missing 'kind'",
                    ctxLabel, path));
-    if (!actionNode.containsKey("id"))
-        throw new Exception(
-            format("buttonset: action for '%s' ('%s') is missing 'id'",
-                   ctxLabel, path));
     string kindStr = actionNode["kind"].as!string;
     ActionKind kind;
     if      (kindStr == "tool")    kind = ActionKind.tool;
     else if (kindStr == "command") kind = ActionKind.command;
+    else if (kindStr == "script")  kind = ActionKind.script;
     else throw new Exception(
         format("buttonset: unknown action kind '%s' for '%s' in '%s'",
                kindStr, ctxLabel, path));
-    return Action(kind, actionNode["id"].as!string);
+
+    Action a;
+    a.kind = kind;
+    if (kind == ActionKind.script) {
+        if (!actionNode.containsKey("lines"))
+            throw new Exception(
+                format("buttonset: script action for '%s' ('%s') is missing 'lines'",
+                       ctxLabel, path));
+        import dyaml : Node;
+        foreach (Node lineNode; actionNode["lines"]) {
+            string line = lineNode.as!string;
+            if (line.length > 0)
+                a.scriptLines ~= line;
+        }
+        if (a.scriptLines.length == 0)
+            throw new Exception(
+                format("buttonset: script action for '%s' ('%s') has no non-empty lines",
+                       ctxLabel, path));
+    } else {
+        if (!actionNode.containsKey("id"))
+            throw new Exception(
+                format("buttonset: action for '%s' ('%s') is missing 'id'",
+                       ctxLabel, path));
+        a.id = actionNode["id"].as!string;
+    }
+    return a;
 }
 
 private ButtonVariant parseModifierVariant(NodeT)(NodeT btnNode, string key,
