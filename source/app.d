@@ -646,19 +646,26 @@ void main(string[] args) {
     Panel[]       panels    = loadButtons("config/buttons.yaml");
     ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
 
-    // Validate: every action id in panels must exist in the registry.
+    // Validate: every action id (including modifier variants) must exist in
+    // the registry.
     {
         import std.array : appender;
         auto missing = appender!string();
+        void check(Action a) {
+            if (a.kind == ActionKind.tool) {
+                if ((a.id in reg.toolFactories) is null)
+                    missing ~= " tool:" ~ a.id;
+            } else {
+                if ((a.id in reg.commandFactories) is null)
+                    missing ~= " command:" ~ a.id;
+            }
+        }
         foreach (ref p; panels) {
             foreach (ref btn; allButtons(p)) {
-                if (btn.action.kind == ActionKind.tool) {
-                    if ((btn.action.id in reg.toolFactories) is null)
-                        missing ~= " tool:" ~ btn.action.id;
-                } else {
-                    if ((btn.action.id in reg.commandFactories) is null)
-                        missing ~= " command:" ~ btn.action.id;
-                }
+                check(btn.action);
+                if (btn.ctrl.present)  check(btn.ctrl.action);
+                if (btn.alt.present)   check(btn.alt.action);
+                if (btn.shift.present) check(btn.shift.action);
             }
         }
         if (missing.data.length > 0)
@@ -2047,22 +2054,38 @@ void main(string[] args) {
             pushButtonBarStyle();
             scope(exit) popButtonBarStyle();
             void renderButton(ref Button btn) {
+                // Pick which (label, action) to show based on the live
+                // modifier state. Priority: ctrl > alt > shift, single
+                // modifier only (combinations not supported yet).
+                SDL_Keymod mods = SDL_GetModState();
+                string label  = btn.label;
+                Action action = btn.action;
+                if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
+                    label = btn.ctrl.label;  action = btn.ctrl.action;
+                }
+                else if (btn.alt.present   && (mods & KMOD_ALT))   {
+                    label = btn.alt.label;   action = btn.alt.action;
+                }
+                else if (btn.shift.present && (mods & KMOD_SHIFT)) {
+                    label = btn.shift.label; action = btn.shift.action;
+                }
+
                 string sc;
-                if (btn.action.kind == ActionKind.tool) {
-                    if (auto sp = btn.action.id in shortcuts.byToolId)
+                if (action.kind == ActionKind.tool) {
+                    if (auto sp = action.id in shortcuts.byToolId)
                         sc = sp.display();
                 } else {
-                    if (auto sp = btn.action.id in shortcuts.byCommandId)
+                    if (auto sp = action.id in shortcuts.byCommandId)
                         sc = sp.display();
                 }
-                bool on = (btn.action.kind == ActionKind.tool &&
-                           activeToolId == btn.action.id);
-                bool isCommand = btn.action.kind == ActionKind.command;
-                if (renderStyledButton(btn.label, sc, on, isCommand, ImVec2(-1, 0))) {
-                    if (btn.action.kind == ActionKind.tool)
-                        activateToolById(btn.action.id);
-                    else if (!tryOpenArgsDialog(btn.action.id))
-                        runCommand(reg.commandFactories[btn.action.id]());
+                bool on = (action.kind == ActionKind.tool &&
+                           activeToolId == action.id);
+                bool isCommand = action.kind == ActionKind.command;
+                if (renderStyledButton(label, sc, on, isCommand, ImVec2(-1, 0))) {
+                    if (action.kind == ActionKind.tool)
+                        activateToolById(action.id);
+                    else if (!tryOpenArgsDialog(action.id))
+                        runCommand(reg.commandFactories[action.id]());
                 }
             }
 
