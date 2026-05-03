@@ -31,12 +31,13 @@ alias SphereEditFactory = MeshBevelEdit delegate();
 // modo_cl), not diameters as in prim.cube. MODO labels them "Radius X/Y/Z".
 // ---------------------------------------------------------------------------
 struct SphereParams {
-    int   method = 0;            // 0=globe, 1=qball, 2=tess (only Globe in 6.2)
+    int   method = 0;            // 0=globe, 1=qball, 2=tess
     float cenX  = 0.0f, cenY  = 0.0f, cenZ  = 0.0f;
     float sizeX = 0.5f, sizeY = 0.5f, sizeZ = 0.5f;  // radii; defaults give D=1
     int   sides    = 24;         // longitude segments (Globe)
     int   segments = 24;         // latitude segments (Globe)
-    int   axis     = 1;          // X=0, Y=1, Z=2 — pole axis
+    int   axis     = 1;          // X=0, Y=1, Z=2 — pole axis (Globe-only in MODO)
+    int   order    = 2;          // QuadBall / Tesselation subdivision level
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,119 @@ void buildSphereGlobe(Mesh* dst, const ref SphereParams p)
         fi.length = f.length;
         foreach (i, vi; f) fi[i] = vi + base;
         dst.addFace(fi);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// buildSphereQuadBall — cube-sphere primitive (MODO `prim.sphere method:qball`).
+//
+// Topology: each cube face is subdivided into (order+1)² quads, vertices
+// shared on edges and corners. For order >= 1, vertices are projected onto
+// the unit sphere via radial normalization; for order == 0 the result is
+// just a cube (no projection). The whole mesh is then scaled by an
+// order-specific MODO empirical factor and finally by per-axis sizes.
+//
+// MODO scale factors (size=1 → max coord magnitude). Verified against
+// modo_cl — these are NOT derivable from a clean closed form so we
+// hardcode them. Order beyond the table extrapolates via the last entry.
+//
+// `axis` does not apply to qball (MODO refuses `tool.attr axis` while
+// method=qball). The mesh is symmetric under cube-axis permutation, so
+// no rotation is needed.
+// ---------------------------------------------------------------------------
+private static immutable float[] QBALL_SCALE = [
+    1.30924f, 1.24533f, 1.14025f, 1.08108f,
+    1.05485f, 1.03842f, 1.02881f, 1.02249f,
+];
+
+void buildSphereQuadBall(Mesh* dst, const ref SphereParams p)
+{
+    int n = p.order;
+    if (n < 0) n = 0;
+
+    int nseg = n + 1;          // segments per cube edge
+    int nv1d = n + 2;          // verts along one cube edge
+
+    float scale = (n < cast(int)QBALL_SCALE.length)
+        ? QBALL_SCALE[n] : QBALL_SCALE[$ - 1];
+
+    // 6 cube faces. For each: origin (corner i=j=0), u-axis, v-axis.
+    // Choose u/v so u × v = outward normal — quads wound [00,10,11,01]
+    // then carry the right-handed outward normal automatically.
+    static immutable Vec3[3][6] FACES = [
+        // +X: origin (1,-1,-1), u=+Y, v=+Z   (Y × Z = +X)
+        [Vec3( 1, -1, -1), Vec3(0, 1, 0), Vec3(0, 0, 1)],
+        // -X: origin (-1,-1,-1), u=+Z, v=+Y  (Z × Y = -X)
+        [Vec3(-1, -1, -1), Vec3(0, 0, 1), Vec3(0, 1, 0)],
+        // +Y: origin (-1, 1,-1), u=+Z, v=+X  (Z × X = +Y)
+        [Vec3(-1,  1, -1), Vec3(0, 0, 1), Vec3(1, 0, 0)],
+        // -Y: origin (-1,-1,-1), u=+X, v=+Z  (X × Z = -Y)
+        [Vec3(-1, -1, -1), Vec3(1, 0, 0), Vec3(0, 0, 1)],
+        // +Z: origin (-1,-1, 1), u=+X, v=+Y  (X × Y = +Z)
+        [Vec3(-1, -1,  1), Vec3(1, 0, 0), Vec3(0, 1, 0)],
+        // -Z: origin (-1,-1,-1), u=+Y, v=+X  (Y × X = -Z)
+        [Vec3(-1, -1, -1), Vec3(0, 1, 0), Vec3(1, 0, 0)],
+    ];
+
+    // Dedupe vertices by quantized cube position (before projection).
+    // Shared edges/corners produce identical pre-projection positions
+    // across adjacent faces — round to a fine grid to look them up.
+    uint[ulong] lookup;
+    Vec3 cen = Vec3(p.cenX, p.cenY, p.cenZ);
+    enum float QUANT = 1e6f;
+
+    ulong key3(Vec3 q) {
+        // Pack (i,j,k) of rounded grid coords into a single 64-bit hash.
+        long ix = cast(long)(q.x * QUANT + (q.x >= 0 ? 0.5f : -0.5f));
+        long iy = cast(long)(q.y * QUANT + (q.y >= 0 ? 0.5f : -0.5f));
+        long iz = cast(long)(q.z * QUANT + (q.z >= 0 ? 0.5f : -0.5f));
+        // Mix into a 64-bit hash — simple FNV-style.
+        ulong h = 14695981039346656037UL;
+        h = (h ^ cast(ulong)ix) * 1099511628211UL;
+        h = (h ^ cast(ulong)iy) * 1099511628211UL;
+        h = (h ^ cast(ulong)iz) * 1099511628211UL;
+        return h;
+    }
+
+    uint addOrFind(Vec3 cubePos) {
+        ulong k = key3(cubePos);
+        if (auto p_idx = k in lookup) return *p_idx;
+        // Project to unit sphere (only for order >= 1; order 0 keeps cube).
+        Vec3 pos = cubePos;
+        if (n >= 1) {
+            float r = sqrt(pos.x*pos.x + pos.y*pos.y + pos.z*pos.z);
+            if (r > 1e-9f) pos = pos / r;
+        }
+        // MODO scale + per-axis sizing + center offset.
+        pos = Vec3(pos.x * scale * p.sizeX,
+                   pos.y * scale * p.sizeY,
+                   pos.z * scale * p.sizeZ) + cen;
+        uint idx = dst.addVertex(pos);
+        lookup[k] = idx;
+        return idx;
+    }
+
+    foreach (ref face; FACES) {
+        Vec3 origin = face[0];
+        Vec3 ua     = face[1];
+        Vec3 va     = face[2];
+        // Pre-fill grid of vertex indices for this face.
+        uint[][] grid;
+        grid.length = nv1d;
+        foreach (i; 0 .. nv1d) {
+            grid[i].length = nv1d;
+            foreach (j; 0 .. nv1d) {
+                float u = 2.0f * cast(float)i / cast(float)nseg;
+                float v = 2.0f * cast(float)j / cast(float)nseg;
+                Vec3 cubePos = origin + ua * u + va * v;
+                grid[i][j] = addOrFind(cubePos);
+            }
+        }
+        // Emit (nseg)² quads. Winding [00,10,11,01] gives outward normal.
+        foreach (i; 0 .. nseg)
+            foreach (j; 0 .. nseg)
+                dst.addFace([grid[i][j], grid[i + 1][j],
+                             grid[i + 1][j + 1], grid[i][j + 1]]);
     }
 }
 
@@ -291,7 +405,15 @@ public:
                  IntEnumEntry(1, "y", "Y"),
                  IntEnumEntry(2, "z", "Z")],
                 1),
+            Param.int_("order", "Subdivision Level", &params_.order, 2).min(0).max(16),
         ];
+    }
+
+    override bool paramEnabled(string name) const {
+        // sides / segments are Globe-only; order is QuadBall/Tesselation-only.
+        if (name == "sides" || name == "segments") return params_.method == 0;
+        if (name == "order")                       return params_.method != 0;
+        return true;
     }
 
     override void activate() {
@@ -352,10 +474,8 @@ public:
     }
 
     override bool applyHeadless() {
-        // Only Globe is wired up so far.
-        if (params_.method != 0) return false;
         Mesh fresh;
-        buildSphereGlobe(&fresh, params_);
+        if (!buildByMethod(&fresh)) return false;
         fresh.buildLoops();
         fresh.resetSelection();
         *mesh = fresh;
@@ -678,9 +798,9 @@ private:
     void rebuildPreview() {
         previewMesh.clear();
         if (sizeOnAxis(planeNormal) > 1e-9f && state >= SphereState.DrawingHeight)
-            buildSphereGlobe(&previewMesh, params_);
+            buildByMethod(&previewMesh);
         else
-            buildEllipseBase(&previewMesh, params_.sides, sphereCenter(),
+            buildEllipseBase(&previewMesh, ellipsePreviewSides(), sphereCenter(),
                              planeAxis1, sizeOnAxis(planeAxis1),
                              planeAxis2, sizeOnAxis(planeAxis2));
         previewMesh.buildLoops();
@@ -693,7 +813,7 @@ private:
     // BoxTool.commitBase / commitCuboid. Replacing would wipe any existing
     // geometry the user already built.
     void commitBase() {
-        buildEllipseBase(mesh, params_.sides, sphereCenter(),
+        buildEllipseBase(mesh, ellipsePreviewSides(), sphereCenter(),
                          planeAxis1, sizeOnAxis(planeAxis1),
                          planeAxis2, sizeOnAxis(planeAxis2));
         mesh.buildLoops();
@@ -702,10 +822,28 @@ private:
     }
 
     void commitSphere() {
-        buildSphereGlobe(mesh, params_);
+        buildByMethod(mesh);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
+    }
+
+    // Dispatch to the right generator based on params_.method.
+    // Returns false if method is unsupported (e.g. Tesselation in 6.3 phase).
+    bool buildByMethod(Mesh* dst) {
+        switch (params_.method) {
+            case 0: buildSphereGlobe(dst, params_);    return true;
+            case 1: buildSphereQuadBall(dst, params_); return true;
+            default:                                   return false;
+        }
+    }
+
+    // Sides count for the flat ellipse preview. Globe uses `sides`; QuadBall /
+    // Tesselation don't have an analogous concept, so just pick a reasonable
+    // default.
+    int ellipsePreviewSides() const {
+        if (params_.method == 0) return params_.sides;
+        return 24;
     }
 
     void commitSphereEdit(MeshSnapshot pre) {

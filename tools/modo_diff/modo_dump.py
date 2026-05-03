@@ -341,13 +341,24 @@ def main():
             tool = setup["tool"]
             params = setup.get("params", {})
             lx.eval('tool.set "%s" on 0' % tool)
-            for k, v in params.items():
+            # MODO 902 ships Python 2.x where dict iteration order is
+            # arbitrary. Some attributes (notably `method` / `axis`) gate
+            # the validity of others, so we always send `method` first when
+            # present, then everything else. ToolCache from a prior session
+            # can also leave the tool in an unexpected mode (e.g. qball
+            # disables `axis`); putting `method` first heals that.
+            ordered_keys = (["method"] if "method" in params else []) \
+                + [k for k in params if k != "method"]
+            for k in ordered_keys:
+                v = params[k]
                 if isinstance(v, bool):
-                    lx.eval('tool.attr %s %s %s' % (tool, k, "true" if v else "false"))
+                    cmd = 'tool.attr %s %s %s' % (tool, k, "true" if v else "false")
                 elif isinstance(v, (int, float)):
-                    lx.eval('tool.attr %s %s %g' % (tool, k, v))
+                    cmd = 'tool.attr %s %s %g' % (tool, k, v)
                 else:
-                    lx.eval('tool.attr %s %s "%s"' % (tool, k, v))
+                    cmd = 'tool.attr %s %s "%s"' % (tool, k, v)
+                log("attr:", cmd)
+                lx.eval(cmd)
             lx.eval("tool.doApply")
             lx.eval('tool.set "%s" off 0' % tool)
         else:

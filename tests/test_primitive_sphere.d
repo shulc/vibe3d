@@ -184,3 +184,33 @@ unittest { // JSON path produces same geometry as argstring
     assert(vA == 42, "expected 42 verts, got " ~ vA.to!string);
     assert(fA == 48, "expected 48 faces, got " ~ fA.to!string);
 }
+
+// -------------------------------------------------------------------------
+// 7. QuadBall counts at order 0..3
+//    Topology formula: 8 + 12*n + 6*n² verts, 6*(n+1)² faces.
+// -------------------------------------------------------------------------
+
+unittest { // QuadBall vertex/face counts across orders 0..3
+    static struct OrderCase { int order; size_t verts; size_t faces; }
+    OrderCase[] cases = [
+        OrderCase(0,  8,  6),
+        OrderCase(1, 26, 24),
+        OrderCase(2, 56, 54),
+        OrderCase(3, 98, 96),
+    ];
+    foreach (oc; cases) {
+        resetEmpty();
+        auto resp = primSphereArg("method:qball order:" ~ oc.order.to!string
+            ~ " sizeX:1.0 sizeY:1.0 sizeZ:1.0");
+        assert(resp["status"].str == "ok",
+            "qball order=" ~ oc.order.to!string ~ ": " ~ resp.toString);
+        auto m = getModel();
+        assert(m["vertices"].array.length == oc.verts,
+            "qball order=" ~ oc.order.to!string ~ ": expected "
+            ~ oc.verts.to!string ~ " verts, got "
+            ~ m["vertices"].array.length.to!string);
+        assert(m["faces"].array.length == oc.faces,
+            "qball order=" ~ oc.order.to!string ~ ": expected "
+            ~ oc.faces.to!string ~ " faces");
+    }
+}

@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.sphere qball order=0 — degenerate case, just a cube scaled by MODO factor 1.30924. 8v/6f.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method": "qball",
+      "cenX":   0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":  1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "order":  0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

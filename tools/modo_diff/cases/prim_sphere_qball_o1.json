@@ -1,0 +1,15 @@
+{
+  "_comment": "prim.sphere qball order=1 — 26v/24f. 6 cube faces × 2x2 quads, sphere radius = MODO factor 1.24533.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method": "qball",
+      "cenX":   0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":  1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "order":  1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
