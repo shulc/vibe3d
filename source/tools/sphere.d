@@ -559,9 +559,13 @@ public:
     }
 
     override bool paramEnabled(string name) const {
-        // sides / segments are Globe-only; order is QuadBall/Tesselation-only.
-        if (name == "sides" || name == "segments") return params_.method == 0;
-        if (name == "order")                       return params_.method != 0;
+        // sides / segments / axis are Globe-only (axis is rejected by MODO
+        // for QuadBall and Tesselation methods).
+        // order is QuadBall/Tesselation-only.
+        if (name == "sides" || name == "segments" || name == "axis")
+            return params_.method == 0;
+        if (name == "order")
+            return params_.method != 0;
         return true;
     }
 
