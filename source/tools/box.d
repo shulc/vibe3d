@@ -1803,6 +1803,12 @@ private:
     Vec3    heightDragStart; // world hit at second LMB press
     Vec3    baseAnchor;      // base centroid captured at DrawingHeight start
 
+    // Sticky modifier captured at LMB-down: Ctrl held at click → uniform
+    // cube drag (all three sizes equal). At first click, the click point
+    // anchors the cube center; at second click, the existing center stays
+    // and only the uniform extent updates.
+    bool    dragUniform;
+
     // Plane frame chosen at first click — persistent through the whole interaction.
     Vec3  planeNormal;
     Vec3  planeAxis1;
@@ -1912,7 +1918,10 @@ public:
 
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
-        if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;
+        // Alt / Shift remain reserved for camera. Ctrl is consumed here as
+        // "constrain drag to a uniform cube".
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+        bool ctrlAtClick = (mods & KMOD_CTRL) != 0;
 
         // Edge handle hit-test (BaseSet / HeightSet)
         if (state == BoxState.BaseSet || state == BoxState.HeightSet) {
@@ -1982,12 +1991,45 @@ public:
                 return false;
             startPoint   = hit;
             currentPoint = hit;
-            state        = BoxState.DrawingBase;
+            // Ctrl at the first click jumps straight into a 3D uniform cube
+            // (center = click point, drag = half-extent applied to all three
+            // axes), skipping the BaseSet → DrawingHeight stage. Otherwise
+            // fall through to the normal bbox-corner-to-corner drag.
+            dragUniform = ctrlAtClick;
+            if (dragUniform) {
+                params_.cenX = hit.x; params_.cenY = hit.y; params_.cenZ = hit.z;
+                params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
+            }
+            state = BoxState.DrawingBase;
             uploadBase();
             return true;
         }
 
         if (state == BoxState.BaseSet) {
+            // Ctrl at the second click keeps the existing cube center and
+            // re-drives all three sizes from the cursor's distance to that
+            // center (uniform half-extent). The flat base from the first
+            // drag is replaced by a 3D cube.
+            if (ctrlAtClick) {
+                baseAnchor = boxCenter();
+                Vec3 hit;
+                if (!rayPlaneIntersect(cachedVp.eye,
+                                       screenRay(e.x, e.y, cachedVp),
+                                       baseAnchor, planeNormal, hit))
+                    return false;
+                Vec3  d = hit - baseAnchor;
+                float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                params_.cenX = baseAnchor.x;
+                params_.cenY = baseAnchor.y;
+                params_.cenZ = baseAnchor.z;
+                params_.sizeX = 2.0f * r;
+                params_.sizeY = 2.0f * r;
+                params_.sizeZ = 2.0f * r;
+                dragUniform = true;
+                state = BoxState.DrawingHeight;
+                uploadCuboid();
+                return true;
+            }
             // Zero out height in params_ (the plane-normal axis size).
             writeSizeParam(planeNormal, 0.0f);
             setupHeightPlane();
@@ -1998,6 +2040,7 @@ public:
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
+            dragUniform = false;
             state = BoxState.DrawingHeight;
             uploadCuboid();
             return true;
@@ -2014,8 +2057,20 @@ public:
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) { heightHDragIdx = -1; return true; }
 
         if (state == BoxState.DrawingBase) {
-            // params_ was synced every frame during DrawingBase motion; just
-            // check the final sizes are non-degenerate before committing.
+            // Ctrl-uniform mode: the drag fully defined a 3D cube on its
+            // own — reject only zero-extent drags, then jump straight to
+            // the finalized state (skip BaseSet → DrawingHeight).
+            if (dragUniform) {
+                if (!(sizeAlong(planeAxis1) > 1e-5f)) {
+                    state = BoxState.Idle;
+                    return true;
+                }
+                state = BoxState.HeightSet;
+                uploadCuboid();
+                return true;
+            }
+            // Normal corner-to-corner flow: reject degenerate ellipses and
+            // otherwise wait for the second drag.
             // Also rejects NaN (NaN comparisons are false, so !(s > 1e-5f) catches NaN).
             float s1 = sizeAlong(planeAxis1);
             float s2 = sizeAlong(planeAxis2);
@@ -2141,13 +2196,36 @@ public:
                                   Vec3(0,0,0), planeNormal, hit))
             {
                 currentPoint = hit;
-                syncParamsFromBaseDrag();
+                if (dragUniform) syncParamsFromUniformDrag();
+                else             syncParamsFromBaseDrag();
                 uploadBase();
             }
             return true;
         }
 
         if (state == BoxState.DrawingHeight) {
+            // Ctrl-uniform: project cursor onto the construction plane
+            // through the cube center; cursor distance from baseAnchor
+            // becomes the new uniform half-extent for all three sizes.
+            // Center stays put.
+            if (dragUniform) {
+                Vec3 hit;
+                if (rayPlaneIntersect(cachedVp.eye,
+                                      screenRay(e.x, e.y, cachedVp),
+                                      baseAnchor, planeNormal, hit))
+                {
+                    Vec3  d = hit - baseAnchor;
+                    float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                    params_.cenX = baseAnchor.x;
+                    params_.cenY = baseAnchor.y;
+                    params_.cenZ = baseAnchor.z;
+                    params_.sizeX = 2.0f * r;
+                    params_.sizeY = 2.0f * r;
+                    params_.sizeZ = 2.0f * r;
+                    uploadCuboid();
+                }
+                return true;
+            }
             Vec3 hit;
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
@@ -2371,6 +2449,22 @@ private:
         writeSizeParam(planeAxis1, d1);
         writeSizeParam(planeAxis2, d2);
         // planeNormal axis intentionally stays 0 → plane mode.
+    }
+
+    // Ctrl-at-first-click shortcut: center stays at the click point and the
+    // distance from start to current on the construction plane becomes the
+    // half-extent for all three axes (full size = 2× drag length). The
+    // resulting cube is volumetric from frame one — DrawingBase preview
+    // immediately shows a 3D cuboid instead of a flat rectangle.
+    void syncParamsFromUniformDrag() {
+        Vec3  d = currentPoint - startPoint;
+        float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        params_.cenX = startPoint.x;
+        params_.cenY = startPoint.y;
+        params_.cenZ = startPoint.z;
+        params_.sizeX = 2.0f * r;
+        params_.sizeY = 2.0f * r;
+        params_.sizeZ = 2.0f * r;
     }
 
     // -----------------------------------------------------------------------
