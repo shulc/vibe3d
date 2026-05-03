@@ -33,6 +33,7 @@ import tools.move;
 import tools.scale;
 import tools.rotate;
 import tools.box;
+import tools.sphere;
 import tools.bevel;
 
 import commands.select.connect;
@@ -515,6 +516,13 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh, cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.cube", reg.toolFactories["prim.cube"]);
+
+    reg.toolFactories["prim.sphere"] = () => cast(Tool)
+        new SphereTool(&mesh, &gpu);
+    reg.commandFactories["prim.sphere"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh, cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.sphere", reg.toolFactories["prim.sphere"]);
 
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands

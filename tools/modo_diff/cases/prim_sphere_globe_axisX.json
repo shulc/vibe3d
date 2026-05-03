@@ -1,0 +1,17 @@
+{
+  "_comment": "prim.sphere globe sides=6 segments=4 axis=X. Tests cyclic-permutation pole orientation.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method":   "globe",
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    6,
+      "segments": 4,
+      "axis":     0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

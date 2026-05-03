@@ -1,0 +1,17 @@
+{
+  "_comment": "prim.sphere globe sides=8 segments=6 unit radius. Mid-density topology check.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method":   "globe",
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    8,
+      "segments": 6,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

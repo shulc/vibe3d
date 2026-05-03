@@ -1,0 +1,17 @@
+{
+  "_comment": "prim.sphere globe at off-center (1,2,3) — tests cen translation independent of axis swap.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.sphere",
+    "params": {
+      "method":   "globe",
+      "cenX":     1.0, "cenY": 2.0, "cenZ": 3.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    6,
+      "segments": 4,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
