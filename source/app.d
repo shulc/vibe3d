@@ -643,8 +643,9 @@ void main(string[] args) {
         new HistoryShow(&mesh, cameraView, editMode,
                         () { showHistoryPanel = !showHistoryPanel; });
 
-    Panel[]       panels    = loadButtons("config/buttons.yaml");
-    ShortcutTable shortcuts = loadShortcuts("config/shortcuts.yaml");
+    Panel[]       panels        = loadButtons("config/buttons.yaml");
+    Button[]      statusLineBtns = loadStatusLine("config/statusline.yaml");
+    ShortcutTable shortcuts      = loadShortcuts("config/shortcuts.yaml");
 
     // Validate: every action id (including modifier variants) must exist in
     // the registry. For script actions, validate the first token of each
@@ -677,16 +678,20 @@ void main(string[] args) {
                     break;
             }
         }
-        foreach (ref p; panels) {
-            foreach (ref btn; allButtons(p)) {
-                check(btn.action);
-                if (btn.ctrl.present)  check(btn.ctrl.action);
-                if (btn.alt.present)   check(btn.alt.action);
-                if (btn.shift.present) check(btn.shift.action);
-            }
+        void checkButton(ref Button btn) {
+            check(btn.action);
+            if (btn.ctrl.present)  check(btn.ctrl.action);
+            if (btn.alt.present)   check(btn.alt.action);
+            if (btn.shift.present) check(btn.shift.action);
         }
+        foreach (ref p; panels)
+            foreach (ref btn; allButtons(p))
+                checkButton(btn);
+        foreach (ref btn; statusLineBtns)
+            checkButton(btn);
         if (missing.data.length > 0)
-            throw new Exception("buttons.yaml references unknown ids:" ~ missing.data);
+            throw new Exception("buttons.yaml/statusline.yaml references unknown ids:"
+                                ~ missing.data);
     }
     // Validate shortcut tool/command ids.
     {
@@ -2176,22 +2181,96 @@ void main(string[] args) {
             pushButtonBarStyle();
             scope(exit) popButtonBarStyle();
 
-            void renderModeButton(string label, string modeId, EditMode mode, float w) {
-                auto sp = modeId in shortcuts.byEditMode;
-                string sc = sp ? sp.display() : "";
-                bool on = (editMode == mode);
-                if (renderStyledButton(label, sc, on, /*isCommand=*/true, ImVec2(w, 0))) {
-                    setActiveTool(null);
-                    editMode = mode;
+            // Render the YAML-driven status row. Each entry's first script
+            // line determines (a) the keyboard shortcut hint via byEditMode
+            // and (b) the "active" highlight, by parsing
+            // `select.typeFrom <vertex|edge|polygon>` and matching against
+            // the live editMode.
+            import argstring : parseArgstring;
+            enum float btnW = 85.0f;
+            foreach (i, ref btn; statusLineBtns) {
+                if (i > 0) ImGui.SameLine();
+                // ImGui derives widget IDs from label text, so when modifier
+                // overrides give all three buttons the same label (e.g.
+                // "Convert" while Alt is held) the second and third would
+                // collapse onto the first's ID and stop clicking. Push the
+                // index to keep IDs unique.
+                ImGui.PushID(cast(int)i);
+                scope(exit) ImGui.PopID();
+
+                // Variant select (ctrl/alt/shift) — same convention as
+                // side-panel buttons.
+                SDL_Keymod mods = SDL_GetModState();
+                string label  = btn.label;
+                Action action = btn.action;
+                if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
+                    label = btn.ctrl.label;  action = btn.ctrl.action;
+                }
+                else if (btn.alt.present   && (mods & KMOD_ALT))   {
+                    label = btn.alt.label;   action = btn.alt.action;
+                }
+                else if (btn.shift.present && (mods & KMOD_SHIFT)) {
+                    label = btn.shift.label; action = btn.shift.action;
+                }
+
+                // Detect select.typeFrom <type> in the action's first line
+                // for shortcut display + on-highlight. Positional args land
+                // in params["_positional"] as a JSON array.
+                string editModeId;
+                if (action.kind == ActionKind.script
+                    && action.scriptLines.length > 0)
+                {
+                    auto parsed = parseArgstring(action.scriptLines[0]);
+                    if (!parsed.isEmpty
+                        && parsed.commandId == "select.typeFrom"
+                        && "_positional" in parsed.params
+                        && parsed.params["_positional"].type == JSONType.array
+                        && parsed.params["_positional"].array.length > 0
+                        && parsed.params["_positional"].array[0].type == JSONType.string)
+                    {
+                        string t = parsed.params["_positional"].array[0].str;
+                        if      (t == "vertex")  editModeId = "vertices";
+                        else if (t == "edge")    editModeId = "edges";
+                        else if (t == "polygon") editModeId = "polygons";
+                    }
+                }
+                string sc;
+                if (editModeId.length > 0) {
+                    if (auto sp = editModeId in shortcuts.byEditMode) sc = sp.display();
+                }
+                bool on = (editModeId == "vertices" && editMode == EditMode.Vertices)
+                       || (editModeId == "edges"    && editMode == EditMode.Edges)
+                       || (editModeId == "polygons" && editMode == EditMode.Polygons);
+
+                if (renderStyledButton(label, sc, on, /*isCommand=*/true,
+                                       ImVec2(btnW, 0))) {
+                    final switch (action.kind) {
+                        case ActionKind.tool:
+                            activateToolById(action.id);
+                            break;
+                        case ActionKind.command:
+                            if (!tryOpenArgsDialog(action.id))
+                                runCommand(reg.commandFactories[action.id]());
+                            break;
+                        case ActionKind.script:
+                            // typeFrom doesn't go through the args dialog —
+                            // dispatch each line via the same path as
+                            // /api/command argstring bodies.
+                            foreach (line; action.scriptLines) {
+                                auto p2 = parseArgstring(line);
+                                if (p2.isEmpty) continue;
+                                if (commandHandlerDelegate !is null)
+                                    commandHandlerDelegate(p2.commandId,
+                                                            p2.params.toString());
+                            }
+                            // Activating an edit mode is conceptually a
+                            // tool change — drop any sticky tool too.
+                            if (editModeId.length > 0)
+                                setActiveTool(null);
+                            break;
+                    }
                 }
             }
-
-            enum float btnW = 85.0f;
-            renderModeButton("Vertices", "vertices", EditMode.Vertices, btnW);
-            ImGui.SameLine();
-            renderModeButton("Edges",    "edges",    EditMode.Edges,    btnW);
-            ImGui.SameLine();
-            renderModeButton("Polygons", "polygons", EditMode.Polygons, btnW);
         }
         ImGui.End();
         popPanelChromeStyle();

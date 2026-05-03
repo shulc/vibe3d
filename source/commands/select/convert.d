@@ -11,11 +11,12 @@ import editmode;
 /// element type, then switches EditMode to that type and clears the old
 /// selection.
 ///
-/// Conversion rules (matches MODO semantics):
+/// Conversion rules (matches MODO semantics — verified against modo_cl):
 ///   vertex  → edge:    select edges where BOTH endpoints are selected.
 ///   vertex  → polygon: select polygons where ALL vertices are selected.
 ///   edge    → vertex:  select the endpoints of every selected edge.
-///   edge    → polygon: select polygons that share at least one selected edge.
+///   edge    → polygon: select polygons where ALL edges are selected
+///                      ("polygons completely surrounded by selected edges").
 ///   polygon → vertex:  select all vertices of selected polygons.
 ///   polygon → edge:    select all edges of selected polygons.
 ///
@@ -139,14 +140,32 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // edge → polygon: select polys with at least one selected edge.
+    // edge → polygon: select polys where ALL edges are selected (matches
+    // MODO — "polygon completely surrounded by selected edges"). The earlier
+    // "any one selected edge" rule meant convert poly→edge→poly added the
+    // four neighbouring faces; the ALL rule round-trips back to the source.
     // -----------------------------------------------------------------------
     void edgeToPoly() {
         bool[] newSel = new bool[](mesh.faces.length);
-        foreach (ei, sel; mesh.selectedEdges) {
-            if (!sel) continue;
-            foreach (fi; mesh.facesAroundEdge(cast(uint)ei))
-                if (fi < newSel.length) newSel[fi] = true;
+        foreach (fi, face; mesh.faces) {
+            if (face.length == 0) continue;
+            bool allSel = true;
+            foreach (k; 0 .. face.length) {
+                uint a = face[k];
+                uint b = face[(k + 1) % face.length];
+                bool found = false;
+                foreach (ei; mesh.edgesAroundVertex(a)) {
+                    auto e = mesh.edges[ei];
+                    if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) {
+                        if (ei < mesh.selectedEdges.length
+                            && mesh.selectedEdges[ei])
+                            found = true;
+                        break;
+                    }
+                }
+                if (!found) { allSel = false; break; }
+            }
+            if (allSel) newSel[fi] = true;
         }
         mesh.clearEdgeSelection();
         mesh.clearFaceSelection();

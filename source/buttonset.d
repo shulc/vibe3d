@@ -121,6 +121,31 @@ Panel[] loadButtons(string path) {
 }
 
 // ---------------------------------------------------------------------------
+// Load config/statusline.yaml — flat horizontal row of buttons rendered in
+// the bottom status bar. Same per-button schema as buttons.yaml entries.
+// Top-level YAML key: `buttons:`.
+// ---------------------------------------------------------------------------
+
+Button[] loadStatusLine(string path) {
+    import dyaml;
+
+    Node root;
+    try {
+        root = Loader.fromFile(path).load();
+    } catch (Exception e) {
+        throw new Exception(format("statusline: failed to load '%s': %s", path, e.msg));
+    }
+
+    if (!root.containsKey("buttons"))
+        throw new Exception(format("statusline: '%s' missing top-level 'buttons' key", path));
+
+    Button[] buttons;
+    foreach (Node btnNode; root["buttons"])
+        buttons ~= parseButton(btnNode, "<statusline>", "", path);
+    return buttons;
+}
+
+// ---------------------------------------------------------------------------
 // Helper: flatten all buttons in a panel (used by startup validation).
 // ---------------------------------------------------------------------------
 

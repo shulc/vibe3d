@@ -279,17 +279,35 @@ unittest { // convert edge→vertex selects both endpoints
     assertSet(selectedEdges(), [], "convert edge→vert: edge selection cleared");
 }
 
-// edge → polygon: faces adjacent to edge 0 ([0,3]): back (f0) and left (f2)
-unittest { // convert edge→polygon selects incident faces
+// edge → polygon (MODO ALL rule): face is selected only when every one of
+// its edges is in the current edge selection.
+unittest { // convert edge→poly with ALL edges of f0 → f0 selected (round-trip)
     resetCube();
-    postSelect("edges", [0]);     // edge 0 = [0, 3] — shared by back f0 and left f2
+    // f0 = [0, 3, 2, 1] — its 4 edges are 0:[0,3], 1:[3,2], 2:[2,1], 3:[1,0]
+    postSelect("edges", [0, 1, 2, 3]);
     postCommand("select.convert polygon");
     assert(editMode() == "polygons",
         "convert edge→poly: mode should be polygons, got " ~ editMode());
-    auto faces = selectedFaces();
-    assert(faces.canFind(0) && faces.canFind(2),
-        "convert edge→poly: expected f0 and f2, got " ~ faces.to!string);
+    assertSet(selectedFaces(), [0],
+        "convert edge→poly with all f0 edges: only f0 should be selected");
     assertSet(selectedEdges(), [], "convert edge→poly: edge selection cleared");
+}
+
+unittest { // convert edge→poly with ONLY ONE edge → no face selected (ALL rule)
+    resetCube();
+    postSelect("edges", [0]);   // edge 0 alone is not enough for any face
+    postCommand("select.convert polygon");
+    assertSet(selectedFaces(), [],
+        "convert edge→poly with single edge: no face should be selected under MODO ALL rule");
+}
+
+unittest { // poly → edge → poly round-trip preserves the original face
+    resetCube();
+    postSelect("polygons", [0]);
+    postCommand("select.convert edge");      // f0 → its 4 edges
+    postCommand("select.convert polygon");   // those 4 edges → f0 only
+    assertSet(selectedFaces(), [0],
+        "poly→edge→poly round-trip: should land on the original face only");
 }
 
 // polygon → vertex: face 0 = back [0,3,2,1]
