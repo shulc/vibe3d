@@ -1784,23 +1784,23 @@ private:
 
     BoxState  state;
 
-    // Headless/scripted invocation parameters (phase 6.1a).
-    // Not automatically synced with the interactive drag state — these are
-    // the MODO-aligned schema fields used by applyHeadless() only.
+    // params_ is the single source of truth for all box geometry.
+    // All drag handlers write into params_; rendering and handle positions
+    // are derived from params_ on demand.
     BoxParams params_;
 
-    // Base rectangle (axis-aligned on the most-facing plane)
+    // Ephemeral drag anchors — valid only during active drag phases:
+    //   startPoint / currentPoint : valid during DrawingBase only.
+    //   heightDragStart / baseAnchor : valid during DrawingHeight and heightH re-drag.
+    //   hpOrigin / hpn : valid during DrawingHeight and heightH re-drag.
     Vec3    startPoint;
     Vec3    currentPoint;
-    Vec3[4] baseCorners;
+    Vec3    hpn;
+    Vec3    hpOrigin;        // plane origin for height ray-plane intersect (drag anchor)
+    Vec3    heightDragStart; // world hit at second LMB press
+    Vec3    baseAnchor;      // base centroid captured at DrawingHeight start
 
-    // Height extrusion
-    float height;
-    Vec3  hpn;
-    Vec3  hpOrigin;       // base centroid, origin of height plane
-    Vec3  heightDragStart; // world hit at second LMB press
-
-    // Plane chosen at first click
+    // Plane frame chosen at first click — persistent through the whole interaction.
     Vec3  planeNormal;
     Vec3  planeAxis1;
     Vec3  planeAxis2;
@@ -1869,7 +1869,6 @@ public:
         edgeDragIdx     = -1;
         heightHDragIdx  = -1;
         heightHHovered  = false;
-        height          = 0.0f;
         previewGpu.init();
     }
 
@@ -1878,14 +1877,14 @@ public:
         // pre-commit snapshot ONLY when we're about to mutate the cage,
         // so an empty Idle deactivate doesn't pollute the undo stack.
         bool willCommit = (state == BoxState.BaseSet)
-                       || (state >= BoxState.DrawingHeight && abs(height) > 1e-5f);
+                       || (state >= BoxState.DrawingHeight && abs(currentHeight()) > 1e-5f);
 
         MeshSnapshot pre;
         if (willCommit) pre = MeshSnapshot.capture(*mesh);
 
         if (state == BoxState.BaseSet)
             commitBase();
-        else if (state >= BoxState.DrawingHeight && abs(height) > 1e-5f)
+        else if (state >= BoxState.DrawingHeight && abs(currentHeight()) > 1e-5f)
             commitCuboid();
         state = BoxState.Idle;
         previewGpu.destroy();
@@ -1933,6 +1932,14 @@ public:
             heightHHitIdx = 1;
         if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHHitIdx >= 0) {
             heightHDragIdx = heightHHitIdx;
+            if (state == BoxState.BaseSet) {
+                // Transition from BaseSet → DrawingHeight via bottom handle.
+                // Zero out height in params_ (the plane-normal axis size) before
+                // setting up the height plane so hpOrigin is at the correct position.
+                writeSizeParam(planeNormal, 0.0f);
+            }
+            // Capture base anchor before setupHeightPlane (baseCentroid() is correct now).
+            baseAnchor = baseCentroid();
             setupHeightPlane();
             Vec3 hhit;
             bool hhitOk = rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
@@ -1940,15 +1947,14 @@ public:
             if (heightHHitIdx == 1) {
                 // Top handle: non-incremental drag; anchor so current height is preserved.
                 heightDragStart = hhitOk
-                    ? hhit - planeNormal * height
+                    ? hhit - planeNormal * currentHeight()
                     : hpOrigin;
             } else {
                 // Bottom handle: incremental drag; anchor at the current hit point.
                 heightDragStart = hhitOk ? hhit : hpOrigin;
             }
             if (state == BoxState.BaseSet) {
-                height = 0.0f;
-                state  = BoxState.DrawingHeight;
+                state = BoxState.DrawingHeight;
             }
             uploadCuboid();
             return true;
@@ -1979,8 +1985,10 @@ public:
         }
 
         if (state == BoxState.BaseSet) {
-            height = 0.0f;
+            // Zero out height in params_ (the plane-normal axis size).
+            writeSizeParam(planeNormal, 0.0f);
             setupHeightPlane();
+            baseAnchor = baseCentroid();
             Vec3 hit;
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
@@ -2003,12 +2011,12 @@ public:
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) { heightHDragIdx = -1; return true; }
 
         if (state == BoxState.DrawingBase) {
-            computeBaseCorners();
-            Vec3 d = currentPoint - startPoint;
-            float dd1 = dot(d, planeAxis1);
-            float dd2 = dot(d, planeAxis2);
-            // Also rejects NaN (NaN comparisons are false, so !(dd1 > 1e-5f) catches NaN).
-            if (!(abs(dd1) > 1e-5f) || !(abs(dd2) > 1e-5f)) {
+            // params_ was synced every frame during DrawingBase motion; just
+            // check the final sizes are non-degenerate before committing.
+            // Also rejects NaN (NaN comparisons are false, so !(s > 1e-5f) catches NaN).
+            float s1 = sizeAlong(planeAxis1);
+            float s2 = sizeAlong(planeAxis2);
+            if (!(s1 > 1e-5f) || !(s2 > 1e-5f)) {
                 state = BoxState.Idle;
                 return true;
             }
@@ -2058,18 +2066,29 @@ public:
                                   hpOrigin, hpn, hit))
             {
                 if (heightHDragIdx == 1) {
-                    // Top handle: move top face, base stays.
-                    height = dot(hit - heightDragStart, planeNormal);
+                    // Top handle: move top face, base stays (non-incremental).
+                    // baseAnchor holds the base centroid captured at drag start.
+                    float newH = dot(hit - heightDragStart, planeNormal);
+                    if (newH < 0.0f) newH = 0.0f;
+                    Vec3 newCen = baseAnchor + planeNormal * (newH * 0.5f);
+                    params_.cenX = newCen.x;
+                    params_.cenY = newCen.y;
+                    params_.cenZ = newCen.z;
+                    writeSizeParam(planeNormal, newH);
                 } else {
-                    // Bottom handle: move base, top face stays.
-                    // Incremental delta so the top face world position is preserved.
+                    // Bottom handle: move base, top face stays (incremental).
                     float delta = dot(hit - heightDragStart, planeNormal);
-                    Vec3  d     = planeNormal * delta;
-                    startPoint   += d;
-                    currentPoint += d;
-                    hpOrigin     += d;
-                    foreach (ref c; baseCorners) c += d;
-                    height      -= delta;
+                    float oldH  = currentHeight();
+                    float newH  = oldH - delta;
+                    if (newH < 0.0f) { delta = oldH; newH = 0.0f; }
+                    // cen' = cen + planeNormal*(delta/2); size' = size - delta.
+                    Vec3 cenDelta = planeNormal * (delta * 0.5f);
+                    params_.cenX += cenDelta.x;
+                    params_.cenY += cenDelta.y;
+                    params_.cenZ += cenDelta.z;
+                    writeSizeParam(planeNormal, newH);
+                    // Advance height plane origin along with the base.
+                    hpOrigin     += planeNormal * delta;
                     heightDragStart = hit; // incremental: advance anchor each frame
                 }
                 uploadCuboid();
@@ -2098,6 +2117,7 @@ public:
                                   Vec3(0,0,0), planeNormal, hit))
             {
                 currentPoint = hit;
+                syncParamsFromBaseDrag();
                 uploadBase();
             }
             return true;
@@ -2108,7 +2128,13 @@ public:
             if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                   hpOrigin, hpn, hit))
             {
-                height = dot(hit - heightDragStart, planeNormal);
+                float newH = dot(hit - heightDragStart, planeNormal);
+                if (newH < 0.0f) newH = 0.0f;
+                Vec3 newCen = baseAnchor + planeNormal * (newH * 0.5f);
+                params_.cenX = newCen.x;
+                params_.cenY = newCen.y;
+                params_.cenZ = newCen.z;
+                writeSizeParam(planeNormal, newH);
                 uploadCuboid();
             }
             return true;
@@ -2259,15 +2285,77 @@ public:
     }
 
 private:
-    // Center of the current box shape (base centroid shifted by half height).
-    Vec3 boxCenter() const {
-        Vec3 c = baseCentroid();
-        if (state >= BoxState.DrawingHeight)
-            c = c + planeNormal * (height * 0.5f);
+    // -----------------------------------------------------------------------
+    // Helpers that derive geometry from params_ (single source of truth).
+    // -----------------------------------------------------------------------
+
+    // Box center == params_ center (always).
+    Vec3 cenVec() const {
+        return Vec3(params_.cenX, params_.cenY, params_.cenZ);
+    }
+
+    // Size stored in params_ along the given world axis (one of ±X/Y/Z).
+    float sizeAlong(Vec3 axisVec) const {
+        if (abs(axisVec.x) > 0.5f) return params_.sizeX;
+        if (abs(axisVec.y) > 0.5f) return params_.sizeY;
+        return params_.sizeZ;
+    }
+
+    // Height of the cuboid along planeNormal (params_.size for that axis).
+    float currentHeight() const { return sizeAlong(planeNormal); }
+
+    // Base centroid: center offset downward along planeNormal by half height.
+    Vec3 baseCentroid() const {
+        return cenVec() - planeNormal * (currentHeight() * 0.5f);
+    }
+
+    // Four corners of the base rectangle derived from params_.
+    Vec3[4] computedBaseCorners() const {
+        Vec3 bc  = baseCentroid();
+        float s1 = sizeAlong(planeAxis1);
+        float s2 = sizeAlong(planeAxis2);
+        Vec3 a   = planeAxis1 * (s1 * 0.5f);
+        Vec3 b   = planeAxis2 * (s2 * 0.5f);
+        Vec3[4] c;
+        c[0] = bc - a - b;
+        c[1] = bc + a - b;
+        c[2] = bc + a + b;
+        c[3] = bc - a + b;
         return c;
     }
 
+    // Write a magnitude into the params_ size field matching the given world axis.
+    void writeSizeParam(Vec3 axisVec, float magnitude) {
+        float v = abs(magnitude);
+        if      (abs(axisVec.x) > 0.5f) params_.sizeX = v;
+        else if (abs(axisVec.y) > 0.5f) params_.sizeY = v;
+        else                             params_.sizeZ = v;
+    }
+
+    // Sync params_ from startPoint/currentPoint after a DrawingBase motion frame.
+    // The plane-normal axis size is left at 0 (plane mode until height drag).
+    void syncParamsFromBaseDrag() {
+        Vec3  d  = currentPoint - startPoint;
+        float d1 = dot(d, planeAxis1);
+        float d2 = dot(d, planeAxis2);
+        Vec3  cen = (startPoint + currentPoint) * 0.5f;
+        params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
+        params_.sizeX = 0.0f; params_.sizeY = 0.0f; params_.sizeZ = 0.0f;
+        writeSizeParam(planeAxis1, d1);
+        writeSizeParam(planeAxis2, d2);
+        // planeNormal axis intentionally stays 0 → plane mode.
+    }
+
+    // -----------------------------------------------------------------------
+    // Gizmo center.
+    // -----------------------------------------------------------------------
+
+    // mover sits at the box center = params_ center.
+    Vec3 boxCenter() const { return cenVec(); }
+
+    // -----------------------------------------------------------------------
     // Hit-test axis arrows (0/1/2) and centerBox (3).
+    // -----------------------------------------------------------------------
     int moverHitTest(int mx, int my) {
         import handler : Arrow;
         if (mover.centerBox.hitTest(mx, my, cachedVp)) return 3;
@@ -2285,13 +2373,11 @@ private:
         return -1;
     }
 
-    // Apply world-space delta to all box geometry.
+    // Apply world-space delta to box by updating params_ center.
     void applyMoverDelta(Vec3 d) {
-        startPoint      = startPoint      + d;
-        currentPoint    = currentPoint    + d;
-        hpOrigin        = hpOrigin        + d;
-        heightDragStart = heightDragStart + d;
-        foreach (ref c; baseCorners) c = c + d;
+        params_.cenX += d.x;
+        params_.cenY += d.y;
+        params_.cenZ += d.z;
         uploadPreview();
     }
 
@@ -2302,12 +2388,12 @@ private:
         return Vec3(0.2f, 0.2f, 0.9f);
     }
 
-    // Update height handles.
-    // [0] = bottom face center (baseCentroid), always.
-    // [1] = top face center (baseCentroid + height), DrawingHeight/HeightSet only.
+    // Update height handles — positions derived from params_.
+    // [0] = base centroid (bottom face center).
+    // [1] = base centroid + planeNormal * currentHeight() (top face center).
     void updateHeightHandler(const ref Viewport vp) {
         Vec3 bot = baseCentroid();
-        Vec3 top = bot + planeNormal * height;
+        Vec3 top = bot + planeNormal * currentHeight();
         Vec3[2] pts = [bot, top];
         foreach (i; 0 .. 2) {
             heightH[i].pos   = pts[i];
@@ -2316,18 +2402,19 @@ private:
         }
     }
 
-    // Update edge handler positions, sizes and colors.
-    // BaseSet            → midpoints of base edges.
-    // DrawingHeight/HeightSet → centers of the 4 side faces (edge midpoints + half height).
+    // Update edge handler positions — derived from computedBaseCorners().
+    // BaseSet: midpoints of base edges.
+    // DrawingHeight/HeightSet: centers of the 4 side faces (midpoint + halfH).
     void updateEdgeHandlers(const ref Viewport vp) {
+        Vec3[4] corners = computedBaseCorners();
         Vec3 halfH = (state >= BoxState.DrawingHeight)
-            ? planeNormal * (height * 0.5f)
+            ? planeNormal * (currentHeight() * 0.5f)
             : Vec3(0, 0, 0);
 
         static immutable int[4][4] edgePairs = [[0,1],[1,2],[2,3],[3,0]];
         Vec3[4] mids;
         foreach (i, pair; edgePairs)
-            mids[i] = (baseCorners[pair[0]] + baseCorners[pair[1]]) * 0.5f + halfH;
+            mids[i] = (corners[pair[0]] + corners[pair[1]]) * 0.5f + halfH;
 
         Vec3[4] colors = [axisColor(planeAxis2), axisColor(planeAxis1),
                           axisColor(planeAxis2), axisColor(planeAxis1)];
@@ -2340,18 +2427,47 @@ private:
     }
 
     // Move one edge of the base rectangle along its perpendicular axis.
-    // Edge 0 (corners 0,1): shift startPoint along axis2
-    // Edge 1 (corners 1,2): extend currentPoint along axis1
-    // Edge 2 (corners 2,3): extend currentPoint along axis2
-    // Edge 3 (corners 3,0): shift startPoint along axis1
+    // Each edge moves along either planeAxis1 or planeAxis2; the opposite
+    // edge stays fixed, so only the moved edge's world-axis size+center changes.
+    //
+    // Edge mapping (corners 0=(-a,-b), 1=(+a,-b), 2=(+a,+b), 3=(-a,+b)):
+    //   Edge 0 (0,1): south edge → moves along -planeAxis2 (signed by delta projection)
+    //   Edge 1 (1,2): east  edge → moves along +planeAxis1
+    //   Edge 2 (2,3): north edge → moves along +planeAxis2
+    //   Edge 3 (3,0): west  edge → moves along -planeAxis1
+    //
+    // For an edge moving along `moveAxis` by signed scalar `d`:
+    //   The moved edge shifts by d; opposite stays. Center shifts by d/2;
+    //   size changes by abs(d) (one side only).
+    //   Precisely: newSize = oldSize + d*sign; newCen = oldCen + moveAxis*(d/2).
     void applyEdgeDelta(int idx, Vec3 delta) {
-        switch (idx) {
-            case 0: startPoint   = startPoint   + planeAxis2 * dot(delta, planeAxis2); break;
-            case 1: currentPoint = currentPoint + planeAxis1 * dot(delta, planeAxis1); break;
-            case 2: currentPoint = currentPoint + planeAxis2 * dot(delta, planeAxis2); break;
-            case 3: startPoint   = startPoint   + planeAxis1 * dot(delta, planeAxis1); break;
-            default: break;
+        // Determine which world axis this edge moves along and the sign convention.
+        //   Edge 0 → planeAxis2, sign = -1 (south edge: + delta means "shrink" from south side)
+        //   Edge 1 → planeAxis1, sign = +1
+        //   Edge 2 → planeAxis2, sign = +1
+        //   Edge 3 → planeAxis1, sign = -1
+        Vec3  moveAxis;
+        float sign;
+        final switch (idx) {
+            case 0: moveAxis = planeAxis2; sign = -1.0f; break;
+            case 1: moveAxis = planeAxis1; sign = +1.0f; break;
+            case 2: moveAxis = planeAxis2; sign = +1.0f; break;
+            case 3: moveAxis = planeAxis1; sign = -1.0f; break;
         }
+
+        float d       = dot(delta, moveAxis) * sign;
+        float oldSize = sizeAlong(moveAxis);
+        float newSize = oldSize + d;
+        if (newSize < 0.0f) newSize = 0.0f;
+        float actualD = (newSize - oldSize) * sign; // may be clamped
+
+        writeSizeParam(moveAxis, newSize);
+        // Center shifts by half the actual edge movement.
+        Vec3 cenShift = moveAxis * (actualD * 0.5f);
+        params_.cenX += cenShift.x;
+        params_.cenY += cenShift.y;
+        params_.cenZ += cenShift.z;
+
         uploadPreview();
     }
 
@@ -2362,51 +2478,16 @@ private:
         planeAxis2  = bp.axis2;
     }
 
-    void computeBaseCorners() {
-        Vec3  d  = currentPoint - startPoint;
-        float d1 = dot(d, planeAxis1);
-        float d2 = dot(d, planeAxis2);
-        baseCorners[0] = startPoint;
-        baseCorners[1] = startPoint   + planeAxis1 * d1;
-        baseCorners[2] = baseCorners[1] + planeAxis2 * d2;
-        baseCorners[3] = startPoint     + planeAxis2 * d2;
-    }
-
+    // Build a preview/commit mesh directly from params_ (no sync needed).
     void buildBase(Mesh* m) {
-        // Map interactive base drag → axis-aligned BoxParams with the
-        // plane-normal axis size left at 0 (plane mode). Then delegate to
-        // buildCuboidParametric so the same subdivision/segments path
-        // applies to base preview as to evaluate() (segments slider).
-        // Without this sync, evaluate() during BaseSet would build from
-        // default params_ (1×1×1 at origin) instead of the drag rectangle.
-        computeBaseCorners();
-        Vec3  d  = currentPoint - startPoint;
-        float d1 = dot(d, planeAxis1);
-        float d2 = dot(d, planeAxis2);
-        Vec3  cen = baseCentroid();
-
-        BoxParams p = params_;
-        p.cenX = cen.x; p.cenY = cen.y; p.cenZ = cen.z;
-        p.sizeX = 0.0f; p.sizeY = 0.0f; p.sizeZ = 0.0f;
-        void writeSize(Vec3 axisVec, float magnitude) {
-            if      (abs(axisVec.x) > 0.5f) p.sizeX = abs(magnitude);
-            else if (abs(axisVec.y) > 0.5f) p.sizeY = abs(magnitude);
-            else if (abs(axisVec.z) > 0.5f) p.sizeZ = abs(magnitude);
-        }
-        writeSize(planeAxis1, d1);
-        writeSize(planeAxis2, d2);
-        // planeNormal axis intentionally NOT written — stays 0 → plane mode.
-
-        // Sync back so the schema panel reflects the drag rectangle.
-        params_.cenX  = p.cenX;  params_.cenY  = p.cenY;  params_.cenZ  = p.cenZ;
-        params_.sizeX = p.sizeX; params_.sizeY = p.sizeY; params_.sizeZ = p.sizeZ;
-
-        buildCuboidParametric(m, p);
+        // params_.size on planeNormal axis is 0 at this point (plane mode).
+        buildCuboidParametric(m, params_);
     }
 
     void uploadBase() {
         previewMesh.clear();
         buildBase(&previewMesh);
+        previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
 
@@ -2425,14 +2506,6 @@ private:
         meshChanged = true;
     }
 
-    Vec3 baseCentroid() const {
-        return Vec3(
-            (baseCorners[0].x + baseCorners[1].x + baseCorners[2].x + baseCorners[3].x) * 0.25f,
-            (baseCorners[0].y + baseCorners[1].y + baseCorners[2].y + baseCorners[3].y) * 0.25f,
-            (baseCorners[0].z + baseCorners[1].z + baseCorners[2].z + baseCorners[3].z) * 0.25f,
-        );
-    }
-
     void setupHeightPlane() {
         hpOrigin = baseCentroid();
         Vec3 toCamera = cachedVp.eye - hpOrigin;
@@ -2443,45 +2516,15 @@ private:
             : planeAxis1;
     }
 
+    // Build a cuboid preview/commit mesh directly from params_.
     void buildCuboid(Mesh* m) {
-        // Map interactive drag state → axis-aligned BoxParams so the
-        // parametric builder handles segments correctly.
-        // pickMostFacingPlane guarantees each axis is one of ±X/Y/Z.
-        computeBaseCorners();
-        Vec3  d  = currentPoint - startPoint;
-        float d1 = dot(d, planeAxis1);
-        float d2 = dot(d, planeAxis2);
-
-        Vec3 cen = baseCentroid();
-        if (state >= BoxState.DrawingHeight)
-            cen = cen + planeNormal * (height * 0.5f);
-
-        // Snapshot: keeps user-set segmentsX/Y/Z, overwrites pos/size below.
-        BoxParams p = params_;
-        p.cenX = cen.x; p.cenY = cen.y; p.cenZ = cen.z;
-        p.sizeX = 0.0f; p.sizeY = 0.0f; p.sizeZ = 0.0f;
-
-        // Write each drag magnitude into the matching world axis size slot.
-        void writeSize(Vec3 axisVec, float magnitude) {
-            if      (abs(axisVec.x) > 0.5f) p.sizeX = abs(magnitude);
-            else if (abs(axisVec.y) > 0.5f) p.sizeY = abs(magnitude);
-            else if (abs(axisVec.z) > 0.5f) p.sizeZ = abs(magnitude);
-        }
-        writeSize(planeAxis1, d1);
-        writeSize(planeAxis2, d2);
-        if (state >= BoxState.DrawingHeight)
-            writeSize(planeNormal, height);
-
-        // Sync back so the schema panel reflects the current drag state.
-        params_.cenX  = p.cenX;  params_.cenY  = p.cenY;  params_.cenZ  = p.cenZ;
-        params_.sizeX = p.sizeX; params_.sizeY = p.sizeY; params_.sizeZ = p.sizeZ;
-
-        buildCuboidParametric(m, p);
+        buildCuboidParametric(m, params_);
     }
 
     void uploadCuboid() {
         previewMesh.clear();
         buildCuboid(&previewMesh);
+        previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
 
