@@ -49,7 +49,12 @@ bool drawInt(ref Param p) {
     if (h.widget == ParamHints.Widget.Slider && h.hasMinI && h.hasMaxI)
         return ImGui.SliderInt(p.label, p.iptr, lo, hi);
     string fmt = "%d";
-    return ImGui.DragInt(p.label, p.iptr, 1.0f, lo, hi, fmt);
+    // Default DragInt speed: 0.1 unit/pixel (1 step every 10 pixels). The
+    // ImGui default of 1.0 was too jumpy for small-range params like
+    // `order` (0..16) where each pixel jumped a whole subdivision level.
+    // Hold Shift while dragging for ×10 speed (matches ImGui's built-in
+    // fast modifier); Alt gives ÷100 fine mode but rounds to the same int.
+    return ImGui.DragInt(p.label, p.iptr, 0.1f, lo, hi, fmt);
 }
 
 bool drawFloat(ref Param p) {
