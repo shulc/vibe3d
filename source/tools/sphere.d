@@ -198,6 +198,10 @@ private:
     CommandHistory     history;
     SphereEditFactory  factory;
 
+    // Last params_.axis value seen — used by onParamChanged("axis") to compute
+    // the cyclic shift that needs to be undone before applying the new one.
+    int                axisAtLastSync = 1;
+
     SphereState        state;
     Mesh               previewMesh;
     GpuMesh            previewGpu;
@@ -291,11 +295,34 @@ public:
     }
 
     override void activate() {
-        state         = SphereState.Idle;
-        meshChanged   = false;
-        moverDragAxis = -1;
-        radDragIdx    = -1;
+        state          = SphereState.Idle;
+        meshChanged    = false;
+        moverDragAxis  = -1;
+        radDragIdx     = -1;
+        axisAtLastSync = params_.axis;
         previewGpu.init();
+    }
+
+    override void onParamChanged(string name) {
+        if (name != "axis") return;
+        if (params_.axis == axisAtLastSync) return;
+
+        // Re-permute sizeX/Y/Z so the sphere's WORLD extents along X/Y/Z are
+        // unchanged across the axis switch — only the topology orientation
+        // (where the poles point) rotates. Without this, the cyclic
+        // permutation in buildSphereGlobe would visibly shuffle the radii
+        // (sizeX→world Y for axis=Z, etc.).
+        int oldAxis = axisAtLastSync;
+        // Snapshot old-frame world radii before any writes.
+        float wx = worldRadiusUnderAxis(oldAxis, 0);
+        float wy = worldRadiusUnderAxis(oldAxis, 1);
+        float wz = worldRadiusUnderAxis(oldAxis, 2);
+        // params_.axis is already the new value — setWorldRadius routes
+        // through the new permutation.
+        setWorldRadius(0, wx);
+        setWorldRadius(1, wy);
+        setWorldRadius(2, wz);
+        axisAtLastSync = params_.axis;
     }
 
     override void deactivate() {
@@ -566,13 +593,28 @@ private:
     // X extent comes from sizeY (axis=X) or sizeZ (axis=Z) — visually the
     // handles ended up "controlling the wrong axis".
     int worldAxisToOrig(int worldIdx) const {
-        if (params_.axis == 1) return worldIdx;
-        if (params_.axis == 0) return (worldIdx + 1) % 3;
+        return worldAxisToOrigWithAxis(params_.axis, worldIdx);
+    }
+
+    static int worldAxisToOrigWithAxis(int axisVal, int worldIdx) {
+        if (axisVal == 1) return worldIdx;
+        if (axisVal == 0) return (worldIdx + 1) % 3;
         return (worldIdx + 2) % 3;
     }
 
     float worldRadius(int worldIdx) const {
         final switch (worldAxisToOrig(worldIdx)) {
+            case 0: return params_.sizeX;
+            case 1: return params_.sizeY;
+            case 2: return params_.sizeZ;
+        }
+    }
+
+    // Same as worldRadius() but with an explicit axis value — used when the
+    // current params_.axis has already been mutated and we need to read
+    // extents under the previous orientation.
+    float worldRadiusUnderAxis(int axisVal, int worldIdx) const {
+        final switch (worldAxisToOrigWithAxis(axisVal, worldIdx)) {
             case 0: return params_.sizeX;
             case 1: return params_.sizeY;
             case 2: return params_.sizeZ;
