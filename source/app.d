@@ -86,6 +86,9 @@ import commands.tool.attr     : ToolAttrCommand;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
+import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
+                                WorkplaneRotateCommand, WorkplaneOffsetCommand,
+                                WorkplaneAlignToSelectionCommand;
 
 import command;
 import registry;
@@ -624,6 +627,19 @@ void main(string[] args) {
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
         new ToolPipeAttrCommand(&mesh, cameraView, editMode);
 
+    // workplane.* commands — MODO-aligned API targeting the
+    // WorkplaneStage at LXs_ORD_WORK in the global Tool Pipe.
+    reg.commandFactories["workplane.reset"] = () => cast(Command)
+        new WorkplaneResetCommand(&mesh, cameraView, editMode);
+    reg.commandFactories["workplane.edit"] = () => cast(Command)
+        new WorkplaneEditCommand(&mesh, cameraView, editMode);
+    reg.commandFactories["workplane.rotate"] = () => cast(Command)
+        new WorkplaneRotateCommand(&mesh, cameraView, editMode);
+    reg.commandFactories["workplane.offset"] = () => cast(Command)
+        new WorkplaneOffsetCommand(&mesh, cameraView, editMode);
+    reg.commandFactories["workplane.alignToSelection"] = () => cast(Command)
+        new WorkplaneAlignToSelectionCommand(&mesh, cameraView, editMode);
+
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
     reg.commandFactories["select.more"]           = () => cast(Command) new SelectMore(&mesh, cameraView, editMode);
@@ -1011,6 +1027,47 @@ void main(string[] args) {
                 }
             }
             // tool.doApply has no params.
+
+            // workplane.* commands: read named args (cenX/Y/Z, rotX/Y/Z,
+            // axis, angle, dist). All MODO-style argstring keys; we
+            // accept JSON scalar types for the value and stringify /
+            // floatify as needed.
+            import std.math : isNaN;
+            bool isNaNFloat(float f) { return isNaN(f); }
+            float readFloat(string key) {
+                if (auto p = key in pj) {
+                    if      (p.type == JSONType.integer)  return cast(float)p.integer;
+                    else if (p.type == JSONType.uinteger) return cast(float)p.uinteger;
+                    else if (p.type == JSONType.float_)   return cast(float)p.floating;
+                    else if (p.type == JSONType.string)   {
+                        try { return p.str.to!float; } catch (Exception) {}
+                    }
+                }
+                return float.nan;
+            }
+            string readString(string key) {
+                if (auto p = key in pj)
+                    if (p.type == JSONType.string) return p.str;
+                return "";
+            }
+            if (auto we = cast(WorkplaneEditCommand)cmd) {
+                float cx = readFloat("cenX");
+                float cy = readFloat("cenY");
+                float cz = readFloat("cenZ");
+                float rx = readFloat("rotX");
+                float ry = readFloat("rotY");
+                float rz = readFloat("rotZ");
+                we.setCenX(cx); we.setCenY(cy); we.setCenZ(cz);
+                we.setRotX(rx); we.setRotY(ry); we.setRotZ(rz);
+            } else if (auto wr = cast(WorkplaneRotateCommand)cmd) {
+                wr.setAxis(readString("axis"));
+                float a = readFloat("angle");
+                if (!isNaNFloat(a)) wr.setAngle(a);
+            } else if (auto wo = cast(WorkplaneOffsetCommand)cmd) {
+                wo.setAxis(readString("axis"));
+                float d = readFloat("dist");
+                if (!isNaNFloat(d)) wo.setDist(d);
+            }
         }
 
         // Helper: inject _positional args for MODO-compat select.* commands.
