@@ -83,6 +83,24 @@ string clickAt(double t, int x, int y, int clicks = 1) {
         t + 10.0, x, y, clicks);
 }
 
+// Compose a drag from (x1,y1) to (x2,y2) — LMB-down at start, two motion
+// frames (mid + end with state=1 to indicate LMB held), LMB-up at end.
+string dragFromTo(double t, int x1, int y1, int x2, int y2) {
+    int xm = (x1 + x2) / 2;
+    int ym = (y1 + y2) / 2;
+    return format(
+        `{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+        t,        x1, y1,
+        t +  5.0, x1, y1,
+        t + 10.0, xm, ym, xm - x1, ym - y1,
+        t + 15.0, x2, y2, x2 - xm, y2 - ym,
+        t + 20.0, x2, y2);
+}
+
 string keyDown(double t, int sym) {
     return format(`{"t":%g,"type":"SDL_KEYDOWN","sym":%d,"scan":0,"mod":0,"repeat":0}`,
                   t, sym);
@@ -272,6 +290,148 @@ unittest { // two triangles, one Pen session
 // -------------------------------------------------------------------------
 // 8. Undo restores previous state.
 // -------------------------------------------------------------------------
+
+// =========================================================================
+// Phase 6.9.1 — vertex editing (drag, weld, insert) + currentPoint
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// 6.9.1: click on existing vertex selects it (currentPoint updated);
+// subsequent click on empty plane inserts a new vertex AFTER the selected
+// one. Net result for a 3-click triangle + reselect-v0 + click-empty +
+// Enter: 4-vert face (the inserted vertex sits between v0 and v1).
+// -------------------------------------------------------------------------
+
+unittest { // insert mid-sequence
+    resetEmpty();
+    activatePen();
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"   // v0
+        ~ clickAt(200, 525, 250) ~ "\n"   // v1
+        ~ clickAt(300, 475, 350) ~ "\n"   // v2  → currentPoint=2
+        ~ clickAt(400, 425, 250) ~ "\n"   // re-click v0's pixel → selects v0
+        ~ clickAt(500, 460, 280) ~ "\n"   // click empty → insert AFTER v0
+        ~ keyDown(600, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    assert(m["vertices"].array.length == 4,
+        "insert: expected 4 verts, got "
+        ~ m["vertices"].array.length.to!string);
+    assert(m["faces"].array.length == 1);
+    assert(m["faces"].array[0].array.length == 4,
+        "expected 4-gon, got " ~ m["faces"].array[0].array.length.to!string ~ "-gon");
+}
+
+// -------------------------------------------------------------------------
+// 6.9.1: dragging an in-progress vertex onto another welds them — the
+// dragged vertex drops out of the boundary list. 4 verts → drag v3 onto
+// v0 → 3 verts → Enter commits a triangle.
+// -------------------------------------------------------------------------
+
+unittest { // weld via drag
+    resetEmpty();
+    activatePen();
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"   // v0
+        ~ clickAt(200, 525, 250) ~ "\n"   // v1
+        ~ clickAt(300, 525, 350) ~ "\n"   // v2
+        ~ clickAt(400, 425, 350) ~ "\n"   // v3
+        ~ dragFromTo(500, 425, 350, 425, 250) ~ "\n"  // drag v3 onto v0
+        ~ keyDown(700, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    assert(m["vertices"].array.length == 3,
+        "weld: expected 3 verts after drag-weld, got "
+        ~ m["vertices"].array.length.to!string);
+    assert(m["faces"].array[0].array.length == 3, "expected triangle after weld");
+}
+
+// -------------------------------------------------------------------------
+// 6.9.1: dragging a vertex without dropping on another simply relocates
+// it. After commit, the polygon's vertex set should differ from a no-drag
+// baseline at the dragged vertex's index.
+// -------------------------------------------------------------------------
+
+unittest { // drag relocates without weld
+    // Baseline: 3 clicks + Enter, no drag.
+    resetEmpty();
+    activatePen();
+    string baseline = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 525, 250) ~ "\n"
+        ~ clickAt(300, 475, 350) ~ "\n"
+        ~ keyDown(400, SDLK_RETURN);
+    playEvents(baseline);
+    waitForPlaybackFinish();
+    deactivateTool();
+    auto mb = getJson("/api/model");
+    assert(mb["vertices"].array.length == 3);
+    auto vbX = mb["vertices"].array[0].array[0].floating;
+
+    // Drag v0 to a new pixel before Enter.
+    resetEmpty();
+    activatePen();
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 525, 250) ~ "\n"
+        ~ clickAt(300, 475, 350) ~ "\n"
+        ~ dragFromTo(400, 425, 250, 350, 250) ~ "\n"   // drag v0 left
+        ~ keyDown(600, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    deactivateTool();
+    auto md = getJson("/api/model");
+    assert(md["vertices"].array.length == 3,
+        "drag-relocate: still expected 3 verts (no weld), got "
+        ~ md["vertices"].array.length.to!string);
+    auto vdX = md["vertices"].array[0].array[0].floating;
+
+    assert(fabs(vdX - vbX) > 0.01,
+        "drag-relocate: expected v0.x to differ after drag (was "
+        ~ vbX.to!string ~ ", now " ~ vdX.to!string ~ ")");
+}
+
+// -------------------------------------------------------------------------
+// 6.9.1: numeric edit of currentPoint via tool.attr changes which vertex
+// is "current". Editing posX/Y/Z then writes back into the buffer. After
+// Enter, the polygon's vertices reflect the numeric edit.
+// -------------------------------------------------------------------------
+
+unittest { // tool.attr posX rewrites the current vertex
+    resetEmpty();
+    activatePen();
+    string log1 = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 525, 250) ~ "\n"
+        ~ clickAt(300, 475, 350);
+    playEvents(log1);
+    waitForPlaybackFinish();
+
+    // currentPoint defaults to 2 (last appended). Set it to 0, then move
+    // posX numerically; Enter commits.
+    auto r1 = postJson("/api/command", "tool.attr pen currentPoint 0");
+    assert(r1["status"].str == "ok", "tool.attr currentPoint failed: " ~ r1.toString);
+    auto r2 = postJson("/api/command", "tool.attr pen posX 5.0");
+    assert(r2["status"].str == "ok", "tool.attr posX failed: " ~ r2.toString);
+
+    string log2 = LOG_HEADER ~ "\n" ~ keyDown(100, SDLK_RETURN);
+    playEvents(log2);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    assert(m["vertices"].array.length == 3);
+    // v0.x should now be 5.0 (re-written via tool.attr posX).
+    auto v0x = m["vertices"].array[0].array[0].floating;
+    assert(fabs(v0x - 5.0) < 1e-3,
+        "tool.attr posX: expected v0.x ~ 5.0, got " ~ v0x.to!string);
+}
 
 unittest { // commit → undo → empty
     resetEmpty();

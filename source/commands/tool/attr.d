@@ -62,6 +62,13 @@ class ToolAttrCommand : Command {
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;
         injectParamsInto(t.params(), pj);
+        // Mirror the property-panel contract (property_panel.d): fire
+        // onParamChanged + evaluate after a runtime attribute write so the
+        // tool can react (e.g. PenTool clamping currentPoint, mirroring the
+        // posX/Y/Z field into the in-progress vertex buffer; SphereTool
+        // re-permuting per-axis radii on axis change).
+        t.onParamChanged(attrName_);
+        t.evaluate();
         return true;
     }
 
