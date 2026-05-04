@@ -140,20 +140,24 @@ draw. Unlock on commit / cancel.
 ### C.1 Preview rendering colors
 
 In-progress vertices are rendered as small screen-space dots
-(BoxHandler-style markers, sized via `gizmoSize`) with two states:
+(BoxHandler-style markers, sized via `gizmoSize`) with three states,
+ordered by BoxHandler.draw's precedence:
 
-- **Default / unselected: cyan** `(0.0, 0.9, 0.9)` — every in-progress
-  vertex while the cursor isn't over it.
-- **Current / hovered: yellow** `(1.0, 0.9, 0.0)` — the vertex marked
-  as `currentPoint` (set by hover-on-press, drag, or numeric edit
-  via the property panel). Matches MODO's "they'll turn yellow when
-  the mouse is directly over them" from `pen.html`.
+- **Hovered: yellow** `(1.0, 0.95, 0.15)` — the vertex under the
+  cursor. Matches MODO's "they'll turn yellow when the mouse is
+  directly over them" from `pen.html`. Set by `BoxHandler.updateHover`
+  per frame; takes precedence over the selected state below.
+- **Current point (not hovered): orange** `(1.0, 0.64, 0.0)` — the
+  vertex marked as `currentPoint` in PenParams. Set by Pen.draw via
+  `BoxHandler.selected`. Used for click-on-vertex selection, drag
+  origin, and numeric-edit target.
+- **Default: cyan** `(0.0, 0.9, 0.9)` — every other in-progress vertex.
 
 The in-progress edges connecting vertices use the standard wireframe
 color (no highlight). On commit, the vertex markers disappear (the
 geometry becomes regular mesh, rendered through the usual path).
-Hover-detection radius for "current" promotion: same pixel threshold
-as vertex-pick (~6 px, see `pickVertices`).
+Hover-detection radius is the BoxHandler.hitTest cube extent, sized
+by `gizmoSize(pos, vp, 0.04)` — about 4% of the vertical viewport.
 
 ### D. Vertex weld and merge
 

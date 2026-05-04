@@ -214,15 +214,14 @@ public:
         if (mods & KMOD_ALT) return false;
         if (mods & (KMOD_CTRL | KMOD_SHIFT)) return false;
 
-        // Double-click commits the current sequence (vibe3d convention,
-        // see doc/pen_plan.md). The first physical click of the double
-        // will have fired with clicks=1 already, adding a vertex; the
-        // clicks=2 event then commits without adding another.
-        if (e.clicks == 2) {
-            if (state == PenState.Drawing && vertices_.length >= 3)
-                commitPolygonWithUndo();
-            return true;
-        }
+        // Double-click semantics (vibe3d convention from doc/pen_plan.md):
+        // every LMB-down adds a vertex, then on the SECOND click of a
+        // double-click the polygon also commits if it now has ≥3 verts.
+        // We can't rely on `clicks==2` to mean "no vertex added" — SDL may
+        // auto-promote clicks=1 events that arrive within the double-click
+        // window (default 500 ms) to clicks=2, which would silently swallow
+        // rapid normal clicks. Instead the behaviour is "always add, also
+        // commit on double-click".
 
         if (state == PenState.Idle) {
             choosePlane(cachedVp);
@@ -235,6 +234,7 @@ public:
             syncPosFromCurrent();
             state = PenState.Drawing;
             uploadPreview();
+            armDragOnFresh(e.x, e.y);
             return true;
         }
 
@@ -273,6 +273,7 @@ public:
         }
         syncPosFromCurrent();
         uploadPreview();
+        armDragOnFresh(e.x, e.y);
         return true;
     }
 
@@ -378,9 +379,13 @@ public:
         if (vertices_.length >= 2)
             previewGpu.drawEdges(shader.locColor, -1, []);
 
-        // Vertex markers — cyan default; BoxHandler.draw paints yellow on hover.
+        // Vertex markers — three-state colour, by BoxHandler.draw precedence:
+        //   hovered  → yellow (BoxHandler base, set by updateHover in draw)
+        //   selected (not hovered) → orange — used for the current point
+        //   default → cyan
         foreach (i, h; vertHandlers) {
-            h.size = gizmoSize(h.pos, vp, 0.04f);
+            h.size     = gizmoSize(h.pos, vp, 0.04f);
+            h.selected = (cast(int)i == params_.currentPoint);
             h.draw(shader, vp);
         }
     }
@@ -477,6 +482,19 @@ private:
 
     // Hit-test in-progress vertex markers; returns the index of the first
     // marker whose screen-space bounding cube contains (mx, my), or -1.
+    // Arm a drag on the just-appended / just-inserted vertex (currentPoint)
+    // so motion-while-LMB-held relocates it and LMB-up finalises (with
+    // optional weld). Lets the user place a vertex with a single click-
+    // and-drag motion — pure click (LMB-up without motion past
+    // DRAG_THRESHOLD_PX) leaves the vertex at the click point unchanged.
+    void armDragOnFresh(int mx, int my) {
+        dragArmed     = true;
+        dragInitiated = false;
+        dragVertIdx   = params_.currentPoint;
+        dragStartMX   = mx;
+        dragStartMY   = my;
+    }
+
     int findHoveredVert(int mx, int my) {
         foreach (i, h; vertHandlers) {
             if (h.hitTest(mx, my, cachedVp)) return cast(int)i;

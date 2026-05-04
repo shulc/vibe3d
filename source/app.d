@@ -2414,7 +2414,14 @@ void main(string[] args) {
             if (!isF1orF2) recLog.log(event);
             ImGui_ImplSDL2_ProcessEvent(&event);
 
-            if (io.WantCaptureMouse &&
+            // ImGui-driven mouse capture filter — skip mouse events when
+            // an ImGui panel claims them. Bypassed in test mode: HTTP-driven
+            // event playback fires events at deterministic viewport pixels
+            // and must not be silently swallowed when ImGui's WantCaptureMouse
+            // happens to flip on between clicks (its state depends on the
+            // most recent processed event, so consecutive playback clicks
+            // can intermittently drop).
+            if (!testMode && io.WantCaptureMouse &&
                 (event.type == SDL_MOUSEBUTTONDOWN ||
                  event.type == SDL_MOUSEBUTTONUP   ||
                  event.type == SDL_MOUSEMOTION      ||
