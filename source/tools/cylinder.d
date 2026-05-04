@@ -721,13 +721,34 @@ private:
         }
     }
 
+    // Box-style anchored-opposite handle drag: the dragged face follows the
+    // cursor while the opposite face stays fixed in world space. d is the
+    // signed projection of the cursor delta on the outward face normal.
+    // MODO's prim.cylinder size is half-extent, so the change in half-extent
+    // equals d/2 and the center shifts by d/2 along the outward direction —
+    // full height (or full diameter on radial axes) changes by exactly d,
+    // not 2·d as the previous symmetric scaling produced.
+    //
+    // Flip-through: if the drag pushed the size negative, the cylinder has
+    // crossed the opposite face. Swap to the OPPOSITE handle so subsequent
+    // motion continues to follow the cursor on the new "front" side.
     void applySizeDelta(int idx, Vec3 delta) {
-        Vec3 axisDir = SIZE_AXES[idx];
-        float d = delta.x * axisDir.x + delta.y * axisDir.y + delta.z * axisDir.z;
-        int worldIdx = idx / 2;
-        float v = worldSize(worldIdx) + d;
-        if (v < 0.0f) v = 0.0f;
-        setWorldSize(worldIdx, v);
+        Vec3  outward  = SIZE_AXES[idx];
+        float d        = dot(delta, outward);
+        int   worldIdx = idx / 2;
+        float oldSize  = worldSize(worldIdx);
+        float signedSz = oldSize + d * 0.5f;
+        float newSize  = abs(signedSz);
+
+        setWorldSize(worldIdx, newSize);
+        Vec3 cenShift = outward * (d * 0.5f);
+        params_.cenX += cenShift.x;
+        params_.cenY += cenShift.y;
+        params_.cenZ += cenShift.z;
+
+        if (signedSz < 0.0f)
+            sizeDragIdx ^= 1;
+
         rebuildPreview();
     }
 
