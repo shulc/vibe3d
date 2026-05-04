@@ -2897,7 +2897,28 @@ void main(string[] args) {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         // glDepthMask(GL_FALSE);
 
-        gridShader.useProgram(identityMatrix, cameraView,
+        // When the workplane is non-auto, draw the grid in its plane
+        // (centre + axis1/normal/axis2 basis) instead of world XZ. The
+        // grid mesh is built in the local XZ plane (Y=0); the model
+        // matrix maps local (X,Y,Z) → workplane (axis1,normal,axis2)
+        // so the grid lines lie ON the workplane.
+        float[16] gridModel = identityMatrix;
+        if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+            if (!wp.isAuto) {
+                Vec3 n, a1, a2;
+                wp.currentBasis(n, a1, a2);
+                Vec3 c = wp.center;
+                // Column-major: each column is the image of a local axis.
+                gridModel = [
+                    a1.x, a1.y, a1.z, 0,
+                    n.x,  n.y,  n.z,  0,
+                    a2.x, a2.y, a2.z, 0,
+                    c.x,  c.y,  c.z,  1,
+                ];
+            }
+        }
+
+        gridShader.useProgram(gridModel, cameraView,
             cameraView.distance * 2.0f,
             cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY,
             cast(float)layout.vpX * scaleX, cast(float)layout.vpGlY * scaleY);

@@ -143,6 +143,14 @@ class WorkplaneStage : Stage {
         publishState();
     }
 
+    /// Read the current orientation as (normal, axis1, axis2) without
+    /// running a full pipeline.evaluate(). Honours directBasis when set.
+    /// Independent of `isAuto` — callers that want the auto-snapped basis
+    /// should run pipeline.evaluate() with a live ToolState instead.
+    void currentBasis(out Vec3 normal, out Vec3 axis1, out Vec3 axis2) const {
+        rotateBasis(rotation, normal, axis1, axis2);
+    }
+
     /// Set the basis directly (used by `workplane.alignToSelection` to
     /// apply a computed orientation without going through Euler decompo
     /// — Euler decomposition for arbitrary frames is gimbal-prone).
