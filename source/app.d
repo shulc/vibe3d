@@ -36,6 +36,7 @@ import tools.box;
 import tools.sphere;
 import tools.cylinder;
 import tools.cone;
+import tools.capsule;
 import tools.bevel;
 
 import commands.select.connect;
@@ -548,6 +549,16 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh, cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.cone", reg.toolFactories["prim.cone"]);
+
+    reg.toolFactories["prim.capsule"] = () {
+        auto t = new CapsuleTool(&mesh, &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["prim.capsule"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh, cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.capsule", reg.toolFactories["prim.capsule"]);
 
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands

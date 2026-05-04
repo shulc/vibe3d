@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.capsule with cylY=0 (endsize·avgPerp >= sizeA → sphere-equivalent). sides=24/seg=1/ends=6 → 110v/120f.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.capsule",
+    "params": {
+      "cenX":        0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":       1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":       24,
+      "segments":    1,
+      "endsegments": 6,
+      "endsize":     1.0,
+      "axis":        1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

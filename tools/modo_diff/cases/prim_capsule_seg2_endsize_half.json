@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.capsule with cylinder segments=2 (visible only when endsize<1 so cylY>0).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.capsule",
+    "params": {
+      "cenX":        0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":       1.0, "sizeY": 1.5, "sizeZ": 1.0,
+      "sides":       8,
+      "segments":    2,
+      "endsegments": 3,
+      "endsize":     0.5,
+      "axis":        1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

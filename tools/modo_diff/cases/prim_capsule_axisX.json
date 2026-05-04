@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.capsule axis=X — main axis along X.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.capsule",
+    "params": {
+      "cenX":        0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":       1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":       4,
+      "segments":    1,
+      "endsegments": 2,
+      "endsize":     1.0,
+      "axis":        0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

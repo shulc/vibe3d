@@ -49,6 +49,14 @@ panels:
                 kind: script
                 lines:
                   - "prim.cone cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:1 axis:1"
+          - label: Capsule
+            action: { kind: tool, id: prim.capsule }
+            ctrl:
+              label: "Unit Capsule"
+              action:
+                kind: script
+                lines:
+                  - "prim.capsule cenX:0 cenY:0 cenZ:0 sizeX:0.25 sizeY:0.5 sizeZ:0.25 sides:24 segments:1 endsegments:6 endsize:1.0 axis:1"
   - title: Multiply
     items:
       - title: Subdivide

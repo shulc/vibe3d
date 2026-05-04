@@ -1,0 +1,18 @@
+{
+  "_comment": "prim.capsule endsize=0.5 — cylinder section visible (cylY=0.5). sides=4/seg=1/ends=2 → 18v/20f.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.capsule",
+    "params": {
+      "cenX":        0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":       1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":       4,
+      "segments":    1,
+      "endsegments": 2,
+      "endsize":     0.5,
+      "axis":        1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
