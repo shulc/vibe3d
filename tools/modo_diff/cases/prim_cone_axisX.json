@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cone axis=X — apex on +X, cap on -X. Tests cyclic axis permutation.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cone",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    8,
+      "segments": 1,
+      "axis":     0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

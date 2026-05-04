@@ -41,6 +41,14 @@ panels:
                 kind: script
                 lines:
                   - "prim.cylinder cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:1 axis:1"
+          - label: Cone
+            action: { kind: tool, id: prim.cone }
+            ctrl:
+              label: "Unit Cone"
+              action:
+                kind: script
+                lines:
+                  - "prim.cone cenX:0 cenY:0 cenZ:0 sizeX:0.5 sizeY:0.5 sizeZ:0.5 sides:24 segments:1 axis:1"
   - title: Multiply
     items:
       - title: Subdivide

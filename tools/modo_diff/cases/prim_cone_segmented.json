@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cone sides=4 segments=2 axis=Y — 9v / 9f. Mid-ring tests linear taper (radius·(1−k/N)).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cone",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    4,
+      "segments": 2,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

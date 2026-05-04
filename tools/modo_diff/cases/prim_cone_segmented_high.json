@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cone sides=12 segments=4 — exercises (N-1)·S quad strips + S apex tris with high segment count.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cone",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    12,
+      "segments": 4,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

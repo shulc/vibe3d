@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cone defaults sides=24 segments=1 axis=Y — 25v / 25f (1 cap + 24 side tris).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cone",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    24,
+      "segments": 1,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
