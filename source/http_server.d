@@ -35,6 +35,8 @@ class HttpServer {
     private SelectionDataProvider selectionDataProvider;
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
+    private alias ToolPipeProvider = string delegate();
+    private ToolPipeProvider toolpipeProvider;
     private alias ResetHandler = void delegate(string primitiveType, bool empty);
     private ResetHandler resetHandler;
     private shared long resetSubmittedEpoch;
@@ -146,6 +148,13 @@ class HttpServer {
 
     public void setRecordedEventsProvider(RecordedEventsProvider provider) {
         this.recordedEventsProvider = provider;
+    }
+
+    /// Phase 7.0 — Tool Pipe inspection endpoint. The provider returns a
+    /// JSON snapshot of the active pipeline (registered stages + their
+    /// task codes / ordinals / enabled flags).
+    public void setToolPipeProvider(ToolPipeProvider provider) {
+        this.toolpipeProvider = provider;
     }
 
     private alias BevvertProvider = string delegate(int vert);
@@ -459,6 +468,23 @@ class HttpServer {
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Selection data provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/toolpipe") {
+            if (toolpipeProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = toolpipeProvider();
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 200;
+                response.body = "{\"stages\":[]}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/camera") {

@@ -22,6 +22,7 @@ import eventlog;
 import handler;
 import tool;
 import editmode;
+import toolpipe;
 import gizmo;
 import view;
 import shader;
@@ -491,6 +492,14 @@ void main(string[] args) {
     auto bevelEditFactory = () => new MeshBevelEdit(&mesh, cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
 
+    // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
+    // globally via toolpipe.g_pipeCtx for tools that opt into the pipe.
+    // Phase 7.0 ships the skeleton only — no concrete stages are
+    // registered yet, so the pipe evaluates to an identity transform on
+    // the SubjectPacket and existing tools keep their hard-coded center
+    // / axis / workplane logic until later subphases migrate them.
+    g_pipeCtx = new ToolPipeContext();
+
     Registry reg;
     reg.toolFactories["move"]   = () {
         auto t = new MoveTool(&mesh, &gpu, &editMode);
@@ -841,6 +850,35 @@ void main(string[] args) {
             import std.file : exists, readText;
             if (!exists("recording.jsonl")) return null;
             return readText("recording.jsonl");
+        });
+        // Phase 7.0 — Tool Pipe inspection. Returns JSON listing the
+        // stages currently registered with the global pipe. Empty in 7.0
+        // (no concrete stages); 7.1+ subphases populate as they land.
+        httpServer.setToolPipeProvider(() {
+            import std.array  : appender;
+            import std.format : format;
+            auto buf = appender!string;
+            buf.put(`{"stages":[`);
+            bool first = true;
+            if (g_pipeCtx !is null) {
+                foreach (s; g_pipeCtx.pipeline.all()) {
+                    if (!first) buf.put(",");
+                    first = false;
+                    uint code = cast(uint)s.taskCode();
+                    char[4] taskStr = [
+                        cast(char)((code >> 24) & 0xFF),
+                        cast(char)((code >> 16) & 0xFF),
+                        cast(char)((code >>  8) & 0xFF),
+                        cast(char)( code        & 0xFF),
+                    ];
+                    buf.put(format(
+                        `{"task":"%s","id":"%s","ordinal":%d,"enabled":%s}`,
+                        taskStr.idup, s.id(), s.ordinal(),
+                        s.enabled ? "true" : "false"));
+                }
+            }
+            buf.put(`]}`);
+            return buf.data;
         });
         httpServer.setBevvertProvider((int vert) {
             import bevel : buildBevVert, populateBoundVerts, BevVert;
