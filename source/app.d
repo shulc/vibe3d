@@ -2269,6 +2269,37 @@ void main(string[] args) {
         }
     }
 
+    // LightWave-style popup chrome: re-skin ImGui's default dark popup to
+    // match the panel grey + beige hover used elsewhere. Push BEFORE
+    // `BeginPopup` (PopupBg / PopupRounding / PopupBorderSize must be set
+    // when the popup window is created); pop after `EndPopup` (or after a
+    // skipped popup frame — Push/Pop must balance regardless of whether
+    // BeginPopup returned true).
+    void pushPopupStyle() {
+        ImVec4 popupBg  = ImVec4(0.561f, 0.561f, 0.561f, 1.0f);  // (143,143,143)
+        ImVec4 hov      = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
+        ImVec4 active   = ImVec4(1.0f,   1.0f,   1.0f,   1.0f);
+        ImVec4 sep      = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
+        ImVec4 disabled = ImVec4(0.235f, 0.235f, 0.235f, 1.0f);  // dark grey
+
+        ImGui.PushStyleColor(ImGuiCol.PopupBg,       popupBg);
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, hov);      // MenuItem hover
+        ImGui.PushStyleColor(ImGuiCol.Header,        active);   // MenuItem selected
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive,  active);   // MenuItem clicked
+        ImGui.PushStyleColor(ImGuiCol.Separator,     sep);
+        ImGui.PushStyleColor(ImGuiCol.TextDisabled,  disabled);
+
+        ImGui.PushStyleVar(ImGuiStyleVar.PopupRounding,   0.0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.PopupBorderSize, 1.0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,   ImVec2(2, 2));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,     ImVec2(0, 1));
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,    ImVec2(6, 4));
+    }
+    void popPopupStyle() {
+        ImGui.PopStyleVar(5);
+        ImGui.PopStyleColor(6);
+    }
+
     // LightWave-style section header: dark slate-blue band with centered white
     // text, framed by a 1-pixel black outline matching button edges.
     void drawSectionHeader(string title) {
@@ -2401,6 +2432,8 @@ void main(string[] args) {
                         dispatchAction(action);
                 }
                 if (action.kind == ActionKind.popup) {
+                    pushPopupStyle();
+                    scope(exit) popPopupStyle();
                     if (ImGui.BeginPopup(popupId)) {
                         renderPopupItems(action.popupItems);
                         ImGui.EndPopup();
@@ -2571,6 +2604,8 @@ void main(string[] args) {
                         }
                     }
                     if (action.kind == ActionKind.popup) {
+                        pushPopupStyle();
+                        scope(exit) popPopupStyle();
                         if (ImGui.BeginPopup(popupId)) {
                             renderPopupItems(action.popupItems);
                             ImGui.EndPopup();
