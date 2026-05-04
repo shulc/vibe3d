@@ -57,6 +57,7 @@ class WorkplaneStage : Stage {
             state.workplane.normal = bp.normal;
             state.workplane.axis1  = bp.axis1;
             state.workplane.axis2  = bp.axis2;
+            state.workplane.center = Vec3(0, 0, 0);
             state.workplane.isAuto = true;
             return;
         }
@@ -65,11 +66,8 @@ class WorkplaneStage : Stage {
         state.workplane.normal = n;
         state.workplane.axis1  = a1;
         state.workplane.axis2  = a2;
+        state.workplane.center = center;
         state.workplane.isAuto = false;
-        // Center is intentionally NOT folded into the basis vectors —
-        // tools that care about the workplane origin read it separately
-        // (via state.workplane.center once we add that field). Phase 7.1
-        // only emits orientation since no consumer reads the origin yet.
     }
 
     override bool setAttr(string name, string value) {
@@ -149,6 +147,45 @@ class WorkplaneStage : Stage {
     /// should run pipeline.evaluate() with a live ToolState instead.
     void currentBasis(out Vec3 normal, out Vec3 axis1, out Vec3 axis2) const {
         rotateBasis(rotation, normal, axis1, axis2);
+    }
+
+    /// Local-workplane → world transform, column-major / OpenGL convention.
+    /// Columns: [axis1, normal, axis2, center]. Local Y is the workplane
+    /// normal (so a primitive built in the local XZ plane lies ON the
+    /// workplane after applying this matrix).
+    ///
+    /// In auto-mode the center isn't published in the stage state until
+    /// pipeline.evaluate runs, so direct callers get center=(0,0,0); use
+    /// the WorkplaneFrame returned by `pickWorkplane` (in tools/create_
+    /// common.d) when the auto basis matters.
+    float[16] transform() const {
+        Vec3 n, a1, a2;
+        rotateBasis(rotation, n, a1, a2);
+        return [
+            a1.x, a1.y, a1.z, 0,
+            n.x,  n.y,  n.z,  0,
+            a2.x, a2.y, a2.z, 0,
+            center.x, center.y, center.z, 1,
+        ];
+    }
+
+    /// World → local-workplane. Inverse of transform(). Cheap: relies on
+    /// the basis being orthonormal (rotational part transposes; translation
+    /// is -Rᵀ·center).
+    float[16] inverse() const {
+        Vec3 n, a1, a2;
+        rotateBasis(rotation, n, a1, a2);
+        // Rᵀ has axis1/normal/axis2 as ROWS (originally columns); its
+        // columns become (a1.x,n.x,a2.x), etc.
+        float tx = -(a1.x * center.x + a1.y * center.y + a1.z * center.z);
+        float ty = -(n.x  * center.x + n.y  * center.y + n.z  * center.z);
+        float tz = -(a2.x * center.x + a2.y * center.y + a2.z * center.z);
+        return [
+            a1.x, n.x,  a2.x, 0,
+            a1.y, n.y,  a2.y, 0,
+            a1.z, n.z,  a2.z, 0,
+            tx,   ty,   tz,   1,
+        ];
     }
 
     /// Set the basis directly (used by `workplane.alignToSelection` to

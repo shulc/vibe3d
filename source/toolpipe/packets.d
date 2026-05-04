@@ -54,14 +54,16 @@ struct AxisPacket {
 }
 
 /// Workplane state — produced by WORK stage in 7.1. Default = world XZ
-/// plane (normal = +Y, axis1 = +X, axis2 = +Z), matching the Y-up
-/// convention. A stage choosing the most-camera-facing plane (which
-/// today's BoxTool / Pen / etc. do via `pickMostFacingPlane`) overrides
-/// these fields.
+/// plane (normal = +Y, axis1 = +X, axis2 = +Z, center = origin), matching
+/// the Y-up convention. A stage choosing the most-camera-facing plane
+/// (which today's BoxTool / Pen / etc. do via `pickMostFacingPlane`)
+/// overrides the basis; `center` is whatever the workplane stage published
+/// (auto-mode keeps it at world origin; manual / alignToSelection moves it).
 struct WorkplanePacket {
     Vec3 normal = Vec3(0, 1, 0);
     Vec3 axis1  = Vec3(1, 0, 0);
     Vec3 axis2  = Vec3(0, 0, 1);
+    Vec3 center = Vec3(0, 0, 0);
     bool isAuto = true;
 }
 
