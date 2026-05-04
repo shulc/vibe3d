@@ -1543,6 +1543,14 @@ void main(string[] args) {
     void delegate(int mx, int my) doSelectPickAt;
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
+        // Keep the queryMouse override in lockstep with the latest motion
+        // event so picking in subsequent render frames reads the actual
+        // cursor. Without this update, doSelectPickAt's setOverrideMouse
+        // (only called during select-drag) latched stale coordinates on
+        // the first drag, after which queryMouse forever returned that
+        // position — so a later "clear-then-pick" click would re-select
+        // the face under the old cursor instead of nothing.
+        setOverrideMouse(mot.x, mot.y);
         if (rmbDragging)
             rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
         if (activeTool && activeTool.onMouseMotion(mot)) return;
