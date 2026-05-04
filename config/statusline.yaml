@@ -1,16 +1,18 @@
-buttons:
-  - label: Vertices
-    action: { kind: script, lines: ["select.typeFrom vertex"] }
-    alt:
-      label: "Convert V"
-      action: { kind: script, lines: ["select.convert vertex"] }
-  - label: Edges
-    action: { kind: script, lines: ["select.typeFrom edge"] }
-    alt:
-      label: "Convert E"
-      action: { kind: script, lines: ["select.convert edge"] }
-  - label: Polygons
-    action: { kind: script, lines: ["select.typeFrom polygon"] }
-    alt:
-      label: "Convert P"
-      action: { kind: script, lines: ["select.convert polygon"] }
+groups:
+  - title: editmode
+    buttons:
+      - label: Vertices
+        action: { kind: script, lines: ["select.typeFrom vertex"] }
+        alt:
+          label: "Convert V"
+          action: { kind: script, lines: ["select.convert vertex"] }
+      - label: Edges
+        action: { kind: script, lines: ["select.typeFrom edge"] }
+        alt:
+          label: "Convert E"
+          action: { kind: script, lines: ["select.convert edge"] }
+      - label: Polygons
+        action: { kind: script, lines: ["select.typeFrom polygon"] }
+        alt:
+          label: "Convert P"
+          action: { kind: script, lines: ["select.convert polygon"] }

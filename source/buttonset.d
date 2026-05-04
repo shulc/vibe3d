@@ -121,12 +121,34 @@ Panel[] loadButtons(string path) {
 }
 
 // ---------------------------------------------------------------------------
-// Load config/statusline.yaml — flat horizontal row of buttons rendered in
-// the bottom status bar. Same per-button schema as buttons.yaml entries.
-// Top-level YAML key: `buttons:`.
+// Load config/statusline.yaml — horizontal row of grouped buttons rendered
+// in the bottom status bar. Same per-button schema as buttons.yaml entries.
+//
+// Two YAML shapes accepted:
+//
+//   1. New (preferred — `doc/button_grouping_plan.md`):
+//        groups:
+//          - title: editmode
+//            buttons:
+//              - { label: Vertices, ... }
+//              ...
+//          - title: workplane
+//            buttons:
+//              - { label: Work Plane, ... }
+//
+//      `Group.title` is grouping-only (NOT rendered in the status bar) —
+//      used as a stable PushID key and for diagnostics. The renderer
+//      adds an inter-group gap so adjacent groups read as separate
+//      concerns.
+//
+//   2. Legacy (kept for backward-compat — wraps in a single anonymous
+//      Group with title="default"):
+//        buttons:
+//          - { label: Vertices, ... }
+//          ...
 // ---------------------------------------------------------------------------
 
-Button[] loadStatusLine(string path) {
+Group[] loadStatusLine(string path) {
     import dyaml;
 
     Node root;
@@ -136,13 +158,31 @@ Button[] loadStatusLine(string path) {
         throw new Exception(format("statusline: failed to load '%s': %s", path, e.msg));
     }
 
-    if (!root.containsKey("buttons"))
-        throw new Exception(format("statusline: '%s' missing top-level 'buttons' key", path));
+    bool hasGroups  = root.containsKey("groups");
+    bool hasButtons = root.containsKey("buttons");
 
-    Button[] buttons;
-    foreach (Node btnNode; root["buttons"])
-        buttons ~= parseButton(btnNode, "<statusline>", "", path);
-    return buttons;
+    if (hasGroups && hasButtons)
+        throw new Exception(format(
+            "statusline: '%s' has both 'groups:' and 'buttons:' top-level keys — pick one",
+            path));
+    if (!hasGroups && !hasButtons)
+        throw new Exception(format(
+            "statusline: '%s' must have either 'groups:' (preferred) or 'buttons:' (legacy)",
+            path));
+
+    Group[] groups;
+    if (hasGroups) {
+        foreach (Node groupNode; root["groups"])
+            groups ~= parseGroup(groupNode, "<statusline>", path);
+    } else {
+        // Legacy flat-list — wrap in a single anonymous group.
+        Group g;
+        g.title = "default";
+        foreach (Node btnNode; root["buttons"])
+            g.buttons ~= parseButton(btnNode, "<statusline>", g.title, path);
+        groups ~= g;
+    }
+    return groups;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +205,26 @@ Button[] allButtons(ref Panel p) {
 // ---------------------------------------------------------------------------
 // Private
 // ---------------------------------------------------------------------------
+
+// Parse one Group node — { title (mandatory), buttons: [...] }. Used by
+// the status-bar loader; the side-panel loader has its own inline
+// equivalent for now since it also accepts standalone-Button entries
+// (see `doc/buttonset_unification_plan.md` for the eventual merge).
+private Group parseGroup(NodeT)(NodeT groupNode, string ctxLabel, string path) {
+    if (!groupNode.containsKey("title"))
+        throw new Exception(format(
+            "buttonset: group in %s ('%s') is missing 'title'", ctxLabel, path));
+    if (!groupNode.containsKey("buttons"))
+        throw new Exception(format(
+            "buttonset: group in %s ('%s') is missing 'buttons'", ctxLabel, path));
+
+    Group g;
+    g.title = groupNode["title"].as!string;
+    import dyaml : Node;
+    foreach (Node btnNode; groupNode["buttons"])
+        g.buttons ~= parseButton(btnNode, ctxLabel, g.title, path);
+    return g;
+}
 
 private Action parseAction(NodeT)(NodeT actionNode, string ctxLabel, string path) {
     if (!actionNode.containsKey("kind"))
