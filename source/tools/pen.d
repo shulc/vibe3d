@@ -39,6 +39,15 @@ struct PenParams {
     // are written back into the buffer through onParamChanged.
     int   currentPoint = -1;
     float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
+
+    // 6.9.5: Make Quads. After the first two clicks anchor a starting edge,
+    // each subsequent click appends a pair of vertices forming one quad of
+    // a strip — the user-placed vertex at the cursor plus an auto-corner
+    // computed by the parallelogram rule (verified MODO behaviour: no, but
+    // the most intuitive convention for ribbon-style strips, and the one
+    // the docs imply by "polygon strips"). Only meaningful in `polygons`
+    // mode.
+    bool  makeQuads    = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +156,7 @@ public:
             Param.float_("posY", "Position Y", &params_.posY, 0.0f),
             Param.float_("posZ", "Position Z", &params_.posZ, 0.0f),
             Param.bool_("flip", "Flip Polygon", &params_.flip, false),
+            Param.bool_("makeQuads", "Make Quads", &params_.makeQuads, false),
         ];
     }
 
@@ -194,7 +204,7 @@ public:
 
     override void deactivate() {
         // If a valid sequence is pending, commit it on deactivate.
-        if (state == PenState.Drawing && vertices_.length >= 3) {
+        if (state == PenState.Drawing && vertices_.length >= minCommitVerts()) {
             commitPolygonWithUndo();
         } else {
             cancelPolygon();
@@ -254,14 +264,31 @@ public:
             return true;
         }
 
-        // Click on empty plane — append at end OR insert after currentPoint
-        // (the doc's "to insert a vertex between two existing ones, highlight
-        // a previously created vertex and click away from it").
+        // Click on empty plane.
         Vec3 hit;
         if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
                                Vec3(0, 0, 0), planeNormal, hit))
             return true;
 
+        // Make Quads strip extension: after 2 anchor verts, each click adds
+        // user (cursor) + auto (parallelogram extension). Skips the insert
+        // path and the current-point preservation since strip ordering is
+        // a positional sequence rather than a polygon's free boundary.
+        if (params_.makeQuads && vertices_.length >= 2) {
+            appendQuadStripPair(hit);
+            // Current point follows the user-placed vertex (the second-to-
+            // last in the buffer; the very-last is the auto-corner). Lets
+            // the user's intent — placing a top-row vert at the cursor —
+            // remain selectable for numeric edits.
+            params_.currentPoint = cast(int)vertices_.length - 2;
+            syncPosFromCurrent();
+            uploadPreview();
+            return true;
+        }
+
+        // Default polygon mode: append at end OR insert after currentPoint
+        // (the doc's "to insert a vertex between two existing ones, highlight
+        // a previously created vertex and click away from it").
         int n   = cast(int)vertices_.length;
         int cur = params_.currentPoint;
         if (cur >= 0 && cur < n - 1) {
@@ -336,7 +363,7 @@ public:
         switch (e.keysym.sym) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                if (state == PenState.Drawing && vertices_.length >= 3) {
+                if (state == PenState.Drawing && vertices_.length >= minCommitVerts()) {
                     commitPolygonWithUndo();
                     return true;
                 }
@@ -420,6 +447,28 @@ private:
         auto h = new BoxHandler(pos, Vec3(0.0f, 0.9f, 0.9f));
         h.size = gizmoSize(pos, cachedVp, 0.04f);
         vertHandlers ~= h;
+    }
+
+    // 6.9.5: Make Quads — append the two vertices that complete the next
+    // strip quad. The user-placed `cursorPos` becomes the new "top" vertex;
+    // the auto-corner is computed by the parallelogram rule
+    //
+    //   newBottom = prevBottom + (cursorPos − prevTop)
+    //
+    // where prevTop / prevBottom are the LAST two vertices in the buffer
+    // (the leading edge of the strip so far). After the call the buffer
+    // grows by 2 and the new pair is the next leading edge.
+    //
+    // Caller must have already ensured vertices_.length >= 2 (the two
+    // anchor clicks); for fewer than 2 verts the regular append path is
+    // used so the strip can be seeded.
+    void appendQuadStripPair(Vec3 cursorPos) {
+        Vec3 prevTop = vertices_[$ - 2];
+        Vec3 prevBot = vertices_[$ - 1];
+        Vec3 newTop  = cursorPos;
+        Vec3 newBot  = prevBot + (newTop - prevTop);
+        appendVertex(newTop);
+        appendVertex(newBot);
     }
 
     // Insert a new vertex (and matching handler) at position insertIdx in the
@@ -535,8 +584,15 @@ private:
         foreach (i, ref h; vertHandlers) h.pos = vertices_[i];
     }
 
+    // Minimum vertex count for a commit. Default polygon mode needs ≥3
+    // (a triangle); Make Quads needs ≥4 (one full quad in the strip; the
+    // first two anchor verts alone don't yet form a face).
+    size_t minCommitVerts() const {
+        return params_.makeQuads ? 4 : 3;
+    }
+
     void commitPolygonWithUndo() {
-        if (state != PenState.Drawing || vertices_.length < 3) return;
+        if (state != PenState.Drawing || vertices_.length < minCommitVerts()) return;
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
         commitPolygon();
         if (history !is null && factory !is null && pre.filled) {
@@ -565,16 +621,38 @@ private:
     void commitPolygon() {
         uint base = cast(uint)mesh.vertices.length;
         foreach (v; vertices_) mesh.addVertex(v);
-        uint[] face;
-        face.length = vertices_.length;
-        if (params_.flip) {
-            foreach (i, _; vertices_)
-                face[i] = base + cast(uint)(vertices_.length - 1 - i);
+
+        if (params_.makeQuads) {
+            // Strip: vertices laid out [v0_top, v1_bot, v2_top, v3_bot, ...].
+            // Quad k uses indices [2k, 2k+2, 2k+3, 2k+1] — top→top→bot→bot
+            // forms a CCW boundary that yields the same outward normal as
+            // the regular polygon mode would for the corresponding edge
+            // sequence. flip swaps to [2k+1, 2k+3, 2k+2, 2k]. Round the
+            // vertex count down to even since an odd buffer leaves a half-
+            // quad that can't be closed.
+            int N = cast(int)(vertices_.length / 2 * 2);
+            int nQuads = (N - 2) / 2;
+            foreach (k; 0 .. nQuads) {
+                uint a = base + cast(uint)(2 * k);
+                uint b = base + cast(uint)(2 * k + 2);
+                uint c = base + cast(uint)(2 * k + 3);
+                uint d = base + cast(uint)(2 * k + 1);
+                if (params_.flip) mesh.addFace([d, c, b, a]);
+                else              mesh.addFace([a, b, c, d]);
+            }
         } else {
-            foreach (i, _; vertices_)
-                face[i] = base + cast(uint)i;
+            uint[] face;
+            face.length = vertices_.length;
+            if (params_.flip) {
+                foreach (i, _; vertices_)
+                    face[i] = base + cast(uint)(vertices_.length - 1 - i);
+            } else {
+                foreach (i, _; vertices_)
+                    face[i] = base + cast(uint)i;
+            }
+            mesh.addFace(face);
         }
-        mesh.addFace(face);
+
         mesh.buildLoops();
         gpu.upload(*mesh);
     }

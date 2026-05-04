@@ -485,6 +485,108 @@ unittest { // tool.attr posX rewrites the current vertex
         "tool.attr posX: expected v0.x ~ 5.0, got " ~ v0x.to!string);
 }
 
+// =========================================================================
+// Phase 6.9.5 — Make Quads (polygon strip)
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// 6.9.5: makeQuads strip — first 2 clicks anchor the leading edge; each
+// subsequent click extends the strip by one parallelogram quad. Five
+// clicks should commit a 3-quad strip with 8 verts.
+// -------------------------------------------------------------------------
+
+unittest { // makeQuads → 3-quad strip from 5 clicks
+    resetEmpty();
+    activatePen();
+    auto rt = postJson("/api/command", "tool.attr pen makeQuads true");
+    assert(rt["status"].str == "ok", "tool.attr makeQuads failed: " ~ rt.toString);
+
+    // 5 clicks roughly traversing a strip from left to right.
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"   // anchor v0 (top)
+        ~ clickAt(200, 425, 350) ~ "\n"   // anchor v1 (bot)
+        ~ clickAt(300, 475, 250) ~ "\n"   // strip click 1 → +2 verts (1 quad)
+        ~ clickAt(400, 525, 250) ~ "\n"   // strip click 2 → +2 verts (2 quads)
+        ~ clickAt(500, 575, 250) ~ "\n"   // strip click 3 → +2 verts (3 quads)
+        ~ keyDown(600, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    // 2 anchor + 3·2 strip-pair = 8 verts; 3 quads.
+    assert(m["vertices"].array.length == 8,
+        "makeQuads: expected 8 verts, got "
+        ~ m["vertices"].array.length.to!string);
+    assert(m["faces"].array.length == 3,
+        "makeQuads: expected 3 quads, got "
+        ~ m["faces"].array.length.to!string);
+    foreach (f; m["faces"].array)
+        assert(f.array.length == 4,
+            "makeQuads: every face must be a quad");
+}
+
+// -------------------------------------------------------------------------
+// 6.9.5: makeQuads + only 2 clicks + Enter = nothing committed (need ≥4 verts
+// to form one full quad).
+// -------------------------------------------------------------------------
+
+unittest { // makeQuads below minimum
+    resetEmpty();
+    activatePen();
+    postJson("/api/command", "tool.attr pen makeQuads true");
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 425, 350) ~ "\n"
+        ~ keyDown(300, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    assert(m["vertices"].array.length == 0,
+        "makeQuads with 2 verts + Enter: should not commit, got "
+        ~ m["vertices"].array.length.to!string);
+}
+
+// -------------------------------------------------------------------------
+// 6.9.5: 3 clicks form exactly one quad. Auto-corner sits at
+// v3 = v1 + (v2 − v0) (parallelogram rule).
+// -------------------------------------------------------------------------
+
+unittest { // makeQuads parallelogram auto-corner
+    resetEmpty();
+    activatePen();
+    postJson("/api/command", "tool.attr pen makeQuads true");
+    string log = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"   // v0 (top anchor)
+        ~ clickAt(200, 425, 350) ~ "\n"   // v1 (bot anchor)
+        ~ clickAt(300, 525, 250) ~ "\n"   // v2 (top extend), v3 = v1 + (v2 - v0)
+        ~ keyDown(400, SDLK_RETURN);
+    playEvents(log);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto m = getJson("/api/model");
+    assert(m["vertices"].array.length == 4, "expected 4 verts (1 quad)");
+    assert(m["faces"].array.length == 1, "expected 1 quad");
+
+    // Verify parallelogram invariant: v3 - v1 == v2 - v0 (same offset on
+    // both sides of the strip).
+    auto verts = m["vertices"].array;
+    double[3] v0 = [verts[0].array[0].floating, verts[0].array[1].floating, verts[0].array[2].floating];
+    double[3] v1 = [verts[1].array[0].floating, verts[1].array[1].floating, verts[1].array[2].floating];
+    double[3] v2 = [verts[2].array[0].floating, verts[2].array[1].floating, verts[2].array[2].floating];
+    double[3] v3 = [verts[3].array[0].floating, verts[3].array[1].floating, verts[3].array[2].floating];
+    foreach (i; 0 .. 3) {
+        double offTop = v2[i] - v0[i];
+        double offBot = v3[i] - v1[i];
+        assert(fabs(offTop - offBot) < 1e-3,
+            "parallelogram: axis " ~ i.to!string ~ " mismatch (top "
+            ~ offTop.to!string ~ " vs bot " ~ offBot.to!string ~ ")");
+    }
+}
+
 unittest { // commit → undo → empty
     resetEmpty();
     activatePen();
