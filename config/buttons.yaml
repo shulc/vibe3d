@@ -65,6 +65,8 @@ panels:
                 kind: script
                 lines:
                   - "prim.torus cenX:0 cenY:0 cenZ:0 majorRadius:0.5 minorRadius:0.125 majorSegments:24 minorSegments:12 axis:1"
+          - label: Pen
+            action: { kind: tool, id: pen }
   - title: Multiply
     items:
       - title: Subdivide

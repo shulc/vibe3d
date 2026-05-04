@@ -38,6 +38,7 @@ import tools.cylinder;
 import tools.cone;
 import tools.capsule;
 import tools.torus;
+import tools.pen;
 import tools.bevel;
 
 import commands.select.connect;
@@ -570,6 +571,15 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh, cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.torus", reg.toolFactories["prim.torus"]);
+
+    // Pen has no headless / modo_diff path — interactive only. Tool factory
+    // only; no commandFactories entry. See doc/pen_plan.md.
+    reg.toolFactories["pen"] = () {
+        auto t = new PenTool(&mesh, &gpu, litShader,
+                             &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
 
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands
@@ -1236,6 +1246,12 @@ void main(string[] args) {
     }
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
+        // Active tool gets first dibs on key events. Tools that handle keys
+        // (e.g. PenTool's Enter/Backspace/Esc) return true to consume; tools
+        // that don't override onKeyDown fall through to the default false
+        // and the rest of the handler runs as before.
+        if (activeTool && activeTool.onKeyDown(kev)) return;
+
         // YAML-driven shortcut lookup (tool, command, editmode).
         string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
         if (canon.length > 0) {
