@@ -12,7 +12,9 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane;
+import tools.create_common : pickWorkplane, BuildPlane,
+                              pickWorkplaneFrame, WorkplaneFrame,
+                              transformPoint, transformDir;
 import params : Param;
 
 import ImGui = d_imgui;
@@ -1809,10 +1811,24 @@ private:
     // and only the uniform extent updates.
     bool    dragUniform;
 
-    // Plane frame chosen at first click — persistent through the whole interaction.
+    // Plane frame chosen at first click — persistent through the whole
+    // interaction. After the workplane refactor (step 2), tool internals
+    // operate in the LOCAL workplane space — so planeNormal / Axis1 /
+    // Axis2 are always the local-frame identity (Y / X / Z). They stay
+    // here as fields so the existing writeSizeParam / sizeAlong /
+    // axisColor helpers (which look at axis component magnitudes) keep
+    // working unchanged. Conversion to world for rendering / hit-test
+    // happens via `frame`.
     Vec3  planeNormal;
     Vec3  planeAxis1;
     Vec3  planeAxis2;
+    /// Workplane local↔world transform captured at choosePlane(). All
+    /// tool-internal Vec3 fields (startPoint, currentPoint, baseAnchor,
+    /// hpOrigin, heightDragStart, params_.cen*) and previewMesh / commit
+    /// mesh vertices live in this frame's local space; mesh upload
+    /// transforms vertices through `frame.toWorld` immediately before
+    /// uploading to GPU.
+    WorkplaneFrame frame;
 
     Viewport cachedVp;
 
@@ -1954,7 +1970,7 @@ public:
             baseAnchor = baseCentroid();
             setupHeightPlane();
             Vec3 hhit;
-            bool hhitOk = rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            bool hhitOk = rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                             hpOrigin, hpn, hhit);
             if (heightHHitIdx == 1) {
                 // Top handle: non-incremental drag; anchor so current height is preserved.
@@ -1986,7 +2002,7 @@ public:
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0,0,0), planeNormal, hit))
                 return false;
             startPoint   = hit;
@@ -2013,8 +2029,8 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = boxCenter();
                 Vec3 hit;
-                if (!rayPlaneIntersect(cachedVp.eye,
-                                       screenRay(e.x, e.y, cachedVp),
+                if (!rayPlaneIntersect(localEye(),
+                                       localRay(e.x, e.y),
                                        baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
@@ -2035,7 +2051,7 @@ public:
             setupHeightPlane();
             baseAnchor = baseCentroid();
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
@@ -2094,10 +2110,15 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (edgeDragIdx >= 0) {
-            Vec3 moveAxis = (edgeDragIdx == 0 || edgeDragIdx == 2) ? planeAxis2 : planeAxis1;
+            // The handle pos lives in world (rendered via cachedVp); pass
+            // the world version of the local axis we want to project the
+            // drag onto. applyEdgeDelta receives a world-space delta and
+            // converts to local via toLocalD before mutating params_.
+            Vec3 moveAxisLocal = (edgeDragIdx == 0 || edgeDragIdx == 2) ? planeAxis2 : planeAxis1;
+            Vec3 moveAxisWorld = toWorldD(moveAxisLocal);
             bool skip;
             Vec3 delta = screenAxisDelta(e.x, e.y, edgeLastMX, edgeLastMY,
-                                         edgeH[edgeDragIdx].pos, moveAxis, cachedVp, skip);
+                                         edgeH[edgeDragIdx].pos, moveAxisWorld, cachedVp, skip);
             if (!skip) applyEdgeDelta(edgeDragIdx, delta);
             edgeLastMX = e.x;
             edgeLastMY = e.y;
@@ -2120,7 +2141,7 @@ public:
         // heightH drag in HeightSet (re-drag without changing state)
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
                 if (heightHDragIdx == 1) {
@@ -2192,7 +2213,7 @@ public:
 
         if (state == BoxState.DrawingBase) {
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0,0,0), planeNormal, hit))
             {
                 currentPoint = hit;
@@ -2210,8 +2231,8 @@ public:
             // Center stays put.
             if (dragUniform) {
                 Vec3 hit;
-                if (rayPlaneIntersect(cachedVp.eye,
-                                      screenRay(e.x, e.y, cachedVp),
+                if (rayPlaneIntersect(localEye(),
+                                      localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
                     Vec3  d = hit - baseAnchor;
@@ -2227,7 +2248,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
                 // Signed projection of drag onto planeNormal — sign decides
@@ -2305,7 +2326,7 @@ public:
 
         // Draw move gizmo only once the base is finalized
         if (state >= BoxState.BaseSet) {
-            mover.setPosition(boxCenter());
+            mover.setPosition(toWorldP(boxCenter()));
             mover.arrowX.setForceHovered(moverDragAxis == 0);
             mover.arrowY.setForceHovered(moverDragAxis == 1);
             mover.arrowZ.setForceHovered(moverDragAxis == 2);
@@ -2495,10 +2516,14 @@ private:
     }
 
     // Apply world-space delta to box by updating params_ center.
+    // The mover gizmo lives in world (its arrows align with world XYZ),
+    // so axisDragDelta returns a world-space vector. Project it into
+    // the workplane local frame before adding to params_.
     void applyMoverDelta(Vec3 d) {
-        params_.cenX += d.x;
-        params_.cenY += d.y;
-        params_.cenZ += d.z;
+        Vec3 dl = toLocalD(d);
+        params_.cenX += dl.x;
+        params_.cenY += dl.y;
+        params_.cenZ += dl.z;
         uploadPreview();
     }
 
@@ -2512,14 +2537,19 @@ private:
     // Update height handles — positions derived from params_.
     // [0] = base centroid (bottom face center).
     // [1] = base centroid + planeNormal * currentHeight() (top face center).
+    // Positions are computed in LOCAL space then transformed to world for
+    // rendering / hit-test against the live viewport.
     void updateHeightHandler(const ref Viewport vp) {
-        Vec3 bot = baseCentroid();
-        Vec3 top = bot + planeNormal * currentHeight();
-        Vec3[2] pts = [bot, top];
+        Vec3 botL = baseCentroid();
+        Vec3 topL = botL + planeNormal * currentHeight();
+        Vec3 botW = toWorldP(botL);
+        Vec3 topW = toWorldP(topL);
+        Vec3[2] pts = [botW, topW];
+        Vec3 colorAxis = toWorldD(planeNormal);
         foreach (i; 0 .. 2) {
             heightH[i].pos   = pts[i];
             heightH[i].size  = gizmoSize(pts[i], vp, 0.04f);
-            heightH[i].color = axisColor(planeNormal);
+            heightH[i].color = axisColor(colorAxis);
         }
     }
 
@@ -2527,7 +2557,7 @@ private:
     // BaseSet: midpoints of base edges.
     // DrawingHeight/HeightSet: centers of the 4 side faces (midpoint + halfH).
     void updateEdgeHandlers(const ref Viewport vp) {
-        Vec3[4] corners = computedBaseCorners();
+        Vec3[4] corners = computedBaseCorners();   // local
         Vec3 halfH = (state >= BoxState.DrawingHeight)
             ? planeNormal * (currentHeight() * 0.5f)
             : Vec3(0, 0, 0);
@@ -2535,10 +2565,12 @@ private:
         static immutable int[4][4] edgePairs = [[0,1],[1,2],[2,3],[3,0]];
         Vec3[4] mids;
         foreach (i, pair; edgePairs)
-            mids[i] = (corners[pair[0]] + corners[pair[1]]) * 0.5f + halfH;
+            mids[i] = toWorldP((corners[pair[0]] + corners[pair[1]]) * 0.5f + halfH);
 
-        Vec3[4] colors = [axisColor(planeAxis2), axisColor(planeAxis1),
-                          axisColor(planeAxis2), axisColor(planeAxis1)];
+        Vec3 c1 = toWorldD(planeAxis1);
+        Vec3 c2 = toWorldD(planeAxis2);
+        Vec3[4] colors = [axisColor(c2), axisColor(c1),
+                          axisColor(c2), axisColor(c1)];
 
         foreach (i; 0 .. 4) {
             edgeH[i].pos   = mids[i];
@@ -2562,7 +2594,12 @@ private:
     //   size changes by abs(d) (one side only).
     //   Precisely: newSize = oldSize + d*sign; newCen = oldCen + moveAxis*(d/2).
     void applyEdgeDelta(int idx, Vec3 delta) {
-        // Determine which world axis this edge moves along and the sign convention.
+        // Incoming delta is in WORLD (axisDragDelta projects screen
+        // motion onto a world-space axis). Convert to local before
+        // running the size-+-center math, since planeAxis1/Axis2/normal
+        // are the local-frame identity.
+        Vec3 deltaL = toLocalD(delta);
+        // Determine which local axis this edge moves along and the sign convention.
         //   Edge 0 → planeAxis2, sign = -1 (south edge: + delta means "shrink" from south side)
         //   Edge 1 → planeAxis1, sign = +1
         //   Edge 2 → planeAxis2, sign = +1
@@ -2576,7 +2613,7 @@ private:
             case 3: moveAxis = planeAxis1; sign = -1.0f; break;
         }
 
-        float d        = dot(delta, moveAxis) * sign;
+        float d        = dot(deltaL, moveAxis) * sign;
         float oldSize  = sizeAlong(moveAxis);
         float signedSz = oldSize + d;
         // signedSz < 0 ⇒ dragged edge crossed the opposite edge ⇒
@@ -2585,7 +2622,7 @@ private:
         // matter the sign), so the rectangle stays anchored at the
         // un-dragged opposite edge.
         float newSize = abs(signedSz);
-        float fullD   = dot(delta, moveAxis);
+        float fullD   = dot(deltaL, moveAxis);
 
         writeSizeParam(moveAxis, newSize);
         Vec3 cenShift = moveAxis * (fullD * 0.5f);
@@ -2606,21 +2643,59 @@ private:
     }
 
     void choosePlane(const ref Viewport vp) {
-        auto bp    = pickWorkplane(vp);
-        planeNormal = bp.normal;
-        planeAxis1  = bp.axis1;
-        planeAxis2  = bp.axis2;
+        // Capture the active workplane as a local↔world transform. From
+        // here on, all tool-internal coords are in local-space (where the
+        // workplane is the identity XZ plane), so plane axes are the
+        // canonical local triple. The previous behaviour — caching world-
+        // space (axis1, normal, axis2) from pickWorkplane — implied an
+        // axis-aligned workplane and broke after alignToSelection.
+        frame       = pickWorkplaneFrame(vp);
+        planeNormal = Vec3(0, 1, 0);
+        planeAxis1  = Vec3(1, 0, 0);
+        planeAxis2  = Vec3(0, 0, 1);
     }
 
+    // ---- Local ↔ world helpers (workplane refactor step 2) ----------------
+    // cachedVp is in world space; mouse rays come from world; gizmo handles
+    // hit-test against world-space projection. These wrappers do the
+    // single-point transform between the two spaces.
+
+    Vec3 localEye() const {
+        return transformPoint(frame.toLocal, cachedVp.eye);
+    }
+    Vec3 localRay(int x, int y) const {
+        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    }
+    Vec3 toWorldP(Vec3 p)  const { return transformPoint(frame.toWorld, p); }
+    Vec3 toWorldD(Vec3 d)  const { return transformDir  (frame.toWorld, d); }
+    Vec3 toLocalD(Vec3 d)  const { return transformDir  (frame.toLocal, d); }
+
     // Build a preview/commit mesh directly from params_ (no sync needed).
+    // Mesh is emitted in LOCAL workplane space; callers transform vertices
+    // through `frame.toWorld` before uploading / committing.
     void buildBase(Mesh* m) {
         // params_.size on planeNormal axis is 0 at this point (plane mode).
         buildCuboidParametric(m, params_);
     }
 
+    // Apply `frame.toWorld` to every vertex of `m`. The cuboid generator
+    // emits vertices in local space (axis-aligned around params_.cen with
+    // ±size/2 extents along local X/Y/Z); this rotates+translates them
+    // into world coords so renderers / commit see the workplane-aligned
+    // primitive.
+    //
+    // The auto-mode frame is NOT necessarily identity (X-dominant camera
+    // gets normal=+X / axis1=+Y, etc.) — always run the per-vertex math
+    // rather than special-casing.
+    void applyFrameToMesh(Mesh* m) {
+        foreach (ref v; m.vertices)
+            v = transformPoint(frame.toWorld, v);
+    }
+
     void uploadBase() {
         previewMesh.clear();
         buildBase(&previewMesh);
+        applyFrameToMesh(&previewMesh);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
@@ -2635,6 +2710,7 @@ private:
 
     void commitBase() {
         buildBase(mesh);
+        applyFrameToMesh(mesh);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -2642,7 +2718,11 @@ private:
 
     void setupHeightPlane() {
         hpOrigin = baseCentroid();
-        Vec3 toCamera = cachedVp.eye - hpOrigin;
+        // Camera direction in LOCAL space — height-drag plane sits with
+        // its normal in the workplane (perpendicular to planeNormal),
+        // pointing roughly at the camera so the user's screen-vertical
+        // mouse motion projects cleanly onto planeNormal.
+        Vec3 toCamera = localEye() - hpOrigin;
         Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
         float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
         hpn = len > 1e-6f
@@ -2650,7 +2730,8 @@ private:
             : planeAxis1;
     }
 
-    // Build a cuboid preview/commit mesh directly from params_.
+    // Build a cuboid preview/commit mesh directly from params_. Like
+    // buildBase, emitted vertices are in local workplane space.
     void buildCuboid(Mesh* m) {
         buildCuboidParametric(m, params_);
     }
@@ -2658,12 +2739,14 @@ private:
     void uploadCuboid() {
         previewMesh.clear();
         buildCuboid(&previewMesh);
+        applyFrameToMesh(&previewMesh);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
 
     void commitCuboid() {
         buildCuboid(mesh);
+        applyFrameToMesh(mesh);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
