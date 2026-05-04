@@ -929,17 +929,89 @@ struct Mesh {
     }
 
     /// Return a bool mask (indexed by vertex index) where `true` means the vertex
-    /// belongs to at least one front-facing face as seen from `eye`.
+    /// belongs to at least one front-facing face AND is not occluded by any
+    /// other front-facing face along the eye→vertex ray.
+    ///
     /// A face is front-facing when its normal points toward the camera
-    /// (dot(normal, face[0] - eye) < 0).
+    /// (dot(normal, face[0] - eye) < 0). Occlusion is tested by ray-casting
+    /// from the eye through each candidate vertex against every other
+    /// front-facing face: if the ray crosses a face's plane inside its
+    /// polygon at a smaller t than the vertex distance, the vertex is hidden
+    /// behind that face. Used by pickVertices / pickEdges and the RMB lasso
+    /// path so neither picks elements behind opaque geometry — including
+    /// disjoint mesh components in the same Mesh struct (cube + cube,
+    /// cube + cylinder, etc.).
     bool[] visibleVertices(Vec3 eye) const {
+        import math : pointInPolygon2D;
+        import std.math : abs;
         bool[] vis = new bool[](vertices.length);
-        foreach (face; faces) {
+        if (vertices.length == 0 || faces.length == 0) return vis;
+
+        // Pass 1: collect front-facing faces and seed the visibility mask
+        // (vertex is on at least one front-facing face).
+        struct FrontFace { uint fi; Vec3 n; size_t flen; }
+        FrontFace[] front;
+        front.reserve(faces.length);
+        foreach (fi, ref face; faces) {
             if (face.length < 3) continue;
             Vec3 fn = cross(vertices[face[1]] - vertices[face[0]],
                             vertices[face[2]] - vertices[face[0]]);
             if (dot(fn, vertices[face[0]] - eye) >= 0) continue;
             foreach (vi; face) vis[vi] = true;
+            front ~= FrontFace(cast(uint)fi, fn, face.length);
+        }
+
+        // Pass 2: reject vertices occluded by any closer front-facing face.
+        // For each candidate vertex compute the ray eye→vertex and intersect
+        // it with every other front-facing face's plane; if the parametric
+        // hit t lies in (0, 1) (strictly closer than the vertex) and the
+        // hit point falls inside that face's polygon, the vertex is hidden.
+        // Faces that own the vertex are skipped (their plane passes through
+        // the vertex with t≈1, and FP noise around the boundary is handled
+        // by the (1 - ε) cutoff).
+        enum float OCCL_EPS = 1e-4f;
+        foreach (vi; 0 .. vertices.length) {
+            if (!vis[vi]) continue;
+            Vec3 vpos = vertices[vi];
+            Vec3 dir  = vpos - eye;
+            float vd2 = dir.x*dir.x + dir.y*dir.y + dir.z*dir.z;
+            if (vd2 < 1e-12f) continue;
+
+            foreach (ref ff; front) {
+                const(uint)[] face = faces[ff.fi];
+                bool ownsVi = false;
+                foreach (v; face) if (v == vi) { ownsVi = true; break; }
+                if (ownsVi) continue;
+
+                float denom = dot(ff.n, dir);
+                if (abs(denom) < 1e-9f) continue;     // ray parallel to plane
+                float t = dot(ff.n, vertices[face[0]] - eye) / denom;
+                if (t <= 0.0f || t >= 1.0f - OCCL_EPS) continue;
+                Vec3 hit = eye + dir * t;
+
+                // Project face polygon and hit point onto the 2D plane normal
+                // to the dominant axis of the face normal — a stable point-in-
+                // polygon test independent of camera orientation.
+                float ax = abs(ff.n.x), ay = abs(ff.n.y), az = abs(ff.n.z);
+                int u, w;
+                if (ax >= ay && ax >= az) { u = 1; w = 2; }
+                else if (ay >= az)        { u = 0; w = 2; }
+                else                      { u = 0; w = 1; }
+
+                float[] px = new float[](face.length);
+                float[] py = new float[](face.length);
+                foreach (i, vk; face) {
+                    Vec3 q = vertices[vk];
+                    px[i] = (u == 0) ? q.x : (u == 1 ? q.y : q.z);
+                    py[i] = (w == 0) ? q.x : (w == 1 ? q.y : q.z);
+                }
+                float hx = (u == 0) ? hit.x : (u == 1 ? hit.y : hit.z);
+                float hy = (w == 0) ? hit.x : (w == 1 ? hit.y : hit.z);
+                if (pointInPolygon2D(hx, hy, px, py)) {
+                    vis[vi] = false;
+                    break;
+                }
+            }
         }
         return vis;
     }
