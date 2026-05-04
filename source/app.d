@@ -2210,6 +2210,66 @@ void main(string[] args) {
         return clicked;
     }
 
+    // Dispatch a single Action (used by `renderButton` and by popup-item
+    // clicks). Tool/command/script branches mirror the inline logic in the
+    // side-panel renderer; popup-as-an-action is a no-op (nested popups
+    // are not currently supported — the outer popup would close before
+    // an inner one could open).
+    void dispatchAction(ref Action action) {
+        import argstring : parseArgstring;
+        final switch (action.kind) {
+            case ActionKind.tool:
+                activateToolById(action.id);
+                break;
+            case ActionKind.command:
+                if (!tryOpenArgsDialog(action.id))
+                    runCommand(reg.commandFactories[action.id]());
+                break;
+            case ActionKind.script:
+                foreach (line; action.scriptLines) {
+                    auto parsed = parseArgstring(line);
+                    if (parsed.isEmpty) continue;
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate(parsed.commandId,
+                                               parsed.params.toString());
+                }
+                break;
+            case ActionKind.popup:
+                // Nested popup not supported.
+                break;
+        }
+    }
+
+    // Resolve a popup item's `checked:` block to a tri-state result. Until
+    // 8.2 ships the state registry every check returns `false` — items
+    // render unchecked. This is the single seam tests + the registry will
+    // hook into.
+    bool popupItemChecked(ref Checked chk) {
+        if (!chk.present) return false;
+        return false;
+    }
+
+    // Render the body of a popup (between `BeginPopup` and `EndPopup`).
+    // Action items dispatch via `dispatchAction`; dividers/headers are
+    // non-interactive.
+    void renderPopupItems(ref PopupItem[] items) {
+        foreach (ref it; items) {
+            final switch (it.kind) {
+                case PopupItemKind.divider:
+                    ImGui.Separator();
+                    break;
+                case PopupItemKind.header:
+                    ImGui.TextDisabled("%s", it.label.toStringz);
+                    break;
+                case PopupItemKind.action:
+                    bool checked = popupItemChecked(it.checked);
+                    if (ImGui.MenuItem(it.label, "", checked))
+                        dispatchAction(it.action);
+                    break;
+            }
+        }
+    }
+
     // LightWave-style section header: dark slate-blue band with centered white
     // text, framed by a 1-pixel black outline matching button edges.
     void drawSectionHeader(string title) {
@@ -2329,32 +2389,22 @@ void main(string[] args) {
                 // sequence of commands, not a sticky-tool activation).
                 bool isCommand = (action.kind == ActionKind.command
                                || action.kind == ActionKind.script);
+                // Per-button popup ID — must be stable across frames and
+                // unique within the panel. Use the button label; popups
+                // are user-selected one-at-a-time so collisions across
+                // distinct popup-buttons would only happen with duplicate
+                // labels, which startup validation already rejects.
+                string popupId = "##popup_" ~ btn.label;
                 if (renderStyledButton(label, sc, on, isCommand, ImVec2(-1, 0))) {
-                    final switch (action.kind) {
-                        case ActionKind.tool:
-                            activateToolById(action.id);
-                            break;
-                        case ActionKind.command:
-                            if (!tryOpenArgsDialog(action.id))
-                                runCommand(reg.commandFactories[action.id]());
-                            break;
-                        case ActionKind.script:
-                            // Run each argstring line through the same
-                            // dispatcher /api/command uses.
-                            import argstring : parseArgstring;
-                            foreach (line; action.scriptLines) {
-                                auto parsed = parseArgstring(line);
-                                if (parsed.isEmpty) continue;
-                                if (commandHandlerDelegate !is null)
-                                    commandHandlerDelegate(parsed.commandId,
-                                                            parsed.params.toString());
-                            }
-                            break;
-                        case ActionKind.popup:
-                            // Popup rendering lands in subphase 8.1 — for
-                            // now treat as a no-op so older buttons.yaml
-                            // shapes keep compiling.
-                            break;
+                    if (action.kind == ActionKind.popup)
+                        ImGui.OpenPopup(popupId);
+                    else
+                        dispatchAction(action);
+                }
+                if (action.kind == ActionKind.popup) {
+                    if (ImGui.BeginPopup(popupId)) {
+                        renderPopupItems(action.popupItems);
+                        ImGui.EndPopup();
                     }
                 }
             }
@@ -2487,6 +2537,7 @@ void main(string[] args) {
                            || (editModeId == "edges"    && editMode == EditMode.Edges)
                            || (editModeId == "polygons" && editMode == EditMode.Polygons);
 
+                    string popupId = "##popup_" ~ btn.label;
                     if (renderStyledButton(label, sc, on, /*isCommand=*/true,
                                            ImVec2(btnW, 0))) {
                         final switch (action.kind) {
@@ -2516,8 +2567,14 @@ void main(string[] args) {
                                     setActiveTool(null);
                                 break;
                             case ActionKind.popup:
-                                // Popup rendering lands in subphase 8.1.
+                                ImGui.OpenPopup(popupId);
                                 break;
+                        }
+                    }
+                    if (action.kind == ActionKind.popup) {
+                        if (ImGui.BeginPopup(popupId)) {
+                            renderPopupItems(action.popupItems);
+                            ImGui.EndPopup();
                         }
                     }
                 }
