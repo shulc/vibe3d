@@ -5,3 +5,4 @@ module toolpipe;
 public import toolpipe.stage;
 public import toolpipe.packets;
 public import toolpipe.pipeline;
+public import toolpipe.stages.workplane;

@@ -3,6 +3,9 @@ module tools.create_common;
 import math : Vec3, Viewport;
 import std.math : abs;
 
+import toolpipe.pipeline : g_pipeCtx;
+import toolpipe.packets  : SubjectPacket;
+
 // ---------------------------------------------------------------------------
 // Helpers shared by interactive Create-tools (BoxTool and the upcoming
 // SphereTool / CylinderTool / ConeTool / CapsuleTool / TorusTool / PenTool).
@@ -47,6 +50,25 @@ BuildPlane pickMostFacingPlane(const ref Viewport vp) {
     } else {
         return BuildPlane(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0));
     }
+}
+
+// ---------------------------------------------------------------------------
+// pickWorkplane — phase-7.1 wrapper. Routes the construction-plane query
+// through the global ToolPipeContext so the WorkplaneStage's `mode`
+// (auto / worldX / worldY / worldZ) is honoured. Falls back to direct
+// `pickMostFacingPlane` if the pipe hasn't been initialised yet (e.g.
+// in a unittest with no app loop running).
+//
+// Tools call this instead of `pickMostFacingPlane` directly so the
+// global Tool Pipe state takes precedence over per-tool defaults.
+// ---------------------------------------------------------------------------
+BuildPlane pickWorkplane(const ref Viewport vp) {
+    if (g_pipeCtx is null) return pickMostFacingPlane(vp);
+    SubjectPacket subj;   // empty subject — the workplane stage doesn't read it
+    auto state = g_pipeCtx.pipeline.evaluate(subj, vp);
+    return BuildPlane(state.workplane.normal,
+                      state.workplane.axis1,
+                      state.workplane.axis2);
 }
 
 unittest {

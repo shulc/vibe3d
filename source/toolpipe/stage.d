@@ -93,6 +93,21 @@ abstract class Stage {
     // stages are skipped during evaluation but stay in the pipe (matches
     // MODO's E column in tool_pipe.html).
     bool enabled = true;
+
+    // ------------------------------------------------------------------
+    // Attribute mutation (HTTP `tool.pipe.attr <stageId> <name> <value>`).
+    //
+    // Default impls are no-ops; concrete stages override to expose
+    // panel-editable fields. Returning `false` from `setAttr` signals
+    // "unknown attribute" to the HTTP layer, which surfaces it as an
+    // error.
+    //
+    // listAttrs returns (name, value) pairs for the inspection endpoint
+    // (`/api/toolpipe`). Pairs are passed through verbatim — values are
+    // stringified by the stage itself (no JSON typing).
+    // ------------------------------------------------------------------
+    bool setAttr(string name, string value) { return false; }
+    string[2][] listAttrs() const { return []; }
 }
 
 // ---------------------------------------------------------------------------

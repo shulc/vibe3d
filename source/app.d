@@ -85,6 +85,7 @@ import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
+import commands.tool.pipe     : ToolPipeAttrCommand;
 
 import command;
 import registry;
@@ -493,12 +494,13 @@ void main(string[] args) {
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
-    // globally via toolpipe.g_pipeCtx for tools that opt into the pipe.
-    // Phase 7.0 ships the skeleton only — no concrete stages are
-    // registered yet, so the pipe evaluates to an identity transform on
-    // the SubjectPacket and existing tools keep their hard-coded center
-    // / axis / workplane logic until later subphases migrate them.
+    // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
+    // WorkplaneStage (mode=auto by default) — tools that previously
+    // called pickMostFacingPlane(vp) now route through the pipe via
+    // pickWorkplane(vp), so the global "workplane mode" attr is honoured
+    // (auto / worldX / worldY / worldZ).
     g_pipeCtx = new ToolPipeContext();
+    g_pipeCtx.pipeline.add(new WorkplaneStage());
 
     Registry reg;
     reg.toolFactories["move"]   = () {
@@ -619,6 +621,8 @@ void main(string[] args) {
                                &gpu, &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["tool.reset"] = () => cast(Command)
         new ToolResetCommand(&mesh, cameraView, editMode, toolHost);
+    reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
+        new ToolPipeAttrCommand(&mesh, cameraView, editMode);
 
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
@@ -852,8 +856,9 @@ void main(string[] args) {
             return readText("recording.jsonl");
         });
         // Phase 7.0 — Tool Pipe inspection. Returns JSON listing the
-        // stages currently registered with the global pipe. Empty in 7.0
-        // (no concrete stages); 7.1+ subphases populate as they land.
+        // stages currently registered with the global pipe (task FOURCC,
+        // id, ordinal, enabled flag, plus per-stage attrs from
+        // listAttrs).
         httpServer.setToolPipeProvider(() {
             import std.array  : appender;
             import std.format : format;
@@ -872,9 +877,16 @@ void main(string[] args) {
                         cast(char)( code        & 0xFF),
                     ];
                     buf.put(format(
-                        `{"task":"%s","id":"%s","ordinal":%d,"enabled":%s}`,
+                        `{"task":"%s","id":"%s","ordinal":%d,"enabled":%s,"attrs":{`,
                         taskStr.idup, s.id(), s.ordinal(),
                         s.enabled ? "true" : "false"));
+                    bool firstAttr = true;
+                    foreach (kv; s.listAttrs()) {
+                        if (!firstAttr) buf.put(",");
+                        firstAttr = false;
+                        buf.put(format(`"%s":"%s"`, kv[0], kv[1]));
+                    }
+                    buf.put(`}}`);
                 }
             }
             buf.put(`]}`);
@@ -971,6 +983,30 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             tr.setToolId(pos[0].str);
+                    }
+                }
+            } else if (auto tpa = cast(ToolPipeAttrCommand)cmd) {
+                // tool.pipe.attr <stageId> <name> <value>
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            tpa.setStageId(pos[0].str);
+                        if (pos.length >= 2 && pos[1].type == JSONType.string)
+                            tpa.setAttrName(pos[1].str);
+                        if (pos.length >= 3) {
+                            // Value is whatever scalar form was passed —
+                            // stringify so the stage's setAttr can parse it.
+                            import std.conv : to;
+                            string sval;
+                            if      (pos[2].type == JSONType.string)   sval = pos[2].str;
+                            else if (pos[2].type == JSONType.integer)  sval = pos[2].integer.to!string;
+                            else if (pos[2].type == JSONType.uinteger) sval = pos[2].uinteger.to!string;
+                            else if (pos[2].type == JSONType.float_)   sval = pos[2].floating.to!string;
+                            else if (pos[2].type == JSONType.true_)    sval = "true";
+                            else if (pos[2].type == JSONType.false_)   sval = "false";
+                            tpa.setAttrValue(sval);
+                        }
                     }
                 }
             }

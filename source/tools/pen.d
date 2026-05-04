@@ -13,7 +13,7 @@ import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
-import tools.create_common : pickMostFacingPlane, BuildPlane;
+import tools.create_common : pickWorkplane, BuildPlane;
 
 import std.math : abs;
 
@@ -449,7 +449,7 @@ public:
 
 private:
     void choosePlane(const ref Viewport vp) {
-        auto bp = pickMostFacingPlane(vp);
+        auto bp = pickWorkplane(vp);
         planeNormal = bp.normal;
         planeAxis1  = bp.axis1;
         planeAxis2  = bp.axis2;

@@ -12,7 +12,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
-import tools.create_common : pickMostFacingPlane, BuildPlane;
+import tools.create_common : pickWorkplane, BuildPlane;
 import params : Param;
 
 import ImGui = d_imgui;
@@ -2606,7 +2606,7 @@ private:
     }
 
     void choosePlane(const ref Viewport vp) {
-        auto bp    = pickMostFacingPlane(vp);
+        auto bp    = pickWorkplane(vp);
         planeNormal = bp.normal;
         planeAxis1  = bp.axis1;
         planeAxis2  = bp.axis2;

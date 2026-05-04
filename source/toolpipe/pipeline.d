@@ -3,6 +3,7 @@ module toolpipe.pipeline;
 import std.algorithm : sort, remove;
 import std.array     : array;
 
+import math : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
@@ -29,6 +30,7 @@ import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
 // ---------------------------------------------------------------------------
 struct ToolState {
     SubjectPacket      subject;
+    Viewport           view;        // active 3D viewport at evaluation time
     WorkplanePacket    workplane;
     ActionCenterPacket actionCenter;
     AxisPacket         axis;
@@ -110,11 +112,14 @@ public:
     }
 
     /// Walk enabled stages low → high and return the populated ToolState.
-    /// Caller seeds `state.subject` (the pipeline's input); each stage
-    /// then enriches the rest of the packet fields.
-    ToolState evaluate(SubjectPacket subject) {
+    /// Caller seeds `state.subject` (the pipeline's input) plus the active
+    /// viewport (needed by stages that depend on the camera frame, e.g.
+    /// the auto-mode workplane that runs `pickMostFacingPlane`); each
+    /// stage then enriches the rest of the packet fields.
+    ToolState evaluate(SubjectPacket subject, const ref Viewport view) {
         ToolState state;
         state.subject = subject;
+        state.view    = view;
         foreach (s; stages_) {
             if (!s.enabled) continue;
             s.evaluate(state);
@@ -138,11 +143,10 @@ public:
 final class ToolPipeContext {
     Pipeline pipeline;
 
-    /// Convenience: build the Subject packet from a Mesh + EditMode and
-    /// run pipeline.evaluate. Cheap because most stages are no-ops in
-    /// 7.0.
-    ToolState run(SubjectPacket subject) {
-        return pipeline.evaluate(subject);
+    /// Convenience: run pipeline.evaluate. Cheap because most stages are
+    /// no-ops at default settings.
+    ToolState run(SubjectPacket subject, const ref Viewport view) {
+        return pipeline.evaluate(subject, view);
     }
 }
 
