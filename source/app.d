@@ -1779,7 +1779,16 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
-        float bestZ = float.infinity;
+        // Surface depth at the cursor pixel via ray-vs-plane intersection.
+        // Centroid NDC-Z (the previous heuristic) ordered faces incorrectly
+        // when a small face nested inside a larger occluder had its centroid
+        // pulled closer to the camera by being off-center — e.g. a cylinder
+        // inscribed in a cube: the side quad most facing the camera sits
+        // ~0.05 closer to the camera than the cube's centered face, so the
+        // cylinder won the depth test through the cube wall. Ray-plane gives
+        // the actual world-space depth at the click point.
+        Vec3  rayDir   = screenRay(cast(float)mx, cast(float)my, vp);
+        float bestDist = float.infinity;
 
         // Subpatch mode: project preview faces, translate hit to cage.
         if (subpatchPreview.active) {
@@ -1803,11 +1812,14 @@ void main(string[] args) {
                 if (!ok) continue;
                 if (!pointInPolygon2D(cast(float)mx, cast(float)my, sx, sy)) continue;
 
-                float cZ = 0;
-                foreach (z; ndz) cZ += z;
-                cZ /= len;
-                if (cZ < bestZ) {
-                    bestZ    = cZ;
+                Vec3 hit;
+                if (!rayPlaneIntersect(cameraView.eye, rayDir,
+                                       pv.vertices[face[0]], n, hit)) continue;
+                Vec3  toHit = hit - cameraView.eye;
+                if (dot(toHit, rayDir) <= 0) continue;     // behind camera
+                float d2 = toHit.x*toHit.x + toHit.y*toHit.y + toHit.z*toHit.z;
+                if (d2 < bestDist) {
+                    bestDist = d2;
                     bestCage = cast(int)subpatchPreview.trace.faceOrigin[fi];
                 }
             }
@@ -1829,10 +1841,8 @@ void main(string[] args) {
             if (face.length < 3) continue;
 
             // Back-face culling: skip faces whose normal points away from camera.
-            {
-                Vec3 n = mesh.faceNormal(cast(uint)fi);
-                if (dot(n, mesh.vertices[face[0]] - cameraView.eye) >= 0) continue;
-            }
+            Vec3 faceN = mesh.faceNormal(cast(uint)fi);
+            if (dot(faceN, mesh.vertices[face[0]] - cameraView.eye) >= 0) continue;
 
             // Quick bounds check if cached — avoids expensive projection.
             if (useBoundsCache && faceCache.valid[fi]) {
@@ -1881,11 +1891,18 @@ void main(string[] args) {
 
             if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
 
-            // Use centroid NDC-Z for occlusion ordering.
-            float cZ = 0;
-            for (int j = 0; j < len; j++) cZ += vertexCache.ndcZ[face[j]];
-            cZ /= len;
-            if (cZ < bestZ) { bestZ = cZ; hoveredFace = cast(int)fi; }
+            // Ray-plane depth at the cursor pixel — gives the actual surface
+            // depth at the click point instead of the centroid's depth, so a
+            // small face nested inside a larger occluder no longer wins the
+            // ordering through the wall. Skip on parallel ray (denom→0) or
+            // hits behind the camera.
+            Vec3 hit;
+            if (!rayPlaneIntersect(cameraView.eye, rayDir,
+                                   mesh.vertices[face[0]], faceN, hit)) continue;
+            Vec3  toHit = hit - cameraView.eye;
+            if (dot(toHit, rayDir) <= 0) continue;
+            float d2 = toHit.x*toHit.x + toHit.y*toHit.y + toHit.z*toHit.z;
+            if (d2 < bestDist) { bestDist = d2; hoveredFace = cast(int)fi; }
         }
 
         if (hoveredFace >= 0) {
