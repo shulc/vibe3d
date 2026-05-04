@@ -2240,13 +2240,12 @@ void main(string[] args) {
         }
     }
 
-    // Resolve a popup item's `checked:` block to a tri-state result. Until
-    // 8.2 ships the state registry every check returns `false` — items
-    // render unchecked. This is the single seam tests + the registry will
-    // hook into.
+    // Resolve a popup item's `checked:` block via the popup_state
+    // registry. Producers publish via setStatePath; this is the only
+    // consumer site.
     bool popupItemChecked(ref Checked chk) {
-        if (!chk.present) return false;
-        return false;
+        import popup_state : resolveChecked;
+        return resolveChecked(chk);
     }
 
     // Render the body of a popup (between `BeginPopup` and `EndPopup`).
