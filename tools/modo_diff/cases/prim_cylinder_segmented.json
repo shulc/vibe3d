@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cylinder sides=8 segments=2 axis=Y — 24v / 18f (16 side quads + 2 caps).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cylinder",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    8,
+      "segments": 2,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

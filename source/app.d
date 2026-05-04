@@ -34,6 +34,7 @@ import tools.scale;
 import tools.rotate;
 import tools.box;
 import tools.sphere;
+import tools.cylinder;
 import tools.bevel;
 
 import commands.select.connect;
@@ -526,6 +527,16 @@ void main(string[] args) {
         new ToolHeadlessCommand(&mesh, cameraView, editMode,
                                 &gpu, &vertexCache, &edgeCache, &faceCache,
                                 "prim.sphere", reg.toolFactories["prim.sphere"]);
+
+    reg.toolFactories["prim.cylinder"] = () {
+        auto t = new CylinderTool(&mesh, &gpu, litShader);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+    reg.commandFactories["prim.cylinder"] = () => cast(Command)
+        new ToolHeadlessCommand(&mesh, cameraView, editMode,
+                                &gpu, &vertexCache, &edgeCache, &faceCache,
+                                "prim.cylinder", reg.toolFactories["prim.cylinder"]);
 
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands

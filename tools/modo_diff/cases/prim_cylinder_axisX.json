@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cylinder axis=X — caps perpendicular to X, perp axes (Y, Z).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cylinder",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    8,
+      "segments": 1,
+      "axis":     0
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

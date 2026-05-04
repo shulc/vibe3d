@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cylinder defaults sides=24 segments=1 axis=Y — 48v / 26f (24 side quads + 2 cap n-gons).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cylinder",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "sides":    24,
+      "segments": 1,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

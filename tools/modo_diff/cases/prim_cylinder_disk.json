@@ -1,0 +1,17 @@
+{
+  "_comment": "prim.cylinder disk degenerate — sizeY=0 with axis=Y → single S-gon. 4v / 1f at sides=4.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cylinder",
+    "params": {
+      "cenX":     0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX":    1.0, "sizeY": 0.0, "sizeZ": 1.0,
+      "sides":    4,
+      "segments": 1,
+      "axis":     1,
+      "flip":     false
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}

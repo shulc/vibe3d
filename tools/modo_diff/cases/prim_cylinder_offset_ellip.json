@@ -1,0 +1,16 @@
+{
+  "_comment": "prim.cylinder off-center with ellipsoidal radii — exercises cen translation independent of per-axis size.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cylinder",
+    "params": {
+      "cenX":     1.0, "cenY": 2.0, "cenZ": 3.0,
+      "sizeX":    0.5, "sizeY": 2.0, "sizeZ": 1.5,
+      "sides":    6,
+      "segments": 1,
+      "axis":     1
+    }
+  },
+  "ops": [],
+  "tolerance": 0.001
+}
