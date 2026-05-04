@@ -57,6 +57,14 @@ panels:
                 kind: script
                 lines:
                   - "prim.capsule cenX:0 cenY:0 cenZ:0 sizeX:0.25 sizeY:0.5 sizeZ:0.25 sides:24 segments:1 endsegments:6 endsize:1.0 axis:1"
+          - label: Torus
+            action: { kind: tool, id: prim.torus }
+            ctrl:
+              label: "Unit Torus"
+              action:
+                kind: script
+                lines:
+                  - "prim.torus cenX:0 cenY:0 cenZ:0 majorRadius:0.5 minorRadius:0.125 majorSegments:24 minorSegments:12 axis:1"
   - title: Multiply
     items:
       - title: Subdivide
