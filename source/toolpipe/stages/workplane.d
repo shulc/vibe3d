@@ -8,6 +8,7 @@ import math : Vec3;
 import toolpipe.stage    : Stage, TaskCode, ordWork;
 import toolpipe.pipeline : ToolState;
 import tools.create_common : pickMostFacingPlane;
+import popup_state        : setStatePath;
 
 // ---------------------------------------------------------------------------
 // WorkplaneStage — MODO-aligned construction-plane state.
@@ -42,6 +43,10 @@ class WorkplaneStage : Stage {
     Vec3 center    = Vec3(0, 0, 0);
     Vec3 rotation  = Vec3(0, 0, 0);   // degrees, extrinsic XYZ
 
+    this() {
+        publishState();
+    }
+
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Work; }
     override string   id()       const                          { return "workplane"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWork; }
@@ -68,43 +73,9 @@ class WorkplaneStage : Stage {
     }
 
     override bool setAttr(string name, string value) {
-        switch (name) {
-            case "auto":
-                if      (value == "true"  || value == "1") { isAuto = true;  return true; }
-                else if (value == "false" || value == "0") { isAuto = false; return true; }
-                return false;
-            case "cenX":  center.x   = parseFloat(value); return true;
-            case "cenY":  center.y   = parseFloat(value); return true;
-            case "cenZ":  center.z   = parseFloat(value); return true;
-            case "rotX":  rotation.x = parseFloat(value); isAuto = false; return true;
-            case "rotY":  rotation.y = parseFloat(value); isAuto = false; return true;
-            case "rotZ":  rotation.z = parseFloat(value); isAuto = false; return true;
-            case "mode":
-                // Convenience presets — translate enum-style values into
-                // (isAuto, rotation) pairs. `worldY` is the default flat
-                // XZ plane; `worldX` / `worldZ` are 90° rotations of it.
-                switch (value) {
-                    case "auto":
-                        isAuto = true;
-                        rotation = Vec3(0, 0, 0);
-                        center   = Vec3(0, 0, 0);
-                        return true;
-                    case "worldY":
-                        isAuto = false;
-                        rotation = Vec3(0, 0, 0);
-                        return true;
-                    case "worldX":
-                        isAuto = false;
-                        rotation = Vec3(0, 0, -90.0f);
-                        return true;
-                    case "worldZ":
-                        isAuto = false;
-                        rotation = Vec3(90.0f, 0, 0);
-                        return true;
-                    default: return false;
-                }
-            default: return false;
-        }
+        bool ok = applySetAttr(name, value);
+        if (ok) publishState();
+        return ok;
     }
 
     override string[2][] listAttrs() const {
@@ -126,6 +97,8 @@ class WorkplaneStage : Stage {
         isAuto   = true;
         center   = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);
+        directBasisActive = false;
+        publishState();
     }
 
     /// Set absolute center / rotation. Pass NaN for any component to
@@ -142,6 +115,7 @@ class WorkplaneStage : Stage {
         if (!isNaN(ry)) { rotation.y = ry; rotChanged = true; }
         if (!isNaN(rz)) { rotation.z = rz; rotChanged = true; }
         if (rotChanged) isAuto = false;
+        publishState();
     }
 
     /// Add `angle` (degrees) around world axis `axisIdx` (0=X, 1=Y, 2=Z)
@@ -154,6 +128,7 @@ class WorkplaneStage : Stage {
             case 2: rotation.z += angleDeg; break;
         }
         isAuto = false;
+        publishState();
     }
 
     /// Add `dist` (world units) to the center along axis `axisIdx`.
@@ -165,6 +140,7 @@ class WorkplaneStage : Stage {
             case 1: center.y += dist; break;
             case 2: center.z += dist; break;
         }
+        publishState();
     }
 
     /// Set the basis directly (used by `workplane.alignToSelection` to
@@ -179,6 +155,7 @@ class WorkplaneStage : Stage {
         center       = newCenter;
         directBasisActive = true;
         isAuto = false;
+        publishState();
     }
 
 private:
@@ -186,6 +163,58 @@ private:
     Vec3 directNormal;
     Vec3 directAxis1;
     Vec3 directAxis2;
+
+    // Publish current state under the `workplane/` prefix so popup
+    // checkmarks (see source/popup_state.d) can reflect it. Called
+    // from constructor + every mutator.
+    void publishState() {
+        setStatePath("workplane/auto", isAuto ? "true" : "false");
+        setStatePath("workplane/mode", modeLabel());
+    }
+
+    bool applySetAttr(string name, string value) {
+        switch (name) {
+            case "auto":
+                if      (value == "true"  || value == "1") { isAuto = true;  return true; }
+                else if (value == "false" || value == "0") { isAuto = false; return true; }
+                return false;
+            case "cenX":  center.x   = parseFloat(value); return true;
+            case "cenY":  center.y   = parseFloat(value); return true;
+            case "cenZ":  center.z   = parseFloat(value); return true;
+            case "rotX":  rotation.x = parseFloat(value); isAuto = false; return true;
+            case "rotY":  rotation.y = parseFloat(value); isAuto = false; return true;
+            case "rotZ":  rotation.z = parseFloat(value); isAuto = false; return true;
+            case "mode":
+                // Convenience presets — translate enum-style values into
+                // (isAuto, rotation) pairs. `worldY` is the default flat
+                // XZ plane; `worldX` / `worldZ` are 90° rotations of it.
+                switch (value) {
+                    case "auto":
+                        isAuto = true;
+                        rotation = Vec3(0, 0, 0);
+                        center   = Vec3(0, 0, 0);
+                        directBasisActive = false;
+                        return true;
+                    case "worldY":
+                        isAuto = false;
+                        rotation = Vec3(0, 0, 0);
+                        directBasisActive = false;
+                        return true;
+                    case "worldX":
+                        isAuto = false;
+                        rotation = Vec3(0, 0, -90.0f);
+                        directBasisActive = false;
+                        return true;
+                    case "worldZ":
+                        isAuto = false;
+                        rotation = Vec3(90.0f, 0, 0);
+                        directBasisActive = false;
+                        return true;
+                    default: return false;
+                }
+            default: return false;
+        }
+    }
 
     string modeLabel() const {
         if (isAuto) return "auto";

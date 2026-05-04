@@ -16,3 +16,26 @@ groups:
         alt:
           label: "Convert P"
           action: { kind: script, lines: ["select.convert polygon"] }
+  - title: workplane
+    buttons:
+      - label: "Work Plane"
+        action:
+          kind: popup
+          items:
+            - label: Auto
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
+              checked: { path: "workplane/auto", equals: "true" }
+            - label: World Y
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
+              checked: { path: "workplane/mode", equals: "worldY" }
+            - label: World X
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
+              checked: { path: "workplane/mode", equals: "worldX" }
+            - label: World Z
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
+              checked: { path: "workplane/mode", equals: "worldZ" }
+            - { kind: divider }
+            - label: Align To Selection
+              action: { kind: command, id: workplane.alignToSelection }
+            - label: Reset
+              action: { kind: command, id: workplane.reset }
