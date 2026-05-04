@@ -403,6 +403,58 @@ unittest { // drag relocates without weld
 // Enter, the polygon's vertices reflect the numeric edit.
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// 6.9.1: tool.attr flip:true reverses the boundary winding on commit.
+// Build a triangle, set flip via tool.attr, commit; verify the face's
+// vertex index order is the reverse of the no-flip baseline.
+// -------------------------------------------------------------------------
+
+unittest { // flip reverses face winding
+    // Baseline: 3 clicks + Enter, no flip.
+    resetEmpty();
+    activatePen();
+    string baseline = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 525, 250) ~ "\n"
+        ~ clickAt(300, 475, 350) ~ "\n"
+        ~ keyDown(400, SDLK_RETURN);
+    playEvents(baseline);
+    waitForPlaybackFinish();
+    deactivateTool();
+    auto mb = getJson("/api/model");
+    assert(mb["faces"].array.length == 1);
+    long[] faceB;
+    foreach (e; mb["faces"].array[0].array) faceB ~= e.integer;
+
+    // Same clicks but flip set via tool.attr before Enter.
+    resetEmpty();
+    activatePen();
+    string log1 = LOG_HEADER ~ "\n"
+        ~ clickAt(100, 425, 250) ~ "\n"
+        ~ clickAt(200, 525, 250) ~ "\n"
+        ~ clickAt(300, 475, 350);
+    playEvents(log1);
+    waitForPlaybackFinish();
+    auto rf = postJson("/api/command", "tool.attr pen flip true");
+    assert(rf["status"].str == "ok", "tool.attr flip failed: " ~ rf.toString);
+    string log2 = LOG_HEADER ~ "\n" ~ keyDown(100, SDLK_RETURN);
+    playEvents(log2);
+    waitForPlaybackFinish();
+    deactivateTool();
+
+    auto mf = getJson("/api/model");
+    assert(mf["faces"].array.length == 1);
+    long[] faceF;
+    foreach (e; mf["faces"].array[0].array) faceF ~= e.integer;
+    assert(faceB.length == faceF.length, "flip: face length differs");
+
+    // Flip reverses the boundary order.
+    foreach (i; 0 .. faceB.length)
+        assert(faceB[i] == faceF[$ - 1 - i],
+            "flip: expected reversed boundary, baseline=" ~ faceB.to!string
+            ~ " flipped=" ~ faceF.to!string);
+}
+
 unittest { // tool.attr posX rewrites the current vertex
     resetEmpty();
     activatePen();
