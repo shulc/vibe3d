@@ -397,12 +397,32 @@ public:
 
         immutable float[16] identity = identityMatrix;
 
+        // Filled face preview (shaded). Visible whenever the in-progress
+        // sequence has enough vertices to form at least one face — ≥3 in
+        // default polygon mode, ≥4 for the first quad in Make Quads. Faces
+        // are rebuilt into previewMesh by uploadPreview.
+        if (vertices_.length >= minCommitVerts()) {
+            Vec3 lightDir = normalize(Vec3(0.6f, 1.0f, 0.5f));
+            glUseProgram(litShader.program);
+            glUniformMatrix4fv(litShader.locModel, 1, GL_FALSE, identity.ptr);
+            glUniformMatrix4fv(litShader.locView,  1, GL_FALSE, vp.view.ptr);
+            glUniformMatrix4fv(litShader.locProj,  1, GL_FALSE, vp.proj.ptr);
+            glUniform3f(litShader.locLightDir, lightDir.x, lightDir.y, lightDir.z);
+            glUniform3f(litShader.locEyePos,   vp.eye.x, vp.eye.y, vp.eye.z);
+            glUniform1f(litShader.locAmbient,  0.20f);
+            glUniform1f(litShader.locSpecStr,  0.25f);
+            glUniform1f(litShader.locSpecPow,  32.0f);
+            previewGpu.drawFaces(litShader);
+        }
+
         glUseProgram(shader.program);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identity.ptr);
         glUniformMatrix4fv(shader.locView,  1, GL_FALSE, vp.view.ptr);
         glUniformMatrix4fv(shader.locProj,  1, GL_FALSE, vp.proj.ptr);
 
-        // Open polyline preview (edges between consecutive verts).
+        // Wireframe preview — shows the open polyline before the first
+        // face is closed, and the boundary edges of the in-progress face(s)
+        // afterwards (drawn on top of the lit fill).
         if (vertices_.length >= 2)
             previewGpu.drawEdges(shader.locColor, -1, []);
 
@@ -574,10 +594,38 @@ private:
     void uploadPreview() {
         previewMesh.clear();
         foreach (v; vertices_) previewMesh.addVertex(v);
-        if (vertices_.length >= 2) {
+
+        // Filled face preview. Mirrors commitPolygon's index pattern so the
+        // shape the user sees while drawing matches what they get on Enter.
+        // flip is intentionally NOT applied here — the preview always shows
+        // the un-flipped winding so the face stays visible from the user's
+        // viewing angle. (Backface culling on a flipped preview would hide
+        // the entire shape.)
+        if (vertices_.length >= minCommitVerts()) {
+            if (params_.makeQuads) {
+                int N = cast(int)(vertices_.length / 2 * 2);
+                int nQuads = (N - 2) / 2;
+                foreach (k; 0 .. nQuads) {
+                    uint a = cast(uint)(2 * k);
+                    uint b = cast(uint)(2 * k + 2);
+                    uint c = cast(uint)(2 * k + 3);
+                    uint d = cast(uint)(2 * k + 1);
+                    previewMesh.addFace([a, b, c, d]);
+                }
+            } else {
+                uint[] face;
+                face.length = vertices_.length;
+                foreach (i, _; vertices_) face[i] = cast(uint)i;
+                previewMesh.addFace(face);
+            }
+        } else if (vertices_.length >= 2) {
+            // Pre-face: open polyline only (no faces yet, so addFace would
+            // form none — register edges directly so the wireframe pass can
+            // render them).
             foreach (i; 0 .. cast(int)vertices_.length - 1)
                 previewMesh.addEdge(cast(uint)i, cast(uint)(i + 1));
         }
+
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
         // popVertex / future numeric edits).
