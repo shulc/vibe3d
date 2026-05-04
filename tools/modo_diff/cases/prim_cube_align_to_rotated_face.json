@@ -1,0 +1,30 @@
+{
+  "_comment": "Workflow regression for the workplane refactor: build a 1x2x1 cuboid (sizeY=2 → top face has unambiguous longest edge along Y), rotate 30deg around Z so the cuboid is tilted in the XY plane, alignToSelection on the rotated +Z face, then prim.cube creates a unit cube which should land workplane-aligned (its 'up' along the picked face normal, its 'Z' along the longest edge of that face). Verifies vibe3d's BoxTool.applyHeadless + currentWorkplaneFrame + the longest-edge-along-Z alignToSelection rule against MODO bit-for-bit.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 2.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }
+  },
+  "ops": [
+    {"op": "rotate", "axis": "Z", "angle": 30, "pivot": [0, 0, 0]},
+    {"op": "select_face", "face": [
+      [0.066987, -1.116025, 0.5],
+      [0.933013, -0.616025, 0.5],
+      [-0.066987, 1.116025, 0.5],
+      [-0.933013, 0.616025, 0.5]
+    ]},
+    {"op": "workplane_align"},
+    {"op": "prim_cube", "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 0.4, "sizeY": 0.4, "sizeZ": 0.4,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }}
+  ],
+  "tolerance": 0.001
+}

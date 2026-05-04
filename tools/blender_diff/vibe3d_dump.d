@@ -14,7 +14,7 @@ import std.array : array;
 import std.conv : to;
 import std.file : readText, write;
 import std.json;
-import std.math : abs;
+import std.math : abs, PI;
 import std.net.curl;
 import std.stdio;
 import std.string : startsWith;
@@ -301,17 +301,145 @@ void runVertCommand(JSONValue op, string commandId) {
         throw new Exception(commandId ~ " failed: " ~ resp.toString());
 }
 
+// Convert "X"|"Y"|"Z" axis label to a unit Vec3 string for the JSON
+// payload of /api/transform.
+string axisFromLabel(string label) {
+    if (label == "X" || label == "x") return "[1,0,0]";
+    if (label == "Y" || label == "y") return "[0,1,0]";
+    if (label == "Z" || label == "z") return "[0,0,1]";
+    throw new Exception("axis must be X/Y/Z, got '" ~ label ~ "'");
+}
+
+// Select every polygon in the current mesh — needed before mesh.transform
+// (which is selection-aware) so a `rotate` / `scale` op affects all
+// geometry. Switches edit mode to polygons via select.typeFrom first.
+void selectAllPolygons() {
+    auto resp = postJson("/api/command", "select.typeFrom polygon");
+    if (resp["status"].str != "ok")
+        throw new Exception("select.typeFrom polygon failed: " ~ resp.toString());
+    auto model = parseJSON(get(url("/api/model")));
+    long n = model["faceCount"].integer;
+    string idxStr;
+    foreach (i; 0 .. n) {
+        if (i > 0) idxStr ~= ",";
+        idxStr ~= i.to!string;
+    }
+    auto sel = postJson("/api/select",
+        `{"mode":"polygons","indices":[` ~ idxStr ~ `]}`);
+    if (sel["status"].str != "ok")
+        throw new Exception("select-all failed: " ~ sel.toString());
+}
+
+// Accept JSON number as integer | uinteger | float and return double.
+double readNum(JSONValue n) {
+    switch (n.type) {
+        case JSONType.integer:  return cast(double)n.integer;
+        case JSONType.uinteger: return cast(double)n.uinteger;
+        case JSONType.float_:   return n.floating;
+        default: throw new Exception("expected number, got " ~ n.toString());
+    }
+}
+
+double[3] readPivot(JSONValue op) {
+    if ("pivot" !in op) return [0.0, 0.0, 0.0];
+    auto a = op["pivot"].array;
+    return [readNum(a[0]), readNum(a[1]), readNum(a[2])];
+}
+
+// Rotate every polygon by `angle` degrees around `axis` (X/Y/Z), pivoting
+// at `pivot` (default origin). Maps to vibe3d's MeshTransform via
+// /api/transform.
+void runRotate(JSONValue op) {
+    selectAllPolygons();
+    string axis  = axisFromLabel(op["axis"].str);
+    // Case files specify rotation in degrees (matches MODO Python /
+    // user UX). vibe3d's /api/transform consumes radians (cos/sin
+    // input), so convert at the boundary.
+    double angDeg = readNum(op["angle"]);
+    double angRad = angDeg * PI / 180.0;
+    double[3] p   = readPivot(op);
+    string body_ = `{"kind":"rotate","axis":` ~ axis
+        ~ `,"angle":` ~ angRad.to!string
+        ~ `,"pivot":[` ~ p[0].to!string ~ `,` ~ p[1].to!string ~ `,` ~ p[2].to!string ~ `]}`;
+    auto resp = postJson("/api/transform", body_);
+    if (resp["status"].str != "ok")
+        throw new Exception("rotate failed: " ~ resp.toString());
+}
+
+// Scale every polygon by per-axis `factor` [fx, fy, fz], pivoting at
+// `pivot` (default origin).
+void runScale(JSONValue op) {
+    selectAllPolygons();
+    auto f = op["factor"].array;
+    double[3] p  = readPivot(op);
+    string body_ = `{"kind":"scale","factor":[`
+        ~ readNum(f[0]).to!string ~ `,` ~ readNum(f[1]).to!string ~ `,` ~ readNum(f[2]).to!string
+        ~ `],"pivot":[`
+        ~ p[0].to!string ~ `,` ~ p[1].to!string ~ `,` ~ p[2].to!string ~ `]}`;
+    auto resp = postJson("/api/transform", body_);
+    if (resp["status"].str != "ok")
+        throw new Exception("scale failed: " ~ resp.toString());
+}
+
+// Select a single polygon by listing its vertex coordinates (in any
+// order). Sets edit mode to polygons.
+void runSelectFace(JSONValue op) {
+    auto resp0 = postJson("/api/command", "select.typeFrom polygon");
+    if (resp0["status"].str != "ok")
+        throw new Exception("select.typeFrom polygon failed: " ~ resp0.toString());
+    auto model = parseJSON(get(url("/api/model")));
+    double[3][] fv;
+    foreach (v; op["face"].array) fv ~= toVec(v);
+    int idx = findFaceIndex(model, fv);
+    auto sel = postJson("/api/select",
+        `{"mode":"polygons","indices":[` ~ idx.to!string ~ `]}`);
+    if (sel["status"].str != "ok")
+        throw new Exception("select_face failed: " ~ sel.toString());
+}
+
+void runWorkplaneAlign(JSONValue _op) {
+    auto resp = postJson("/api/command", "workplane.alignToSelection");
+    if (resp["status"].str != "ok")
+        throw new Exception("workplane.alignToSelection failed: " ~ resp.toString());
+}
+
+// `prim.cube` argstring as an op (different shape from setup, which is
+// one-shot at case start). Uses the same command dispatcher so the
+// active workplane is honoured.
+void runPrimCube(JSONValue op) {
+    string argstr = "prim.cube";
+    if ("params" in op && op["params"].type == JSONType.object) {
+        foreach (string k, ref v; op["params"].objectNoRef) {
+            argstr ~= " " ~ k ~ ":";
+            if      (v.type == JSONType.string)   argstr ~= v.str;
+            else if (v.type == JSONType.integer)  argstr ~= v.integer.to!string;
+            else if (v.type == JSONType.uinteger) argstr ~= v.uinteger.to!string;
+            else if (v.type == JSONType.float_)   argstr ~= v.floating.to!string;
+            else if (v.type == JSONType.true_)    argstr ~= "true";
+            else if (v.type == JSONType.false_)   argstr ~= "false";
+        }
+    }
+    auto resp = postJson("/api/command", argstr);
+    if (resp["status"].str != "ok")
+        throw new Exception("prim.cube op failed: " ~ resp.toString());
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
-        case "bevel":         runBevel(op);      break;
-        case "split_edge":    runSplitEdge(op);  break;
-        case "subdivide":     runSubdivide(op);  break;
-        case "move_vertex":   runMoveVertex(op); break;
-        case "polygon_bevel": runPolyBevel(op);  break;
-        case "delete":        runDeleteOrRemove(op, "mesh.delete"); break;
-        case "remove":        runDeleteOrRemove(op, "mesh.remove"); break;
-        case "vert.merge":    runVertCommand(op, "vert.merge"); break;
-        case "vert.join":     runVertCommand(op, "vert.join");  break;
+        case "bevel":            runBevel(op);      break;
+        case "split_edge":       runSplitEdge(op);  break;
+        case "subdivide":        runSubdivide(op);  break;
+        case "move_vertex":      runMoveVertex(op); break;
+        case "polygon_bevel":    runPolyBevel(op);  break;
+        case "delete":           runDeleteOrRemove(op, "mesh.delete"); break;
+        case "remove":           runDeleteOrRemove(op, "mesh.remove"); break;
+        case "vert.merge":       runVertCommand(op, "vert.merge"); break;
+        case "vert.join":        runVertCommand(op, "vert.join");  break;
+        case "rotate":           runRotate(op);          break;
+        case "scale":            runScale(op);           break;
+        case "select_face":      runSelectFace(op);      break;
+        case "workplane_align":  runWorkplaneAlign(op);  break;
+        case "prim_cube":        runPrimCube(op);        break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }

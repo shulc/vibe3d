@@ -124,6 +124,46 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
     return f;
 }
 
+/// Build a frame directly from the WorkplaneStage's internal state — no
+/// viewport, no pipeline.evaluate. For headless callers (prim.* commands
+/// invoked over HTTP / from the modo_diff harness) where there's no live
+/// camera and the auto-mode camera-facing pick has no input. In auto-mode
+/// the returned frame is identity (world XZ); in manual / aligned mode
+/// the stage's stored center + rotation drive the basis.
+WorkplaneFrame currentWorkplaneFrame() {
+    WorkplaneFrame f;
+    if (g_pipeCtx is null) {
+        f.normal = Vec3(0, 1, 0);
+        f.axis1  = Vec3(1, 0, 0);
+        f.axis2  = Vec3(0, 0, 1);
+        f.origin = Vec3(0, 0, 0);
+        f.isAuto = true;
+        fillFrameMatrices(f);
+        return f;
+    }
+    if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+        if (wp.isAuto) {
+            f.normal = Vec3(0, 1, 0);
+            f.axis1  = Vec3(1, 0, 0);
+            f.axis2  = Vec3(0, 0, 1);
+            f.origin = Vec3(0, 0, 0);
+            f.isAuto = true;
+        } else {
+            wp.currentBasis(f.normal, f.axis1, f.axis2);
+            f.origin = wp.center;
+            f.isAuto = false;
+        }
+    } else {
+        f.normal = Vec3(0, 1, 0);
+        f.axis1  = Vec3(1, 0, 0);
+        f.axis2  = Vec3(0, 0, 1);
+        f.origin = Vec3(0, 0, 0);
+        f.isAuto = true;
+    }
+    fillFrameMatrices(f);
+    return f;
+}
+
 /// Build a frame from explicit basis + origin. Useful for tools that
 /// want to lock the workplane at activation time and cache the frame
 /// (matches today's BoxTool's `choosePlane` pattern).

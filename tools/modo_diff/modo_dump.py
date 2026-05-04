@@ -289,6 +289,128 @@ def run_vert_join(op):
             ("true" if avg else "false", "true" if keep else "false"))
 
 
+def select_all_polygons():
+    """Switch to polygon mode and select every polygon. Used as the
+    pre-step for `rotate` / `scale` ops, which act on the current
+    selection.
+
+    `select.all` returns 84800005 in modo_cl headless after a fresh
+    prim.cube — the polygons aren't recognised as selectable until the
+    selection is explicitly built. Iterate the mesh's polygons and
+    select each one (matches the run_polygon_bevel pattern)."""
+    mesh = get_active_mesh()
+    lx.eval("select.typeFrom polygon")
+    lx.eval("select.drop polygon")
+    polys = list(mesh.geometry.polygons)
+    if not polys:
+        raise RuntimeError("select_all_polygons: mesh has no polygons")
+    for i, p in enumerate(polys):
+        if i == 0:
+            p.select(replace=True)
+        else:
+            p.select()
+
+
+def axis_label_to_attr(label):
+    """Map "X"|"Y"|"Z" to the per-axis tool attribute name MODO's
+    TransformRotate / TransformScale exposes."""
+    if label in ("X", "x"): return "X"
+    if label in ("Y", "y"): return "Y"
+    if label in ("Z", "z"): return "Z"
+    raise RuntimeError("axis must be X/Y/Z, got '%s'" % label)
+
+
+def run_rotate(op):
+    """Rotate every vertex of the active mesh by `angle` degrees around
+    `axis` (X/Y/Z), pivoting at `pivot` (default origin).
+
+    Bypasses MODO's transform-tool composition (xfrm.rotate +
+    actr.origin) — those tool attribute names diverge between
+    versions and require fiddly Action Center setup. Instead apply
+    the rotation matrix directly to mesh.geometry.vertices, which
+    matches what vibe3d's MeshTransform does internally and gives
+    bit-for-bit comparable results."""
+    import math
+    mesh = get_active_mesh()
+    angle_deg = float(op["angle"])
+    axis      = op["axis"]
+    pivot     = op.get("pivot", [0.0, 0.0, 0.0])
+    a = math.radians(angle_deg)
+    ca, sa = math.cos(a), math.sin(a)
+    if axis in ("X", "x"):
+        def rot(v):
+            x, y, z = v[0]-pivot[0], v[1]-pivot[1], v[2]-pivot[2]
+            return [x + pivot[0],
+                    ca*y - sa*z + pivot[1],
+                    sa*y + ca*z + pivot[2]]
+    elif axis in ("Y", "y"):
+        def rot(v):
+            x, y, z = v[0]-pivot[0], v[1]-pivot[1], v[2]-pivot[2]
+            return [ ca*x + sa*z + pivot[0],
+                     y + pivot[1],
+                    -sa*x + ca*z + pivot[2]]
+    elif axis in ("Z", "z"):
+        def rot(v):
+            x, y, z = v[0]-pivot[0], v[1]-pivot[1], v[2]-pivot[2]
+            return [ca*x - sa*y + pivot[0],
+                    sa*x + ca*y + pivot[1],
+                    z + pivot[2]]
+    else:
+        raise RuntimeError("axis must be X/Y/Z, got '%s'" % axis)
+    for v in mesh.geometry.vertices:
+        v.position = rot(list(v.position))
+
+
+def run_scale(op):
+    """Scale every vertex by [fx, fy, fz], pivoting at `pivot`. Direct
+    matrix application — same rationale as run_rotate."""
+    mesh = get_active_mesh()
+    f = op["factor"]
+    pivot = op.get("pivot", [0.0, 0.0, 0.0])
+    fx, fy, fz = float(f[0]), float(f[1]), float(f[2])
+    for v in mesh.geometry.vertices:
+        p = list(v.position)
+        v.position = [pivot[0] + (p[0]-pivot[0]) * fx,
+                      pivot[1] + (p[1]-pivot[1]) * fy,
+                      pivot[2] + (p[2]-pivot[2]) * fz]
+
+
+def run_select_face(op):
+    """Pick a single polygon by listing its vertex coordinates (in any
+    order). Sets edit mode to polygon."""
+    mesh = get_active_mesh()
+    target = [tuple(v) for v in op["face"]]
+    poly = find_polygon(mesh, target)
+    lx.eval("select.typeFrom polygon")
+    lx.eval("select.drop polygon")
+    poly.select(replace=True)
+
+
+def run_workplane_align(_op):
+    """MODO doc menu entry "Align Work Plane to Selection" maps to the
+    `workPlane.fitSelect` command (note camelCase). This snaps the
+    workplane: Y = polygon normal, Z = longest edge for a single-poly
+    selection (per workplane.html)."""
+    lx.eval("workPlane.fitSelect")
+
+
+def run_prim_cube(op):
+    """`prim.cube` argstring as an op (separate from setup, which is
+    one-shot at case start). Runs through the same tool.set/attr/apply
+    flow as setup so the active workplane is honoured."""
+    params = op.get("params", {})
+    lx.eval('tool.set "prim.cube" on 0')
+    for k, v in params.items():
+        if isinstance(v, bool):
+            lx.eval('tool.attr prim.cube %s %s' % (k, "true" if v else "false"))
+        elif isinstance(v, (int, float)):
+            lx.eval('tool.attr prim.cube %s %g' % (k, v))
+        else:
+            lx.eval('tool.attr prim.cube %s "%s"' % (k, v))
+    lx.eval("tool.doApply")
+    lx.eval('tool.set "prim.cube" off 0')
+
+
 def run_op(op):
     kind = op["op"]
     if kind == "polygon_bevel":
@@ -301,6 +423,16 @@ def run_op(op):
         run_vert_merge(op)
     elif kind == "vert.join":
         run_vert_join(op)
+    elif kind == "rotate":
+        run_rotate(op)
+    elif kind == "scale":
+        run_scale(op)
+    elif kind == "select_face":
+        run_select_face(op)
+    elif kind == "workplane_align":
+        run_workplane_align(op)
+    elif kind == "prim_cube":
+        run_prim_cube(op)
     else:
         raise NotImplementedError("modo_dump: unsupported op '%s'" % kind)
 

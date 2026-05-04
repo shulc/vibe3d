@@ -14,6 +14,7 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
+                              currentWorkplaneFrame,
                               transformPoint, transformDir;
 import params : Param;
 
@@ -2383,7 +2384,19 @@ public:
     /// scripted callers (Ctrl-click "Unit Box", etc.) expect existing
     /// geometry to survive.
     override bool applyHeadless() {
+        // Headless prim.cube honours the active WorkplaneStage — params_
+        // are interpreted in LOCAL workplane space (mirroring the
+        // interactive commitCuboid path). Auto-mode falls back to identity
+        // (world XZ) since there's no camera to drive the most-facing pick.
+        //
+        // buildCuboidParametric appends to `mesh` (existing geometry
+        // survives — matches the interactive Append convention), so the
+        // workplane transform must apply ONLY to the newly-emitted
+        // vertices, not the pre-existing ones.
+        frame = currentWorkplaneFrame();
+        size_t firstNewVert = mesh.vertices.length;
         buildCuboidParametric(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
@@ -2692,6 +2705,15 @@ private:
             v = transformPoint(frame.toWorld, v);
     }
 
+    // Apply frame.toWorld to only vertices [firstIdx .. $] — used by
+    // applyHeadless where buildCuboidParametric APPENDS to an existing
+    // mesh. Transforming the whole vertex array would also re-transform
+    // unrelated geometry that was placed in world coords by other tools.
+    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
+        foreach (i; firstIdx .. m.vertices.length)
+            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
+    }
+
     void uploadBase() {
         previewMesh.clear();
         buildBase(&previewMesh);
@@ -2709,8 +2731,12 @@ private:
     }
 
     void commitBase() {
+        // buildBase APPENDS to `mesh` (cube tools preserve existing
+        // geometry, matching MODO's prim.cube convention). Transform
+        // only the newly-emitted vertices.
+        size_t firstNewVert = mesh.vertices.length;
         buildBase(mesh);
-        applyFrameToMesh(mesh);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -2745,8 +2771,9 @@ private:
     }
 
     void commitCuboid() {
+        size_t firstNewVert = mesh.vertices.length;
         buildCuboid(mesh);
-        applyFrameToMesh(mesh);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;

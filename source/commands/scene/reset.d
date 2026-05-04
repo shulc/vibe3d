@@ -66,6 +66,17 @@ class SceneReset : Command {
         viewPtr.reset();
         mesh.resetSelection();
         *editModePtr = EditMode.Vertices;
+        // Reset the workplane along with the scene — it's session state
+        // (a tilted / aligned workplane left over from a previous edit
+        // changes how subsequent prim.* and BoxTool / SphereTool / ...
+        // behave) and a "reset" UX promise should clear it.
+        import toolpipe.pipeline       : g_pipeCtx;
+        import toolpipe.stages.workplane : WorkplaneStage;
+        import toolpipe.stage          : TaskCode;
+        if (g_pipeCtx !is null) {
+            if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work))
+                wp.reset();
+        }
         if (onResetTool !is null) onResetTool();
         refreshCaches();
         return true;
