@@ -194,6 +194,9 @@ struct Mesh {
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
         compactUnreferenced();
+        // See deleteFacesByMask: loops carry stale indices after face/vert
+        // compaction.
+        buildLoops();
         ++mutationVersion;
         return welded;
     }
@@ -365,6 +368,12 @@ struct Mesh {
         edgeSelectionOrder.length = edges.length;
         // Compact orphan vertices (no-op if all verts still referenced).
         compactUnreferenced();
+        // Half-edge loops carry face/vert indices that compaction just
+        // invalidated; rebuild so adjacentFaces / verticesAroundVertex /
+        // friends return live indices. (Without this, the next consumer
+        // of `loops` walks stale data and either reports wrong adjacency
+        // or indexes out of bounds.)
+        buildLoops();
         ++mutationVersion;
         return removed;
     }
@@ -421,6 +430,9 @@ struct Mesh {
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
         compactUnreferenced();
+        // See deleteFacesByMask: loops carry stale indices after face/vert
+        // compaction.
+        buildLoops();
         ++mutationVersion;
         return dissolved;
     }
@@ -604,6 +616,9 @@ struct Mesh {
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
         compactUnreferenced();
+        // See deleteFacesByMask: loops carry stale indices after face/vert
+        // compaction.
+        buildLoops();
         ++mutationVersion;
         return dissolved;
     }
