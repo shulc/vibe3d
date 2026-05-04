@@ -759,6 +759,12 @@ void main(string[] args) {
                         }
                     }
                     break;
+                case ActionKind.popup:
+                    foreach (ref pi; a.popupItems) {
+                        if (pi.kind == PopupItemKind.action)
+                            check(pi.action);
+                    }
+                    break;
             }
         }
         void checkButton(ref Button btn) {
@@ -2344,6 +2350,11 @@ void main(string[] args) {
                                                             parsed.params.toString());
                             }
                             break;
+                        case ActionKind.popup:
+                            // Popup rendering lands in subphase 8.1 — for
+                            // now treat as a no-op so older buttons.yaml
+                            // shapes keep compiling.
+                            break;
                     }
                 }
             }
@@ -2503,6 +2514,9 @@ void main(string[] args) {
                                 // too.
                                 if (editModeId.length > 0)
                                     setActiveTool(null);
+                                break;
+                            case ActionKind.popup:
+                                // Popup rendering lands in subphase 8.1.
                                 break;
                         }
                     }

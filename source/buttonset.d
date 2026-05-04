@@ -6,15 +6,63 @@ import std.format : format;
 // Types
 // ---------------------------------------------------------------------------
 
-enum ActionKind { tool, command, script }
+enum ActionKind { tool, command, script, popup }
 
 struct Action {
     ActionKind kind;
-    string     id;            // empty for kind == script
+    string     id;            // empty for kind == script / popup
     // For kind == script: each entry is a MODO-style argstring line that
     // gets dispatched through the same path as /api/command. Empty for
-    // kind == tool / command.
+    // kind == tool / command / popup.
     string[]   scriptLines;
+    // For kind == popup: items rendered in the dropdown when the button
+    // is clicked. See doc/popup_buttons_plan.md.
+    PopupItem[] popupItems;
+}
+
+// ---------------------------------------------------------------------------
+// PopupItem — a row inside a dropdown opened by a `kind: popup` button.
+//
+// Three kinds (mirroring the 3-state behaviour described in
+// doc/popup_buttons_plan.md §"Item types in items[]"):
+//
+//   - `action`   — a clickable row that runs an Action (tool / command
+//                  / script). `label` is the row text. Optional
+//                  `checked` (Checked struct, see below) draws a ✓ on
+//                  the left when its state-path query matches.
+//   - `divider`  — non-interactive horizontal separator. Drawn as
+//                  `ImGui.Separator`. `label` ignored.
+//   - `header`   — non-interactive bold label that titles a sub-group
+//                  of items. Drawn as `ImGui.TextDisabled`. No action.
+//
+// `kind: separator` is accepted as a YAML alias of `divider` (matches
+// the term used by config/statusline.yaml's grouping plan).
+// ---------------------------------------------------------------------------
+enum PopupItemKind { action, divider, header }
+
+/// Optional state-query attached to action items — when present, the
+/// row gets a checkmark indicator if the comparison matches.
+///
+/// Two modes (mutually exclusive):
+///   `equals`   exact string equality with state[path]
+///   `contains` substring or list-element match in state[path]
+///
+/// State paths are slash-separated (e.g. `workplane/mode`). The
+/// state map is populated by subsystems and resolved at render time
+/// — see doc/popup_buttons_plan.md §"State paths examples" + the
+/// 8.2 subphase that adds the registry.
+struct Checked {
+    bool   present;       // true when YAML had a `checked:` block
+    string path;
+    string equals_;       // populated when `equals:` was given
+    string contains;      // populated when `contains:` was given
+}
+
+struct PopupItem {
+    PopupItemKind kind;
+    string        label;        // valid for action / header
+    Action        action;       // valid for action only
+    Checked       checked;      // valid for action only — optional
 }
 
 // One-modifier override: when the corresponding key is held, the button
@@ -236,35 +284,129 @@ private Action parseAction(NodeT)(NodeT actionNode, string ctxLabel, string path
     if      (kindStr == "tool")    kind = ActionKind.tool;
     else if (kindStr == "command") kind = ActionKind.command;
     else if (kindStr == "script")  kind = ActionKind.script;
+    else if (kindStr == "popup")   kind = ActionKind.popup;
     else throw new Exception(
         format("buttonset: unknown action kind '%s' for '%s' in '%s'",
                kindStr, ctxLabel, path));
 
     Action a;
     a.kind = kind;
-    if (kind == ActionKind.script) {
-        if (!actionNode.containsKey("lines"))
-            throw new Exception(
-                format("buttonset: script action for '%s' ('%s') is missing 'lines'",
-                       ctxLabel, path));
-        import dyaml : Node;
-        foreach (Node lineNode; actionNode["lines"]) {
-            string line = lineNode.as!string;
-            if (line.length > 0)
-                a.scriptLines ~= line;
+    final switch (kind) {
+        case ActionKind.script: {
+            if (!actionNode.containsKey("lines"))
+                throw new Exception(
+                    format("buttonset: script action for '%s' ('%s') is missing 'lines'",
+                           ctxLabel, path));
+            import dyaml : Node;
+            foreach (Node lineNode; actionNode["lines"]) {
+                string line = lineNode.as!string;
+                if (line.length > 0)
+                    a.scriptLines ~= line;
+            }
+            if (a.scriptLines.length == 0)
+                throw new Exception(
+                    format("buttonset: script action for '%s' ('%s') has no non-empty lines",
+                           ctxLabel, path));
+            break;
         }
-        if (a.scriptLines.length == 0)
-            throw new Exception(
-                format("buttonset: script action for '%s' ('%s') has no non-empty lines",
-                       ctxLabel, path));
-    } else {
-        if (!actionNode.containsKey("id"))
-            throw new Exception(
-                format("buttonset: action for '%s' ('%s') is missing 'id'",
-                       ctxLabel, path));
-        a.id = actionNode["id"].as!string;
+        case ActionKind.popup: {
+            if (!actionNode.containsKey("items"))
+                throw new Exception(
+                    format("buttonset: popup action for '%s' ('%s') is missing 'items'",
+                           ctxLabel, path));
+            import dyaml : Node;
+            size_t idx = 0;
+            foreach (Node itemNode; actionNode["items"]) {
+                a.popupItems ~= parsePopupItem(itemNode, ctxLabel, idx, path);
+                ++idx;
+            }
+            if (a.popupItems.length == 0)
+                throw new Exception(
+                    format("buttonset: popup action for '%s' ('%s') has empty 'items'",
+                           ctxLabel, path));
+            break;
+        }
+        case ActionKind.tool:
+        case ActionKind.command: {
+            if (!actionNode.containsKey("id"))
+                throw new Exception(
+                    format("buttonset: action for '%s' ('%s') is missing 'id'",
+                           ctxLabel, path));
+            a.id = actionNode["id"].as!string;
+            break;
+        }
     }
     return a;
+}
+
+// Parse one PopupItem node. Three shapes accepted:
+//
+//   { kind: divider }                  → divider row (no label, no action)
+//   { kind: separator }                → alias of divider
+//   { kind: header, label: "..." }     → bold header row (no action)
+//   { label: "...", action: {...},     → action row (clickable)
+//     checked: { path: ..., equals: "..." | contains: "..." } }
+//
+// For the action shape, `kind:` is OPTIONAL (defaults to action). `kind:
+// action` is also accepted for explicitness.
+private PopupItem parsePopupItem(NodeT)(NodeT itemNode, string ctxLabel,
+                                         size_t idx, string path) {
+    string kindStr = itemNode.containsKey("kind") ? itemNode["kind"].as!string : "action";
+
+    PopupItem pi;
+    if (kindStr == "divider" || kindStr == "separator") {
+        pi.kind = PopupItemKind.divider;
+        return pi;
+    }
+    if (kindStr == "header") {
+        if (!itemNode.containsKey("label"))
+            throw new Exception(format(
+                "buttonset: popup header item #%d for '%s' ('%s') is missing 'label'",
+                idx, ctxLabel, path));
+        pi.kind  = PopupItemKind.header;
+        pi.label = itemNode["label"].as!string;
+        return pi;
+    }
+    if (kindStr != "action")
+        throw new Exception(format(
+            "buttonset: unknown popup item kind '%s' (#%d) for '%s' in '%s'",
+            kindStr, idx, ctxLabel, path));
+
+    if (!itemNode.containsKey("label"))
+        throw new Exception(format(
+            "buttonset: popup item #%d for '%s' ('%s') is missing 'label'",
+            idx, ctxLabel, path));
+    if (!itemNode.containsKey("action"))
+        throw new Exception(format(
+            "buttonset: popup item '%s' for '%s' ('%s') is missing 'action'",
+            itemNode["label"].as!string, ctxLabel, path));
+
+    pi.kind   = PopupItemKind.action;
+    pi.label  = itemNode["label"].as!string;
+    pi.action = parseAction(itemNode["action"], ctxLabel ~ "/" ~ pi.label, path);
+
+    if (itemNode.containsKey("checked")) {
+        auto chkNode = itemNode["checked"];
+        if (!chkNode.containsKey("path"))
+            throw new Exception(format(
+                "buttonset: popup item '%s' for '%s' ('%s') has 'checked' without 'path'",
+                pi.label, ctxLabel, path));
+        bool hasEquals   = chkNode.containsKey("equals");
+        bool hasContains = chkNode.containsKey("contains");
+        if (hasEquals && hasContains)
+            throw new Exception(format(
+                "buttonset: popup item '%s' for '%s' ('%s') has 'checked' with both 'equals' and 'contains'",
+                pi.label, ctxLabel, path));
+        if (!hasEquals && !hasContains)
+            throw new Exception(format(
+                "buttonset: popup item '%s' for '%s' ('%s') has 'checked' without 'equals' or 'contains'",
+                pi.label, ctxLabel, path));
+        pi.checked.present = true;
+        pi.checked.path    = chkNode["path"].as!string;
+        if (hasEquals)   pi.checked.equals_  = chkNode["equals"].as!string;
+        if (hasContains) pi.checked.contains = chkNode["contains"].as!string;
+    }
+    return pi;
 }
 
 private ButtonVariant parseModifierVariant(NodeT)(NodeT btnNode, string key,
