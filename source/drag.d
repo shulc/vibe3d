@@ -28,9 +28,6 @@ Vec3 axisDragDelta(int mx,     int my,
     Vec3 axisEnd = dragAxis == 0 ? handler.arrowX.end
                  : dragAxis == 1 ? handler.arrowY.end
                                  : handler.arrowZ.end;
-    Vec3 axis    = dragAxis == 0 ? Vec3(1,0,0)
-                 : dragAxis == 1 ? Vec3(0,1,0)
-                                 : Vec3(0,0,1);
 
     float cx, cy, cndcZ, ax_, ay_, andcZ;
     if (!projectToWindowFull(center,  vp, cx,  cy,  cndcZ) ||
@@ -41,12 +38,17 @@ Vec3 axisDragDelta(int mx,     int my,
     float slen2 = sdx*sdx + sdy*sdy;
     if (slen2 < 1.0f) { skip = true; return Vec3(0,0,0); }
 
+    // Orientation-agnostic: the arrow's world-space direction *is* the
+    // axis we drag along, regardless of whether it's world XYZ or the
+    // active workplane basis. arrowEnd - center carries that direction
+    // and its length; (axisDir * d) yields the world delta.
     Vec3  ae      = axisEnd - center;
     float axisLen = sqrt(ae.x*ae.x + ae.y*ae.y + ae.z*ae.z);
     if (axisLen < 1e-9f) { skip = true; return Vec3(0,0,0); }
+    Vec3 axisDir = ae / axisLen;
 
     float d = ((mx - lastMX) * sdx + (my - lastMY) * sdy) / slen2 * axisLen;
-    return axis * d;
+    return axisDir * d;
 }
 
 // Delta for dragging along an arbitrary world axis from a screen mouse delta.
@@ -74,26 +76,38 @@ Vec3 screenAxisDelta(int mx,     int my,
 }
 
 // Plane drag (dragAxis 3/4/5/6).
-//   3 = most-facing plane (normal derived from view matrix)
+//   3 = most-facing plane (normal derived from view matrix vs basis)
 //   4 = XY plane (normal Z)   5 = YZ plane (normal X)   6 = XZ plane (normal Y)
+//
+// Optional `axisX/axisY/axisZ` rotate the planes into the workplane basis —
+// "XY" then means the axisX×axisY plane, the most-facing pick chooses among
+// the basis axes. Default = world XYZ.
 Vec3 planeDragDelta(int mx,     int my,
                     int lastMX, int lastMY,
                     int dragAxis,
                     Vec3 center,
                     const ref Viewport vp,
-                    out bool skip)
+                    out bool skip,
+                    Vec3 axisX = Vec3(1, 0, 0),
+                    Vec3 axisY = Vec3(0, 1, 0),
+                    Vec3 axisZ = Vec3(0, 0, 1))
 {
     skip = false;
     Vec3 n;
-    if      (dragAxis == 4) n = Vec3(0,0,1);
-    else if (dragAxis == 5) n = Vec3(1,0,0);
-    else if (dragAxis == 6) n = Vec3(0,1,0);
+    if      (dragAxis == 4) n = axisZ;
+    else if (dragAxis == 5) n = axisX;
+    else if (dragAxis == 6) n = axisY;
     else {
+        // Most-facing plane: pick the basis axis most aligned with the
+        // camera-back direction (view's third row in column-major).
         const ref float[16] v2 = vp.view;
-        float avx = abs(v2[2]), avy = abs(v2[6]), avz = abs(v2[10]);
-        n = avx >= avy && avx >= avz ? Vec3(1,0,0)
-          : avy >= avx && avy >= avz ? Vec3(0,1,0)
-                                     : Vec3(0,0,1);
+        Vec3 camBack = Vec3(v2[2], v2[6], v2[10]);
+        float aX = abs(camBack.x*axisX.x + camBack.y*axisX.y + camBack.z*axisX.z);
+        float aY = abs(camBack.x*axisY.x + camBack.y*axisY.y + camBack.z*axisY.z);
+        float aZ = abs(camBack.x*axisZ.x + camBack.y*axisZ.y + camBack.z*axisZ.z);
+        n = aX >= aY && aX >= aZ ? axisX
+          : aY >= aX && aY >= aZ ? axisY
+                                 : axisZ;
     }
 
     const ref float[16] v = vp.view;

@@ -539,6 +539,16 @@ class MoveHandler : Handler {
     BoxHandler    centerBox;
     CircleHandler circleXY, circleYZ, circleXZ;
     Vec3 viewDir;
+    // World-space orientation triple. Defaults to identity (world XYZ);
+    // setOrientation rotates the gizmo into an arbitrary basis (e.g. the
+    // active workplane). Used by draw() for arrow tip / circle normal
+    // directions and by drag.d for axis-aligned plane normals.
+    Vec3 axisX = Vec3(1, 0, 0);
+    Vec3 axisY = Vec3(0, 1, 0);
+    Vec3 axisZ = Vec3(0, 0, 1);
+    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) {
+        axisX = ax; axisY = ay; axisZ = az;
+    }
 
     this(Vec3 center) {
         this.center = center;
@@ -575,34 +585,44 @@ class MoveHandler : Handler {
     {
         float size = gizmoSize(center, vp);
 
-        arrowX.start = center + Vec3(size/6, 0     , 0);
-        arrowX.end   = center + Vec3(size  , 0.    , 0);
-        arrowY.start = center + Vec3(0     , size/6, 0);
-        arrowY.end   = center + Vec3(0     , size  , 0);
-        arrowZ.start = center + Vec3(0     , 0     , size/6);
-        arrowZ.end   = center + Vec3(0     , 0     , size);
+        // Each axis is the world-space image of local X/Y/Z under the
+        // gizmo orientation. arrowX always represents axisX, irrespective
+        // of whether axisX = world-X (auto workplane) or workplane.axis1.
+        arrowX.start = center + axisX * (size/6);
+        arrowX.end   = center + axisX * size;
+        arrowY.start = center + axisY * (size/6);
+        arrowY.end   = center + axisY * size;
+        arrowZ.start = center + axisZ * (size/6);
+        arrowZ.end   = center + axisZ * size;
 
         centerBox.pos  = center;
         centerBox.size = size * 0.04f;
 
         float circR = size * 0.07f;
-        float cirOffset = size * 0.75;
-        circleXY.center = center + Vec3(cirOffset, cirOffset, 0   ); circleXY.radius = circR;
-        circleYZ.center = center + Vec3(0   , cirOffset, cirOffset); circleYZ.radius = circR;
-        circleXZ.center = center + Vec3(size, 0   , cirOffset); circleXZ.radius = circR;
+        float cirOffset = size * 0.75f;
+        // Plane handles sit at the corners of the basis quads; their
+        // normals are the basis axis perpendicular to the plane.
+        circleXY.center = center + axisX * cirOffset + axisY * cirOffset;
+        circleXY.normal = axisZ; circleXY.radius = circR;
+        circleYZ.center = center + axisY * cirOffset + axisZ * cirOffset;
+        circleYZ.normal = axisX; circleYZ.radius = circR;
+        circleXZ.center = center + axisX * size      + axisZ * cirOffset;
+        circleXZ.normal = axisY; circleXZ.radius = circR;
 
         // Hide arrows that point too directly toward/away from the camera.
-        // viewDir is the normalised vector from eye to center.
+        // viewDir is the normalised eye→center vector.
         Vec3  d    = vp.eye - center;
         float dist = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
         viewDir = dist > 1e-6f
-            ? d / dist  // eye→center direction (d = eye-center, flip)
+            ? d / dist
             : Vec3(0,0,1);
-        // d = eye - center, so viewDir (center→eye) = d/dist; axis dot with that.
+        // Hide each axis when its world direction aligns with the camera
+        // ray (parallel ⇒ zero on-screen length). Use the dot of viewDir
+        // with the axis (works for non-canonical orientations).
         enum float HIDE_THRESHOLD = 0.995f;
-        arrowX.setVisible(abs(viewDir.x) < HIDE_THRESHOLD);
-        arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
-        arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
+        arrowX.setVisible(abs(dot(viewDir, axisX)) < HIDE_THRESHOLD);
+        arrowY.setVisible(abs(dot(viewDir, axisY)) < HIDE_THRESHOLD);
+        arrowZ.setVisible(abs(dot(viewDir, axisZ)) < HIDE_THRESHOLD);
 
         circleXY.draw(shader, vp);
         circleYZ.draw(shader, vp);
@@ -642,6 +662,14 @@ class RotateHandler : Handler {
     SemicircleHandler arcX, arcY, arcZ;
     FullCircleHandler arcView;   // camera-view-plane ring (gray, interactive)
     FullCircleHandler bgCircle;  // camera-view-plane ring (black 1px, decorative)
+    // World-space orientation triple — see MoveHandler.axisX/Y/Z. Each arc
+    // rotates around the corresponding basis axis (arcX = around axisX).
+    Vec3 axisX = Vec3(1, 0, 0);
+    Vec3 axisY = Vec3(0, 1, 0);
+    Vec3 axisZ = Vec3(0, 0, 1);
+    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) {
+        axisX = ax; axisY = ay; axisZ = az;
+    }
 
     this(Vec3 center) {
         this.center = center;
@@ -665,9 +693,9 @@ class RotateHandler : Handler {
     {
         size = gizmoSize(center, vp);
 
-        arcX.center = center; arcX.normal = Vec3(1,0,0); arcX.radius = size;
-        arcY.center = center; arcY.normal = Vec3(0,1,0); arcY.radius = size;
-        arcZ.center = center; arcZ.normal = Vec3(0,0,1); arcZ.radius = size;
+        arcX.center = center; arcX.normal = axisX; arcX.radius = size;
+        arcY.center = center; arcY.normal = axisY; arcY.radius = size;
+        arcZ.center = center; arcZ.normal = axisZ; arcZ.radius = size;
 
         // Camera forward vector (world space): f = (-view[2], -view[6], -view[10])
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
@@ -695,16 +723,11 @@ class RotateHandler : Handler {
             Vec3 mid = cross(n, dir);
             if (dot(mid, camFwd) < 0.0f)
                 dir = -dir;
-
-            // Arrow a = new Arrow(center, vec3Add(center, dir), Vec3(0.2f, 0.2f, 0.9f));
-            // a.draw(program, locColor, vp);
-            // a.destroy();
-
             arc.setStartDirection(dir);
         }
-        applyStart(arcX, Vec3(1,0,0));
-        applyStart(arcY, Vec3(0,1,0));
-        applyStart(arcZ, Vec3(0,0,1));
+        applyStart(arcX, axisX);
+        applyStart(arcY, axisY);
+        applyStart(arcZ, axisZ);
 
         bgCircle.draw(shader, vp);
         arcX.draw(shader, vp);
@@ -1007,6 +1030,16 @@ class ScaleHandler : Handler {
     CircleHandler   circleXY, circleYZ, circleXZ;
     Vec3 viewDir;
     private Vec3 scaleAccum = Vec3(1, 1, 1);
+    // World-space orientation triple — see MoveHandler.axisX/Y/Z.
+    Vec3 axisX = Vec3(1, 0, 0);
+    Vec3 axisY = Vec3(0, 1, 0);
+    Vec3 axisZ = Vec3(0, 0, 1);
+    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) {
+        axisX = ax; axisY = ay; axisZ = az;
+        scaleArrowX.fixedDir = ax;
+        scaleArrowY.fixedDir = ay;
+        scaleArrowZ.fixedDir = az;
+    }
 
     this(Vec3 center) {
         this.center = center;
@@ -1055,25 +1088,24 @@ class ScaleHandler : Handler {
     {
         size = gizmoSize(center, vp);
 
-        arrowX.start = center + Vec3(size/7, 0,      0     );
-        arrowX.end   = center + Vec3(size,   0,      0     );
-        arrowY.start = center + Vec3(0,      size/7, 0     );
-        arrowY.end   = center + Vec3(0,      size,   0     );
-        arrowZ.start = center + Vec3(0,      0,      size/7);
-        arrowZ.end   = center + Vec3(0,      0,      size  );
+        arrowX.start = center + axisX * (size/7);
+        arrowX.end   = center + axisX * size;
+        arrowY.start = center + axisY * (size/7);
+        arrowY.end   = center + axisY * size;
+        arrowZ.start = center + axisZ * (size/7);
+        arrowZ.end   = center + axisZ * size;
 
         float cubeFixed = size * 0.03f;
-        // Start matches the regular arrows (size/8 offset); frozen during drag.
         if (activeDragAxis < 0) {
             scaleArrowX.start = arrowX.start;
             scaleArrowY.start = arrowY.start;
             scaleArrowZ.start = arrowZ.start;
         }
-        scaleArrowX.end           = center + Vec3(size * scaleAccum.x, 0, 0);
+        scaleArrowX.end           = center + axisX * (size * scaleAccum.x);
         scaleArrowX.fixedCubeHalf = cubeFixed;
-        scaleArrowY.end           = center + Vec3(0, size * scaleAccum.y, 0);
+        scaleArrowY.end           = center + axisY * (size * scaleAccum.y);
         scaleArrowY.fixedCubeHalf = cubeFixed;
-        scaleArrowZ.end           = center + Vec3(0, 0, size * scaleAccum.z);
+        scaleArrowZ.end           = center + axisZ * (size * scaleAccum.z);
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
         Vec3  d    = vp.eye - center;
@@ -1082,9 +1114,9 @@ class ScaleHandler : Handler {
             ? d / dist
             : Vec3(0,0,1);
         enum float HIDE_THRESHOLD = 0.995f;
-        arrowX.setVisible(abs(viewDir.x) < HIDE_THRESHOLD);
-        arrowY.setVisible(abs(viewDir.y) < HIDE_THRESHOLD);
-        arrowZ.setVisible(abs(viewDir.z) < HIDE_THRESHOLD);
+        arrowX.setVisible(abs(dot(viewDir, axisX)) < HIDE_THRESHOLD);
+        arrowY.setVisible(abs(dot(viewDir, axisY)) < HIDE_THRESHOLD);
+        arrowZ.setVisible(abs(dot(viewDir, axisZ)) < HIDE_THRESHOLD);
 
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
         centerDisk.center = center;
@@ -1093,9 +1125,12 @@ class ScaleHandler : Handler {
 
         float circR      = size * 0.07f;
         float cirOffset  = size * 0.75f;
-        circleXY.center = center + Vec3(cirOffset, cirOffset, 0);         circleXY.radius = circR;
-        circleYZ.center = center + Vec3(0,         cirOffset, cirOffset); circleYZ.radius = circR;
-        circleXZ.center = center + Vec3(cirOffset, 0,         cirOffset); circleXZ.radius = circR;
+        circleXY.center = center + axisX * cirOffset + axisY * cirOffset;
+        circleXY.normal = axisZ; circleXY.radius = circR;
+        circleYZ.center = center + axisY * cirOffset + axisZ * cirOffset;
+        circleYZ.normal = axisX; circleYZ.radius = circR;
+        circleXZ.center = center + axisX * cirOffset + axisZ * cirOffset;
+        circleXZ.normal = axisY; circleXZ.radius = circR;
 
         circleXY.draw(shader, vp);
         circleYZ.draw(shader, vp);

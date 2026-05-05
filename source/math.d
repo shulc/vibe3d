@@ -97,6 +97,47 @@ float[16] pivotScaleMatrix(Vec3 pivot, float sx, float sy, float sz) {
             pivot.x*(1.0f-sx), pivot.y*(1.0f-sy), pivot.z*(1.0f-sz), 1];
 }
 
+// Non-uniform scale around a pivot, along an arbitrary orthonormal basis
+// (ax, ay, az). M = T(pivot) * R * diag(s) * R^T * T(-pivot) where
+// R has columns [ax | ay | az]. With identity basis it's equivalent to
+// pivotScaleMatrix above.
+float[16] pivotScaleMatrixBasis(Vec3 pivot, Vec3 ax, Vec3 ay, Vec3 az,
+                                float sx, float sy, float sz) {
+    // M3[i,j] = ax[i]*sx*ax[j] + ay[i]*sy*ay[j] + az[i]*sz*az[j]
+    float m00 = ax.x*sx*ax.x + ay.x*sy*ay.x + az.x*sz*az.x;
+    float m01 = ax.x*sx*ax.y + ay.x*sy*ay.y + az.x*sz*az.y;
+    float m02 = ax.x*sx*ax.z + ay.x*sy*ay.z + az.x*sz*az.z;
+    float m10 = ax.y*sx*ax.x + ay.y*sy*ay.x + az.y*sz*az.x;
+    float m11 = ax.y*sx*ax.y + ay.y*sy*ay.y + az.y*sz*az.y;
+    float m12 = ax.y*sx*ax.z + ay.y*sy*ay.z + az.y*sz*az.z;
+    float m20 = ax.z*sx*ax.x + ay.z*sy*ay.x + az.z*sz*az.x;
+    float m21 = ax.z*sx*ax.y + ay.z*sy*ay.y + az.z*sz*az.y;
+    float m22 = ax.z*sx*ax.z + ay.z*sy*ay.z + az.z*sz*az.z;
+    // Affine offset so the pivot is fixed: t = pivot - M3 * pivot
+    float tx = pivot.x - (m00*pivot.x + m01*pivot.y + m02*pivot.z);
+    float ty = pivot.y - (m10*pivot.x + m11*pivot.y + m12*pivot.z);
+    float tz = pivot.z - (m20*pivot.x + m21*pivot.y + m22*pivot.z);
+    return [m00, m10, m20, 0,
+            m01, m11, m21, 0,
+            m02, m12, m22, 0,
+            tx,  ty,  tz,  1];
+}
+
+// Scale a single vertex around `pivot` along an orthonormal basis. The
+// vertex's offset from pivot is decomposed onto (ax, ay, az), each
+// component is multiplied by its scale factor, and the pieces are
+// recomposed in world space. With identity basis this collapses to
+// per-axis scaling.
+Vec3 scaleAlongBasis(Vec3 v, Vec3 pivot, Vec3 ax, Vec3 ay, Vec3 az,
+                     float sx, float sy, float sz) @safe pure nothrow @nogc
+{
+    Vec3 d = v - pivot;
+    float a = d.x*ax.x + d.y*ax.y + d.z*ax.z;
+    float b = d.x*ay.x + d.y*ay.y + d.z*ay.z;
+    float c = d.x*az.x + d.y*az.y + d.z*az.z;
+    return pivot + ax*(a*sx) + ay*(b*sy) + az*(c*sz);
+}
+
 // Column-major 4x4 matrix multiplication: C = A * B
 float[16] matMul4(float[16] a, float[16] b) {
     float[16] c;

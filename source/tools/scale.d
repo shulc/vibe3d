@@ -125,6 +125,11 @@ public:
         if (!active) return;
         cachedVp = vp;
 
+        // Orient gizmo into the active workplane basis.
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ);
+        handler.setOrientation(bX, bY, bZ);
+
         // Flush pending partial-selection GPU upload once per frame.
         if (needsGpuUpdate) {
             uploadToGpu();
@@ -169,12 +174,17 @@ public:
         }
 
         // Click outside gizmo: teleport to most-facing plane at click point.
+        // Plane normal picked from the gizmo's basis (workplane axes when
+        // non-auto, world XYZ when auto).
         const ref float[16] v = cachedVp.view;
         import std.math : abs;
-        float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
-        Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
-               : avy >= avx && avy >= avz ? Vec3(0,1,0)
-                                          : Vec3(0,0,1);
+        Vec3 camBack = Vec3(v[2], v[6], v[10]);
+        float aX = abs(dot(camBack, handler.axisX));
+        float aY = abs(dot(camBack, handler.axisY));
+        float aZ = abs(dot(camBack, handler.axisZ));
+        Vec3 n = aX >= aY && aX >= aZ ? handler.axisX
+               : aY >= aX && aY >= aZ ? handler.axisY
+                                      : handler.axisZ;
         Vec3 hit;
         if (!rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                                handler.center, n, hit))
@@ -225,7 +235,9 @@ public:
             dragScaleAccum.x *= scaleFactor; dragScaleAccum.y *= scaleFactor; dragScaleAccum.z *= scaleFactor;
             if (wholeMeshDrag) {
                 float lx = scaleAccum.x / dragStartScaleAccum.x;
-                gpuMatrix = pivotScaleMatrix(center, lx, lx, lx);
+                gpuMatrix = pivotScaleMatrixBasis(center,
+                    handler.axisX, handler.axisY, handler.axisZ,
+                    lx, lx, lx);
             } else {
                 applyScaleAxesFactor(true, true, true, scaleFactor);
             }
@@ -251,7 +263,9 @@ public:
                 float lx = scaleX ? scaleAccum.x / dragStartScaleAccum.x : 1.0f;
                 float ly = scaleY ? scaleAccum.y / dragStartScaleAccum.y : 1.0f;
                 float lz = scaleZ ? scaleAccum.z / dragStartScaleAccum.z : 1.0f;
-                gpuMatrix = pivotScaleMatrix(center, lx, ly, lz);
+                gpuMatrix = pivotScaleMatrixBasis(center,
+                    handler.axisX, handler.axisY, handler.axisZ,
+                    lx, ly, lz);
             } else {
                 applyScaleAxesFactor(scaleX, scaleY, scaleZ, scaleFactor);
             }
@@ -259,9 +273,9 @@ public:
             return true;
         }
 
-        Vec3 axis = dragAxis == 0 ? Vec3(1,0,0)
-                  : dragAxis == 1 ? Vec3(0,1,0)
-                                  : Vec3(0,0,1);
+        Vec3 axis = dragAxis == 0 ? handler.axisX
+                  : dragAxis == 1 ? handler.axisY
+                                  : handler.axisZ;
 
         float cx, cy, cndcZ, ax_, ay_, andcZ;
         if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
@@ -283,7 +297,9 @@ public:
             float lx = axX ? scaleAccum.x / dragStartScaleAccum.x : 1.0f;
             float ly = axY ? scaleAccum.y / dragStartScaleAccum.y : 1.0f;
             float lz = axZ ? scaleAccum.z / dragStartScaleAccum.z : 1.0f;
-            gpuMatrix = pivotScaleMatrix(center, lx, ly, lz);
+            gpuMatrix = pivotScaleMatrixBasis(center,
+                handler.axisX, handler.axisY, handler.axisZ,
+                lx, ly, lz);
         } else {
             applyScaleAxesFactor(axX, axY, axZ, scaleFactor);
         }
@@ -342,7 +358,9 @@ public:
                     uploadPropsBase(activationVertices);
                     propsDragging = true;
                 }
-                gpuMatrix = pivotScaleMatrix(activationCenter, scaleAccum.x, scaleAccum.y, scaleAccum.z);
+                gpuMatrix = pivotScaleMatrixBasis(activationCenter,
+                    handler.axisX, handler.axisY, handler.axisZ,
+                    scaleAccum.x, scaleAccum.y, scaleAccum.z);
             } else {
                 // Partial selection: deferred GPU upload in draw().
                 needsGpuUpdate = true;
@@ -370,14 +388,18 @@ private:
         return sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
     }
 
-    // Apply an incremental scale factor to cached vertex indices (partial selection path).
+    // Apply an incremental scale factor to cached vertex indices (partial
+    // selection path). Scaling happens along the gizmo's basis — workplane
+    // axes when non-auto, world XYZ when auto.
     void applyScaleAxesFactor(bool sx, bool sy, bool sz, float factor) {
         Vec3 center = handler.center;
-        foreach (vi; vertexIndicesToProcess) {
-            if (sx) mesh.vertices[vi].x = center.x + (mesh.vertices[vi].x - center.x) * factor;
-            if (sy) mesh.vertices[vi].y = center.y + (mesh.vertices[vi].y - center.y) * factor;
-            if (sz) mesh.vertices[vi].z = center.z + (mesh.vertices[vi].z - center.z) * factor;
-        }
+        Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
+        float fx = sx ? factor : 1.0f;
+        float fy = sy ? factor : 1.0f;
+        float fz = sz ? factor : 1.0f;
+        foreach (vi; vertexIndicesToProcess)
+            mesh.vertices[vi] = scaleAlongBasis(mesh.vertices[vi], center,
+                                                ax, ay, az, fx, fy, fz);
         needsGpuUpdate = true;
     }
 
@@ -385,26 +407,25 @@ private:
     void commitWholeMeshScale() {
         if (dragStartVertices.length != mesh.vertices.length) return;
         Vec3 center = handler.center;
+        Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
         float lx = scaleAccum.x / dragStartScaleAccum.x;
         float ly = scaleAccum.y / dragStartScaleAccum.y;
         float lz = scaleAccum.z / dragStartScaleAccum.z;
-        foreach (i; 0 .. mesh.vertices.length) {
-            mesh.vertices[i].x = center.x + (dragStartVertices[i].x - center.x) * lx;
-            mesh.vertices[i].y = center.y + (dragStartVertices[i].y - center.y) * ly;
-            mesh.vertices[i].z = center.z + (dragStartVertices[i].z - center.z) * lz;
-        }
+        foreach (i; 0 .. mesh.vertices.length)
+            mesh.vertices[i] = scaleAlongBasis(dragStartVertices[i], center,
+                                               ax, ay, az, lx, ly, lz);
     }
 
     // Apply scale from activationVertices to CPU vertices only (no GPU).
-    // Uses current scaleAccum for all three axes.
+    // Uses current scaleAccum for all three basis axes.
     void applyScaleFromActivationCpuOnly() {
         if (activationVertices.length == 0) return;
         Vec3 center = activationCenter;
-        foreach (vi; vertexIndicesToProcess) {
-            mesh.vertices[vi].x = center.x + (activationVertices[vi].x - center.x) * scaleAccum.x;
-            mesh.vertices[vi].y = center.y + (activationVertices[vi].y - center.y) * scaleAccum.y;
-            mesh.vertices[vi].z = center.z + (activationVertices[vi].z - center.z) * scaleAccum.z;
-        }
+        Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
+        foreach (vi; vertexIndicesToProcess)
+            mesh.vertices[vi] = scaleAlongBasis(activationVertices[vi], center,
+                                                ax, ay, az,
+                                                scaleAccum.x, scaleAccum.y, scaleAccum.z);
     }
 
     int hitTestAxes(int mx, int my) {

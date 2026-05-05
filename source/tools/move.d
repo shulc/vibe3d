@@ -89,6 +89,13 @@ public:
         if (!active) return;
         cachedVp = vp;
 
+        // Pull the active workplane basis (auto ⇒ world XYZ) and orient the
+        // gizmo into it: arrowX = workplane axis1, arrowY = workplane normal,
+        // arrowZ = workplane axis2. Drag math reads these via the handler.
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ);
+        handler.setOrientation(bX, bY, bZ);
+
         // Flush pending GPU upload once per frame (partial selection during drag).
         if (needsGpuUpdate) {
             uploadToGpu();
@@ -183,12 +190,17 @@ public:
         }
 
         // Click outside gizmo: teleport to most-facing plane at click point.
+        // Use the gizmo's basis so non-auto workplanes pick the correct
+        // construction plane (world-XZ default when basis = identity).
         import std.math : abs;
         const ref float[16] v = cachedVp.view;
-        float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
-        Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
-               : avy >= avx && avy >= avz ? Vec3(0,1,0)
-                                          : Vec3(0,0,1);
+        Vec3 camBack = Vec3(v[2], v[6], v[10]);
+        float aX = abs(dot(camBack, handler.axisX));
+        float aY = abs(dot(camBack, handler.axisY));
+        float aZ = abs(dot(camBack, handler.axisZ));
+        Vec3 n = aX >= aY && aX >= aZ ? handler.axisX
+               : aY >= aX && aY >= aZ ? handler.axisY
+                                      : handler.axisZ;
         Vec3 hit;
         if (!rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                                handler.center, n, hit))
@@ -219,14 +231,19 @@ public:
             int tdy = e.y - constrainStartMY;
             if (tdx*tdx + tdy*tdy < 25) { lastMX = e.x; lastMY = e.y; return true; }
 
-            // Identify the two axes that lie in the most-facing plane.
+            // Identify the two basis axes that lie in the most-facing plane
+            // (the third axis — the one most parallel to the camera ray — is
+            // the plane normal).
             import std.math : abs;
             const ref float[16] vv = cachedVp.view;
-            float avx = abs(vv[2]), avy = abs(vv[6]), avz = abs(vv[10]);
+            Vec3 camBack = Vec3(vv[2], vv[6], vv[10]);
+            float aXdot = abs(dot(camBack, handler.axisX));
+            float aYdot = abs(dot(camBack, handler.axisY));
+            float aZdot = abs(dot(camBack, handler.axisZ));
             int ax1, ax2;
-            if      (avx >= avy && avx >= avz) { ax1 = 1; ax2 = 2; } // normal X → Y,Z
-            else if (avy >= avx && avy >= avz) { ax1 = 0; ax2 = 2; } // normal Y → X,Z
-            else                               { ax1 = 0; ax2 = 1; } // normal Z → X,Y
+            if      (aXdot >= aYdot && aXdot >= aZdot) { ax1 = 1; ax2 = 2; } // normal=axisX → Y,Z
+            else if (aYdot >= aXdot && aYdot >= aZdot) { ax1 = 0; ax2 = 2; } // normal=axisY → X,Z
+            else                                       { ax1 = 0; ax2 = 1; } // normal=axisZ → X,Y
 
             // Project each candidate axis onto screen; pick best alignment.
             float cx, cy, dummy;
@@ -258,7 +275,8 @@ public:
                                        dragAxis, handler, cachedVp, skip);
         else
             worldDelta = planeDragDelta(e.x, e.y, lastMX, lastMY,
-                                        dragAxis, handler.center, cachedVp, skip);
+                                        dragAxis, handler.center, cachedVp, skip,
+                                        handler.axisX, handler.axisY, handler.axisZ);
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
         // Update gizmo position immediately (always fast)

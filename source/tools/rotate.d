@@ -139,6 +139,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
+        // Orient gizmo into the active workplane basis (auto ⇒ identity).
+        // arcX rotates around axisX, arcY around axisY, arcZ around axisZ.
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ);
+        handler.setOrientation(bX, bY, bZ);
+
         // Flush pending partial-selection GPU upload once per frame.
         if (needsGpuUpdate) {
             uploadToGpu();
@@ -169,13 +175,18 @@ public:
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis < 0) {
-            // Click outside gizmo: teleport rotation center to the clicked point.
+            // Click outside gizmo: teleport rotation center to the clicked
+            // point. Most-facing plane is picked from the gizmo's basis so
+            // workplane-aligned tools land hits on the workplane plane.
             import std.math : abs;
             const ref float[16] v = cachedVp.view;
-            float avx = abs(v[2]), avy = abs(v[6]), avz = abs(v[10]);
-            Vec3 n = avx >= avy && avx >= avz ? Vec3(1,0,0)
-                   : avy >= avx && avy >= avz ? Vec3(0,1,0)
-                                              : Vec3(0,0,1);
+            Vec3 camBack = Vec3(v[2], v[6], v[10]);
+            float aX = abs(dot(camBack, handler.axisX));
+            float aY = abs(dot(camBack, handler.axisY));
+            float aZ = abs(dot(camBack, handler.axisZ));
+            Vec3 n = aX >= aY && aX >= aZ ? handler.axisX
+                   : aY >= aX && aY >= aZ ? handler.axisY
+                                          : handler.axisZ;
             Vec3 hit;
             if (!rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                                    handler.center, n, hit))
@@ -203,14 +214,15 @@ public:
         snapshotEditState();   // capture pre-drag Tool-Properties state.
         beginEdit();           // Phase C.3: snapshot pre-drag positions for undo.
 
-        // Cache the axis vector for the duration of this drag.
+        // Cache the axis vector for the duration of this drag — basis-
+        // aware (workplane axis1/normal/axis2 when non-auto).
         if (dragAxis == 3) {
             viewDragAxis = Vec3(-cachedVp.view[2], -cachedVp.view[6], -cachedVp.view[10]);
             dragAxisVec = viewDragAxis;
         } else {
-            dragAxisVec = dragAxis == 0 ? Vec3(1,0,0)
-                        : dragAxis == 1 ? Vec3(0,1,0)
-                                        : Vec3(0,0,1);
+            dragAxisVec = dragAxis == 0 ? handler.axisX
+                        : dragAxis == 1 ? handler.axisY
+                                        : handler.axisZ;
         }
 
         // Compute drag start direction in the arc plane.
@@ -414,15 +426,17 @@ private:
     }
 
     // Apply X→Y→Z Euler rotation from origVertices to CPU vertices only (no GPU).
+    // angleAccum.x/.y/.z are interpreted around the gizmo's basis (workplane
+    // axis1/normal/axis2 when non-auto, world XYZ when auto).
     void applyAbsoluteFromOrigCpuOnly() {
         if (origVertices.length != mesh.vertices.length) return;
         Vec3 pivot = handler.center;
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toProcess[i]) { mesh.vertices[i] = origVertices[i]; continue; }
             Vec3 v = origVertices[i];
-            if (angleAccum.x != 0) v = rotateVec(v, pivot, Vec3(1,0,0), angleAccum.x);
-            if (angleAccum.y != 0) v = rotateVec(v, pivot, Vec3(0,1,0), angleAccum.y);
-            if (angleAccum.z != 0) v = rotateVec(v, pivot, Vec3(0,0,1), angleAccum.z);
+            if (angleAccum.x != 0) v = rotateVec(v, pivot, handler.axisX, angleAccum.x);
+            if (angleAccum.y != 0) v = rotateVec(v, pivot, handler.axisY, angleAccum.y);
+            if (angleAccum.z != 0) v = rotateVec(v, pivot, handler.axisZ, angleAccum.z);
             mesh.vertices[i] = v;
         }
     }
@@ -431,9 +445,9 @@ private:
     float[16] computePropsRotationMatrix() {
         Vec3 pivot = handler.center;
         float[16] m = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-        if (angleAccum.x != 0) m = matMul4(m, pivotRotationMatrix(pivot, Vec3(1,0,0), angleAccum.x));
-        if (angleAccum.y != 0) m = matMul4(m, pivotRotationMatrix(pivot, Vec3(0,1,0), angleAccum.y));
-        if (angleAccum.z != 0) m = matMul4(m, pivotRotationMatrix(pivot, Vec3(0,0,1), angleAccum.z));
+        if (angleAccum.x != 0) m = matMul4(m, pivotRotationMatrix(pivot, handler.axisX, angleAccum.x));
+        if (angleAccum.y != 0) m = matMul4(m, pivotRotationMatrix(pivot, handler.axisY, angleAccum.y));
+        if (angleAccum.z != 0) m = matMul4(m, pivotRotationMatrix(pivot, handler.axisZ, angleAccum.z));
         return m;
     }
 
