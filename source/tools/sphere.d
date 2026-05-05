@@ -13,7 +13,9 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis;
+import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
+                              pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
+                              transformPoint, transformDir;
 
 import std.math : sin, cos, acos, PI, abs, sqrt;
 
@@ -471,10 +473,19 @@ private:
     bool               meshChanged;
 
     // Construction-plane frame chosen at first click and locked for the
-    // whole interaction.
+    // whole interaction. After the workplane refactor these are in LOCAL
+    // workplane coords (canonical (1,0,0)/(0,1,0)/(0,0,1) — the actual
+    // world basis is encoded in `frame`); ray-plane sites use localEye()
+    // / localRay() and produce hits in local space.
     Vec3 planeNormal;
     Vec3 planeAxis1;
     Vec3 planeAxis2;
+    /// Workplane local↔world transform captured at choosePlane(). All
+    /// internal coords (params_.cen*, sphereCenter, baseAnchor, hpOrigin,
+    /// startPoint/currentPoint, radH positions) live in this frame's
+    /// local space; mesh upload / commit transforms vertices through
+    /// `frame.toWorld` immediately before they hit GPU / the scene.
+    WorkplaneFrame frame;
 
     // Drag anchors — only valid for the matching state(s).
     Vec3 startPoint;       // DrawingBase: first click on plane
@@ -633,14 +644,17 @@ public:
 
     override bool applyHeadless() {
         // Append into the scene mesh (same convention as the interactive
-        // commitSphere). Replacing would wipe any geometry the user already
-        // has — this hits scripted paths like the Ctrl-click Unit Sphere
-        // shortcut where the user expects the new sphere to be added, not
-        // to replace the scene.
+        // commitSphere). Headless prim.sphere honours the active
+        // WorkplaneStage — params_ are interpreted in LOCAL workplane
+        // space (mirroring the interactive commit path). Auto-mode falls
+        // back to identity (world XZ).
+        frame = currentWorkplaneFrame();
+        size_t firstNewVert = mesh.vertices.length;
         if (params_.method == 0)      buildSphereGlobe(mesh, params_);
         else if (params_.method == 1) buildSphereQuadBall(mesh, params_);
         else if (params_.method == 2) buildSphereTess(mesh, params_);
         else                          return false;
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
@@ -680,7 +694,7 @@ public:
         if (state == SphereState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return false;
             startPoint   = hit;
@@ -708,8 +722,8 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = sphereCenter();
                 Vec3 hit;
-                if (!rayPlaneIntersect(cachedVp.eye,
-                                       screenRay(e.x, e.y, cachedVp),
+                if (!rayPlaneIntersect(localEye(),
+                                       localRay(e.x, e.y),
                                        baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
@@ -726,7 +740,7 @@ public:
             setupHeightPlane();
             baseAnchor = sphereCenter();
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
@@ -779,10 +793,13 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (radDragIdx >= 0) {
-            Vec3 outward = RAD_AXES[radDragIdx];
+            // screenAxisDelta consumes WORLD origin + axis; RAD_AXES
+            // entries are LOCAL outward directions (canonical ±X/±Y/±Z),
+            // so route through toWorldD before passing them in.
+            Vec3 outwardWorld = toWorldD(RAD_AXES[radDragIdx]);
             bool skip;
             Vec3 delta = screenAxisDelta(e.x, e.y, radLastMX, radLastMY,
-                                         radH[radDragIdx].pos, outward,
+                                         radH[radDragIdx].pos, outwardWorld,
                                          cachedVp, skip);
             if (!skip) applyRadiusDelta(radDragIdx, delta);
             radLastMX = e.x; radLastMY = e.y;
@@ -797,9 +814,11 @@ public:
                                  moverDragAxis, mover.center, cachedVp, skip,
                                  mover.axisX, mover.axisY, mover.axisZ);
             if (!skip) {
-                params_.cenX += delta.x;
-                params_.cenY += delta.y;
-                params_.cenZ += delta.z;
+                // delta is in WORLD; params_ live in LOCAL workplane space.
+                Vec3 dl = toLocalD(delta);
+                params_.cenX += dl.x;
+                params_.cenY += dl.y;
+                params_.cenZ += dl.z;
                 rebuildPreview();
             }
             moverLastMX = e.x; moverLastMY = e.y;
@@ -808,7 +827,7 @@ public:
 
         if (state == SphereState.DrawingBase) {
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
                 currentPoint = hit;
@@ -825,8 +844,8 @@ public:
             // stays put (Ctrl-second-click never moves it).
             if (dragUniform) {
                 Vec3 hit;
-                if (rayPlaneIntersect(cachedVp.eye,
-                                      screenRay(e.x, e.y, cachedVp),
+                if (rayPlaneIntersect(localEye(),
+                                      localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
                     Vec3  d = hit - baseAnchor;
@@ -842,7 +861,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
                 // Sphere center stays at baseAnchor; only the radius along
@@ -891,11 +910,13 @@ public:
         // Handles only show once base is finalized.
         if (state >= SphereState.BaseSet) {
             updateRadHandlers(vp);
-            mover.setPosition(sphereCenter());
-            // Orient mover gizmo into the active workplane (auto ⇒ world XYZ).
-            Vec3 gAx, gAy, gAz;
-            pickWorkplaneGizmoBasis(vp, gAx, gAy, gAz);
-            mover.setOrientation(gAx, gAy, gAz);
+            // sphereCenter is in workplane local; transform through the
+            // captured frame for world rendering.
+            mover.setPosition(toWorldP(sphereCenter()));
+            // Mover gizmo aligned to the captured frame's basis — keeps
+            // the arrows along the sphere's local axes (frame.axis1,
+            // frame.normal, frame.axis2 in world).
+            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
             radHoveredIdx = -1;
             bool radBusy = radDragIdx >= 0;
             foreach (i; 0 .. 6) {
@@ -1001,10 +1022,45 @@ private:
     float currentHeight() const { return sizeOnAxis(planeNormal) * 2.0f; }
 
     void choosePlane(const ref Viewport vp) {
-        auto bp = pickWorkplane(vp);
-        planeNormal = bp.normal;
-        planeAxis1  = bp.axis1;
-        planeAxis2  = bp.axis2;
+        // Capture the active workplane as a local↔world transform; from
+        // here on, all tool-internal coords are in local-space (workplane
+        // = identity XZ plane).
+        frame = pickWorkplaneFrame(vp);
+        // Pick the construction plane by camera, just like BoxTool /
+        // corner gizmo's most-facing-quad: the workplane basis axis
+        // (a1, n, a2) most aligned with camera-back is the plane normal,
+        // the other two span the construction plane.
+        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        float aA = abs(dot(camBack, frame.axis1));
+        float aN = abs(dot(camBack, frame.normal));
+        float aZ = abs(dot(camBack, frame.axis2));
+        if (aA >= aN && aA >= aZ) {
+            planeNormal = Vec3(1, 0, 0);
+            planeAxis1  = Vec3(0, 1, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else if (aN >= aA && aN >= aZ) {
+            planeNormal = Vec3(0, 1, 0);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else {
+            planeNormal = Vec3(0, 0, 1);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 1, 0);
+        }
+    }
+
+    // ---- Local ↔ world helpers (workplane refactor) ----------------------
+    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
+    Vec3 localRay(int x, int y) const {
+        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    }
+    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
+    Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
+    Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
+
+    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
+        foreach (i; firstIdx .. m.vertices.length)
+            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
     }
 
     // Update params_ from startPoint/currentPoint while drawing the base.
@@ -1041,7 +1097,11 @@ private:
 
     void setupHeightPlane() {
         hpOrigin = sphereCenter();
-        Vec3 toCamera = cachedVp.eye - hpOrigin;
+        // Camera direction in LOCAL space — height-drag plane sits with
+        // its normal in the workplane (perpendicular to planeNormal),
+        // pointing roughly at the camera so the user's screen-vertical
+        // mouse motion projects cleanly onto planeNormal.
+        Vec3 toCamera = localEye() - hpOrigin;
         Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
         float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
         hpn = len > 1e-6f ? inPlane / len : planeAxis1;
@@ -1060,6 +1120,10 @@ private:
             buildEllipseBase(&previewMesh, ellipsePreviewSides(), sphereCenter(),
                              planeAxis1, sizeOnAxis(planeAxis1),
                              planeAxis2, sizeOnAxis(planeAxis2));
+        // Mesh built in LOCAL workplane space; transform every preview
+        // vertex through frame.toWorld so the on-screen sphere lies in
+        // its world position / orientation.
+        applyFrameToMeshRange(&previewMesh, 0);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
@@ -1068,18 +1132,24 @@ private:
 
     // Both commit helpers APPEND into the scene mesh — same convention as
     // BoxTool.commitBase / commitCuboid. Replacing would wipe any existing
-    // geometry the user already built.
+    // geometry the user already built. Mesh is emitted in LOCAL workplane
+    // space; only the newly-appended vertex range is transformed via
+    // frame.toWorld so existing scene geometry stays put.
     void commitBase() {
+        size_t firstNewVert = mesh.vertices.length;
         buildEllipseBase(mesh, ellipsePreviewSides(), sphereCenter(),
                          planeAxis1, sizeOnAxis(planeAxis1),
                          planeAxis2, sizeOnAxis(planeAxis2));
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
     }
 
     void commitSphere() {
+        size_t firstNewVert = mesh.vertices.length;
         buildByMethod(mesh);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -1114,24 +1184,30 @@ private:
     }
 
     void updateRadHandlers(const ref Viewport vp) {
-        Vec3 cen = sphereCenter();
+        Vec3 cen = sphereCenter();   // local
         float rx = worldRadius(0);
         float ry = worldRadius(1);
         float rz = worldRadius(2);
-        Vec3[6] pts = [
+        // Compute handle positions in LOCAL frame, then transform to
+        // world for the on-screen gizmoSize / hit-test that work in
+        // world coords against the live viewport.
+        Vec3[6] localPts = [
             cen + Vec3( rx, 0, 0), cen + Vec3(-rx, 0, 0),
             cen + Vec3(0,  ry, 0), cen + Vec3(0, -ry, 0),
             cen + Vec3(0, 0,  rz), cen + Vec3(0, 0, -rz),
         ];
         foreach (i; 0 .. 6) {
-            radH[i].pos  = pts[i];
-            radH[i].size = gizmoSize(pts[i], vp, 0.04f);
+            Vec3 worldPos = toWorldP(localPts[i]);
+            radH[i].pos  = worldPos;
+            radH[i].size = gizmoSize(worldPos, vp, 0.04f);
         }
     }
 
     void applyRadiusDelta(int idx, Vec3 delta) {
-        Vec3 axisDir = RAD_AXES[idx];
-        float d = delta.x * axisDir.x + delta.y * axisDir.y + delta.z * axisDir.z;
+        // delta is in WORLD; project onto the world image of the local
+        // outward axis to get the scalar size change.
+        Vec3 outwardWorld = toWorldD(RAD_AXES[idx]);
+        float d = dot(delta, outwardWorld);
         int worldIdx = idx / 2;
         float r = worldRadius(worldIdx) + d;
         if (r < 0.0f) r = 0.0f;
