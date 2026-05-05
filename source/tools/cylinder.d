@@ -13,7 +13,9 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis;
+import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
+                              pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
+                              transformPoint, transformDir;
 
 import std.math : sin, cos, PI, abs, sqrt;
 
@@ -201,11 +203,18 @@ private:
     bool                meshChanged;
 
     // Construction-plane frame chosen at first click and locked for the
-    // whole interaction. params_.axis is set to the world axis index of
-    // planeNormal so the cylinder's caps line up with the plane.
+    // whole interaction. After the workplane refactor these are in LOCAL
+    // workplane coords (canonical (1,0,0)/(0,1,0)/(0,0,1) — actual world
+    // basis is encoded in `frame`); ray-plane sites use localEye() /
+    // localRay() and produce hits in local space.
     Vec3 planeNormal;
     Vec3 planeAxis1;
     Vec3 planeAxis2;
+    /// Workplane local↔world transform captured at choosePlane(). All
+    /// internal coords (params_.cen*, cylinderCenter, baseAnchor,
+    /// hpOrigin, sizeH positions) live in this frame's local space; mesh
+    /// upload / commit transforms vertices through `frame.toWorld`.
+    WorkplaneFrame frame;
 
     // Drag anchors — only valid for the matching state(s).
     Vec3 startPoint;
@@ -324,7 +333,13 @@ public:
 
     override bool applyHeadless() {
         // Append into the scene mesh (same convention as Box / Sphere).
+        // Headless prim.cylinder honours the active WorkplaneStage —
+        // params_ are LOCAL workplane coords; vertices are emitted in
+        // local then transformed via frame.toWorld.
+        frame = currentWorkplaneFrame();
+        size_t firstNewVert = mesh.vertices.length;
         buildCylinder(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
@@ -362,12 +377,12 @@ public:
         if (state == CylinderState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return false;
             startPoint   = hit;
             currentPoint = hit;
-            // Set params_.axis = world axis index of plane normal so the
+            // Set params_.axis = local axis index of plane normal so the
             // cylinder's topology aligns with the construction plane.
             params_.axis = worldAxisIdxOf(planeNormal);
             params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
@@ -381,8 +396,8 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = cylinderCenter();
                 Vec3 hit;
-                if (!rayPlaneIntersect(cachedVp.eye,
-                                       screenRay(e.x, e.y, cachedVp),
+                if (!rayPlaneIntersect(localEye(),
+                                       localRay(e.x, e.y),
                                        baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
@@ -398,7 +413,7 @@ public:
             setupHeightPlane();
             baseAnchor = cylinderCenter();
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
@@ -446,10 +461,12 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (sizeDragIdx >= 0) {
-            Vec3 outward = SIZE_AXES[sizeDragIdx];
+            // SIZE_AXES are LOCAL outward directions; screenAxisDelta
+            // consumes WORLD origin + axis, so route through toWorldD.
+            Vec3 outwardWorld = toWorldD(SIZE_AXES[sizeDragIdx]);
             bool skip;
             Vec3 delta = screenAxisDelta(e.x, e.y, sizeLastMX, sizeLastMY,
-                                         sizeH[sizeDragIdx].pos, outward,
+                                         sizeH[sizeDragIdx].pos, outwardWorld,
                                          cachedVp, skip);
             if (!skip) applySizeDelta(sizeDragIdx, delta);
             sizeLastMX = e.x; sizeLastMY = e.y;
@@ -464,9 +481,11 @@ public:
                                  moverDragAxis, mover.center, cachedVp, skip,
                                  mover.axisX, mover.axisY, mover.axisZ);
             if (!skip) {
-                params_.cenX += delta.x;
-                params_.cenY += delta.y;
-                params_.cenZ += delta.z;
+                // delta is in WORLD; params_ are in LOCAL workplane space.
+                Vec3 dl = toLocalD(delta);
+                params_.cenX += dl.x;
+                params_.cenY += dl.y;
+                params_.cenZ += dl.z;
                 rebuildPreview();
             }
             moverLastMX = e.x; moverLastMY = e.y;
@@ -475,7 +494,7 @@ public:
 
         if (state == CylinderState.DrawingBase) {
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
                 currentPoint = hit;
@@ -488,8 +507,8 @@ public:
         if (state == CylinderState.DrawingHeight) {
             if (dragUniform) {
                 Vec3 hit;
-                if (rayPlaneIntersect(cachedVp.eye,
-                                      screenRay(e.x, e.y, cachedVp),
+                if (rayPlaneIntersect(localEye(),
+                                      localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
                     Vec3  d = hit - baseAnchor;
@@ -505,7 +524,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
                 // Box-style asymmetric grow: the disk drawn in DrawingBase is
@@ -557,10 +576,10 @@ public:
 
         if (state >= CylinderState.BaseSet) {
             updateSizeHandlers(vp);
-            mover.setPosition(cylinderCenter());
-            Vec3 gAx, gAy, gAz;
-            pickWorkplaneGizmoBasis(vp, gAx, gAy, gAz);
-            mover.setOrientation(gAx, gAy, gAz);
+            // cylinderCenter is in workplane local; transform to world.
+            mover.setPosition(toWorldP(cylinderCenter()));
+            // Mover gizmo aligned to the captured frame's basis.
+            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
             sizeHoveredIdx = -1;
             bool sizeBusy = sizeDragIdx >= 0;
             foreach (i; 0 .. 6) {
@@ -633,10 +652,41 @@ private:
     float currentHeight() const { return sizeOnAxis(planeNormal) * 2.0f; }
 
     void choosePlane(const ref Viewport vp) {
-        auto bp = pickWorkplane(vp);
-        planeNormal = bp.normal;
-        planeAxis1  = bp.axis1;
-        planeAxis2  = bp.axis2;
+        // Capture workplane as a local↔world transform; tool-internal
+        // coords are in local-space (workplane = identity XZ plane).
+        frame = pickWorkplaneFrame(vp);
+        // Pick the construction plane by camera (most-facing-axis in
+        // workplane basis), matching BoxTool / SphereTool / corner gizmo.
+        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        float aA = abs(dot(camBack, frame.axis1));
+        float aN = abs(dot(camBack, frame.normal));
+        float aZ = abs(dot(camBack, frame.axis2));
+        if (aA >= aN && aA >= aZ) {
+            planeNormal = Vec3(1, 0, 0);
+            planeAxis1  = Vec3(0, 1, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else if (aN >= aA && aN >= aZ) {
+            planeNormal = Vec3(0, 1, 0);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else {
+            planeNormal = Vec3(0, 0, 1);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 1, 0);
+        }
+    }
+
+    // ---- Local ↔ world helpers (workplane refactor) ---------------------
+    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
+    Vec3 localRay(int x, int y) const {
+        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    }
+    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
+    Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
+    Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
+    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
+        foreach (i; firstIdx .. m.vertices.length)
+            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
     }
 
     // First click anchors the cylinder center; the cursor traces a point on
@@ -668,7 +718,7 @@ private:
 
     void setupHeightPlane() {
         hpOrigin = cylinderCenter();
-        Vec3 toCamera = cachedVp.eye - hpOrigin;
+        Vec3 toCamera = localEye() - hpOrigin;
         Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
         float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
         hpn = len > 1e-6f ? inPlane / len : planeAxis1;
@@ -676,25 +726,36 @@ private:
 
     // Build a single-ring "disk" preview to use during DrawingBase. The
     // generator handles this via the isDisk path — sizeOnAxis(planeNormal)
-    // is 0, so buildCylinder produces a single S-gon face.
+    // is 0, so buildCylinder produces a single S-gon face. Mesh built in
+    // LOCAL workplane space; vertices transformed via frame.toWorld for
+    // rendering.
     void rebuildPreview() {
         previewMesh.clear();
         buildCylinder(&previewMesh, params_);
+        applyFrameToMeshRange(&previewMesh, 0);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
 
     void uploadPreview() { rebuildPreview(); }
 
+    // Append into the scene mesh (same convention as Box / Sphere).
+    // Mesh emitted in LOCAL workplane space; only the newly-appended
+    // vertex range is transformed via frame.toWorld so existing scene
+    // geometry stays put.
     void commitDisk() {
+        size_t firstNewVert = mesh.vertices.length;
         buildCylinder(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
     }
 
     void commitCylinder() {
+        size_t firstNewVert = mesh.vertices.length;
         buildCylinder(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -710,18 +771,21 @@ private:
     }
 
     void updateSizeHandlers(const ref Viewport vp) {
-        Vec3 cen = cylinderCenter();
+        Vec3 cen = cylinderCenter();   // local
         float sx = worldSize(0);
         float sy = worldSize(1);
         float sz = worldSize(2);
-        Vec3[6] pts = [
+        // Compute in LOCAL frame, then transform each to world for hit-
+        // test / gizmoSize against the live viewport.
+        Vec3[6] localPts = [
             cen + Vec3( sx, 0, 0), cen + Vec3(-sx, 0, 0),
             cen + Vec3(0,  sy, 0), cen + Vec3(0, -sy, 0),
             cen + Vec3(0, 0,  sz), cen + Vec3(0, 0, -sz),
         ];
         foreach (i; 0 .. 6) {
-            sizeH[i].pos  = pts[i];
-            sizeH[i].size = gizmoSize(pts[i], vp, 0.04f);
+            Vec3 worldPos = toWorldP(localPts[i]);
+            sizeH[i].pos  = worldPos;
+            sizeH[i].size = gizmoSize(worldPos, vp, 0.04f);
         }
     }
 
@@ -737,8 +801,11 @@ private:
     // crossed the opposite face. Swap to the OPPOSITE handle so subsequent
     // motion continues to follow the cursor on the new "front" side.
     void applySizeDelta(int idx, Vec3 delta) {
+        // delta arrives in WORLD; SIZE_AXES are LOCAL outward dirs.
+        // Convert delta to local once, then project & shift in local.
         Vec3  outward  = SIZE_AXES[idx];
-        float d        = dot(delta, outward);
+        Vec3  deltaL   = toLocalD(delta);
+        float d        = dot(deltaL, outward);
         int   worldIdx = idx / 2;
         float oldSize  = worldSize(worldIdx);
         float signedSz = oldSize + d * 0.5f;

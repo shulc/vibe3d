@@ -13,7 +13,9 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis;
+import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
+                              pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
+                              transformPoint, transformDir;
 
 import std.math : sin, cos, PI, abs, sqrt;
 
@@ -180,9 +182,13 @@ private:
     GpuMesh         previewGpu;
     bool            meshChanged;
 
+    // After workplane refactor these are LOCAL canonical (1,0,0)/(0,1,0)/
+    // (0,0,1); world basis is encoded in `frame`.
     Vec3 planeNormal;
     Vec3 planeAxis1;
     Vec3 planeAxis2;
+    /// Workplane local↔world transform captured at choosePlane().
+    WorkplaneFrame frame;
 
     Vec3 startPoint;
     Vec3 currentPoint;
@@ -290,7 +296,10 @@ public:
     }
 
     override bool applyHeadless() {
+        frame = currentWorkplaneFrame();
+        size_t firstNewVert = mesh.vertices.length;
         buildCone(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
@@ -327,7 +336,7 @@ public:
         if (state == ConeState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return false;
             startPoint   = hit;
@@ -344,8 +353,8 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = coneCenter();
                 Vec3 hit;
-                if (!rayPlaneIntersect(cachedVp.eye,
-                                       screenRay(e.x, e.y, cachedVp),
+                if (!rayPlaneIntersect(localEye(),
+                                       localRay(e.x, e.y),
                                        baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
@@ -361,7 +370,7 @@ public:
             setupHeightPlane();
             baseAnchor = coneCenter();
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
@@ -409,10 +418,10 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (sizeDragIdx >= 0) {
-            Vec3 outward = SIZE_AXES[sizeDragIdx];
+            Vec3 outwardWorld = toWorldD(SIZE_AXES[sizeDragIdx]);
             bool skip;
             Vec3 delta = screenAxisDelta(e.x, e.y, sizeLastMX, sizeLastMY,
-                                         sizeH[sizeDragIdx].pos, outward,
+                                         sizeH[sizeDragIdx].pos, outwardWorld,
                                          cachedVp, skip);
             if (!skip) applySizeDelta(sizeDragIdx, delta);
             sizeLastMX = e.x; sizeLastMY = e.y;
@@ -427,9 +436,10 @@ public:
                                  moverDragAxis, mover.center, cachedVp, skip,
                                  mover.axisX, mover.axisY, mover.axisZ);
             if (!skip) {
-                params_.cenX += delta.x;
-                params_.cenY += delta.y;
-                params_.cenZ += delta.z;
+                Vec3 dl = toLocalD(delta);
+                params_.cenX += dl.x;
+                params_.cenY += dl.y;
+                params_.cenZ += dl.z;
                 rebuildPreview();
             }
             moverLastMX = e.x; moverLastMY = e.y;
@@ -438,7 +448,7 @@ public:
 
         if (state == ConeState.DrawingBase) {
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
                 currentPoint = hit;
@@ -451,8 +461,8 @@ public:
         if (state == ConeState.DrawingHeight) {
             if (dragUniform) {
                 Vec3 hit;
-                if (rayPlaneIntersect(cachedVp.eye,
-                                      screenRay(e.x, e.y, cachedVp),
+                if (rayPlaneIntersect(localEye(),
+                                      localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
                     Vec3  d = hit - baseAnchor;
@@ -468,7 +478,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
                 // Box-style asymmetric grow: base disk stays anchored on
@@ -516,10 +526,8 @@ public:
 
         if (state >= ConeState.BaseSet) {
             updateSizeHandlers(vp);
-            mover.setPosition(coneCenter());
-            Vec3 gAx, gAy, gAz;
-            pickWorkplaneGizmoBasis(vp, gAx, gAy, gAz);
-            mover.setOrientation(gAx, gAy, gAz);
+            mover.setPosition(toWorldP(coneCenter()));
+            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
             sizeHoveredIdx = -1;
             bool sizeBusy = sizeDragIdx >= 0;
             foreach (i; 0 .. 6) {
@@ -590,10 +598,37 @@ private:
     float currentHeight() const { return sizeOnAxis(planeNormal) * 2.0f; }
 
     void choosePlane(const ref Viewport vp) {
-        auto bp = pickWorkplane(vp);
-        planeNormal = bp.normal;
-        planeAxis1  = bp.axis1;
-        planeAxis2  = bp.axis2;
+        frame = pickWorkplaneFrame(vp);
+        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        float aA = abs(dot(camBack, frame.axis1));
+        float aN = abs(dot(camBack, frame.normal));
+        float aZ = abs(dot(camBack, frame.axis2));
+        if (aA >= aN && aA >= aZ) {
+            planeNormal = Vec3(1, 0, 0);
+            planeAxis1  = Vec3(0, 1, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else if (aN >= aA && aN >= aZ) {
+            planeNormal = Vec3(0, 1, 0);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else {
+            planeNormal = Vec3(0, 0, 1);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 1, 0);
+        }
+    }
+
+    // ---- Local ↔ world helpers (workplane refactor) ---------------------
+    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
+    Vec3 localRay(int x, int y) const {
+        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    }
+    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
+    Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
+    Vec3 toLocalD(Vec3 d) const { return transformDir  (frame.toLocal, d); }
+    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
+        foreach (i; firstIdx .. m.vertices.length)
+            m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
     }
 
     void syncParamsFromBaseDrag() {
@@ -621,7 +656,7 @@ private:
 
     void setupHeightPlane() {
         hpOrigin = coneCenter();
-        Vec3 toCamera = cachedVp.eye - hpOrigin;
+        Vec3 toCamera = localEye() - hpOrigin;
         Vec3 inPlane  = toCamera - planeNormal * dot(toCamera, planeNormal);
         float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
         hpn = len > 1e-6f ? inPlane / len : planeAxis1;
@@ -629,12 +664,8 @@ private:
 
     void rebuildPreview() {
         previewMesh.clear();
-        // During DrawingBase the axis-extent is 0; buildCone collapses to a
-        // degenerate cone (apex coincident with the base centre). Render it
-        // as the base ellipse only by short-circuiting via buildEllipseBase
-        // — but to keep cone preview minimal we just call buildCone, which
-        // produces a flat fan when halfA=0 (visible as the base ring).
         buildCone(&previewMesh, params_);
+        applyFrameToMeshRange(&previewMesh, 0);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
@@ -642,14 +673,18 @@ private:
     void uploadPreview() { rebuildPreview(); }
 
     void commitDisk() {
+        size_t firstNewVert = mesh.vertices.length;
         buildCone(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
     }
 
     void commitCone() {
+        size_t firstNewVert = mesh.vertices.length;
         buildCone(mesh, params_);
+        applyFrameToMeshRange(mesh, firstNewVert);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -665,18 +700,19 @@ private:
     }
 
     void updateSizeHandlers(const ref Viewport vp) {
-        Vec3 cen = coneCenter();
+        Vec3 cen = coneCenter();   // local
         float sx = worldSize(0);
         float sy = worldSize(1);
         float sz = worldSize(2);
-        Vec3[6] pts = [
+        Vec3[6] localPts = [
             cen + Vec3( sx, 0, 0), cen + Vec3(-sx, 0, 0),
             cen + Vec3(0,  sy, 0), cen + Vec3(0, -sy, 0),
             cen + Vec3(0, 0,  sz), cen + Vec3(0, 0, -sz),
         ];
         foreach (i; 0 .. 6) {
-            sizeH[i].pos  = pts[i];
-            sizeH[i].size = gizmoSize(pts[i], vp, 0.04f);
+            Vec3 worldPos = toWorldP(localPts[i]);
+            sizeH[i].pos  = worldPos;
+            sizeH[i].size = gizmoSize(worldPos, vp, 0.04f);
         }
     }
 
@@ -694,8 +730,10 @@ private:
     // SIZE_AXES is laid out in pairs (+/-) per world axis — XOR 1 toggles
     // 0↔1, 2↔3, 4↔5.
     void applySizeDelta(int idx, Vec3 delta) {
+        // delta in WORLD; SIZE_AXES are LOCAL outward dirs.
         Vec3  outward  = SIZE_AXES[idx];
-        float d        = dot(delta, outward);
+        Vec3  deltaL   = toLocalD(delta);
+        float d        = dot(deltaL, outward);
         int   worldIdx = idx / 2;
         float oldSize  = worldSize(worldIdx);
         float signedSz = oldSize + d * 0.5f;

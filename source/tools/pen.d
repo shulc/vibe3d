@@ -13,7 +13,9 @@ import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
-import tools.create_common : pickWorkplane, BuildPlane;
+import tools.create_common : pickWorkplane, BuildPlane,
+                              pickWorkplaneFrame, WorkplaneFrame,
+                              transformPoint, transformDir;
 
 import std.math : abs;
 
@@ -98,15 +100,20 @@ private:
     PenEditFactory   factory;
 
     PenState         state;
-    Vec3[]           vertices_;     // world positions of the in-progress sequence
-    BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex
+    Vec3[]           vertices_;     // LOCAL workplane positions of the in-progress sequence
+    BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
 
     Mesh             previewMesh;
     GpuMesh          previewGpu;
 
+    // After workplane refactor — LOCAL canonical axes; world basis is in
+    // `frame`.
     Vec3 planeNormal;
     Vec3 planeAxis1;
     Vec3 planeAxis2;
+    /// Workplane local↔world transform captured at choosePlane(). All
+    /// in-progress vertices live in this frame's local space.
+    WorkplaneFrame frame;
 
     Viewport cachedVp;
     bool     meshChanged;
@@ -236,7 +243,7 @@ public:
         if (state == PenState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return true;
             appendVertex(hit);
@@ -266,7 +273,7 @@ public:
 
         // Click on empty plane.
         Vec3 hit;
-        if (!rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+        if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                Vec3(0, 0, 0), planeNormal, hit))
             return true;
 
@@ -319,7 +326,7 @@ public:
         if (dragVertIdx < 0 || dragVertIdx >= cast(int)vertices_.length)
             return true;
         Vec3 hit;
-        if (rayPlaneIntersect(cachedVp.eye, screenRay(e.x, e.y, cachedVp),
+        if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                               Vec3(0, 0, 0), planeNormal, hit))
         {
             vertices_[dragVertIdx] = hit;
@@ -449,23 +456,41 @@ public:
 
 private:
     void choosePlane(const ref Viewport vp) {
-        auto bp = pickWorkplane(vp);
-        planeNormal = bp.normal;
-        planeAxis1  = bp.axis1;
-        planeAxis2  = bp.axis2;
+        frame = pickWorkplaneFrame(vp);
+        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        float aA = abs(dot(camBack, frame.axis1));
+        float aN = abs(dot(camBack, frame.normal));
+        float aZ = abs(dot(camBack, frame.axis2));
+        if (aA >= aN && aA >= aZ) {
+            planeNormal = Vec3(1, 0, 0);
+            planeAxis1  = Vec3(0, 1, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else if (aN >= aA && aN >= aZ) {
+            planeNormal = Vec3(0, 1, 0);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else {
+            planeNormal = Vec3(0, 0, 1);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 1, 0);
+        }
     }
 
+    // ---- Local ↔ world helpers (workplane refactor) ---------------------
+    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
+    Vec3 localRay(int x, int y) const {
+        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    }
+    Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
+    Vec3 toLocalP(Vec3 p) const { return transformPoint(frame.toLocal, p); }
+
     void appendVertex(Vec3 pos) {
+        // pos is in LOCAL workplane coords; the vertex handler renders in
+        // world, so hit-testing needs the world image of `pos`.
         vertices_ ~= pos;
-        // Cyan marker per architectural decision C.1 in doc/pen_plan.md;
-        // BoxHandler tinted yellow on cursor hover via the base class.
-        // Size is initialised here (not just in draw()) so the very next
-        // hit-test inside the SAME event-processing pass sees a sensibly
-        // sized hit volume — the BoxHandler default of 0.5 in world units
-        // would otherwise project to most of the screen at typical camera
-        // distances and cause spurious hover matches.
-        auto h = new BoxHandler(pos, Vec3(0.0f, 0.9f, 0.9f));
-        h.size = gizmoSize(pos, cachedVp, 0.04f);
+        Vec3 worldPos = toWorldP(pos);
+        auto h = new BoxHandler(worldPos, Vec3(0.0f, 0.9f, 0.9f));
+        h.size = gizmoSize(worldPos, cachedVp, 0.04f);
         vertHandlers ~= h;
     }
 
@@ -495,12 +520,14 @@ private:
     // boundary list, shifting later elements right. Used by the "click-away
     // while a vertex is current" path to splice into the polygon.
     void insertVertexAfter(int afterIdx, Vec3 pos) {
+        // pos in LOCAL; handler in WORLD.
         int insertIdx = afterIdx + 1;
         if (insertIdx < 0) insertIdx = 0;
         if (insertIdx > cast(int)vertices_.length) insertIdx = cast(int)vertices_.length;
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
-        auto h = new BoxHandler(pos, Vec3(0.0f, 0.9f, 0.9f));
-        h.size = gizmoSize(pos, cachedVp, 0.04f);
+        Vec3 worldPos = toWorldP(pos);
+        auto h = new BoxHandler(worldPos, Vec3(0.0f, 0.9f, 0.9f));
+        h.size = gizmoSize(worldPos, cachedVp, 0.04f);
         vertHandlers = vertHandlers[0 .. insertIdx] ~ h ~ vertHandlers[insertIdx .. $];
     }
 
@@ -593,7 +620,9 @@ private:
 
     void uploadPreview() {
         previewMesh.clear();
-        foreach (v; vertices_) previewMesh.addVertex(v);
+        // vertices_ are in LOCAL; transform each through frame.toWorld so
+        // the preview renders in world position.
+        foreach (v; vertices_) previewMesh.addVertex(toWorldP(v));
 
         // Filled face preview. Mirrors commitPolygon's index pattern so the
         // shape the user sees while drawing matches what they get on Enter.
@@ -628,8 +657,8 @@ private:
 
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
-        // popVertex / future numeric edits).
-        foreach (i, ref h; vertHandlers) h.pos = vertices_[i];
+        // popVertex / future numeric edits). Handlers render in WORLD.
+        foreach (i, ref h; vertHandlers) h.pos = toWorldP(vertices_[i]);
     }
 
     // Minimum vertex count for a commit. Default polygon mode needs ≥3
@@ -668,7 +697,10 @@ private:
 
     void commitPolygon() {
         uint base = cast(uint)mesh.vertices.length;
-        foreach (v; vertices_) mesh.addVertex(v);
+        // Append committed vertices in WORLD; vertices_ are stored in
+        // LOCAL workplane coords for the duration of the in-progress
+        // session, so transform through frame.toWorld at commit.
+        foreach (v; vertices_) mesh.addVertex(toWorldP(v));
 
         if (params_.makeQuads) {
             // Strip: vertices laid out [v0_top, v1_bot, v2_top, v3_bot, ...].
