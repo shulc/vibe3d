@@ -2806,7 +2806,16 @@ void main(string[] args) {
 
 
         // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
-        DrawGizmo(layout.sideW + 32.0f, cameraView.height - layout.statusH - 32.0f, cameraView.view);
+        // Pass the active workplane basis so the corner gizmo follows the
+        // same local frame as tools / numeric fields / construction-plane
+        // grid. Auto-mode falls back to world XYZ (identity basis).
+        Vec3 gz_a1 = Vec3(1, 0, 0), gz_n = Vec3(0, 1, 0), gz_a2 = Vec3(0, 0, 1);
+        if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+            if (!wp.isAuto)
+                wp.currentBasis(gz_n, gz_a1, gz_a2);
+        }
+        DrawGizmo(layout.sideW + 32.0f, cameraView.height - layout.statusH - 32.0f,
+                  cameraView.view, gz_a1, gz_n, gz_a2);
 
         // ---- Playback cursor overlay ----
         {
