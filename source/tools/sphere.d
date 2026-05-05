@@ -894,7 +894,7 @@ public:
             mover.setPosition(sphereCenter());
             // Orient mover gizmo into the active workplane (auto ⇒ world XYZ).
             Vec3 gAx, gAy, gAz;
-            pickWorkplaneGizmoBasis(gAx, gAy, gAz);
+            pickWorkplaneGizmoBasis(vp, gAx, gAy, gAz);
             mover.setOrientation(gAx, gAy, gAz);
             radHoveredIdx = -1;
             bool radBusy = radDragIdx >= 0;

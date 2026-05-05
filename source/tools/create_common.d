@@ -165,18 +165,26 @@ WorkplaneFrame currentWorkplaneFrame() {
 }
 
 /// World-space basis triple for Create-tool gizmos (mover arrows / plane
-/// handles / etc.). At auto-mode (or no pipeline) the result is identity
-/// (world XYZ). At non-auto, it's the WorkplaneStage's (axis1, normal,
-/// axis2) — same convention TransformTool.currentBasis() uses for
-/// Move/Rotate/Scale gizmos. Cheap (no matrix build); call from draw().
-void pickWorkplaneGizmoBasis(out Vec3 ax, out Vec3 ay, out Vec3 az) {
-    ax = Vec3(1, 0, 0); ay = Vec3(0, 1, 0); az = Vec3(0, 0, 1);
-    if (g_pipeCtx is null) return;
-    auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work);
-    if (wp is null || wp.isAuto) return;
-    Vec3 n, a1, a2;
-    wp.currentBasis(n, a1, a2);
-    ax = a1; ay = n; az = a2;
+/// handles / etc.) — same basis the construction-plane pickers use, so the
+/// gizmo always agrees with where primitives actually drop:
+///   - auto  ⇒ pickMostFacingPlane(vp) (camera-snapped world axis triple)
+///   - non-auto ⇒ WorkplaneStage's (axis1, normal, axis2)
+/// Used by Sphere / Cylinder / Cone / Capsule / Torus mover.setOrientation
+/// in draw(). Box has its own captured frame and doesn't need this.
+void pickWorkplaneGizmoBasis(const ref Viewport vp,
+                             out Vec3 ax, out Vec3 ay, out Vec3 az)
+{
+    if (g_pipeCtx !is null) {
+        auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work);
+        if (wp !is null && !wp.isAuto) {
+            Vec3 n, a1, a2;
+            wp.currentBasis(n, a1, a2);
+            ax = a1; ay = n; az = a2;
+            return;
+        }
+    }
+    auto bp = pickMostFacingPlane(vp);
+    ax = bp.axis1; ay = bp.normal; az = bp.axis2;
 }
 
 /// Build a frame from explicit basis + origin. Useful for tools that

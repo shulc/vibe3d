@@ -518,7 +518,7 @@ public:
             updateSizeHandlers(vp);
             mover.setPosition(coneCenter());
             Vec3 gAx, gAy, gAz;
-            pickWorkplaneGizmoBasis(gAx, gAy, gAz);
+            pickWorkplaneGizmoBasis(vp, gAx, gAy, gAz);
             mover.setOrientation(gAx, gAy, gAz);
             sizeHoveredIdx = -1;
             bool sizeBusy = sizeDragIdx >= 0;
