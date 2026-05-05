@@ -2670,10 +2670,33 @@ private:
         // canonical local triple. The previous behaviour — caching world-
         // space (axis1, normal, axis2) from pickWorkplane — implied an
         // axis-aligned workplane and broke after alignToSelection.
-        frame       = pickWorkplaneFrame(vp);
-        planeNormal = Vec3(0, 1, 0);
-        planeAxis1  = Vec3(1, 0, 0);
-        planeAxis2  = Vec3(0, 0, 1);
+        frame = pickWorkplaneFrame(vp);
+        // Pick the construction plane by camera, just like the corner
+        // gizmo's most-facing-quad: in the workplane basis (a1, n, a2),
+        // the basis axis most aligned with the camera-back vector is the
+        // plane normal; the other two span the construction plane. With
+        // auto-mode the basis is already pickMostFacingPlane → normal
+        // wins by definition → planeNormal=local Y, falls back to the
+        // XZ-base behaviour. With non-auto + camera looking from the
+        // side, the construction plane swaps to the right local plane
+        // so it agrees with what the corner gizmo highlights.
+        Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+        float aA = abs(dot(camBack, frame.axis1));
+        float aN = abs(dot(camBack, frame.normal));
+        float aZ = abs(dot(camBack, frame.axis2));
+        if (aA >= aN && aA >= aZ) {
+            planeNormal = Vec3(1, 0, 0);
+            planeAxis1  = Vec3(0, 1, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else if (aN >= aA && aN >= aZ) {
+            planeNormal = Vec3(0, 1, 0);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 0, 1);
+        } else {
+            planeNormal = Vec3(0, 0, 1);
+            planeAxis1  = Vec3(1, 0, 0);
+            planeAxis2  = Vec3(0, 1, 0);
+        }
     }
 
     // ---- Local ↔ world helpers (workplane refactor step 2) ----------------
