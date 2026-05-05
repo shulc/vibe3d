@@ -25,7 +25,8 @@ class MoveTool : TransformTool {
 
 private:
     Vec3     dragDelta;       // accumulated world-space offset since drag start
-    Vec3     propInput;       // value shown in Tool Properties (persisted for ImGui)
+    Vec3     propInput;       // value shown in Tool Properties (basis-local components,
+                              //  i.e. dot(dragDelta, axisX/Y/Z) — see drawProperties)
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
 
@@ -132,7 +133,11 @@ public:
         }
         wholeMeshDrag = false;
         dragAxis = -1;
-        propInput = dragDelta;
+        // propInput holds basis-local components, so projecting via the
+        // gizmo's basis. With identity basis this collapses to world XYZ.
+        propInput = Vec3(dot(dragDelta, handler.axisX),
+                         dot(dragDelta, handler.axisY),
+                         dot(dragDelta, handler.axisZ));
         // Sync cachedCenter to the actual post-move gizmo position so update()
         // does not snap it back to the pre-move centroid on the next frame.
         cachedCenter = handler.center;
@@ -301,7 +306,18 @@ public:
     }
 
     override void drawProperties() {
-        if (dragAxis >= 0) propInput = dragDelta;
+        // X/Y/Z fields show the cumulative drag in BASIS-local components
+        // (dot of world dragDelta onto handler.axisX/Y/Z). With auto
+        // workplane the basis is identity ⇒ the fields read as world XYZ;
+        // with a non-auto workplane they read as workplane-local — same
+        // semantics as MODO's tool properties form.
+        Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
+        if (dragAxis >= 0) {
+            propInput = Vec3(dot(dragDelta, ax),
+                             dot(dragDelta, ay),
+                             dot(dragDelta, az));
+        }
+        Vec3 propBefore = propInput;
 
         ImGui.DragFloat("X", &propInput.x, 0.01f, 0, 0, "%.4f");
         bool xActive = ImGui.IsItemActive();
@@ -314,15 +330,13 @@ public:
         bool zDone   = ImGui.IsItemDeactivatedAfterEdit();
 
         if (xActive || yActive || zActive) {
-            Vec3 delta = Vec3(propInput.x - dragDelta.x,
-                              propInput.y - dragDelta.y,
-                              propInput.z - dragDelta.z);
-            if (delta.x != 0 || delta.y != 0 || delta.z != 0) {
+            // Slider edits are in basis-local components; recompose into a
+            // world delta along the gizmo's axes before applying.
+            Vec3 localDiff = propInput - propBefore;
+            if (localDiff.x != 0 || localDiff.y != 0 || localDiff.z != 0) {
+                Vec3 delta = ax*localDiff.x + ay*localDiff.y + az*localDiff.z;
                 dragDelta += delta;
                 buildVertexCacheIfNeeded();
-                // Phase C.2: snapshot on the first frame the slider becomes
-                // active, so commitEdit() at the end has the pre-drag
-                // baseline. beginEdit() is idempotent within an open edit.
                 beginEdit();
                 applyDeltaImmediate(delta);
                 handler.setPosition(handler.center + delta);
@@ -335,7 +349,7 @@ public:
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             wholeMeshDrag = false;
-            commitEdit("Move");   // Phase C.2: land slider drag on undo stack.
+            commitEdit("Move");
         }
     }
 

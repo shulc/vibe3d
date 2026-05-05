@@ -246,9 +246,13 @@ public:
         else if (dragAxis == 1) angleAccum.y += effectiveAngle;
         else if (dragAxis == 2) angleAccum.z += effectiveAngle;
         else if (dragAxis == 3) {
-            angleAccum.x += effectiveAngle * viewDragAxis.x;
-            angleAccum.y += effectiveAngle * viewDragAxis.y;
-            angleAccum.z += effectiveAngle * viewDragAxis.z;
+            // angleAccum.{x,y,z} are rotations around the gizmo's basis
+            // (axisX/Y/Z). Decompose the view-aligned rotation onto those
+            // axes via dot products — identity basis collapses to the
+            // legacy world-XYZ behaviour.
+            angleAccum.x += effectiveAngle * dot(viewDragAxis, handler.axisX);
+            angleAccum.y += effectiveAngle * dot(viewDragAxis, handler.axisY);
+            angleAccum.z += effectiveAngle * dot(viewDragAxis, handler.axisZ);
         }
 
         if (wholeMeshDrag) {
@@ -344,9 +348,11 @@ public:
         import std.math : PI;
         if (dragAxis >= 0) {
             float dispAngle = (SDL_GetModState() & KMOD_CTRL) ? lastSnappedAngle : totalAngle;
-            float vx = dragAxis == 3 ? viewDragAxis.x : 0;
-            float vy = dragAxis == 3 ? viewDragAxis.y : 0;
-            float vz = dragAxis == 3 ? viewDragAxis.z : 0;
+            // For view-axis drag (==3) the in-progress angle is decomposed
+            // onto the basis triple (matches onMouseButtonUp's accumulation).
+            float vx = dragAxis == 3 ? dot(viewDragAxis, handler.axisX) : 0;
+            float vy = dragAxis == 3 ? dot(viewDragAxis, handler.axisY) : 0;
+            float vz = dragAxis == 3 ? dot(viewDragAxis, handler.axisZ) : 0;
             propDeg.x = (angleAccum.x + (dragAxis == 0 ? dispAngle : dispAngle * vx)) * 180.0f / PI;
             propDeg.y = (angleAccum.y + (dragAxis == 1 ? dispAngle : dispAngle * vy)) * 180.0f / PI;
             propDeg.z = (angleAccum.z + (dragAxis == 2 ? dispAngle : dispAngle * vz)) * 180.0f / PI;
