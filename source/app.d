@@ -2414,7 +2414,10 @@ void main(string[] args) {
                         sc = sp.display();
                 }
                 bool on = (action.kind == ActionKind.tool &&
-                           activeToolId == action.id);
+                           activeToolId == action.id)
+                       || (action.kind == ActionKind.popup
+                           && action.checked.present
+                           && popupItemChecked(action.checked));
                 // Scripts share the command's pale-blue palette (they're a
                 // sequence of commands, not a sticky-tool activation).
                 bool isCommand = (action.kind == ActionKind.command
@@ -2567,7 +2570,10 @@ void main(string[] args) {
                     }
                     bool on = (editModeId == "vertices" && editMode == EditMode.Vertices)
                            || (editModeId == "edges"    && editMode == EditMode.Edges)
-                           || (editModeId == "polygons" && editMode == EditMode.Polygons);
+                           || (editModeId == "polygons" && editMode == EditMode.Polygons)
+                           || (action.kind == ActionKind.popup
+                               && action.checked.present
+                               && popupItemChecked(action.checked));
 
                     string popupId = "##popup_" ~ btn.label;
                     if (renderStyledButton(label, sc, on, /*isCommand=*/true,

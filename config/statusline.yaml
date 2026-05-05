@@ -21,6 +21,10 @@ groups:
       - label: "Work Plane"
         action:
           kind: popup
+          # Highlight the button whenever the workplane is non-auto — visual
+          # cue that subsequent prim.* / move / rotate / scale tools will
+          # interpret coordinates relative to this plane, not world-XZ.
+          checked: { path: "workplane/auto", equals: "false" }
           items:
             - label: Auto
               action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }

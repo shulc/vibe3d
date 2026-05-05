@@ -18,6 +18,10 @@ struct Action {
     // For kind == popup: items rendered in the dropdown when the button
     // is clicked. See doc/popup_buttons_plan.md.
     PopupItem[] popupItems;
+    // For kind == popup: optional state-query that drives the parent
+    // button's "pressed" appearance — same shape as PopupItem.checked
+    // (e.g. Work Plane button glows when workplane/auto != "true").
+    Checked    checked;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +328,27 @@ private Action parseAction(NodeT)(NodeT actionNode, string ctxLabel, string path
                 throw new Exception(
                     format("buttonset: popup action for '%s' ('%s') has empty 'items'",
                            ctxLabel, path));
+            if (actionNode.containsKey("checked")) {
+                auto chkNode = actionNode["checked"];
+                if (!chkNode.containsKey("path"))
+                    throw new Exception(format(
+                        "buttonset: popup action for '%s' ('%s') has 'checked' without 'path'",
+                        ctxLabel, path));
+                bool hasEquals   = chkNode.containsKey("equals");
+                bool hasContains = chkNode.containsKey("contains");
+                if (hasEquals && hasContains)
+                    throw new Exception(format(
+                        "buttonset: popup action for '%s' ('%s') has 'checked' with both 'equals' and 'contains'",
+                        ctxLabel, path));
+                if (!hasEquals && !hasContains)
+                    throw new Exception(format(
+                        "buttonset: popup action for '%s' ('%s') has 'checked' without 'equals' or 'contains'",
+                        ctxLabel, path));
+                a.checked.present = true;
+                a.checked.path    = chkNode["path"].as!string;
+                if (hasEquals)   a.checked.equals_  = chkNode["equals"].as!string;
+                if (hasContains) a.checked.contains = chkNode["contains"].as!string;
+            }
             break;
         }
         case ActionKind.tool:
