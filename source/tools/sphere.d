@@ -13,7 +13,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
-import tools.create_common : pickWorkplane, BuildPlane;
+import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis;
 
 import std.math : sin, cos, acos, PI, abs, sqrt;
 
@@ -794,7 +794,8 @@ public:
                 ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
                                  moverDragAxis, mover, cachedVp, skip)
                 : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover.center, cachedVp, skip);
+                                 moverDragAxis, mover.center, cachedVp, skip,
+                                 mover.axisX, mover.axisY, mover.axisZ);
             if (!skip) {
                 params_.cenX += delta.x;
                 params_.cenY += delta.y;
@@ -891,6 +892,10 @@ public:
         if (state >= SphereState.BaseSet) {
             updateRadHandlers(vp);
             mover.setPosition(sphereCenter());
+            // Orient mover gizmo into the active workplane (auto ⇒ world XYZ).
+            Vec3 gAx, gAy, gAz;
+            pickWorkplaneGizmoBasis(gAx, gAy, gAz);
+            mover.setOrientation(gAx, gAy, gAz);
             radHoveredIdx = -1;
             bool radBusy = radDragIdx >= 0;
             foreach (i; 0 .. 6) {

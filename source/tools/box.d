@@ -2135,7 +2135,8 @@ public:
                 ? axisDragDelta (e.x, e.y, moverLastMX, moverLastMY,
                                  moverDragAxis, mover, cachedVp, skip)
                 : planeDragDelta(e.x, e.y, moverLastMX, moverLastMY,
-                                 moverDragAxis, mover.center, cachedVp, skip);
+                                 moverDragAxis, mover.center, cachedVp, skip,
+                                 frame.axis1, frame.normal, frame.axis2);
             if (!skip) applyMoverDelta(delta);
             moverLastMX = e.x;
             moverLastMY = e.y;
@@ -2331,6 +2332,10 @@ public:
         // Draw move gizmo only once the base is finalized
         if (state >= BoxState.BaseSet) {
             mover.setPosition(toWorldP(boxCenter()));
+            // Mover gizmo follows the workplane frame captured at first
+            // click — keeps the arrows aligned with the cube's local axes
+            // (frame.axis1, frame.normal, frame.axis2 in world).
+            mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
             mover.arrowX.setForceHovered(moverDragAxis == 0);
             mover.arrowY.setForceHovered(moverDragAxis == 1);
             mover.arrowZ.setForceHovered(moverDragAxis == 2);
