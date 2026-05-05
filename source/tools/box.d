@@ -2013,10 +2013,13 @@ public:
             // axes), skipping the BaseSet → DrawingHeight stage. Otherwise
             // fall through to the normal bbox-corner-to-corner drag.
             dragUniform = ctrlAtClick;
-            if (dragUniform) {
-                params_.cenX = hit.x; params_.cenY = hit.y; params_.cenZ = hit.z;
-                params_.sizeX = 0; params_.sizeY = 0; params_.sizeZ = 0;
-            }
+            // Seed params_ to a degenerate (size=0) cube at the click point
+            // BEFORE uploadBase. Otherwise uploadBase reads stale defaults
+            // (cen=0, size=1) and the preview flashes a unit cube at the
+            // workplane origin — visible as an "offset cube" the first
+            // frame after click whenever the workplane isn't auto/identity.
+            if (dragUniform) syncParamsFromUniformDrag();
+            else             syncParamsFromBaseDrag();
             state = BoxState.DrawingBase;
             uploadBase();
             return true;
