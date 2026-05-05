@@ -263,6 +263,11 @@ private:
 
     string modeLabel() const {
         if (isAuto) return "auto";
+        // alignToSelection / any caller of setBasis stamps a custom basis;
+        // the legacy `rotation` field is stale in that mode, so don't
+        // report a worldX/Y/Z preset here (would light up the wrong popup
+        // checkmark).
+        if (directBasisActive) return "aligned";
         if (rotation == Vec3(0, 0, 0)) return "worldY";
         if (rotation == Vec3(0, 0, -90.0f)) return "worldX";
         if (rotation == Vec3(90.0f, 0, 0)) return "worldZ";
