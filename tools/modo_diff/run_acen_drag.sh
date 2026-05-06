@@ -13,9 +13,16 @@
 # Override with env vars: MODO_BIN, MODO_LD, MODO_CONTENT.
 #
 # Usage:
-#   run_acen_drag.sh              # all default modes
-#   run_acen_drag.sh select       # one mode
-#   run_acen_drag.sh select origin border
+#   run_acen_drag.sh                          # all modes × default patterns
+#   run_acen_drag.sh select                   # one mode × default patterns
+#   run_acen_drag.sh select origin border     # subset of modes
+#
+# Override PATTERNS env var to pick selection patterns:
+#   PATTERNS="single_top asymmetric" run_acen_drag.sh
+#
+# single_top:  unit cube, top face only — all centroid modes converge.
+# asymmetric:  2x2x2 segment cube, two top -X polys + one disjoint
+#              bottom +X+Z poly. Distinguishes Select / Border / Local.
 #
 # Exit 0 = all PASS. Exit 1 = at least one FAIL. Exit 2+ = setup error.
 
@@ -33,6 +40,7 @@ SYSTEM_SCRIPTS=$(dirname "$MODO_BIN")/extra/Scripts
 # resulting cube vertices match.
 DEFAULT_MODES=(select selectauto auto border origin local)
 MODES=("${@:-${DEFAULT_MODES[@]}}")
+PATTERNS_LIST=(${PATTERNS:-single_top asymmetric})
 
 # UI coordinates for MODO under matchbox WM at 1920x1080.
 FILE_MENU_X=17;     FILE_MENU_Y=10
@@ -148,24 +156,25 @@ ui_click "$FILE_MENU_X"  "$FILE_MENU_Y";  sleep 1
 ui_click "$RESET_ITEM_X" "$RESET_ITEM_Y"; sleep 2
 ui_click "$POPUP_OK_X"   "$POPUP_OK_Y";   sleep 3
 
-# Run the test for each mode in $MODES. Tally results.
+# Run the test for each (pattern, mode) combination. Tally results.
 PASS_LIST=()
 FAIL_LIST=()
 
+for pattern in "${PATTERNS_LIST[@]}"; do
 for mode in "${MODES[@]}"; do
   blue ""
   blue "============================================================"
-  blue "=== mode: actr.${mode}"
+  blue "=== pattern: ${pattern}    mode: actr.${mode}"
   blue "============================================================"
 
   rm -f /tmp/modo_drag_state.json /tmp/modo_drag_result.json
 
-  ui_type "@modo_drag_setup.py ${mode}"
+  ui_type "@modo_drag_setup.py ${mode} ${pattern}"
   sleep 4
 
   if [ ! -f /tmp/modo_drag_state.json ]; then
     red "  ERROR: setup did not produce /tmp/modo_drag_state.json"
-    FAIL_LIST+=("$mode (setup failed)")
+    FAIL_LIST+=("${pattern}/${mode} (setup failed)")
     continue
   fi
 
@@ -177,24 +186,25 @@ for mode in "${MODES[@]}"; do
 
   if [ ! -f /tmp/modo_drag_result.json ]; then
     red "  ERROR: dump did not produce /tmp/modo_drag_result.json"
-    FAIL_LIST+=("$mode (dump failed)")
+    FAIL_LIST+=("${pattern}/${mode} (dump failed)")
     continue
   fi
 
   if MODE="$mode" python3 "$SCRIPT_DIR/verify_acen_drag.py" \
        /tmp/modo_drag_result.json; then
-    PASS_LIST+=("$mode")
+    PASS_LIST+=("${pattern}/${mode}")
   else
-    FAIL_LIST+=("$mode")
+    FAIL_LIST+=("${pattern}/${mode}")
   fi
+done
 done
 
 blue ""
 blue "============================================================"
 blue "=== summary"
 blue "============================================================"
-for m in "${PASS_LIST[@]}"; do green "  PASS: actr.$m"; done
-for m in "${FAIL_LIST[@]}"; do red   "  FAIL: actr.$m"; done
+for m in "${PASS_LIST[@]}"; do green "  PASS: $m"; done
+for m in "${FAIL_LIST[@]}"; do red   "  FAIL: $m"; done
 
 if [ ${#FAIL_LIST[@]} -eq 0 ]; then
   echo

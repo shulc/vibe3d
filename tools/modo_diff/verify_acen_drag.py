@@ -1,124 +1,228 @@
 #!/usr/bin/env python3
-"""Verify ACEN.<mode> + xfrm.scale drag result against the pivot the mode
-should have produced.
+"""Verify ACEN.<mode> + xfrm.scale drag result against the pivot the
+mode should have produced.
 
-Reads /tmp/modo_drag_result.json (or arg 1) which contains a "verts"
-list of 8 cube vertices. The mode is read from $MODE env var.
+Reads /tmp/modo_drag_result.json (verts after drag) and
+/tmp/modo_drag_state.json (mode, pattern, verts before). Decomposes the
+drag into (scale factor, pivot) per axis, compares against the
+predicted pivot for the (mode, pattern) combination.
 
-For each mode we know the predicted pivot. Then we check:
-  - selected vertices (the top face, y=+0.5) scaled around pivot
-  - unselected vertices (bottom face, y=-0.5) untouched
-
-Exits 0 on PASS, 1 on FAIL.
+Exit 0 = PASS, 1 = FAIL.
 """
 import json
 import os
 import sys
 
-TOL = 0.005
+# Tolerance for matching a vertex to a pre-drag position, AND for
+# matching the recovered pivot to the prediction. MODO's mouse-driven
+# evaluate adds a small drag-position-dependent jitter — keep loose.
+TOL = 0.05
 
 
-def at(c, target):
-    return abs(c - target) < TOL
+def at(c, target, tol=TOL):
+    return abs(c - target) < tol
+
+
+def avg(verts):
+    n = len(verts)
+    return tuple(sum(v[i] for v in verts) / n for i in range(3))
+
+
+def bbox_center(verts):
+    if not verts:
+        return (0.0, 0.0, 0.0)
+    mn = [min(v[i] for v in verts) for i in range(3)]
+    mx = [max(v[i] for v in verts) for i in range(3)]
+    return tuple((mn[i] + mx[i]) / 2 for i in range(3))
+
+
+# Selection patterns mirror modo_drag_setup.py.
+PATTERN_POLYS = {
+    "single_top": [
+        [(-0.5, 0.5, -0.5), (0.5, 0.5, -0.5),
+         (0.5, 0.5,  0.5), (-0.5, 0.5,  0.5)],
+    ],
+    "asymmetric": [
+        [(-0.5, 0.5, -0.5), (0.0, 0.5, -0.5),
+         (0.0, 0.5,  0.0), (-0.5, 0.5,  0.0)],
+        [(-0.5, 0.5,  0.0), (0.0, 0.5,  0.0),
+         (0.0, 0.5,  0.5), (-0.5, 0.5,  0.5)],
+        [(0.0, -0.5,  0.0), (0.5, -0.5,  0.0),
+         (0.5, -0.5,  0.5), (0.0, -0.5,  0.5)],
+    ],
+}
+
+
+def selected_unique_verts(pattern):
+    seen = set()
+    out  = []
+    for poly in PATTERN_POLYS[pattern]:
+        for v in poly:
+            t = tuple(v)
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
+def selected_clusters(pattern):
+    polys = [list(map(tuple, p)) for p in PATTERN_POLYS[pattern]]
+    n     = len(polys)
+    poly_verts = [set(p) for p in polys]
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if poly_verts[i] & poly_verts[j]:
+                a, b = find(i), find(j)
+                if a != b: parent[a] = b
+
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    clusters = []
+    for members in groups.values():
+        verts = set()
+        for k in members:
+            verts.update(polys[k])
+        clusters.append(sorted(verts))
+    return clusters
+
+
+def predict_pivot(mode, pattern):
+    """Return predicted pivot, or list of acceptable pivots, or None
+    (drag-position-dependent, skip exact check)."""
+    sel = selected_unique_verts(pattern)
+    clusters = selected_clusters(pattern)
+
+    if mode in ("select", "selectauto"):
+        return [avg(sel)]
+    if mode == "border":
+        return [bbox_center(sel)]
+    if mode == "local":
+        # Combined OR per-cluster centroid is acceptable. vibe3d's
+        # current implementation publishes only the first cluster's
+        # centroid; MODO's drag may use the combined centroid.
+        return [avg(c) for c in clusters] + [avg(sel)]
+    if mode == "origin":
+        return [(0.0, 0.0, 0.0)]
+    if mode == "auto":
+        return None
+    return None
+
+
+def decompose(top_old, top_new):
+    """Recover (k, P) from old/new vertex bounds assuming uniform
+    scale by k around pivot P (per-axis)."""
+    k = 1.0
+    for ax in range(3):
+        old_min = min(v[ax] for v in top_old)
+        old_max = max(v[ax] for v in top_old)
+        new_min = min(v[ax] for v in top_new)
+        new_max = max(v[ax] for v in top_new)
+        if abs(old_max - old_min) > 1e-6:
+            k = (new_max - new_min) / (old_max - old_min)
+            break
+
+    P = []
+    for ax in range(3):
+        mid_old = (min(v[ax] for v in top_old)
+                   + max(v[ax] for v in top_old)) / 2
+        mid_new = (min(v[ax] for v in top_new)
+                   + max(v[ax] for v in top_new)) / 2
+        P.append(mid_old if abs(1 - k) < 1e-6
+                 else (mid_new - mid_old * k) / (1 - k))
+    return k, tuple(P)
+
+
+def split_moved_unmoved(verts_before, verts_after, sel_set):
+    """Pair pre/post drag verts. Untouched (= not in selection) verts
+    should appear unchanged in verts_after; selected verts move."""
+    untouched_pre = [tuple(v) for v in verts_before
+                     if (round(v[0], 4), round(v[1], 4),
+                         round(v[2], 4)) not in sel_set]
+
+    moved_after = []
+    untouched_remaining = list(untouched_pre)
+    untouched_after_count = 0
+    for a in verts_after:
+        idx = None
+        for j, u in enumerate(untouched_remaining):
+            if all(at(a[i], u[i]) for i in range(3)):
+                idx = j; break
+        if idx is not None:
+            untouched_remaining.pop(idx)
+            untouched_after_count += 1
+        else:
+            moved_after.append(a)
+
+    untouched_ok = (untouched_after_count == len(untouched_pre))
+    return untouched_ok, untouched_pre, moved_after
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/modo_drag_result.json"
-    mode = os.environ.get("MODE", "select")
+    result_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/modo_drag_result.json"
+    state_path  = "/tmp/modo_drag_state.json"
 
-    with open(path) as f:
-        verts = json.load(f)["verts"]
+    with open(result_path) as f:
+        verts_after = json.load(f)["verts"]
+    with open(state_path) as f:
+        state = json.load(f)
 
-    top = sorted([v for v in verts if v[1] > 0])
-    bot = sorted([v for v in verts if v[1] < 0])
+    mode    = os.environ.get("MODE", state.get("acen_mode", "select"))
+    pattern = state.get("pattern", "single_top")
+    verts_before = state.get("before", [])
 
-    print()
-    print("  bottom face (4 verts, expected unchanged at y=-0.5):")
-    for v in bot:
-        print(f"    {v}")
-    print("  top face (4 verts, scaled around pivot):")
-    for v in top:
-        print(f"    {v}")
-    print()
+    sel = selected_unique_verts(pattern)
+    sel_set = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
 
-    # Bottom face must be untouched: xfrm.scale + actr.<any> applies the
-    # transform only to the *selected* geometry (top face). So all four
-    # bottom verts should stay at their original ±0.5 corners.
-    bot_unchanged = all(
-        at(abs(v[0]), 0.5) and at(v[1], -0.5) and at(abs(v[2]), 0.5)
-        for v in bot
-    )
+    untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
+        verts_before, verts_after, sel_set)
 
-    # Predict pivot Y for each mode. Top face vertices have original
-    # y=0.5; after scaling around pivot, new_y = (0.5 - pivot.y) * k +
-    # pivot.y. We don't know k (depends on drag distance), but we DO
-    # know which axis stays unchanged: if pivot.y == 0.5, top.y stays
-    # 0.5 regardless of k. If pivot.y != 0.5, top.y will move (unless
-    # drag was zero).
-    # Predictions calibrated against MODO 9 reference (polygon-component
-    # selection, top face of unit cube, drag in viewport):
-    #   actr.select / selectauto / border  → selection centroid (0, 0.5, 0)
-    #   actr.local                         → ALSO selection centroid
-    #     (despite the name; in component mode `local` uses the
-    #     selection's local position, not the item's local origin —
-    #     verified empirically against MODO 9.0v2)
-    #   actr.origin                        → world (0, 0, 0)
-    #   actr.auto                          → element-under-cursor
-    #     dependent — pivot is computed from where the drag started, NOT
-    #     the selection. We can't easily predict the exact pivot without
-    #     replicating MODO's element-pick logic. Skip exact y check;
-    #     just verify drag was applied and bottom untouched.
-    #   actr.element                       → element-under-cursor too;
-    #     same skip rationale.
-    centroid_y = 0.5
-    if mode in ("select", "selectauto", "border", "local"):
-        pivot_y = centroid_y
-        pivot_desc = "selection centroid (0, 0.5, 0)"
-    elif mode == "origin":
-        pivot_y = 0.0
-        pivot_desc = "world origin (0, 0, 0)"
-    elif mode in ("auto", "element"):
-        pivot_y = None  # don't check
-        pivot_desc = "element-under-cursor (drag-position dependent)"
-    else:
-        print(f"  SKIP: don't know predicted pivot for actr.{mode}")
-        return 0
+    print(f"mode: {mode}   pattern: {pattern}")
+    print(f"  selection: {len(sel)} unique verts in "
+          f"{len(PATTERN_POLYS[pattern])} polygons, "
+          f"{len(selected_clusters(pattern))} cluster(s)")
+    print(f"  untouched verts preserved: {untouched_ok}  "
+          f"({len(untouched_pre)} verts)")
+    print(f"  moved verts after drag:    {len(moved_after)} / {len(sel)} expected")
 
-    if pivot_y is None:
-        # element/auto modes — don't check top.y against a specific pivot;
-        # just confirm the drag applied something.
-        top_y_match = True
-        top_y_label = "top.y check skipped (pivot is drag-position dependent)"
-    elif pivot_y == centroid_y:
-        # top.y should stay at 0.5
-        top_y_match = all(at(v[1], 0.5) for v in top)
-        top_y_label = "top.y stays at 0.5 (pivot.y == 0.5)"
-    else:
-        # top.y must have moved away from 0.5
-        top_y_match = any(not at(v[1], 0.5) for v in top)
-        top_y_label = f"top.y changed away from 0.5 (pivot.y == {pivot_y})"
-
-    drag_applied = any(abs(v[0]) > 0.51 or abs(v[2]) > 0.51
-                       or not at(v[1], 0.5)
-                       for v in top)
-
-    def row(label, ok):
-        mark = "\033[32mOK\033[0m" if ok else "\033[31mFAIL\033[0m"
-        print(f"  [{mark}] {label}")
-
-    print(f"  predicted pivot: {pivot_desc}")
-    row("bottom face untouched (xfrm.scale operates on selection)", bot_unchanged)
-    row(top_y_label, top_y_match)
-    row("drag actually applied (top verts moved)", drag_applied)
-    print()
-
-    ok = bot_unchanged and top_y_match and drag_applied
-    if ok:
-        print(f"\033[32m  PASS\033[0m: actr.{mode} pivot matches prediction.")
-        return 0
-    else:
-        print(f"\033[31m  FAIL\033[0m: actr.{mode} pivot does not match prediction.")
+    if not moved_after:
+        print("\033[31m  FAIL\033[0m: no verts moved.")
         return 1
+
+    if len(moved_after) != len(sel):
+        print(f"  (warning: moved count != selection count — verts may "
+              f"have collapsed onto each other)")
+
+    k, P = decompose(sel, moved_after)
+    print(f"  observed: k = {k:+.4f}, "
+          f"P = ({P[0]:+.4f}, {P[1]:+.4f}, {P[2]:+.4f})")
+
+    pred = predict_pivot(mode, pattern)
+    if pred is None:
+        print(f"  predicted pivot: drag-position-dependent (skip exact)")
+        ok = untouched_ok
+    else:
+        labels = ", ".join(
+            f"({p[0]:+.4f}, {p[1]:+.4f}, {p[2]:+.4f})" for p in pred)
+        print(f"  predicted pivot: {labels}")
+        match = any(all(at(P[i], p[i]) for i in range(3)) for p in pred)
+        ok = untouched_ok and match
+
+    print()
+    if ok:
+        print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} pivot matches prediction.")
+        return 0
+    print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} pivot does NOT match.")
+    return 1
 
 
 if __name__ == "__main__":
