@@ -23,6 +23,7 @@ artists' muscle memory from MODO produces unexpected pivots in vibe3d).
 | 1 — Auto: drag-projected pivot          | ✅ done | Click-away path already wired (notifyAcenUserPlaced existed); switched projection plane from most-facing-axis-through-gizmo to world Y=0 Work Plane to match MODO docs. New `screenToWorkPlane` helper in math.d. All tests pass. |
 | 2 — Select: bbox center, not vert avg   | ✅ done | `asymmetric/select` + `selectauto` PASS in `run_acen_drag.sh`; all 47 unit tests still pass (symmetric inputs). Commit b7c96ca. |
 | 3 — Local: per-cluster pivots in Tool   | ✅ done | `ActionCenterPacket` now ships `clusterCenters[]`+`clusterOf[]`. Scale tool consumes them via `pivotFor(vi)`. `asymmetric/local` PASS — MODO's per-cluster bbox-center invariant is preserved. All 12/12 cross-check modes pass. Move/Rotate per-cluster — follow-up. |
+| 4 — Local: per-cluster axes (axis.local)| ⬜ in progress | `AxisPacket` extended with cluster arrays; `AxisStage.Local` to compute per-cluster basis; Move tool to apply per-cluster delta. Test extensions: sphere geometry + rotate tool. |
 
 ## Recommended order
 
@@ -332,6 +333,142 @@ math but worse UX.
   the screen-space picker — collisions when clusters are visually
   close. Resolve by tagging each handle with its cluster id and
   picking the front-most.
+
+---
+
+---
+
+## Phase 4: Per-cluster axes for `axis.local` (Move/Rotate/Scale)
+
+**Effort: ~3-4 days. Risk: medium (AxisPacket ABI change, mirrors Phase 3).**
+
+### What MODO does
+
+`actr.local` + `xfrm.move` with multiple disjoint clusters does NOT
+move every cluster by the same world-space delta. Instead each cluster
+moves along its own local basis: the same screen drag projects onto
+each cluster's right/up/fwd vectors, producing different per-cluster
+world deltas.
+
+Cross-check empirical (`tools/modo_diff/run_acen_drag.sh`,
+`asymmetric/local/move`):
+- top -X cluster delta ≈ `(0, 0.11, 3.8)` — primarily +Z
+- bottom +X+Z cluster delta ≈ `(3.8, -0.11, 0)` — primarily +X
+- same screen drag, two completely different world directions
+
+This is `axis.local`'s per-cluster basis at work. MODO derives each
+cluster's basis from its own geometry (face normal for face clusters;
+edge direction for edge clusters; etc.). Without this, vibe3d's
+single-basis Move tool will move all clusters in the same direction —
+visibly wrong vs MODO.
+
+### What vibe3d does today
+
+`AxisStage.Mode.Local` returns a single basis (currently aligned to
+the FIRST cluster's geometry, mirroring how `actr.local` returned only
+the first cluster's centroid pre-Phase-3). Move/Rotate/Scale tools all
+read `state.axis.right/up/fwd` once and apply that basis to every
+selected vertex regardless of cluster.
+
+### Plan
+
+#### Subphase 4.1 — AxisPacket cluster fields (~0.5 day)
+
+```d
+struct AxisPacket {
+    Vec3 right, up, fwd;
+    int  axIndex = -1;
+    int  type;
+    // Per-cluster basis (Phase 4). When `clusterRight.length >= 2`
+    // the packet is in multi-cluster mode and tools must use
+    // clusterRight[clusterId] / clusterUp / clusterFwd. Length and
+    // cluster ids match ActionCenterPacket.clusterCenters.length.
+    Vec3[] clusterRight;
+    Vec3[] clusterUp;
+    Vec3[] clusterFwd;
+}
+```
+
+#### Subphase 4.2 — AxisStage.Local fills cluster basis (~1 day)
+
+For each cluster (face / edge / vertex), compute a local right/up/fwd:
+
+- **Face clusters**: `up` = average face normal across the cluster's
+  selected faces. `right` = primary tangent — pick the world axis
+  aligned with the cluster's longest bbox extent in the face plane
+  (ties broken by lowest world-axis index). `fwd` = `cross(up, right)`.
+- **Edge clusters**: `right` = average edge direction. `up` =
+  perpendicular to `right` and most-camera-aligned. `fwd` =
+  `cross(up, right)`.
+- **Vertex clusters**: fall back to world basis (PCA over so few
+  verts is unstable).
+
+The "longest bbox extent" rule is empirically close to MODO 9 but not
+exact — see "Risks" below. Single-cluster Local stays in the global
+basis (matches Phase 3's "skip per-element when only one cluster").
+
+#### Subphase 4.3 — Move tool consumes per-cluster basis (~1 day)
+
+Currently `MoveTool.onMouseMotion` calls `axisDragDelta` /
+`screenAxisDelta` which compute the world delta from screen mouse
+delta along a single axis. Extend the apply loop to:
+
+```d
+auto cp = queryClusterPivots();   // per-cluster pivot (Phase 3)
+auto ap = queryClusterAxes();     // per-cluster basis (Phase 4)
+foreach (vi; vertexIndicesToProcess) {
+    Vec3 axis = (ap.active && cp.clusterOf[vi] >= 0)
+              ? ap.cluster[ax_id][cp.clusterOf[vi]]
+              : globalAxis;
+    Vec3 delta = projectScreenDelta(mouseDelta, axis, cachedVp);
+    mesh.vertices[vi] = mesh.vertices[vi] + delta;
+}
+```
+
+`globalAxis` is the existing single-basis path; `axis` is per-cluster
+when both Local stages are active. Single-pivot fallback keeps
+non-Local modes unaffected.
+
+#### Subphase 4.4 — Rotate / Scale per-cluster basis (~1 day)
+
+Scale already has per-cluster pivots from Phase 3; it gets
+per-cluster axes too, plumbed through `scaleAlongBasis(v, pivot, ax,
+ay, az, fx, fy, fz)` — just look up `(ax, ay, az)` per cluster.
+
+Rotate today computes `rotateVec(v, pivot, axis, angle)`. Extend to
+look up `pivot` per-cluster (Phase 3 wasn't yet ported to Rotate) and
+`axis` per-cluster (Phase 4). Rotate angle stays the same — single
+drag → single angle, applied around per-cluster pivot+axis.
+
+### Subphase 4.5 — Test extensions
+
+1. **Sphere geometry**: new pattern in `modo_drag_setup.py` —
+   `sphere_top_half`. Activates `prim.sphere`, selects all faces
+   above Y=0 (the top half of the sphere). Tests Local with a
+   non-axis-aligned cluster geometry, more representative than
+   the cube faces.
+
+2. **Rotate tool**: `tool` arg gains a third value `rotate`. Setup
+   activates `xfrm.transform` with `T=0 R=1 S=0` (TransformRotate
+   tool preset) instead of `xfrm.scale`. Verifier gets a
+   `verify_rotate` path: for rotate, vertices stay equidistant from
+   pivot and the chord between pre/post per cluster is consistent.
+
+3. Full matrix becomes `tool × pattern × mode` =
+   `3 × 3 × 6 = 54` cells. Runtime ~10 minutes.
+
+### Risks
+
+- AxisPacket ABI change: any external reader of
+  `state.axis.right/up/fwd` continues to work, but existing AxisStage
+  unit tests will need updates if they query the cluster fields.
+- MODO's exact per-cluster basis algorithm isn't documented. Our
+  "longest bbox extent" heuristic matches the asymmetric test case
+  but may diverge for other geometries (e.g. a face whose normal
+  isn't axis-aligned, where the tangent picking is ambiguous).
+- Sphere clusters interact with the current sphere primitive's
+  topology — need to validate `prim.sphere` segment count gives a
+  clean Y=0 split (segmentsY=2 should put a vertex ring at Y=0).
 
 ---
 
