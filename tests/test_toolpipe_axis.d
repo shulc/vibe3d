@@ -108,6 +108,35 @@ unittest { // Workplane mode follows WorkplaneStage
 }
 
 // -------------------------------------------------------------------------
+// 7.2e: Element mode — basis from selected face's normal. Top face
+// (face 4) of the default cube has normal +Y, so up=(0,1,0). Right
+// is a tangent in the face plane (one of the face edges projected
+// perp to up).
+// -------------------------------------------------------------------------
+
+unittest { // Element mode — face normal as up
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode element");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "element", "expected element, got " ~ a["mode"]);
+    // Top face normal = +Y.
+    assert(abs(floatAttr(a, "upX")) < 1e-3, "upX: " ~ a["upX"]);
+    assert(abs(floatAttr(a, "upY") - 1.0f) < 1e-3, "upY: " ~ a["upY"]);
+    assert(abs(floatAttr(a, "upZ")) < 1e-3, "upZ: " ~ a["upZ"]);
+    // Right + fwd should be unit vectors perpendicular to up. Spot-check
+    // their length.
+    auto rx = floatAttr(a, "rightX");
+    auto ry = floatAttr(a, "rightY");
+    auto rz = floatAttr(a, "rightZ");
+    assert(abs(rx*rx + ry*ry + rz*rz - 1.0f) < 1e-3,
+        "right not unit: (" ~ a["rightX"] ~ "," ~ a["rightY"] ~ "," ~ a["rightZ"] ~ ")");
+    // Up · right ≈ 0 (orthogonal).
+    assert(abs(0.0f*rx + 1.0f*ry + 0.0f*rz) < 1e-3,
+        "up not perpendicular to right");
+}
+
+// -------------------------------------------------------------------------
 // 7.2c: Unknown mode rejected.
 // -------------------------------------------------------------------------
 

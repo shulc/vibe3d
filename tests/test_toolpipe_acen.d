@@ -281,6 +281,35 @@ unittest { // move.element activates ACEN + AXIS Element
 }
 
 // -------------------------------------------------------------------------
+// 7.2e: Local mode with two disjoint face selections (top + bottom of
+// the cube — opposite faces, no shared edge) yields clusterCount=2.
+// state.actionCenter.center = first cluster's pivot. Adjacent face
+// pair yields clusterCount=1.
+// -------------------------------------------------------------------------
+
+unittest { // Local — two disjoint face clusters
+    resetCube();
+    // Faces 4 (top, y=0.5) + 5 (bottom, y=-0.5) share no edge → 2
+    // clusters.
+    postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "local", "expected local, got " ~ a["mode"]);
+    assert(a["clusterCount"].to!int == 2,
+        "expected clusterCount=2, got " ~ a["clusterCount"]);
+}
+
+unittest { // Local — adjacent faces = single cluster
+    resetCube();
+    // Faces 0 (back) + 5 (bottom) share edge [0,1] → 1 cluster.
+    postJson("/api/select", `{"mode":"polygons","indices":[0,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 1,
+        "adjacent faces expected 1 cluster, got " ~ a["clusterCount"]);
+}
+
+// -------------------------------------------------------------------------
 // 7.2a: Unknown mode value is rejected (mode stays unchanged).
 // -------------------------------------------------------------------------
 

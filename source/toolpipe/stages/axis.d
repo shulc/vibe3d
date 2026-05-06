@@ -3,7 +3,9 @@ module toolpipe.stages.axis;
 import std.format : format;
 import std.math   : abs;
 
-import math    : Vec3, Viewport;
+import math    : Vec3, Viewport, cross, dot, normalize;
+import mesh    : Mesh;
+import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
 import toolpipe.pipeline : ToolState;
 import popup_state       : setStatePath;
@@ -61,9 +63,18 @@ private:
     Vec3     lastWpNormal_ = Vec3(0, 1, 0);
     Vec3     lastWpAxis2_  = Vec3(0, 0, 1);
     bool     lastWpIsAuto_ = true;
+    // Direct mesh refs for Element / Local modes (face/edge/vertex
+    // normals). Optional — the stage works without when only World /
+    // Workplane / Auto modes are used.
+    Mesh*     mesh_;
+    EditMode* editMode_;
 
 public:
-    this() { publishState(); }
+    this(Mesh* mesh = null, EditMode* editMode = null) {
+        this.mesh_     = mesh;
+        this.editMode_ = editMode;
+        publishState();
+    }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Axis; }
     override string   id()       const                          { return "axis"; }
@@ -144,13 +155,14 @@ private:
             case Mode.Manual:
                 r = manualRight; u = manualUp; f = manualFwd;
                 return;
+            case Mode.Element:
+                if (computeElementBasis(r, u, f)) return;
+                goto case Mode.Auto;       // fall back to workplane basis
             case Mode.Select:
             case Mode.SelectAuto:
-            case Mode.Element:
             case Mode.Local:
-            case Mode.Screen:
-                // 7.2d / 7.2e / follow-up — degrade to current Auto
-                // basis until those subphases land.
+            case Mode.Screen: {
+                // 7.2 follow-up — degrade to Auto basis (workplane).
                 Vec3 a1, n, a2;
                 if (queryWorkplaneBasis(a1, n, a2)) {
                     r = a1; u = n; f = a2;
@@ -158,7 +170,96 @@ private:
                     r = lastWpAxis1_; u = lastWpNormal_; f = lastWpAxis2_;
                 }
                 return;
+            }
         }
+    }
+
+    // Element mode basis: uses the first selected element's normal as
+    // `up`. For face mode, reads the face normal directly via Newell's
+    // method (mesh.faceNormal). For edge mode, uses edge tangent as
+    // `right` with up = world Y. For vertex mode, averages incident
+    // face normals as `up`. Returns false when no selection is active
+    // (caller falls back to Auto).
+    bool computeElementBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        if (mesh_ is null || editMode_ is null) return false;
+        Vec3 nUp;
+        Vec3 nRight;
+        bool got = false;
+        final switch (*editMode_) {
+            case EditMode.Polygons: {
+                if (!mesh_.hasAnySelectedFaces()) return false;
+                foreach (i, _; mesh_.faces) {
+                    if (i < mesh_.selectedFaces.length && mesh_.selectedFaces[i]) {
+                        nUp = mesh_.faceNormal(cast(uint)i);
+                        // Tangent: first edge of the face, projected
+                        // perpendicular to the face normal.
+                        const uint[] face = mesh_.faces[i];
+                        Vec3 e0 = mesh_.vertices[face[1]] - mesh_.vertices[face[0]];
+                        Vec3 proj = e0 - nUp * dot(e0, nUp);
+                        nRight = normalize(proj);
+                        got = true;
+                        break;
+                    }
+                }
+                break;
+            }
+            case EditMode.Edges: {
+                if (!mesh_.hasAnySelectedEdges()) return false;
+                foreach (i, edge; mesh_.edges) {
+                    if (i < mesh_.selectedEdges.length && mesh_.selectedEdges[i]) {
+                        Vec3 t = mesh_.vertices[edge[1]] - mesh_.vertices[edge[0]];
+                        nRight = normalize(t);
+                        // Up = workplane normal projected perpendicular
+                        // to edge tangent, fallback to world Y.
+                        Vec3 wpUp = lastWpNormal_;
+                        Vec3 proj = wpUp - nRight * dot(wpUp, nRight);
+                        nUp = normalize(proj);
+                        got = true;
+                        break;
+                    }
+                }
+                break;
+            }
+            case EditMode.Vertices: {
+                if (!mesh_.hasAnySelectedVertices()) return false;
+                // Sum incident face normals across selected verts to
+                // form an averaged "vertex normal". Imperfect (no
+                // weighting by face area), but matches MODO's coarse
+                // vertex-normal heuristic close enough for gizmo
+                // alignment.
+                Vec3 acc = Vec3(0, 0, 0);
+                foreach (vi, sel; mesh_.selectedVertices) {
+                    if (!sel) continue;
+                    foreach (fi, face; mesh_.faces)
+                        foreach (vj; face)
+                            if (vj == vi) {
+                                acc += mesh_.faceNormal(cast(uint)fi);
+                                break;
+                            }
+                }
+                if (acc.x == 0 && acc.y == 0 && acc.z == 0) return false;
+                nUp = normalize(acc);
+                // Right = world X projected perpendicular to up.
+                Vec3 worldX = Vec3(1, 0, 0);
+                Vec3 proj = worldX - nUp * dot(worldX, nUp);
+                if (proj.x == 0 && proj.y == 0 && proj.z == 0) {
+                    // Up is parallel to world X; use world Z instead.
+                    Vec3 worldZ = Vec3(0, 0, 1);
+                    proj = worldZ - nUp * dot(worldZ, nUp);
+                }
+                nRight = normalize(proj);
+                got = true;
+                break;
+            }
+        }
+        if (!got) return false;
+        right = nRight;
+        up    = nUp;
+        fwd   = cross(right, up);
+        // Re-orthogonalise: cross gives an exact perpendicular even
+        // if right wasn't strictly perpendicular to up.
+        right = cross(up, fwd);
+        return true;
     }
 
     // Look up WorkplaneStage from the global pipe context and read its

@@ -60,6 +60,11 @@ class ActionCenterStage : Stage {
     bool userPlaced = false;                // Auto-mode click-outside marker
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
     int  selectSubMode = SelectSubMode.Center;
+    // Phase 7.2e (Local mode): cluster count + first-cluster centroid
+    // are recomputed in evaluate() and exposed via listAttrs() so
+    // tools or UI can iterate. The single-pivot
+    // `state.actionCenter.center` always = clusters[0].
+    int  clusterCount_ = 0;
 
 private:
     // Stage holds direct refs to the live mesh + edit mode; re-evaluating
@@ -106,13 +111,22 @@ public:
     }
 
     override string[2][] listAttrs() const {
+        Vec3 c = currentCenter();
+        // Local mode exposes cluster count alongside the first-cluster
+        // pivot. Other modes report 0 (no per-cluster semantics).
+        int clusters = 0;
+        if (mode == Mode.Local) {
+            Vec3 dummy;
+            computeLocalClusters(dummy, clusters);
+        }
         return [
             ["mode",          modeLabel()],
-            ["cenX",          format("%g", currentCenter().x)],
-            ["cenY",          format("%g", currentCenter().y)],
-            ["cenZ",          format("%g", currentCenter().z)],
+            ["cenX",          format("%g", c.x)],
+            ["cenY",          format("%g", c.y)],
+            ["cenZ",          format("%g", c.z)],
             ["userPlaced",    userPlaced ? "true" : "false"],
             ["selectSubMode", selectSubModeLabel()],
+            ["clusterCount",  format("%d", clusters)],
         ];
     }
 
@@ -171,12 +185,177 @@ private:
                 return screenCenter();
             case Mode.Element:
                 return elementCenter();
-            case Mode.Local:
+            case Mode.Local: {
+                Vec3 first;
+                int  count;
+                computeLocalClusters(first, count);
+                return count > 0 ? first : centroidWithGeometryFallback();
+            }
             case Mode.Border:
-                // 7.2e — degrade to selection centroid until
-                // implemented (better than 0,0,0; keeps existing tool
-                // behaviour intact).
+                // 7.2e follow-up — degrade to selection centroid.
                 return centroidWithGeometryFallback();
+        }
+    }
+
+    // Local mode: enumerate connected components inside the current
+    // selection (face graph for face mode — faces sharing an edge are
+    // one cluster; vertex graph for vert / edge mode — verts sharing
+    // an edge are one cluster). For each cluster, compute its centroid.
+    // Output: `firstCenter` = clusters[0]; `count` = total clusters.
+    // `state.actionCenter.center` reads firstCenter; per-cluster pivots
+    // for tools that iterate (Rotate, Scale) come in a follow-up
+    // subphase via ElementCenterPacket.
+    void computeLocalClusters(out Vec3 firstCenter, out int count) const {
+        firstCenter = Vec3(0, 0, 0);
+        count = 0;
+        if (mesh_ is null) return;
+        final switch (*editMode_) {
+            case EditMode.Polygons:
+                computeLocalFaceClusters(firstCenter, count);
+                break;
+            case EditMode.Edges:
+                computeLocalEdgeClusters(firstCenter, count);
+                break;
+            case EditMode.Vertices:
+                computeLocalVertClusters(firstCenter, count);
+                break;
+        }
+    }
+
+    void computeLocalFaceClusters(out Vec3 firstCenter, out int count) const {
+        // Face-graph BFS: faces sharing an edge are connected.
+        if (!mesh_.hasAnySelectedFaces()) return;
+        size_t nF = mesh_.faces.length;
+        bool[] visited = new bool[](nF);
+        // Build face-adjacency on the fly: for each pair of selected
+        // faces, check if they share at least one edge (= a vertex
+        // pair). O(F²·avg_face_size); cheap at typical mesh sizes.
+        bool faceShareEdge(uint a, uint b) {
+            const(uint)[] fa = mesh_.faces[a];
+            const(uint)[] fb = mesh_.faces[b];
+            foreach (i; 0 .. fa.length) {
+                uint v0 = fa[i];
+                uint v1 = fa[(i + 1) % fa.length];
+                foreach (j; 0 .. fb.length) {
+                    uint w0 = fb[j];
+                    uint w1 = fb[(j + 1) % fb.length];
+                    if ((v0 == w0 && v1 == w1) || (v0 == w1 && v1 == w0))
+                        return true;
+                }
+            }
+            return false;
+        }
+        bool selectedFace(size_t i) {
+            return i < mesh_.selectedFaces.length && mesh_.selectedFaces[i];
+        }
+        Vec3 faceCentroid(uint fi) {
+            Vec3 c = Vec3(0, 0, 0);
+            const(uint)[] face = mesh_.faces[fi];
+            foreach (vi; face) c += mesh_.vertices[vi];
+            return face.length > 0 ? c / cast(float)face.length : c;
+        }
+        foreach (start; 0 .. nF) {
+            if (!selectedFace(start) || visited[start]) continue;
+            // BFS.
+            uint[] queue;
+            queue ~= cast(uint)start;
+            visited[start] = true;
+            Vec3 sum = Vec3(0, 0, 0);
+            int  n = 0;
+            while (queue.length > 0) {
+                uint cur = queue[0];
+                queue = queue[1 .. $];
+                sum += faceCentroid(cur);
+                n++;
+                foreach (other; 0 .. nF) {
+                    if (!selectedFace(other) || visited[other]) continue;
+                    if (faceShareEdge(cur, cast(uint)other)) {
+                        visited[other] = true;
+                        queue ~= cast(uint)other;
+                    }
+                }
+            }
+            Vec3 cen = n > 0 ? sum / cast(float)n : Vec3(0, 0, 0);
+            if (count == 0) firstCenter = cen;
+            count++;
+        }
+    }
+
+    void computeLocalEdgeClusters(out Vec3 firstCenter, out int count) const {
+        // Vertex-graph BFS over the verts touched by selected edges.
+        if (!mesh_.hasAnySelectedEdges()) return;
+        size_t nV = mesh_.vertices.length;
+        bool[] inSel = new bool[](nV);
+        foreach (i, edge; mesh_.edges) {
+            if (i < mesh_.selectedEdges.length && mesh_.selectedEdges[i]) {
+                inSel[edge[0]] = true;
+                inSel[edge[1]] = true;
+            }
+        }
+        // Adjacency only via SELECTED edges.
+        bool[] visited = new bool[](nV);
+        foreach (start; 0 .. nV) {
+            if (!inSel[start] || visited[start]) continue;
+            uint[] queue;
+            queue ~= cast(uint)start;
+            visited[start] = true;
+            Vec3 sum = Vec3(0, 0, 0);
+            int  n = 0;
+            while (queue.length > 0) {
+                uint cur = queue[0];
+                queue = queue[1 .. $];
+                sum += mesh_.vertices[cur];
+                n++;
+                foreach (i, edge; mesh_.edges) {
+                    if (!(i < mesh_.selectedEdges.length
+                          && mesh_.selectedEdges[i])) continue;
+                    uint other = uint.max;
+                    if      (edge[0] == cur) other = edge[1];
+                    else if (edge[1] == cur) other = edge[0];
+                    if (other == uint.max || visited[other]) continue;
+                    visited[other] = true;
+                    queue ~= other;
+                }
+            }
+            Vec3 cen = n > 0 ? sum / cast(float)n : Vec3(0, 0, 0);
+            if (count == 0) firstCenter = cen;
+            count++;
+        }
+    }
+
+    void computeLocalVertClusters(out Vec3 firstCenter, out int count) const {
+        // Vertex-graph BFS via mesh edges among SELECTED verts.
+        if (!mesh_.hasAnySelectedVertices()) return;
+        size_t nV = mesh_.vertices.length;
+        bool[] visited = new bool[](nV);
+        foreach (start; 0 .. nV) {
+            if (!(start < mesh_.selectedVertices.length
+                  && mesh_.selectedVertices[start])) continue;
+            if (visited[start]) continue;
+            uint[] queue;
+            queue ~= cast(uint)start;
+            visited[start] = true;
+            Vec3 sum = Vec3(0, 0, 0);
+            int  n = 0;
+            while (queue.length > 0) {
+                uint cur = queue[0];
+                queue = queue[1 .. $];
+                sum += mesh_.vertices[cur];
+                n++;
+                foreach (edge; mesh_.edges) {
+                    uint other = uint.max;
+                    if      (edge[0] == cur) other = edge[1];
+                    else if (edge[1] == cur) other = edge[0];
+                    if (other == uint.max || visited[other]) continue;
+                    if (!(other < mesh_.selectedVertices.length
+                          && mesh_.selectedVertices[other])) continue;
+                    visited[other] = true;
+                    queue ~= other;
+                }
+            }
+            Vec3 cen = n > 0 ? sum / cast(float)n : Vec3(0, 0, 0);
+            if (count == 0) firstCenter = cen;
+            count++;
         }
     }
 
