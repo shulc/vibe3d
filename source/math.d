@@ -325,6 +325,25 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
     return true;
 }
 
+// Project a screen pixel onto the Work Plane in world space.
+// Default Work Plane is the X-Z plane at world Y = `planeY` (0 = floor),
+// matching MODO's "Work Plane" concept used by `actr.auto` to relocate
+// the action center on click-away. Returns false if the click ray is
+// parallel to the plane.
+//
+// `planeNormal` lets the caller use a tilted Work Plane (e.g. screen-
+// aligned through gizmo); current tools use the default Y-up plane.
+// See doc/acen_modo_parity_plan.md Phase 1.
+bool screenToWorkPlane(float sx, float sy, const ref Viewport vp,
+                       out Vec3 worldHit,
+                       float planeY = 0.0f,
+                       Vec3  planeNormal = Vec3(0, 1, 0))
+{
+    Vec3 dir = screenRay(sx, sy, vp);
+    return rayPlaneIntersect(vp.eye, dir,
+                             Vec3(0, planeY, 0), planeNormal, worldHit);
+}
+
 // Safe normalize — returns (0,1,0) for near-zero vectors.
 Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
     float len = v.length;

@@ -167,21 +167,13 @@ public:
             return true;
         }
 
-        // Click outside gizmo: teleport to most-facing plane at click point.
-        // Plane normal picked from the gizmo's basis (workplane axes when
-        // non-auto, world XYZ when auto).
-        const ref float[16] v = cachedVp.view;
-        import std.math : abs;
-        Vec3 camBack = Vec3(v[2], v[6], v[10]);
-        float aX = abs(dot(camBack, handler.axisX));
-        float aY = abs(dot(camBack, handler.axisY));
-        float aZ = abs(dot(camBack, handler.axisZ));
-        Vec3 n = aX >= aY && aX >= aZ ? handler.axisX
-               : aY >= aX && aY >= aZ ? handler.axisY
-                                      : handler.axisZ;
+        // Click outside gizmo: relocate ACEN to the click projected onto
+        // the world Work Plane (Y=0), matching MODO's actr.auto docs:
+        // "the position at the intersection of where the pointer
+        // clicked in the viewport and the Work Plane." See
+        // doc/acen_modo_parity_plan.md Phase 1.
         Vec3 hit;
-        if (!rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
-                               handler.center, n, hit))
+        if (!screenToWorkPlane(e.x, e.y, cachedVp, hit))
             return false;
         handler.setPosition(hit);
         centerManual = true;
