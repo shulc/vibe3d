@@ -175,6 +175,102 @@ unittest { // Select mode — back face (z=-0.5) gives extents (1,1,0)
 }
 
 // -------------------------------------------------------------------------
+// Mode-coverage tests — every mode must at least set its label and
+// emit a finite right/up/fwd vector.
+// -------------------------------------------------------------------------
+
+unittest { // SelectAuto — same algorithm as Select (bbox-extent-sort).
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode selectauto");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
+    // Back face → extents (1,1,0). Tied X vs Y, X wins → right=X.
+    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3, "rightX: " ~ a["rightX"]);
+    assert(abs(floatAttr(a, "upY") - 1.0f) < 1e-3, "upY: " ~ a["upY"]);
+}
+
+unittest { // Origin — alias of World (identity basis).
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr axis mode origin");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "origin", "got " ~ a["mode"]);
+    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-6, "rightX");
+    assert(abs(floatAttr(a, "upY") - 1.0f)    < 1e-6, "upY");
+    assert(abs(floatAttr(a, "fwdZ") - 1.0f)   < 1e-6, "fwdZ");
+}
+
+unittest { // Local — currently degrades to Auto basis (workplane).
+           // Smoke test: mode label set + finite vectors.
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr axis mode local");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "local", "got " ~ a["mode"]);
+    auto rx = floatAttr(a, "rightX");
+    auto uy = floatAttr(a, "upY");
+    auto fz = floatAttr(a, "fwdZ");
+    assert(rx == rx && uy == uy && fz == fz, "Local published NaN");
+}
+
+unittest { // Screen — degrades to Auto basis (workplane). Smoke test.
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr axis mode screen");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "screen", "got " ~ a["mode"]);
+    auto rx = floatAttr(a, "rightX");
+    auto uy = floatAttr(a, "upY");
+    auto fz = floatAttr(a, "fwdZ");
+    assert(rx == rx && uy == uy && fz == fz, "Screen published NaN");
+}
+
+unittest { // Manual — switching mode without setting manual* attrs
+           // returns the field defaults (right=+X, up=+Y, fwd=+Z).
+           // Manual right/up/fwd HTTP attrs land in a follow-up.
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr axis mode manual");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "manual", "got " ~ a["mode"]);
+    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-6, "default rightX");
+    assert(abs(floatAttr(a, "upY") - 1.0f)    < 1e-6, "default upY");
+    assert(abs(floatAttr(a, "fwdZ") - 1.0f)   < 1e-6, "default fwdZ");
+}
+
+unittest { // Element edges — edge tangent as right; up perpendicular.
+    resetCube();
+    // Edge 0 = [0,3] direction = +Y. Tangent → right=(0,1,0).
+    postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode element");
+    auto a = getAxisAttrs();
+    assert(abs(floatAttr(a, "rightY") - 1.0f) < 1e-3,
+        "edge tangent: rightY expected 1, got " ~ a["rightY"]);
+    // up is workplane-normal projected perp to edge tangent. With
+    // workplane=auto + camera default, can vary slightly — just assert
+    // it's a unit vector perpendicular to right.
+    auto ux = floatAttr(a, "upX");
+    auto uy = floatAttr(a, "upY");
+    auto uz = floatAttr(a, "upZ");
+    assert(abs(ux*ux + uy*uy + uz*uz - 1.0f) < 1e-3, "up not unit");
+    assert(abs(0.0f*ux + 1.0f*uy + 0.0f*uz) < 1e-3, "up not perp to right");
+}
+
+unittest { // Element vertices — averaged incident face normal as up.
+    resetCube();
+    // Vert 6 = (0.5, 0.5, 0.5) — corner shared by faces 1 (top, +Y),
+    // 3 (right, +X), 4 (front, +Z). Avg face normal: (1/√3)*(1,1,1).
+    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode element");
+    auto a = getAxisAttrs();
+    auto ux = floatAttr(a, "upX");
+    auto uy = floatAttr(a, "upY");
+    auto uz = floatAttr(a, "upZ");
+    // up should be a unit vector (verify magnitude rather than exact
+    // direction — the picked face set depends on cube topology).
+    assert(abs(ux*ux + uy*uy + uz*uz - 1.0f) < 1e-3,
+        "vertex normal up not unit: ("
+        ~ a["upX"] ~ "," ~ a["upY"] ~ "," ~ a["upZ"] ~ ")");
+}
+
+// -------------------------------------------------------------------------
 // 7.2c: Unknown mode rejected.
 // -------------------------------------------------------------------------
 

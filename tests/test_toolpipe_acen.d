@@ -310,6 +310,94 @@ unittest { // Local — adjacent faces = single cluster
 }
 
 // -------------------------------------------------------------------------
+// Mode-coverage tests (the rest of the matrix). Each verifies the mode
+// label is set + the published center is finite (non-NaN) and matches
+// the documented contract for that mode.
+// -------------------------------------------------------------------------
+
+unittest { // SelectAuto — same center as Select; axis stage handles the
+           // "auto axis" part separately.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode selectauto");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
+    // Top face centroid: (0, 0.5, 0).
+    assert(abs(floatAttr(a, "cenY") - 0.5f) < 1e-3,
+        "SelectAuto cenY expected 0.5 (top centroid), got " ~ a["cenY"]);
+}
+
+unittest { // Border — mode label set, currently degrades to centroid
+           // (proper border-edges algorithm is a follow-up). Verify
+           // it doesn't crash and emits a finite Vec3.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode border");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "border", "got " ~ a["mode"]);
+    auto x = floatAttr(a, "cenX");
+    auto y = floatAttr(a, "cenY");
+    auto z = floatAttr(a, "cenZ");
+    assert(x == x && y == y && z == z, "Border published NaN");
+}
+
+unittest { // Element edges mode — edge midpoint as pivot.
+    resetCube();
+    // Edge 0 = [0,3] of cube — verts (-0.5,-0.5,-0.5) ↔ (-0.5, 0.5,-0.5).
+    // Midpoint: (-0.5, 0, -0.5).
+    postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenX") - (-0.5f)) < 1e-3, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY")) < 1e-3, "cenY: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ") - (-0.5f)) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+unittest { // Element vertices mode — vertex coord as pivot.
+    resetCube();
+    // Vert 6 = (0.5, 0.5, 0.5).
+    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenX") - 0.5f) < 1e-3, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY") - 0.5f) < 1e-3, "cenY: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ") - 0.5f) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+unittest { // Local edges mode — two disjoint edges (no shared vert)
+           // = 2 clusters; two adjacent edges (shared vert) = 1.
+    resetCube();
+    // Pick two edges with no shared vertex. Edge 0 = [0,3];
+    // Edge 4 = [4,5] (verts (-0.5,-0.5,0.5)↔(0.5,-0.5,0.5)). No shared
+    // vert between {0,3} and {4,5}.
+    postJson("/api/select", `{"mode":"edges","indices":[0,4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 2,
+        "expected 2 clusters, got " ~ a["clusterCount"]);
+}
+
+unittest { // Local vertices mode — two non-adjacent verts → 2 clusters.
+    resetCube();
+    // Vert 0 and vert 6 are diagonal corners of the cube; no shared
+    // edge → 2 clusters.
+    postJson("/api/select", `{"mode":"vertices","indices":[0,6]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 2,
+        "expected 2 clusters, got " ~ a["clusterCount"]);
+}
+
+unittest { // Local — empty selection → 0 clusters, centroid fallback.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 0,
+        "expected 0 clusters on empty selection, got " ~ a["clusterCount"]);
+}
+
+// -------------------------------------------------------------------------
 // 7.2a: Unknown mode value is rejected (mode stays unchanged).
 // -------------------------------------------------------------------------
 
