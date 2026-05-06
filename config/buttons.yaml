@@ -15,6 +15,10 @@ panels:
           - { label: Move,   action: { kind: tool, id: move } }
           - { label: Rotate, action: { kind: tool, id: rotate } }
           - { label: Scale,  action: { kind: tool, id: scale } }
+          # Phase 7.2g: MODO-style Element Move — MoveTool with ACEN +
+          # AXIS pinned to Element. Activating switches both stages
+          # via the side-effect in the move.element factory.
+          - { label: "Move Elem", action: { kind: tool, id: move.element } }
       - title: Create
         buttons:
           - label: Box

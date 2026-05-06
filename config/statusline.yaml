@@ -43,3 +43,67 @@ groups:
               action: { kind: command, id: workplane.alignToSelection }
             - label: Reset
               action: { kind: command, id: workplane.reset }
+  - title: actioncenter
+    buttons:
+      # Phase 7.2g: action-center popup. Combined `actr.<mode>` presets
+      # flip both ACEN and AXIS atomically (matches MODO `tool.set
+      # actr.<mode>`). Glow when the active ACEN mode is anything other
+      # than Auto.
+      - label: "Action Center"
+        action:
+          kind: popup
+          checked: { path: "actionCenter/mode", contains: "select,selectauto,element,local,origin,screen,border,manual" }
+          items:
+            - label: Automatic
+              action: { kind: command, id: actr.auto }
+              checked: { path: "actionCenter/mode", equals: "auto" }
+            - label: Selection
+              action: { kind: command, id: actr.select }
+              checked: { path: "actionCenter/mode", equals: "select" }
+            - label: Selection Center Auto Axis
+              action: { kind: command, id: actr.selectauto }
+              checked: { path: "actionCenter/mode", equals: "selectauto" }
+            - label: Element
+              action: { kind: command, id: actr.element }
+              checked: { path: "actionCenter/mode", equals: "element" }
+            - label: Local
+              action: { kind: command, id: actr.local }
+              checked: { path: "actionCenter/mode", equals: "local" }
+            - label: Origin
+              action: { kind: command, id: actr.origin }
+              checked: { path: "actionCenter/mode", equals: "origin" }
+            - label: Screen
+              action: { kind: command, id: actr.screen }
+              checked: { path: "actionCenter/mode", equals: "screen" }
+            - label: Selection Border
+              action: { kind: command, id: actr.border }
+              checked: { path: "actionCenter/mode", equals: "border" }
+      # Phase 7.2g: granular Action Axis selector. Decoupled from
+      # ACEN — for users who want ACEN=Selection but AXIS=Workplane
+      # (or vice versa). Glow when not Auto.
+      - label: "Action Axis"
+        action:
+          kind: popup
+          checked: { path: "axis/mode", contains: "world,workplane,select,selectauto,element,local,origin,screen,manual" }
+          items:
+            - label: Automatic
+              action: { kind: script, lines: ["tool.pipe.attr axis mode auto"] }
+              checked: { path: "axis/mode", equals: "auto" }
+            - label: World
+              action: { kind: script, lines: ["tool.pipe.attr axis mode world"] }
+              checked: { path: "axis/mode", equals: "world" }
+            - label: Work Plane
+              action: { kind: script, lines: ["tool.pipe.attr axis mode workplane"] }
+              checked: { path: "axis/mode", equals: "workplane" }
+            - label: Selection
+              action: { kind: script, lines: ["tool.pipe.attr axis mode select"] }
+              checked: { path: "axis/mode", equals: "select" }
+            - label: Element
+              action: { kind: script, lines: ["tool.pipe.attr axis mode element"] }
+              checked: { path: "axis/mode", equals: "element" }
+            - label: Local
+              action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
+              checked: { path: "axis/mode", equals: "local" }
+            - label: Screen
+              action: { kind: script, lines: ["tool.pipe.attr axis mode screen"] }
+              checked: { path: "axis/mode", equals: "screen" }
