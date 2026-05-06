@@ -45,6 +45,16 @@ struct ActionCenterPacket {
     // Mode enum (mirrors MODO `actr.<mode>`). 0 = Auto, see
     // toolpipe.stages.actcenter.ActionCenterStage.Mode for full list.
     int  type   = 0;
+    // Per-element pivots (Phase 3 of doc/acen_modo_parity_plan.md).
+    // Populated by `actr.local` when the selection has multiple disjoint
+    // clusters: each cluster scales/rotates around its own centroid.
+    // `clusterCenters[clusterOf[vi]]` is the per-vertex pivot.
+    // `clusterOf[vi] == -1` means vertex `vi` is not in the selection
+    // (tools must skip it). When `clusterCenters.length == 0` the packet
+    // is in single-pivot mode and tools fall back to `center`.
+    // Mirrors MODO's `LXpToolElementCenter` packet semantics.
+    Vec3[] clusterCenters;
+    int [] clusterOf;
 }
 
 /// LXsP_TOOL_AXIS — orientation produced by AXIS stage in 7.2.

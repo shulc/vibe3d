@@ -102,6 +102,25 @@ public:
         state.actionCenter.center = computeCenter();
         state.actionCenter.isAuto = (mode == Mode.Auto && !userPlaced);
         state.actionCenter.type   = cast(int)mode;
+
+        // Phase 3 of doc/acen_modo_parity_plan.md: Local mode publishes
+        // per-cluster pivots so transform tools can scale/rotate each
+        // cluster around its own centroid (matches MODO's actr.local).
+        // Other modes leave the per-element fields empty — tools then
+        // fall back to the single `center` pivot.
+        state.actionCenter.clusterCenters = null;
+        state.actionCenter.clusterOf      = null;
+        if (mode == Mode.Local && mesh_ !is null) {
+            Vec3[] centers;
+            int[]  clusterOf;
+            computeLocalClustersFull(centers, clusterOf);
+            if (centers.length >= 2) {
+                // Single-cluster Local degrades to single-pivot — no
+                // need to ship the per-element arrays.
+                state.actionCenter.clusterCenters = centers;
+                state.actionCenter.clusterOf      = clusterOf;
+            }
+        }
     }
 
     override bool setAttr(string name, string value) {
@@ -195,6 +214,168 @@ private:
                 // 7.2e follow-up — degrade to selection centroid.
                 return centroidWithGeometryFallback();
         }
+    }
+
+    // Phase 3 follow-up to computeLocalClusters: enumerate ALL clusters
+    // and assign every selected vertex to its cluster id. Used by
+    // evaluate() to populate ActionCenterPacket.{clusterCenters,
+    // clusterOf} so tools can apply per-cluster pivots. Cluster centers
+    // are bounding-box midpoints (consistent with Phase 2's bbox-Select
+    // choice). `clusterOf[vi] == -1` for verts not in the selection.
+    void computeLocalClustersFull(out Vec3[] clusterCenters,
+                                  out int[]  clusterOf) const {
+        if (mesh_ is null) return;
+        clusterOf = new int[](mesh_.vertices.length);
+        foreach (ref c; clusterOf) c = -1;
+        final switch (*editMode_) {
+            case EditMode.Polygons:
+                computeLocalFaceClustersFull(clusterCenters, clusterOf);
+                break;
+            case EditMode.Edges:
+                computeLocalEdgeClustersFull(clusterCenters, clusterOf);
+                break;
+            case EditMode.Vertices:
+                computeLocalVertClustersFull(clusterCenters, clusterOf);
+                break;
+        }
+    }
+
+    // Helper: bbox center of vertices in a cluster (verts identified by
+    // clusterOf == cid). Mirrors mesh.selectionBBoxCenterFaces() but
+    // restricted to one cluster.
+    Vec3 clusterBBoxCenter(const(int)[] clusterOf, int cid) const {
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (vi, c; clusterOf) {
+            if (c != cid) continue;
+            Vec3 v = mesh_.vertices[vi];
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+            seen = true;
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    void computeLocalFaceClustersFull(out Vec3[] clusterCenters,
+                                      ref int[]  clusterOf) const {
+        if (!mesh_.hasAnySelectedFaces()) return;
+        size_t nF = mesh_.faces.length;
+        int[]  clusterOfFace = new int[](nF);
+        foreach (ref c; clusterOfFace) c = -1;
+        bool faceShareEdge(uint a, uint b) {
+            const(uint)[] fa = mesh_.faces[a];
+            const(uint)[] fb = mesh_.faces[b];
+            foreach (i; 0 .. fa.length) {
+                uint v0 = fa[i];
+                uint v1 = fa[(i + 1) % fa.length];
+                foreach (j; 0 .. fb.length) {
+                    uint w0 = fb[j];
+                    uint w1 = fb[(j + 1) % fb.length];
+                    if ((v0 == w0 && v1 == w1) || (v0 == w1 && v1 == w0))
+                        return true;
+                }
+            }
+            return false;
+        }
+        bool selectedFace(size_t i) {
+            return i < mesh_.selectedFaces.length && mesh_.selectedFaces[i];
+        }
+        int cid = 0;
+        foreach (start; 0 .. nF) {
+            if (!selectedFace(start) || clusterOfFace[start] != -1) continue;
+            uint[] queue; queue ~= cast(uint)start;
+            clusterOfFace[start] = cid;
+            while (queue.length > 0) {
+                uint cur = queue[0]; queue = queue[1 .. $];
+                foreach (other; 0 .. nF) {
+                    if (!selectedFace(other) || clusterOfFace[other] != -1) continue;
+                    if (faceShareEdge(cur, cast(uint)other)) {
+                        clusterOfFace[other] = cid;
+                        queue ~= cast(uint)other;
+                    }
+                }
+            }
+            cid++;
+        }
+        // Project face cluster ids onto verts. A vertex shared between
+        // two disjoint clusters keeps the lowest cid (deterministic).
+        foreach (fi; 0 .. nF) {
+            int c = clusterOfFace[fi];
+            if (c == -1) continue;
+            foreach (vi; mesh_.faces[fi]) {
+                if (clusterOf[vi] == -1 || c < clusterOf[vi])
+                    clusterOf[vi] = c;
+            }
+        }
+        clusterCenters = new Vec3[](cid);
+        foreach (i; 0 .. cid) clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
+    }
+
+    void computeLocalEdgeClustersFull(out Vec3[] clusterCenters,
+                                      ref int[]  clusterOf) const {
+        if (!mesh_.hasAnySelectedEdges()) return;
+        size_t nV = mesh_.vertices.length;
+        bool[] inSel = new bool[](nV);
+        foreach (i, edge; mesh_.edges) {
+            if (i < mesh_.selectedEdges.length && mesh_.selectedEdges[i]) {
+                inSel[edge[0]] = true;
+                inSel[edge[1]] = true;
+            }
+        }
+        int cid = 0;
+        foreach (start; 0 .. nV) {
+            if (!inSel[start] || clusterOf[start] != -1) continue;
+            uint[] queue; queue ~= cast(uint)start;
+            clusterOf[start] = cid;
+            while (queue.length > 0) {
+                uint cur = queue[0]; queue = queue[1 .. $];
+                foreach (i, edge; mesh_.edges) {
+                    if (!(i < mesh_.selectedEdges.length
+                          && mesh_.selectedEdges[i])) continue;
+                    uint other = uint.max;
+                    if      (edge[0] == cur) other = edge[1];
+                    else if (edge[1] == cur) other = edge[0];
+                    if (other == uint.max || clusterOf[other] != -1) continue;
+                    clusterOf[other] = cid;
+                    queue ~= other;
+                }
+            }
+            cid++;
+        }
+        clusterCenters = new Vec3[](cid);
+        foreach (i; 0 .. cid) clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
+    }
+
+    void computeLocalVertClustersFull(out Vec3[] clusterCenters,
+                                      ref int[]  clusterOf) const {
+        if (!mesh_.hasAnySelectedVertices()) return;
+        size_t nV = mesh_.vertices.length;
+        int cid = 0;
+        foreach (start; 0 .. nV) {
+            if (!(start < mesh_.selectedVertices.length
+                  && mesh_.selectedVertices[start])) continue;
+            if (clusterOf[start] != -1) continue;
+            uint[] queue; queue ~= cast(uint)start;
+            clusterOf[start] = cid;
+            while (queue.length > 0) {
+                uint cur = queue[0]; queue = queue[1 .. $];
+                foreach (edge; mesh_.edges) {
+                    uint other = uint.max;
+                    if      (edge[0] == cur) other = edge[1];
+                    else if (edge[1] == cur) other = edge[0];
+                    if (other == uint.max || clusterOf[other] != -1) continue;
+                    if (!(other < mesh_.selectedVertices.length
+                          && mesh_.selectedVertices[other])) continue;
+                    clusterOf[other] = cid;
+                    queue ~= other;
+                }
+            }
+            cid++;
+        }
+        clusterCenters = new Vec3[](cid);
+        foreach (i; 0 .. cid) clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
     }
 
     // Local mode: enumerate connected components inside the current

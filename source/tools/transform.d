@@ -269,6 +269,31 @@ protected:
         ac.setAutoUserPlaced(worldHit);
     }
 
+    // Per-cluster pivots from the ACEN stage (Phase 3 of
+    // doc/acen_modo_parity_plan.md). Active only when ACEN.Local has
+    // ≥2 disjoint clusters in the current selection. Tools that respect
+    // per-cluster transforms (Scale, Rotate) call this and use
+    // `centers[clusterOf[vi]]` as the per-vertex pivot. Move is
+    // pivot-invariant for translates so it ignores the per-cluster path.
+    static struct ClusterPivots {
+        Vec3[] centers;
+        int [] clusterOf;
+        bool active() const { return centers.length >= 2; }
+    }
+    ClusterPivots queryClusterPivots() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stage              : TaskCode;
+        import toolpipe.packets            : SubjectPacket;
+        ClusterPivots out_;
+        if (g_pipeCtx is null) return out_;
+        if (g_pipeCtx.pipeline.findByTask(TaskCode.Acen) is null) return out_;
+        SubjectPacket subj;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        out_.centers   = state.actionCenter.clusterCenters;
+        out_.clusterOf = state.actionCenter.clusterOf;
+        return out_;
+    }
+
     // Active action-center origin sourced from the ACEN stage (phase 7.2a).
     // Falls back to the bbox-center of the selection if no ACEN stage is
     // registered (unit tests that bypass app.d's pipe init). Bbox center

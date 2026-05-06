@@ -22,7 +22,7 @@ artists' muscle memory from MODO produces unexpected pivots in vibe3d).
 |---|---|---|
 | 1 — Auto: drag-projected pivot          | ✅ done | Click-away path already wired (notifyAcenUserPlaced existed); switched projection plane from most-facing-axis-through-gizmo to world Y=0 Work Plane to match MODO docs. New `screenToWorkPlane` helper in math.d. All tests pass. |
 | 2 — Select: bbox center, not vert avg   | ✅ done | `asymmetric/select` + `selectauto` PASS in `run_acen_drag.sh`; all 47 unit tests still pass (symmetric inputs). Commit b7c96ca. |
-| 3 — Local: per-cluster pivots in Tool   | ⬜ not started | `asymmetric/local` is the only remaining FAIL in the cross-check. |
+| 3 — Local: per-cluster pivots in Tool   | ✅ done | `ActionCenterPacket` now ships `clusterCenters[]`+`clusterOf[]`. Scale tool consumes them via `pivotFor(vi)`. `asymmetric/local` PASS — MODO's per-cluster bbox-center invariant is preserved. All 12/12 cross-check modes pass. Move/Rotate per-cluster — follow-up. |
 
 ## Recommended order
 

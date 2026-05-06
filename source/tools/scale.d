@@ -375,44 +375,61 @@ private:
         return sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
     }
 
+    // Pick the pivot for vertex `vi`: per-cluster pivot if ACEN.Local
+    // has multiple disjoint clusters, else the gizmo's single center.
+    // Phase 3 of doc/acen_modo_parity_plan.md.
+    Vec3 pivotFor(size_t vi, ClusterPivots cp, Vec3 fallback) {
+        if (!cp.active) return fallback;
+        if (vi >= cp.clusterOf.length) return fallback;
+        int cid = cp.clusterOf[vi];
+        if (cid < 0 || cid >= cp.centers.length) return fallback;
+        return cp.centers[cid];
+    }
+
     // Apply an incremental scale factor to cached vertex indices (partial
     // selection path). Scaling happens along the gizmo's basis — workplane
     // axes when non-auto, world XYZ when auto.
     void applyScaleAxesFactor(bool sx, bool sy, bool sz, float factor) {
-        Vec3 center = handler.center;
+        auto cp = queryClusterPivots();
         Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
         float fx = sx ? factor : 1.0f;
         float fy = sy ? factor : 1.0f;
         float fz = sz ? factor : 1.0f;
-        foreach (vi; vertexIndicesToProcess)
-            mesh.vertices[vi] = scaleAlongBasis(mesh.vertices[vi], center,
+        foreach (vi; vertexIndicesToProcess) {
+            Vec3 pivot = pivotFor(vi, cp, handler.center);
+            mesh.vertices[vi] = scaleAlongBasis(mesh.vertices[vi], pivot,
                                                 ax, ay, az, fx, fy, fz);
+        }
         needsGpuUpdate = true;
     }
 
     // Apply scale from drag-start snapshot to mesh.vertices at mouseUp (whole-mesh).
     void commitWholeMeshScale() {
         if (dragStartVertices.length != mesh.vertices.length) return;
-        Vec3 center = handler.center;
+        auto cp = queryClusterPivots();
         Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
         float lx = scaleAccum.x / dragStartScaleAccum.x;
         float ly = scaleAccum.y / dragStartScaleAccum.y;
         float lz = scaleAccum.z / dragStartScaleAccum.z;
-        foreach (i; 0 .. mesh.vertices.length)
-            mesh.vertices[i] = scaleAlongBasis(dragStartVertices[i], center,
+        foreach (i; 0 .. mesh.vertices.length) {
+            Vec3 pivot = pivotFor(i, cp, handler.center);
+            mesh.vertices[i] = scaleAlongBasis(dragStartVertices[i], pivot,
                                                ax, ay, az, lx, ly, lz);
+        }
     }
 
     // Apply scale from activationVertices to CPU vertices only (no GPU).
     // Uses current scaleAccum for all three basis axes.
     void applyScaleFromActivationCpuOnly() {
         if (activationVertices.length == 0) return;
-        Vec3 center = activationCenter;
+        auto cp = queryClusterPivots();
         Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
-        foreach (vi; vertexIndicesToProcess)
-            mesh.vertices[vi] = scaleAlongBasis(activationVertices[vi], center,
+        foreach (vi; vertexIndicesToProcess) {
+            Vec3 pivot = pivotFor(vi, cp, activationCenter);
+            mesh.vertices[vi] = scaleAlongBasis(activationVertices[vi], pivot,
                                                 ax, ay, az,
                                                 scaleAccum.x, scaleAccum.y, scaleAccum.z);
+        }
     }
 
     int hitTestAxes(int mx, int my) {
