@@ -517,6 +517,26 @@ void main(string[] args) {
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
+    // Phase 7.2d: `move.element` is the same MoveTool with ACEN +
+    // AXIS pre-set to Element. Activating switches the modes; the
+    // tool itself reads them through state.actionCenter / state.axis
+    // and shows the gizmo at the selected element's centroid.
+    reg.toolFactories["move.element"] = () {
+        auto t = new MoveTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        import toolpipe.stages.actcenter : ActionCenterStage;
+        import toolpipe.stages.axis      : AxisStage;
+        import toolpipe.stage            : TaskCode;
+        if (g_pipeCtx !is null) {
+            if (auto ac = cast(ActionCenterStage)
+                          g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
+                ac.setAttr("mode", "element");
+            if (auto ax = cast(AxisStage)
+                          g_pipeCtx.pipeline.findByTask(TaskCode.Axis))
+                ax.setAttr("mode", "element");
+        }
+        return cast(Tool)t;
+    };
     reg.toolFactories["rotate"] = () {
         auto t = new RotateTool(&mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);

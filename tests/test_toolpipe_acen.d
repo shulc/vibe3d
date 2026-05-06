@@ -214,6 +214,73 @@ unittest { // Screen mode resolves to a finite center
 }
 
 // -------------------------------------------------------------------------
+// 7.2d: Element mode with single face selected → ACEN at face centroid
+// (NOT bbox center of face's verts — for a unit cube face these
+// coincide, so verify against face 4 = top, centroid (0, 0.5, 0)).
+// -------------------------------------------------------------------------
+
+unittest { // Element mode — single face → face centroid
+    resetCube();
+    // Default cube face 4 = [3, 7, 6, 2] with all y = 0.5 (top face).
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "element", "expected element, got " ~ a["mode"]);
+    assert(abs(floatAttr(a, "cenY") - 0.5f) < 1e-3,
+        "Element cenY expected 0.5 (top-face centroid), got " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenX")) < 1e-3, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenZ")) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2d: Element mode with two opposite faces selected → average of
+// their centroids = origin (faces at y=0.5 and y=-0.5 → mean y=0).
+// -------------------------------------------------------------------------
+
+unittest { // Element mode — two faces → mean of centroids
+    resetCube();
+    // Face 4 = top (y=0.5), face 5 = bottom (y=-0.5). Mean y = 0.
+    postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenY")) < 1e-3,
+        "Element mean-of-top-bot cenY expected 0, got " ~ a["cenY"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2d: `move.element` tool — alias factory that activates MoveTool
+// with ACEN + AXIS pre-set to Element. Activating it should switch
+// both stage modes to "element".
+// -------------------------------------------------------------------------
+
+unittest { // move.element activates ACEN + AXIS Element
+    resetCube();
+    // First make sure modes are NOT element so the toggle is observable.
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+    postJson("/api/command", "tool.pipe.attr axis mode auto");
+
+    // Activate move.element via the registry (mirrors what a side-panel
+    // button click would do).
+    postJson("/api/command", "tool.set move.element on");
+
+    auto ac = getAcenAttrs();
+    assert(ac["mode"] == "element",
+        "move.element should switch ACEN to element; got " ~ ac["mode"]);
+
+    // Walk axis stage too.
+    auto j = getJson("/api/toolpipe");
+    string axMode;
+    foreach (st; j["stages"].array) {
+        if (st["task"].str == "AXIS") {
+            axMode = st["attrs"]["mode"].str;
+            break;
+        }
+    }
+    assert(axMode == "element",
+        "move.element should switch AXIS to element; got " ~ axMode);
+}
+
+// -------------------------------------------------------------------------
 // 7.2a: Unknown mode value is rejected (mode stays unchanged).
 // -------------------------------------------------------------------------
 

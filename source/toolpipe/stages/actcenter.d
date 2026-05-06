@@ -170,13 +170,66 @@ private:
             case Mode.Screen:
                 return screenCenter();
             case Mode.Element:
+                return elementCenter();
             case Mode.Local:
             case Mode.Border:
-                // 7.2d / 7.2e — degrade to selection centroid until
+                // 7.2e — degrade to selection centroid until
                 // implemented (better than 0,0,0; keeps existing tool
                 // behaviour intact).
                 return centroidWithGeometryFallback();
         }
+    }
+
+    // Element mode: average of per-element centroids of the selected
+    // elements (NOT the bbox of all their vertices). Differs from
+    // Select sub-mode=Center for face/edge selection — here we treat
+    // each selected face / edge as one logical "element" and average
+    // its own centroid. With a single face selected this gives the
+    // face centroid (matches MODO's "click on a polygon → center to
+    // its centroid"). Vertex mode collapses to per-vertex average,
+    // which equals the regular selection centroid.
+    Vec3 elementCenter() const {
+        if (mesh_ is null) return Vec3(0, 0, 0);
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        final switch (*editMode_) {
+            case EditMode.Vertices: {
+                bool any = mesh_.hasAnySelectedVertices();
+                foreach (i, v; mesh_.vertices) {
+                    if (!any || (i < mesh_.selectedVertices.length
+                                 && mesh_.selectedVertices[i])) {
+                        sum += v;
+                        count++;
+                    }
+                }
+                break;
+            }
+            case EditMode.Edges: {
+                bool any = mesh_.hasAnySelectedEdges();
+                foreach (i, edge; mesh_.edges) {
+                    if (any && !(i < mesh_.selectedEdges.length
+                                 && mesh_.selectedEdges[i])) continue;
+                    Vec3 mid = (mesh_.vertices[edge[0]] + mesh_.vertices[edge[1]]) * 0.5f;
+                    sum += mid;
+                    count++;
+                }
+                break;
+            }
+            case EditMode.Polygons: {
+                bool any = mesh_.hasAnySelectedFaces();
+                foreach (i, face; mesh_.faces) {
+                    if (any && !(i < mesh_.selectedFaces.length
+                                 && mesh_.selectedFaces[i])) continue;
+                    Vec3 c = Vec3(0, 0, 0);
+                    foreach (vi; face) c += mesh_.vertices[vi];
+                    if (face.length > 0) c = c / cast(float)face.length;
+                    sum += c;
+                    count++;
+                }
+                break;
+            }
+        }
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
     }
 
     // Screen mode: cast a ray from the camera's eye through the screen
