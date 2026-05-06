@@ -474,13 +474,37 @@ def run_xfrm_translate(op):
     lx.eval('tool.set "xfrm.move" off 0')
 
 def run_xfrm_rotate(op):
-    """Apply MODO's `xfrm.rotate` — consumes both action center (pivot)
-    and action axis (rotation axis = primary `axis` direction of the
-    LXpToolAxis packet). The `angle` attr is in degrees. MODO's
-    xfrm.rotate has no `axis` attr — it always uses the action axis's
-    primary direction; the test's `axis` field is recorded but
-    doesn't change MODO's behaviour (vibe3d-side picks the requested
-    handle direction explicitly when reading from /api/toolpipe).
+    """Apply MODO's `xfrm.rotate`. **Known unreliable headlessly** —
+    keep around for completeness but DO NOT rely on this for ACEN /
+    AXIS cross-check. Investigation summary (2026-05):
+
+      - `tool.attr xfrm.rotate angle 90; tool.doApply` rotates by
+        180°, not 90°. Pattern: actual_rotation = angle + 90°. Likely
+        because `doApply` simulates a drag whose start handle was
+        never set (`startX/Y/Z` attrs are mode-disabled headlessly,
+        only enabled when the "Advanced Handles" GUI mode is on).
+
+      - `xfrm.transform RX/RY/RZ` are also mode-gated; headless
+        `tool.attr xfrm.transform RX 90` errors out as "Command
+        disabled".
+
+      - `xfrm.scale factor:2` does work but uses pivot (0,0,0) for
+        ANY selection — modo_cl's tool-pipe stages
+        (`actr.select` / `center.select` / `axis.select`) don't
+        compute selection-derived center / axis in headless mode.
+        Selection is recognised for which-verts-move (xfrm.move only
+        translates the selected face) but the LXpToolActionCenter
+        packet is never populated by the live evaluate.
+
+    Net: rotate-based ACEN / AXIS cross-check via tool composition is
+    not reliable headlessly. The interactive MODO GUI computes ACEN /
+    AXIS from a different code path (mouse-driven event translator)
+    that doesn't fire in modo_cl. Workaround paths considered:
+      - Record an interactive MODO event log and replay it (complex
+        to automate, version-fragile).
+      - Apply rotation via direct vertex math after reading ACEN /
+        AXIS from a separate GUI-only export (no headless API for
+        that today).
     """
     angle_deg = float(op["angle"])
     lx.eval('tool.set "xfrm.rotate" on 0')
