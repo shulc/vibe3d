@@ -433,8 +433,66 @@ def run_op(op):
         run_workplane_align(op)
     elif kind == "prim_cube":
         run_prim_cube(op)
+    elif kind == "query_acen":
+        run_query_acen(op)
+    elif kind == "query_axis":
+        run_query_axis(op)
     else:
         raise NotImplementedError("modo_dump: unsupported op '%s'" % kind)
+
+
+# Phase 7.2h: scalar query results accumulated across the case's ops.
+# Both modo_dump and vibe3d_dump build the same dict shape; diff.py
+# compares scalar-by-scalar.
+QUERIES = {}
+
+def _query_tool_attr(tool_id, attr):
+    """Try the MODO query forms in order until one returns a number;
+    otherwise NaN. modo_cl's `?` syntax varies across versions:
+    - `tool.attr <tool> <attr> ?` (trailing-? query mode)
+    - `?tool.attr <tool> <attr>` (lx.eval return-value prefix)
+    - `query toolservice attrvalue ? <tool> <attr>`
+    """
+    forms = [
+        '?tool.attr %s %s ?' % (tool_id, attr),
+        '?tool.attr %s %s' % (tool_id, attr),
+        'query toolservice attrvalue ? %s %s' % (tool_id, attr),
+    ]
+    last_err = None
+    for f in forms:
+        try:
+            r = lx.eval(f)
+            if r is None:
+                continue
+            return float(r)
+        except Exception as e:
+            last_err = e
+    log("query: all forms failed for %s %s: %s" % (tool_id, attr, last_err))
+    return float("nan")
+
+def run_query_acen(op):
+    """Activate `center.<mode>` tool, dump cen{X,Y,Z} into QUERIES under
+    the keys `actionCenter.<mode>.{cenX,cenY,cenZ}`. Selection-driven
+    modes (select / element / local / border) require a prior
+    `select_face` op in the same case.
+    """
+    mode = op["mode"]
+    lx.eval('tool.set "center.%s" on 0' % mode)
+    tool_id = "center.%s" % mode
+    for ax in ("cenX", "cenY", "cenZ"):
+        QUERIES["actionCenter.%s.%s" % (mode, ax)] = _query_tool_attr(tool_id, ax)
+    # Mode is also recorded so the comparison can fail loudly if vibe3d
+    # ends up in a different mode.
+    QUERIES["actionCenter.%s.mode" % mode] = mode
+
+def run_query_axis(op):
+    """Same shape as run_query_acen, for `axis.<mode>` tool's
+    axisX/Y/Z attrs. Records them under `axis.<mode>.<key>`."""
+    mode = op["mode"]
+    lx.eval('tool.set "axis.%s" on 0' % mode)
+    tool_id = "axis.%s" % mode
+    for ax in ("axisX", "axisY", "axisZ"):
+        QUERIES["axis.%s.%s" % (mode, ax)] = _query_tool_attr(tool_id, ax)
 
 
 def dump_mesh(out_path):
@@ -450,6 +508,8 @@ def dump_mesh(out_path):
         "faces":       faces,
         "source":      "modo",
     }
+    if QUERIES:
+        out["queries"] = QUERIES
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
     log("wrote", out_path, ":", len(verts), "verts,", len(faces), "faces")

@@ -1,0 +1,17 @@
+{
+  "_comment": "Phase 7.2h baseline: ACEN=Origin must publish (0,0,0) regardless of selection. Smoke-test for the query-cross-check pipeline (modo_dump + vibe3d_dump → queries dict in both outputs, diff.py compares scalars).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }
+  },
+  "ops": [
+    { "op": "query_acen", "mode": "origin" }
+  ],
+  "tolerance": 0.001
+}

@@ -142,7 +142,45 @@ def main():
             print(f"    A face {ai} ↔ B face {bi}  centroid=({c[0]:+.3f},"
                   f"{c[1]:+.3f},{c[2]:+.3f})")
 
-    ok = (fail_ab == 0 and fail_ba == 0 and same_topo and not flipped)
+    # Phase 7.2h: scalar query comparison. When both engines produced a
+    # `queries` dict, compare every key — strings must match exactly,
+    # numbers within tolerance. Missing keys on either side count as a
+    # failure.
+    queries_ok = True
+    qa = A.get("queries") or {}
+    qb = B.get("queries") or {}
+    if qa or qb:
+        keys = sorted(set(qa.keys()) | set(qb.keys()))
+        print(f"\n  Queries: {len(keys)} entries")
+        for k in keys:
+            va = qa.get(k, None)
+            vb = qb.get(k, None)
+            if va is None or vb is None:
+                print(f"    MISS  {k}: A={va} B={vb}")
+                queries_ok = False
+                continue
+            if isinstance(va, str) or isinstance(vb, str):
+                if va != vb:
+                    print(f"    DIFF  {k}: A={va!r} B={vb!r}")
+                    queries_ok = False
+            else:
+                fa = float(va)
+                fb = float(vb)
+                # NaN ≠ anything (including itself). A NaN on either
+                # side means the engine couldn't read the attr —
+                # surface this loudly rather than silently matching.
+                import math
+                if math.isnan(fa) or math.isnan(fb):
+                    print(f"    NAN   {k}: A={va} B={vb}")
+                    queries_ok = False
+                    continue
+                d = abs(fa - fb)
+                if d > tol:
+                    print(f"    DIFF  {k}: A={va} B={vb}  Δ={d:.5f}")
+                    queries_ok = False
+
+    ok = (fail_ab == 0 and fail_ba == 0 and same_topo
+          and not flipped and queries_ok)
     print(f"\n  RESULT: {'OK' if ok else 'FAIL'}")
     return 0 if ok else 1
 

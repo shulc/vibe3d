@@ -424,6 +424,55 @@ void runPrimCube(JSONValue op) {
         throw new Exception("prim.cube op failed: " ~ resp.toString());
 }
 
+// Phase 7.2h: scalar query results accumulated across the case's ops.
+// Both vibe3d_dump and modo_dump produce the same dict shape; diff.py
+// compares scalar-by-scalar with case tolerance.
+JSONValue[string] queries;
+
+// Helper: walk /api/toolpipe stages and return the named stage's
+// `attrs` map.
+JSONValue[string] findStageAttrs(string taskCode) {
+    auto j = parseJSON(get(url("/api/toolpipe")));
+    foreach (st; j["stages"].array) {
+        if (st["task"].str == taskCode)
+            return st["attrs"].object;
+    }
+    throw new Exception("stage " ~ taskCode ~ " missing from /api/toolpipe");
+}
+
+void runQueryAcen(JSONValue op) {
+    string mode = op["mode"].str;
+    auto resp = parseJSON(post(url("/api/command"),
+                               "tool.pipe.attr actionCenter mode " ~ mode));
+    if (resp["status"].str != "ok")
+        throw new Exception("set actionCenter mode " ~ mode ~ " failed: "
+                            ~ resp.toString());
+    auto attrs = findStageAttrs("ACEN");
+    string base = "actionCenter." ~ mode ~ ".";
+    queries[base ~ "cenX"] = JSONValue(attrs["cenX"].str.to!float);
+    queries[base ~ "cenY"] = JSONValue(attrs["cenY"].str.to!float);
+    queries[base ~ "cenZ"] = JSONValue(attrs["cenZ"].str.to!float);
+    queries[base ~ "mode"] = JSONValue(mode);
+}
+
+void runQueryAxis(JSONValue op) {
+    string mode = op["mode"].str;
+    auto resp = parseJSON(post(url("/api/command"),
+                               "tool.pipe.attr axis mode " ~ mode));
+    if (resp["status"].str != "ok")
+        throw new Exception("set axis mode " ~ mode ~ " failed: "
+                            ~ resp.toString());
+    auto attrs = findStageAttrs("AXIS");
+    string base = "axis." ~ mode ~ ".";
+    // AxisStage publishes right/up/fwd; modo_dump uses axisX/Y/Z which
+    // mirror MODO `axis.<mode>` attrs. Mapping: axisX = up.x (the
+    // pole / forward axis is `up` in our convention; verify against
+    // MODO via 7.2h cross-check).
+    queries[base ~ "axisX"] = JSONValue(attrs["upX"].str.to!float);
+    queries[base ~ "axisY"] = JSONValue(attrs["upY"].str.to!float);
+    queries[base ~ "axisZ"] = JSONValue(attrs["upZ"].str.to!float);
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
         case "bevel":            runBevel(op);      break;
@@ -440,6 +489,8 @@ void runOp(JSONValue op) {
         case "select_face":      runSelectFace(op);      break;
         case "workplane_align":  runWorkplaneAlign(op);  break;
         case "prim_cube":        runPrimCube(op);        break;
+        case "query_acen":       runQueryAcen(op);       break;
+        case "query_axis":       runQueryAxis(op);       break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }
@@ -510,6 +561,8 @@ int main(string[] args) {
     out_["faceCount"]   = model["faceCount"];
     out_["vertices"]    = model["vertices"];
     out_["faces"]       = model["faces"];
+    if (queries.length > 0)
+        out_["queries"] = JSONValue(queries);
     write(outPath, out_.toPrettyString());
     writefln("[vibe3d_dump] wrote %s: %d verts, %d faces",
         outPath, model["vertexCount"].integer, model["faceCount"].integer);
