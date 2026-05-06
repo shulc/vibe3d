@@ -249,6 +249,23 @@ protected:
         ax = bp.axis1; ay = bp.normal; az = bp.axis2;
     }
 
+    // Click-outside-gizmo hook (phase 7.2b). Move/Rotate/Scale call this
+    // after the cursor ray hit a construction plane outside the gizmo —
+    // the ACEN stage records `userPlaced` so subsequent
+    // `queryActionCenter` returns this point. Mode stays Auto (matches
+    // MODO "Auto NOT fixed; click away → new center"). No-op when no
+    // ACEN stage is registered.
+    void notifyAcenUserPlaced(Vec3 worldHit) {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.setAutoUserPlaced(worldHit);
+    }
+
     // Active action-center origin sourced from the ACEN stage (phase 7.2a).
     // Falls back to the legacy mesh.selectionCentroid* path if no ACEN
     // stage is registered (unit tests that bypass app.d's pipe init).

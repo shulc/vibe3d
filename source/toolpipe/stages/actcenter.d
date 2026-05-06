@@ -2,7 +2,7 @@ module toolpipe.stages.actcenter;
 
 import std.format : format;
 
-import math    : Vec3;
+import math    : Vec3, Viewport, screenRay, rayPlaneIntersect;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
@@ -56,9 +56,9 @@ class ActionCenterStage : Stage {
     }
 
     Mode mode = Mode.Auto;
-    Vec3 userPlacedCenter;     // valid when userPlaced is true
-    bool userPlaced = false;   // Auto-mode click-outside marker
-    Vec3 manualCenter;         // valid for Mode.Manual
+    Vec3 userPlacedCenter = Vec3(0, 0, 0);  // valid when userPlaced is true
+    bool userPlaced = false;                // Auto-mode click-outside marker
+    Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
     int  selectSubMode = SelectSubMode.Center;
 
 private:
@@ -68,6 +68,13 @@ private:
     // state.actionCenter (typically Move/Rotate/Scale's per-frame update).
     Mesh*     mesh_;
     EditMode* editMode_;
+    // Cached viewport from the last evaluate() — Screen mode needs it to
+    // ray-cast the screen-center pixel onto the workplane. listAttrs()
+    // doesn't run inside the pipeline, so it reads back the cache.
+    Viewport  lastView_;
+    // Cached upstream workplane state (origin + normal) for Screen mode.
+    Vec3      lastWpCenter_  = Vec3(0, 0, 0);
+    Vec3      lastWpNormal_  = Vec3(0, 1, 0);
 
 public:
     this(Mesh* mesh, EditMode* editMode) {
@@ -81,6 +88,12 @@ public:
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordAcen; }
 
     override void evaluate(ref ToolState state) {
+        // Cache live view + upstream workplane so listAttrs (called
+        // outside evaluation) and Screen mode can re-derive the same
+        // value the pipeline just produced.
+        lastView_     = state.view;
+        lastWpCenter_ = state.workplane.center;
+        lastWpNormal_ = state.workplane.normal;
         state.actionCenter.center = computeCenter();
         state.actionCenter.isAuto = (mode == Mode.Auto && !userPlaced);
         state.actionCenter.type   = cast(int)mode;
@@ -154,15 +167,44 @@ private:
                 return Vec3(0, 0, 0);
             case Mode.Manual:
                 return manualCenter;
+            case Mode.Screen:
+                return screenCenter();
             case Mode.Element:
             case Mode.Local:
             case Mode.Border:
-            case Mode.Screen:
-                // 7.2b–7.2e — for now degrade to selection centroid
-                // (better than 0,0,0; keeps existing tool behaviour
-                // intact while subsequent subphases land).
+                // 7.2d / 7.2e — degrade to selection centroid until
+                // implemented (better than 0,0,0; keeps existing tool
+                // behaviour intact).
                 return centroidWithGeometryFallback();
         }
+    }
+
+    // Screen mode: cast a ray from the camera's eye through the screen
+    // center pixel and intersect with the workplane plane. Matches MODO
+    // "the action center and axis to be based on the frame of the
+    // viewport, or screen space" — picture-plane center projected to the
+    // construction plane. If the workplane is parallel to the camera
+    // ray the projection degenerates; fall back to the camera focus
+    // point so we never publish a NaN center.
+    Vec3 screenCenter() const {
+        // No view captured yet (stage just constructed) — use the
+        // workplane center as a sane default.
+        if (lastView_.width == 0 || lastView_.height == 0)
+            return lastWpCenter_;
+        Vec3 ray = screenRay(cast(int)(lastView_.width / 2),
+                             cast(int)(lastView_.height / 2),
+                             lastView_);
+        Vec3 hit;
+        if (rayPlaneIntersect(lastView_.eye, ray,
+                              lastWpCenter_, lastWpNormal_, hit))
+            return hit;
+        // Degenerate (ray ⟂ plane normal). Fall back to camera focus.
+        // In practice this hits when the camera looks along the
+        // workplane plane edge-on; use the perpendicular projection of
+        // eye onto the workplane.
+        Vec3 d = lastView_.eye - lastWpCenter_;
+        float h = d.x * lastWpNormal_.x + d.y * lastWpNormal_.y + d.z * lastWpNormal_.z;
+        return lastView_.eye - lastWpNormal_ * h;
     }
 
     // Auto mode: selection centroid if any selection, else geometry-bbox

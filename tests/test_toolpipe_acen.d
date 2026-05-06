@@ -139,6 +139,81 @@ unittest { // selectSubMode top / bottom
 }
 
 // -------------------------------------------------------------------------
+// 7.2b: Manual mode pins center via cenX/Y/Z attrs. Setting cen* in any
+// other mode auto-promotes to Manual.
+// -------------------------------------------------------------------------
+
+unittest { // Manual mode via cenX/Y/Z auto-promote
+    resetCube();
+    // tool.pipe.attr sets one attr per call — argstring positional
+    // form is `<stage> <name> <value>`.
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 1.5");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenY -2.0");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenZ 0.25");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "manual",
+        "Setting cen* should promote to Manual; got mode=" ~ a["mode"]);
+    assert(abs(floatAttr(a, "cenX") - 1.5f) < 1e-6, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY") - (-2.0f)) < 1e-6, "cenY: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ") - 0.25f) < 1e-6, "cenZ: " ~ a["cenZ"]);
+}
+
+unittest { // Manual ignores selection changes
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr actionCenter mode manual");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 5");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenY 5");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenZ 5");
+    // Now select a face that would shift Auto's centroid — Manual must
+    // stay pinned.
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenX") - 5.0f) < 1e-6,
+        "Manual cenX must not follow selection; got " ~ a["cenX"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2b: Switching modes clears Auto's userPlaced sub-state. Re-selecting
+// "Auto" from a Manual mode resets userPlaced=false (matches popup re-
+// click semantics in MODO).
+// -------------------------------------------------------------------------
+
+unittest { // mode switch clears userPlaced
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 5");   // → Manual
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "auto", "expected auto, got " ~ a["mode"]);
+    assert(a["userPlaced"] == "false",
+        "userPlaced must clear on mode switch; got " ~ a["userPlaced"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2b: Screen mode publishes a center on the workplane. With default
+// camera looking at origin and workplane = world XZ at origin, the
+// screen-center ray should hit at (0,0,0) (or close — camera might be
+// slightly off-axis).
+// -------------------------------------------------------------------------
+
+unittest { // Screen mode resolves to a finite center
+    resetCube();
+    // Reset camera to default so the test is deterministic.
+    postJson("/api/command", "viewport.fit");
+    postJson("/api/command", "tool.pipe.attr actionCenter mode screen");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "screen", "expected screen, got " ~ a["mode"]);
+    // Just verify the values are finite floats (no NaN). Screen-center
+    // depends on camera state which other tests may have mutated; the
+    // important contract is "doesn't crash + publishes a Vec3".
+    auto cx = floatAttr(a, "cenX");
+    auto cy = floatAttr(a, "cenY");
+    auto cz = floatAttr(a, "cenZ");
+    assert(cx == cx && cy == cy && cz == cz,    // NaN check
+        "Screen mode published NaN: " ~ a["cenX"] ~ "," ~ a["cenY"] ~ "," ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
 // 7.2a: Unknown mode value is rejected (mode stays unchanged).
 // -------------------------------------------------------------------------
 

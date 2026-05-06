@@ -185,6 +185,7 @@ public:
             return false;
         handler.setPosition(hit);
         centerManual = true;
+        notifyAcenUserPlaced(hit);
         activationVertices = mesh.vertices.dup;
         activationCenter   = hit;
         return false;  // don't start a drag

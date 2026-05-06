@@ -208,6 +208,10 @@ public:
 
         handler.setPosition(hit);
         centerManual = true;
+        // Phase 7.2b: notify ACEN so the user-placed point sticks across
+        // future queries (other tools, history replay etc.). Mode stays
+        // Auto — userPlaced sub-state, MODO "click away → new center".
+        notifyAcenUserPlaced(hit);
         dragAxis = 3;
         lastMX = e.x; lastMY = e.y;
         dragDelta = Vec3(0, 0, 0);

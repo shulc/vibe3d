@@ -187,6 +187,7 @@ public:
                 return false;
             handler.setPosition(hit);
             centerManual = true;
+            notifyAcenUserPlaced(hit);
             origVertices = mesh.vertices.dup;
             angleAccum = Vec3(0, 0, 0);
             propDeg    = Vec3(0, 0, 0);
