@@ -102,9 +102,11 @@ def predict_pivot(mode, pattern):
     sel = selected_unique_verts(pattern)
     clusters = selected_clusters(pattern)
 
-    if mode in ("select", "selectauto"):
-        return [avg(sel)]
-    if mode == "border":
+    if mode in ("select", "selectauto", "border"):
+        # MODO 9 empirically uses BBOX CENTER for all three of these
+        # in component selection mode — see doc/acen_modo_parity_plan.md
+        # Phase 2. Docs claim "average vertex position" for select but
+        # the artifact disagrees; we follow the artifact.
         return [bbox_center(sel)]
     if mode == "local":
         # Combined OR per-cluster centroid is acceptable. vibe3d's

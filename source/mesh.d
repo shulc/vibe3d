@@ -919,6 +919,74 @@ struct Mesh {
         return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
     }
 
+    // ---- BBOX CENTER variants ------------------------------------------
+    //
+    // Same selection logic as `selectionCentroid*` but return (min+max)/2
+    // per axis instead of the vertex-position mean. Used by ACEN.Select /
+    // .Border / .Auto to match MODO 9's empirical "selection-center" pivot,
+    // which is the bounding-box midpoint of the selected verts (not the
+    // vertex average — verified against MODO via tools/modo_diff/
+    // run_acen_drag.sh on the asymmetric pattern). For symmetric selections
+    // the two coincide; only asymmetric / clustered selections distinguish
+    // them. Phase 2 of doc/acen_modo_parity_plan.md.
+
+    Vec3 selectionBBoxCenterVertices() const {
+        bool any = hasAnySelected(selectedVertices);
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (i, v; vertices) {
+            if (any && !(i < selectedVertices.length && selectedVertices[i])) continue;
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+            seen = true;
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    Vec3 selectionBBoxCenterEdges() const {
+        bool any = hasAnySelected(selectedEdges);
+        bool[] vis = new bool[](vertices.length);
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (i, edge; edges) {
+            if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
+            foreach (vi; edge) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = vertices[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    Vec3 selectionBBoxCenterFaces() const {
+        bool any = hasAnySelected(selectedFaces);
+        bool[] vis = new bool[](vertices.length);
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (i, face; faces) {
+            if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
+            foreach (vi; face) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = vertices[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
     /// Return the centroid (average position) of face `fi`.
     Vec3 faceCentroid(uint fi) const {
         const uint[] face = faces[fi];

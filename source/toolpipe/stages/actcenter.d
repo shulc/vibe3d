@@ -441,14 +441,24 @@ private:
 
     // Auto mode: selection centroid if any selection, else geometry-bbox
     // centroid (matches MODO "handles at center of selection / geometry").
+    //
+    // Phase 2 of doc/acen_modo_parity_plan.md: this returns the BBOX
+    // CENTER of the selected verts, not the per-vertex average. MODO 9's
+    // empirical drag-derived pivot for actr.select / .selectauto / .auto
+    // / .border is bbox center; the docs say "average vertex position"
+    // but the artifact disagrees (see tools/modo_diff/run_acen_drag.sh
+    // asymmetric pattern). For symmetric selections (default cube,
+    // single full face) bbox == avg, so existing unit tests are
+    // unaffected.
     Vec3 centroidWithGeometryFallback() const {
         if (mesh_ is null) return Vec3(0, 0, 0);
-        // mesh.selectionCentroid* already implements this: when the
-        // selection bit-array is empty it sums all vertices.
+        // mesh.selectionBBoxCenter* falls back to the whole geometry
+        // when no selection bits are set, matching MODO's "no selection
+        // ⇒ all geometry" behaviour.
         final switch (*editMode_) {
-            case EditMode.Vertices: return mesh_.selectionCentroidVertices();
-            case EditMode.Edges:    return mesh_.selectionCentroidEdges();
-            case EditMode.Polygons: return mesh_.selectionCentroidFaces();
+            case EditMode.Vertices: return mesh_.selectionBBoxCenterVertices();
+            case EditMode.Edges:    return mesh_.selectionBBoxCenterEdges();
+            case EditMode.Polygons: return mesh_.selectionBBoxCenterFaces();
         }
     }
 

@@ -270,8 +270,9 @@ protected:
     }
 
     // Active action-center origin sourced from the ACEN stage (phase 7.2a).
-    // Falls back to the legacy mesh.selectionCentroid* path if no ACEN
-    // stage is registered (unit tests that bypass app.d's pipe init).
+    // Falls back to the bbox-center of the selection if no ACEN stage is
+    // registered (unit tests that bypass app.d's pipe init). Bbox center
+    // matches MODO 9 — see doc/acen_modo_parity_plan.md Phase 2.
     Vec3 queryActionCenter() {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stage              : TaskCode;
@@ -283,10 +284,10 @@ protected:
             auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
             return state.actionCenter.center;
         }
-        // Fallback (no ACEN registered): preserve legacy behaviour.
-        if (*editMode == EditMode.Vertices) return mesh.selectionCentroidVertices();
-        if (*editMode == EditMode.Edges)    return mesh.selectionCentroidEdges();
-        if (*editMode == EditMode.Polygons) return mesh.selectionCentroidFaces();
+        // Fallback (no ACEN registered): bbox center of the selection.
+        if (*editMode == EditMode.Vertices) return mesh.selectionBBoxCenterVertices();
+        if (*editMode == EditMode.Edges)    return mesh.selectionBBoxCenterEdges();
+        if (*editMode == EditMode.Polygons) return mesh.selectionBBoxCenterFaces();
         return Vec3(0, 0, 0);
     }
 }
