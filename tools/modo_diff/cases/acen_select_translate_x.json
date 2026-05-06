@@ -1,0 +1,24 @@
+{
+  "_comment": "Phase 7.2-h-extended: AXIS=Selection cross-check via translate. Both engines: select top face of cube, set actr.select, translate +1 unit along handle X (= largest bbox extent). If both engines compute the same selection-axis basis, the resulting vertex positions agree bit-for-bit. Top face has bbox extents (1,0,1) — tie X vs Z, stable sort picks X first → handle X = world X. Translate offX:1 should shift the 4 face verts +1 along world X.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0.0, "cenY": 0.0, "cenZ": 0.0,
+      "sizeX": 1.0, "sizeY": 1.0, "sizeZ": 1.0,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0.0
+    }
+  },
+  "ops": [
+    { "op": "select_face", "face": [
+      [-0.5, 0.5, -0.5],
+      [0.5, 0.5, -0.5],
+      [0.5, 0.5, 0.5],
+      [-0.5, 0.5, 0.5]
+    ]},
+    { "op": "actr_set", "preset": "select" },
+    { "op": "xfrm_translate", "axis": "x", "dist": 1.0 }
+  ],
+  "tolerance": 0.001
+}

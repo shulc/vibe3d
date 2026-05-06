@@ -176,20 +176,27 @@ private:
         }
     }
 
-    // Selection bbox-extent-sorted basis (MODO Selection / Selection
-    // Center Auto Axis algorithm). Walks the verts touched by the
-    // active selection, builds a world-axis-aligned bbox, then assigns
-    // handles by decreasing extent: largest → right, middle → up,
-    // smallest → fwd. fwd is computed as cross(right, up) so the basis
-    // is always strictly right-handed (avoids sign-flip when the
-    // extent order yields a left-handed permutation of XYZ).
+    // Selection-derived basis (MODO Selection / Selection Center Auto
+    // Axis algorithm). Verified against modo_cl xfrm.move (level-2
+    // cross-check in tools/modo_diff/cases/acen_select_translate_*.json):
+    // - Polygons / Vertices mode: `up` = avg face normal (snapped to
+    //   nearest world axis); `right` = world axis with the largest
+    //   in-plane (perpendicular to up) bbox extent of the selection.
+    //   Matches MODO behaviour for face / vertex selections — handle
+    //   Y always points along the face-normal direction.
+    // - Edges mode: degrades to pure bbox-extent-sort (MODO's edge-
+    //   selection axis is more nuanced — uses edge-tangent direction
+    //   — handled in a follow-up).
+    // fwd = cross(right, up) keeps the basis strictly right-handed.
     bool computeSelectionBboxBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
         if (mesh_ is null || editMode_ is null) return false;
+        // World-axis bbox of vertices touched by the selection.
         bool[] visited = new bool[](mesh_.vertices.length);
         float[3] mn = [float.infinity, float.infinity, float.infinity];
         float[3] mx = [-float.infinity, -float.infinity, -float.infinity];
+        Vec3 normalAcc = Vec3(0, 0, 0);   // sum of face normals (face / vert)
         bool any = false;
-        void touch(uint vi) {
+        void touchVert(uint vi) {
             if (visited[vi]) return;
             visited[vi] = true;
             Vec3 v = mesh_.vertices[vi];
@@ -206,7 +213,8 @@ private:
                 foreach (i, face; mesh_.faces) {
                     if (!(i < mesh_.selectedFaces.length
                           && mesh_.selectedFaces[i])) continue;
-                    foreach (vi; face) touch(vi);
+                    normalAcc = normalAcc + mesh_.faceNormal(cast(uint)i);
+                    foreach (vi; face) touchVert(vi);
                 }
                 break;
             case EditMode.Edges:
@@ -214,33 +222,74 @@ private:
                 foreach (i, edge; mesh_.edges) {
                     if (!(i < mesh_.selectedEdges.length
                           && mesh_.selectedEdges[i])) continue;
-                    foreach (vi; edge) touch(vi);
+                    foreach (vi; edge) touchVert(vi);
                 }
                 break;
             case EditMode.Vertices:
                 if (!mesh_.hasAnySelectedVertices()) return false;
-                foreach (vi, sel; mesh_.selectedVertices)
-                    if (sel) touch(cast(uint)vi);
+                foreach (vi, sel; mesh_.selectedVertices) {
+                    if (!sel) continue;
+                    touchVert(cast(uint)vi);
+                    // Per-vert normal = sum of incident face normals.
+                    foreach (fi, face; mesh_.faces) {
+                        foreach (fvi; face)
+                            if (fvi == vi) {
+                                normalAcc = normalAcc
+                                          + mesh_.faceNormal(cast(uint)fi);
+                                break;
+                            }
+                    }
+                }
                 break;
         }
         if (!any) return false;
-        float ex = mx[0] - mn[0];
-        float ey = mx[1] - mn[1];
-        float ez = mx[2] - mn[2];
-        // Pair (extent, world-axis-vector) and sort by extent decreasing.
-        Vec3[3] worldAxes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
-        float[3] extents = [ex, ey, ez];
+
+        Vec3[3] worldAxes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+        float[3] extents = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
+
+        // Decide `up` direction.
+        bool haveNormal = normalAcc.x != 0 || normalAcc.y != 0 || normalAcc.z != 0;
+        if (haveNormal && (*editMode_ == EditMode.Polygons
+                           || *editMode_ == EditMode.Vertices))
+        {
+            // Snap avg normal to the nearest world axis. Sign follows
+            // the dominant component so the basis points outward like
+            // MODO's gizmo.
+            float ax = abs(normalAcc.x);
+            float ay = abs(normalAcc.y);
+            float az = abs(normalAcc.z);
+            int upIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            float sign = ((upIdx == 0 ? normalAcc.x
+                         : upIdx == 1 ? normalAcc.y
+                                       : normalAcc.z) >= 0) ? 1.0f : -1.0f;
+            up = worldAxes[upIdx] * sign;
+
+            // `right` = world axis with the largest in-plane bbox
+            // extent. Walk in natural (X, Y, Z) order and pick the
+            // first non-up axis with strictly the larger extent — on
+            // ties the lower-indexed axis wins, matching MODO.
+            int rightIdx = -1;
+            float bestExt = -1;
+            foreach (k; 0 .. 3) {
+                if (k == upIdx) continue;
+                if (extents[k] > bestExt + 1e-6f) {
+                    bestExt = extents[k];
+                    rightIdx = k;
+                }
+            }
+            right = worldAxes[rightIdx];
+            fwd = cross(right, up);
+            return true;
+        }
+        // Edge mode (no robust normal) — fall back to pure bbox-extent
+        // sort. Largest extent → right, middle → up, smallest → fwd.
         int[3] idx = [0, 1, 2];
-        // Bubble-sort 3 elements by extent decreasing — preserves the
-        // natural (X, Y, Z) order when ties so axis-aligned cubes still
-        // give the canonical basis.
         if (extents[idx[1]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[1]; idx[1] = t; }
         if (extents[idx[2]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[2]; idx[2] = t; }
         if (extents[idx[2]] > extents[idx[1]]) { int t = idx[1]; idx[1] = idx[2]; idx[2] = t; }
         right = worldAxes[idx[0]];
         up    = worldAxes[idx[1]];
-        // fwd = right × up — always right-handed, ±worldAxes[idx[2]].
-        fwd = cross(right, up);
+        fwd   = cross(right, up);
         return true;
     }
 

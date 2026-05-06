@@ -142,36 +142,32 @@ unittest { // Element mode — face normal as up
 // handed). Verified against MODO Selection auto-axis behaviour.
 // -------------------------------------------------------------------------
 
-unittest { // Select mode — selecting top face (y=0.5) of unit cube
+unittest { // Select mode — top face (face 4) — face-normal as up.
     resetCube();
-    // Top face = [3,7,6,2]; bbox spans X=1, Y=0, Z=1 → extents
-    // (1, 0, 1). Tie between X and Z: stable sort keeps X first.
-    // Result: right=X (largest, X picked first on tie), up=Z,
-    // fwd = X×Z = -Y.
+    // Top face has avg normal +Y. up = world +Y. In-plane bbox
+    // extents X=1, Z=1 → tie; X has lower index → right = +X.
+    // fwd = X × Y = +Z. Verified against modo_cl xfrm.move (see
+    // tools/modo_diff/cases/acen_select_translate_x.json + _y).
     postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
     postJson("/api/command", "tool.pipe.attr axis mode select");
     auto a = getAxisAttrs();
     assert(a["mode"] == "select", "got " ~ a["mode"]);
-    // right = X (1,0,0)
     assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3, "rightX: " ~ a["rightX"]);
-    assert(abs(floatAttr(a, "rightY")) < 1e-3, "rightY: " ~ a["rightY"]);
-    assert(abs(floatAttr(a, "rightZ")) < 1e-3, "rightZ: " ~ a["rightZ"]);
-    // up = Z (0,0,1)
-    assert(abs(floatAttr(a, "upZ") - 1.0f) < 1e-3, "upZ: " ~ a["upZ"]);
-    // fwd = right×up = X×Z = -Y → (0,-1,0)
-    assert(abs(floatAttr(a, "fwdY") - (-1.0f)) < 1e-3, "fwdY: " ~ a["fwdY"]);
+    assert(abs(floatAttr(a, "upY")    - 1.0f) < 1e-3, "upY: "    ~ a["upY"]);
+    assert(abs(floatAttr(a, "fwdZ")   - 1.0f) < 1e-3, "fwdZ: "   ~ a["fwdZ"]);
 }
 
-unittest { // Select mode — back face (z=-0.5) gives extents (1,1,0)
+unittest { // Select mode — back face (face 0) — face-normal -Z up.
     resetCube();
-    // Face 0 = back, verts at z=-0.5; X-extent=1, Y=1, Z=0.
-    // Tie X vs Y: X wins → right=X. Y → up. fwd = X×Y = Z.
+    // Back face avg normal = -Z. up = world -Z. In-plane bbox
+    // extents X=1, Y=1 → tie; X wins → right = +X.
+    // fwd = X × (-Z) = +Y.
     postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
     postJson("/api/command", "tool.pipe.attr axis mode select");
     auto a = getAxisAttrs();
-    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3, "rightX: " ~ a["rightX"]);
-    assert(abs(floatAttr(a, "upY") - 1.0f) < 1e-3, "upY: " ~ a["upY"]);
-    assert(abs(floatAttr(a, "fwdZ") - 1.0f) < 1e-3, "fwdZ: " ~ a["fwdZ"]);
+    assert(abs(floatAttr(a, "rightX") - 1.0f)    < 1e-3, "rightX: " ~ a["rightX"]);
+    assert(abs(floatAttr(a, "upZ")    - (-1.0f)) < 1e-3, "upZ: "    ~ a["upZ"]);
+    assert(abs(floatAttr(a, "fwdY")   - 1.0f)    < 1e-3, "fwdY: "   ~ a["fwdY"]);
 }
 
 // -------------------------------------------------------------------------
@@ -179,15 +175,15 @@ unittest { // Select mode — back face (z=-0.5) gives extents (1,1,0)
 // emit a finite right/up/fwd vector.
 // -------------------------------------------------------------------------
 
-unittest { // SelectAuto — same algorithm as Select (bbox-extent-sort).
+unittest { // SelectAuto — same algorithm as Select (face-normal up).
     resetCube();
     postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
     postJson("/api/command", "tool.pipe.attr axis mode selectauto");
     auto a = getAxisAttrs();
     assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
-    // Back face → extents (1,1,0). Tied X vs Y, X wins → right=X.
-    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3, "rightX: " ~ a["rightX"]);
-    assert(abs(floatAttr(a, "upY") - 1.0f) < 1e-3, "upY: " ~ a["upY"]);
+    // Back face: up=-Z, right=+X (tie-break by lowest index).
+    assert(abs(floatAttr(a, "rightX") - 1.0f)    < 1e-3, "rightX: " ~ a["rightX"]);
+    assert(abs(floatAttr(a, "upZ")    - (-1.0f)) < 1e-3, "upZ: "    ~ a["upZ"]);
 }
 
 unittest { // Origin — alias of World (identity basis).

@@ -18,6 +18,7 @@ import std.math : abs, PI;
 import std.net.curl;
 import std.stdio;
 import std.string : startsWith;
+import std.format : format;
 
 int port = 8080;
 
@@ -473,6 +474,68 @@ void runQueryAxis(JSONValue op) {
     queries[base ~ "axisZ"] = JSONValue(attrs["upZ"].str.to!float);
 }
 
+// Phase 7.2h-extended: ACEN/AXIS round-trip cross-check via xfrm tools.
+// vibe3d's /api/transform consumes raw world-space pivot+axis+delta,
+// so the test reads the live ACEN center + AXIS basis from /api/
+// toolpipe and feeds them through. MODO's xfrm.translate / xfrm.rotate
+// implicitly consume action center / axis from the active stages, so
+// MODO doesn't need this read-and-pass step. If both engines published
+// the same ACEN/AXIS values, the resulting meshes match bit-for-bit.
+
+void runActrSet(JSONValue op) {
+    string preset = op["preset"].str;
+    auto resp = parseJSON(post(url("/api/command"), "actr." ~ preset));
+    if (resp["status"].str != "ok")
+        throw new Exception("actr." ~ preset ~ " failed: " ~ resp.toString());
+}
+
+private double[3] readAxisDir(string handle) {
+    auto a = findStageAttrs("AXIS");
+    return [a[handle ~ "X"].str.to!double,
+            a[handle ~ "Y"].str.to!double,
+            a[handle ~ "Z"].str.to!double];
+}
+
+private double[3] readAcenCenter() {
+    auto a = findStageAttrs("ACEN");
+    return [a["cenX"].str.to!double,
+            a["cenY"].str.to!double,
+            a["cenZ"].str.to!double];
+}
+
+void runXfrmTranslate(JSONValue op) {
+    string axis = "axis" in op ? op["axis"].str : "x";
+    double dist = readNum(op["dist"]);
+    string handle = (axis == "x") ? "right"
+                  : (axis == "y") ? "up"
+                                  : "fwd";
+    auto dir = readAxisDir(handle);
+    auto body_ = format(`{"kind":"translate","delta":[%.10g,%.10g,%.10g]}`,
+                        dir[0] * dist, dir[1] * dist, dir[2] * dist);
+    auto resp = parseJSON(post(url("/api/transform"), body_));
+    if (resp["status"].str != "ok")
+        throw new Exception("xfrm_translate failed: " ~ resp.toString());
+}
+
+void runXfrmRotate(JSONValue op) {
+    string axis = "axis" in op ? op["axis"].str : "x";
+    double angleDeg = readNum(op["angle"]);
+    import std.math : PI;
+    double angleRad = angleDeg * PI / 180.0;
+    string handle = (axis == "x") ? "right"
+                  : (axis == "y") ? "up"
+                                  : "fwd";
+    auto axisVec = readAxisDir(handle);
+    auto pivot   = readAcenCenter();
+    auto body_ = format(
+        `{"kind":"rotate","axis":[%.10g,%.10g,%.10g],"angle":%.10g,"pivot":[%.10g,%.10g,%.10g]}`,
+        axisVec[0], axisVec[1], axisVec[2], angleRad,
+        pivot[0], pivot[1], pivot[2]);
+    auto resp = parseJSON(post(url("/api/transform"), body_));
+    if (resp["status"].str != "ok")
+        throw new Exception("xfrm_rotate failed: " ~ resp.toString());
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
         case "bevel":            runBevel(op);      break;
@@ -491,6 +554,9 @@ void runOp(JSONValue op) {
         case "prim_cube":        runPrimCube(op);        break;
         case "query_acen":       runQueryAcen(op);       break;
         case "query_axis":       runQueryAxis(op);       break;
+        case "actr_set":         runActrSet(op);         break;
+        case "xfrm_translate":   runXfrmTranslate(op);   break;
+        case "xfrm_rotate":      runXfrmRotate(op);      break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }

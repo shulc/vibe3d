@@ -437,8 +437,56 @@ def run_op(op):
         run_query_acen(op)
     elif kind == "query_axis":
         run_query_axis(op)
+    elif kind == "actr_set":
+        run_actr_set(op)
+    elif kind == "xfrm_translate":
+        run_xfrm_translate(op)
+    elif kind == "xfrm_rotate":
+        run_xfrm_rotate(op)
     else:
         raise NotImplementedError("modo_dump: unsupported op '%s'" % kind)
+
+
+def run_actr_set(op):
+    """Activate `actr.<preset>` — combined ACEN + AXIS preset (MODO
+    `cmdhelptools.cfg`'s actr.auto / actr.select / actr.element / ...).
+    """
+    preset = op["preset"]
+    lx.eval('tool.set "actr.%s" on 0' % preset)
+
+def run_xfrm_translate(op):
+    """Apply MODO's `xfrm.move` (the canonical translate tool — not
+    `xfrm.translate`, which doesn't exist). Attrs are `X`/`Y`/`Z`
+    (capitalised, not `offX/offY/offZ`). `axis` selects which handle
+    in the action-axis basis to translate along; selected geometry
+    moves by `dist` units along that direction.
+    """
+    axis = op.get("axis", "x").lower()
+    dist = float(op["dist"])
+    lx.eval('tool.set "xfrm.move" on 0')
+    attr_map = {"x": "X", "y": "Y", "z": "Z"}
+    # Zero out the other two so leftover state from a previous case
+    # doesn't bleed in.
+    for a in ("X", "Y", "Z"):
+        lx.eval('tool.attr xfrm.move %s 0' % a)
+    lx.eval('tool.attr xfrm.move %s %g' % (attr_map[axis], dist))
+    lx.eval('tool.doApply')
+    lx.eval('tool.set "xfrm.move" off 0')
+
+def run_xfrm_rotate(op):
+    """Apply MODO's `xfrm.rotate` — consumes both action center (pivot)
+    and action axis (rotation axis = primary `axis` direction of the
+    LXpToolAxis packet). The `angle` attr is in degrees. MODO's
+    xfrm.rotate has no `axis` attr — it always uses the action axis's
+    primary direction; the test's `axis` field is recorded but
+    doesn't change MODO's behaviour (vibe3d-side picks the requested
+    handle direction explicitly when reading from /api/toolpipe).
+    """
+    angle_deg = float(op["angle"])
+    lx.eval('tool.set "xfrm.rotate" on 0')
+    lx.eval('tool.attr xfrm.rotate angle %g' % angle_deg)
+    lx.eval('tool.doApply')
+    lx.eval('tool.set "xfrm.rotate" off 0')
 
 
 # Phase 7.2h: scalar query results accumulated across the case's ops.
