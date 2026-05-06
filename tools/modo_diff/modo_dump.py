@@ -497,11 +497,20 @@ def run_xfrm_rotate(op):
         packet is never populated by the live evaluate.
 
     Net: rotate-based ACEN / AXIS cross-check via tool composition is
-    not reliable headlessly. The interactive MODO GUI computes ACEN /
-    AXIS from a different code path (mouse-driven event translator)
-    that doesn't fire in modo_cl. Workaround paths considered:
+    not reliable headlessly. Verified 2026-05 that the same limitation
+    applies to FULL MODO GUI run under Xvfb (with -cmd:'@<script>'
+    invocation) — `xfrm.scale factor:2` with actr.select on a selected
+    face still pivots at world (0, 0, 0), not at the face centroid.
+    Conclusion: MODO's ACEN/AXIS stages only evaluate during a live
+    mouse-drag via the event translator path; `tool.doApply` bypasses
+    that and reads the default action-center packet (= world origin).
+    This is an architectural MODO design choice, not a headless quirk.
+
+    Workaround paths considered (all deferred):
       - Record an interactive MODO event log and replay it (complex
         to automate, version-fragile).
+      - Drive MODO under Xvfb via xdotool mouse simulation (requires
+        viewport projection math, gizmo screen positions — fragile).
       - Apply rotation via direct vertex math after reading ACEN /
         AXIS from a separate GUI-only export (no headless API for
         that today).
