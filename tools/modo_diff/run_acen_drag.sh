@@ -41,6 +41,7 @@ SYSTEM_SCRIPTS=$(dirname "$MODO_BIN")/extra/Scripts
 DEFAULT_MODES=(select selectauto auto border origin local)
 MODES=("${@:-${DEFAULT_MODES[@]}}")
 PATTERNS_LIST=(${PATTERNS:-single_top asymmetric})
+TOOLS_LIST=(${TOOLS:-scale move})
 
 # UI coordinates for MODO under matchbox WM at 1920x1080.
 FILE_MENU_X=17;     FILE_MENU_Y=10
@@ -156,25 +157,27 @@ ui_click "$FILE_MENU_X"  "$FILE_MENU_Y";  sleep 1
 ui_click "$RESET_ITEM_X" "$RESET_ITEM_Y"; sleep 2
 ui_click "$POPUP_OK_X"   "$POPUP_OK_Y";   sleep 3
 
-# Run the test for each (pattern, mode) combination. Tally results.
+# Run the test for each (tool, pattern, mode) combination.
 PASS_LIST=()
 FAIL_LIST=()
 
+for tool in "${TOOLS_LIST[@]}"; do
 for pattern in "${PATTERNS_LIST[@]}"; do
 for mode in "${MODES[@]}"; do
+  label="${tool}/${pattern}/${mode}"
   blue ""
   blue "============================================================"
-  blue "=== pattern: ${pattern}    mode: actr.${mode}"
+  blue "=== tool: xfrm.${tool}   pattern: ${pattern}   mode: actr.${mode}"
   blue "============================================================"
 
   rm -f /tmp/modo_drag_state.json /tmp/modo_drag_result.json
 
-  ui_type "@modo_drag_setup.py ${mode} ${pattern}"
+  ui_type "@modo_drag_setup.py ${mode} ${pattern} ${tool}"
   sleep 4
 
   if [ ! -f /tmp/modo_drag_state.json ]; then
     red "  ERROR: setup did not produce /tmp/modo_drag_state.json"
-    FAIL_LIST+=("${pattern}/${mode} (setup failed)")
+    FAIL_LIST+=("${label} (setup failed)")
     continue
   fi
 
@@ -186,16 +189,17 @@ for mode in "${MODES[@]}"; do
 
   if [ ! -f /tmp/modo_drag_result.json ]; then
     red "  ERROR: dump did not produce /tmp/modo_drag_result.json"
-    FAIL_LIST+=("${pattern}/${mode} (dump failed)")
+    FAIL_LIST+=("${label} (dump failed)")
     continue
   fi
 
   if MODE="$mode" python3 "$SCRIPT_DIR/verify_acen_drag.py" \
        /tmp/modo_drag_result.json; then
-    PASS_LIST+=("${pattern}/${mode}")
+    PASS_LIST+=("${label}")
   else
-    FAIL_LIST+=("${pattern}/${mode}")
+    FAIL_LIST+=("${label}")
   fi
+done
 done
 done
 

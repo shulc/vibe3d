@@ -1,23 +1,13 @@
 #python
 """Setup: cube + select polygons matching pattern + activate ACEN.<mode>
-+ xfrm.scale. Caller does real mouse drag to trigger ACEN evaluate.
++ xfrm.<tool>. Caller does real mouse drag to trigger ACEN evaluate.
 
 Usage:
-    @modo_drag_setup.py [acen_mode] [pattern]
+    @modo_drag_setup.py [acen_mode] [pattern] [tool]
 
 acen_mode:  select (default), selectauto, auto, border, origin, local
 pattern:    single_top (default) or asymmetric
-
-Patterns:
-    single_top  — unit cube, select the y=+0.5 face (4 verts).
-                  All ACEN modes resolve to the top centroid (0, 0.5, 0)
-                  except origin / auto.
-    asymmetric  — 2x2x2-segment cube, select two adjacent top polygons
-                  (-X half of top face: -X-Z corner + -X+Z corner) and
-                  one disjoint bottom polygon (+X+Z corner). This gives
-                  two non-adjacent clusters whose centroids differ from
-                  the combined selection centroid AND from the bbox
-                  center, so Select / Border / Local diverge.
+tool:       scale (default) or move
 """
 import lx
 import modo
@@ -26,6 +16,7 @@ import json
 args = lx.args()
 acen_mode = args[0] if len(args) > 0 else "select"
 pattern   = args[1] if len(args) > 1 else "single_top"
+tool      = args[2] if len(args) > 2 else "scale"
 
 
 def get_active_mesh():
@@ -105,9 +96,9 @@ for p in mesh.geometry.polygons:
         selected += 1
 
 
-# ---- activate ACEN.<mode> + xfrm.scale
+# ---- activate ACEN.<mode> + xfrm.<tool>
 lx.eval('tool.set "actr.%s" on 0' % acen_mode)
-lx.eval('tool.set "xfrm.scale" on 0')
+lx.eval('tool.set "xfrm.%s" on 0' % tool)
 
 
 # ---- dump initial state
@@ -116,10 +107,11 @@ with open("/tmp/modo_drag_state.json", "w") as f:
     json.dump({
         "acen_mode": acen_mode,
         "pattern":   pattern,
+        "tool":      tool,
         "segments":  segments,
         "selected":  selected,
         "before":    verts,
     }, f, indent=2)
 
-lx.out("setup: pattern=%s acen=%s selected=%d/%d targets" %
-       (pattern, acen_mode, selected, len(targets)))
+lx.out("setup: pattern=%s acen=%s tool=%s selected=%d/%d targets" %
+       (pattern, acen_mode, tool, selected, len(targets)))

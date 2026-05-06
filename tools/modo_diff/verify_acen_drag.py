@@ -252,6 +252,90 @@ def verify_local(pattern, verts_before, verts_after, sel_set):
     return 1
 
 
+def verify_move(mode, pattern, verts_before, verts_after, sel_set):
+    """xfrm.move translates selected verts by a single delta vector.
+    The ACEN pivot does NOT affect the resulting geometry (translate is
+    pivot-invariant); it only changes where the gizmo is drawn. So the
+    pass criteria are weaker than for Scale.
+
+    For ACEN.Local with multiple clusters, each cluster's AXIS may
+    differ (axis.local), so per-cluster deltas can differ. Within one
+    cluster all verts share a delta — pure translation preserves the
+    cluster's bbox dimensions and shifts its centre by exactly delta.
+
+    We pair clusters via bbox shape: the SET of post-drag verts that
+    forms a bbox with the same dimensions as the cluster's pre-drag
+    bbox is the cluster, and its centroid shift is the delta.
+    """
+    untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
+        verts_before, verts_after, sel_set)
+    print(f"  untouched verts preserved: {untouched_ok}  "
+          f"({len(untouched_pre)} verts)")
+    print(f"  moved verts after drag:    {len(moved_after)}")
+    if not moved_after:
+        print("\033[31m  FAIL\033[0m: no verts moved.")
+        return 1
+
+    clusters_pre = selected_clusters(pattern)
+
+    # For each cluster find the n-subset of `moved_after` whose bbox
+    # dimensions match the cluster's pre-drag bbox. Pure translate
+    # preserves bbox dims exactly. Combinatorial search is cheap for our
+    # cluster sizes (n ≤ 10).
+    from itertools import combinations
+
+    def bbox_dims(pts):
+        mn = [min(p[i] for p in pts) for i in range(3)]
+        mx = [max(p[i] for p in pts) for i in range(3)]
+        return [mx[i] - mn[i] for i in range(3)], \
+               [(mn[i] + mx[i]) / 2 for i in range(3)]
+
+    used_indices = set()
+    deltas_per_cluster = []
+    for ci, cluster in enumerate(clusters_pre):
+        n = len(cluster)
+        dim0, cen0 = bbox_dims(cluster)
+        avail = [j for j in range(len(moved_after)) if j not in used_indices]
+
+        best_subset = None
+        best_err = float("inf")
+        for combo in combinations(avail, n):
+            pts = [moved_after[j] for j in combo]
+            dim1, cen1 = bbox_dims(pts)
+            err = sum((dim1[i] - dim0[i]) ** 2 for i in range(3))
+            if err < best_err:
+                best_err = err
+                best_subset = combo
+
+        if best_subset is None:
+            print(f"  cluster {ci}: no candidate subset")
+            deltas_per_cluster.append((False, (0, 0, 0)))
+            continue
+
+        used_indices.update(best_subset)
+        pts = [moved_after[j] for j in best_subset]
+        dim1, cen1 = bbox_dims(pts)
+        dim_match = all(at(dim0[i], dim1[i]) for i in range(3))
+        delta = tuple(cen1[i] - cen0[i] for i in range(3))
+        mark = "OK" if dim_match else "FAIL (dim mismatch)"
+        print(f"  cluster {ci}: delta ≈ "
+              f"({delta[0]:+.4f}, {delta[1]:+.4f}, {delta[2]:+.4f})  "
+              f"[shape {mark}]")
+        if not dim_match:
+            print(f"    pre  dims:  {dim0}")
+            print(f"    post dims:  {dim1}")
+        deltas_per_cluster.append((dim_match, delta))
+
+    all_ok = untouched_ok and all(m for m, _ in deltas_per_cluster)
+    if all_ok:
+        print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (move) "
+              f"each cluster translated rigidly.")
+        return 0
+    print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (move) "
+          f"clusters not rigidly translated.")
+    return 1
+
+
 def main():
     result_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/modo_drag_result.json"
     state_path  = "/tmp/modo_drag_state.json"
@@ -263,15 +347,20 @@ def main():
 
     mode    = os.environ.get("MODE", state.get("acen_mode", "select"))
     pattern = state.get("pattern", "single_top")
+    tool    = state.get("tool",    "scale")
     verts_before = state.get("before", [])
 
     sel = selected_unique_verts(pattern)
     sel_set = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
 
-    print(f"mode: {mode}   pattern: {pattern}")
+    print(f"mode: {mode}   pattern: {pattern}   tool: {tool}")
     print(f"  selection: {len(sel)} unique verts in "
           f"{len(PATTERN_POLYS[pattern])} polygons, "
           f"{len(selected_clusters(pattern))} cluster(s)")
+
+    # xfrm.move is pivot-invariant: weaker pass criteria.
+    if tool == "move":
+        return verify_move(mode, pattern, verts_before, verts_after, sel_set)
 
     # Local mode is special — per-cluster transforms can't be decomposed
     # into a single (k, P), so use a dedicated verifier.
