@@ -42,6 +42,11 @@ DEFAULT_MODES=(select selectauto auto border origin local)
 MODES=("${@:-${DEFAULT_MODES[@]}}")
 PATTERNS_LIST=(${PATTERNS:-single_top asymmetric})
 TOOLS_LIST=(${TOOLS:-scale move})
+# sphere_top + rotate are wired up but not in defaults yet — sphere
+# triggers a setup race (the drag fires before the scene is fully
+# updated for sphere geometry), and rotate via TransformRotate doesn't
+# pick up dragAxis cleanly under our xdotool path. Run with
+# `PATTERNS=sphere_top` or `TOOLS=rotate` to debug.
 
 # UI coordinates for MODO under matchbox WM at 1920x1080.
 FILE_MENU_X=17;     FILE_MENU_Y=10

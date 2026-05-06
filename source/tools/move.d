@@ -273,12 +273,25 @@ public:
                                         handler.axisX, handler.axisY, handler.axisZ);
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
-        // Update gizmo position immediately (always fast)
+        // Phase 4 of doc/acen_modo_parity_plan.md: when ACEN.Local +
+        // axis.local publish per-cluster basis, project the same screen
+        // mouse delta onto EACH cluster's basis. Each cluster moves in
+        // its own world direction, matching MODO's empirical actr.local
+        // + xfrm.move behaviour.
+        auto cp = queryClusterPivots();
+        auto ap = queryClusterAxes();
+        if (cp.active && ap.active && dragAxis <= 2) {
+            applyPerClusterDelta(e.x, e.y, lastMX, lastMY, dragAxis, cp, ap);
+        } else {
+            // Apply delta to CPU vertices (fast inner loop)
+            applyDelta(worldDelta);
+        }
+
+        // Update gizmo position immediately (uses world delta — gizmo
+        // sits at the global ACEN center). Per-cluster verts have
+        // already been moved above; this is just visual feedback.
         dragDelta += worldDelta;
         handler.setPosition(handler.center + worldDelta);
-
-        // Apply delta to CPU vertices (fast: simple float additions, no GPU work)
-        applyDelta(worldDelta);
 
         if (wholeMeshDrag) {
             // Whole-mesh move: update gpuMatrix so app.d sets u_model each frame.
@@ -356,5 +369,39 @@ private:
             mesh.vertices[vi].y += delta.y;
             mesh.vertices[vi].z += delta.z;
         }
+    }
+
+    // Per-cluster delta: project the screen-mouse motion onto each
+    // cluster's basis axis (right/up/fwd, picked by dragAxis) and apply
+    // that per-cluster delta to the cluster's verts. Phase 4 of
+    // doc/acen_modo_parity_plan.md.
+    void applyPerClusterDelta(int mx, int my, int lastMX, int lastMY,
+                              int axisIdx,
+                              ClusterPivots cp, ClusterAxes ap)
+    {
+        import drag : screenAxisDelta;
+        import math : projectToWindowFull;
+        size_t n = ap.right.length;
+        Vec3[] deltas = new Vec3[](n);
+        foreach (cid; 0 .. n) {
+            Vec3 axis;
+            if      (axisIdx == 0) axis = ap.right[cid];
+            else if (axisIdx == 1) axis = ap.up[cid];
+            else                   axis = ap.fwd[cid];
+            Vec3 origin = cp.centers[cid];
+            bool skip;
+            deltas[cid] = screenAxisDelta(mx, my, lastMX, lastMY,
+                                          origin, axis, cachedVp, skip);
+            if (skip) deltas[cid] = Vec3(0, 0, 0);
+        }
+        buildVertexCacheIfNeeded();
+        foreach (vi; vertexIndicesToProcess) {
+            int cid = (vi < cp.clusterOf.length) ? cp.clusterOf[vi] : -1;
+            Vec3 d = (cid >= 0 && cid < cast(int)n) ? deltas[cid] : Vec3(0, 0, 0);
+            mesh.vertices[vi].x += d.x;
+            mesh.vertices[vi].y += d.y;
+            mesh.vertices[vi].z += d.z;
+        }
+        needsGpuUpdate = true;
     }
 }

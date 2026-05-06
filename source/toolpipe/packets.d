@@ -70,6 +70,16 @@ struct AxisPacket {
     // toolpipe.stages.axis.AxisStage.Mode for full list.
     int  type    = 0;
     bool isAuto  = true;
+    // Per-cluster basis (Phase 4 of doc/acen_modo_parity_plan.md).
+    // Mirrors ActionCenterPacket.clusterCenters / clusterOf semantics:
+    // when `clusterRight.length >= 2` the packet is in multi-cluster
+    // mode and tools must use `clusterRight[clusterId]` /
+    // `clusterUp[clusterId]` / `clusterFwd[clusterId]`. Cluster ids
+    // come from ActionCenterPacket.clusterOf so the two packets stay
+    // in lockstep. Lengths match ActionCenterPacket.clusterCenters.
+    Vec3[] clusterRight;
+    Vec3[] clusterUp;
+    Vec3[] clusterFwd;
 }
 
 /// Workplane state — produced by WORK stage in 7.1. Default = world XZ

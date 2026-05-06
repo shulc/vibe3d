@@ -294,6 +294,30 @@ protected:
         return out_;
     }
 
+    // Per-cluster basis from the AXIS stage (Phase 4). Active only when
+    // axis.local has ≥2 disjoint clusters in the current selection (kept
+    // in lockstep with ClusterPivots via shared clusterOf indexing).
+    static struct ClusterAxes {
+        Vec3[] right;
+        Vec3[] up;
+        Vec3[] fwd;
+        bool active() const { return right.length >= 2; }
+    }
+    ClusterAxes queryClusterAxes() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stage              : TaskCode;
+        import toolpipe.packets            : SubjectPacket;
+        ClusterAxes out_;
+        if (g_pipeCtx is null) return out_;
+        if (g_pipeCtx.pipeline.findByTask(TaskCode.Axis) is null) return out_;
+        SubjectPacket subj;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        out_.right = state.axis.clusterRight;
+        out_.up    = state.axis.clusterUp;
+        out_.fwd   = state.axis.clusterFwd;
+        return out_;
+    }
+
     // Active action-center origin sourced from the ACEN stage (phase 7.2a).
     // Falls back to the bbox-center of the selection if no ACEN stage is
     // registered (unit tests that bypass app.d's pipe init). Bbox center

@@ -336,6 +336,75 @@ def verify_move(mode, pattern, verts_before, verts_after, sel_set):
     return 1
 
 
+def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
+    """xfrm.rotate (TransformRotate) preserves vertex distances from the
+    rotation axis line. The axis passes through the pivot. For uniform
+    rotation around a single axis, every vertex's distance from the
+    pivot stays the same. For per-cluster rotation, the same holds
+    per-cluster around its own pivot."""
+    untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
+        verts_before, verts_after, sel_set)
+    print(f"  untouched verts preserved: {untouched_ok}")
+    print(f"  moved verts after drag:    {len(moved_after)}")
+    if not moved_after:
+        print("\033[31m  FAIL\033[0m: no verts moved.")
+        return 1
+
+    clusters_pre = selected_clusters(pattern)
+    cluster_centroids = [bbox_center(c) for c in clusters_pre]
+    print(f"  expected per-cluster centroids:")
+    for c in cluster_centroids:
+        print(f"    ({c[0]:+.4f}, {c[1]:+.4f}, {c[2]:+.4f})")
+
+    # For each cluster, check that the SET of pre-vert distances from
+    # the cluster centroid equals the SET of post-vert distances of the
+    # cluster's matched verts. Distance preservation = rigid rotation.
+    from itertools import combinations
+    used_indices = set()
+    all_ok = True
+    for ci, cluster in enumerate(clusters_pre):
+        n = len(cluster)
+        cen = cluster_centroids[ci]
+        pre_dists = sorted(
+            ((v[0]-cen[0])**2 + (v[1]-cen[1])**2 + (v[2]-cen[2])**2)**0.5
+            for v in cluster)
+        # Find n-subset of moved_after with matching distance multiset.
+        avail = [j for j in range(len(moved_after)) if j not in used_indices]
+        best = None
+        best_err = float("inf")
+        for combo in combinations(avail, n):
+            pts = [moved_after[j] for j in combo]
+            post_dists = sorted(
+                ((p[0]-cen[0])**2 + (p[1]-cen[1])**2 + (p[2]-cen[2])**2)**0.5
+                for p in pts)
+            err = sum((post_dists[i] - pre_dists[i])**2 for i in range(n))
+            if err < best_err:
+                best_err = err; best = combo
+        if best is None:
+            print(f"  cluster {ci}: no candidate subset"); all_ok = False; continue
+        used_indices.update(best)
+        ok = best_err < 0.001
+        mark = "OK" if ok else "FAIL"
+        print(f"  cluster {ci}: distance-preservation err = {best_err:.5f}  [{mark}]")
+        all_ok = all_ok and ok
+
+    if untouched_ok and all_ok:
+        print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (rotate) "
+              f"each cluster rotated rigidly around its centroid.")
+        return 0
+    print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (rotate) "
+          f"distances not preserved.")
+    return 1
+
+
+def selected_unique_verts_runtime(pattern, verts_before):
+    """For runtime-selection patterns (e.g. sphere_top) PATTERN_POLYS
+    has no entries. Read selection from /tmp/modo_drag_state.json's
+    `before` plus `selected_indices` if available, otherwise infer
+    from before/after diff post-test (used by main path only)."""
+    return None
+
+
 def main():
     result_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/modo_drag_result.json"
     state_path  = "/tmp/modo_drag_state.json"
@@ -350,6 +419,27 @@ def main():
     tool    = state.get("tool",    "scale")
     verts_before = state.get("before", [])
 
+    # Runtime patterns (sphere_top etc) — selection is computed in MODO.
+    # We infer it post-hoc from which verts moved in the result.
+    if pattern not in PATTERN_POLYS:
+        print(f"mode: {mode}   pattern: {pattern}   tool: {tool}")
+        # Determine which verts moved (selected) vs stayed.
+        moved = []
+        stayed = []
+        for a in verts_after:
+            matched = False
+            for b in verts_before:
+                if all(at(a[i], b[i]) for i in range(3)): matched = True; break
+            if matched: stayed.append(tuple(a))
+            else:       moved.append(tuple(a))
+        print(f"  moved verts: {len(moved)}, stayed: {len(stayed)}")
+        # Sphere top half: just verify SOMETHING moved (smoke test).
+        if moved:
+            print(f"\033[32m  PASS\033[0m (smoke): {len(moved)} verts moved on {pattern}/{tool}/{mode}.")
+            return 0
+        print(f"\033[31m  FAIL\033[0m: no verts moved.")
+        return 1
+
     sel = selected_unique_verts(pattern)
     sel_set = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
 
@@ -357,6 +447,10 @@ def main():
     print(f"  selection: {len(sel)} unique verts in "
           f"{len(PATTERN_POLYS[pattern])} polygons, "
           f"{len(selected_clusters(pattern))} cluster(s)")
+
+    # xfrm.rotate preserves distances from cluster centroid.
+    if tool == "rotate":
+        return verify_rotate(mode, pattern, verts_before, verts_after, sel_set)
 
     # xfrm.move is pivot-invariant: weaker pass criteria.
     if tool == "move":

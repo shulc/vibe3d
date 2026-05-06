@@ -94,6 +94,36 @@ public:
         state.axis.axIndex = axIndex;
         state.axis.type    = cast(int)mode;
         state.axis.isAuto  = (mode == Mode.Auto);
+
+        // Phase 4 of doc/acen_modo_parity_plan.md: Local mode publishes
+        // per-cluster basis when ACEN.Local has multiple clusters. AxisStage
+        // runs after ActionCenterStage (ordAxis > ordAcen) so the cluster
+        // assignments in state.actionCenter.clusterOf are already filled.
+        state.axis.clusterRight = null;
+        state.axis.clusterUp    = null;
+        state.axis.clusterFwd   = null;
+        if (mode == Mode.Local
+            && state.actionCenter.clusterCenters.length >= 2
+            && mesh_ !is null && editMode_ !is null)
+        {
+            int n = cast(int)state.actionCenter.clusterCenters.length;
+            state.axis.clusterRight = new Vec3[](n);
+            state.axis.clusterUp    = new Vec3[](n);
+            state.axis.clusterFwd   = new Vec3[](n);
+            foreach (cid; 0 .. n) {
+                Vec3 cr, cu, cf;
+                if (computeClusterBasis(state.actionCenter.clusterOf,
+                                        cid, cr, cu, cf)) {
+                    state.axis.clusterRight[cid] = cr;
+                    state.axis.clusterUp[cid]    = cu;
+                    state.axis.clusterFwd[cid]   = cf;
+                } else {
+                    state.axis.clusterRight[cid] = r;
+                    state.axis.clusterUp[cid]    = u;
+                    state.axis.clusterFwd[cid]   = f;
+                }
+            }
+        }
     }
 
     override bool setAttr(string name, string value) {
@@ -283,6 +313,98 @@ private:
         }
         // Edge mode (no robust normal) — fall back to pure bbox-extent
         // sort. Largest extent → right, middle → up, smallest → fwd.
+        int[3] idx = [0, 1, 2];
+        if (extents[idx[1]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[1]; idx[1] = t; }
+        if (extents[idx[2]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[2]; idx[2] = t; }
+        if (extents[idx[2]] > extents[idx[1]]) { int t = idx[1]; idx[1] = idx[2]; idx[2] = t; }
+        right = worldAxes[idx[0]];
+        up    = worldAxes[idx[1]];
+        fwd   = cross(right, up);
+        return true;
+    }
+
+    // Per-cluster basis (Phase 4 of doc/acen_modo_parity_plan.md). Same
+    // algorithm as computeSelectionBboxBasis but restricted to vertices
+    // marked with cluster id `cid` in the supplied `clusterOf` array
+    // (built by ActionCenterStage.Local). Used when ACEN.Local has ≥2
+    // disjoint clusters so each cluster gets its own world-axis-snapped
+    // basis. Returns false when the cluster has no vertices, or in edit
+    // modes (Edges) where the bbox-extent fallback alone is unhelpful.
+    bool computeClusterBasis(const(int)[] clusterOf, int cid,
+                             out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        if (mesh_ is null || editMode_ is null) return false;
+        if (clusterOf.length != mesh_.vertices.length) return false;
+        float[3] mn = [float.infinity, float.infinity, float.infinity];
+        float[3] mx = [-float.infinity, -float.infinity, -float.infinity];
+        Vec3 normalAcc = Vec3(0, 0, 0);
+        bool any = false;
+        foreach (vi, c; clusterOf) {
+            if (c != cid) continue;
+            Vec3 v = mesh_.vertices[vi];
+            float[3] p = [v.x, v.y, v.z];
+            foreach (k; 0 .. 3) {
+                if (p[k] < mn[k]) mn[k] = p[k];
+                if (p[k] > mx[k]) mx[k] = p[k];
+            }
+            any = true;
+        }
+        if (!any) return false;
+
+        // Sum face normals for faces whose verts are all in this cluster
+        // (face mode), or for any face touching a cluster-vertex (vertex
+        // mode). Edge mode lacks normals so we fall through to bbox sort.
+        if (*editMode_ == EditMode.Polygons || *editMode_ == EditMode.Vertices) {
+            foreach (fi, face; mesh_.faces) {
+                bool inCluster = false;
+                if (*editMode_ == EditMode.Polygons) {
+                    if (fi >= mesh_.selectedFaces.length || !mesh_.selectedFaces[fi])
+                        continue;
+                    // A face is in the cluster if all its verts are
+                    // assigned cid. (Mirrors how we project face cluster
+                    // ids onto verts in ACEN's computeLocalFaceClustersFull.)
+                    inCluster = true;
+                    foreach (vi; face) {
+                        if (clusterOf[vi] != cid) { inCluster = false; break; }
+                    }
+                } else {
+                    foreach (vi; face) {
+                        if (clusterOf[vi] == cid) { inCluster = true; break; }
+                    }
+                }
+                if (inCluster)
+                    normalAcc = normalAcc + mesh_.faceNormal(cast(uint)fi);
+            }
+        }
+
+        Vec3[3] worldAxes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+        float[3] extents = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
+        bool haveNormal = normalAcc.x != 0 || normalAcc.y != 0 || normalAcc.z != 0;
+        if (haveNormal && (*editMode_ == EditMode.Polygons
+                           || *editMode_ == EditMode.Vertices))
+        {
+            float ax = abs(normalAcc.x);
+            float ay = abs(normalAcc.y);
+            float az = abs(normalAcc.z);
+            int upIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            float sign = ((upIdx == 0 ? normalAcc.x
+                         : upIdx == 1 ? normalAcc.y
+                                       : normalAcc.z) >= 0) ? 1.0f : -1.0f;
+            up = worldAxes[upIdx] * sign;
+            int rightIdx = -1;
+            float bestExt = -1;
+            foreach (k; 0 .. 3) {
+                if (k == upIdx) continue;
+                if (extents[k] > bestExt + 1e-6f) {
+                    bestExt = extents[k];
+                    rightIdx = k;
+                }
+            }
+            if (rightIdx == -1) return false;
+            right = worldAxes[rightIdx];
+            fwd = cross(right, up);
+            return true;
+        }
+        // Edge mode: pure bbox-extent sort.
         int[3] idx = [0, 1, 2];
         if (extents[idx[1]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[1]; idx[1] = t; }
         if (extents[idx[2]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[2]; idx[2] = t; }

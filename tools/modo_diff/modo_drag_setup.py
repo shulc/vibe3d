@@ -31,14 +31,16 @@ def vset(*verts):
 
 PATTERNS = {
     "single_top": {
-        "segments": 1,
+        "primitive": "cube",
+        "segments":  1,
         "polys": [
             vset((-0.5, 0.5, -0.5), (0.5, 0.5, -0.5),
                  (0.5, 0.5,  0.5), (-0.5, 0.5,  0.5)),
         ],
     },
     "asymmetric": {
-        "segments": 2,
+        "primitive": "cube",
+        "segments":  2,
         "polys": [
             # top, -X, -Z corner
             vset((-0.5, 0.5, -0.5), (0.0, 0.5, -0.5),
@@ -51,25 +53,35 @@ PATTERNS = {
                  (0.5, -0.5,  0.5), (0.0, -0.5,  0.5)),
         ],
     },
+    # Sphere top half: prim.sphere with default tessellation, then we
+    # SELECT all faces whose centroid Y > 0 by walking the geometry at
+    # runtime (no hardcoded vert table — sphere verts depend on segments).
+    "sphere_top": {
+        "primitive": "sphere",
+        "segments":  1,
+        "polys":     None,   # signals "select faces with centroid.y > 0"
+    },
 }
 
 if pattern not in PATTERNS:
     lx.out("unknown pattern '%s', using single_top" % pattern)
     pattern = "single_top"
 spec = PATTERNS[pattern]
-segments = spec["segments"]
-targets  = spec["polys"]
+primitive = spec["primitive"]
+segments  = spec["segments"]
+targets   = spec["polys"]
 
 
-# ---- create the cube via Unit Cube macro pattern, with segments override
+# ---- create the primitive via macro pattern with segments override
 lx.eval("scene.new")
-lx.eval('tool.set "prim.cube" on 0')
-lx.eval('tool.reset "prim.cube"')
-lx.eval('tool.attr prim.cube segmentsX %d' % segments)
-lx.eval('tool.attr prim.cube segmentsY %d' % segments)
-lx.eval('tool.attr prim.cube segmentsZ %d' % segments)
+lx.eval('tool.set "prim.%s" on 0' % primitive)
+lx.eval('tool.reset "prim.%s"' % primitive)
+if primitive == "cube":
+    lx.eval('tool.attr prim.cube segmentsX %d' % segments)
+    lx.eval('tool.attr prim.cube segmentsY %d' % segments)
+    lx.eval('tool.attr prim.cube segmentsZ %d' % segments)
 lx.eval('tool.apply')
-lx.eval('tool.set "prim.cube" off 0')
+lx.eval('tool.set "prim.%s" off 0' % primitive)
 
 
 # ---- enter polygon selection mode and pick all matching faces
@@ -87,10 +99,21 @@ def vert_set(p):
         out.append((round(x, 4), round(y, 4), round(z, 4)))
     return frozenset(out)
 
+def poly_centroid_y(p):
+    ys = [v.position[1] for v in p.vertices]
+    return sum(ys) / max(1, len(ys))
+
 selected = 0
 first = True
 for p in mesh.geometry.polygons:
-    if vert_set(p) in targets:
+    pick = False
+    if targets is None:
+        # Runtime selection: pattern-specific. sphere_top → centroid.y > 0.
+        if pattern == "sphere_top":
+            pick = poly_centroid_y(p) > 0.001
+    else:
+        pick = vert_set(p) in targets
+    if pick:
         p.select(replace=first)
         first = False
         selected += 1
@@ -98,7 +121,13 @@ for p in mesh.geometry.polygons:
 
 # ---- activate ACEN.<mode> + xfrm.<tool>
 lx.eval('tool.set "actr.%s" on 0' % acen_mode)
-lx.eval('tool.set "xfrm.%s" on 0' % tool)
+# `xfrm.rotate` exists but is mode-disabled headless; the
+# `TransformRotate` tool preset wraps `xfrm.transform` with rotate-only
+# attrs (T=0 R=1 S=0) and does respond to drag in the GUI.
+if tool == "rotate":
+    lx.eval('tool.set "TransformRotate" on 0')
+else:
+    lx.eval('tool.set "xfrm.%s" on 0' % tool)
 
 
 # ---- dump initial state
