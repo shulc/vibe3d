@@ -666,6 +666,38 @@ void main(string[] args) {
     reg.commandFactories["workplane.alignToSelection"] = () => cast(Command)
         new WorkplaneAlignToSelectionCommand(&mesh, cameraView, editMode);
 
+    // Phase 7.2f: actr.<mode> — MODO-aligned combined presets that
+    // flip ACEN + AXIS stages atomically. Granular tool.pipe.attr
+    // forms remain available for mix-and-match. Mappings per
+    // phase7_2_plan.md §"Canonical user commands".
+    {
+        import commands.actr : ActrPresetCommand;
+        // (preset, acenMode, axisMode) tuples.
+        static struct Preset { string name; string acen; string axis; }
+        immutable Preset[] presets = [
+            Preset("auto",       "auto",       "auto"),
+            Preset("select",     "select",     "select"),
+            Preset("selectauto", "selectauto", "selectauto"),
+            Preset("element",    "element",    "element"),
+            Preset("local",      "local",      "local"),
+            Preset("origin",     "origin",     "world"),    // axis at origin = world
+            Preset("screen",     "screen",     "screen"),
+            Preset("border",     "border",     "select"),   // border edges + selection-aligned axis
+        ];
+        // IIFE capture by value — the bare-foreach + lambda pattern
+        // closes over the loop variable by reference in D, so without
+        // this all 8 factories would end up calling with the LAST
+        // iteration's mode strings.
+        Command delegate() makeFactory(string nm, string a, string x) {
+            return () => cast(Command)
+                new ActrPresetCommand(&mesh, cameraView, editMode, nm, a, x);
+        }
+        foreach (p; presets) {
+            reg.commandFactories["actr." ~ p.name] =
+                makeFactory(p.name, p.acen, p.axis);
+        }
+    }
+
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
     reg.commandFactories["select.more"]           = () => cast(Command) new SelectMore(&mesh, cameraView, editMode);
