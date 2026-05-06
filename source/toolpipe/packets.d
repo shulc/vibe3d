@@ -53,7 +53,13 @@ struct AxisPacket {
     Vec3 right = Vec3(1, 0, 0);
     Vec3 up    = Vec3(0, 1, 0);
     Vec3 fwd   = Vec3(0, 0, 1);
-    bool isAuto = true;
+    // Hint for axis-aligned consumers: 0/1/2 = principal world axis,
+    // -1 = arbitrary basis (matches MODO LXpToolAxis.axIndex semantics).
+    int  axIndex = -1;
+    // Mode enum (mirrors MODO `axis.<mode>`). 0 = Auto, see
+    // toolpipe.stages.axis.AxisStage.Mode for full list.
+    int  type    = 0;
+    bool isAuto  = true;
 }
 
 /// Workplane state — produced by WORK stage in 7.1. Default = world XZ

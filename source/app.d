@@ -506,7 +506,9 @@ void main(string[] args) {
     g_pipeCtx.pipeline.add(new WorkplaneStage());
     {
         import toolpipe.stages.actcenter : ActionCenterStage;
+        import toolpipe.stages.axis      : AxisStage;
         g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
+        g_pipeCtx.pipeline.add(new AxisStage());
     }
 
     Registry reg;

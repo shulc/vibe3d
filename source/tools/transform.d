@@ -224,26 +224,29 @@ protected:
         );
     }
 
-    // Active world-space basis for transform tools. Same convention as
-    // create-tool gizmos: at auto-mode the basis is the camera-snapped
-    // world axis triple (pickMostFacingPlane), at non-auto it's the
-    // WorkplaneStage's (axis1, normal, axis2). Keeps Move/Rotate/Scale
-    // gizmos aligned with what BoxTool / SphereTool / ... actually use,
-    // so corner-gizmo and tool-gizmo never disagree.
-    // Per-frame call from each tool's draw(); cheap (no matrix build).
+    // Active world-space basis for transform tools. Phase 7.2c: routed
+    // through the AxisStage so Move/Rotate/Scale gizmos respect the
+    // user-selectable axis mode (`tool.pipe.attr axis mode <X>`).
+    // Default mode=Auto + WorkplaneStage in auto = pickMostFacingPlane,
+    // matching the pre-7.2 behaviour. Falls back to that direct path
+    // when no AxisStage is registered (unit tests bypass app.d's pipe
+    // init).
     void currentBasis(out Vec3 ax, out Vec3 ay, out Vec3 az) {
-        import toolpipe.pipeline       : g_pipeCtx;
-        import toolpipe.stages.workplane : WorkplaneStage;
-        import toolpipe.stage          : TaskCode;
-        import tools.create_common      : pickMostFacingPlane;
-        if (g_pipeCtx !is null) {
-            auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work);
-            if (wp !is null && !wp.isAuto) {
-                Vec3 n, a1, a2;
-                wp.currentBasis(n, a1, a2);
-                ax = a1; ay = n; az = a2;
-                return;
-            }
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stage              : TaskCode;
+        import toolpipe.packets            : SubjectPacket;
+        import tools.create_common         : pickMostFacingPlane;
+        if (g_pipeCtx !is null
+            && g_pipeCtx.pipeline.findByTask(TaskCode.Axis) !is null)
+        {
+            SubjectPacket subj;
+            auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+            // Mapping per phase7_2_plan §6: right=axisX, up=axisY (=normal
+            // in workplane mode), fwd=axisZ.
+            ax = state.axis.right;
+            ay = state.axis.up;
+            az = state.axis.fwd;
+            return;
         }
         auto bp = pickMostFacingPlane(cachedVp);
         ax = bp.axis1; ay = bp.normal; az = bp.axis2;
