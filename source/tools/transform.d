@@ -248,4 +248,25 @@ protected:
         auto bp = pickMostFacingPlane(cachedVp);
         ax = bp.axis1; ay = bp.normal; az = bp.axis2;
     }
+
+    // Active action-center origin sourced from the ACEN stage (phase 7.2a).
+    // Falls back to the legacy mesh.selectionCentroid* path if no ACEN
+    // stage is registered (unit tests that bypass app.d's pipe init).
+    Vec3 queryActionCenter() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stage              : TaskCode;
+        import toolpipe.packets            : SubjectPacket;
+        if (g_pipeCtx !is null
+            && g_pipeCtx.pipeline.findByTask(TaskCode.Acen) !is null)
+        {
+            SubjectPacket subj;
+            auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+            return state.actionCenter.center;
+        }
+        // Fallback (no ACEN registered): preserve legacy behaviour.
+        if (*editMode == EditMode.Vertices) return mesh.selectionCentroidVertices();
+        if (*editMode == EditMode.Edges)    return mesh.selectionCentroidEdges();
+        if (*editMode == EditMode.Polygons) return mesh.selectionCentroidFaces();
+        return Vec3(0, 0, 0);
+    }
 }

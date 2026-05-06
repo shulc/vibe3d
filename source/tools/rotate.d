@@ -92,14 +92,8 @@ public:
             propDeg      = Vec3(0, 0, 0);
             origVertices = mesh.vertices.dup;
             centerManual = false;
-            if (*editMode == EditMode.Vertices)
-                cachedCenter = mesh.selectionCentroidVertices();
-            else if (*editMode == EditMode.Edges)
-                cachedCenter = mesh.selectionCentroidEdges();
-            else if (*editMode == EditMode.Polygons)
-                cachedCenter = mesh.selectionCentroidFaces();
-            else
-                cachedCenter = Vec3(0, 0, 0);
+            // Phase 7.2a: pivot via ACEN stage.
+            cachedCenter = queryActionCenter();
         }
 
         if (!centerManual)

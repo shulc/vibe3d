@@ -504,6 +504,10 @@ void main(string[] args) {
     // (auto / worldX / worldY / worldZ).
     g_pipeCtx = new ToolPipeContext();
     g_pipeCtx.pipeline.add(new WorkplaneStage());
+    {
+        import toolpipe.stages.actcenter : ActionCenterStage;
+        g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
+    }
 
     Registry reg;
     reg.toolFactories["move"]   = () {

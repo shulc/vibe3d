@@ -69,14 +69,9 @@ public:
             // the gizmo snaps back to the selection centroid.
             centerManual = false;
 
-            if (*editMode == EditMode.Vertices)
-                cachedCenter = mesh.selectionCentroidVertices();
-            else if (*editMode == EditMode.Edges)
-                cachedCenter = mesh.selectionCentroidEdges();
-            else if (*editMode == EditMode.Polygons)
-                cachedCenter = mesh.selectionCentroidFaces();
-            else
-                cachedCenter = Vec3(0, 0, 0);
+            // Phase 7.2a: pull the pivot from ACEN stage (mode=Auto by
+            // default ⇒ same selection-centroid-or-geometry behaviour).
+            cachedCenter = queryActionCenter();
             dragDelta = Vec3(0, 0, 0);
             propInput = Vec3(0, 0, 0);
         }

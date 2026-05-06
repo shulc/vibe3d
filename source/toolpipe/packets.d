@@ -39,9 +39,12 @@ struct SubjectPacket {
 struct ActionCenterPacket {
     Vec3 center = Vec3(0, 0, 0);
     // Whether this center is "auto" (recomputes on selection change) or
-    // "manual" (sticky until user moves it). Maps to MODO's A column in
-    // the Tool Pipe panel.
+    // "manual" / preset-driven (sticky until user moves it). Maps to
+    // MODO's A column in the Tool Pipe panel.
     bool isAuto = true;
+    // Mode enum (mirrors MODO `actr.<mode>`). 0 = Auto, see
+    // toolpipe.stages.actcenter.ActionCenterStage.Mode for full list.
+    int  type   = 0;
 }
 
 /// LXsP_TOOL_AXIS — orientation produced by AXIS stage in 7.2.
