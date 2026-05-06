@@ -507,13 +507,24 @@ def run_xfrm_rotate(op):
     This is an architectural MODO design choice, not a headless quirk.
 
     Workaround paths considered (all deferred):
-      - Record an interactive MODO event log and replay it (complex
-        to automate, version-fragile).
+      - Record an interactive MODO event log and replay it. Verified
+        2026-05 that MODO has NO mouse-event recording — its `.lxm`
+        macros (via `macro.record` / `macro.runFile`) only capture
+        command sequences (`tool.set X on; tool.attr Y Z; tool.apply`)
+        which replay identically to direct command invocation, so
+        same ACEN limitation. No `event.replay` / `event.simulate`
+        / `pointer.move` / `tool.simulateDrag` / `cmds.executeHaul`
+        in cmdhelp.cfg.
       - Drive MODO under Xvfb via xdotool mouse simulation (requires
         viewport projection math, gizmo screen positions — fragile).
       - Apply rotation via direct vertex math after reading ACEN /
         AXIS from a separate GUI-only export (no headless API for
         that today).
+
+    Also tried 2026-05: `tool.apply` (the user-facing apply) instead
+    of `tool.doApply` (the internal Post Mode). MODO docs distinguish
+    them but the result is identical — both produce pivot=(0,0,0)
+    even under full GUI MODO with Xvfb display.
     """
     angle_deg = float(op["angle"])
     lx.eval('tool.set "xfrm.rotate" on 0')
