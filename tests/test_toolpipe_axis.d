@@ -137,6 +137,44 @@ unittest { // Element mode — face normal as up
 }
 
 // -------------------------------------------------------------------------
+// 7.2e+: Select mode — bbox-extent-sort. Map: largest extent → right,
+// middle → up, smallest → fwd; fwd = cross(right, up) (always right-
+// handed). Verified against MODO Selection auto-axis behaviour.
+// -------------------------------------------------------------------------
+
+unittest { // Select mode — selecting top face (y=0.5) of unit cube
+    resetCube();
+    // Top face = [3,7,6,2]; bbox spans X=1, Y=0, Z=1 → extents
+    // (1, 0, 1). Tie between X and Z: stable sort keeps X first.
+    // Result: right=X (largest, X picked first on tie), up=Z,
+    // fwd = X×Z = -Y.
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode select");
+    auto a = getAxisAttrs();
+    assert(a["mode"] == "select", "got " ~ a["mode"]);
+    // right = X (1,0,0)
+    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3, "rightX: " ~ a["rightX"]);
+    assert(abs(floatAttr(a, "rightY")) < 1e-3, "rightY: " ~ a["rightY"]);
+    assert(abs(floatAttr(a, "rightZ")) < 1e-3, "rightZ: " ~ a["rightZ"]);
+    // up = Z (0,0,1)
+    assert(abs(floatAttr(a, "upZ") - 1.0f) < 1e-3, "upZ: " ~ a["upZ"]);
+    // fwd = right×up = X×Z = -Y → (0,-1,0)
+    assert(abs(floatAttr(a, "fwdY") - (-1.0f)) < 1e-3, "fwdY: " ~ a["fwdY"]);
+}
+
+unittest { // Select mode — back face (z=-0.5) gives extents (1,1,0)
+    resetCube();
+    // Face 0 = back, verts at z=-0.5; X-extent=1, Y=1, Z=0.
+    // Tie X vs Y: X wins → right=X. Y → up. fwd = X×Y = Z.
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", "tool.pipe.attr axis mode select");
+    auto a = getAxisAttrs();
+    assert(abs(floatAttr(a, "rightX") - 1.0f) < 1e-3, "rightX: " ~ a["rightX"]);
+    assert(abs(floatAttr(a, "upY") - 1.0f) < 1e-3, "upY: " ~ a["upY"]);
+    assert(abs(floatAttr(a, "fwdZ") - 1.0f) < 1e-3, "fwdZ: " ~ a["fwdZ"]);
+}
+
+// -------------------------------------------------------------------------
 // 7.2c: Unknown mode rejected.
 // -------------------------------------------------------------------------
 

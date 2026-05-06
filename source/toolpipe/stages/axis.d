@@ -160,6 +160,8 @@ private:
                 goto case Mode.Auto;       // fall back to workplane basis
             case Mode.Select:
             case Mode.SelectAuto:
+                if (computeSelectionBboxBasis(r, u, f)) return;
+                goto case Mode.Auto;
             case Mode.Local:
             case Mode.Screen: {
                 // 7.2 follow-up — degrade to Auto basis (workplane).
@@ -172,6 +174,74 @@ private:
                 return;
             }
         }
+    }
+
+    // Selection bbox-extent-sorted basis (MODO Selection / Selection
+    // Center Auto Axis algorithm). Walks the verts touched by the
+    // active selection, builds a world-axis-aligned bbox, then assigns
+    // handles by decreasing extent: largest → right, middle → up,
+    // smallest → fwd. fwd is computed as cross(right, up) so the basis
+    // is always strictly right-handed (avoids sign-flip when the
+    // extent order yields a left-handed permutation of XYZ).
+    bool computeSelectionBboxBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        if (mesh_ is null || editMode_ is null) return false;
+        bool[] visited = new bool[](mesh_.vertices.length);
+        float[3] mn = [float.infinity, float.infinity, float.infinity];
+        float[3] mx = [-float.infinity, -float.infinity, -float.infinity];
+        bool any = false;
+        void touch(uint vi) {
+            if (visited[vi]) return;
+            visited[vi] = true;
+            Vec3 v = mesh_.vertices[vi];
+            float[3] p = [v.x, v.y, v.z];
+            foreach (k; 0 .. 3) {
+                if (p[k] < mn[k]) mn[k] = p[k];
+                if (p[k] > mx[k]) mx[k] = p[k];
+            }
+            any = true;
+        }
+        final switch (*editMode_) {
+            case EditMode.Polygons:
+                if (!mesh_.hasAnySelectedFaces()) return false;
+                foreach (i, face; mesh_.faces) {
+                    if (!(i < mesh_.selectedFaces.length
+                          && mesh_.selectedFaces[i])) continue;
+                    foreach (vi; face) touch(vi);
+                }
+                break;
+            case EditMode.Edges:
+                if (!mesh_.hasAnySelectedEdges()) return false;
+                foreach (i, edge; mesh_.edges) {
+                    if (!(i < mesh_.selectedEdges.length
+                          && mesh_.selectedEdges[i])) continue;
+                    foreach (vi; edge) touch(vi);
+                }
+                break;
+            case EditMode.Vertices:
+                if (!mesh_.hasAnySelectedVertices()) return false;
+                foreach (vi, sel; mesh_.selectedVertices)
+                    if (sel) touch(cast(uint)vi);
+                break;
+        }
+        if (!any) return false;
+        float ex = mx[0] - mn[0];
+        float ey = mx[1] - mn[1];
+        float ez = mx[2] - mn[2];
+        // Pair (extent, world-axis-vector) and sort by extent decreasing.
+        Vec3[3] worldAxes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
+        float[3] extents = [ex, ey, ez];
+        int[3] idx = [0, 1, 2];
+        // Bubble-sort 3 elements by extent decreasing — preserves the
+        // natural (X, Y, Z) order when ties so axis-aligned cubes still
+        // give the canonical basis.
+        if (extents[idx[1]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[1]; idx[1] = t; }
+        if (extents[idx[2]] > extents[idx[0]]) { int t = idx[0]; idx[0] = idx[2]; idx[2] = t; }
+        if (extents[idx[2]] > extents[idx[1]]) { int t = idx[1]; idx[1] = idx[2]; idx[2] = t; }
+        right = worldAxes[idx[0]];
+        up    = worldAxes[idx[1]];
+        // fwd = right × up — always right-handed, ±worldAxes[idx[2]].
+        fwd = cross(right, up);
+        return true;
     }
 
     // Element mode basis: uses the first selected element's normal as
