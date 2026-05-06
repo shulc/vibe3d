@@ -16,13 +16,13 @@ roadmap if/when full parity is wanted (e.g. for Modo file
 import/export round-trip, or to remove a long-standing footgun where
 artists' muscle memory from MODO produces unexpected pivots in vibe3d).
 
-## Status snapshot (2026-05-06)
+## Status snapshot (2026-05-07)
 
 | Phase | Status | Result |
 |---|---|---|
 | 1 — Auto: drag-projected pivot          | ⬜ not started | — |
-| 2 — Select: bbox center, not vert avg   | ⬜ not started | — |
-| 3 — Local: per-cluster pivots in Tool   | ⬜ not started | — |
+| 2 — Select: bbox center, not vert avg   | ✅ done | `asymmetric/select` + `selectauto` PASS in `run_acen_drag.sh`; all 47 unit tests still pass (symmetric inputs). Commit b7c96ca. |
+| 3 — Local: per-cluster pivots in Tool   | ⬜ not started | `asymmetric/local` is the only remaining FAIL in the cross-check. |
 
 ## Recommended order
 
