@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.scale + actr.select on asymmetric pattern",
+  "tool": "scale",
+  "pattern": "asymmetric",
+  "acen_mode": "select"
+}

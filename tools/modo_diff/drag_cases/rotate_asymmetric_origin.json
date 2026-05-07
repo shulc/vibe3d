@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.rotate + actr.origin on asymmetric pattern",
+  "tool": "rotate",
+  "pattern": "asymmetric",
+  "acen_mode": "origin"
+}

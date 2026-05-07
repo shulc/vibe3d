@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """Cross-check vibe3d ACEN modes against MODO via real mouse-drag.
 
-Architecture: launches Xvfb + matchbox + MODO ONCE; between tests uses
-File→Reset and a fresh setup-script run (NOT a MODO restart).
+Architecture: launches Xvfb + matchbox + MODO ONCE; iterates the JSON
+cases under `drag_cases/` (mirrors `tools/modo_diff/cases/`'s pattern
+for the modo_cl harness). Each case is one (tool, pattern, acen_mode)
+combination plus optional overrides (drag start / direction, etc.);
+default drag is +100 px right from (1020, 560) which lands on a
+gizmo handle for both small sphere and larger cube primitives.
 
-Why not bash like the previous run_acen_drag.sh: this is fundamentally
-state-driven shell-out + JSON parsing + waits + retry — Python's
-subprocess + pathlib + json keep the orchestration readable. Each test
-case is a function call instead of an inlined bash block.
+Usage:
+  ./run_acen_drag.py                       # run every case in drag_cases/
+  ./run_acen_drag.py scale_single_top_select  # one case (filename stem)
+  ./run_acen_drag.py 'rotate_*'            # glob
+  ./run_acen_drag.py --keep                # leave Xvfb/MODO running after
 
 Requires: Xvfb, matchbox-window-manager, xdotool, ImageMagick (`import`),
 python3. Override via env: MODO_BIN, MODO_LD, MODO_CONTENT.
 
-Usage:
-  ./run_acen_drag.py                   # full default matrix
-  ./run_acen_drag.py select origin     # subset of modes
-  PATTERNS=sphere_top TOOLS=rotate ./run_acen_drag.py local
+Per-case status:
+  PASS — verifier returned 0
+  FAIL — verifier returned non-zero
+  ERROR — setup/dump didn't produce its JSON within the timeout
 """
+import argparse
+import fnmatch
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -34,6 +40,7 @@ MODO_LD        = os.environ.get("MODO_LD", "/home/ashagarov/.local/lib")
 MODO_CONTENT   = os.environ.get(
     "MODO_CONTENT", "/home/ashagarov/.luxology/Content")
 SCRIPT_DIR     = Path(__file__).resolve().parent
+CASES_DIR      = SCRIPT_DIR / "drag_cases"
 USER_SCRIPTS   = Path.home() / ".luxology" / "Scripts"
 SYSTEM_SCRIPTS = MODO_BIN.parent / "extra" / "Scripts"
 LOG_DIR        = Path("/tmp")
@@ -43,12 +50,7 @@ FILE_MENU_X,  FILE_MENU_Y  = 17,   10
 RESET_ITEM_X, RESET_ITEM_Y = 40,   778
 POPUP_OK_X,   POPUP_OK_Y   = 1175, 538
 CMD_BAR_X,    CMD_BAR_Y    = 1750, 1063
-DRAG_START_X, DRAG_START_Y = 1020, 560
-
-# Default matrix (overridable via env or argv).
-DEFAULT_MODES    = ["select", "selectauto", "auto", "border", "origin", "local"]
-DEFAULT_TOOLS    = ["scale", "move", "rotate"]
-DEFAULT_PATTERNS = ["single_top", "asymmetric", "sphere_top"]
+DEFAULT_DRAG = (1020, 560, 100, 0)   # (start_x, start_y, dx, dy)
 
 
 # ---- ANSI ------------------------------------------------------------
@@ -61,14 +63,11 @@ def blue(s):  return f"\033[34m{s}\033[0m"
 def display_env(extra=None):
     e = os.environ.copy()
     e["DISPLAY"] = DISPLAY
-    if extra:
-        e.update(extra)
+    if extra: e.update(extra)
     return e
 
 
 def xdo(*args):
-    """Run xdotool with DISPLAY set, ignore errors (xdotool returns
-    non-zero for benign no-window-focus warnings under matchbox)."""
     subprocess.run(["xdotool", *args], env=display_env(),
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -78,19 +77,14 @@ def screenshot(path):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def click(x, y, settle=0.3):
+def click(x, y, settle=0.15):
     xdo("mousemove", str(x), str(y))
     time.sleep(settle)
     xdo("click", "1")
 
 
 def cmd_bar(cmd, wait_for=None, timeout=8.0):
-    """Type a command into MODO's bottom-right command bar and Enter.
-    If `wait_for` is a path, poll for it (100ms granularity) up to
-    `timeout` seconds — much faster than a fixed `time.sleep` since
-    MODO usually finishes the command in <1s but we used to wait 3-4s.
-    Returns True if the path appeared (or wait_for is None)."""
-    click(CMD_BAR_X, CMD_BAR_Y, settle=0.15)
+    click(CMD_BAR_X, CMD_BAR_Y)
     time.sleep(0.15)
     xdo("type", "--delay", "20", cmd)
     time.sleep(0.15)
@@ -107,21 +101,20 @@ def cmd_bar(cmd, wait_for=None, timeout=8.0):
 
 
 def file_reset():
-    """Layout → File → Reset → OK. Resets gizmo state between tests so
-    each iteration starts from the same camera + viewport configuration."""
     click(FILE_MENU_X,  FILE_MENU_Y);  time.sleep(1)
     click(RESET_ITEM_X, RESET_ITEM_Y); time.sleep(2)
     click(POPUP_OK_X,   POPUP_OK_Y);   time.sleep(3)
 
 
-def mouse_drag(x, y, dx=100):
-    """Drag from (x,y) to (x+dx, y) in five 20-px steps."""
+def mouse_drag(x, y, dx, dy):
     xdo("mousemove", str(x), str(y))
     time.sleep(0.2)
     xdo("mousedown", "1")
     time.sleep(0.15)
-    for step in range(20, dx + 1, 20):
-        xdo("mousemove", str(x + step), str(y))
+    steps = max(abs(dx), abs(dy)) // 20 or 1
+    for i in range(1, steps + 1):
+        xdo("mousemove", str(x + dx * i // steps),
+                          str(y + dy * i // steps))
         time.sleep(0.03)
     time.sleep(0.15)
     xdo("mouseup", "1")
@@ -139,7 +132,7 @@ def check_prereqs():
     if not MODO_BIN.exists() or not os.access(MODO_BIN, os.X_OK):
         print(red(f"ERROR: {MODO_BIN} not executable"))
         sys.exit(2)
-    for d in (USER_SCRIPTS, SYSTEM_SCRIPTS):
+    for d in (USER_SCRIPTS, SYSTEM_SCRIPTS, CASES_DIR):
         if not d.is_dir():
             print(red(f"ERROR: {d} missing"))
             sys.exit(2)
@@ -173,9 +166,9 @@ def start_xvfb():
         stdout=open(LOG_DIR / "modo_acen_xvfb.log", "w"),
         stderr=subprocess.STDOUT, start_new_session=True)
     time.sleep(2)
-    r = subprocess.run(["xdpyinfo"], env=display_env(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if r.returncode != 0:
+    if subprocess.run(["xdpyinfo"], env=display_env(),
+                      stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode != 0:
         print(red("ERROR: Xvfb failed to come up"))
         sys.exit(3)
 
@@ -214,7 +207,6 @@ def launch_modo():
         env=env,
         stdout=open(LOG_DIR / "modo_acen_log.txt", "w"),
         stderr=subprocess.STDOUT, start_new_session=True)
-
     print(blue("=== waiting for viewport render ==="))
     for i in range(60):
         if proc.poll() is not None:
@@ -230,46 +222,75 @@ def launch_modo():
     sys.exit(4)
 
 
-# ---- per-test orchestration -----------------------------------------
-def run_one(tool, pattern, mode):
-    """Run setup → drag → dump → verify for one (tool, pattern, mode).
-    Returns ("PASS", None) or ("FAIL", "reason").
+# ---- case discovery -------------------------------------------------
+def discover_cases(filters):
+    """Walk drag_cases/*.json. If `filters` is non-empty, keep only
+    cases whose stem matches ANY filter (glob-style)."""
+    cases = sorted(CASES_DIR.glob("*.json"))
+    if not cases:
+        print(red(f"ERROR: no cases in {CASES_DIR}"))
+        sys.exit(2)
+    if not filters:
+        return cases
+    keep = []
+    for c in cases:
+        if any(fnmatch.fnmatch(c.stem, pat) for pat in filters):
+            keep.append(c)
+    if not keep:
+        print(red(f"ERROR: no case matches: {' '.join(filters)}"))
+        sys.exit(2)
+    return keep
 
-    NOTE: relies on the setup script's `scene.new` to clear scene state
-    between tests, NOT File→Reset. File→Reset between every iteration
-    (instead of once at MODO startup) tends to leave the layout in a
-    state where the cmd bar / popups don't respond reliably — empirically
-    only the first test passes when File→Reset runs per-iteration.
-    `scene.new` is enough to reset mesh + selection + tool state."""
+
+# ---- per-case orchestration -----------------------------------------
+def run_case(path):
+    """Run setup → drag → dump → verify for one case file. Returns
+    ('PASS'|'FAIL'|'ERROR', detail)."""
+    spec = json.loads(path.read_text())
+    tool      = spec["tool"]
+    pattern   = spec["pattern"]
+    acen_mode = spec["acen_mode"]
+    drag      = spec.get("drag", DEFAULT_DRAG)
+    if len(drag) != 4:
+        return "ERROR", f"drag must be [x, y, dx, dy] not {drag}"
+
     for f in ("/tmp/modo_drag_state.json", "/tmp/modo_drag_result.json"):
         try: os.remove(f)
         except OSError: pass
 
-    if not cmd_bar(f"@modo_drag_setup.py {mode} {pattern} {tool}",
+    if not cmd_bar(f"@modo_drag_setup.py {acen_mode} {pattern} {tool}",
                    wait_for="/tmp/modo_drag_state.json", timeout=8):
-        return "FAIL", "setup did not produce state.json"
+        return "ERROR", "setup did not produce state.json"
 
-    mouse_drag(DRAG_START_X, DRAG_START_Y)
-    time.sleep(0.5)   # let MODO process the drag before dumping
+    mouse_drag(*drag)
+    time.sleep(0.5)
 
     if not cmd_bar("@modo_dump_verts.py",
                    wait_for="/tmp/modo_drag_result.json", timeout=6):
-        return "FAIL", "dump did not produce result.json"
+        return "ERROR", "dump did not produce result.json"
 
-    env = {**os.environ, "MODE": mode}
+    env = {**os.environ, "MODE": acen_mode}
     r = subprocess.run(
         ["python3", str(SCRIPT_DIR / "verify_acen_drag.py"),
          "/tmp/modo_drag_result.json"], env=env)
-    return ("PASS", None) if r.returncode == 0 else ("FAIL", "verify")
+    return ("PASS", None) if r.returncode == 0 else ("FAIL", "verifier")
 
 
 # ---- main -----------------------------------------------------------
 def main():
-    modes    = sys.argv[1:] if len(sys.argv) > 1 else DEFAULT_MODES
-    tools    = os.environ.get("TOOLS",    " ".join(DEFAULT_TOOLS)).split()
-    patterns = os.environ.get("PATTERNS", " ".join(DEFAULT_PATTERNS)).split()
+    ap = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__)
+    ap.add_argument("filters", nargs="*",
+                    help="case filename stems / glob patterns; "
+                         "default = run every case")
+    ap.add_argument("--keep", action="store_true",
+                    help="leave Xvfb/MODO running after the matrix completes")
+    args = ap.parse_args()
 
     check_prereqs()
+    cases = discover_cases(args.filters)
+    print(blue(f"=== {len(cases)} case(s) selected ==="))
     cleanup()
 
     try:
@@ -278,44 +299,41 @@ def main():
         copy_scripts()
         launch_modo()
 
-        # ONE-TIME File → Reset → OK so subsequent runs start from the
-        # default layout. Per-test reset breaks the cmd bar — see
-        # run_one's docstring.
-        print(blue("=== File → Reset → OK ==="))
+        print(blue("=== File → Reset → OK (one-time) ==="))
         file_reset()
 
-        passed, failed = [], []
-        for tool in tools:
-            for pattern in patterns:
-                for mode in modes:
-                    label = f"{tool}/{pattern}/{mode}"
-                    print()
-                    print(blue("="*60))
-                    print(blue(f"=== {label}"))
-                    print(blue("="*60))
-                    status, why = run_one(tool, pattern, mode)
-                    if status == "PASS":
-                        passed.append(label)
-                    else:
-                        failed.append((label, why))
+        passed, failed, errored = [], [], []
+        for path in cases:
+            print()
+            print(blue("="*60))
+            print(blue(f"=== {path.stem}"))
+            print(blue("="*60))
+            status, why = run_case(path)
+            if   status == "PASS":  passed.append(path.stem)
+            elif status == "FAIL":  failed.append((path.stem, why))
+            else:                   errored.append((path.stem, why))
 
         print()
         print(blue("="*60))
         print(blue("=== summary"))
         print(blue("="*60))
-        for p in passed: print(green(f"  PASS: {p}"))
-        for label, why in failed:
-            tag = f" ({why})" if why else ""
-            print(red(f"  FAIL: {label}{tag}"))
+        for name in passed:
+            print(green(f"  PASS:  {name}"))
+        for name, why in failed:
+            print(red(f"  FAIL:  {name}{(' (' + why + ')') if why else ''}"))
+        for name, why in errored:
+            print(red(f"  ERROR: {name} ({why})"))
 
         print()
-        if not failed:
-            print(green(f"All {len(passed)} cells PASS."))
+        total = len(passed) + len(failed) + len(errored)
+        if not failed and not errored:
+            print(green(f"All {total} cases PASS."))
             return 0
-        print(red(f"{len(failed)} of {len(passed) + len(failed)} cells FAILED."))
+        print(red(f"{len(failed) + len(errored)} of {total} cases failed."))
         return 1
     finally:
-        cleanup()
+        if not args.keep:
+            cleanup()
 
 
 if __name__ == "__main__":

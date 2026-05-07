@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.rotate + actr.selectauto on sphere_top pattern",
+  "tool": "rotate",
+  "pattern": "sphere_top",
+  "acen_mode": "selectauto"
+}

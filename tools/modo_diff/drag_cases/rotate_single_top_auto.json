@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.rotate + actr.auto on single_top pattern",
+  "tool": "rotate",
+  "pattern": "single_top",
+  "acen_mode": "auto"
+}

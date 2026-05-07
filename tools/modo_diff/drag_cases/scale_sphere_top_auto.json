@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.scale + actr.auto on sphere_top pattern",
+  "tool": "scale",
+  "pattern": "sphere_top",
+  "acen_mode": "auto"
+}

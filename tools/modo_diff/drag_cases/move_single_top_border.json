@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.move + actr.border on single_top pattern",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "border"
+}

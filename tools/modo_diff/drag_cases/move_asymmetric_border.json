@@ -1,0 +1,6 @@
+{
+  "_comment": "baseline: xfrm.move + actr.border on asymmetric pattern",
+  "tool": "move",
+  "pattern": "asymmetric",
+  "acen_mode": "border"
+}
