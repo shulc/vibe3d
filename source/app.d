@@ -973,6 +973,76 @@ void main(string[] args) {
             buf.put(`]}`);
             return buf.data;
         });
+
+        // Pipeline evaluation snapshot — runs pipeline.evaluate once with
+        // the current mesh + selection + camera and returns the resulting
+        // ActionCenterPacket / AxisPacket as JSON. The modo_diff parity
+        // harness reads this to compare vibe3d's computed pivot/axis to
+        // MODO's empirically-derived ones for the same case.
+        //
+        // Called from the HTTP thread; pipeline.evaluate touches View
+        // state (cameraView.viewport() recomputes view/proj). Tests are
+        // expected to be quiescent (no concurrent edits) when probing.
+        httpServer.setToolPipeEvalProvider(() {
+            import std.array       : appender;
+            import std.format      : format;
+            import toolpipe.pipeline : g_pipeCtx;
+            import toolpipe.packets  : SubjectPacket;
+            import math              : Vec3;
+
+            auto buf = appender!string;
+            if (g_pipeCtx is null) {
+                buf.put(`{"error":"pipeline not initialised"}`);
+                return buf.data;
+            }
+            SubjectPacket subj;
+            subj.mesh             = &mesh;
+            subj.editMode         = editMode;
+            subj.selectedVertices = mesh.selectedVertices.dup;
+            subj.selectedEdges    = mesh.selectedEdges.dup;
+            subj.selectedFaces    = mesh.selectedFaces.dup;
+            auto vp    = cameraView.viewport();
+            auto state = g_pipeCtx.pipeline.evaluate(subj, vp);
+
+            void putVec3(Vec3 v) {
+                buf.put(format(`[%f,%f,%f]`, v.x, v.y, v.z));
+            }
+            void putVec3List(Vec3[] list) {
+                buf.put("[");
+                foreach (i, v; list) {
+                    if (i) buf.put(",");
+                    putVec3(v);
+                }
+                buf.put("]");
+            }
+
+            buf.put(`{"actionCenter":{"center":`);
+            putVec3(state.actionCenter.center);
+            buf.put(format(`,"isAuto":%s,"type":%d,"clusterCenters":`,
+                           state.actionCenter.isAuto ? "true" : "false",
+                           state.actionCenter.type));
+            putVec3List(state.actionCenter.clusterCenters);
+            buf.put(`,"clusterOf":[`);
+            foreach (i, c; state.actionCenter.clusterOf) {
+                if (i) buf.put(",");
+                buf.put(format(`%d`, c));
+            }
+            buf.put(`]},"axis":{"right":`);
+            putVec3(state.axis.right);
+            buf.put(`,"up":`);
+            putVec3(state.axis.up);
+            buf.put(`,"fwd":`);
+            putVec3(state.axis.fwd);
+            buf.put(format(`,"axIndex":%d,"type":%d,"isAuto":%s`,
+                           state.axis.axIndex, state.axis.type,
+                           state.axis.isAuto ? "true" : "false"));
+            buf.put(`,"clusterRight":`);  putVec3List(state.axis.clusterRight);
+            buf.put(`,"clusterUp":`);     putVec3List(state.axis.clusterUp);
+            buf.put(`,"clusterFwd":`);    putVec3List(state.axis.clusterFwd);
+            buf.put(`}}`);
+            return buf.data;
+        });
+
         httpServer.setBevvertProvider((int vert) {
             import bevel : buildBevVert, populateBoundVerts, BevVert;
             import std.format : format;

@@ -37,6 +37,12 @@ class HttpServer {
     private RecordedEventsProvider recordedEventsProvider;
     private alias ToolPipeProvider = string delegate();
     private ToolPipeProvider toolpipeProvider;
+    // /api/toolpipe/eval — runs pipeline.evaluate once and returns the
+    // resulting ActionCenterPacket + AxisPacket as JSON. Used by the
+    // modo_diff parity harness to read vibe3d's pipe state directly
+    // for a given selection without needing to drive the actual tool.
+    private alias ToolPipeEvalProvider = string delegate();
+    private ToolPipeEvalProvider toolpipeEvalProvider;
     private alias ResetHandler = void delegate(string primitiveType, bool empty);
     private ResetHandler resetHandler;
     private shared long resetSubmittedEpoch;
@@ -155,6 +161,12 @@ class HttpServer {
     /// task codes / ordinals / enabled flags).
     public void setToolPipeProvider(ToolPipeProvider provider) {
         this.toolpipeProvider = provider;
+    }
+
+    /// JSON snapshot of pipeline evaluation results — center, axis basis,
+    /// and per-cluster pivots/axes when ACEN/AXIS are in cluster mode.
+    public void setToolPipeEvalProvider(ToolPipeEvalProvider provider) {
+        this.toolpipeEvalProvider = provider;
     }
 
     private alias BevvertProvider = string delegate(int vert);
@@ -468,6 +480,23 @@ class HttpServer {
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Selection data provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/toolpipe/eval") {
+            if (toolpipeEvalProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = toolpipeEvalProvider();
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"toolpipe eval provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/toolpipe") {
