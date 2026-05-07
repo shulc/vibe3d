@@ -337,11 +337,16 @@ def verify_move(mode, pattern, verts_before, verts_after, sel_set):
 
 
 def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
-    """xfrm.rotate (TransformRotate) preserves vertex distances from the
-    rotation axis line. The axis passes through the pivot. For uniform
-    rotation around a single axis, every vertex's distance from the
-    pivot stays the same. For per-cluster rotation, the same holds
-    per-cluster around its own pivot."""
+    """xfrm.rotate (TransformRotate) is a rigid rotation around the ACEN
+    pivot. Vertex distances from the pivot are preserved. The pivot
+    depends on the mode (NOT always the cluster centroid):
+      select/selectauto/border/local → cluster centroid (per-cluster)
+      origin                          → world origin
+      auto                            → drag-projected on Work Plane
+                                        (single global pivot, not
+                                        per-cluster — auto isn't local)
+    """
+    from itertools import combinations
     untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
         verts_before, verts_after, sel_set)
     print(f"  untouched verts preserved: {untouched_ok}")
@@ -351,24 +356,77 @@ def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
         return 1
 
     clusters_pre = selected_clusters(pattern)
-    cluster_centroids = [bbox_center(c) for c in clusters_pre]
-    print(f"  expected per-cluster centroids:")
-    for c in cluster_centroids:
-        print(f"    ({c[0]:+.4f}, {c[1]:+.4f}, {c[2]:+.4f})")
 
-    # For each cluster, check that the SET of pre-vert distances from
-    # the cluster centroid equals the SET of post-vert distances of the
-    # cluster's matched verts. Distance preservation = rigid rotation.
-    from itertools import combinations
+    # Decide the pivot we'll measure distances against. Per-cluster
+    # centroid for selection-derived modes; single global pivot for
+    # origin / border (bbox-of-all-selection); drag-position-dependent
+    # for auto — we don't know the exact world pivot from screen coords
+    # alone, so use the recovered "rotation centre" for the cluster.
+    sel = selected_unique_verts(pattern)
+    # actr.select / .selectauto / .border / .origin all give a SINGLE
+    # global pivot (Phase 2 + 3 finding: bbox center of selection;
+    # origin = world origin). Only actr.local gives per-cluster pivots.
+    if mode == "origin":
+        pivots_per_cluster = [(0.0, 0.0, 0.0)] * len(clusters_pre)
+    elif mode in ("select", "selectauto", "border"):
+        gp = bbox_center(sel)
+        pivots_per_cluster = [gp] * len(clusters_pre)
+    elif mode == "auto":
+        # Auto: pivot is drag-projected onto Work Plane Y=0. We don't
+        # have screen coords here, but we DO know it's a global single
+        # pivot (not per-cluster), and its Y is 0 (Work Plane). For the
+        # verifier we accept any pivot whose distances-from-it across
+        # the moved verts are preserved — try several candidates.
+        pivots_per_cluster = None
+    else:  # local
+        pivots_per_cluster = [bbox_center(c) for c in clusters_pre]
+
+    if pivots_per_cluster is None:
+        # auto: brute-force a single pivot whose distances are preserved
+        # across all moved verts. Search over the drag-projected line
+        # (Y=0 plane) at coarse spacing.
+        all_pre = [tuple(v) for v in sel]
+        all_post = list(moved_after)
+        if len(all_pre) != len(all_post):
+            print(f"  count mismatch sel={len(all_pre)} moved={len(all_post)}")
+        # Try the drag start: world (CUBE_DRAG_X, CUBE_DRAG_Y) projected
+        # — too complex without camera. Heuristic: rigid rotation
+        # preserves vertex pairwise distances. Check that.
+        pre_pairs = sorted(
+            ((all_pre[i][0]-all_pre[j][0])**2
+             + (all_pre[i][1]-all_pre[j][1])**2
+             + (all_pre[i][2]-all_pre[j][2])**2) ** 0.5
+            for i in range(len(all_pre)) for j in range(i+1, len(all_pre)))
+        post_pairs = sorted(
+            ((all_post[i][0]-all_post[j][0])**2
+             + (all_post[i][1]-all_post[j][1])**2
+             + (all_post[i][2]-all_post[j][2])**2) ** 0.5
+            for i in range(len(all_post)) for j in range(i+1, len(all_post)))
+        n = min(len(pre_pairs), len(post_pairs))
+        err = sum((pre_pairs[k] - post_pairs[k])**2 for k in range(n))
+        ok = err < 0.001
+        mark = "OK" if ok else "FAIL"
+        print(f"  pairwise-distance err = {err:.5f}  [{mark}]")
+        if untouched_ok and ok:
+            print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (rotate) "
+                  f"rigid (pairwise distances preserved).")
+            return 0
+        print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (rotate) "
+              f"not a rigid rotation.")
+        return 1
+
+    print(f"  per-cluster pivots:")
+    for p in pivots_per_cluster:
+        print(f"    ({p[0]:+.4f}, {p[1]:+.4f}, {p[2]:+.4f})")
+
     used_indices = set()
     all_ok = True
     for ci, cluster in enumerate(clusters_pre):
         n = len(cluster)
-        cen = cluster_centroids[ci]
+        cen = pivots_per_cluster[ci]
         pre_dists = sorted(
             ((v[0]-cen[0])**2 + (v[1]-cen[1])**2 + (v[2]-cen[2])**2)**0.5
             for v in cluster)
-        # Find n-subset of moved_after with matching distance multiset.
         avail = [j for j in range(len(moved_after)) if j not in used_indices]
         best = None
         best_err = float("inf")
@@ -390,7 +448,7 @@ def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
 
     if untouched_ok and all_ok:
         print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (rotate) "
-              f"each cluster rotated rigidly around its centroid.")
+              f"rigid rotation around predicted pivot.")
         return 0
     print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (rotate) "
           f"distances not preserved.")

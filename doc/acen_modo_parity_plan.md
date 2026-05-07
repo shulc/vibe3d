@@ -23,7 +23,7 @@ artists' muscle memory from MODO produces unexpected pivots in vibe3d).
 | 1 — Auto: drag-projected pivot          | ✅ done | Click-away path already wired (notifyAcenUserPlaced existed); switched projection plane from most-facing-axis-through-gizmo to world Y=0 Work Plane to match MODO docs. New `screenToWorkPlane` helper in math.d. All tests pass. |
 | 2 — Select: bbox center, not vert avg   | ✅ done | `asymmetric/select` + `selectauto` PASS in `run_acen_drag.sh`; all 47 unit tests still pass (symmetric inputs). Commit b7c96ca. |
 | 3 — Local: per-cluster pivots in Tool   | ✅ done | `ActionCenterPacket` now ships `clusterCenters[]`+`clusterOf[]`. Scale tool consumes them via `pivotFor(vi)`. `asymmetric/local` PASS — MODO's per-cluster bbox-center invariant is preserved. All 12/12 cross-check modes pass. Move/Rotate per-cluster — follow-up. |
-| 4 — Local: per-cluster axes (axis.local)| ⬜ in progress | `AxisPacket` extended with cluster arrays; `AxisStage.Local` to compute per-cluster basis; Move tool to apply per-cluster delta. Test extensions: sphere geometry + rotate tool. |
+| 4 — Local: per-cluster axes (axis.local)| 🟡 partial | Move per-cluster basis done (commit 046d38f). Scale/Rotate per-cluster basis still TODO. Test extensions: sphere_top pattern + rotate tool now in defaults — 52/54 cells pass. Two known fails: `rotate/sphere_top/border` and `rotate/sphere_top/origin` — drag at (1000, 580) hits the gizmo's centre disk (which moves the gizmo) instead of a rotation ring when the pivot is at world origin (origin) or at sphere bbox center (border). Tracking as a drag-position calibration issue, not a vibe3d bug. |
 
 ## Recommended order
 

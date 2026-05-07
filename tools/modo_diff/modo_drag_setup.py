@@ -142,5 +142,6 @@ with open("/tmp/modo_drag_state.json", "w") as f:
         "before":    verts,
     }, f, indent=2)
 
+target_count = len(targets) if targets is not None else -1
 lx.out("setup: pattern=%s acen=%s tool=%s selected=%d/%d targets" %
-       (pattern, acen_mode, tool, selected, len(targets)))
+       (pattern, acen_mode, tool, selected, target_count))
