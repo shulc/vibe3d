@@ -987,6 +987,44 @@ struct Mesh {
         return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
     }
 
+    /// Bounding-box center of the selection's BORDER vertices — verts on
+    /// edges with exactly one selected adjacent face and at least one
+    /// unselected adjacent face. For a cube top face this is the
+    /// perimeter (same as `selectionBBoxCenterFaces`); for a sphere top
+    /// hemisphere it's only the equator ring (the inner verts are NOT
+    /// on a border edge). Mirrors MODO `actr.border` semantics.
+    /// Falls back to `selectionBBoxCenterFaces` when there's no border
+    /// edge (every selected face's edges are also adjacent to other
+    /// selected faces — closed selection on a closed manifold).
+    Vec3 selectionBorderBBoxCenterFaces() const {
+        if (!hasAnySelected(selectedFaces)) return Vec3(0, 0, 0);
+        bool[] onBorder = new bool[](vertices.length);
+        bool   any      = false;
+        // For each edge, count selected and unselected adjacent faces.
+        foreach (ei; 0 .. cast(uint)edges.length) {
+            int sel = 0, unsel = 0;
+            foreach (fi; facesAroundEdge(ei)) {
+                if (fi < selectedFaces.length && selectedFaces[fi]) sel++;
+                else                                                unsel++;
+            }
+            if (sel == 1 && unsel >= 1) {
+                onBorder[edges[ei][0]] = true;
+                onBorder[edges[ei][1]] = true;
+                any = true;
+            }
+        }
+        if (!any) return selectionBBoxCenterFaces();
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        foreach (vi, on; onBorder) if (on) {
+            Vec3 v = vertices[vi];
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+        }
+        return (mn + mx) * 0.5f;
+    }
+
     /// Return the centroid (average position) of face `fi`.
     Vec3 faceCentroid(uint fi) const {
         const uint[] face = faces[fi];

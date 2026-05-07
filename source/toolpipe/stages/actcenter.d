@@ -211,8 +211,21 @@ private:
                 return count > 0 ? first : centroidWithGeometryFallback();
             }
             case Mode.Border:
-                // 7.2e follow-up — degrade to selection centroid.
-                return centroidWithGeometryFallback();
+                // Bbox center of selection-border verts — those on edges
+                // with one selected and one unselected adjacent face.
+                // For closed/symmetric selections the border == the full
+                // selection (cube top face: every edge is bounded by
+                // unselected faces below it), so the result equals
+                // `centroidWithGeometryFallback`. For open/partial
+                // selections (sphere top hemisphere: only the equator
+                // ring is on a border edge) the result differs and
+                // matches MODO `actr.border`.
+                if (mesh_ is null) return Vec3(0, 0, 0);
+                final switch (*editMode_) {
+                    case EditMode.Vertices: return centroidWithGeometryFallback();
+                    case EditMode.Edges:    return centroidWithGeometryFallback();
+                    case EditMode.Polygons: return mesh_.selectionBorderBBoxCenterFaces();
+                }
         }
     }
 
