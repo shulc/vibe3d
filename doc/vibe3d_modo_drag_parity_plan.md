@@ -16,11 +16,26 @@ the same numbers MODO produces, on the same case.
 
 | Phase | Cells | Status |
 |---|---|---|
-| 0 — case JSONs as ground truth (current)         | 54   | ✅ done — MODO recorded |
-| 1 — vibe3d HTTP endpoints for headless drag      | —    | ⬜ |
-| 2 — orchestrator runs vibe3d after MODO per case | 54   | ⬜ |
-| 3 — close behavioural gaps (Scale/Rotate Local)  | 4–6  | ⬜ — finishes Phase 4 of `acen_modo_parity_plan.md` |
-| 4 — full matrix green                            | 54   | ⬜ |
+| 0 — case JSONs as ground truth                                     | 54   | ✅ done |
+| 1 — `/api/toolpipe/eval` exposes pipe state                        | —    | ✅ done |
+| 2 — `check_vibe3d_parity.py` runs vibe3d alongside MODO            | 54   | ✅ done |
+| 3 — close behavioural gaps (ACEN.Border, Scale/Rotate AXIS.Local)  | 4–6  | 🟡 partial — Border closed, Scale/Rotate Local axes still TODO |
+| 4 — full matrix green                                              | 54   | 🟡 45/45 (excluding 9 drag-dependent `auto` skips) |
+
+vibe3d-side runs through `check_vibe3d_parity.py`:
+- builds the same primitive (cube/sphere) and selects the same polys;
+- runs `actr.<mode>`;
+- compares `/api/toolpipe/eval`'s center to the same prediction
+  `verify_acen_drag.py` validates against MODO.
+
+So MODO ≡ prediction (verified by `run_acen_drag.py`) AND
+vibe3d ≡ prediction (verified here) ⇒ vibe3d ≡ MODO transitively.
+
+Remaining gap: per-cluster AXIS basis for Scale and Rotate tools
+under ACEN.Local (Phase 4 of `acen_modo_parity_plan.md`). Move tool
+already consumes per-cluster basis correctly. The harness here only
+checks pivot positions, not basis vectors — extending the verifier
+to compare basis comes after Scale/Rotate pick up cluster axes.
 
 ## What we already have
 
