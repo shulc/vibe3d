@@ -53,61 +53,80 @@ PATTERN_POLYS = {
 }
 
 
-def selected_unique_verts(pattern):
-    seen = set()
-    out  = []
-    for poly in PATTERN_POLYS[pattern]:
+# State source-of-truth: we read `selected_verts` and `clusters` from
+# /tmp/modo_drag_state.json directly, populated by modo_drag_setup.py
+# at MODO-side test setup. This means the verifier no longer depends
+# on PATTERN_POLYS for runtime-selection patterns (e.g. sphere_top
+# whose vertex positions vary with `prim.sphere`'s segment count).
+def selected_unique_verts_from_state(state):
+    """Return the list of (x, y, z) tuples for selected verts, prefer-
+    ring state['selected_verts'] (set by setup script). Falls back to
+    PATTERN_POLYS for older state files that pre-date the field."""
+    if "selected_verts" in state:
+        return [tuple(v) for v in state["selected_verts"]]
+    pattern = state.get("pattern", "single_top")
+    seen = set(); out = []
+    for poly in PATTERN_POLYS.get(pattern, []):
         for v in poly:
             t = tuple(v)
             if t not in seen:
-                seen.add(t)
-                out.append(t)
+                seen.add(t); out.append(t)
     return out
 
 
-def selected_clusters(pattern):
-    polys = [list(map(tuple, p)) for p in PATTERN_POLYS[pattern]]
-    n     = len(polys)
-    poly_verts = [set(p) for p in polys]
-    parent = list(range(n))
+def selected_clusters_from_state(state):
+    """Cluster groupings of selected verts. Source order:
+    1. state['clusters'] (setup-script computed)
+    2. PATTERN_POLYS-based reconstruction (legacy fallback)
+    3. single cluster of all selected verts (last resort)."""
+    if "clusters" in state:
+        return [[tuple(v) for v in c] for c in state["clusters"]]
+    pattern = state.get("pattern", "single_top")
+    if pattern in PATTERN_POLYS:
+        polys = [list(map(tuple, p)) for p in PATTERN_POLYS[pattern]]
+        n = len(polys)
+        poly_verts = [set(p) for p in polys]
+        parent = list(range(n))
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i in range(n):
+            for j in range(i + 1, n):
+                if poly_verts[i] & poly_verts[j]:
+                    a, b = find(i), find(j)
+                    if a != b: parent[a] = b
+        groups = {}
+        for i in range(n):
+            groups.setdefault(find(i), []).append(i)
+        clusters = []
+        for members in groups.values():
+            verts = set()
+            for k in members:
+                verts.update(polys[k])
+            clusters.append(sorted(verts))
+        return clusters
+    # Last resort: treat the whole selection as one cluster.
+    return [list(state.get("selected_verts", []))]
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            if poly_verts[i] & poly_verts[j]:
-                a, b = find(i), find(j)
-                if a != b: parent[a] = b
-
-    groups = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
-
-    clusters = []
-    for members in groups.values():
-        verts = set()
-        for k in members:
-            verts.update(polys[k])
-        clusters.append(sorted(verts))
-    return clusters
-
-
-def predict_pivot(mode, pattern):
-    """Return predicted pivot, or list of acceptable pivots, or None
-    (drag-position-dependent, skip exact check)."""
-    sel = selected_unique_verts(pattern)
-    clusters = selected_clusters(pattern)
-
-    if mode in ("select", "selectauto", "border"):
-        # MODO 9 empirically uses BBOX CENTER for all three of these
-        # in component selection mode — see doc/acen_modo_parity_plan.md
-        # Phase 2. Docs claim "average vertex position" for select but
-        # the artifact disagrees; we follow the artifact.
+def predict_pivot(mode, sel, clusters, border=None):
+    """Return predicted pivot, list of acceptable pivots, or None
+    (drag-position-dependent → skip exact check)."""
+    if mode in ("select", "selectauto"):
+        # MODO 9 empirically uses BBOX CENTER for both — see
+        # doc/acen_modo_parity_plan.md Phase 2. Docs claim "average
+        # vertex position" for select but the artifact disagrees; we
+        # follow the artifact.
         return [bbox_center(sel)]
+    if mode == "border":
+        # ACEN.Border uses the bbox center of the SELECTION BORDER —
+        # verts on edges that bound the selection (one selected, one
+        # unselected adjacent face). For a cube's top face the border
+        # is the perimeter (4 verts, same center as the face); for a
+        # sphere's top hemisphere the border is the equator ring.
+        return [bbox_center(border)] if border else [bbox_center(sel)]
     if mode == "local":
         # Combined OR per-cluster centroid is acceptable. vibe3d's
         # current implementation publishes only the first cluster's
@@ -169,7 +188,7 @@ def split_moved_unmoved(verts_before, verts_after, sel_set):
     return untouched_ok, untouched_pre, moved_after
 
 
-def verify_local(pattern, verts_before, verts_after, sel_set):
+def verify_local(clusters_pre, verts_before, verts_after, sel_set):
     """Local mode does per-cluster transforms — each cluster scales
     around its OWN centroid. Verify per-cluster: the bbox center of
     each cluster's verts must equal the cluster's centroid both before
@@ -183,8 +202,6 @@ def verify_local(pattern, verts_before, verts_after, sel_set):
         print("\033[31m  FAIL\033[0m: no verts moved.")
         return 1
 
-    # For each cluster compute its expected centroid from PATTERN_POLYS.
-    clusters_pre = selected_clusters(pattern)
     cluster_centroids = [bbox_center(c) for c in clusters_pre]
     print(f"  expected per-cluster centroids:")
     for c in cluster_centroids:
@@ -252,20 +269,21 @@ def verify_local(pattern, verts_before, verts_after, sel_set):
     return 1
 
 
-def verify_move(mode, pattern, verts_before, verts_after, sel_set):
-    """xfrm.move translates selected verts by a single delta vector.
-    The ACEN pivot does NOT affect the resulting geometry (translate is
-    pivot-invariant); it only changes where the gizmo is drawn. So the
-    pass criteria are weaker than for Scale.
+def verify_move(mode, sel, clusters_pre, verts_before, verts_after,
+                sel_set, tool_amount):
+    """xfrm.move translates selected verts. ACEN pivot is irrelevant
+    (translate is pivot-invariant). For ACEN.Local each cluster can
+    have its own AXIS basis → per-cluster world deltas can differ.
 
-    For ACEN.Local with multiple clusters, each cluster's AXIS may
-    differ (axis.local), so per-cluster deltas can differ. Within one
-    cluster all verts share a delta — pure translation preserves the
-    cluster's bbox dimensions and shifts its centre by exactly delta.
+    Verification: each cluster must be RIGIDLY translated — every vert
+    in the cluster shifts by the same world delta. We pair each pre
+    vert in cluster `c` with the nearest unused post vert; if all
+    pairings within `c` give the same delta, the cluster is OK.
 
-    We pair clusters via bbox shape: the SET of post-drag verts that
-    forms a bbox with the same dimensions as the cluster's pre-drag
-    bbox is the cluster, and its centroid shift is the delta.
+    `tool_amount` (xfrm.move's X/Y/Z) is NOT used here — those values
+    are in the tool's local frame (AXIS basis), and we don't have the
+    basis published by AXIS stage.  The geometric pairing gives world
+    deltas directly.
     """
     untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
         verts_before, verts_after, sel_set)
@@ -276,67 +294,74 @@ def verify_move(mode, pattern, verts_before, verts_after, sel_set):
         print("\033[31m  FAIL\033[0m: no verts moved.")
         return 1
 
-    clusters_pre = selected_clusters(pattern)
-
-    # For each cluster find the n-subset of `moved_after` whose bbox
-    # dimensions match the cluster's pre-drag bbox. Pure translate
-    # preserves bbox dims exactly. Combinatorial search is cheap for our
-    # cluster sizes (n ≤ 10).
-    from itertools import combinations
-
-    def bbox_dims(pts):
-        mn = [min(p[i] for p in pts) for i in range(3)]
-        mx = [max(p[i] for p in pts) for i in range(3)]
-        return [mx[i] - mn[i] for i in range(3)], \
-               [(mn[i] + mx[i]) / 2 for i in range(3)]
-
-    used_indices = set()
-    deltas_per_cluster = []
-    for ci, cluster in enumerate(clusters_pre):
+    # Per-cluster rigid-translation check by searching for the post-vert
+    # SUBSET that is exactly the cluster's pre-verts translated by some
+    # delta T. Concretely: for a candidate T, all cluster pre-verts +T
+    # must have a unique matching post-vert (within TOL). T candidates
+    # come from "what delta would map pre-vert 0 to some post-vert" — n
+    # × m candidates total (n = cluster size, m = moved_after count).
+    # Avoids global Hungarian's cross-cluster confusion when clusters
+    # land in similar regions (ACEN.Local: each cluster moves along its
+    # own world-space axis).
+    used_post = set()
+    cluster_ok_by_idx = {}
+    # Process clusters in decreasing size — a small cluster's translated
+    # bbox can sit inside a larger cluster's translated bbox (asymmetric
+    # pattern: 4-vert subface ⊂ 6-vert supface). Matching the big one
+    # first removes its posts from the pool before the small one tries.
+    order = sorted(range(len(clusters_pre)),
+                   key=lambda i: -len(clusters_pre[i]))
+    for ci in order:
+        cluster = clusters_pre[ci]
         n = len(cluster)
-        dim0, cen0 = bbox_dims(cluster)
-        avail = [j for j in range(len(moved_after)) if j not in used_indices]
+        avail = [j for j in range(len(moved_after)) if j not in used_post]
+        if len(avail) < n:
+            print(f"  cluster {ci}: not enough free post verts"); cluster_ok_by_idx[ci] = False; continue
 
+        best_T = None
         best_subset = None
-        best_err = float("inf")
-        for combo in combinations(avail, n):
-            pts = [moved_after[j] for j in combo]
-            dim1, cen1 = bbox_dims(pts)
-            err = sum((dim1[i] - dim0[i]) ** 2 for i in range(3))
-            if err < best_err:
-                best_err = err
-                best_subset = combo
+        # Try candidate T = post[j] - cluster[0] for each j; verify the
+        # whole cluster is translated by that T into available posts.
+        anchor = cluster[0]
+        for j in avail:
+            T = tuple(moved_after[j][k] - anchor[k] for k in range(3))
+            subset = [j]
+            ok = True
+            for v in cluster[1:]:
+                tgt = tuple(v[k] + T[k] for k in range(3))
+                hit = None
+                for jj in avail:
+                    if jj in subset: continue
+                    p = moved_after[jj]
+                    if all(at(p[k], tgt[k]) for k in range(3)):
+                        hit = jj; break
+                if hit is None:
+                    ok = False; break
+                subset.append(hit)
+            if ok:
+                best_T = T
+                best_subset = subset
+                break
 
-        if best_subset is None:
-            print(f"  cluster {ci}: no candidate subset")
-            deltas_per_cluster.append((False, (0, 0, 0)))
-            continue
-
-        used_indices.update(best_subset)
-        pts = [moved_after[j] for j in best_subset]
-        dim1, cen1 = bbox_dims(pts)
-        dim_match = all(at(dim0[i], dim1[i]) for i in range(3))
-        delta = tuple(cen1[i] - cen0[i] for i in range(3))
-        mark = "OK" if dim_match else "FAIL (dim mismatch)"
+        if best_T is None:
+            print(f"  cluster {ci}: no consistent translation found")
+            cluster_ok_by_idx[ci] = False; continue
+        used_post.update(best_subset)
         print(f"  cluster {ci}: delta ≈ "
-              f"({delta[0]:+.4f}, {delta[1]:+.4f}, {delta[2]:+.4f})  "
-              f"[shape {mark}]")
-        if not dim_match:
-            print(f"    pre  dims:  {dim0}")
-            print(f"    post dims:  {dim1}")
-        deltas_per_cluster.append((dim_match, delta))
+              f"({best_T[0]:+.4f}, {best_T[1]:+.4f}, {best_T[2]:+.4f})  [OK]")
+        cluster_ok_by_idx[ci] = True
 
-    all_ok = untouched_ok and all(m for m, _ in deltas_per_cluster)
+    all_ok = untouched_ok and all(cluster_ok_by_idx.values())
     if all_ok:
-        print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (move) "
+        print(f"\033[32m  PASS\033[0m: actr.{mode} (move) "
               f"each cluster translated rigidly.")
         return 0
-    print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (move) "
+    print(f"\033[31m  FAIL\033[0m: actr.{mode} (move) "
           f"clusters not rigidly translated.")
     return 1
 
 
-def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
+def verify_rotate(mode, sel, clusters_pre, verts_before, verts_after, sel_set):
     """xfrm.rotate (TransformRotate) is a rigid rotation around the ACEN
     pivot. Vertex distances from the pivot are preserved. The pivot
     depends on the mode (NOT always the cluster centroid):
@@ -354,15 +379,6 @@ def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
     if not moved_after:
         print("\033[31m  FAIL\033[0m: no verts moved.")
         return 1
-
-    clusters_pre = selected_clusters(pattern)
-
-    # Decide the pivot we'll measure distances against. Per-cluster
-    # centroid for selection-derived modes; single global pivot for
-    # origin / border (bbox-of-all-selection); drag-position-dependent
-    # for auto — we don't know the exact world pivot from screen coords
-    # alone, so use the recovered "rotation centre" for the cluster.
-    sel = selected_unique_verts(pattern)
     # actr.select / .selectauto / .border / .origin all give a SINGLE
     # global pivot (Phase 2 + 3 finding: bbox center of selection;
     # origin = world origin). Only actr.local gives per-cluster pivots.
@@ -408,10 +424,10 @@ def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
         mark = "OK" if ok else "FAIL"
         print(f"  pairwise-distance err = {err:.5f}  [{mark}]")
         if untouched_ok and ok:
-            print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (rotate) "
+            print(f"\033[32m  PASS\033[0m: actr.{mode} (rotate) "
                   f"rigid (pairwise distances preserved).")
             return 0
-        print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (rotate) "
+        print(f"\033[31m  FAIL\033[0m: actr.{mode} (rotate) "
               f"not a rigid rotation.")
         return 1
 
@@ -441,26 +457,22 @@ def verify_rotate(mode, pattern, verts_before, verts_after, sel_set):
         if best is None:
             print(f"  cluster {ci}: no candidate subset"); all_ok = False; continue
         used_indices.update(best)
-        ok = best_err < 0.001
+        # RMS per-vert distance error vs MODO's drag-evaluate jitter (TOL).
+        # Absolute sum-of-squares scales with cluster size — sphere_top
+        # (~145 verts) trips a fixed threshold even at sub-pixel jitter.
+        rms = (best_err / max(1, n)) ** 0.5
+        ok = rms < TOL
         mark = "OK" if ok else "FAIL"
-        print(f"  cluster {ci}: distance-preservation err = {best_err:.5f}  [{mark}]")
+        print(f"  cluster {ci}: distance-preservation rms = {rms:.5f}  [{mark}]")
         all_ok = all_ok and ok
 
     if untouched_ok and all_ok:
-        print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} (rotate) "
+        print(f"\033[32m  PASS\033[0m: actr.{mode} (rotate) "
               f"rigid rotation around predicted pivot.")
         return 0
-    print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} (rotate) "
+    print(f"\033[31m  FAIL\033[0m: actr.{mode} (rotate) "
           f"distances not preserved.")
     return 1
-
-
-def selected_unique_verts_runtime(pattern, verts_before):
-    """For runtime-selection patterns (e.g. sphere_top) PATTERN_POLYS
-    has no entries. Read selection from /tmp/modo_drag_state.json's
-    `before` plus `selected_indices` if available, otherwise infer
-    from before/after diff post-test (used by main path only)."""
-    return None
 
 
 def main():
@@ -468,7 +480,9 @@ def main():
     state_path  = "/tmp/modo_drag_state.json"
 
     with open(result_path) as f:
-        verts_after = json.load(f)["verts"]
+        result = json.load(f)
+    verts_after = result["verts"]
+    tool_amount = result.get("tool_amount")
     with open(state_path) as f:
         state = json.load(f)
 
@@ -477,47 +491,28 @@ def main():
     tool    = state.get("tool",    "scale")
     verts_before = state.get("before", [])
 
-    # Runtime patterns (sphere_top etc) — selection is computed in MODO.
-    # We infer it post-hoc from which verts moved in the result.
-    if pattern not in PATTERN_POLYS:
-        print(f"mode: {mode}   pattern: {pattern}   tool: {tool}")
-        # Determine which verts moved (selected) vs stayed.
-        moved = []
-        stayed = []
-        for a in verts_after:
-            matched = False
-            for b in verts_before:
-                if all(at(a[i], b[i]) for i in range(3)): matched = True; break
-            if matched: stayed.append(tuple(a))
-            else:       moved.append(tuple(a))
-        print(f"  moved verts: {len(moved)}, stayed: {len(stayed)}")
-        # Sphere top half: just verify SOMETHING moved (smoke test).
-        if moved:
-            print(f"\033[32m  PASS\033[0m (smoke): {len(moved)} verts moved on {pattern}/{tool}/{mode}.")
-            return 0
-        print(f"\033[31m  FAIL\033[0m: no verts moved.")
-        return 1
-
-    sel = selected_unique_verts(pattern)
-    sel_set = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
+    # Selection now comes from the state JSON (setup script computes
+    # it). Same code path for hardcoded patterns and runtime ones —
+    # the smoke-only sphere_top branch is gone.
+    sel      = selected_unique_verts_from_state(state)
+    clusters = selected_clusters_from_state(state)
+    border   = [tuple(v) for v in state.get("border_verts", [])] or None
+    sel_set  = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
 
     print(f"mode: {mode}   pattern: {pattern}   tool: {tool}")
-    print(f"  selection: {len(sel)} unique verts in "
-          f"{len(PATTERN_POLYS[pattern])} polygons, "
-          f"{len(selected_clusters(pattern))} cluster(s)")
+    print(f"  selection: {len(sel)} unique verts in {len(clusters)} cluster(s)")
 
-    # xfrm.rotate preserves distances from cluster centroid.
     if tool == "rotate":
-        return verify_rotate(mode, pattern, verts_before, verts_after, sel_set)
-
-    # xfrm.move is pivot-invariant: weaker pass criteria.
+        return verify_rotate(mode, sel, clusters,
+                             verts_before, verts_after, sel_set)
     if tool == "move":
-        return verify_move(mode, pattern, verts_before, verts_after, sel_set)
+        return verify_move(mode, sel, clusters,
+                           verts_before, verts_after, sel_set, tool_amount)
 
     # Local mode is special — per-cluster transforms can't be decomposed
     # into a single (k, P), so use a dedicated verifier.
-    if mode == "local" and len(selected_clusters(pattern)) >= 2:
-        return verify_local(pattern, verts_before, verts_after, sel_set)
+    if mode == "local" and len(clusters) >= 2:
+        return verify_local(clusters, verts_before, verts_after, sel_set)
 
     untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
         verts_before, verts_after, sel_set)
@@ -538,7 +533,7 @@ def main():
     print(f"  observed: k = {k:+.4f}, "
           f"P = ({P[0]:+.4f}, {P[1]:+.4f}, {P[2]:+.4f})")
 
-    pred = predict_pivot(mode, pattern)
+    pred = predict_pivot(mode, sel, clusters, border)
     if pred is None:
         print(f"  predicted pivot: drag-position-dependent (skip exact)")
         ok = untouched_ok
@@ -551,9 +546,9 @@ def main():
 
     print()
     if ok:
-        print(f"\033[32m  PASS\033[0m: actr.{mode}/{pattern} pivot matches prediction.")
+        print(f"\033[32m  PASS\033[0m: actr.{mode} pivot matches prediction.")
         return 0
-    print(f"\033[31m  FAIL\033[0m: actr.{mode}/{pattern} pivot does NOT match.")
+    print(f"\033[31m  FAIL\033[0m: actr.{mode} pivot does NOT match.")
     return 1
 
 

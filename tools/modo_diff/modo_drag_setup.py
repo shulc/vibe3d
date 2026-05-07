@@ -103,12 +103,17 @@ def poly_centroid_y(p):
     ys = [v.position[1] for v in p.vertices]
     return sum(ys) / max(1, len(ys))
 
-selected = 0
+# Pick polygons matching the pattern. Track BOTH the selected
+# polygons (for cluster computation) and the unique vertex positions
+# they expose (so the verifier can identify the selection from
+# state.json without re-deriving it from PATTERN_POLYS at runtime —
+# matters for `sphere_top` whose verts depend on segments and aren't
+# hardcoded).
+selected_polys = []
 first = True
 for p in mesh.geometry.polygons:
     pick = False
     if targets is None:
-        # Runtime selection: pattern-specific. sphere_top → centroid.y > 0.
         if pattern == "sphere_top":
             pick = poly_centroid_y(p) > 0.001
     else:
@@ -116,7 +121,87 @@ for p in mesh.geometry.polygons:
     if pick:
         p.select(replace=first)
         first = False
-        selected += 1
+        selected_polys.append(p)
+selected = len(selected_polys)
+
+# Per-poly vert sets, for cluster grouping by shared edges (matches
+# vibe3d's computeLocalFaceClustersFull algorithm).
+poly_vsets = []
+for p in selected_polys:
+    poly_vsets.append([(round(v.position[0], 4),
+                        round(v.position[1], 4),
+                        round(v.position[2], 4)) for v in p.vertices])
+
+# Union-find over selected polygons connected via shared edges.
+n_polys = len(poly_vsets)
+parent = list(range(n_polys))
+def _find(i):
+    while parent[i] != i:
+        parent[i] = parent[parent[i]]
+        i = parent[i]
+    return i
+def _union(i, j):
+    a, b = _find(i), _find(j)
+    if a != b: parent[a] = b
+def _share_edge(a, b):
+    sa = poly_vsets[a]
+    sb = poly_vsets[b]
+    for i in range(len(sa)):
+        e0a = sa[i]; e1a = sa[(i + 1) % len(sa)]
+        for j in range(len(sb)):
+            e0b = sb[j]; e1b = sb[(j + 1) % len(sb)]
+            if (e0a == e0b and e1a == e1b) or (e0a == e1b and e1a == e0b):
+                return True
+    return False
+for i in range(n_polys):
+    for j in range(i + 1, n_polys):
+        if _share_edge(i, j):
+            _union(i, j)
+
+# Group polys by cluster id; the cluster's verts are the union of its
+# polys' verts.
+cluster_map = {}    # root -> [poly indices]
+for i in range(n_polys):
+    cluster_map.setdefault(_find(i), []).append(i)
+clusters = []   # list of unique sorted vert-position lists, one per cluster
+for poly_indices in cluster_map.values():
+    cluster_verts = set()
+    for pi in poly_indices:
+        for v in poly_vsets[pi]:
+            cluster_verts.add(v)
+    clusters.append(sorted(cluster_verts))
+
+# Flat selected-vert list (union of all clusters).
+selected_verts_set = set()
+for c in clusters:
+    selected_verts_set.update(c)
+selected_verts = sorted(selected_verts_set)
+
+# Border verts: ON an edge that bounds the selection. An edge is a
+# border edge if exactly ONE of its two adjacent polygons is selected.
+# Identify selected polys by their vertex-position set (poly_vsets is
+# already populated above as a list of vertex tuples per selected poly).
+selected_vset_keys = set(frozenset(vs) for vs in poly_vsets)
+edge_count = {}      # canonical edge -> count of selected polys adjacent
+edge_count_total = {}# canonical edge -> total count of polys adjacent
+for q in mesh.geometry.polygons:
+    qvs = [(round(v.position[0], 4), round(v.position[1], 4),
+            round(v.position[2], 4)) for v in q.vertices]
+    is_selected = frozenset(qvs) in selected_vset_keys
+    for j in range(len(qvs)):
+        a = qvs[j]; b = qvs[(j + 1) % len(qvs)]
+        e = (a, b) if a < b else (b, a)
+        edge_count_total[e] = edge_count_total.get(e, 0) + 1
+        if is_selected:
+            edge_count[e] = edge_count.get(e, 0) + 1
+border_verts_set = set()
+for e, sel_n in edge_count.items():
+    tot = edge_count_total[e]
+    # Exactly one selected neighbour, AND the edge is not "open" (only
+    # one polygon adjacent total) — open edges count as border too.
+    if sel_n == 1 and tot >= 1 and tot - sel_n >= 1 or sel_n == 1 and tot == 1:
+        border_verts_set.add(e[0]); border_verts_set.add(e[1])
+border_verts = sorted(border_verts_set)
 
 
 # ---- activate ACEN.<mode> + xfrm.<tool>
@@ -134,14 +219,21 @@ else:
 verts = sorted([list(v.position) for v in mesh.geometry.vertices])
 with open("/tmp/modo_drag_state.json", "w") as f:
     json.dump({
-        "acen_mode": acen_mode,
-        "pattern":   pattern,
-        "tool":      tool,
-        "segments":  segments,
-        "selected":  selected,
-        "before":    verts,
+        "acen_mode":      acen_mode,
+        "pattern":        pattern,
+        "tool":           tool,
+        "segments":       segments,
+        "selected":       selected,
+        "before":         verts,
+        # Verifier reads these instead of falling back to PATTERN_POLYS,
+        # so runtime-selection patterns (sphere_top) get the same full
+        # invariant check as hardcoded ones.
+        "selected_verts": [list(v) for v in selected_verts],
+        "clusters":       [[list(v) for v in c] for c in clusters],
+        "border_verts":   [list(v) for v in border_verts],
     }, f, indent=2)
 
 target_count = len(targets) if targets is not None else -1
-lx.out("setup: pattern=%s acen=%s tool=%s selected=%d/%d targets" %
-       (pattern, acen_mode, tool, selected, target_count))
+lx.out("setup: pattern=%s acen=%s tool=%s selected=%d/%d targets, "
+       "%d cluster(s)" %
+       (pattern, acen_mode, tool, selected, target_count, len(clusters)))

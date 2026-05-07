@@ -265,7 +265,7 @@ def run_case(path):
     mouse_drag(*drag)
     time.sleep(0.5)
 
-    if not cmd_bar("@modo_dump_verts.py",
+    if not cmd_bar(f"@modo_dump_verts.py {tool}",
                    wait_for="/tmp/modo_drag_result.json", timeout=6):
         return "ERROR", "dump did not produce result.json"
 
