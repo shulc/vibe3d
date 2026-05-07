@@ -48,7 +48,12 @@ FILE_MENU_X=17;     FILE_MENU_Y=10
 RESET_ITEM_X=40;    RESET_ITEM_Y=778
 POPUP_OK_X=1175;    POPUP_OK_Y=538
 CMD_BAR_X=1750;     CMD_BAR_Y=1063
-CUBE_DRAG_X=1000;   CUBE_DRAG_Y=580
+CUBE_DRAG_X=1020;   CUBE_DRAG_Y=560
+# Drag start position. Empirically lands on a gizmo handle (axis arrow
+# for scale/move, rotation ring for rotate) for both cube and sphere
+# primitives at MODO's default camera. (1000, 580) used to land in the
+# dead zone between rotate's inner sphere body and outer screen-aligned
+# ring on small sphere geometry; (1020, 560) hits the colored rings.
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
