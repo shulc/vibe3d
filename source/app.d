@@ -2864,23 +2864,20 @@ void main(string[] args) {
 
 
         // ---- Gizmo 3D (orientation indicator, bottom-right of 3D view) ----
-        // Pass the active workplane basis so the corner gizmo follows the
-        // same local frame as tools / numeric fields / construction-plane
-        // grid. Auto-mode uses pickMostFacingPlane (= what BoxTool /
-        // SphereTool / ... use to drop primitives) so the gizmo matches
-        // the actual construction plane, not a fixed world XYZ identity.
-        Vec3 gz_a1, gz_n, gz_a2;
-        bool useAutoBasis = true;
+        // Manual workplane: corner gizmo follows it (visual cue that the
+        // local frame is set explicitly). Auto workplane: stay locked to
+        // world XYZ — `pickMostFacingPlane` swaps every 45° of camera
+        // rotation, which made the corner indicator's X/Y/Z labels jump
+        // around as the user orbited. Tool handles still pick the most-
+        // facing-camera basis via AxisStage; only the corner indicator
+        // is pinned to world here.
+        Vec3 gz_a1 = Vec3(1, 0, 0);
+        Vec3 gz_n  = Vec3(0, 1, 0);
+        Vec3 gz_a2 = Vec3(0, 0, 1);
         if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
             if (!wp.isAuto) {
                 wp.currentBasis(gz_n, gz_a1, gz_a2);
-                useAutoBasis = false;
             }
-        }
-        if (useAutoBasis) {
-            import tools.create_common : pickMostFacingPlane;
-            auto bp = pickMostFacingPlane(vp);
-            gz_a1 = bp.axis1; gz_n = bp.normal; gz_a2 = bp.axis2;
         }
         DrawGizmo(layout.sideW + 32.0f, cameraView.height - layout.statusH - 32.0f,
                   cameraView.view, gz_a1, gz_n, gz_a2);
