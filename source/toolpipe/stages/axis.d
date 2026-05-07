@@ -158,27 +158,30 @@ private:
                 r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
                 return;
             case Mode.Workplane: {
+                // Manual workplane only — auto-workplane (camera-derived)
+                // would let tool handles swap with orbit which we don't
+                // want. Default to world XYZ when workplane is auto.
                 Vec3 a1, n, a2;
                 if (queryWorkplaneBasis(a1, n, a2)) {
                     r = a1; u = n; f = a2;
                 } else {
-                    // No WorkplaneStage registered or it's auto-mode
-                    // without a recent evaluate — fall back to last
-                    // cached values (default identity).
-                    r = lastWpAxis1_; u = lastWpNormal_; f = lastWpAxis2_;
+                    r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
                 }
                 return;
             }
             case Mode.Auto: {
-                // Workplane non-auto ⇒ use its basis directly. Auto
-                // workplane has no permanent basis until evaluate runs
-                // with a viewport — return cached or fall back to
-                // identity.
+                // Manual workplane (non-auto) ⇒ tool handles follow it
+                // explicitly. Auto workplane ⇒ pin to world XYZ — the
+                // upstream WorkplaneStage's auto basis follows
+                // pickMostFacingPlane(camera) which swaps every 45° of
+                // orbit, but we don't want tool handles' X/Y/Z to jump
+                // around as the user navigates. Manual workplane =
+                // explicit user choice; auto = leave handles stable.
                 Vec3 a1, n, a2;
                 if (queryWorkplaneBasis(a1, n, a2)) {
                     r = a1; u = n; f = a2;
                 } else {
-                    r = lastWpAxis1_; u = lastWpNormal_; f = lastWpAxis2_;
+                    r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
                 }
                 return;
             }
@@ -194,12 +197,14 @@ private:
                 goto case Mode.Auto;
             case Mode.Local:
             case Mode.Screen: {
-                // 7.2 follow-up — degrade to Auto basis (workplane).
+                // 7.2 follow-up — degrade to Auto basis (manual
+                // workplane if set, world XYZ otherwise; never the
+                // camera-derived auto-workplane).
                 Vec3 a1, n, a2;
                 if (queryWorkplaneBasis(a1, n, a2)) {
                     r = a1; u = n; f = a2;
                 } else {
-                    r = lastWpAxis1_; u = lastWpNormal_; f = lastWpAxis2_;
+                    r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
                 }
                 return;
             }
