@@ -2403,8 +2403,9 @@ public:
         // vertices, not the pre-existing ones.
         frame = currentWorkplaneFrame();
         size_t firstNewVert = mesh.vertices.length;
+        size_t firstNewFace = mesh.faces.length;
         buildCuboidParametric(mesh, params_);
-        applyFrameToMeshRange(mesh, firstNewVert);
+        applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;
@@ -2731,18 +2732,45 @@ private:
     // The auto-mode frame is NOT necessarily identity (X-dominant camera
     // gets normal=+X / axis1=+Y, etc.) — always run the per-vertex math
     // rather than special-casing.
+    //
+    // pickMostFacingPlane returns LEFT-handed bases for cases 1 and 3
+    // (camera most-facing X or Z). The toWorld matrix for those cases
+    // has det = -1 → mirrors local-space polygon winding into world →
+    // face normals point INWARD. Detect via det of the toWorld 3×3 and
+    // reverse every face's vertex order to compensate.
+    bool frameIsLeftHanded() const {
+        // det of upper-left 3×3 of toWorld (column-major).
+        const ref float[16] m = frame.toWorld;
+        float a = m[0], b = m[4], c = m[8];
+        float d = m[1], e = m[5], f = m[9];
+        float g = m[2], h = m[6], i = m[10];
+        float det = a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+        return det < 0;
+    }
+    void reverseFaceWinding(Mesh* m, size_t firstFaceIdx) {
+        foreach (fi; firstFaceIdx .. m.faces.length) {
+            auto face = m.faces[fi];
+            for (size_t k = 0; k < face.length / 2; k++) {
+                auto t = face[k]; face[k] = face[$ - 1 - k]; face[$ - 1 - k] = t;
+            }
+        }
+    }
     void applyFrameToMesh(Mesh* m) {
         foreach (ref v; m.vertices)
             v = transformPoint(frame.toWorld, v);
+        if (frameIsLeftHanded())
+            reverseFaceWinding(m, 0);
     }
 
     // Apply frame.toWorld to only vertices [firstIdx .. $] — used by
     // applyHeadless where buildCuboidParametric APPENDS to an existing
     // mesh. Transforming the whole vertex array would also re-transform
     // unrelated geometry that was placed in world coords by other tools.
-    void applyFrameToMeshRange(Mesh* m, size_t firstIdx) {
+    void applyFrameToMeshRange(Mesh* m, size_t firstIdx, size_t firstFaceIdx) {
         foreach (i; firstIdx .. m.vertices.length)
             m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
+        if (frameIsLeftHanded())
+            reverseFaceWinding(m, firstFaceIdx);
     }
 
     void uploadBase() {
@@ -2766,8 +2794,9 @@ private:
         // geometry, matching MODO's prim.cube convention). Transform
         // only the newly-emitted vertices.
         size_t firstNewVert = mesh.vertices.length;
+        size_t firstNewFace = mesh.faces.length;
         buildBase(mesh);
-        applyFrameToMeshRange(mesh, firstNewVert);
+        applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
@@ -2803,8 +2832,9 @@ private:
 
     void commitCuboid() {
         size_t firstNewVert = mesh.vertices.length;
+        size_t firstNewFace = mesh.faces.length;
         buildCuboid(mesh);
-        applyFrameToMeshRange(mesh, firstNewVert);
+        applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;

@@ -45,18 +45,10 @@ BuildPlane pickMostFacingPlane(const ref Viewport vp) {
     float avx = abs(vp.view[2]);
     float avy = abs(vp.view[6]);
     float avz = abs(vp.view[10]);
-    // All three cases must form a right-handed basis: axis1 × axis2 ==
-    // normal. A left-handed basis flips the polygon winding inside
-    // BoxTool / SphereTool / Cylinder / ... causing their face normals
-    // to invert when the construction plane lands on case 2 (camera
-    // looking along world Y). Verified case-by-case:
-    //   case 1: Y × Z = X = normal      ✓ right-handed
-    //   case 2: was X × Z = -Y, bugged. Swap to Z × X = Y ✓
-    //   case 3: X × Y = Z = normal      ✓ right-handed
     if (avx >= avy && avx >= avz) {
         return BuildPlane(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1));
     } else if (avy >= avx && avy >= avz) {
-        return BuildPlane(Vec3(0, 1, 0), Vec3(0, 0, 1), Vec3(1, 0, 0));
+        return BuildPlane(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1));
     } else {
         return BuildPlane(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0));
     }
