@@ -1,6 +1,6 @@
 #python
 """Dump mesh vertices (post-drag) AND the active tool's attribute
-values to /tmp/modo_drag_result.json.
+values to <tmpdir>/modo_drag_result.json.
 
 Tool attributes are read via the `tool.attr <toolname> <attr> ?` query
 operator that MODO's own Tool Properties uses. For our three tools:
@@ -14,7 +14,9 @@ For TransformRotate (macro wrapping xfrm.transform with T=0,R=1,S=0)
 we read xfrm.transform's RX/RY/RZ instead.
 
 Usage from orchestrator:
-    @modo_dump_verts.py <tool>      # tool ∈ {move, scale, rotate}
+    @modo_dump_verts.py [tmpdir] <tool>      # tool ∈ {move, scale, rotate}
+
+Per-worker isolation: pass a unique tmpdir as the first arg.
 """
 import lx
 import modo
@@ -59,7 +61,11 @@ def collect_tool_amount(tool):
     return None
 
 
-tool_arg = lx.args()[0] if lx.args() else "move"
+_args = list(lx.args())
+tmpdir = "/tmp"
+if _args and _args[0].startswith("/"):
+    tmpdir = _args.pop(0)
+tool_arg = _args[0] if _args else "move"
 
 err = None
 verts = []
@@ -76,11 +82,12 @@ except Exception as e:
 
 # Atomic write so the orchestrator's wait-for-file never sees a partial.
 import os
-tmp = "/tmp/modo_drag_result.json.partial"
+result_path = tmpdir + "/modo_drag_result.json"
+tmp = result_path + ".partial"
 with open(tmp, "w") as f:
     json.dump({"verts": verts, "tool_amount": tool_amount, "error": err},
               f, indent=2)
-os.rename(tmp, "/tmp/modo_drag_result.json")
+os.rename(tmp, result_path)
 
 lx.out("dumped %d verts + tool=%s amount=%r err=%s"
        % (len(verts), tool_arg, tool_amount, err))

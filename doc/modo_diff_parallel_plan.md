@@ -12,11 +12,25 @@ under 10 s. Same machinery should later cover the 200+ cells from
 
 | Phase | Status |
 |---|---|
-| 0 — sequential baseline (current)              | ✅ done |
-| 1 — per-worker tmp paths in scripts            | ⬜ |
-| 2 — per-worker MODO config dir + Xvfb display  | ⬜ |
-| 3 — orchestrator pool + case queue             | ⬜ |
-| 4 — robustness (one-worker crash ≠ matrix lost)| ⬜ |
+| 0 — sequential baseline                                 | ✅ done |
+| 1 — per-worker tmp paths in scripts                     | ✅ done |
+| 2 — per-worker MODO instance + Xvfb display + tmpdir    | ✅ done |
+| 3 — orchestrator pool + case queue                      | ✅ done |
+| 4 — robustness (one-worker crash ≠ matrix lost)         | ⬜ |
+
+Measurements (54-case full matrix, on dev workstation):
+
+| `-j` | wall time | speedup |
+|------|----------:|--------:|
+|   1  | ~3 min    | 1.0×    |
+|   2  | ~1 min 30 | ~2.0×   |
+|   4  | 73 s      | 2.5×    |
+|   8  | 48 s      | 3.7×    |
+
+Speedup is sub-linear: each worker has a fixed ~30 s boot overhead
+(Xvfb + MODO load + first-render wait) which doesn't parallelize with
+case work. Per-case work itself parallelizes well; budget the boot
+once per matrix run.
 
 ## Constraints to design around
 

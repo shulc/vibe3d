@@ -3,20 +3,30 @@
 + xfrm.<tool>. Caller does real mouse drag to trigger ACEN evaluate.
 
 Usage:
-    @modo_drag_setup.py [acen_mode] [pattern] [tool]
+    @modo_drag_setup.py [tmpdir] [acen_mode] [pattern] [tool]
 
+tmpdir:     output dir for state.json (default /tmp)
 acen_mode:  select (default), selectauto, auto, border, origin, local
 pattern:    single_top (default) or asymmetric
 tool:       scale (default) or move
+
+Per-worker isolation: pass a unique tmpdir (e.g. /tmp/worker_3) so
+parallel MODO instances don't clash on state.json.
 """
 import lx
 import modo
 import json
 
-args = lx.args()
+args = list(lx.args())
+# Optional first arg is a tmpdir starting with `/`; otherwise legacy
+# 3-arg form (acen_mode, pattern, tool).
+tmpdir = "/tmp"
+if args and args[0].startswith("/"):
+    tmpdir = args.pop(0)
 acen_mode = args[0] if len(args) > 0 else "select"
 pattern   = args[1] if len(args) > 1 else "single_top"
 tool      = args[2] if len(args) > 2 else "scale"
+state_path = tmpdir + "/modo_drag_state.json"
 
 
 def get_active_mesh():
@@ -217,7 +227,7 @@ else:
 
 # ---- dump initial state
 verts = sorted([list(v.position) for v in mesh.geometry.vertices])
-with open("/tmp/modo_drag_state.json", "w") as f:
+with open(state_path, "w") as f:
     json.dump({
         "acen_mode":      acen_mode,
         "pattern":        pattern,

@@ -476,8 +476,10 @@ def verify_rotate(mode, sel, clusters_pre, verts_before, verts_after, sel_set):
 
 
 def main():
+    # argv: [result_path] [state_path] — defaults are the legacy shared
+    # paths. Per-worker callers pass /tmp/worker_<i>/{result,state}.json.
     result_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/modo_drag_result.json"
-    state_path  = "/tmp/modo_drag_state.json"
+    state_path  = sys.argv[2] if len(sys.argv) > 2 else "/tmp/modo_drag_state.json"
 
     with open(result_path) as f:
         result = json.load(f)
