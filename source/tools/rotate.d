@@ -408,26 +408,64 @@ private:
         return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
     }
 
+    // Phase 4 of doc/acen_modo_parity_plan.md: per-cluster pivot for
+    // vertex `vi`. Mirrors Scale's pivotFor.
+    Vec3 pivotFor(size_t vi, ClusterPivots cp, Vec3 fallback) {
+        if (!cp.active) return fallback;
+        if (vi >= cp.clusterOf.length) return fallback;
+        int cid = cp.clusterOf[vi];
+        if (cid < 0 || cid >= cast(int)cp.centers.length) return fallback;
+        return cp.centers[cid];
+    }
+
+    // Per-cluster axis for vertex `vi`. `axisIdx` ∈ {0,1,2} → right/up/fwd.
+    // Returns the gizmo's global axis (`fallback`) when no cluster basis
+    // is published or the vertex doesn't belong to any cluster.
+    Vec3 axisFor(size_t vi, int axisIdx,
+                 ClusterAxes ap, ClusterPivots cp, Vec3 fallback)
+    {
+        if (!ap.active) return fallback;
+        if (vi >= cp.clusterOf.length) return fallback;
+        int cid = cp.clusterOf[vi];
+        if (cid < 0 || cid >= cast(int)ap.right.length) return fallback;
+        if (axisIdx == 0) return ap.right[cid];
+        if (axisIdx == 1) return ap.up   [cid];
+        return ap.fwd[cid];
+    }
+
     // Apply final rotation from dragStartVertices to mesh.vertices at mouseUp.
     void commitWholeMeshRotation(float angle) {
         if (dragStartVertices.length != mesh.vertices.length) return;
-        Vec3 pivot = handler.center;
-        foreach (i; 0 .. mesh.vertices.length)
-            mesh.vertices[i] = rotateVec(dragStartVertices[i], pivot, dragAxisVec, angle);
+        auto cp = queryClusterPivots();
+        auto ap = queryClusterAxes();
+        int axisIdx = (dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
+        foreach (i; 0 .. mesh.vertices.length) {
+            Vec3 pivot = pivotFor(i, cp, handler.center);
+            Vec3 ax    = (axisIdx >= 0)
+                       ? axisFor(i, axisIdx, ap, cp, dragAxisVec)
+                       : dragAxisVec;
+            mesh.vertices[i] = rotateVec(dragStartVertices[i], pivot, ax, angle);
+        }
     }
 
     // Apply X→Y→Z Euler rotation from origVertices to CPU vertices only (no GPU).
     // angleAccum.x/.y/.z are interpreted around the gizmo's basis (workplane
-    // axis1/normal/axis2 when non-auto, world XYZ when auto).
+    // axis1/normal/axis2 when non-auto, world XYZ when auto). With per-cluster
+    // basis active, each cluster uses its own (right, up, fwd).
     void applyAbsoluteFromOrigCpuOnly() {
         if (origVertices.length != mesh.vertices.length) return;
-        Vec3 pivot = handler.center;
+        auto cp = queryClusterPivots();
+        auto ap = queryClusterAxes();
         foreach (i; 0 .. mesh.vertices.length) {
             if (!toProcess[i]) { mesh.vertices[i] = origVertices[i]; continue; }
+            Vec3 pivot = pivotFor(i, cp, handler.center);
+            Vec3 axX = axisFor(i, 0, ap, cp, handler.axisX);
+            Vec3 axY = axisFor(i, 1, ap, cp, handler.axisY);
+            Vec3 axZ = axisFor(i, 2, ap, cp, handler.axisZ);
             Vec3 v = origVertices[i];
-            if (angleAccum.x != 0) v = rotateVec(v, pivot, handler.axisX, angleAccum.x);
-            if (angleAccum.y != 0) v = rotateVec(v, pivot, handler.axisY, angleAccum.y);
-            if (angleAccum.z != 0) v = rotateVec(v, pivot, handler.axisZ, angleAccum.z);
+            if (angleAccum.x != 0) v = rotateVec(v, pivot, axX, angleAccum.x);
+            if (angleAccum.y != 0) v = rotateVec(v, pivot, axY, angleAccum.y);
+            if (angleAccum.z != 0) v = rotateVec(v, pivot, axZ, angleAccum.z);
             mesh.vertices[i] = v;
         }
     }
@@ -442,11 +480,25 @@ private:
         return m;
     }
 
-    // Apply incremental rotation to cached vertex indices — used for partial selection.
+    // Apply incremental rotation to cached vertex indices — used for
+    // partial selection. When ACEN.Local + AXIS.Local publish per-cluster
+    // pivots/basis, each cluster rotates around ITS pivot using ITS axis
+    // (matches MODO actr.local + axis.local).
     void applyRotationVec(Vec3 axisVec, float angle) {
-        Vec3 pivot = handler.center;
-        foreach (vi; vertexIndicesToProcess)
-            mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, axisVec, angle);
+        auto cp = queryClusterPivots();
+        auto ap = queryClusterAxes();
+        // dragAxis ∈ {0,1,2} means rotation around handler.axisX/Y/Z;
+        // for those, per-cluster basis lookup picks the matching axis
+        // (right/up/fwd) from AxisStage. dragAxis == 3 (screen ring) or
+        // an off-axis arc keeps the global axisVec.
+        int axisIdx = (dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
+        foreach (vi; vertexIndicesToProcess) {
+            Vec3 pivot = pivotFor(vi, cp, handler.center);
+            Vec3 ax    = (axisIdx >= 0)
+                       ? axisFor(vi, axisIdx, ap, cp, axisVec)
+                       : axisVec;
+            mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, ax, angle);
+        }
         needsGpuUpdate = true;
     }
 

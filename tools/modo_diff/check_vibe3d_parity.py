@@ -277,17 +277,36 @@ def run_case(path, port):
 
     eval_state = get(f"{base}/api/toolpipe/eval")
     vibe_center = tuple(eval_state["actionCenter"]["center"])
+    vibe_clusters_n     = len(eval_state["actionCenter"]["clusterCenters"])
+    vibe_axes_clusters  = len(eval_state["axis"]["clusterRight"])
 
     pred = predict_pivots(acen_mode, sel, clusters, border)
     if pred is None:
         return "SKIP", f"{acen_mode} pivot is drag-position-dependent"
 
+    # Cluster-count invariant for ACEN.Local with multi-cluster
+    # selection: vibe3d must publish per-cluster pivots AND per-cluster
+    # axes (both with the same cluster count). Phase 4 of
+    # acen_modo_parity_plan.md — Move/Scale/Rotate consume both.
+    if acen_mode == "local" and len(clusters) >= 2:
+        if vibe_clusters_n != len(clusters):
+            return "FAIL", (
+                f"local: expected {len(clusters)} clusterCenters, got "
+                f"{vibe_clusters_n}")
+        if vibe_axes_clusters != len(clusters):
+            return "FAIL", (
+                f"local: expected {len(clusters)} clusterRight, got "
+                f"{vibe_axes_clusters}")
+
     if any(near(vibe_center, p) for p in pred):
         labels = ", ".join(
             f"({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})" for p in pred)
+        extra = ""
+        if acen_mode == "local" and len(clusters) >= 2:
+            extra = f"  [{vibe_clusters_n}c/axes]"
         return "PASS", (
             f"vibe3d=({vibe_center[0]:+.3f},{vibe_center[1]:+.3f},"
-            f"{vibe_center[2]:+.3f}) ≈ MODO pred={labels}")
+            f"{vibe_center[2]:+.3f}) ≈ MODO pred={labels}{extra}")
     labels = ", ".join(
         f"({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})" for p in pred)
     return "FAIL", (

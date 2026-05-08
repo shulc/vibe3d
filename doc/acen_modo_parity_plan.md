@@ -23,7 +23,7 @@ artists' muscle memory from MODO produces unexpected pivots in vibe3d).
 | 1 — Auto: drag-projected pivot          | ✅ done | Click-away path already wired (notifyAcenUserPlaced existed); switched projection plane from most-facing-axis-through-gizmo to world Y=0 Work Plane to match MODO docs. New `screenToWorkPlane` helper in math.d. All tests pass. |
 | 2 — Select: bbox center, not vert avg   | ✅ done | `asymmetric/select` + `selectauto` PASS in `run_acen_drag.sh`; all 47 unit tests still pass (symmetric inputs). Commit b7c96ca. |
 | 3 — Local: per-cluster pivots in Tool   | ✅ done | `ActionCenterPacket` now ships `clusterCenters[]`+`clusterOf[]`. Scale tool consumes them via `pivotFor(vi)`. `asymmetric/local` PASS — MODO's per-cluster bbox-center invariant is preserved. All 12/12 cross-check modes pass. Move/Rotate per-cluster — follow-up. |
-| 4 — Local: per-cluster axes (axis.local)| 🟡 partial | Move per-cluster basis done (commit 046d38f). Scale/Rotate per-cluster basis still TODO. Test extensions: sphere_top pattern + rotate tool in defaults — **54/54 cells pass**. Drag start moved from (1000, 580) → (1020, 560) so it lands on a rotation ring even when the pivot is inside the small sphere screen footprint. |
+| 4 — Local: per-cluster axes (axis.local)| ✅ done | Move per-cluster basis done in commit 046d38f. Scale + Rotate now consume per-cluster axes via `axesFor(vi, ap, cp, ax, ay, az)` (Scale: applyScaleAxesFactor / commitWholeMeshScale / applyScaleFromActivationCpuOnly; Rotate: applyRotationVec / commitWholeMeshRotation / applyAbsoluteFromOrigCpuOnly). MODO 54/54, vibe3d-side parity 45/45 (9 `auto` skips). |
 
 ## Recommended order
 

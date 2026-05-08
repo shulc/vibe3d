@@ -19,8 +19,8 @@ the same numbers MODO produces, on the same case.
 | 0 — case JSONs as ground truth                                     | 54   | ✅ done |
 | 1 — `/api/toolpipe/eval` exposes pipe state                        | —    | ✅ done |
 | 2 — `check_vibe3d_parity.py` runs vibe3d alongside MODO            | 54   | ✅ done |
-| 3 — close behavioural gaps (ACEN.Border, Scale/Rotate AXIS.Local)  | 4–6  | 🟡 partial — Border closed, Scale/Rotate Local axes still TODO |
-| 4 — full matrix green                                              | 54   | 🟡 45/45 (excluding 9 drag-dependent `auto` skips) |
+| 3 — close behavioural gaps (ACEN.Border, Scale/Rotate AXIS.Local)  | 4–6  | ✅ done |
+| 4 — full matrix green                                              | 54   | ✅ 45/45 (excluding 9 drag-dependent `auto` skips) |
 
 vibe3d-side runs through `check_vibe3d_parity.py`:
 - builds the same primitive (cube/sphere) and selects the same polys;
