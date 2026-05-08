@@ -202,7 +202,20 @@ public:
         // future queries (other tools, history replay etc.). Mode stays
         // Auto — userPlaced sub-state, MODO "click away → new center".
         notifyAcenUserPlaced(hit);
-        dragAxis = 3;
+        // Drag projects onto the WORK PLANE (Y=0), not onto the
+        // most-facing plane through the gizmo. dragAxis=6 selects
+        // planeDragDelta's "axisY-normal" plane = XZ plane through
+        // center; since center lies on the workplane after the
+        // relocation above, this IS the workplane.
+        //
+        // Was dragAxis=3 (most-facing plane normal). For our typical
+        // camera (looking down at angle), the most-facing axis is Z,
+        // and the resulting plane (Z=center.z) gave drag magnitudes
+        // that diverged from MODO's xfrm.move + actr.auto by ~4x.
+        // Workplane-projected drag matches MODO's documented
+        // "click → work plane" semantic and the empirical magnitudes
+        // measured by tools/modo_diff/cross_engine_drag.py.
+        dragAxis = 6;
         lastMX = e.x; lastMY = e.y;
         dragDelta = Vec3(0, 0, 0);
         buildVertexCacheIfNeeded();
