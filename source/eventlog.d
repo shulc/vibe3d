@@ -36,6 +36,26 @@ private int _pushEvent(SDL_Event* e) {
     return SDL_PushEvent(e);
 }
 
+// Direct event dispatch delegate — bypasses SDL_PushEvent during replay.
+//
+// SDL's X11 backend coalesces consecutive SDL_MOUSEMOTION events that
+// land in the same SDL_PollEvent batch (summing their xrel/yrel into
+// one merged event). For event playback this means most motion events
+// never reach the application's onMouseMotion handler; only the last
+// one in a batch survives. The cross-engine drag test relies on per-
+// motion granularity, so we let the app register a direct dispatcher
+// that EventPlayer.tick calls in lieu of SDL_PushEvent.
+//
+// When set, EventPlayer.tick passes each due event to this delegate
+// instead of pushing to SDL's queue. The delegate should perform the
+// equivalent of one SDL_PollEvent iteration (ImGui filter + switch
+// case + handler dispatch).
+alias DirectEventDispatch = void delegate(SDL_Event*);
+private __gshared DirectEventDispatch g_directDispatch;
+
+void setDirectEventDispatch(DirectEventDispatch d) { g_directDispatch = d; }
+void clearDirectEventDispatch() { g_directDispatch = null; }
+
 // Mouse position source — overridden during event playback so that
 // SDL_GetMouseState()-based picking uses replayed coordinates.
 private int  g_mouseX, g_mouseY;
@@ -352,11 +372,12 @@ struct EventPlayer {
     // Call once per frame. Pushes all events whose timestamp has elapsed.
     // Returns false when playback is finished.
     //
-    // Note for log authors: SDL coalesces consecutive SDL_MOUSEMOTION
-    // events that land in the same SDL_PollEvent batch — the X11 backend
-    // merges them into one with summed `xrel`/`yrel`. To make individual
-    // motion events reach the application's onMouseMotion handler,
-    // space motions in the log at least one frame (~16 ms) apart.
+    // If `setDirectEventDispatch` has registered a delegate, each due
+    // event is delivered DIRECTLY via that delegate (bypassing SDL's
+    // event queue, which coalesces consecutive SDL_MOUSEMOTION events).
+    // Otherwise, events go through SDL_PushEvent (legacy path; the X11
+    // backend may merge motions on PollEvent — space them ≥16 ms apart
+    // in the log).
     bool tick() {
         if (!active) return false;
         double nowMs = cast(double)(_perfCounter() - startCounter)
@@ -397,7 +418,10 @@ struct EventPlayer {
                 if (e.button.button == SDL_BUTTON_LEFT)
                     mouseDown = (e.type == SDL_MOUSEBUTTONDOWN);
             }
-            _pushEvent(&e);
+            if (g_directDispatch !is null)
+                g_directDispatch(&e);
+            else
+                _pushEvent(&e);
             ++idx;
         }
         if (idx >= entries.length) {

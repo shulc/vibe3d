@@ -2847,6 +2847,50 @@ void main(string[] args) {
     // Main loop
     // -------------------------------------------------------------------------
 
+    // Process one SDL event through the same path as the main loop's
+    // SDL_PollEvent body. Used both:
+    //   - inline by the main loop (one event per SDL_PollEvent), and
+    //   - by EventPlayer for direct dispatch (skipping SDL_PushEvent and
+    //     thus the X11 motion-event coalescing that drops most motion
+    //     events when many are queued in a single PollEvent batch).
+    // Returns true to keep the main loop running, false to quit.
+    bool processEvent(SDL_Event* ev) {
+        evLog.log(*ev);
+        bool isF1orF2 = ev.type == SDL_KEYDOWN &&
+            (ev.key.keysym.sym == SDLK_F1 || ev.key.keysym.sym == SDLK_F2);
+        if (!isF1orF2) recLog.log(*ev);
+        ImGui_ImplSDL2_ProcessEvent(ev);
+
+        if (!testMode && io.WantCaptureMouse &&
+            (ev.type == SDL_MOUSEBUTTONDOWN ||
+             ev.type == SDL_MOUSEBUTTONUP   ||
+             ev.type == SDL_MOUSEMOTION      ||
+             ev.type == SDL_MOUSEWHEEL))
+            return true;
+
+        if (io.WantTextInput &&
+            (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP))
+            return true;
+
+        switch (ev.type) {
+            case SDL_QUIT:            return false;
+            case SDL_WINDOWEVENT:     handleWindowEvent(ev.window);      break;
+            case SDL_KEYDOWN:         handleKeyDown(ev.key);             break;
+            case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button);  break;
+            case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(ev.button);    break;
+            case SDL_MOUSEMOTION:     handleMouseMotion(ev.motion);      break;
+            default: break;
+        }
+        return true;
+    }
+
+    // Register direct-dispatch delegate so EventPlayer.tick can deliver
+    // events to the same code path without going through SDL's queue.
+    setDirectEventDispatch((SDL_Event* ev) {
+        if (!processEvent(ev)) running = false;
+    });
+    scope(exit) clearDirectEventDispatch();
+
     while (running) {
         // ---- Playback: push due events before polling ----
         if (playbackMode) evPlay.tick();
@@ -2863,39 +2907,9 @@ void main(string[] args) {
 
         // ---- Events ----
         while (SDL_PollEvent(&event)) {
-            // Log to always-on log; log to recording only when active and not F1/F2.
-            evLog.log(event);
-            bool isF1orF2 = event.type == SDL_KEYDOWN &&
-                (event.key.keysym.sym == SDLK_F1 || event.key.keysym.sym == SDLK_F2);
-            if (!isF1orF2) recLog.log(event);
-            ImGui_ImplSDL2_ProcessEvent(&event);
-
-            // ImGui-driven mouse capture filter — skip mouse events when
-            // an ImGui panel claims them. Bypassed in test mode: HTTP-driven
-            // event playback fires events at deterministic viewport pixels
-            // and must not be silently swallowed when ImGui's WantCaptureMouse
-            // happens to flip on between clicks (its state depends on the
-            // most recent processed event, so consecutive playback clicks
-            // can intermittently drop).
-            if (!testMode && io.WantCaptureMouse &&
-                (event.type == SDL_MOUSEBUTTONDOWN ||
-                 event.type == SDL_MOUSEBUTTONUP   ||
-                 event.type == SDL_MOUSEMOTION      ||
-                 event.type == SDL_MOUSEWHEEL))
-                continue;
-
-            if (io.WantTextInput &&
-                (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP))
-                continue;
-
-            switch (event.type) {
-                case SDL_QUIT:            running = false;                      break;
-                case SDL_WINDOWEVENT:     handleWindowEvent(event.window);      break;
-                case SDL_KEYDOWN:         handleKeyDown(event.key);             break;
-                case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(event.button);  break;
-                case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(event.button);    break;
-                case SDL_MOUSEMOTION:     handleMouseMotion(event.motion);      break;
-                default: break;
+            if (!processEvent(&event)) {
+                running = false;
+                break;
             }
         }
 
