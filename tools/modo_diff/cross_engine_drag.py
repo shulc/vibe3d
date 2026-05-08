@@ -466,7 +466,14 @@ def main():
                          "needs its own port). For -j 1 you can also "
                          "start `./vibe3d --test --viewport 1426x966` "
                          "yourself first.")
+    ap.add_argument("--visible", action="store_true",
+                    help="run MODO on the caller's real X display so "
+                         "you can see what's happening interactively. "
+                         "Forces -j 1 (only one visible MODO).")
     args = ap.parse_args()
+    if args.visible and args.j > 1:
+        print(red("--visible: forcing -j 1"))
+        args.j = 1
 
     if args.j > 1 and not args.launch_vibe3d:
         print(red("-j > 1 requires --launch-vibe3d (each worker needs "
@@ -502,9 +509,10 @@ def _main_serial(args):
             'rad', str(SCRIPT_DIR / "run_acen_drag.py"))
         rad = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rad)
-        rad.cleanup_all_displays()
+        if not args.visible:
+            rad.cleanup_all_displays()
         rad.copy_scripts()
-        w = rad.Worker(0)
+        w = rad.Worker(0, visible=args.visible)
         try:
             w.boot()
             passed, failed = [], []

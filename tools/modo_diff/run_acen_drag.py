@@ -182,7 +182,8 @@ def _resolve_handle_drag(state, handle, drag_len, detected=None):
 
 
 # ---- ANSI ------------------------------------------------------------
-def red(s):   return f"\033[31m{s}\033[0m"
+def red(s):    return f"\033[31m{s}\033[0m"
+def yellow(s): return f"\033[33m{s}\033[0m"
 def green(s): return f"\033[32m{s}\033[0m"
 def blue(s):  return f"\033[34m{s}\033[0m"
 
@@ -235,9 +236,19 @@ class Worker:
     dump scripts both accept tmpdir as their first argument.
     """
 
-    def __init__(self, worker_id):
+    def __init__(self, worker_id, visible=False):
         self.id      = worker_id
-        self.display = f":{99 + worker_id}"
+        # `visible` mode: skip Xvfb + matchbox and run MODO on the
+        # caller's real X display. Useful for debugging — you can
+        # SEE what MODO is doing while xdotool drives it. Forces
+        # j=1 (multiple visible MODO instances would compete for
+        # the same display + window manager and not produce
+        # reproducible automation).
+        self.visible = visible
+        if visible:
+            self.display = os.environ.get("DISPLAY", ":0")
+        else:
+            self.display = f":{99 + worker_id}"
         self.tmpdir  = Path(f"/tmp/modo_drag_worker_{worker_id}")
         self.tmpdir.mkdir(exist_ok=True)
         self.state_path  = self.tmpdir / "modo_drag_state.json"
@@ -260,55 +271,125 @@ class Worker:
                        env=self.env(),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def _annotate_handle_debug(self, click_x, click_y, detected, handle):
+        """Save <tmpdir>/handles_debug.png — a copy of the detection
+        screenshot with the planned click position marked by a red
+        cross + each detected handle marked by a yellow dot. Helps
+        the test author eyeball whether the click is going to land
+        on the right gizmo handle without re-running the case."""
+        src = self.tmpdir / "handles.png"
+        if not src.exists():
+            return
+        try:
+            import subprocess as sp
+            args = ["convert", str(src),
+                    "-strokewidth", "2",
+                    "-stroke", "yellow", "-fill", "yellow"]
+            for name, (x, y) in detected.items():
+                args += ["-draw", f"circle {int(x)},{int(y)} {int(x)+5},{int(y)+5}"]
+                args += ["-fill", "yellow", "-draw",
+                         f"text {int(x)+8},{int(y)-2} '{name}'"]
+            # Click target on top: red cross + handle name
+            cx, cy = int(click_x), int(click_y)
+            args += ["-stroke", "red", "-fill", "red"]
+            args += ["-draw", f"line {cx-12},{cy} {cx+12},{cy}"]
+            args += ["-draw", f"line {cx},{cy-12} {cx},{cy+12}"]
+            args += ["-draw",
+                     f"text {cx+14},{cy+5} 'click({handle})'"]
+            args += [str(self.tmpdir / "handles_debug.png")]
+            sp.run(args, capture_output=True)
+        except Exception:
+            pass
+
     def _detect_handles(self, state):
         """Take a viewport screenshot and run detect_handles.py on it
         to locate each colour-coded gizmo handle (X red, Y green, Z
-        blue, center cyan) by their saturated pixel clusters. Returns
-        {handle_name: (px, py)} in screen coords; missing handles are
-        omitted (caller falls back to analytical projection).
-        Returns {} on failure."""
-        png_path  = self.tmpdir / "handles.png"
-        json_path = self.tmpdir / "handles.json"
+        blue, center cyan) by their saturated pixel clusters.
+
+        Each handle gets its own per-handle hint pointing at where
+        that handle's SHAFT should be on screen — the arrows are
+        small enough at our test camera that several other tiny
+        red/green/blue blobs (the Y-ring, Z-circle, axis indicators)
+        are nearby; without the per-handle hint the cyan detector
+        picks the corner Z-indicator badge and the red detector
+        picks the Y-axis red ring instead of the X arrow shaft.
+
+        Returns {handle_name: (px, py)} in screen coords; missing
+        handles are omitted. Returns {} on failure."""
+        png_path = self.tmpdir / "handles.png"
         try: os.remove(png_path)
-        except OSError: pass
-        try: os.remove(json_path)
         except OSError: pass
         cam = state.get("camera", {})
         bnd = cam.get("bounds", [0, 0, 1426, 966])
-        cx = bnd[0] + bnd[2] // 2
-        cy = bnd[1] + bnd[3] // 2
-        # Wake up the gizmo render. Setup activated the tool via
-        # `lx.eval('tool.set "xfrm.move" on 0')` — that's a Python API
-        # call and doesn't always flag the viewport for a full redraw.
-        # Hover the cursor over the viewport AND send a settle delay
-        # so MODO catches up before we screenshot. (Hovering alone
-        # isn't always enough but combined with a 0.5s wait the
-        # gizmo reliably appears in our test scenes.)
-        self.xdo("mousemove", str(cx), str(cy))
-        time.sleep(0.3)
-        # A tiny mousemove "wiggle" forces MODO to retrigger viewport
-        # event handlers (it tracks mouse-over for handle hover-state
-        # which means it must re-render the gizmo on every move).
-        self.xdo("mousemove", str(cx + 1), str(cy + 1))
-        time.sleep(0.2)
-        self.xdo("mousemove", str(cx), str(cy))
-        time.sleep(0.3)
         self.screenshot(png_path)
         if not png_path.exists() or os.path.getsize(png_path) < 1000:
             return {}
         bx, by, bw, bh = bnd
-        r = subprocess.run(
-            ["python3", str(SCRIPT_DIR / "detect_handles.py"),
-             str(png_path), str(json_path),
-             "--region", f"{bx},{by},{bw},{bh}"],
-            capture_output=True, text=True)
-        if r.returncode != 0 or not json_path.exists():
-            return {}
+        # Step 1: detect the cyan center cube using an analytical
+        # gizmo-position hint. This is the only handle for which we
+        # need analytical input — once we have the actual on-screen
+        # gizmo center, the per-axis arrow hints below are computed
+        # relative to THAT pixel, so any inaccuracy in
+        # _world_to_screen doesn't propagate (it just biases the
+        # cyan match toward the right ballpark).
         try:
-            return {k: tuple(v) for k, v
-                    in json.loads(json_path.read_text()).items()}
+            gizmo_world = _selection_bbox_center(state)
+            anal_cx, anal_cy = _world_to_screen(cam, gizmo_world)
         except Exception:
             return {}
+
+        out = {}
+        c_path = self.tmpdir / "handle_center.json"
+        try: os.remove(c_path)
+        except OSError: pass
+        subprocess.run(
+            ["python3", str(SCRIPT_DIR / "detect_handles.py"),
+             str(png_path), str(c_path),
+             "--region", f"{bx},{by},{bw},{bh}",
+             "--hint", f"{anal_cx},{anal_cy}"],
+            capture_output=True, text=True)
+        try:
+            pos = json.loads(c_path.read_text()).get("center")
+            if pos is not None:
+                out["center"] = tuple(pos)
+        except Exception:
+            pass
+
+        # Step 2: per-axis arrow hints anchored on the DETECTED
+        # center (or the analytical fallback). 70 px along the
+        # projected axis biases detection toward the arrow SHAFT and
+        # away from the plane handles (red XY-circle, green YZ-
+        # ellipse, blue XZ-circle) that sit near the base of each
+        # arrow and use the same RGB family.
+        if "center" in out:
+            cx, cy = out["center"]
+        else:
+            cx, cy = anal_cx, anal_cy
+
+        for name, axis in (("x", (1.0, 0.0, 0.0)),
+                           ("y", (0.0, 1.0, 0.0)),
+                           ("z", (0.0, 0.0, 1.0))):
+            sx, sy = _project_axis_to_screen(cam, axis)
+            hx = cx + 70.0 * sx
+            hy = cy + 70.0 * sy
+            json_path = self.tmpdir / f"handle_{name}.json"
+            try: os.remove(json_path)
+            except OSError: pass
+            r = subprocess.run(
+                ["python3", str(SCRIPT_DIR / "detect_handles.py"),
+                 str(png_path), str(json_path),
+                 "--region", f"{bx},{by},{bw},{bh}",
+                 "--hint", f"{hx},{hy}"],
+                capture_output=True, text=True)
+            if r.returncode != 0 or not json_path.exists():
+                continue
+            try:
+                pos = json.loads(json_path.read_text()).get(name)
+                if pos is not None:
+                    out[name] = tuple(pos)
+            except Exception:
+                pass
+        return out
 
     def click(self, x, y, settle=0.15):
         self.xdo("mousemove", str(x), str(y))
@@ -406,8 +487,9 @@ class Worker:
         raise RuntimeError(f"MODO {self.display} didn't render within 60s")
 
     def boot(self):
-        self.start_xvfb()
-        self.start_matchbox()
+        if not self.visible:
+            self.start_xvfb()
+            self.start_matchbox()
         self.launch_modo()
         safe_print(blue(f"=== [w{self.id}] File → Reset → OK ==="))
         self.file_reset()
@@ -418,6 +500,9 @@ class Worker:
         if self.modo_proc:
             try: self.modo_proc.kill()
             except Exception: pass
+        if self.visible:
+            # Caller's display + WM stays — we only manage MODO.
+            return
         # We can't grep by display name reliably for MODO (`modo` is the
         # process name, no DISPLAY in argv), so killing modo_proc PID
         # above is the only safe per-worker kill. Xvfb + matchbox we can
@@ -481,14 +566,33 @@ class Worker:
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
 
-        # NOTE: we considered "waking up" the viewport gizmo render
-        # before the drag (so detect_handles.py could find handle
-        # pixels in a screenshot) via xdotool click + W key in the
-        # viewport. Both click-only and click+W variants either leave
-        # the gizmo unrendered or perturb MODO state in ways that
-        # break the subsequent dump_verts step. Reverted — handle-
-        # driven cases continue to use the analytical projection path
-        # in _resolve_handle_drag.
+        # Wake up viewport gizmo render so detect_handles.py finds
+        # the handle pixels in the screenshot. Sequence:
+        #   1. mousemove cursor into viewport
+        #   2. click — MODO interprets this as click-away with
+        #      xfrm.move active and starts a "drag pending" state
+        #   3. key W — re-activates xfrm.move via the real input
+        #      path, which DOES flag the viewport for redraw
+        #   4. key Space — MODO's "commit tool" shortcut. Closes the
+        #      drag-pending state from step 2 so subsequent cmd_bar
+        #      commands (like @modo_dump_verts.py) actually execute.
+        if handle is not None:
+            try:
+                cam_pre = json.loads(self.state_path.read_text()).get("camera", {})
+                bnd = cam_pre.get("bounds", [0, 0, 1426, 966])
+                vx = bnd[0] + bnd[2] // 2
+                vy = bnd[1] + bnd[3] // 2
+            except Exception:
+                vx, vy = 700, 500
+            self.xdo("mousemove", str(vx), str(vy))
+            time.sleep(0.15)
+            self.xdo("click", "1")
+            time.sleep(0.2)
+            tool_key = {"move": "w", "rotate": "e", "scale": "r"}.get(tool, "w")
+            self.xdo("key", tool_key)
+            time.sleep(0.3)
+            self.xdo("key", "space")
+            time.sleep(0.3)
 
         # Optional `view_pre`: list of MODO eval commands run AFTER the
         # setup script (which creates the cube + selection) but BEFORE
@@ -530,25 +634,25 @@ class Worker:
             self.cmd_bar(f"@{probe_script}")
             time.sleep(0.3)
 
-        # If `handle` was set, resolve the drag spec from MODO's
-        # camera state + the requested handle axis. We project the
-        # selection bbox center to screen via the camera basis +
-        # PixelSize and offset by 30 px along the axis projection.
+        # Handle-driven path: resolve the drag pixel from the
+        # analytical projection of the selection bbox center, then
+        # take a debug screenshot annotated with the planned click
+        # position so the test author can visually verify it lands
+        # on the intended handle.
         #
-        # Screenshot-based detection (detect_handles.py) was tried
-        # here but doesn't pan out: headless modo_cl doesn't render
-        # the xfrm tool's gizmo handles into the viewport unless the
-        # viewport receives an actual interactive event (a real
-        # viewport click), which would itself perturb ACEN state.
-        # Analytical projection is close enough; detect_handles.py is
-        # kept around for offline diagnostics on screenshots produced
-        # via tools/modo_diff/screenshot_gizmo.py (which DOES get a
-        # gizmo render because that path uses an Xvfb-attached MODO
-        # instance with a real cursor over the viewport).
+        # Note: we tried to drive MODO interactively here (keyboard
+        # W to wake the gizmo + screenshot + detect_handles.py for
+        # the actual on-screen handle pixel) but couldn't get
+        # cmd_bar to deliver the subsequent @modo_dump_verts.py
+        # @-load — even with tool.drop / Q-key resets the dump
+        # script never executed, leaving result.json missing. See
+        # commit history for the experimental code; analytical
+        # projection is what passes 9/12 of the handle cases.
         if handle is not None:
             try:
                 state_now = json.loads(self.state_path.read_text())
-                drag = _resolve_handle_drag(state_now, handle, drag_len)
+                drag = _resolve_handle_drag(
+                    state_now, handle, drag_len)
             except Exception as e:
                 return "ERROR", f"could not resolve handle drag: {e}"
             state_now["camera"]["drag"] = [float(drag[0]), float(drag[1])]
@@ -556,7 +660,7 @@ class Worker:
             self.state_path.write_text(json.dumps(state_now))
 
         self.mouse_drag(*drag, step_px=step_px)
-        time.sleep(0.5)
+        time.sleep(0.3)
 
         if not self.cmd_bar(
                 f"@modo_dump_verts.py {self.tmpdir} {tool}",
@@ -625,8 +729,8 @@ def cleanup_all_displays(max_id=64):
 
 
 # ---- main -----------------------------------------------------------
-def run_with_workers(cases, j, keep):
-    workers = [Worker(i) for i in range(j)]
+def run_with_workers(cases, j, keep, visible=False):
+    workers = [Worker(i, visible=visible) for i in range(j)]
 
     # Boot workers in parallel — Xvfb + MODO load is ~3 s per worker,
     # serial that's 3 s × N. Parallel keeps it close to single-worker
@@ -684,11 +788,19 @@ def main():
                     help="leave Xvfb/MODO running after the matrix completes")
     ap.add_argument("-j", type=int, default=1,
                     help="parallel MODO workers (default 1)")
+    ap.add_argument("--visible", action="store_true",
+                    help="run MODO on the caller's real X display "
+                         "(skips Xvfb + matchbox). Useful for "
+                         "debugging — you can SEE what MODO is doing "
+                         "while xdotool drives it. Forces -j 1.")
     args = ap.parse_args()
 
     if args.j < 1:
         print(red("ERROR: -j must be >= 1"))
         sys.exit(2)
+    if args.visible and args.j > 1:
+        print(yellow("--visible: forcing -j 1 (only one visible MODO at a time)"))
+        args.j = 1
 
     check_prereqs()
     cases = discover_cases(args.filters)
@@ -697,7 +809,8 @@ def main():
 
     try:
         copy_scripts()
-        results = run_with_workers(cases, args.j, args.keep)
+        results = run_with_workers(cases, args.j, args.keep,
+                                    visible=args.visible)
 
         passed  = [n for n, s, _ in results if s == "PASS"]
         failed  = [(n, w) for n, s, w in results if s == "FAIL"]

@@ -22,6 +22,12 @@ the arrow shaft is enough for hit-testing.
 Usage (called by run_acen_drag.Worker as a subprocess):
     python3 detect_handles.py <png_path> <out_json> \
         [--region x,y,w,h]    # restrict search to a sub-rect (viewport)
+        [--hint x,y]          # prefer the connected-component blob
+                              # closest to (x, y) — used to pick the
+                              # actual gizmo center cube over the
+                              # tiny "Z" axis-indicator badge in the
+                              # viewport corner that uses the same
+                              # cyan-ish RGB triplet
 
 Output JSON shape:
     {
@@ -55,7 +61,7 @@ HANDLES = {
 }
 
 
-def detect(arr, core, tol, sat_min):
+def detect(arr, core, tol, sat_min, hint=None):
     r, g, b = core
     rch = arr[:, :, 0].astype(int)
     gch = arr[:, :, 1].astype(int)
@@ -72,42 +78,66 @@ def detect(arr, core, tol, sat_min):
     if not mask.any():
         return None
 
-    # Connected-component label so we can isolate the LARGEST blob of
-    # matching colour — MODO renders a small per-axis indicator widget
-    # in the viewport corner that uses the same RGB triplet as the
-    # main gizmo handles, and the centroid of all matching pixels
-    # would split the difference between the two and miss both. The
-    # largest connected component is reliably the gizmo handle.
+    # Connected-component label. Picking the LARGEST blob is wrong
+    # when MODO renders the small per-axis indicator widget (the "Z"
+    # badge in the corner) in the same RGB family — that text can be
+    # bigger than the gizmo center cube and dominate. With a hint
+    # (typically the analytical projection of the gizmo's screen
+    # position) we instead pick the blob whose centroid is CLOSEST
+    # to the hint, breaking ties on size. Without a hint we still
+    # fall back to "largest blob" for backward compatibility.
     labels, n = ndi.label(mask, structure=np.ones((3, 3), dtype=int))
     if n == 0:
         return None
     sizes = ndi.sum(mask, labels, index=range(1, n + 1))
-    biggest = int(np.argmax(sizes)) + 1
-    if sizes[biggest - 1] < 5:
-        return None
-    cy, cx = ndi.center_of_mass(mask, labels, biggest)
-    return (float(cx), float(cy))
+    centers = ndi.center_of_mass(mask, labels, range(1, n + 1))
+    if hint is None:
+        biggest = int(np.argmax(sizes))
+        if sizes[biggest] < 5:
+            return None
+        cy, cx = centers[biggest]
+        return (float(cx), float(cy))
+    # With a hint we use a much looser size threshold: the gizmo's
+    # center cube is anti-aliased into many tiny (2-4 px) blobs so
+    # `>= 5` excludes the actual handle. Distance-from-hint then
+    # picks the cluster nearest the analytical projection regardless
+    # of size; the corner Z-indicator badge — a much larger blob in a
+    # very different screen region — gets correctly skipped.
+    hx, hy = hint
+    best = None
+    best_d = float("inf")
+    for i in range(n):
+        if sizes[i] < 2:
+            continue
+        cy, cx = centers[i]
+        d = (cx - hx) ** 2 + (cy - hy) ** 2
+        if d < best_d:
+            best_d = d
+            best = (float(cx), float(cy))
+    return best
 
 
 def main():
     args = sys.argv[1:]
     region = None
+    hint = None
     if "--region" in args:
         idx = args.index("--region")
         region = tuple(int(v) for v in args[idx + 1].split(","))
         del args[idx:idx + 2]
+    if "--hint" in args:
+        idx = args.index("--hint")
+        hint = tuple(float(v) for v in args[idx + 1].split(","))
+        del args[idx:idx + 2]
     if len(args) != 2:
         print("usage: detect_handles.py <png> <out_json> "
-              "[--region x,y,w,h]", file=sys.stderr)
+              "[--region x,y,w,h] [--hint x,y]", file=sys.stderr)
         return 2
     png, out = args
 
     img = Image.open(png).convert("RGB")
     arr = np.asarray(img)
 
-    # Restrict search to the viewport — menu chrome + icons in MODO's
-    # surrounding panels often have saturated colours that fool the
-    # detector when run on the full screenshot.
     if region is not None:
         rx, ry, rw, rh = region
         sub = arr[ry:ry + rh, rx:rx + rw]
@@ -116,9 +146,15 @@ def main():
         sub = arr
         offset = (0, 0)
 
+    # Translate the hint into sub-image coordinates if we have one.
+    sub_hint = None
+    if hint is not None:
+        sub_hint = (hint[0] - offset[0], hint[1] - offset[1])
+
     found = {}
     for name, spec in HANDLES.items():
-        r = detect(sub, spec["core"], spec["tol"], spec["sat_min"])
+        r = detect(sub, spec["core"], spec["tol"], spec["sat_min"],
+                   sub_hint)
         if r is not None:
             found[name] = [r[0] + offset[0], r[1] + offset[1]]
 

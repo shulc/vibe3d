@@ -273,9 +273,13 @@ if acen_mode == "none":
     lx.eval('tool.clearTask "axis" "center"')
 else:
     lx.eval('tool.set "actr.%s" on 0' % acen_mode)
-# `xfrm.rotate` exists but is mode-disabled headless; the
-# `TransformRotate` tool preset wraps `xfrm.transform` with rotate-only
-# attrs (T=0 R=1 S=0) and does respond to drag in the GUI.
+# Activate the transform tool via lx.eval — puts the tool in the
+# toolpipe so dump_verts' `tool.attr xfrm.<tool> ?` queries work.
+# For handle-driven cases tools/modo_diff/run_acen_drag.py.Worker
+# also fires a real xdotool W/E/R keystroke after this; that
+# keystroke is the one that flags the viewport for redraw (so the
+# gizmo's coloured handles appear in screenshots), but it doesn't
+# replace the toolpipe activation here — it complements it.
 if tool == "rotate":
     lx.eval('tool.set "TransformRotate" on 0')
 else:
