@@ -22,6 +22,12 @@ struct Action {
     // button's "pressed" appearance — same shape as PopupItem.checked
     // (e.g. Work Plane button glows when workplane/auto != "true").
     Checked    checked;
+    // For kind == popup: when true, the parent button's label changes
+    // dynamically to the label of the first popup item whose `checked:`
+    // resolves true (mirrors MODO's `<atom type="PopupFace">optionOrLabel
+    // </atom>` — see resrc/701_frm_modomodes_forms.cfg:683). When no
+    // item is checked, falls back to the static `Button.label`.
+    bool       dynamicLabel;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +48,7 @@ struct Action {
 // `kind: separator` is accepted as a YAML alias of `divider` (matches
 // the term used by config/statusline.yaml's grouping plan).
 // ---------------------------------------------------------------------------
-enum PopupItemKind { action, divider, header }
+enum PopupItemKind { action, divider, header, submenu }
 
 /// Optional state-query attached to action items — when present, the
 /// row gets a checkmark indicator if the comparison matches.
@@ -60,13 +66,19 @@ struct Checked {
     string path;
     string equals_;       // populated when `equals:` was given
     string contains;      // populated when `contains:` was given
+    string notEquals;     // populated when `notEquals:` was given —
+                          // true iff state[path] != notEquals (handy
+                          // for "pressed when not none" semantics).
 }
 
 struct PopupItem {
     PopupItemKind kind;
-    string        label;        // valid for action / header
+    string        label;        // valid for action / header / submenu
     Action        action;       // valid for action only
     Checked       checked;      // valid for action only — optional
+    PopupItem[]   subItems;     // valid for submenu only — children
+                                // rendered in a child popup
+                                // (BeginMenu/EndMenu).
 }
 
 // One-modifier override: when the corresponding key is held, the button
@@ -328,27 +340,10 @@ private Action parseAction(NodeT)(NodeT actionNode, string ctxLabel, string path
                 throw new Exception(
                     format("buttonset: popup action for '%s' ('%s') has empty 'items'",
                            ctxLabel, path));
-            if (actionNode.containsKey("checked")) {
-                auto chkNode = actionNode["checked"];
-                if (!chkNode.containsKey("path"))
-                    throw new Exception(format(
-                        "buttonset: popup action for '%s' ('%s') has 'checked' without 'path'",
-                        ctxLabel, path));
-                bool hasEquals   = chkNode.containsKey("equals");
-                bool hasContains = chkNode.containsKey("contains");
-                if (hasEquals && hasContains)
-                    throw new Exception(format(
-                        "buttonset: popup action for '%s' ('%s') has 'checked' with both 'equals' and 'contains'",
-                        ctxLabel, path));
-                if (!hasEquals && !hasContains)
-                    throw new Exception(format(
-                        "buttonset: popup action for '%s' ('%s') has 'checked' without 'equals' or 'contains'",
-                        ctxLabel, path));
-                a.checked.present = true;
-                a.checked.path    = chkNode["path"].as!string;
-                if (hasEquals)   a.checked.equals_  = chkNode["equals"].as!string;
-                if (hasContains) a.checked.contains = chkNode["contains"].as!string;
-            }
+            if (actionNode.containsKey("checked"))
+                a.checked = parseChecked(actionNode["checked"], ctxLabel, path);
+            if (actionNode.containsKey("dynamicLabel"))
+                a.dynamicLabel = actionNode["dynamicLabel"].as!bool;
             break;
         }
         case ActionKind.tool:
@@ -392,6 +387,30 @@ private PopupItem parsePopupItem(NodeT)(NodeT itemNode, string ctxLabel,
         pi.label = itemNode["label"].as!string;
         return pi;
     }
+    if (kindStr == "submenu") {
+        if (!itemNode.containsKey("label"))
+            throw new Exception(format(
+                "buttonset: popup submenu item #%d for '%s' ('%s') is missing 'label'",
+                idx, ctxLabel, path));
+        if (!itemNode.containsKey("items"))
+            throw new Exception(format(
+                "buttonset: popup submenu item '%s' for '%s' ('%s') is missing 'items'",
+                itemNode["label"].as!string, ctxLabel, path));
+        pi.kind  = PopupItemKind.submenu;
+        pi.label = itemNode["label"].as!string;
+        import dyaml : Node;
+        size_t subIdx = 0;
+        foreach (Node subNode; itemNode["items"]) {
+            pi.subItems ~= parsePopupItem(
+                subNode, ctxLabel ~ "/" ~ pi.label, subIdx, path);
+            ++subIdx;
+        }
+        if (pi.subItems.length == 0)
+            throw new Exception(format(
+                "buttonset: popup submenu '%s' for '%s' ('%s') has empty 'items'",
+                pi.label, ctxLabel, path));
+        return pi;
+    }
     if (kindStr != "action")
         throw new Exception(format(
             "buttonset: unknown popup item kind '%s' (#%d) for '%s' in '%s'",
@@ -410,28 +429,35 @@ private PopupItem parsePopupItem(NodeT)(NodeT itemNode, string ctxLabel,
     pi.label  = itemNode["label"].as!string;
     pi.action = parseAction(itemNode["action"], ctxLabel ~ "/" ~ pi.label, path);
 
-    if (itemNode.containsKey("checked")) {
-        auto chkNode = itemNode["checked"];
-        if (!chkNode.containsKey("path"))
-            throw new Exception(format(
-                "buttonset: popup item '%s' for '%s' ('%s') has 'checked' without 'path'",
-                pi.label, ctxLabel, path));
-        bool hasEquals   = chkNode.containsKey("equals");
-        bool hasContains = chkNode.containsKey("contains");
-        if (hasEquals && hasContains)
-            throw new Exception(format(
-                "buttonset: popup item '%s' for '%s' ('%s') has 'checked' with both 'equals' and 'contains'",
-                pi.label, ctxLabel, path));
-        if (!hasEquals && !hasContains)
-            throw new Exception(format(
-                "buttonset: popup item '%s' for '%s' ('%s') has 'checked' without 'equals' or 'contains'",
-                pi.label, ctxLabel, path));
-        pi.checked.present = true;
-        pi.checked.path    = chkNode["path"].as!string;
-        if (hasEquals)   pi.checked.equals_  = chkNode["equals"].as!string;
-        if (hasContains) pi.checked.contains = chkNode["contains"].as!string;
-    }
+    if (itemNode.containsKey("checked"))
+        pi.checked = parseChecked(itemNode["checked"], ctxLabel, path);
     return pi;
+}
+
+private Checked parseChecked(NodeT)(NodeT chkNode, string ctxLabel, string path) {
+    if (!chkNode.containsKey("path"))
+        throw new Exception(format(
+            "buttonset: 'checked' for '%s' ('%s') is missing 'path'",
+            ctxLabel, path));
+    bool hasEquals    = chkNode.containsKey("equals");
+    bool hasContains  = chkNode.containsKey("contains");
+    bool hasNotEquals = chkNode.containsKey("notEquals");
+    int present = (hasEquals ? 1 : 0) + (hasContains ? 1 : 0) + (hasNotEquals ? 1 : 0);
+    if (present > 1)
+        throw new Exception(format(
+            "buttonset: 'checked' for '%s' ('%s') has multiple of equals/contains/notEquals",
+            ctxLabel, path));
+    if (present == 0)
+        throw new Exception(format(
+            "buttonset: 'checked' for '%s' ('%s') has none of equals/contains/notEquals",
+            ctxLabel, path));
+    Checked chk;
+    chk.present = true;
+    chk.path    = chkNode["path"].as!string;
+    if (hasEquals)    chk.equals_   = chkNode["equals"].as!string;
+    if (hasContains)  chk.contains  = chkNode["contains"].as!string;
+    if (hasNotEquals) chk.notEquals = chkNode["notEquals"].as!string;
+    return chk;
 }
 
 private ButtonVariant parseModifierVariant(NodeT)(NodeT btnNode, string key,

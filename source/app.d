@@ -2492,8 +2492,37 @@ void main(string[] args) {
                     if (ImGui.MenuItem(it.label, "", checked))
                         dispatchAction(it.action);
                     break;
+                case PopupItemKind.submenu:
+                    if (ImGui.BeginMenu(it.label)) {
+                        renderPopupItems(it.subItems);
+                        ImGui.EndMenu();
+                    }
+                    break;
             }
         }
+    }
+
+    // Walk popup items (recursing into submenus) and return the label
+    // of the first one whose `checked:` resolves true. Powers
+    // `Action.dynamicLabel` — MODO's `<atom type="PopupFace">
+    // optionOrLabel</atom>` semantics. Returns "" when nothing matches.
+    string firstCheckedLabel(ref PopupItem[] items) {
+        foreach (ref it; items) {
+            final switch (it.kind) {
+                case PopupItemKind.action:
+                    if (it.checked.present && popupItemChecked(it.checked))
+                        return it.label;
+                    break;
+                case PopupItemKind.submenu:
+                    string s = firstCheckedLabel(it.subItems);
+                    if (s.length > 0) return s;
+                    break;
+                case PopupItemKind.divider:
+                case PopupItemKind.header:
+                    break;
+            }
+        }
+        return "";
     }
 
     // LightWave-style popup chrome: re-skin ImGui's default dark popup to
@@ -2768,6 +2797,16 @@ void main(string[] args) {
                     }
                     else if (btn.shift.present && (mods & KMOD_SHIFT)) {
                         label = btn.shift.label; action = btn.shift.action;
+                    }
+
+                    // Phase: MODO `PopupFace=optionOrLabel` parity. When
+                    // a popup action sets `dynamicLabel: true`, swap the
+                    // static button label for whichever item's `checked:`
+                    // currently resolves true. Falls back to the static
+                    // label when nothing matches.
+                    if (action.kind == ActionKind.popup && action.dynamicLabel) {
+                        string s = firstCheckedLabel(action.popupItems);
+                        if (s.length > 0) label = s;
                     }
 
                     // Detect select.typeFrom <type> in the action's first

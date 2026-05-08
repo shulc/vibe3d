@@ -55,12 +55,59 @@ void clearAllState() {
 ///              path lets producers publish multi-valued state
 ///              (e.g. snap types) as a stable string, and consumers
 ///              read it as a set without knowing the encoding.
+unittest {
+    // notEquals: button-pressed semantics ("active when state isn't X").
+    clearAllState();
+    setStatePath("acen/mode", "auto");
+    Checked chk;
+    chk.present   = true;
+    chk.path      = "acen/mode";
+    chk.notEquals = "none";
+    assert(resolveChecked(chk));        // "auto" != "none"
+    setStatePath("acen/mode", "none");
+    assert(!resolveChecked(chk));       // "none" == "none"
+    setStatePath("acen/mode", "select");
+    assert(resolveChecked(chk));        // "select" != "none"
+    clearAllState();
+}
+
+unittest {
+    // contains: comma-list-as-needle = "state is one of these".
+    // Pre-existing YAML usage relied on this; fix in popup_state.d
+    // makes it actually work.
+    clearAllState();
+    setStatePath("acen/mode", "select");
+    Checked chk;
+    chk.present  = true;
+    chk.path     = "acen/mode";
+    chk.contains = "select,selectauto,element";
+    assert(resolveChecked(chk));
+    setStatePath("acen/mode", "auto");
+    assert(!resolveChecked(chk));
+    setStatePath("acen/mode", "element");
+    assert(resolveChecked(chk));
+    // Single-value contains still works as substring/element match.
+    chk.contains = "vertex";
+    setStatePath("acen/mode", "vertex,edge");   // multi-valued state
+    assert(resolveChecked(chk));
+    setStatePath("acen/mode", "polygon");
+    assert(!resolveChecked(chk));
+    clearAllState();
+}
+
 bool resolveChecked(ref Checked chk) {
     if (!chk.present) return false;
     string v = getStatePath(chk.path);
     if (chk.equals_.length > 0)
         return v == chk.equals_;
+    if (chk.notEquals.length > 0)
+        return v != chk.notEquals;
     if (chk.contains.length > 0) {
+        // YAML "contains: a,b,c" means: true iff `v` is one of {a,b,c}.
+        // Comma-split the *needle* (`contains`) and check if `v` is in
+        // that list. Fallback: if needle has no comma, also accept
+        // substring or list-element match against state.
+        if (chk.contains.split(',').canFind(v)) return true;
         if (v.canFind(chk.contains)) return true;
         return v.split(',').canFind(chk.contains);
     }
