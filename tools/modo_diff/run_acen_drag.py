@@ -254,6 +254,13 @@ class Worker:
         self.state_path  = self.tmpdir / "modo_drag_state.json"
         self.result_path = self.tmpdir / "modo_drag_result.json"
         self.modo_proc = None
+        # Screen-coordinate offset of MODO's content area. Hardcoded
+        # UI coords (CMD_BAR_X / FILE_MENU_X / etc.) are relative to
+        # MODO's content origin which under matchbox-fullscreen is
+        # (0, 0) but on a real WM is shifted by the titlebar height.
+        # _ui_xy() applies this offset.
+        self.win_x = 0
+        self.win_y = 0
 
     # ----- shell helpers -----
     def env(self, extra=None):
@@ -396,8 +403,20 @@ class Worker:
         time.sleep(settle)
         self.xdo("click", "1")
 
+    def _ui_xy(self, x, y):
+        """Translate hardcoded UI coords (relative to MODO content
+        origin) to absolute screen coords. In matchbox-fullscreen
+        win_x/y are (0,0) so this is a no-op; under a normal WM with
+        a titlebar (visible mode) win_y > 0 and we shift everything
+        down so the click hits the same logical UI element."""
+        return x + self.win_x, y + self.win_y
+
+    def click_ui(self, rel_x, rel_y, settle=0.15):
+        ax, ay = self._ui_xy(rel_x, rel_y)
+        self.click(ax, ay, settle)
+
     def cmd_bar(self, cmd, wait_for=None, timeout=8.0):
-        self.click(CMD_BAR_X, CMD_BAR_Y)
+        self.click_ui(CMD_BAR_X, CMD_BAR_Y)
         time.sleep(0.15)
         self.xdo("type", "--delay", "20", cmd)
         time.sleep(0.15)
@@ -413,9 +432,12 @@ class Worker:
         return False
 
     def file_reset(self):
-        self.click(FILE_MENU_X,  FILE_MENU_Y);  time.sleep(1)
-        self.click(RESET_ITEM_X, RESET_ITEM_Y); time.sleep(2)
-        self.click(POPUP_OK_X,   POPUP_OK_Y);   time.sleep(3)
+        self.click_ui(FILE_MENU_X,  FILE_MENU_Y);  time.sleep(1)
+        self.click_ui(RESET_ITEM_X, RESET_ITEM_Y); time.sleep(2)
+        # The popup dialog is centred on the MODO window — under a
+        # WM with frame decoration its absolute screen coords would
+        # also need shifting, so route through _ui_xy via click_ui.
+        self.click_ui(POPUP_OK_X,   POPUP_OK_Y);   time.sleep(3)
 
     def mouse_drag(self, x, y, dx, dy, step_px=20):
         """Drag from (x, y) by (dx, dy) generating one xdotool mousemove
@@ -491,8 +513,57 @@ class Worker:
             self.start_xvfb()
             self.start_matchbox()
         self.launch_modo()
+        if self.visible:
+            self._visible_resize_modo()
         safe_print(blue(f"=== [w{self.id}] File → Reset → OK ==="))
         self.file_reset()
+
+    def _visible_resize_modo(self):
+        """In visible mode, MODO opens at the window manager's
+        default size with WM frame decoration (titlebar). Hardcoded
+        UI coordinates (CMD_BAR_X, FILE_MENU_X, etc.) are relative
+        to MODO's content origin — under matchbox-fullscreen content
+        starts at (0, 0), but under a normal WM it's offset by the
+        titlebar height. After resizing MODO to (0, 0) 1920×1080 we
+        record the actual content origin into self.win_x / win_y so
+        click_ui() can shift each click into screen coords.
+        """
+        env = self.env()
+        for _ in range(20):
+            r = subprocess.run(
+                ["xdotool", "search", "--name", "modo"],
+                env=env, capture_output=True, text=True)
+            wid = r.stdout.strip().split("\n")[0] if r.stdout.strip() else ""
+            if wid:
+                break
+            time.sleep(0.3)
+        if not wid:
+            safe_print(red(f"=== [w{self.id}] visible: MODO window not found ==="))
+            return
+        safe_print(blue(f"=== [w{self.id}] visible: resize MODO {wid} → 1920x1080 @ (0,0) ==="))
+        subprocess.run(["xdotool", "windowmove", wid, "0", "0"],
+                       env=env, capture_output=True)
+        subprocess.run(["xdotool", "windowsize", wid, "1920", "1080"],
+                       env=env, capture_output=True)
+        time.sleep(0.5)
+        subprocess.run(["xdotool", "windowactivate", wid],
+                       env=env, capture_output=True)
+        time.sleep(0.3)
+
+        # xdotool getwindowgeometry returns the window's CONTENT
+        # position+size (frame excluded under most WMs — confirmed
+        # KDE/Plasma + GNOME/Mutter). Use it directly as the content
+        # origin offset.
+        r = subprocess.run(
+            ["xdotool", "getwindowgeometry", "--shell", wid],
+            env=env, capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            if line.startswith("X="):
+                self.win_x = int(line.split("=", 1)[1])
+            elif line.startswith("Y="):
+                self.win_y = int(line.split("=", 1)[1])
+        safe_print(blue(f"=== [w{self.id}] visible: content origin = "
+                        f"({self.win_x}, {self.win_y}) ==="))
 
     def shutdown(self):
         # Kill anything bound to this worker's display. Other workers'
@@ -652,7 +723,10 @@ class Worker:
             # relocate ACEN under actr.auto). Activates the tool
             # via the input pipeline so the gizmo's coloured handles
             # are flagged for redraw and visible in screenshots.
-            self.xdo("mousemove", str(vx), str(vy))
+            # vx, vy are in MODO content coords; _ui_xy() shifts them
+            # to screen coords under a real WM (visible mode).
+            ax, ay = self._ui_xy(vx, vy)
+            self.xdo("mousemove", str(ax), str(ay))
             time.sleep(0.2)
             tool_key = {"move": "w", "rotate": "e", "scale": "r"}.get(tool, "w")
             self.xdo("key", tool_key)
