@@ -1,0 +1,6 @@
+{
+  "_comment": "MODO actr=(none) via tool.clearTask. Drag still works since xfrm.move is pivot-independent. ACEN/AXIS both absent → vibe3d falls back to world origin/world XYZ.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "none"
+}

@@ -1,0 +1,6 @@
+{
+  "_comment": "actr=(none) on sphere top hemisphere.",
+  "tool": "move",
+  "pattern": "sphere_top",
+  "acen_mode": "none"
+}

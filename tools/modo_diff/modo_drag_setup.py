@@ -259,7 +259,15 @@ except Exception as _e:
     camera = {"error": repr(_e)}
 
 # ---- activate ACEN.<mode> + xfrm.<tool>
-lx.eval('tool.set "actr.%s" on 0' % acen_mode)
+# MODO's "(none)" Action Center entry is the absence of any actr.* preset
+# rather than its own preset. Per resrc/701_frm_modomodes_forms.cfg:687,
+# the popup wires it to `tool.clearTask "axis" "center"` — drops both ACEN
+# and AXIS slots from the toolpipe, which is the cross-engine equivalent
+# of vibe3d's `actr.none`.
+if acen_mode == "none":
+    lx.eval('tool.clearTask "axis" "center"')
+else:
+    lx.eval('tool.set "actr.%s" on 0' % acen_mode)
 # `xfrm.rotate` exists but is mode-disabled headless; the
 # `TransformRotate` tool preset wraps `xfrm.transform` with rotate-only
 # attrs (T=0 R=1 S=0) and does respond to drag in the GUI.
