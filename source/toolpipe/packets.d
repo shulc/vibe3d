@@ -133,6 +133,10 @@ enum SnapType : uint {
 /// motion event by tools that consume snap), since snap candidates
 /// depend on the live cursor position and can't be precomputed once
 /// per pipeline.evaluate.
+///
+/// 7.3c: also caches the upstream WORK stage's workplane state +
+/// the resolved grid step, so snap.d's Grid / Workplane candidate
+/// generators don't need to walk the pipeline themselves.
 struct SnapPacket {
     bool   enabled       = false;     // master on/off (X key)
     uint   enabledTypes  = SnapType.Vertex
@@ -143,4 +147,14 @@ struct SnapPacket {
     float  outerRangePx  = 24.0f;      // candidate highlights when within this
     bool   fixedGrid     = false;      // grid uses fixedGridSize, not dynamic
     float  fixedGridSize = 1.0f;       // world units per grid step (when fixedGrid)
+    // Workplane snapshot (mirrors WorkplanePacket fields). Used by
+    // SnapType.Grid (grid lies on the workplane) and SnapType.Workplane
+    // (cursor ray ∩ workplane plane).
+    Vec3   workplaneCenter = Vec3(0, 0, 0);
+    Vec3   workplaneNormal = Vec3(0, 1, 0);
+    Vec3   workplaneAxis1  = Vec3(1, 0, 0);
+    Vec3   workplaneAxis2  = Vec3(0, 0, 1);
+    // Grid step in world units. fixedGrid=true ⇒ fixedGridSize. Else
+    // matches the visible grid (vibe3d's grid is hard-coded at 1.0).
+    float  gridStep        = 1.0f;
 }

@@ -229,31 +229,29 @@ public:
         return true;
     }
 
-    // Phase 7.3a: route the would-be gizmo position through SnapStage.
-    // Returns the (possibly-adjusted) world delta to apply this frame.
-    // No-op when no SnapStage is registered or `enabled` is false; the
-    // dragged element's own verts are excluded so a single-vert drag
-    // can't snap to itself.
+    // Phase 7.3a/c: route the would-be gizmo position through
+    // SnapStage. Returns the (possibly-adjusted) world delta to apply
+    // this frame. No-op when no pipeline is registered or snap is
+    // disabled. The dragged element's own verts are excluded so a
+    // single-vert drag can't snap to itself.
     private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta,
                                   int sx, int sy)
     {
-        import toolpipe.pipeline         : g_pipeCtx;
-        import toolpipe.stages.snap      : SnapStage;
-        import toolpipe.stage            : TaskCode;
+        import toolpipe.pipeline   : g_pipeCtx;
+        import toolpipe.packets    : SubjectPacket;
         if (g_pipeCtx is null) return worldDelta;
-        auto sn = cast(SnapStage)
-                  g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
-        if (sn is null || !sn.enabled) return worldDelta;
 
-        // Build the SnapPacket the math expects from the stage's live
-        // fields (cheap — same pattern other stages use).
-        SnapPacket cfg;
-        cfg.enabled       = sn.enabled;
-        cfg.enabledTypes  = sn.enabledTypes;
-        cfg.innerRangePx  = sn.innerRangePx;
-        cfg.outerRangePx  = sn.outerRangePx;
-        cfg.fixedGrid     = sn.fixedGrid;
-        cfg.fixedGridSize = sn.fixedGridSize;
+        // pipeline.evaluate so SNAP picks up upstream WORK state
+        // (workplane center / normal / axes used by Grid +
+        // Workplane candidates).
+        SubjectPacket subj;
+        subj.mesh             = mesh;
+        subj.editMode         = *editMode;
+        subj.selectedVertices = mesh.selectedVertices.dup;
+        subj.selectedEdges    = mesh.selectedEdges.dup;
+        subj.selectedFaces    = mesh.selectedFaces.dup;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        if (!state.snap.enabled) return worldDelta;
 
         // Exclude verts the drag is moving — same set
         // buildVertexCacheIfNeeded already populated. Otherwise a
@@ -265,7 +263,8 @@ public:
             exclude[i] = cast(uint)vertexIndicesToProcess[i];
 
         Vec3 desired = gizmoCenter + worldDelta;
-        SnapResult sr = snapCursor(desired, sx, sy, cachedVp, *mesh, cfg, exclude);
+        SnapResult sr = snapCursor(desired, sx, sy, cachedVp,
+                                   *mesh, state.snap, exclude);
         if (sr.snapped) return sr.worldPos - gizmoCenter;
         return worldDelta;
     }

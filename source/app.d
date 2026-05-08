@@ -1155,9 +1155,7 @@ void main(string[] args) {
             import std.json        : parseJSON, JSONType, JSONValue;
             import std.conv        : to;
             import toolpipe.pipeline       : g_pipeCtx;
-            import toolpipe.stages.snap    : SnapStage;
-            import toolpipe.stage          : TaskCode;
-            import toolpipe.packets        : SnapPacket;
+            import toolpipe.packets        : SnapPacket, SubjectPacket;
             import snap                    : snapCursor, SnapResult;
             import math                    : Vec3;
 
@@ -1199,23 +1197,22 @@ void main(string[] args) {
                     exclude ~= cast(uint)toI(e);
             }
 
-            // Build the SnapPacket from the registered SnapStage so
-            // the reply reflects whatever the user's most recent
-            // tool.pipe.attr left configured.
+            // Pull a fully-evaluated SnapPacket from the pipeline so
+            // SNAP's workplane snapshot + grid step are populated
+            // (they depend on the upstream WORK stage having run).
+            auto vp = cameraView.viewport();
             SnapPacket cfg;
             if (g_pipeCtx !is null) {
-                if (auto sn = cast(SnapStage)
-                              g_pipeCtx.pipeline.findByTask(TaskCode.Snap)) {
-                    cfg.enabled       = sn.enabled;
-                    cfg.enabledTypes  = sn.enabledTypes;
-                    cfg.innerRangePx  = sn.innerRangePx;
-                    cfg.outerRangePx  = sn.outerRangePx;
-                    cfg.fixedGrid     = sn.fixedGrid;
-                    cfg.fixedGridSize = sn.fixedGridSize;
-                }
+                SubjectPacket subj;
+                subj.mesh             = &mesh;
+                subj.editMode         = editMode;
+                subj.selectedVertices = mesh.selectedVertices.dup;
+                subj.selectedEdges    = mesh.selectedEdges.dup;
+                subj.selectedFaces    = mesh.selectedFaces.dup;
+                auto state = g_pipeCtx.pipeline.evaluate(subj, vp);
+                cfg = state.snap;
             }
 
-            auto vp = cameraView.viewport();
             SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, cfg, exclude);
 
             buf.put(format(

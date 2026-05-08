@@ -319,6 +319,91 @@ unittest { // Polygon snap fires on a cube face surface
 // targetType is one of those three.
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// 7.3c: Workplane snap. Cursor ray ∩ workplane plane. Default
+// workplane = XZ at Y=0 ⇒ snapped Y must be 0. Distance is 0 (the
+// candidate projects back to the cursor pixel) so snap always fires
+// at default ranges.
+// -------------------------------------------------------------------------
+
+unittest { // Workplane snap fires; result lies on Y=0
+    resetCube();
+    // Pin the workplane to XZ at Y=0 so the test doesn't depend on
+    // the auto-mode camera-facing pick.
+    postJson("/api/command", "tool.pipe.attr workplane mode worldY");
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types workplane");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected Workplane snap, got " ~ sr.toString);
+    auto wp = sr["worldPos"].array;
+    assert(approx(wp[1].floating, 0.0),
+        "Workplane snap Y must be 0; got " ~ sr.toString);
+    // SnapType.Workplane = 64.
+    assert(cast(int)sr["targetType"].integer == 64,
+        "targetType expected 64 (Workplane), got " ~ sr.toString);
+    // Restore default for subsequent tests.
+    postJson("/api/command", "tool.pipe.attr workplane mode auto");
+}
+
+// -------------------------------------------------------------------------
+// 7.3c: Grid snap with fixedGrid=true, fixedGridSize=0.5. Result lies
+// on the workplane (Y=0) and X / Z components are integer multiples
+// of 0.5.
+// -------------------------------------------------------------------------
+
+unittest { // Grid snap fixed step = 0.5
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr workplane mode worldY");
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types grid");
+    postJson("/api/command", "tool.pipe.attr snap fixedGrid true");
+    postJson("/api/command", "tool.pipe.attr snap fixedGridSize 0.5");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected Grid snap, got " ~ sr.toString);
+    import std.math : round, fabs;
+    auto wp = sr["worldPos"].array;
+    assert(approx(wp[1].floating, 0.0),
+        "Grid snap Y must be 0; got " ~ sr.toString);
+    double x = wp[0].floating, z = wp[2].floating;
+    assert(fabs(x - round(x / 0.5) * 0.5) < 1e-3,
+        "Grid snap X must be multiple of 0.5; got x=" ~ x.to!string);
+    assert(fabs(z - round(z / 0.5) * 0.5) < 1e-3,
+        "Grid snap Z must be multiple of 0.5; got z=" ~ z.to!string);
+    postJson("/api/command", "tool.pipe.attr workplane mode auto");
+}
+
+// -------------------------------------------------------------------------
+// 7.3c: Grid snap dynamic = step 1.0 (matches visible grid in
+// app.d, hard-coded at 1.0).
+// -------------------------------------------------------------------------
+
+unittest { // Grid snap dynamic step = 1.0
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr workplane mode worldY");
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types grid");
+    postJson("/api/command", "tool.pipe.attr snap fixedGrid false");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected Grid snap, got " ~ sr.toString);
+    import std.math : round, fabs;
+    auto wp = sr["worldPos"].array;
+    assert(approx(wp[1].floating, 0.0),
+        "Grid snap Y must be 0; got " ~ sr.toString);
+    double x = wp[0].floating, z = wp[2].floating;
+    assert(fabs(x - round(x)) < 1e-3,
+        "Grid snap X must be integer; got x=" ~ x.to!string);
+    assert(fabs(z - round(z)) < 1e-3,
+        "Grid snap Z must be integer; got z=" ~ z.to!string);
+    postJson("/api/command", "tool.pipe.attr workplane mode auto");
+}
+
 unittest { // multi-type combo picks closest across types
     resetCube();
     postJson("/api/command", "tool.pipe.attr snap enabled true");

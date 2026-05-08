@@ -54,6 +54,17 @@ class SnapStage : Stage {
         state.snap.outerRangePx  = outerRangePx;
         state.snap.fixedGrid     = fixedGrid;
         state.snap.fixedGridSize = fixedGridSize;
+        // Snapshot workplane state. WORK stage has already run (ord
+        // 0x30 < SNAP 0x40) so state.workplane is populated.
+        state.snap.workplaneCenter = state.workplane.center;
+        state.snap.workplaneNormal = state.workplane.normal;
+        state.snap.workplaneAxis1  = state.workplane.axis1;
+        state.snap.workplaneAxis2  = state.workplane.axis2;
+        // Resolve grid step. Dynamic mode (the default) matches
+        // vibe3d's visible grid, which is hard-coded at 1.0 in
+        // app.d; if/when that becomes zoom-adaptive, this picks
+        // up the same value.
+        state.snap.gridStep = fixedGrid ? fixedGridSize : 1.0f;
     }
 
     override bool setAttr(string name, string value) {

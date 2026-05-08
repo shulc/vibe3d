@@ -1,10 +1,10 @@
 module snap;
 
-import std.math : sqrt;
+import std.math : sqrt, round;
 
 import math : Vec3, Viewport, projectToWindowFull, screenRay,
               rayPlaneIntersect, pointInPolygon2D,
-              closestOnSegment2DSquared, cross;
+              closestOnSegment2DSquared, cross, dot;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType;
 
@@ -150,7 +150,44 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
 
-    // Grid + Workplane land in 7.3c — see doc/snap_plan.md.
+    // Grid candidate (7.3c). The grid lies on the workplane plane.
+    // Project the cursor ray onto the workplane to get a 3D hit, snap
+    // its workplane-local (axis1, axis2) coords to the nearest grid
+    // step, then re-construct the world point. Step is published as
+    // `cfg.gridStep` (= fixedGridSize when fixedGrid, else 1.0 to
+    // match vibe3d's visible grid).
+    if (cfg.enabledTypes & SnapType.Grid) {
+        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        Vec3 hit;
+        if (rayPlaneIntersect(vp.eye, ray,
+                              cfg.workplaneCenter, cfg.workplaneNormal, hit))
+        {
+            Vec3 d = hit - cfg.workplaneCenter;
+            float a1 = dot(d, cfg.workplaneAxis1);
+            float a2 = dot(d, cfg.workplaneAxis2);
+            float step = cfg.gridStep > 1e-9f ? cfg.gridStep : 1.0f;
+            float sa1 = round(a1 / step) * step;
+            float sa2 = round(a2 / step) * step;
+            Vec3 snapped = cfg.workplaneCenter
+                         + cfg.workplaneAxis1 * sa1
+                         + cfg.workplaneAxis2 * sa2;
+            consider(snapped, -1, SnapType.Grid);
+        }
+    }
+
+    // Workplane candidate (7.3c). The cursor ray's intersection with
+    // the workplane plane. Re-projects to exactly the cursor pixel
+    // (modulo float precision), so this candidate's screen distance
+    // is ~0 — geometric / grid candidates with smaller projected-
+    // pixel distance still take priority because they're considered
+    // first and `consider()`'s tie-break is strict less-than.
+    if (cfg.enabledTypes & SnapType.Workplane) {
+        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        Vec3 hit;
+        if (rayPlaneIntersect(vp.eye, ray,
+                              cfg.workplaneCenter, cfg.workplaneNormal, hit))
+            consider(hit, -1, SnapType.Workplane);
+    }
 
     if (bestDist <= cfg.outerRangePx) {
         res.highlighted  = true;
