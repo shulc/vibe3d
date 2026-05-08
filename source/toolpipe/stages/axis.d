@@ -46,6 +46,10 @@ class AxisStage : Stage {
         Origin     = 7,    // alias of World — rotates around (0,0,0) axes
         Screen     = 8,    // camera-aligned (7.2 follow-up)
         Manual     = 9,    // user-pinned right/up/fwd (7.2 follow-up)
+        // Companion of ActionCenterStage.Mode.None — MODO's
+        // tool.clearTask("axis","center") drops both. We keep the stage
+        // installed but publish world XYZ as a sane default basis.
+        None       = 10,
     }
 
     Mode mode = Mode.Auto;
@@ -155,6 +159,8 @@ private:
         final switch (mode) {
             case Mode.World:
             case Mode.Origin:
+            case Mode.None:    // mirrors MODO's "(none)" pulldown — no
+                               // dedicated axis basis; tools see world XYZ.
                 r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
                 return;
             case Mode.Workplane: {
@@ -538,6 +544,7 @@ private:
                 else if (value == "origin")     m = Mode.Origin;
                 else if (value == "screen")     m = Mode.Screen;
                 else if (value == "manual")     m = Mode.Manual;
+                else if (value == "none")       m = Mode.None;
                 else return false;
                 mode = m;
                 return true;
@@ -558,6 +565,7 @@ private:
             case Mode.Origin:     return "origin";
             case Mode.Screen:     return "screen";
             case Mode.Manual:     return "manual";
+            case Mode.None:       return "none";
         }
     }
 

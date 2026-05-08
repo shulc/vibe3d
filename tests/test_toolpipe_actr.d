@@ -98,3 +98,21 @@ unittest { // actr.border (axis falls back to select per the mapping)
     assert(stageMode("ACEN") == "border", "got " ~ stageMode("ACEN"));
     assert(stageMode("AXIS") == "select", "got " ~ stageMode("AXIS"));
 }
+
+unittest { // actr.none — MODO's "(none)" Action Center popup entry,
+           // implemented in MODO as `tool.clearTask "axis" "center"`.
+           // Both stages report mode "none"; ACEN publishes origin (no
+           // pivot), AXIS publishes world XYZ (no orientation override).
+    resetCube();
+    // Switch away from the mappings the previous tests left set.
+    postJson("/api/command", "actr.element");
+    postJson("/api/command", "actr.none");
+    assert(stageMode("ACEN") == "none",
+        "actr.none: ACEN expected none, got " ~ stageMode("ACEN"));
+    assert(stageMode("AXIS") == "none",
+        "actr.none: AXIS expected none, got " ~ stageMode("AXIS"));
+    // Switching back to a real preset still works (no sticky state).
+    postJson("/api/command", "actr.auto");
+    assert(stageMode("ACEN") == "auto", "got " ~ stageMode("ACEN"));
+    assert(stageMode("AXIS") == "auto", "got " ~ stageMode("AXIS"));
+}

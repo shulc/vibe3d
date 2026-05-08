@@ -47,6 +47,13 @@ class ActionCenterStage : Stage {
         Screen     = 6,    // 7.2b
         Border     = 7,    // 7.2e
         Manual     = 8,    // 7.2b
+        // MODO's "(none)" entry in the Action Center popup. In MODO this
+        // is `tool.clearTask "axis" "center"` (drops both ACEN+AXIS from
+        // the toolpipe — see resrc/701_frm_modomodes_forms.cfg:687). We
+        // keep the stage installed but publish a fixed origin pivot and
+        // mark the packet non-Auto, so transform tools can fall back to
+        // world origin without a special-case.
+        None       = 9,
     }
     enum SelectSubMode {
         Center = 0,
@@ -210,6 +217,10 @@ private:
                 computeLocalClusters(first, count);
                 return count > 0 ? first : centroidWithGeometryFallback();
             }
+            case Mode.None:
+                // No action center — tools translate freely; rotate /
+                // scale fall back to world origin.
+                return Vec3(0, 0, 0);
             case Mode.Border:
                 // Bbox center of selection-border verts — those on edges
                 // with one selected and one unselected adjacent face.
@@ -730,6 +741,7 @@ private:
                 else if (value == "screen")     m = Mode.Screen;
                 else if (value == "border")     m = Mode.Border;
                 else if (value == "manual")     m = Mode.Manual;
+                else if (value == "none")       m = Mode.None;
                 else return false;
                 // Switching mode (including Auto→Auto re-pick) clears the
                 // Auto-userPlaced sub-state — matches MODO popup re-click.
@@ -776,6 +788,7 @@ private:
             case Mode.Screen:     return "screen";
             case Mode.Border:     return "border";
             case Mode.Manual:     return "manual";
+            case Mode.None:       return "none";
         }
     }
 

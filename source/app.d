@@ -736,6 +736,7 @@ void main(string[] args) {
             Preset("origin",     "origin",     "world"),    // axis at origin = world
             Preset("screen",     "screen",     "screen"),
             Preset("border",     "border",     "select"),   // border edges + selection-aligned axis
+            Preset("none",       "none",       "none"),     // MODO "(none)" — drops both, world fallback
         ];
         // IIFE capture by value — the bare-foreach + lambda pattern
         // closes over the loop variable by reference in D, so without
