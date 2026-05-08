@@ -7,17 +7,23 @@
  *   ./run_test.d -v test_bevel       # verbose output
  *   ./run_test.d --keep              # leave vibe3d running after the run
  *   ./run_test.d --no-build          # skip `dub build`
+ *   ./run_test.d -j 4                # 4 parallel workers (each its own
+ *                                      vibe3d instance on a private port)
  */
 
 module run_test;
 
-import std.algorithm : canFind, sort;
-import std.array     : array, appender;
+import std.algorithm : canFind, sort, each;
+import std.array     : array, appender, replace;
 import std.conv      : to;
-import std.file      : exists, isFile, mkdirRecurse, rmdirRecurse,
-                       dirEntries, SpanMode, tempDir, readText;
+// Import std.file fully so the per-worker scratch source-write can call
+// `std.file.write` without colliding with the `write` from std.stdio.
+static import std.file;
+import std.file : exists, isFile, mkdirRecurse, rmdirRecurse,
+                  dirEntries, SpanMode, tempDir, readText;
 import std.format    : format;
 import std.getopt    : getopt, config;
+import std.parallelism : parallel, totalCPUs;
 import std.path      : baseName, buildPath, stripExtension;
 import std.process   : spawnProcess, spawnShell, wait, executeShell,
                        Config, Pid, ProcessException, environment;
@@ -35,7 +41,7 @@ import core.sys.posix.unistd : isatty, STDOUT_FILENO;
 // Lifecycle state — accessed by signal handler
 // ---------------------------------------------------------------------------
 
-__gshared int    vibePidId;     // 0 = nothing to kill
+__gshared int[]  vibePids;     // worker PIDs to kill on signal / cleanup
 __gshared string scratchDir;
 __gshared bool   keepVibe;
 __gshared bool   useColor;
@@ -51,22 +57,30 @@ string dim   (string s) { return col("2",  s); }
 string bold  (string s) { return col("1",  s); }
 
 extern(C) void onSignal(int sig) nothrow @nogc @system {
-    if (vibePidId != 0) kill(vibePidId, SIGKILL);
+    foreach (p; vibePids) if (p != 0) kill(p, SIGKILL);
     import core.stdc.stdio : fputs, stderr;
     fputs("\ninterrupted\n", stderr);
     exit(130);
 }
 
 void cleanup() {
-    if (vibePidId != 0 && !keepVibe) {
-        try { kill(vibePidId, SIGTERM); } catch (Exception) {}
-        // Give it ~500ms to exit cleanly, then SIGKILL.
+    if (!keepVibe) {
+        foreach (p; vibePids) {
+            if (p == 0) continue;
+            try { kill(p, SIGTERM); } catch (Exception) {}
+        }
+        // Give them ~500ms each to exit cleanly, then SIGKILL.
         for (int i = 0; i < 10; ++i) {
             Thread.sleep(50.msecs);
-            if (kill(vibePidId, 0) != 0) break;  // process gone
+            bool anyAlive;
+            foreach (p; vibePids) if (p != 0 && kill(p, 0) == 0) { anyAlive = true; break; }
+            if (!anyAlive) break;
         }
-        try { kill(vibePidId, SIGKILL); } catch (Exception) {}
-        vibePidId = 0;
+        foreach (p; vibePids) {
+            if (p == 0) continue;
+            try { kill(p, SIGKILL); } catch (Exception) {}
+        }
+        vibePids = null;
     }
     if (scratchDir.length && exists(scratchDir)) {
         try { rmdirRecurse(scratchDir); } catch (Exception) {}
@@ -107,11 +121,13 @@ string[] resolveTests(string[] args) {
 // ---------------------------------------------------------------------------
 
 void killStaleVibe(ushort port) {
-    // pkill returns 1 if no matches — that's fine.
-    executeShell("pkill -f 'vibe3d --test' 2>/dev/null");
+    // pkill returns 1 if no matches — that's fine. We match by --http-port
+    // arg so workers running on OTHER ports survive.
+    auto pat = format("vibe3d --test --http-port %d", port);
+    executeShell(format("pkill -f '%s' 2>/dev/null", pat));
     // Wait for the process to die.
     for (int i = 0; i < 20; ++i) {
-        auto r = executeShell("pgrep -f 'vibe3d --test' >/dev/null");
+        auto r = executeShell(format("pgrep -f '%s' >/dev/null", pat));
         if (r.status != 0) break;
         Thread.sleep(100.msecs);
     }
@@ -142,13 +158,23 @@ bool dubBuild() {
     return true;
 }
 
-string[] compileTests(string[] paths, string outDir) {
-    writefln("Compiling %d test%s...", paths.length, paths.length == 1 ? "" : "s");
+/// Compile each test in `paths` into `outDir`. Source is read AS-IS unless
+/// `port` differs from 8080 — then literal "localhost:8080" is rewritten
+/// to "localhost:<port>" in a per-test scratch copy. This keeps tests
+/// portable to N parallel vibe3d instances without source changes.
+string[] compileTests(string[] paths, string outDir, ushort port) {
     string[] bins;
     foreach (p; paths) {
         string name = baseName(p).stripExtension;
         string of   = buildPath(outDir, name);
-        auto cmd = format("dmd -unittest %s -w -of=%s 2>&1", p, of);
+        string src  = p;
+        if (port != 8080) {
+            string txt = readText(p)
+                .replace("localhost:8080", "localhost:" ~ port.to!string);
+            src = buildPath(outDir, name ~ ".d");
+            std.file.write(src, txt);
+        }
+        auto cmd = format("dmd -unittest %s -w -of=%s 2>&1", src, of);
         auto r = executeShell(cmd);
         if (r.status != 0) {
             writeln("  ", red("FAIL  "), name);
@@ -157,7 +183,6 @@ string[] compileTests(string[] paths, string outDir) {
         }
         bins ~= of;
     }
-    writeln("  ", green("OK"));
     return bins;
 }
 
@@ -176,12 +201,13 @@ Pid startVibe(ushort port, string logPath) {
         stderr.writeln(red("failed to spawn vibe3d: "), e.msg);
         return null;
     }
-    vibePidId = pid.processID;
+    synchronized {
+        vibePids ~= pid.processID;
+    }
     return pid;
 }
 
 bool waitForHttpReady(string logPath, ushort port) {
-    // First wait for the bind to log "HTTP server started" (the listener is up).
     string needle = format("HTTP server started on port %d", port);
     bool listening;
     for (int i = 0; i < 100; ++i) {
@@ -196,8 +222,6 @@ bool waitForHttpReady(string logPath, ushort port) {
         Thread.sleep(100.msecs);
     }
     if (!listening) return false;
-    // Listener is up, but the main thread may not have wired up the data
-    // providers yet — poll /api/camera until it returns 200.
     string probe = format("curl -s -o /dev/null -w '%%{http_code}' " ~
                           "http://localhost:%d/api/camera", port);
     for (int i = 0; i < 100; ++i) {
@@ -239,6 +263,51 @@ TestResult runOne(string bin, bool verbose) {
 }
 
 // ---------------------------------------------------------------------------
+// Worker: one vibe3d + a slice of tests
+// ---------------------------------------------------------------------------
+
+struct Worker {
+    int      id;
+    ushort   port;
+    string[] tests;    // assigned source paths
+    string[] bins;     // compiled binaries
+    string   scratch;  // per-worker scratch dir
+    string   logPath;
+    Pid      vibePid;
+}
+
+bool prepareWorker(ref Worker w) {
+    mkdirRecurse(w.scratch);
+    w.bins = compileTests(w.tests, w.scratch, w.port);
+    if (w.bins is null) return false;
+    killStaleVibe(w.port);
+    w.logPath = buildPath(w.scratch, "vibe3d.log");
+    w.vibePid = startVibe(w.port, w.logPath);
+    if (w.vibePid is null) return false;
+    if (!waitForHttpReady(w.logPath, w.port)) {
+        stderr.writefln(red("worker %d: vibe3d on :%d failed to come up"),
+            w.id, w.port);
+        try { stderr.writeln(readText(w.logPath)); } catch (Exception) {}
+        return false;
+    }
+    return true;
+}
+
+TestResult[] runWorker(ref Worker w, bool verbose) {
+    TestResult[] out_;
+    foreach (b; w.bins) {
+        auto r = runOne(b, verbose);
+        synchronized {
+            writeln("  ", r.passed ? green("PASS") : red("FAIL"),
+                    "  ", dim(format("[w%d]", w.id)), "  ", r.name);
+            stdout.flush();
+        }
+        out_ ~= r;
+    }
+    return out_;
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 
@@ -260,9 +329,6 @@ void printSummary(TestResult[] results) {
             if (r.passed) continue;
             writeln("  - ", red(r.name));
             auto lines = r.output.splitLines;
-            // Print only the assertion / exception preamble — usually the first
-            // 4–6 lines hold the message and "----------------". The rest is
-            // a stacktrace that adds noise.
             enum int budget = 8;
             foreach (i, line; lines) {
                 if (i >= budget) {
@@ -284,12 +350,15 @@ void printSummary(TestResult[] results) {
 int main(string[] args) {
     bool verbose, noBuild, keep;
     ushort port = 8080;
+    int j = 1;
     auto helpInfo = getopt(args,
         config.bundling,
         "v|verbose",  "stream test output instead of summarizing on failure", &verbose,
         "k|keep",     "leave vibe3d running after tests finish",              &keep,
         "no-build",   "skip `dub build`",                                     &noBuild,
-        "p|port",     "HTTP port for vibe3d (default 8080)",                  &port);
+        "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
+        "j|jobs",     "parallel workers — each runs its own vibe3d on a "
+                    ~ "private port (default 1)",                             &j);
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run_test.d [options] [test_name...]");
@@ -301,6 +370,10 @@ int main(string[] args) {
         return 0;
     }
 
+    if (j < 1) {
+        stderr.writeln(red("-j must be >= 1"));
+        return 2;
+    }
     keepVibe = keep;
     useColor = isatty(STDOUT_FILENO) != 0;
 
@@ -320,30 +393,46 @@ int main(string[] args) {
     if (exists(scratchDir)) rmdirRecurse(scratchDir);
     mkdirRecurse(scratchDir);
 
-    auto bins = compileTests(tests, scratchDir);
-    if (bins is null) return 1;
+    // Cap workers at # of tests so we don't spin up empty vibe3d instances.
+    if (j > cast(int)tests.length) j = cast(int)tests.length;
 
-    killStaleVibe(port);
-
-    string logPath = buildPath(scratchDir, "vibe3d.log");
-    writefln("Starting vibe3d on :%d ", port);
-    auto pid = startVibe(port, logPath);
-    if (pid is null) return 1;
-
-    if (!waitForHttpReady(logPath, port)) {
-        writeln(red("vibe3d failed to come up; tail of log:"));
-        try { writeln(readText(logPath)); } catch (Exception) {}
-        return 1;
+    // Build N workers, distribute tests round-robin.
+    Worker[] workers;
+    workers.length = j;
+    foreach (i, ref w; workers) {
+        w.id      = cast(int)i;
+        w.port    = cast(ushort)(port + i);
+        w.scratch = buildPath(scratchDir, format("worker_%d", i));
     }
+    foreach (i, t; tests) workers[i % j].tests ~= t;
 
+    // Prepare workers in parallel — compile tests + boot vibe3d. Each
+    // worker's compile/boot is independent.
+    writefln("Compiling %d test%s and booting %d vibe3d instance%s...",
+        tests.length, tests.length == 1 ? "" : "s",
+        j, j == 1 ? "" : "s");
+    bool allUp = true;
+    foreach (i, ref w; parallel(workers, 1)) {
+        if (!prepareWorker(w)) {
+            stderr.writefln(red("worker %d failed to prepare"), w.id);
+            allUp = false;
+        }
+    }
+    if (!allUp) return 1;
+    writeln(green("  OK"));
     writeln();
-    TestResult[] results;
-    foreach (b; bins) {
-        auto r = runOne(b, verbose);
-        writeln("  ", r.passed ? green("PASS") : red("FAIL"), "  ", r.name);
-        stdout.flush();
-        results ~= r;
+
+    // Run each worker's slice in parallel (each on its own vibe3d).
+    TestResult[][] perWorker;
+    perWorker.length = workers.length;
+    foreach (i, ref w; parallel(workers, 1)) {
+        perWorker[i] = runWorker(w, verbose);
     }
+
+    // Sort results by test name for deterministic summary output.
+    TestResult[] results;
+    foreach (slice; perWorker) results ~= slice;
+    results.sort!((a, b) => a.name < b.name);
 
     printSummary(results);
     int failed = 0;
