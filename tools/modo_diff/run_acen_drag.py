@@ -275,12 +275,14 @@ class Worker:
             except OSError: pass
 
     # ----- per-case orchestration -----
-    def run_case(self, path):
+    def run_case(self, path, step_px_override=None):
         spec = json.loads(path.read_text())
         tool      = spec["tool"]
         pattern   = spec["pattern"]
         acen_mode = spec["acen_mode"]
         drag      = spec.get("drag", DEFAULT_DRAG)
+        step_px   = step_px_override if step_px_override is not None \
+                    else spec.get("step_px", 20)
         if len(drag) != 4:
             return "ERROR", f"drag must be [x, y, dx, dy] not {drag}"
 
@@ -296,7 +298,7 @@ class Worker:
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
 
-        self.mouse_drag(*drag, step_px=spec.get("step_px", 20))
+        self.mouse_drag(*drag, step_px=step_px)
         time.sleep(0.5)
 
         if not self.cmd_bar(

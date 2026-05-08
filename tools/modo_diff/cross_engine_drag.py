@@ -237,17 +237,18 @@ def pair_and_compare(modo_verts, vibe_verts, tol=TOL):
 
 
 # ---- per-case orchestration -----------------------------------------
-def run_case(case_path, worker, base):
+def run_case(case_path, worker, base, args_step_px=None):
     spec = json.loads(case_path.read_text())
     pattern   = spec["pattern"]
     acen_mode = spec["acen_mode"]
     tool      = spec["tool"]
     drag      = spec.get("drag", [1020, 560, 100, 0])
-    step_px   = spec.get("step_px", 20)
+    step_px   = args_step_px if args_step_px is not None \
+                else spec.get("step_px", 20)
     x0, y0, dx, dy = drag
 
     # 1) Run MODO via the orchestrator Worker — produces state+result.
-    status, why = worker.run_case(case_path)
+    status, why = worker.run_case(case_path, step_px_override=args_step_px)
     if status != "PASS":
         return "ERROR", f"MODO did not PASS ({status}: {why})"
 
@@ -350,6 +351,11 @@ def main():
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--keep", action="store_true",
                     help="leave Xvfb/MODO running after")
+    ap.add_argument("--step-px", type=int, default=None,
+                    help="override per-event xrel step (default: per-case "
+                         "spec, fallback 20). Set to a large value to force "
+                         "single-event drag (N=1) — useful for isolating "
+                         "MODO's quadratic-by-N drag accumulation effect.")
     ap.add_argument("--launch-vibe3d", action="store_true",
                     help="spawn vibe3d as a subprocess (./vibe3d --test "
                          "--viewport 1426x966 --http-port <port>) for the "
@@ -409,7 +415,7 @@ def _main_inner(args, vibe_proc):
         passed, failed = [], []
         for c in cases:
             try:
-                status, msg = run_case(c, w, base)
+                status, msg = run_case(c, w, base, args_step_px=args.step_px)
             except Exception as e:
                 status, msg = "FAIL", repr(e)
             tag = green if status == "PASS" else red
