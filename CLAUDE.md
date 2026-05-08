@@ -103,9 +103,24 @@ Re-runs each ACEN drag case against vibe3d through the SAME camera + screen pixe
 
 `--launch-vibe3d` spawns a vibe3d subprocess pinned to the same 1426×966 viewport MODO uses (cross-engine projection match). Without it, you must start `./vibe3d --test --viewport 1426x966` yourself first.
 
+### One-shot wrapper: `./run_all.d`
+
+Fans out to all four suites and prints a single PASS/FAIL summary. Excludes the documented flaky tests by default (`test_selection`, `test_toolpipe_axis`) so a green run actually means "no regressions".
+
+```bash
+./run_all.d                              # all suites, -j 4
+./run_all.d --no-build                   # forwarded to each suite
+./run_all.d -j 8                         # higher parallelism for unit + ACEN
+./run_all.d --only unit                  # one suite at a time
+./run_all.d --skip modo --skip acen      # skip MODO suites (e.g. on a host without MODO)
+RUN_ALL_EXCLUDE=test_selection ./run_all.d   # override the default exclusions
+```
+
 ### Recommended order before commit
 
-1. `./run_test.d --no-build -j 4` (unit, ~10s with 4 workers).
+`./run_all.d --no-build` is the canonical pre-commit run. The individual suite invocations below are still listed for cases where you want only one of them:
+
+1. `./run_test.d --no-build -j 4` (unit, ~10s with 4 workers; supports `--exclude <name>` to skip flakes one at a time).
 2. `rdmd tools/blender_diff/run.d --no-build` (Blender, ~2 min).
 3. `rdmd tools/modo_diff/run.d --no-build` (MODO bevel/prim, ~30s; only if MODO is installed).
 4. `./tools/modo_diff/run_acen_drag.py -j 4` (ACEN drag, only when ACEN/AXIS or transform tools were touched).

@@ -14,7 +14,7 @@
 module run_test;
 
 import std.algorithm : canFind, sort, each;
-import std.array     : array, appender, replace;
+import std.array     : array, appender, replace, join;
 import std.conv      : to;
 // Import std.file fully so the per-worker scratch source-write can call
 // `std.file.write` without colliding with the `write` from std.stdio.
@@ -351,6 +351,7 @@ int main(string[] args) {
     bool verbose, noBuild, keep;
     ushort port = 8080;
     int j = 1;
+    string[] exclude;
     auto helpInfo = getopt(args,
         config.bundling,
         "v|verbose",  "stream test output instead of summarizing on failure", &verbose,
@@ -358,7 +359,9 @@ int main(string[] args) {
         "no-build",   "skip `dub build`",                                     &noBuild,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
-                    ~ "private port (default 1)",                             &j);
+                    ~ "private port (default 1)",                             &j,
+        "exclude",    "skip a test by name (repeatable). Same name forms as "
+                    ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude);
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run_test.d [options] [test_name...]");
@@ -382,6 +385,19 @@ int main(string[] args) {
     scope(exit) cleanup();
 
     auto tests = resolveTests(args[1 .. $]);
+
+    // --exclude removes any tests whose normalized path matches.
+    if (!exclude.empty) {
+        bool[string] excludeSet;
+        foreach (e; exclude) excludeSet[normalize(e)] = true;
+        string[] kept;
+        foreach (t; tests) if (t !in excludeSet) kept ~= t;
+        if (kept.length != tests.length) {
+            writefln("excluding: %s", exclude.join(", "));
+        }
+        tests = kept;
+    }
+
     if (tests.empty) {
         writeln(yellow("no tests found"));
         return 0;
