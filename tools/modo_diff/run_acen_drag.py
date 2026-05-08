@@ -634,29 +634,44 @@ class Worker:
             self.cmd_bar(f"@{probe_script}")
             time.sleep(0.3)
 
-        # Handle-driven path: resolve the drag pixel from the
-        # analytical projection of the selection bbox center, then
-        # take a debug screenshot annotated with the planned click
-        # position so the test author can visually verify it lands
-        # on the intended handle.
-        #
-        # Note: we tried to drive MODO interactively here (keyboard
-        # W to wake the gizmo + screenshot + detect_handles.py for
-        # the actual on-screen handle pixel) but couldn't get
-        # cmd_bar to deliver the subsequent @modo_dump_verts.py
-        # @-load — even with tool.drop / Q-key resets the dump
-        # script never executed, leaving result.json missing. See
-        # commit history for the experimental code; analytical
-        # projection is what passes 9/12 of the handle cases.
+        # Handle-driven path: wake gizmo via W keystroke, detect
+        # actual handle pixels from a screenshot, drive the test
+        # drag at the detected handle, and save handles_debug.png
+        # with overlay markers for visual verification.
         if handle is not None:
             try:
                 state_now = json.loads(self.state_path.read_text())
+                cam = state_now.get("camera", {})
+                bnd = cam.get("bounds", [0, 0, 1426, 966])
+                vx = bnd[0] + bnd[2] // 2
+                vy = bnd[1] + bnd[3] // 2
+            except Exception:
+                state_now, vx, vy = {"camera": {}}, 700, 500
+
+            # Cursor over viewport + W key (no click — that would
+            # relocate ACEN under actr.auto). Activates the tool
+            # via the input pipeline so the gizmo's coloured handles
+            # are flagged for redraw and visible in screenshots.
+            self.xdo("mousemove", str(vx), str(vy))
+            time.sleep(0.2)
+            tool_key = {"move": "w", "rotate": "e", "scale": "r"}.get(tool, "w")
+            self.xdo("key", tool_key)
+            time.sleep(0.5)
+
+            detected = self._detect_handles(state_now)
+            try:
                 drag = _resolve_handle_drag(
-                    state_now, handle, drag_len)
+                    state_now, handle, drag_len, detected)
             except Exception as e:
                 return "ERROR", f"could not resolve handle drag: {e}"
+            self._annotate_handle_debug(drag[0], drag[1], detected, handle)
             state_now["camera"]["drag"] = [float(drag[0]), float(drag[1])]
             state_now["resolved_drag"]  = list(drag)
+            if detected:
+                state_now["detected_handles"] = {
+                    k: [float(v[0]), float(v[1])]
+                    for k, v in detected.items()
+                }
             self.state_path.write_text(json.dumps(state_now))
 
         self.mouse_drag(*drag, step_px=step_px)
