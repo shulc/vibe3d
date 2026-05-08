@@ -189,44 +189,43 @@ public:
             return true;
         }
 
-        // Click outside gizmo. Two paths:
+        // Click outside gizmo. Two paths share the drag-axis choice
+        // (most-facing plane through gizmo center) and differ only in
+        // whether the click also relocates the gizmo:
         //
-        //   actr.none:  no action center → no relocation. Drag from the
-        //               gizmo's current position along the most-facing
-        //               plane (dragAxis=3), matching MODO's "free move"
-        //               feel when no actr.* preset is active.
+        //   actr.none:  no action center → no relocation. Drag along
+        //               most-facing plane through the current gizmo
+        //               position. Matches MODO's "free move" feel when
+        //               no actr.* preset is active.
         //
-        //   any other:  relocate ACEN to the click projected onto the
-        //               world Work Plane (Y=0), matching MODO's
-        //               actr.auto. dragAxis=6 = XZ plane through the
-        //               new (workplane-aligned) center → drag along
-        //               the workplane. See doc/acen_modo_parity_plan.md
-        //               Phase 1.
-        if (acenIsNone()) {
-            dragAxis = 3;   // most-facing plane through current center
-            if (ctrl) {
-                ctrlConstrain = true;
-                constrainStartMX = e.x; constrainStartMY = e.y;
-            }
-            lastMX = e.x; lastMY = e.y;
-            dragDelta = Vec3(0, 0, 0);
-            buildVertexCacheIfNeeded();
-            wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
-            beginEdit();
-            return true;
+        //   any other:  ACEN.auto / .selectauto / etc. — relocate the
+        //               gizmo to the click projected onto the world
+        //               Work Plane (Y=0), matching MODO's "click → work
+        //               plane" semantic for the action-center POSITION.
+        //               The drag plane is then the most-facing plane
+        //               THROUGH the new (workplane-aligned) center —
+        //               not the workplane itself. Free move feels
+        //               natural across cameras and the workplane only
+        //               anchors WHERE the new center is, not HOW the
+        //               drag projects from screen.
+        //
+        // Was dragAxis=6 (XZ workplane) in the actr.auto branch — that
+        // strict-workplane drag matches one MODO numerical regime but
+        // collapsed all click-away drags onto Y=0 regardless of camera,
+        // which feels wrong on tilted views.
+        if (!acenIsNone()) {
+            Vec3 hit;
+            if (!screenToWorkPlane(e.x, e.y, cachedVp, hit))
+                return false;
+            handler.setPosition(hit);
+            centerManual = true;
+            // Notify ACEN so the user-placed point sticks across future
+            // queries (other tools, history replay etc.). Mode stays
+            // Auto — userPlaced sub-state, MODO "click away → new
+            // center".
+            notifyAcenUserPlaced(hit);
         }
-
-        Vec3 hit;
-        if (!screenToWorkPlane(e.x, e.y, cachedVp, hit))
-            return false;
-
-        handler.setPosition(hit);
-        centerManual = true;
-        // Phase 7.2b: notify ACEN so the user-placed point sticks across
-        // future queries (other tools, history replay etc.). Mode stays
-        // Auto — userPlaced sub-state, MODO "click away → new center".
-        notifyAcenUserPlaced(hit);
-        dragAxis = 6;
+        dragAxis = 3;   // most-facing plane through gizmo center
         lastMX = e.x; lastMY = e.y;
         dragDelta = Vec3(0, 0, 0);
         buildVertexCacheIfNeeded();
