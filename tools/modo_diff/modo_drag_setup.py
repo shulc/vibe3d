@@ -215,42 +215,38 @@ border_verts = sorted(border_verts_set)
 
 
 # ---- read camera + viewport via View3Dport.View(Current()) →
-# View3D cast. Used by the verifier to compute the expected ACEN.Auto
-# pivot (drag-screen → work plane projection). View3Dport.View() is
-# undocumented in the Python dump but exists at runtime; cast the
-# returned Unknown to lx.object.View3D.
+# View3D cast. View3Dport.View() is undocumented in the Python dump
+# (Pixel-Fondue/modo-api) but exists at runtime; cast the returned
+# Unknown to lx.object.View3D.
+#
+# Used by the cross-engine parity test to drive vibe3d through the
+# SAME camera MODO is using, so screen-pixel drags produce equivalent
+# world-space results.
+#
+# We do NOT dump To3D(drag_x, drag_y, ...) here — its flag/coord
+# convention isn't documented and the values returned don't match
+# MODO's empirical actr.auto pivot. See memory note
+# `modo_view3d_python_api.md` for the discovery + caveat.
 camera = None
 try:
     _vp  = lx.service.View3Dport()
     _v3d = lx.object.View3D(_vp.View(_vp.Current()))
-    bnd  = _v3d.Bounds()              # (x, y, w, h)
+    bnd  = _v3d.Bounds()              # (x, y, w, h) viewport pixels
     cen  = _v3d.Center()              # focus point
     ev   = _v3d.EyeVector()           # (distance, focus, fwd)
-    # Eye position = focus - fwd * distance.
     dist = float(ev[0]); fpos = ev[1]; fwd = ev[2]
     eye  = (fpos[0] - fwd[0] * dist,
             fpos[1] - fwd[1] * dist,
             fpos[2] - fwd[2] * dist)
-    # MODO's To3D(x, y, 0) projects a screen pixel onto the work plane
-    # (Y=0 by default). For ACEN.Auto this IS the pivot MODO uses on
-    # the next click. We dump it for the case's drag-start coords.
-    # The orchestrator passes drag start as the next two CLI args
-    # AFTER the standard tmpdir/acen_mode/pattern/tool. Default to a
-    # known position so older callers still work.
     drag_x = float(args[3]) if len(args) > 3 else 1020.0
     drag_y = float(args[4]) if len(args) > 4 else 560.0
-    try:
-        auto_pivot = list(_v3d.To3D(drag_x, drag_y, 0))
-    except Exception:
-        auto_pivot = None
     camera = {
-        "bounds":    [int(bnd[0]), int(bnd[1]), int(bnd[2]), int(bnd[3])],
-        "center":    [float(cen[0]), float(cen[1]), float(cen[2])],
-        "eye":       [eye[0], eye[1], eye[2]],
-        "fwd":       [float(fwd[0]), float(fwd[1]), float(fwd[2])],
-        "distance":  dist,
-        "drag":      [drag_x, drag_y],
-        "auto_pivot": auto_pivot,
+        "bounds":   [int(bnd[0]), int(bnd[1]), int(bnd[2]), int(bnd[3])],
+        "center":   [float(cen[0]), float(cen[1]), float(cen[2])],
+        "eye":      [eye[0], eye[1], eye[2]],
+        "fwd":      [float(fwd[0]), float(fwd[1]), float(fwd[2])],
+        "distance": dist,
+        "drag":     [drag_x, drag_y],
     }
 except Exception as _e:
     camera = {"error": repr(_e)}
