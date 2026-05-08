@@ -28,7 +28,8 @@ private ThickLineState g_thickLine;
 // Change via setGizmoScreenFraction() at runtime.
 // ---------------------------------------------------------------------------
 
-private float g_gizmoScreenFraction = 0.55f;  // index 4 of 9 levels [0.1..1.0]
+private float g_gizmoScreenFraction = 0.18f;  // matches MODO's ~90px gizmo
+                                                // arm at vp height 966
 
 void setGizmoScreenFraction(float f) { g_gizmoScreenFraction = f; }
 float getGizmoScreenFraction()       { return g_gizmoScreenFraction; }

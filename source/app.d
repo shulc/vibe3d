@@ -489,10 +489,12 @@ void main(string[] args) {
     EditMode          pendingSelBeforeMode;
     bool              pendingSelOpen = false;
 
-    // Gizmo size: 9 levels linearly spaced from 0.1 to 1.0; default = middle (index 4).
-    enum float[9] gizmoLevels = [0.10f, 0.2125f, 0.325f, 0.4375f, 0.55f,
-                                  0.6625f, 0.775f, 0.8875f, 1.0f];
-    int gizmoLevelIdx = 4;  // middle
+    // Gizmo size: 9 levels — packed below 0.40 (where common values live)
+    // and stretched above. Default index 2 = 0.18, matching MODO's
+    // xfrm.move/rotate/scale handle screen length at default settings.
+    enum float[9] gizmoLevels = [0.10f, 0.14f, 0.18f, 0.25f, 0.34f,
+                                  0.45f, 0.60f, 0.78f, 1.0f];
+    int gizmoLevelIdx = 2;  // = 0.18, matches MODO
 
     Tool   activeTool   = null;
     string activeToolId = "";
