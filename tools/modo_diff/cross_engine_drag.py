@@ -336,6 +336,7 @@ def discover_cases(filters):
 
 
 def main():
+    import subprocess as sp
     ap = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("filters", nargs="*",
@@ -343,12 +344,46 @@ def main():
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--keep", action="store_true",
                     help="leave Xvfb/MODO running after")
+    ap.add_argument("--launch-vibe3d", action="store_true",
+                    help="spawn vibe3d as a subprocess (./vibe3d --test "
+                         "--viewport 1426x966 --http-port <port>) for the "
+                         "duration of the test. Convenient when running "
+                         "in a sandboxed shell where backgrounding vibe3d "
+                         "manually doesn't survive across commands.")
     args = ap.parse_args()
 
-    if not wait_ready(args.port):
-        print(red(f"vibe3d not running on :{args.port} "
-                  f"(start it with `./vibe3d --test`)"))
-        return 2
+    vibe_proc = None
+    if args.launch_vibe3d:
+        # Kill any leftover vibe3d on this port first.
+        sp.run(["pkill", "-9", "-f",
+                f"vibe3d --test --http-port {args.port}"],
+               stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+        time.sleep(1)
+        v_log = open(f"/tmp/cross_engine_vibe3d_{args.port}.log", "w")
+        vibe_proc = sp.Popen(
+            ["./vibe3d", "--test",
+             "--viewport", "1426x966",
+             "--http-port", str(args.port)],
+            cwd=str(SCRIPT_DIR.parent.parent),
+            stdout=v_log, stderr=sp.STDOUT,
+            start_new_session=True)
+        print(blue(f"=== launched vibe3d pid={vibe_proc.pid} on :{args.port} ==="))
+        time.sleep(0.5)
+
+    try:
+        if not wait_ready(args.port, timeout=20):
+            print(red(f"vibe3d not running on :{args.port} "
+                      f"(start it with `./vibe3d --test --viewport 1426x966`)"))
+            if vibe_proc: vibe_proc.kill()
+            return 2
+        return _main_inner(args, vibe_proc)
+    finally:
+        if vibe_proc and not args.keep:
+            try: vibe_proc.kill(); vibe_proc.wait(timeout=2)
+            except Exception: pass
+
+
+def _main_inner(args, vibe_proc):
 
     cases = discover_cases(args.filters)
     if not cases:
