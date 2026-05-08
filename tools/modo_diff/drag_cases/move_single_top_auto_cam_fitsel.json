@@ -1,0 +1,7 @@
+{
+  "_comment": "viewport.fitSelected — frames the selection. Brings cube top tightly into view.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "view_pre": ["viewport.fitSelected"]
+}

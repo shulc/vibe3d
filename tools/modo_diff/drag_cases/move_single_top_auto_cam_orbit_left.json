@@ -1,0 +1,7 @@
+{
+  "_comment": "Orbit camera 30deg left before drag — verifies drag direction tracks camera basis.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "view_pre": ["view3d.rotate \"30\" \"0\""]
+}

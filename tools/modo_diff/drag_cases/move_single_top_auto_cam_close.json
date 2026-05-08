@@ -1,0 +1,7 @@
+{
+  "_comment": "Close-zoom camera (viewport.zoomIn × 2) — drag scale should follow camera depth.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "view_pre": ["viewport.zoomIn", "viewport.zoomIn"]
+}

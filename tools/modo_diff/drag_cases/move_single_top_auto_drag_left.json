@@ -1,0 +1,7 @@
+{
+  "_comment": "Leftward 100-px drag — verifies sign symmetry of the drag formula.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "drag": [1020, 560, -100, 0]
+}

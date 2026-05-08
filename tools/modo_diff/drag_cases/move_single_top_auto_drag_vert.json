@@ -1,0 +1,7 @@
+{
+  "_comment": "Vertical 100-px drag (downward in screen pixels).",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "drag": [1020, 560, 0, 100]
+}

@@ -1,0 +1,7 @@
+{
+  "_comment": "Far-zoom camera (viewport.zoomOut × 2) — inverse of cam_close.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "view_pre": ["viewport.zoomOut", "viewport.zoomOut"]
+}

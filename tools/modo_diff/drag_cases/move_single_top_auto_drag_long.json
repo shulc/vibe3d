@@ -1,0 +1,7 @@
+{
+  "_comment": "Long 200-px drag — N=10 events at default step_px=20. Stresses MODO's N(N+1)/2 quadratic drag accumulation more.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "drag": [1020, 560, 200, 0]
+}

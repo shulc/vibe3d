@@ -281,6 +281,7 @@ class Worker:
         pattern   = spec["pattern"]
         acen_mode = spec["acen_mode"]
         drag      = spec.get("drag", DEFAULT_DRAG)
+        view_pre  = spec.get("view_pre", [])
         step_px   = step_px_override if step_px_override is not None \
                     else spec.get("step_px", 20)
         if len(drag) != 4:
@@ -297,6 +298,46 @@ class Worker:
                 f"{tool} {drag[0]} {drag[1]}",
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
+
+        # Optional `view_pre`: list of MODO eval commands run AFTER the
+        # setup script (which creates the cube + selection) but BEFORE
+        # the mouse drag. Used by drag_cases/* with non-default cameras
+        # to orbit / zoom / fit the viewport. The setup script captured
+        # camera state for state.json BEFORE these run, so we re-capture
+        # it via a tiny probe script after.
+        if view_pre:
+            for cmd in view_pre:
+                self.cmd_bar(cmd)
+                time.sleep(0.2)
+            # Re-capture camera state into state.json (overwrites the
+            # camera block setup wrote — selection etc. are unchanged).
+            probe_script = self.tmpdir / "recap_camera.py"
+            probe_script.write_text(
+                "#python\n"
+                "import lx, json\n"
+                f"sp = '{self.state_path}'\n"
+                "with open(sp) as f: state = json.load(f)\n"
+                "_vp  = lx.service.View3Dport()\n"
+                "_v3d = lx.object.View3D(_vp.View(_vp.Current()))\n"
+                "bnd  = _v3d.Bounds()\n"
+                "cen  = _v3d.Center()\n"
+                "ev   = _v3d.EyeVector()\n"
+                "dist = float(ev[0]); fpos = ev[1]; fwd = ev[2]\n"
+                "eye  = (fpos[0]-fwd[0]*dist, fpos[1]-fwd[1]*dist,\n"
+                "        fpos[2]-fwd[2]*dist)\n"
+                "state['camera']['bounds'] = "
+                "[int(bnd[0]),int(bnd[1]),int(bnd[2]),int(bnd[3])]\n"
+                "state['camera']['center'] = "
+                "[float(cen[0]),float(cen[1]),float(cen[2])]\n"
+                "state['camera']['eye']    = "
+                "[eye[0],eye[1],eye[2]]\n"
+                "state['camera']['fwd']    = "
+                "[float(fwd[0]),float(fwd[1]),float(fwd[2])]\n"
+                "state['camera']['distance'] = dist\n"
+                "with open(sp,'w') as f: json.dump(state, f)\n"
+            )
+            self.cmd_bar(f"@{probe_script}")
+            time.sleep(0.3)
 
         self.mouse_drag(*drag, step_px=step_px)
         time.sleep(0.5)

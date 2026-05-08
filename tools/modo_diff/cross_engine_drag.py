@@ -342,43 +342,73 @@ def discover_cases(filters):
     return keep
 
 
+def _spawn_vibe3d(port):
+    """Launch a vibe3d --test subprocess pinned to viewport 1426x966
+    on the given HTTP port. Returns the Popen handle."""
+    import subprocess as sp
+    sp.run(["pkill", "-9", "-f", f"vibe3d --test --http-port {port}"],
+           stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+    time.sleep(0.3)
+    v_log = open(f"/tmp/cross_engine_vibe3d_{port}.log", "w")
+    proc = sp.Popen(
+        ["./vibe3d", "--test", "--viewport", "1426x966",
+         "--http-port", str(port)],
+        cwd=str(SCRIPT_DIR.parent.parent),
+        stdout=v_log, stderr=sp.STDOUT,
+        start_new_session=True)
+    return proc
+
+
+def _run_case_safely(case_path, worker, base, step_px):
+    """Single-case wrapper used by both serial and parallel main."""
+    try:
+        return run_case(case_path, worker, base, args_step_px=step_px)
+    except Exception as e:
+        return "FAIL", repr(e)
+
+
 def main():
     import subprocess as sp
     ap = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("filters", nargs="*",
                     help="case filename stems / globs; default = run all")
-    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--port", type=int, default=8080,
+                    help="base HTTP port for vibe3d. Worker N gets "
+                         "port = base + N.")
+    ap.add_argument("-j", type=int, default=1,
+                    help="parallel workers — each gets its own Xvfb "
+                         "(:99+i), MODO instance, and vibe3d subprocess "
+                         "on port (--port + i). Defaults to 1 (serial).")
     ap.add_argument("--keep", action="store_true",
-                    help="leave Xvfb/MODO running after")
+                    help="leave Xvfb/MODO/vibe3d running after")
     ap.add_argument("--step-px", type=int, default=None,
                     help="override per-event xrel step (default: per-case "
                          "spec, fallback 20). Set to a large value to force "
                          "single-event drag (N=1) — useful for isolating "
                          "MODO's quadratic-by-N drag accumulation effect.")
     ap.add_argument("--launch-vibe3d", action="store_true",
-                    help="spawn vibe3d as a subprocess (./vibe3d --test "
-                         "--viewport 1426x966 --http-port <port>) for the "
-                         "duration of the test. Convenient when running "
-                         "in a sandboxed shell where backgrounding vibe3d "
-                         "manually doesn't survive across commands.")
+                    help="spawn vibe3d as a subprocess for the duration "
+                         "of the test. Required for -j > 1 (each worker "
+                         "needs its own port). For -j 1 you can also "
+                         "start `./vibe3d --test --viewport 1426x966` "
+                         "yourself first.")
     args = ap.parse_args()
 
+    if args.j > 1 and not args.launch_vibe3d:
+        print(red("-j > 1 requires --launch-vibe3d (each worker needs "
+                  "its own vibe3d on a unique port)"))
+        return 2
+
+    return _main_serial(args) if args.j <= 1 else _main_parallel(args)
+
+
+def _main_serial(args):
+    """Single-worker path — preserves the previous CLI semantics."""
+    import subprocess as sp
     vibe_proc = None
     if args.launch_vibe3d:
-        # Kill any leftover vibe3d on this port first.
-        sp.run(["pkill", "-9", "-f",
-                f"vibe3d --test --http-port {args.port}"],
-               stdout=sp.DEVNULL, stderr=sp.DEVNULL)
-        time.sleep(1)
-        v_log = open(f"/tmp/cross_engine_vibe3d_{args.port}.log", "w")
-        vibe_proc = sp.Popen(
-            ["./vibe3d", "--test",
-             "--viewport", "1426x966",
-             "--http-port", str(args.port)],
-            cwd=str(SCRIPT_DIR.parent.parent),
-            stdout=v_log, stderr=sp.STDOUT,
-            start_new_session=True)
+        vibe_proc = _spawn_vibe3d(args.port)
         print(blue(f"=== launched vibe3d pid={vibe_proc.pid} on :{args.port} ==="))
         time.sleep(0.5)
 
@@ -388,47 +418,124 @@ def main():
                       f"(start it with `./vibe3d --test --viewport 1426x966`)"))
             if vibe_proc: vibe_proc.kill()
             return 2
-        return _main_inner(args, vibe_proc)
+
+        cases = discover_cases(args.filters)
+        if not cases:
+            print(red("no cases match")); return 2
+
+        base = f"http://localhost:{args.port}"
+
+        spec = importlib.util.spec_from_file_location(
+            'rad', str(SCRIPT_DIR / "run_acen_drag.py"))
+        rad = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rad)
+        rad.cleanup_all_displays()
+        rad.copy_scripts()
+        w = rad.Worker(0)
+        try:
+            w.boot()
+            passed, failed = [], []
+            for c in cases:
+                status, msg = _run_case_safely(
+                    c, w, base, args.step_px)
+                tag = green if status == "PASS" else red
+                print(f"  {tag(status):20s} {c.stem:40s} {msg}")
+                (passed if status == "PASS" else failed).append(c.stem)
+            print()
+            print(f"{len(passed)} pass, {len(failed)} fail "
+                  f"(of {len(cases)})")
+            return 0 if not failed else 1
+        finally:
+            if not args.keep:
+                try: w.shutdown()
+                except Exception: pass
     finally:
         if vibe_proc and not args.keep:
             try: vibe_proc.kill(); vibe_proc.wait(timeout=2)
             except Exception: pass
 
 
-def _main_inner(args, vibe_proc):
+def _main_parallel(args):
+    """Multi-worker path: N MODO Workers + N vibe3d subprocesses, each
+    pair on a disjoint Xvfb display + HTTP port. Cases are pulled from
+    a shared queue."""
+    import concurrent.futures
+    import queue
+    import threading
 
     cases = discover_cases(args.filters)
     if not cases:
         print(red("no cases match")); return 2
 
-    base = f"http://localhost:{args.port}"
-
-    # Boot one MODO Worker.
     spec = importlib.util.spec_from_file_location(
         'rad', str(SCRIPT_DIR / "run_acen_drag.py"))
-    rad = importlib.util.module_from_spec(spec); spec.loader.exec_module(rad)
+    rad = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rad)
     rad.cleanup_all_displays()
     rad.copy_scripts()
-    w = rad.Worker(0)
-    try:
-        w.boot()
-        passed, failed = [], []
-        for c in cases:
-            try:
-                status, msg = run_case(c, w, base, args_step_px=args.step_px)
-            except Exception as e:
-                status, msg = "FAIL", repr(e)
-            tag = green if status == "PASS" else red
-            print(f"  {tag(status):20s} {c.stem:40s} {msg}")
-            (passed if status == "PASS" else failed).append(c.stem)
-        print()
-        print(f"{len(passed)} pass, {len(failed)} fail "
-              f"(of {len(cases)})")
-        return 0 if not failed else 1
-    finally:
-        if not args.keep:
-            try: w.shutdown()
-            except: pass
+
+    j = args.j
+    workers     = [rad.Worker(i) for i in range(j)]
+    vibe_procs  = [_spawn_vibe3d(args.port + i) for i in range(j)]
+    bases       = [f"http://localhost:{args.port + i}" for i in range(j)]
+    print(blue(f"=== launched {j} vibe3d (ports "
+               f"{args.port}..{args.port + j - 1}) ==="))
+
+    # Boot Xvfb + MODO + vibe3d in parallel — single-worker boot is ~3s,
+    # serial = 3s × N. Parallel keeps overall boot near single-worker.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=j) as ex:
+        list(ex.map(lambda w: w.boot(), workers))
+        for i, b in enumerate(bases):
+            if not wait_ready(args.port + i, timeout=30):
+                print(red(f"vibe3d on :{args.port + i} did not come up"))
+                # Best-effort cleanup
+                for vp in vibe_procs:
+                    try: vp.kill()
+                    except Exception: pass
+                for w in workers:
+                    try: w.shutdown()
+                    except Exception: pass
+                return 2
+
+    q = queue.Queue()
+    for c in cases: q.put(c)
+    sentinel = object()
+    for _ in range(j): q.put(sentinel)
+
+    results = []
+    results_lock = threading.Lock()
+
+    def loop(worker_id):
+        w    = workers[worker_id]
+        base = bases[worker_id]
+        while True:
+            item = q.get()
+            if item is sentinel: return
+            status, msg = _run_case_safely(item, w, base, args.step_px)
+            with results_lock:
+                results.append((item.stem, status, msg))
+
+    threads = [threading.Thread(target=loop, args=(i,)) for i in range(j)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    if not args.keep:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=j) as ex:
+            list(ex.map(lambda w: w.shutdown(), workers))
+        for vp in vibe_procs:
+            try: vp.kill(); vp.wait(timeout=2)
+            except Exception: pass
+
+    # Deterministic summary — workers finish in arbitrary order.
+    results.sort(key=lambda r: r[0])
+    passed, failed = [], []
+    for name, status, msg in results:
+        tag = green if status == "PASS" else red
+        print(f"  {tag(status):20s} {name:40s} {msg}")
+        (passed if status == "PASS" else failed).append(name)
+    print()
+    print(f"{len(passed)} pass, {len(failed)} fail (of {len(results)})")
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":

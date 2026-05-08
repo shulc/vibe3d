@@ -1,0 +1,7 @@
+{
+  "_comment": "Diagonal 70x70 drag (~100 px total, +X+Y screen).",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "drag": [1020, 560, 70, 70]
+}
