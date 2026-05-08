@@ -284,8 +284,11 @@ class Worker:
             try: os.remove(f)
             except OSError: pass
 
+        # Pass drag start coords to setup so it can dump To3D(start)
+        # — the expected ACEN.Auto pivot for the next click.
         if not self.cmd_bar(
-                f"@modo_drag_setup.py {self.tmpdir} {acen_mode} {pattern} {tool}",
+                f"@modo_drag_setup.py {self.tmpdir} {acen_mode} {pattern} "
+                f"{tool} {drag[0]} {drag[1]}",
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
 

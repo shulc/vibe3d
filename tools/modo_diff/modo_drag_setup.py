@@ -214,6 +214,47 @@ for e, sel_n in edge_count.items():
 border_verts = sorted(border_verts_set)
 
 
+# ---- read camera + viewport via View3Dport.View(Current()) →
+# View3D cast. Used by the verifier to compute the expected ACEN.Auto
+# pivot (drag-screen → work plane projection). View3Dport.View() is
+# undocumented in the Python dump but exists at runtime; cast the
+# returned Unknown to lx.object.View3D.
+camera = None
+try:
+    _vp  = lx.service.View3Dport()
+    _v3d = lx.object.View3D(_vp.View(_vp.Current()))
+    bnd  = _v3d.Bounds()              # (x, y, w, h)
+    cen  = _v3d.Center()              # focus point
+    ev   = _v3d.EyeVector()           # (distance, focus, fwd)
+    # Eye position = focus - fwd * distance.
+    dist = float(ev[0]); fpos = ev[1]; fwd = ev[2]
+    eye  = (fpos[0] - fwd[0] * dist,
+            fpos[1] - fwd[1] * dist,
+            fpos[2] - fwd[2] * dist)
+    # MODO's To3D(x, y, 0) projects a screen pixel onto the work plane
+    # (Y=0 by default). For ACEN.Auto this IS the pivot MODO uses on
+    # the next click. We dump it for the case's drag-start coords.
+    # The orchestrator passes drag start as the next two CLI args
+    # AFTER the standard tmpdir/acen_mode/pattern/tool. Default to a
+    # known position so older callers still work.
+    drag_x = float(args[3]) if len(args) > 3 else 1020.0
+    drag_y = float(args[4]) if len(args) > 4 else 560.0
+    try:
+        auto_pivot = list(_v3d.To3D(drag_x, drag_y, 0))
+    except Exception:
+        auto_pivot = None
+    camera = {
+        "bounds":    [int(bnd[0]), int(bnd[1]), int(bnd[2]), int(bnd[3])],
+        "center":    [float(cen[0]), float(cen[1]), float(cen[2])],
+        "eye":       [eye[0], eye[1], eye[2]],
+        "fwd":       [float(fwd[0]), float(fwd[1]), float(fwd[2])],
+        "distance":  dist,
+        "drag":      [drag_x, drag_y],
+        "auto_pivot": auto_pivot,
+    }
+except Exception as _e:
+    camera = {"error": repr(_e)}
+
 # ---- activate ACEN.<mode> + xfrm.<tool>
 lx.eval('tool.set "actr.%s" on 0' % acen_mode)
 # `xfrm.rotate` exists but is mode-disabled headless; the
@@ -241,6 +282,7 @@ with open(state_path, "w") as f:
         "selected_verts": [list(v) for v in selected_verts],
         "clusters":       [[list(v) for v in c] for c in clusters],
         "border_verts":   [list(v) for v in border_verts],
+        "camera":         camera,
     }, f, indent=2)
 
 target_count = len(targets) if targets is not None else -1

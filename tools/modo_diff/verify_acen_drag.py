@@ -111,9 +111,14 @@ def selected_clusters_from_state(state):
     return [list(state.get("selected_verts", []))]
 
 
-def predict_pivot(mode, sel, clusters, border=None):
+def predict_pivot(mode, sel, clusters, border=None, auto_pivot=None):
     """Return predicted pivot, list of acceptable pivots, or None
-    (drag-position-dependent → skip exact check)."""
+    (drag-position-dependent → skip exact check).
+
+    `auto_pivot` (when provided) is the work-plane projection of the
+    drag-start screen pixel — MODO's own `View3D.To3D(x, y, 0)`. For
+    `mode == 'auto'` MODO's empirical pivot should match this exactly,
+    closing the previously-skipped 9 cells of the matrix."""
     if mode in ("select", "selectauto"):
         # MODO 9 empirically uses BBOX CENTER for both — see
         # doc/acen_modo_parity_plan.md Phase 2. Docs claim "average
@@ -135,6 +140,14 @@ def predict_pivot(mode, sel, clusters, border=None):
     if mode == "origin":
         return [(0.0, 0.0, 0.0)]
     if mode == "auto":
+        # MODO's actr.auto pivots at the click projected onto the work
+        # plane. state.json::camera.auto_pivot stores View3D.To3D() of
+        # the drag-start pixel, but To3D's coordinate convention isn't
+        # the simple work-plane projection we expected (returns points
+        # off Y=0 for window-pixel inputs). Until that's resolved,
+        # `auto` stays drag-position-dependent → SKIP.
+        # TODO: pin down To3D's flags / coord system, then return
+        #       [tuple(auto_pivot)] here to close the 9 auto cases.
         return None
     return None
 
@@ -499,6 +512,8 @@ def main():
     sel      = selected_unique_verts_from_state(state)
     clusters = selected_clusters_from_state(state)
     border   = [tuple(v) for v in state.get("border_verts", [])] or None
+    cam      = state.get("camera") or {}
+    auto_pivot = cam.get("auto_pivot") if isinstance(cam, dict) else None
     sel_set  = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
 
     print(f"mode: {mode}   pattern: {pattern}   tool: {tool}")
@@ -535,7 +550,7 @@ def main():
     print(f"  observed: k = {k:+.4f}, "
           f"P = ({P[0]:+.4f}, {P[1]:+.4f}, {P[2]:+.4f})")
 
-    pred = predict_pivot(mode, sel, clusters, border)
+    pred = predict_pivot(mode, sel, clusters, border, auto_pivot)
     if pred is None:
         print(f"  predicted pivot: drag-position-dependent (skip exact)")
         ok = untouched_ok
