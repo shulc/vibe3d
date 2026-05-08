@@ -204,6 +204,7 @@ void main(string[] args) {
     bool startHttpServer = true;  // Enable HTTP server by default
     bool testMode = false;
     ushort httpPort = 8080;       // Default port
+    int  cliWinW = 800, cliWinH = 600;   // overridable via --window WxH
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -224,6 +225,24 @@ void main(string[] args) {
                 exit(1);
             }
             httpPort = cast(ushort)args[++i].to!int;
+        } else if (args[i] == "--window") {
+            // --window WxH (e.g. --window 1426x966) — initial SDL window
+            // size. Useful to match an external engine's viewport for the
+            // modo_diff cross-engine drag test.
+            if (i + 1 >= args.length) {
+                writeln("Error: --window requires WxH (e.g. 1426x966)");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            import std.string : split;
+            auto parts = args[++i].split("x");
+            if (parts.length != 2) {
+                writeln("Error: --window arg must be WxH");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            cliWinW = parts[0].to!int;
+            cliWinH = parts[1].to!int;
         } else {
             writefln("Error: unknown argument '%s'", args[i]);
             import core.stdc.stdlib : exit;
@@ -270,7 +289,7 @@ void main(string[] args) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-    int winW = 800, winH = 600;
+    int winW = cliWinW, winH = cliWinH;
     SDL_Window* window = SDL_CreateWindow(
         "Vibe3d",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
