@@ -2,7 +2,9 @@ module snap;
 
 import std.math : sqrt;
 
-import math : Vec3, Viewport, projectToWindowFull;
+import math : Vec3, Viewport, projectToWindowFull, screenRay,
+              rayPlaneIntersect, pointInPolygon2D,
+              closestOnSegment2DSquared, cross;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType;
 
@@ -82,18 +84,73 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // Vertex candidates (7.3a).
     if (cfg.enabledTypes & SnapType.Vertex) {
         foreach (vi, ref v; mesh.vertices) {
-            if (excludeVerts.length > 0) {
-                bool skip = false;
-                foreach (ex; excludeVerts) {
-                    if (ex == cast(uint)vi) { skip = true; break; }
-                }
-                if (skip) continue;
-            }
+            if (isVertExcluded(cast(uint)vi, excludeVerts)) continue;
             consider(v, cast(int)vi, SnapType.Vertex);
         }
     }
 
-    // Other types land in 7.3b / 7.3c — see doc/snap_plan.md.
+    // Edge candidates (7.3b) — closest point on each edge segment in
+    // screen space. Skipped when both endpoints are part of the
+    // dragged set (the entire edge is moving with the cursor).
+    if (cfg.enabledTypes & SnapType.Edge) {
+        foreach (ei, edge; mesh.edges) {
+            if (isVertExcluded(edge[0], excludeVerts)
+             && isVertExcluded(edge[1], excludeVerts)) continue;
+            float px0, py0, ndcZ0, px1, py1, ndcZ1;
+            Vec3 a = mesh.vertices[edge[0]];
+            Vec3 b = mesh.vertices[edge[1]];
+            if (!projectToWindowFull(a, vp, px0, py0, ndcZ0)) continue;
+            if (!projectToWindowFull(b, vp, px1, py1, ndcZ1)) continue;
+            float t;
+            // Screen-space-closest t. The world point at the SAME
+            // parametric t is what we publish — strictly speaking
+            // perspective division means re-projecting that world
+            // point doesn't land exactly on the screen-closest pixel,
+            // but for typical viewports the deviation is sub-pixel
+            // and `consider()` will compute its actual screen
+            // distance against the cursor anyway.
+            closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
+                                       px0, py0, px1, py1, t);
+            consider(a + (b - a) * t, cast(int)ei, SnapType.Edge);
+        }
+    }
+
+    // EdgeCenter candidates (7.3b) — midpoint of each edge.
+    if (cfg.enabledTypes & SnapType.EdgeCenter) {
+        foreach (ei, edge; mesh.edges) {
+            if (isVertExcluded(edge[0], excludeVerts)
+             && isVertExcluded(edge[1], excludeVerts)) continue;
+            Vec3 mid = (mesh.vertices[edge[0]] + mesh.vertices[edge[1]]) * 0.5f;
+            consider(mid, cast(int)ei, SnapType.EdgeCenter);
+        }
+    }
+
+    // Polygon candidates (7.3b) — closest point on the polygon
+    // surface. Cursor inside the screen-projected polygon ⇒ ray-plane
+    // hit on the face. Outside ⇒ closest point on the boundary
+    // (= closest segment of the face's edge ring).
+    if (cfg.enabledTypes & SnapType.Polygon) {
+        foreach (fi, face; mesh.faces) {
+            if (isFaceFullyExcluded(face, excludeVerts)) continue;
+            Vec3 hit;
+            if (closestOnPolygonSurface(face, mesh, sx, sy, vp, hit))
+                consider(hit, cast(int)fi, SnapType.Polygon);
+        }
+    }
+
+    // PolyCenter candidates (7.3b) — face centroid (average of verts).
+    if (cfg.enabledTypes & SnapType.PolyCenter) {
+        foreach (fi, face; mesh.faces) {
+            if (isFaceFullyExcluded(face, excludeVerts)) continue;
+            if (face.length == 0) continue;
+            Vec3 c = Vec3(0, 0, 0);
+            foreach (vi; face) c += mesh.vertices[vi];
+            c = c / cast(float)face.length;
+            consider(c, cast(int)fi, SnapType.PolyCenter);
+        }
+    }
+
+    // Grid + Workplane land in 7.3c — see doc/snap_plan.md.
 
     if (bestDist <= cfg.outerRangePx) {
         res.highlighted  = true;
@@ -106,4 +163,78 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
     return res;
+}
+
+private bool isVertExcluded(uint vi, const(uint)[] exclude) {
+    foreach (ex; exclude)
+        if (ex == vi) return true;
+    return false;
+}
+
+private bool isFaceFullyExcluded(const(uint)[] face,
+                                  const(uint)[] exclude) {
+    if (exclude.length == 0) return false;
+    foreach (vi; face)
+        if (!isVertExcluded(vi, exclude)) return false;
+    return true;
+}
+
+// Closest world-space point on a polygon's surface to the cursor at
+// screen pixel (sx, sy). Cursor inside the screen-projected polygon
+// ⇒ ray-plane hit (face's plane, normal from first 3 verts). Outside
+// ⇒ closest point along the polygon's boundary edge ring. Returns
+// false on degenerate faces (< 3 verts, behind-camera vert, zero-area
+// normal) — caller skips that face.
+private bool closestOnPolygonSurface(const(uint)[] face,
+                                     const ref Mesh mesh,
+                                     int sx, int sy,
+                                     const ref Viewport vp,
+                                     out Vec3 worldHit)
+{
+    if (face.length < 3) return false;
+
+    float[] xs = new float[](face.length);
+    float[] ys = new float[](face.length);
+    foreach (i, vi; face) {
+        float pxs, pys, ndcZ;
+        if (!projectToWindowFull(mesh.vertices[vi], vp, pxs, pys, ndcZ))
+            return false;
+        xs[i] = pxs;
+        ys[i] = pys;
+    }
+
+    Vec3 v0 = mesh.vertices[face[0]];
+    Vec3 v1 = mesh.vertices[face[1]];
+    Vec3 v2 = mesh.vertices[face[2]];
+    Vec3 n  = cross(v1 - v0, v2 - v0);
+    float nlen = sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
+    if (nlen < 1e-9f) return false;
+    n = n / nlen;
+
+    if (pointInPolygon2D(cast(float)sx, cast(float)sy, xs, ys)) {
+        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        return rayPlaneIntersect(vp.eye, ray, v0, n, worldHit);
+    }
+
+    // Outside polygon — walk the boundary edge ring.
+    float bestT     = 0;
+    int   bestEi    = -1;
+    float bestDist2 = float.infinity;
+    foreach (i; 0 .. face.length) {
+        size_t j = (i + 1) % face.length;
+        float t;
+        float d2 = closestOnSegment2DSquared(
+            cast(float)sx, cast(float)sy,
+            xs[i], ys[i], xs[j], ys[j], t);
+        if (d2 < bestDist2) {
+            bestDist2 = d2;
+            bestT     = t;
+            bestEi    = cast(int)i;
+        }
+    }
+    if (bestEi < 0) return false;
+    Vec3 a = mesh.vertices[face[bestEi]];
+    Vec3 b = mesh.vertices[face[(bestEi + 1) % face.length]];
+    worldHit = a + (b - a) * bestT;
+    return true;
 }

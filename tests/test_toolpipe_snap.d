@@ -63,7 +63,10 @@ bool approx(double a, double b, double eps = 1e-4) {
 void resetCube() {
     postJson("/api/reset", `{"primitive":"cube"}`);
     postJson("/api/command", "tool.pipe.attr snap enabled false");
-    postJson("/api/command", "tool.pipe.attr snap types vertex,edgeCenter,polyCenter,grid");
+    // CSV values must be quoted — argstring's bareword grammar
+    // doesn't include comma.
+    postJson("/api/command",
+        `tool.pipe.attr snap types "vertex,edgeCenter,polyCenter,grid"`);
     postJson("/api/command", "tool.pipe.attr snap innerRange 8");
     postJson("/api/command", "tool.pipe.attr snap outerRange 24");
 }
@@ -203,4 +206,131 @@ unittest { // tiny range + far cursor => no snap
         "expected no snap with tiny range + far cursor, got " ~ sr.toString);
     assert(sr["highlighted"].type == JSONType.false_,
         "expected no highlight with tiny range + far cursor");
+}
+
+// -------------------------------------------------------------------------
+// 7.3b: EdgeCenter snap. Cube has 12 edges; each midpoint has exactly
+// one zero coord and two ±0.5 coords. Huge range + types=edgeCenter
+// must produce one of those.
+// -------------------------------------------------------------------------
+
+unittest { // EdgeCenter snap fires on a cube edge midpoint
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types edgeCenter");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected EdgeCenter snap, got " ~ sr.toString);
+    auto wp = sr["worldPos"].array;
+    int zeros = 0, halves = 0;
+    foreach (c; wp) {
+        double v = c.floating;
+        if      (approx(v, 0.0))                          zeros++;
+        else if (approx(v, -0.5) || approx(v, 0.5))       halves++;
+    }
+    assert(zeros == 1 && halves == 2,
+        "EdgeCenter must have 1 zero + 2 ±0.5 coords; got " ~ sr.toString);
+}
+
+// -------------------------------------------------------------------------
+// 7.3b: Edge snap (closest point along an edge). Any point on a cube
+// edge has 2 coords = ±0.5 and 1 coord ∈ [-0.5, 0.5]. Closer test
+// criteria: 2 coords are within 1e-3 of ±0.5; 1 coord is in [-0.5, 0.5].
+// -------------------------------------------------------------------------
+
+unittest { // Edge snap fires on a cube edge
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types edge");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected Edge snap, got " ~ sr.toString);
+    auto wp = sr["worldPos"].array;
+    int onAxis = 0;     // coords pinned to ±0.5
+    int inSpan = 0;     // coords in [-0.5, 0.5] but not pinned
+    foreach (c; wp) {
+        double v = c.floating;
+        if      (approx(v, -0.5) || approx(v, 0.5)) onAxis++;
+        else if (v >= -0.5 - 1e-3 && v <= 0.5 + 1e-3) inSpan++;
+    }
+    assert(onAxis >= 2 && (onAxis + inSpan) == 3,
+        "Edge result must have ≥2 ±0.5 coords; got " ~ sr.toString);
+}
+
+// -------------------------------------------------------------------------
+// 7.3b: PolyCenter snap. Cube has 6 face centers; each has one ±0.5
+// coord and two zero coords.
+// -------------------------------------------------------------------------
+
+unittest { // PolyCenter snap fires on a cube face center
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types polyCenter");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected PolyCenter snap, got " ~ sr.toString);
+    auto wp = sr["worldPos"].array;
+    int zeros = 0, halves = 0;
+    foreach (c; wp) {
+        double v = c.floating;
+        if      (approx(v, 0.0))                          zeros++;
+        else if (approx(v, -0.5) || approx(v, 0.5))       halves++;
+    }
+    assert(zeros == 2 && halves == 1,
+        "PolyCenter must have 2 zeros + 1 ±0.5 coord; got " ~ sr.toString);
+}
+
+// -------------------------------------------------------------------------
+// 7.3b: Polygon snap (closest point on face surface). Any point on a
+// cube face has at least one coord = ±0.5 and the others within
+// [-0.5, 0.5].
+// -------------------------------------------------------------------------
+
+unittest { // Polygon snap fires on a cube face surface
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types polygon");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected Polygon snap, got " ~ sr.toString);
+    auto wp = sr["worldPos"].array;
+    int onAxis = 0;
+    int inSpan = 0;
+    foreach (c; wp) {
+        double v = c.floating;
+        if      (approx(v, -0.5) || approx(v, 0.5)) onAxis++;
+        else if (v >= -0.5 - 1e-3 && v <= 0.5 + 1e-3) inSpan++;
+    }
+    assert(onAxis >= 1 && (onAxis + inSpan) == 3,
+        "Polygon result must have ≥1 ±0.5 coord; got " ~ sr.toString);
+}
+
+// -------------------------------------------------------------------------
+// 7.3b: types is a bitmask — multiple types active simultaneously.
+// Vertex + EdgeCenter + PolyCenter set together produces SOME snap;
+// targetType is one of those three.
+// -------------------------------------------------------------------------
+
+unittest { // multi-type combo picks closest across types
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command",
+        `tool.pipe.attr snap types "vertex,edgeCenter,polyCenter"`);
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto sr = querySnap(0.0, 0.0, 0.0, 320, 240);
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected snap, got " ~ sr.toString);
+    int t = cast(int)sr["targetType"].integer;
+    // SnapType bitmask: Vertex=1, EdgeCenter=4, PolyCenter=16.
+    assert(t == 1 || t == 4 || t == 16,
+        "targetType expected 1 / 4 / 16, got " ~ t.to!string);
 }
