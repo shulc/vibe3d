@@ -351,6 +351,12 @@ struct EventPlayer {
 
     // Call once per frame. Pushes all events whose timestamp has elapsed.
     // Returns false when playback is finished.
+    //
+    // Note for log authors: SDL coalesces consecutive SDL_MOUSEMOTION
+    // events that land in the same SDL_PollEvent batch — the X11 backend
+    // merges them into one with summed `xrel`/`yrel`. To make individual
+    // motion events reach the application's onMouseMotion handler,
+    // space motions in the log at least one frame (~16 ms) apart.
     bool tick() {
         if (!active) return false;
         double nowMs = cast(double)(_perfCounter() - startCounter)

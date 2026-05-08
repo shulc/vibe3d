@@ -63,7 +63,7 @@ def get(url):
         return json.loads(r.read())
 
 
-def wait_playback(base, timeout=10):
+def wait_playback(base, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         s = get(f"{base}/api/play-events/status")
@@ -168,28 +168,34 @@ def find_face_indices(model, pattern):
 
 # ---- event log builder -----------------------------------------------
 def build_drag_log(vp_x, vp_y, vp_w, vp_h, x0, y0, x1, y1, steps=20):
+    """Synthesise a drag's SDL events. Motion events are spaced 50ms
+    apart so each lands in its own frame — SDL coalesces consecutive
+    motion events queued in the same frame, so close timestamps result
+    in only the LAST motion reaching the tool."""
     lines = []
     lines.append(json.dumps({
         "t": 0.0, "type": "VIEWPORT",
         "vpX": vp_x, "vpY": vp_y, "vpW": vp_w, "vpH": vp_h,
         "fovY": 0.785398
     }))
+    t_down = 50.0
     lines.append(json.dumps({
-        "t": 10.0, "type": "SDL_MOUSEBUTTONDOWN",
+        "t": t_down, "type": "SDL_MOUSEBUTTONDOWN",
         "btn": 1, "x": int(x0), "y": int(y0), "clicks": 1, "mod": 0
     }))
+    step_ms = 50.0
     for i in range(1, steps + 1):
         x = x0 + (x1 - x0) * i / steps
         y = y0 + (y1 - y0) * i / steps
         lines.append(json.dumps({
-            "t": 10.0 + i * 5.0, "type": "SDL_MOUSEMOTION",
+            "t": t_down + i * step_ms, "type": "SDL_MOUSEMOTION",
             "x": int(x), "y": int(y),
             "xrel": int((x1 - x0) / steps),
             "yrel": int((y1 - y0) / steps),
             "state": 1, "mod": 0
         }))
     lines.append(json.dumps({
-        "t": 10.0 + (steps + 1) * 5.0, "type": "SDL_MOUSEBUTTONUP",
+        "t": t_down + (steps + 1) * step_ms, "type": "SDL_MOUSEBUTTONUP",
         "btn": 1, "x": int(x1), "y": int(y1), "clicks": 1, "mod": 0
     }))
     return "\n".join(lines)
@@ -292,7 +298,20 @@ def run_case(case_path, worker, base):
 
     # 6) Compare meshes.
     vibe_post = [tuple(v) for v in get(f"{base}/api/model")["vertices"]]
-    ok, msg, _ = pair_and_compare(modo_post, vibe_post)
+    ok, msg, pairs = pair_and_compare(modo_post, vibe_post)
+    if not ok and pairs:
+        # Diagnostic: print up to 4 worst-mismatched pairs.
+        sortable = []
+        for m, v in pairs:
+            d = math.sqrt(sum((m[i] - v[i])**2 for i in range(3)))
+            sortable.append((d, m, v))
+        sortable.sort(reverse=True)
+        diag_lines = []
+        for d, m, v in sortable[:4]:
+            diag_lines.append(
+                f"      modo=({m[0]:+.3f},{m[1]:+.3f},{m[2]:+.3f}) "
+                f"vibe=({v[0]:+.3f},{v[1]:+.3f},{v[2]:+.3f}) d={d:.3f}")
+        msg = msg + "\n" + "\n".join(diag_lines)
     return ("PASS" if ok else "FAIL"), msg
 
 
