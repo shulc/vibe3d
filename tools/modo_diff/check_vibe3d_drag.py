@@ -246,6 +246,142 @@ def test_move_top_face(base):
                     f"on 4 top verts; bottom unchanged")
 
 
+# Asymmetric pattern: 3 polys on a 2x2x2 cube. Top cluster has 6
+# unique verts at y=+0.5 (two adjacent faces); bottom cluster has 4
+# unique verts at y=-0.5 (one face). Mirrors PATTERN_POLYS in
+# check_vibe3d_parity.py and modo_drag_setup.py.
+ASYM_POLY_VSETS = [
+    frozenset([(-0.5, 0.5, -0.5), (0.0, 0.5, -0.5),
+               (0.0, 0.5,  0.0), (-0.5, 0.5,  0.0)]),
+    frozenset([(-0.5, 0.5,  0.0), (0.0, 0.5,  0.0),
+               (0.0, 0.5,  0.5), (-0.5, 0.5,  0.5)]),
+    frozenset([( 0.0, -0.5,  0.0), (0.5, -0.5,  0.0),
+               (0.5, -0.5,  0.5), (0.0, -0.5,  0.5)]),
+]
+
+
+def find_asymmetric_face_indices(model):
+    verts = [tuple(v) for v in model["vertices"]]
+    faces = model.get("polygons") or model.get("faces") or []
+    out = []
+    for fi, f in enumerate(faces):
+        vset = frozenset(
+            (round(verts[i][0], 4), round(verts[i][1], 4),
+             round(verts[i][2], 4)) for i in f)
+        if vset in ASYM_POLY_VSETS:
+            out.append(fi)
+    return out
+
+
+def test_move_asymmetric_local_x_arrow(base):
+    """ACEN.Local + asymmetric selection + Move tool + drag X arrow.
+
+    Per-cluster `right` differs in WORLD direction here:
+      bottom cluster (face y=-0.5, X-Z extents tied 0.5×0.5): right=+X
+      top    cluster (faces y=+0.5, X-Z extents 0.5×1.0):     right=+Z
+    Same screen drag on the global X arrow → top cluster shifts along
+    +Z world (its `right`), bottom along +X world. Validates that
+    MoveTool.applyPerClusterDelta actually consumes per-cluster axes
+    from AxisStage. For Y-arrow the test would be useless: cluster
+    `up` differs only in sign (+Y vs -Y), which screenAxisDelta
+    cancels out (same line ⇒ same world delta)."""
+    # 1) Setup: empty → 2x2x2 cube → select 3 polys → actr.local → move.
+    post(f"{base}/api/reset?empty=true", "")
+    post(f"{base}/api/command",
+         "prim.cube segmentsX:2 segmentsY:2 segmentsZ:2 "
+         "sizeX:1 sizeY:1 sizeZ:1 sharp:true radius:0")
+    model = get(f"{base}/api/model")
+    indices = find_asymmetric_face_indices(model)
+    if len(indices) != 3:
+        return "FAIL", f"expected 3 polys, found {len(indices)}"
+    post(f"{base}/api/select", {"mode": "polygons", "indices": indices})
+    post(f"{base}/api/command", "actr.local")
+    post(f"{base}/api/command", "tool.set move")
+
+    # 2) Drag the GLOBAL X arrow. Gizmo basis = state.axis.right (world
+    #    +X by default for asymmetric_local). Per-cluster `right` differs
+    #    per cluster (top=+Z, bottom=+X) — the per-cluster path picks
+    #    each cluster's own value independently of the global axis.
+    cam = get(f"{base}/api/camera")
+    view_M, proj_M, vw, vh = camera_matrices(cam)
+    eval_state = get(f"{base}/api/toolpipe/eval")
+    cen   = eval_state["actionCenter"]["center"]
+    right = eval_state["axis"]["right"]
+    arrow_len = 0.5
+    tip_world  = [cen[i] + right[i] * arrow_len for i in range(3)]
+    tip_screen = project(tip_world, view_M, proj_M, vw, vh)
+    cen_screen = project(cen,       view_M, proj_M, vw, vh)
+    far_world  = [cen[i] + right[i] * (arrow_len + 0.8) for i in range(3)]
+    far_screen = project(far_world, view_M, proj_M, vw, vh)
+    if not (tip_screen and cen_screen and far_screen):
+        return "FAIL", "could not project X arrow"
+    sx = (cen_screen[0] + tip_screen[0]) * 0.5
+    sy = (cen_screen[1] + tip_screen[1]) * 0.5
+    ex = sx + (far_screen[0] - tip_screen[0])
+    ey = sy + (far_screen[1] - tip_screen[1])
+
+    pre = [tuple(v) for v in model["vertices"]]
+
+    # 3) Replay drag.
+    log = build_drag_log(vw, vh, sx, sy, ex, ey, steps=20)
+    post(f"{base}/api/play-events", log)
+    if not wait_playback_done(base):
+        return "FAIL", "playback did not finish"
+    post_verts = [tuple(v) for v in get(f"{base}/api/model")["vertices"]]
+
+    # 4) Group verts by cluster — top has y=+0.5, bottom has y=-0.5,
+    #    interior verts (y=0) belong to whichever cluster claimed them
+    #    via union-find. Selected verts have the y values above.
+    sel_top    = [(i, p) for i, p in enumerate(pre)
+                  if p[1] > 0.4 and p[1] < 0.6 and
+                     p[0] >= -0.51 and p[0] <= 0.01 and
+                     p[2] >= -0.51 and p[2] <= 0.51]
+    sel_bottom = [(i, p) for i, p in enumerate(pre)
+                  if p[1] < -0.4 and p[1] > -0.6 and
+                     p[0] >= -0.01 and p[0] <= 0.51 and
+                     p[2] >= -0.01 and p[2] <= 0.51]
+    if len(sel_top) != 6 or len(sel_bottom) != 4:
+        return "FAIL", (f"selection mismatch: top={len(sel_top)} "
+                        f"bottom={len(sel_bottom)}")
+
+    def cluster_delta(rows, label):
+        deltas = [tuple(post_verts[i][k] - p[k] for k in range(3))
+                  for i, p in rows]
+        d0 = deltas[0]
+        rigid = all(all(abs(d[k] - d0[k]) < 1e-3 for k in range(3))
+                    for d in deltas)
+        return d0, rigid
+
+    d_top, rigid_top       = cluster_delta(sel_top,    "top")
+    d_bottom, rigid_bottom = cluster_delta(sel_bottom, "bottom")
+    if not (rigid_top and rigid_bottom):
+        return "FAIL", "non-rigid per-cluster"
+
+    # 5) Untouched verts: every non-selected vert must stay put.
+    sel_ids = set(i for i, _ in sel_top) | set(i for i, _ in sel_bottom)
+    untouched_ok = True
+    for i, p in enumerate(pre):
+        if i in sel_ids: continue
+        if any(abs(post_verts[i][k] - p[k]) > 1e-3 for k in range(3)):
+            untouched_ok = False; break
+
+    # 6) Direction sanity: top cluster moves along +Z (its `right`),
+    #    bottom moves along +X (its `right`). Same-axis Y-arrow drag
+    #    would just give parallel +Y moves — useless for distinguishing
+    #    per-cluster from global. Z and X are world-orthogonal here.
+    top_dir_ok    = abs(d_top[2])    > 0.05 and abs(d_top[0])    < 0.02
+    bottom_dir_ok = abs(d_bottom[0]) > 0.05 and abs(d_bottom[2]) < 0.02
+
+    summary = (f"top=({d_top[0]:+.3f},{d_top[1]:+.3f},{d_top[2]:+.3f}) "
+               f"bottom=({d_bottom[0]:+.3f},{d_bottom[1]:+.3f},"
+               f"{d_bottom[2]:+.3f})")
+    if not untouched_ok:
+        return "FAIL", "untouched verts moved; " + summary
+    if not (top_dir_ok and bottom_dir_ok):
+        return "FAIL", "per-cluster direction wrong; " + summary
+    return "PASS", "per-cluster axes verified — " + summary
+
+
 def wait_ready(port, timeout=10):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -269,10 +405,17 @@ def main():
         return 2
 
     base = f"http://localhost:{args.port}"
-    status, msg = test_move_top_face(base)
-    tag = green if status == "PASS" else red
-    print(f"  {tag(status):20s} move_top_y_arrow  {msg}")
-    return 0 if status == "PASS" else 1
+    cases = [
+        ("move_top_y_arrow",            test_move_top_face),
+        ("move_asymmetric_local_x",     test_move_asymmetric_local_x_arrow),
+    ]
+    fail = 0
+    for name, fn in cases:
+        status, msg = fn(base)
+        tag = green if status == "PASS" else red
+        print(f"  {tag(status):20s} {name:30s} {msg}")
+        if status != "PASS": fail += 1
+    return 0 if fail == 0 else 1
 
 
 if __name__ == "__main__":
