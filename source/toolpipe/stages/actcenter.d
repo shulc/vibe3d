@@ -221,9 +221,13 @@ private:
                 return count > 0 ? first : centroidWithGeometryFallback();
             }
             case Mode.None:
-                // No action center — tools translate freely; rotate /
-                // scale fall back to world origin.
-                return Vec3(0, 0, 0);
+                // No designated action center — for visual placement
+                // (gizmo position) and translate-drag plane reference,
+                // fall back to the same centroid Auto would give.
+                // Rotate / Scale that need a real pivot can detect this
+                // mode (state.actionCenter.type) and fall back further
+                // to world origin.
+                return centroidWithGeometryFallback();
             case Mode.Border:
                 // Bbox center of selection-border verts — those on edges
                 // with one selected and one unselected adjacent face.

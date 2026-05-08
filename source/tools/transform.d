@@ -269,6 +269,21 @@ protected:
         ac.setAutoUserPlaced(worldHit);
     }
 
+    /// True iff the ACEN stage is in `Mode.None` — used by transform
+    /// tools to switch click-away from "snap to workplane" (actr.auto
+    /// semantic) to "free-move along most-facing plane" (the natural
+    /// fallback when there is no action center).
+    bool acenIsNone() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return false;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return false;
+        return ac.mode == ActionCenterStage.Mode.None;
+    }
+
     // Per-cluster pivots from the ACEN stage (Phase 3 of
     // doc/acen_modo_parity_plan.md). Active only when ACEN.Local has
     // ≥2 disjoint clusters in the current selection. Tools that respect
