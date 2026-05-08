@@ -205,7 +205,8 @@ void main(string[] args) {
     bool testMode = false;
     ushort httpPort = 8080;       // Default port
     int  cliWinW = 800, cliWinH = 600;   // overridable via --window WxH
-    int  cliVpW = 0,    cliVpH = 0;      // overridable via --viewport WxH
+                                          // (also via --viewport WxH which
+                                          // sets the window to vp+chrome)
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -245,15 +246,18 @@ void main(string[] args) {
             cliWinW = parts[0].to!int;
             cliWinH = parts[1].to!int;
         } else if (args[i] == "--viewport") {
-            // --viewport WxH (e.g. --viewport 1426x966) — pin the
-            // CAMERA viewport size used by the projection matrix and
-            // tools' screen-to-world math. Independent of the actual
-            // SDL window/framebuffer size — useful when window chrome
-            // (titlebar, side panel, status bar) eats pixels and we
-            // want vibe3d's projection to use a specific aspect/size
-            // anyway. Used by the modo_diff cross-engine drag test
-            // to match MODO's viewport (1426x966) regardless of how
-            // the SDL window ends up sized after window-manager chrome.
+            // --viewport WxH — request the CAMERA viewport (3D area)
+            // be exactly WxH. Implementation: size the SDL window so
+            // that, after Layout's side panel (sideW=150) and tab+
+            // status bars (statusH=28 each), the central viewport is
+            // WxH. Picks the same size everywhere — avoids the
+            // mismatch between projection aspect (uses cameraView.
+            // width/height) and mouse-event coords (window pixels)
+            // that arises when these are independently configurable.
+            //
+            // Used by the modo_diff cross-engine drag test to match
+            // MODO's viewport (1426x966) so that screen-pixel drag
+            // → world-delta math is identical between engines.
             if (i + 1 >= args.length) {
                 writeln("Error: --viewport requires WxH (e.g. 1426x966)");
                 import core.stdc.stdlib : exit;
@@ -266,8 +270,11 @@ void main(string[] args) {
                 import core.stdc.stdlib : exit;
                 exit(1);
             }
-            cliVpW = parts[0].to!int;
-            cliVpH = parts[1].to!int;
+            // Layout chrome: sideW (150) on left, statusH (28) on top
+            // for the tab bar and bottom for the status bar. Match
+            // the constants in struct Layout.resize.
+            cliWinW = parts[0].to!int + 150;       // + sideW
+            cliWinH = parts[1].to!int + 2 * 28;    // + 2 × statusH
         } else {
             writefln("Error: unknown argument '%s'", args[i]);
             import core.stdc.stdlib : exit;
@@ -402,9 +409,7 @@ void main(string[] args) {
     setReplayCurrentViewport(layout.vpX, layout.vpY, layout.vpW, layout.vpH, kFovY);
 
     // Camera
-    int initVpW = (cliVpW > 0) ? cliVpW : layout.vpW;
-    int initVpH = (cliVpH > 0) ? cliVpH : layout.vpH;
-    View cameraView = new View(layout.vpX, layout.vpY, initVpW, initVpH);
+    View cameraView = new View(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
 
     VertexCache vertexCache;
     vertexCache.resize(mesh.vertices.length);
@@ -2941,13 +2946,7 @@ void main(string[] args) {
         }
 
 
-        // --viewport pins the camera-projection viewport size regardless
-        // of the actual SDL window/layout dimensions. Otherwise track the
-        // window-derived layout viewport (default behaviour).
-        if (cliVpW > 0 && cliVpH > 0)
-            cameraView.setSize(cliVpW, cliVpH);
-        else
-            cameraView.setSize(layout.vpW, layout.vpH);
+        cameraView.setSize(layout.vpW, layout.vpH);
 
         Viewport vp = cameraView.viewport();
 
