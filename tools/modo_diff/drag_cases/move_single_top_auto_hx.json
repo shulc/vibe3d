@@ -1,0 +1,8 @@
+{
+  "_comment": "Move tool, ACEN.auto, click on handle 'x', drag 100 px along its projection.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "handle": "x",
+  "drag_pixels": 100
+}

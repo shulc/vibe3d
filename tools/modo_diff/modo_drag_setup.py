@@ -247,13 +247,18 @@ try:
             fpos[2] - fwd[2] * dist)
     drag_x = float(args[3]) if len(args) > 3 else 1020.0
     drag_y = float(args[4]) if len(args) > 4 else 560.0
+    # PixelSize() returns world units per screen pixel at the workplane.
+    # Cross-engine handle-pick code uses this to convert axis-arrow
+    # offsets (in world space) to per-handle screen-pixel click points.
+    pix_size = float(_v3d.PixelSize())
     camera = {
-        "bounds":   [int(bnd[0]), int(bnd[1]), int(bnd[2]), int(bnd[3])],
-        "center":   [float(cen[0]), float(cen[1]), float(cen[2])],
-        "eye":      [eye[0], eye[1], eye[2]],
-        "fwd":      [float(fwd[0]), float(fwd[1]), float(fwd[2])],
-        "distance": dist,
-        "drag":     [drag_x, drag_y],
+        "bounds":     [int(bnd[0]), int(bnd[1]), int(bnd[2]), int(bnd[3])],
+        "center":     [float(cen[0]), float(cen[1]), float(cen[2])],
+        "eye":        [eye[0], eye[1], eye[2]],
+        "fwd":        [float(fwd[0]), float(fwd[1]), float(fwd[2])],
+        "distance":   dist,
+        "pixel_size": pix_size,
+        "drag":       [drag_x, drag_y],
     }
 except Exception as _e:
     camera = {"error": repr(_e)}

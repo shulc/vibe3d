@@ -1,0 +1,9 @@
+{
+  "_comment": "Move tool, ACEN.auto, handle 'center', drag at orbited camera (30deg horizontal).",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "handle": "center",
+  "drag_pixels": 100,
+  "view_pre": ["view3d.rotate \"30\" \"0\""]
+}

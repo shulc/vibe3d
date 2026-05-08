@@ -1,0 +1,8 @@
+{
+  "_comment": "Move tool, ACEN.none, click on handle 'y', drag 100 px along its projection.",
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "none",
+  "handle": "y",
+  "drag_pixels": 100
+}

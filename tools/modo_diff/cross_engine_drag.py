@@ -93,6 +93,60 @@ def wait_ready(port, timeout=10):
     return False
 
 
+# ---- handle pick math --------------------------------------------------
+def _normalize(v):
+    n = math.sqrt(sum(c*c for c in v))
+    return tuple(c/n for c in v) if n > 1e-9 else v
+
+
+def _cross(a, b):
+    return (a[1]*b[2] - a[2]*b[1],
+            a[2]*b[0] - a[0]*b[2],
+            a[0]*b[1] - a[1]*b[0])
+
+
+def _dot(a, b):
+    return sum(a[i]*b[i] for i in range(3))
+
+
+def handle_click_offset(cam, handle):
+    """Pixel offset (dx, dy) from gizmo screen-center to a click point
+    that lands inside `handle`'s hitbox. `cam` is MODO's camera dict
+    from state.json (eye, fwd, pixel_size, etc.). Handle ∈
+    {"x","y","z","center"}. The offset uses 30 px along the handle's
+    world-axis projection, which is comfortably inside both engines'
+    arrow hitboxes regardless of which gizmo length each engine uses
+    (vibe3d 0.18 fraction ≈ 95 px arrow at our test camera, MODO ≈ 90
+    px — both safely larger than 30 px)."""
+    if handle == "center":
+        return (0.0, 0.0)
+    fwd = cam["fwd"]
+    cam_right = _normalize(_cross(fwd, (0.0, 1.0, 0.0)))
+    cam_up    = _normalize(_cross(cam_right, fwd))
+    axis = {"x": (1.0, 0.0, 0.0),
+            "y": (0.0, 1.0, 0.0),
+            "z": (0.0, 0.0, 1.0)}[handle]
+    # Projection of world axis onto screen-pixel basis. Screen Y is
+    # inverted (down=positive) hence the unary minus on cam_up.
+    sx =  _dot(cam_right, axis)
+    sy = -_dot(cam_up,    axis)
+    mag = math.sqrt(sx*sx + sy*sy)
+    if mag < 1e-3:
+        # Axis is nearly along view direction — no meaningful screen
+        # projection. Use a default (+30, 0) to at least be off-center.
+        return (30.0, 0.0)
+    return (30.0 * sx / mag, 30.0 * sy / mag)
+
+
+def screen_center_from_state(cam):
+    """Approximate screen-center pixel of the gizmo. Without a full
+    projection matrix here we approximate by the centre of the
+    viewport bounds — fine for our cases where ACEN.center ≈ camera
+    focus and the gizmo lands near the screen centre."""
+    bx, by, bw, bh = cam["bounds"]
+    return (bx + bw * 0.5, by + bh * 0.5)
+
+
 # ---- camera conversion: MODO → vibe3d spherical ----------------------
 def modo_to_vibe3d_camera(cam):
     """MODO publishes (focus, eye, distance). vibe3d wants az/el/dist
@@ -242,10 +296,18 @@ def run_case(case_path, worker, base, args_step_px=None):
     pattern   = spec["pattern"]
     acen_mode = spec["acen_mode"]
     tool      = spec["tool"]
-    drag      = spec.get("drag", [1020, 560, 100, 0])
+    handle    = spec.get("handle")        # x|y|z|center, optional
     step_px   = args_step_px if args_step_px is not None \
                 else spec.get("step_px", 20)
-    x0, y0, dx, dy = drag
+    # When `handle` is set, the actual drag pixels are computed inside
+    # run_acen_drag.Worker.run_case (after MODO's camera state is
+    # available) and persisted to state.json's `resolved_drag`. We pull
+    # them back from state.json after MODO has run, then drive vibe3d
+    # with the SAME pixel coords so cross-engine numerics line up.
+    if handle is None:
+        drag = spec.get("drag", [1020, 560, 100, 0])
+    else:
+        drag = None  # patched after MODO returns
 
     # 1) Run MODO via the orchestrator Worker — produces state+result.
     status, why = worker.run_case(case_path, step_px_override=args_step_px)
@@ -259,6 +321,17 @@ def run_case(case_path, worker, base, args_step_px=None):
     if not cam_modo or "error" in cam_modo:
         return "ERROR", "no camera in MODO state.json"
     modo_post = [tuple(v) for v in result["verts"]]
+
+    # When the case is handle-driven, run_acen_drag.Worker.run_case
+    # resolved the actual click pixels against MODO's camera and
+    # persisted them under state["resolved_drag"]. Pull them back so
+    # we drive vibe3d through the SAME pixels MODO saw.
+    if drag is None:
+        rd = state.get("resolved_drag")
+        if rd is None:
+            return "ERROR", "handle-driven case missing resolved_drag in state"
+        drag = [float(rd[0]), float(rd[1]), float(rd[2]), float(rd[3])]
+    x0, y0, dx, dy = drag
 
     # 3) Build same scene + selection + ACEN + tool, THEN set camera.
     #    /api/reset resets the View; setting the camera last keeps our

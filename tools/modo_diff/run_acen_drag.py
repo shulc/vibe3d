@@ -29,6 +29,7 @@ import argparse
 import concurrent.futures
 import fnmatch
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -57,6 +58,62 @@ RESET_ITEM_X, RESET_ITEM_Y = 40,   778
 POPUP_OK_X,   POPUP_OK_Y   = 1175, 538
 CMD_BAR_X,    CMD_BAR_Y    = 1750, 1063
 DEFAULT_DRAG = (1020, 560, 100, 0)   # (start_x, start_y, dx, dy)
+
+
+# ---- handle-pick screen math ----------------------------------------
+def _normalize_v(v):
+    n = math.sqrt(sum(c*c for c in v))
+    return tuple(c/n for c in v) if n > 1e-9 else v
+
+
+def _cross_v(a, b):
+    return (a[1]*b[2] - a[2]*b[1],
+            a[2]*b[0] - a[0]*b[2],
+            a[0]*b[1] - a[1]*b[0])
+
+
+def _dot_v(a, b):
+    return sum(a[i]*b[i] for i in range(3))
+
+
+def _project_axis_to_screen(cam, axis):
+    """World axis (unit vec) → unit (sx, sy) in screen-pixel space.
+    `cam` is state.json's camera dict (uses `fwd` only)."""
+    fwd = cam["fwd"]
+    cam_right = _normalize_v(_cross_v(fwd, (0.0, 1.0, 0.0)))
+    cam_up    = _normalize_v(_cross_v(cam_right, fwd))
+    sx =  _dot_v(cam_right, axis)
+    sy = -_dot_v(cam_up,    axis)   # screen Y inverted
+    mag = math.sqrt(sx*sx + sy*sy)
+    if mag < 1e-3:
+        return (1.0, 0.0)           # axis along view → fallback right
+    return (sx / mag, sy / mag)
+
+
+def _resolve_handle_drag(cam, handle, drag_len):
+    """For handle ∈ {x,y,z,center}, return (start_x, start_y, dx, dy)
+    in MODO viewport pixels. Click sits 30 px from the gizmo screen
+    centre along the handle's projected axis (or AT the centre for the
+    "center" cube handle); drag is `drag_len` px along that same
+    direction (or +X for "center", since the cube handle drags in the
+    most-facing plane and screen-X gives the most reliable cross-camera
+    behaviour)."""
+    bx, by, bw, bh = cam["bounds"]
+    # Approximate gizmo centre at viewport centre — fine for our cases
+    # where the selection centroid sits near the camera focus.
+    cx = bx + bw * 0.5
+    cy = by + bh * 0.5
+    if handle == "center":
+        return (cx, cy, drag_len, 0)
+    if handle not in ("x", "y", "z"):
+        raise ValueError(f"unknown handle: {handle}")
+    axis = {"x": (1.0, 0.0, 0.0),
+            "y": (0.0, 1.0, 0.0),
+            "z": (0.0, 0.0, 1.0)}[handle]
+    sx, sy = _project_axis_to_screen(cam, axis)
+    start_x = cx + 30.0 * sx
+    start_y = cy + 30.0 * sy
+    return (start_x, start_y, drag_len * sx, drag_len * sy)
 
 
 # ---- ANSI ------------------------------------------------------------
@@ -280,22 +337,32 @@ class Worker:
         tool      = spec["tool"]
         pattern   = spec["pattern"]
         acen_mode = spec["acen_mode"]
-        drag      = spec.get("drag", DEFAULT_DRAG)
+        handle    = spec.get("handle")             # x|y|z|center, optional
+        drag_len  = spec.get("drag_pixels", 100)
+        # When `handle` is set, we resolve the drag start/length from
+        # camera + axis after the setup script has dumped state.json
+        # (camera info is unknown until then). Fall back to the raw
+        # `drag` field for cases without a handle.
+        drag      = spec.get("drag", DEFAULT_DRAG) if handle is None else None
         view_pre  = spec.get("view_pre", [])
         step_px   = step_px_override if step_px_override is not None \
                     else spec.get("step_px", 20)
-        if len(drag) != 4:
+        if drag is not None and len(drag) != 4:
             return "ERROR", f"drag must be [x, y, dx, dy] not {drag}"
 
         for f in (self.state_path, self.result_path):
             try: os.remove(f)
             except OSError: pass
 
-        # Pass drag start coords to setup so it can dump To3D(start)
-        # — the expected ACEN.Auto pivot for the next click.
+        # When handle-driven, defer the screen-pixel drag start until
+        # after we've read state.json's camera. For now feed setup with
+        # a placeholder click point — actual drag pixel is computed
+        # from the camera + axis projection below.
+        setup_drag_x = drag[0] if drag else 1020
+        setup_drag_y = drag[1] if drag else 560
         if not self.cmd_bar(
                 f"@modo_drag_setup.py {self.tmpdir} {acen_mode} {pattern} "
-                f"{tool} {drag[0]} {drag[1]}",
+                f"{tool} {setup_drag_x} {setup_drag_y}",
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
 
@@ -338,6 +405,25 @@ class Worker:
             )
             self.cmd_bar(f"@{probe_script}")
             time.sleep(0.3)
+
+        # If `handle` was set, resolve the drag spec now from MODO's
+        # camera state (post view_pre) + the requested handle axis.
+        # The "drag direction" is +30 px along world X for the handle's
+        # natural drag axis (so the result is a meaningful translation
+        # that we can compare cross-engine).
+        if handle is not None:
+            try:
+                state_now = json.loads(self.state_path.read_text())
+                cam = state_now.get("camera", {})
+                drag = _resolve_handle_drag(cam, handle, drag_len)
+            except Exception as e:
+                return "ERROR", f"could not resolve handle drag: {e}"
+            # Persist the resolved drag back to state.json so
+            # downstream consumers (cross_engine_drag.py, verifier)
+            # see the exact pixels we drove MODO with.
+            state_now["camera"]["drag"] = [float(drag[0]), float(drag[1])]
+            state_now["resolved_drag"]  = list(drag)
+            self.state_path.write_text(json.dumps(state_now))
 
         self.mouse_drag(*drag, step_px=step_px)
         time.sleep(0.5)
