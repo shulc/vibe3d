@@ -243,6 +243,7 @@ def run_case(case_path, worker, base):
     acen_mode = spec["acen_mode"]
     tool      = spec["tool"]
     drag      = spec.get("drag", [1020, 560, 100, 0])
+    step_px   = spec.get("step_px", 20)
     x0, y0, dx, dy = drag
 
     # 1) Run MODO via the orchestrator Worker — produces state+result.
@@ -299,7 +300,12 @@ def run_case(case_path, worker, base):
                 (y - by) * vh / float(bh))
     sx, sy = remap(x0,         y0)
     ex, ey = remap(x0 + dx,    y0 + dy)
-    log = build_drag_log(0, 0, vw, vh, sx, sy, ex, ey, steps=20)
+    # Use the same per-event step granularity vibe3d-side as MODO-side.
+    # MODO's mouse_drag computed N = max(|dx|,|dy|) // step_px or 1.
+    # Mirror that here so both engines see the same number of motion
+    # events. Important for testing the cumulative-impulse hypothesis.
+    n_events = max(abs(dx), abs(dy)) // step_px or 1
+    log = build_drag_log(0, 0, vw, vh, sx, sy, ex, ey, steps=n_events)
     post(f"{base}/api/play-events", log)
     if not wait_playback(base):
         return "FAIL", "vibe3d playback didn't finish"

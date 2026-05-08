@@ -1,0 +1,7 @@
+{
+  "tool": "move",
+  "pattern": "single_top",
+  "acen_mode": "auto",
+  "drag": [1020, 560, 100, 0],
+  "step_px": 200
+}
