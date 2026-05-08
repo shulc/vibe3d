@@ -252,12 +252,12 @@ protected:
         ax = bp.axis1; ay = bp.normal; az = bp.axis2;
     }
 
-    // Click-outside-gizmo hook (phase 7.2b). Move/Rotate/Scale call this
-    // after the cursor ray hit a construction plane outside the gizmo —
-    // the ACEN stage records `userPlaced` so subsequent
-    // `queryActionCenter` returns this point. Mode stays Auto (matches
-    // MODO "Auto NOT fixed; click away → new center"). No-op when no
-    // ACEN stage is registered.
+    // Click-outside-gizmo hook. Move/Rotate/Scale call this after the
+    // cursor ray hit the relocation plane outside the gizmo — the ACEN
+    // stage records `userPlaced` so subsequent `queryActionCenter`
+    // returns this point. Mode stays unchanged (Auto / None / Screen
+    // all consume userPlaced; the other modes ignore it). No-op when
+    // no ACEN stage is registered.
     void notifyAcenUserPlaced(Vec3 worldHit) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
@@ -266,22 +266,90 @@ protected:
         auto ac = cast(ActionCenterStage)
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return;
-        ac.setAutoUserPlaced(worldHit);
+        ac.setUserPlaced(worldHit);
     }
 
-    /// True iff the ACEN stage is in `Mode.None` — used by transform
-    /// tools to switch click-away from "snap to workplane" (actr.auto
-    /// semantic) to "free-move along most-facing plane" (the natural
-    /// fallback when there is no action center).
-    bool acenIsNone() {
+    /// True iff the current ACEN mode lets click-outside-gizmo relocate
+    /// the gizmo. Per MODO 9: only Auto, None and Screen do — the other
+    /// modes (Select / SelectAuto / Element / Local / Origin / Manual /
+    /// Border) keep the gizmo pinned to a selection-derived or fixed
+    /// point and ignore the click. With no ACEN stage registered we
+    /// behave as Auto (legacy default).
+    bool acenAllowsClickRelocate() {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        if (g_pipeCtx is null) return false;
+        if (g_pipeCtx is null) return true;
         auto ac = cast(ActionCenterStage)
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
-        if (ac is null) return false;
-        return ac.mode == ActionCenterStage.Mode.None;
+        if (ac is null) return true;
+        auto m = ac.mode;
+        return m == ActionCenterStage.Mode.Auto
+            || m == ActionCenterStage.Mode.None
+            || m == ActionCenterStage.Mode.Screen;
+    }
+
+    /// Project a click pixel onto the appropriate relocation plane for
+    /// the current ACEN mode. Per MODO 9:
+    ///
+    ///   Auto / None : most-facing world-axis plane through (0,0,0).
+    ///   Screen      : camera-perpendicular plane through the current
+    ///                 selection bbox center.
+    ///
+    /// Returns false when relocation is not allowed in the current mode,
+    /// or the click ray is parallel to the projection plane. Callers
+    /// must have already checked `acenAllowsClickRelocate()`.
+    bool computeClickRelocateHit(int sx, int sy, out Vec3 worldHit) {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        import tools.create_common         : pickMostFacingPlane;
+        import math : screenRay, rayPlaneIntersect;
+        Vec3 dir = screenRay(sx, sy, cachedVp);
+        // Default (no ACEN stage) — Auto semantics.
+        auto mode = ActionCenterStage.Mode.Auto;
+        if (g_pipeCtx !is null) {
+            auto ac = cast(ActionCenterStage)
+                      g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+            if (ac !is null) mode = ac.mode;
+        }
+        final switch (mode) {
+            case ActionCenterStage.Mode.Auto:
+            case ActionCenterStage.Mode.None: {
+                auto bp = pickMostFacingPlane(cachedVp);
+                return rayPlaneIntersect(cachedVp.eye, dir,
+                                         Vec3(0, 0, 0), bp.normal, worldHit);
+            }
+            case ActionCenterStage.Mode.Screen: {
+                Vec3 selCen = currentSelectionBBoxCenter();
+                Vec3 camBack = Vec3(cachedVp.view[2],
+                                    cachedVp.view[6],
+                                    cachedVp.view[10]);
+                return rayPlaneIntersect(cachedVp.eye, dir,
+                                         selCen, camBack, worldHit);
+            }
+            case ActionCenterStage.Mode.Select:
+            case ActionCenterStage.Mode.SelectAuto:
+            case ActionCenterStage.Mode.Element:
+            case ActionCenterStage.Mode.Local:
+            case ActionCenterStage.Mode.Origin:
+            case ActionCenterStage.Mode.Manual:
+            case ActionCenterStage.Mode.Border:
+                return false;
+        }
+    }
+
+    // Bbox center of the current selection, independent of the ACEN
+    // stage — used as the through-point for Screen-mode click-relocate
+    // projection plane (the action-center stage in Screen mode publishes
+    // the screen-center pixel, not the selection center).
+    private Vec3 currentSelectionBBoxCenter() {
+        if (mesh is null) return Vec3(0, 0, 0);
+        final switch (*editMode) {
+            case EditMode.Vertices: return mesh.selectionBBoxCenterVertices();
+            case EditMode.Edges:    return mesh.selectionBBoxCenterEdges();
+            case EditMode.Polygons: return mesh.selectionBBoxCenterFaces();
+        }
     }
 
     // Per-cluster pivots from the ACEN stage (Phase 3 of

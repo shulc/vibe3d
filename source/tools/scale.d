@@ -66,32 +66,37 @@ public:
         ulong currentMutVer = mesh.mutationVersion;
         bool selChanged = (currentHash   != lastSelectionHash);
         bool mutChanged = (currentMutVer != lastMutationVersion);
-        if (!selChanged && !mutChanged) return;
 
-        lastSelectionHash   = currentHash;
-        lastMutationVersion = currentMutVer;
-        vertexCacheDirty    = true;
+        if (selChanged || mutChanged) {
+            lastSelectionHash   = currentHash;
+            lastMutationVersion = currentMutVer;
+            vertexCacheDirty    = true;
 
-        // Geometry-only change: per-edit hooks have already restored
-        // scaleAccum / propScale. activationVertices stays at the
-        // activate-time baseline — applying scaleAccum to activationVertices
-        // around activationCenter always reproduces current mesh state.
+            // Geometry-only change: per-edit hooks have already
+            // restored scaleAccum / propScale. activationVertices stays
+            // at the activate-time baseline — applying scaleAccum to
+            // activationVertices around activationCenter always
+            // reproduces current mesh state.
 
-        // Selection change: zero accumulators and refresh everything.
-        if (selChanged) {
-            scaleAccum         = Vec3(1, 1, 1);
-            propScale          = Vec3(1, 1, 1);
-            activationVertices = mesh.vertices.dup;
-            centerManual       = false;
-            // Phase 7.2a: pivot via ACEN stage.
-            cachedCenter = queryActionCenter();
-            activationCenter = cachedCenter;
+            // Selection change: zero accumulators and refresh
+            // everything.
+            if (selChanged) {
+                scaleAccum         = Vec3(1, 1, 1);
+                propScale          = Vec3(1, 1, 1);
+                activationVertices = mesh.vertices.dup;
+                centerManual       = false;
+            }
         }
-        // On geometry-only change, cachedCenter / activationCenter stay
-        // at the same pivot the user grabbed.
 
-        if (!centerManual && dragAxis == -1)
-            handler.setPosition(cachedCenter);
+        // Pull the gizmo center from the ACEN stage every frame: mode /
+        // userPlaced changes don't bump the selection hash or mesh
+        // mutation, so they would otherwise not propagate to the
+        // visible gizmo. activationCenter (= scale pivot for the next
+        // drag / prop-apply) tracks cachedCenter so a mid-tool ACEN
+        // mode change reaches the next scale operation too.
+        cachedCenter = queryActionCenter();
+        activationCenter = cachedCenter;
+        handler.setPosition(cachedCenter);
     }
 
     private void snapshotEditState() {
@@ -167,13 +172,15 @@ public:
             return true;
         }
 
-        // Click outside gizmo: relocate ACEN to the click projected onto
-        // the world Work Plane (Y=0), matching MODO's actr.auto docs:
-        // "the position at the intersection of where the pointer
-        // clicked in the viewport and the Work Plane." See
-        // doc/acen_modo_parity_plan.md Phase 1.
+        // Click outside gizmo: relocate ACEN to the click projected
+        // onto the per-mode plane (most-facing world plane through
+        // origin for Auto/None; camera-perpendicular through selection
+        // center for Screen). Other ACEN modes keep the gizmo pinned
+        // and ignore the click.
+        if (!acenAllowsClickRelocate())
+            return false;
         Vec3 hit;
-        if (!screenToWorkPlane(e.x, e.y, cachedVp, hit))
+        if (!computeClickRelocateHit(e.x, e.y, hit))
             return false;
         handler.setPosition(hit);
         centerManual = true;

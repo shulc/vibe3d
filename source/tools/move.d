@@ -59,25 +59,22 @@ public:
 
         uint  currentHash   = computeSelectionHash();
         ulong currentMutVer = mesh.mutationVersion;
-        // Refresh on selection change OR on geometry change (e.g. undo of
-        // a transform shifts the centroid back without touching selection).
+        // Reset per-drag scratch on selection / geometry change.
         if (currentHash != lastSelectionHash || currentMutVer != lastMutationVersion) {
             lastSelectionHash   = currentHash;
             lastMutationVersion = currentMutVer;
             vertexCacheDirty    = true;
-            // Geometry changed under our feet — drop manual placement so
-            // the gizmo snaps back to the selection centroid.
-            centerManual = false;
-
-            // Phase 7.2a: pull the pivot from ACEN stage (mode=Auto by
-            // default ⇒ same selection-centroid-or-geometry behaviour).
-            cachedCenter = queryActionCenter();
+            centerManual        = false;
             dragDelta = Vec3(0, 0, 0);
             propInput = Vec3(0, 0, 0);
         }
 
-        if (!centerManual && dragAxis == -1)
-            handler.setPosition(cachedCenter);
+        // Pull the gizmo center from the ACEN stage every frame: mode /
+        // userPlaced changes don't bump the selection hash or mesh
+        // mutation, so they would otherwise not propagate to the
+        // visible gizmo.
+        cachedCenter = queryActionCenter();
+        handler.setPosition(cachedCenter);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -189,42 +186,34 @@ public:
             return true;
         }
 
-        // Click outside gizmo. Two paths share the drag-axis choice
-        // (most-facing plane through gizmo center) and differ only in
-        // whether the click also relocates the gizmo:
+        // Click outside gizmo. Per MODO 9, only Auto / None / Screen
+        // ACEN modes relocate the gizmo on click-outside; the others
+        // (Select / SelectAuto / Element / Local / Origin / Manual /
+        // Border) keep the gizmo pinned to a selection-derived or
+        // fixed point and ignore the click entirely.
         //
-        //   actr.none:  no action center → no relocation. Drag along
-        //               most-facing plane through the current gizmo
-        //               position. Matches MODO's "free move" feel when
-        //               no actr.* preset is active.
+        //   Auto / None : project click onto the most-facing world-axis
+        //                 plane through (0,0,0).
+        //   Screen      : project click onto a camera-perpendicular
+        //                 plane through the current selection bbox
+        //                 centre.
         //
-        //   any other:  ACEN.auto / .selectauto / etc. — relocate the
-        //               gizmo to the click projected onto the world
-        //               Work Plane (Y=0), matching MODO's "click → work
-        //               plane" semantic for the action-center POSITION.
-        //               The drag plane is then the most-facing plane
-        //               THROUGH the new (workplane-aligned) center —
-        //               not the workplane itself. Free move feels
-        //               natural across cameras and the workplane only
-        //               anchors WHERE the new center is, not HOW the
-        //               drag projects from screen.
-        //
-        // Was dragAxis=6 (XZ workplane) in the actr.auto branch — that
-        // strict-workplane drag matches one MODO numerical regime but
-        // collapsed all click-away drags onto Y=0 regardless of camera,
-        // which feels wrong on tilted views.
-        if (!acenIsNone()) {
-            Vec3 hit;
-            if (!screenToWorkPlane(e.x, e.y, cachedVp, hit))
-                return false;
-            handler.setPosition(hit);
-            centerManual = true;
-            // Notify ACEN so the user-placed point sticks across future
-            // queries (other tools, history replay etc.). Mode stays
-            // Auto — userPlaced sub-state, MODO "click away → new
-            // center".
-            notifyAcenUserPlaced(hit);
-        }
+        // After relocation the drag plane is the most-facing plane
+        // THROUGH the new gizmo center — drag projection feels natural
+        // across camera angles regardless of where the new center
+        // landed.
+        if (!acenAllowsClickRelocate())
+            return false;
+        Vec3 hit;
+        if (!computeClickRelocateHit(e.x, e.y, hit))
+            return false;
+        handler.setPosition(hit);
+        centerManual = true;
+        // Notify ACEN so the user-placed point sticks across future
+        // queries (other tools, history replay etc.). Only meaningful
+        // in Auto mode — None / Screen don't currently consume
+        // userPlaced, but the call is harmless there.
+        notifyAcenUserPlaced(hit);
         dragAxis = 3;   // most-facing plane through gizmo center
         lastMX = e.x; lastMY = e.y;
         dragDelta = Vec3(0, 0, 0);

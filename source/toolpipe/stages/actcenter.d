@@ -20,7 +20,9 @@ import popup_state       : setStatePath;
 //                  `userPlacedCenter` and `userPlaced=true` but mode
 //                  STAYS Auto (matches MODO "Auto NOT fixed; click
 //                  away → new center"). Re-selecting "Auto" in the
-//                  popup clears userPlaced.
+//                  popup clears userPlaced. The same click-outside
+//                  hook also applies to None and Screen — see those
+//                  modes below.
 //   - Select     — strict selection centroid (no fallback to geometry).
 //                  `selectSubMode` picks which side of the bounding
 //                  box of the selection (center / top / bottom / back
@@ -29,7 +31,12 @@ import popup_state       : setStatePath;
 //                  major world axis (the axis pick lives in AxisStage;
 //                  ActionCenterStage just emits centroid).
 //   - Origin     — world (0,0,0).
-//   - Screen     — picture-plane center (camera-derived; 7.2b).
+//   - Screen     — selection centroid (the "screen" aspect is the
+//                  AXIS orientation handled by AxisStage; the action-
+//                  center POSITION just tracks the selection like
+//                  Auto). Click-outside relocates the gizmo onto a
+//                  camera-perpendicular plane through the selection
+//                  center; userPlaced wins until mode is switched.
 //   - Manual     — sticky `manualCenter`, ignores selection (7.2b).
 //   - Element / Local / Border — see 7.2d / 7.2e.
 //
@@ -67,7 +74,7 @@ class ActionCenterStage : Stage {
     // preset). Tests that rely on a specific mode set it explicitly.
     Mode mode = Mode.None;
     Vec3 userPlacedCenter = Vec3(0, 0, 0);  // valid when userPlaced is true
-    bool userPlaced = false;                // Auto-mode click-outside marker
+    bool userPlaced = false;                // click-outside marker for Auto / None / Screen
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
     int  selectSubMode = SelectSubMode.Center;
     // Phase 7.2e (Local mode): cluster count + first-cluster centroid
@@ -169,11 +176,15 @@ public:
     }
 
     /// Click-outside-gizmo entrypoint for transform tools. Move/Rotate
-    /// /Scale call this when the user clicks on the empty viewport
-    /// while in Auto mode (sets a sticky center without leaving Auto).
-    /// Outside Auto mode this is a no-op — Manual mode has its own
-    /// `setManualCenter` which switches mode explicitly.
-    void setAutoUserPlaced(Vec3 worldHit) {
+    /// /Scale call this when the user clicks on empty viewport while
+    /// in a relocate-allowed mode (Auto / None / Screen). Sets a sticky
+    /// center without leaving the current mode — `computeCenter` then
+    /// returns this point until either the mode is switched or the
+    /// click is repeated. In modes that don't allow click-relocate
+    /// (Select / Element / Local / Origin / Manual / Border) the call
+    /// is harmless but the userPlaced flag is never read by their
+    /// `computeCenter` branches.
+    void setUserPlaced(Vec3 worldHit) {
         userPlacedCenter = worldHit;
         userPlaced       = true;
         publishState();
@@ -211,7 +222,12 @@ private:
             case Mode.Manual:
                 return manualCenter;
             case Mode.Screen:
-                return screenCenter();
+                // Selection centroid — Screen mode's distinguishing
+                // feature is the AXIS orientation (camera-aligned),
+                // handled by AxisStage. The action-center POSITION
+                // tracks the selection like Auto does.
+                if (userPlaced) return userPlacedCenter;
+                return centroidWithGeometryFallback();
             case Mode.Element:
                 return elementCenter();
             case Mode.Local: {
@@ -224,9 +240,10 @@ private:
                 // No designated action center — for visual placement
                 // (gizmo position) and translate-drag plane reference,
                 // fall back to the same centroid Auto would give.
-                // Rotate / Scale that need a real pivot can detect this
-                // mode (state.actionCenter.type) and fall back further
-                // to world origin.
+                // Click-outside-gizmo writes userPlaced (same hook as
+                // Auto / Screen), so the gizmo + transform pivot stay
+                // in sync after relocation.
+                if (userPlaced) return userPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Border:
                 // Bbox center of selection-border verts — those on edges

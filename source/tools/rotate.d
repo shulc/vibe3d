@@ -69,35 +69,40 @@ public:
         ulong currentMutVer = mesh.mutationVersion;
         bool selChanged = (currentHash   != lastSelectionHash);
         bool mutChanged = (currentMutVer != lastMutationVersion);
-        if (!selChanged && !mutChanged) return;
 
-        lastSelectionHash   = currentHash;
-        lastMutationVersion = currentMutVer;
-        vertexCacheDirty    = true;
+        if (selChanged || mutChanged) {
+            lastSelectionHash   = currentHash;
+            lastMutationVersion = currentMutVer;
+            vertexCacheDirty    = true;
 
-        // Geometry-only change: the per-edit hook on the (un)applied
-        // MeshVertexEdit has already restored angleAccum / propDeg to the
-        // value they held at that edit's boundary. origVertices stays at
-        // its activate-time value — the (origVertices, angleAccum)
-        // contract is invariant: applying angleAccum to origVertices
-        // always reproduces the current mesh state, even across undo/redo.
+            // Geometry-only change: the per-edit hook on the (un)applied
+            // MeshVertexEdit has already restored angleAccum / propDeg to
+            // the value they held at that edit's boundary. origVertices
+            // stays at its activate-time value — the (origVertices,
+            // angleAccum) contract is invariant: applying angleAccum to
+            // origVertices always reproduces the current mesh state,
+            // even across undo/redo.
 
-        // Selection change: zero the accumulators and refresh everything.
-        // The per-edit hooks for now-stale entries on the stack still
-        // reference the OLD (origVertices, angleAccum) tuple — they'll
-        // misfire if undone after re-selection, but that's an acceptable
-        // edge case (cross-selection undo rarely makes sense anyway).
-        if (selChanged) {
-            angleAccum   = Vec3(0, 0, 0);
-            propDeg      = Vec3(0, 0, 0);
-            origVertices = mesh.vertices.dup;
-            centerManual = false;
-            // Phase 7.2a: pivot via ACEN stage.
-            cachedCenter = queryActionCenter();
+            // Selection change: zero the accumulators and refresh
+            // everything. The per-edit hooks for now-stale entries on
+            // the stack still reference the OLD (origVertices,
+            // angleAccum) tuple — they'll misfire if undone after re-
+            // selection, but that's an acceptable edge case (cross-
+            // selection undo rarely makes sense anyway).
+            if (selChanged) {
+                angleAccum   = Vec3(0, 0, 0);
+                propDeg      = Vec3(0, 0, 0);
+                origVertices = mesh.vertices.dup;
+                centerManual = false;
+            }
         }
 
-        if (!centerManual)
-            handler.setPosition(cachedCenter);
+        // Pull the gizmo center from the ACEN stage every frame: mode /
+        // userPlaced changes don't bump the selection hash or mesh
+        // mutation, so they would otherwise not propagate to the
+        // visible gizmo.
+        cachedCenter = queryActionCenter();
+        handler.setPosition(cachedCenter);
     }
 
     // Snapshot Tool-Properties state at the start of an edit session, so
@@ -170,10 +175,14 @@ public:
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis < 0) {
             // Click outside gizmo: relocate ACEN to the click projected
-            // onto the world Work Plane (Y=0). See
-            // doc/acen_modo_parity_plan.md Phase 1.
+            // onto the per-mode plane (most-facing world plane through
+            // origin for Auto/None; camera-perpendicular through
+            // selection center for Screen). Other ACEN modes keep the
+            // gizmo pinned and ignore the click.
+            if (!acenAllowsClickRelocate())
+                return false;
             Vec3 hit;
-            if (!screenToWorkPlane(e.x, e.y, cachedVp, hit))
+            if (!computeClickRelocateHit(e.x, e.y, hit))
                 return false;
             handler.setPosition(hit);
             centerManual = true;
