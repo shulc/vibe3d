@@ -15,6 +15,8 @@ import d_imgui.imgui_h;
 
 import std.math;
 import drag;
+import snap : snapCursor, SnapResult;
+import toolpipe.packets : SnapPacket;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -227,6 +229,47 @@ public:
         return true;
     }
 
+    // Phase 7.3a: route the would-be gizmo position through SnapStage.
+    // Returns the (possibly-adjusted) world delta to apply this frame.
+    // No-op when no SnapStage is registered or `enabled` is false; the
+    // dragged element's own verts are excluded so a single-vert drag
+    // can't snap to itself.
+    private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta,
+                                  int sx, int sy)
+    {
+        import toolpipe.pipeline         : g_pipeCtx;
+        import toolpipe.stages.snap      : SnapStage;
+        import toolpipe.stage            : TaskCode;
+        if (g_pipeCtx is null) return worldDelta;
+        auto sn = cast(SnapStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        if (sn is null || !sn.enabled) return worldDelta;
+
+        // Build the SnapPacket the math expects from the stage's live
+        // fields (cheap — same pattern other stages use).
+        SnapPacket cfg;
+        cfg.enabled       = sn.enabled;
+        cfg.enabledTypes  = sn.enabledTypes;
+        cfg.innerRangePx  = sn.innerRangePx;
+        cfg.outerRangePx  = sn.outerRangePx;
+        cfg.fixedGrid     = sn.fixedGrid;
+        cfg.fixedGridSize = sn.fixedGridSize;
+
+        // Exclude verts the drag is moving — same set
+        // buildVertexCacheIfNeeded already populated. Otherwise a
+        // single-vert drag always snaps to its own (zero-distance)
+        // projected pixel.
+        uint[] exclude;
+        exclude.length = vertexProcessCount;
+        foreach (i; 0 .. vertexProcessCount)
+            exclude[i] = cast(uint)vertexIndicesToProcess[i];
+
+        Vec3 desired = gizmoCenter + worldDelta;
+        SnapResult sr = snapCursor(desired, sx, sy, cachedVp, *mesh, cfg, exclude);
+        if (sr.snapped) return sr.worldPos - gizmoCenter;
+        return worldDelta;
+    }
+
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active || dragAxis == -1) return false;
 
@@ -284,6 +327,15 @@ public:
                                         dragAxis, handler.center, cachedVp, skip,
                                         handler.axisX, handler.axisY, handler.axisZ);
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
+
+        // Phase 7.3a: snap. Bend the would-be gizmo position towards a
+        // mesh element (vertex in 7.3a; edge / face / centre in 7.3b)
+        // when SNAP is on. Adjust `worldDelta` so the gizmo lands at
+        // the snapped point — selection moves by the same delta.
+        // Per-cluster path keeps its own delta-per-cluster math and
+        // doesn't go through snap (snap-with-multi-cluster has no
+        // single target meaning; revisit if MODO parity demands it).
+        worldDelta = applySnapToDelta(handler.center, worldDelta, e.x, e.y);
 
         // Phase 4 of doc/acen_modo_parity_plan.md: when ACEN.Local +
         // axis.local publish per-cluster basis, project the same screen

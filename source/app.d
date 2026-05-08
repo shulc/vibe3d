@@ -560,6 +560,8 @@ void main(string[] args) {
     {
         import toolpipe.stages.actcenter : ActionCenterStage;
         import toolpipe.stages.axis      : AxisStage;
+        import toolpipe.stages.snap      : SnapStage;
+        g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
         g_pipeCtx.pipeline.add(new AxisStage(&mesh, &editMode));
     }
@@ -1139,6 +1141,93 @@ void main(string[] args) {
             buf.put(`,"clusterUp":`);     putVec3List(state.axis.clusterUp);
             buf.put(`,"clusterFwd":`);    putVec3List(state.axis.clusterFwd);
             buf.put(`}}`);
+            return buf.data;
+        });
+
+        // Phase 7.3a: /api/snap query bridge. Lets unit tests probe
+        // the snap math directly with explicit cursor world pos +
+        // screen pixel + excludeVerts, without driving an interactive
+        // Move drag through play-events. Read-only — same quiescence
+        // expectation as toolpipeEvalProvider above.
+        httpServer.setSnapQueryProvider((string body_) {
+            import std.array       : appender;
+            import std.format      : format;
+            import std.json        : parseJSON, JSONType, JSONValue;
+            import std.conv        : to;
+            import toolpipe.pipeline       : g_pipeCtx;
+            import toolpipe.stages.snap    : SnapStage;
+            import toolpipe.stage          : TaskCode;
+            import toolpipe.packets        : SnapPacket;
+            import snap                    : snapCursor, SnapResult;
+            import math                    : Vec3;
+
+            auto buf = appender!string;
+            JSONValue req;
+            try req = parseJSON(body_);
+            catch (Exception e) {
+                buf.put(`{"error":"invalid JSON","message":"`
+                        ~ e.msg ~ `"}`);
+                return buf.data;
+            }
+
+            // Required: cursor (Vec3 array), sx, sy.
+            if ("cursor" !in req || "sx" !in req || "sy" !in req) {
+                buf.put(`{"error":"missing fields cursor/sx/sy"}`);
+                return buf.data;
+            }
+            auto cur = req["cursor"].array;
+            if (cur.length != 3) {
+                buf.put(`{"error":"cursor must be [x,y,z]"}`);
+                return buf.data;
+            }
+            float toF(JSONValue v) {
+                if (v.type == JSONType.integer) return cast(float)v.integer;
+                if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
+                return cast(float)v.floating;
+            }
+            int toI(JSONValue v) {
+                if (v.type == JSONType.integer) return cast(int)v.integer;
+                if (v.type == JSONType.uinteger) return cast(int)v.uinteger;
+                return cast(int)v.floating;
+            }
+            Vec3 cursor = Vec3(toF(cur[0]), toF(cur[1]), toF(cur[2]));
+            int  sx     = toI(req["sx"]);
+            int  sy     = toI(req["sy"]);
+            uint[] exclude;
+            if ("excludeVerts" in req) {
+                foreach (e; req["excludeVerts"].array)
+                    exclude ~= cast(uint)toI(e);
+            }
+
+            // Build the SnapPacket from the registered SnapStage so
+            // the reply reflects whatever the user's most recent
+            // tool.pipe.attr left configured.
+            SnapPacket cfg;
+            if (g_pipeCtx !is null) {
+                if (auto sn = cast(SnapStage)
+                              g_pipeCtx.pipeline.findByTask(TaskCode.Snap)) {
+                    cfg.enabled       = sn.enabled;
+                    cfg.enabledTypes  = sn.enabledTypes;
+                    cfg.innerRangePx  = sn.innerRangePx;
+                    cfg.outerRangePx  = sn.outerRangePx;
+                    cfg.fixedGrid     = sn.fixedGrid;
+                    cfg.fixedGridSize = sn.fixedGridSize;
+                }
+            }
+
+            auto vp = cameraView.viewport();
+            SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, cfg, exclude);
+
+            buf.put(format(
+                `{"snapped":%s,"highlighted":%s,"targetType":%d,`
+              ~ `"targetIndex":%d,"worldPos":[%f,%f,%f],`
+              ~ `"highlightPos":[%f,%f,%f]}`,
+                sr.snapped ? "true" : "false",
+                sr.highlighted ? "true" : "false",
+                cast(int)sr.targetType,
+                sr.targetIndex,
+                sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
+                sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
             return buf.data;
         });
 

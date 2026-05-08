@@ -113,10 +113,34 @@ struct SymmetryPacket {
     Vec3    pivot = Vec3(0, 0, 0);
 }
 
-/// Snap state — populated by SNAP stage in 7.3. The cursor's effective
-/// world position after snap; if no snap fired, equals the raw cursor.
-/// `applied` lets actors render snap-feedback hints when relevant.
+/// Geometry-snap candidate-type bitmask. Multiple types can be enabled
+/// simultaneously; the closest screen-pixel candidate across all
+/// enabled types wins. Mirrors MODO `snap-element-mode` enum + grid /
+/// workplane variants — see doc/snap_plan.md.
+enum SnapType : uint {
+    None       = 0,
+    Vertex     = 1 << 0,   // 7.3a
+    Edge       = 1 << 1,   // 7.3b
+    EdgeCenter = 1 << 2,   // 7.3b
+    Polygon    = 1 << 3,   // 7.3b
+    PolyCenter = 1 << 4,   // 7.3b
+    Grid       = 1 << 5,   // 7.3c
+    Workplane  = 1 << 6,   // 7.3c
+}
+
+/// Snap configuration — published by SNAP stage in 7.3. The actual
+/// snap math runs in `source/snap.d`'s `snapCursor()` (called on every
+/// motion event by tools that consume snap), since snap candidates
+/// depend on the live cursor position and can't be precomputed once
+/// per pipeline.evaluate.
 struct SnapPacket {
-    Vec3 cursorWorld = Vec3(0, 0, 0);
-    bool applied     = false;
+    bool   enabled       = false;     // master on/off (X key)
+    uint   enabledTypes  = SnapType.Vertex
+                         | SnapType.EdgeCenter
+                         | SnapType.PolyCenter
+                         | SnapType.Grid;
+    float  innerRangePx  = 8.0f;       // snap fires when cursor within this
+    float  outerRangePx  = 24.0f;      // candidate highlights when within this
+    bool   fixedGrid     = false;      // grid uses fixedGridSize, not dynamic
+    float  fixedGridSize = 1.0f;       // world units per grid step (when fixedGrid)
 }

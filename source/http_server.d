@@ -43,6 +43,14 @@ class HttpServer {
     // for a given selection without needing to drive the actual tool.
     private alias ToolPipeEvalProvider = string delegate();
     private ToolPipeEvalProvider toolpipeEvalProvider;
+    // /api/snap — POST. Body is the snap-query JSON ({cursor, sx, sy,
+    // excludeVerts}); response is the SnapResult JSON. Used by the
+    // 7.3 unit tests to probe snap math directly without driving an
+    // interactive Move drag through play-events. Read-only, so served
+    // straight from the HTTP thread (same convention as
+    // toolpipeEvalProvider) — tests are quiescent during probing.
+    private alias SnapQueryProvider = string delegate(string requestBody);
+    private SnapQueryProvider snapQueryProvider;
     private alias ResetHandler = void delegate(string primitiveType, bool empty);
     private ResetHandler resetHandler;
     // POST /api/camera — sync bridge to set the live View. Used by
@@ -176,6 +184,12 @@ class HttpServer {
     /// and per-cluster pivots/axes when ACEN/AXIS are in cluster mode.
     public void setToolPipeEvalProvider(ToolPipeEvalProvider provider) {
         this.toolpipeEvalProvider = provider;
+    }
+
+    /// Phase 7.3 — `/api/snap` query endpoint. Provider takes the raw
+    /// request body (JSON) and returns the SnapResult JSON.
+    public void setSnapQueryProvider(SnapQueryProvider provider) {
+        this.snapQueryProvider = provider;
     }
 
     private alias BevvertProvider = string delegate(int vert);
@@ -530,6 +544,23 @@ class HttpServer {
             } else {
                 response.statusCode = 200;
                 response.body = "{\"stages\":[]}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/snap" && request.method == "POST") {
+            if (snapQueryProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = snapQueryProvider(request.body);
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"snap query failed\",\"message\":\"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"snap query provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/camera" && request.method == "POST") {
