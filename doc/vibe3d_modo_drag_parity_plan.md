@@ -20,7 +20,7 @@ the same numbers MODO produces, on the same case.
 | 1 — `/api/toolpipe/eval` exposes pipe state                        | —    | ✅ done |
 | 2 — `check_vibe3d_parity.py` runs vibe3d alongside MODO            | 54   | ✅ done |
 | 3 — close behavioural gaps (ACEN.Border, Scale/Rotate AXIS.Local)  | 4–6  | ✅ done |
-| 4 — full matrix green                                              | 54   | ✅ 45/45 (excluding 9 drag-dependent `auto` skips) |
+| 4 — full matrix green (pivot + per-cluster axes)                   | 54   | ✅ 45/45 (excluding 9 drag-dependent `auto` skips); per-cluster basis verified for ACEN.Local with multi-cluster selections (asymmetric pattern) |
 
 vibe3d-side runs through `check_vibe3d_parity.py`:
 - builds the same primitive (cube/sphere) and selects the same polys;

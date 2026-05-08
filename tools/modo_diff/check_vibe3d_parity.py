@@ -222,6 +222,82 @@ def avg(verts):
     return tuple(sum(v[i] for v in verts) / n for i in range(3))
 
 
+# ---- per-cluster basis prediction (mirrors AxisStage.computeClusterBasis) ----
+WORLD_AXES = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
+
+
+def _cross(a, b):
+    return (a[1]*b[2] - a[2]*b[1],
+            a[2]*b[0] - a[0]*b[2],
+            a[0]*b[1] - a[1]*b[0])
+
+
+def _scale(v, s):
+    return (v[0]*s, v[1]*s, v[2]*s)
+
+
+def _newell_normal(face_pts):
+    """Newell's method: robust face-normal for arbitrary polygon."""
+    nx = ny = nz = 0.0
+    n = len(face_pts)
+    for i in range(n):
+        a = face_pts[i]; b = face_pts[(i + 1) % n]
+        nx += (a[1] - b[1]) * (a[2] + b[2])
+        ny += (a[2] - b[2]) * (a[0] + b[0])
+        nz += (a[0] - b[0]) * (a[1] + b[1])
+    return (nx, ny, nz)
+
+
+def predict_cluster_basis(cluster_face_pts):
+    """Mirrors source/toolpipe/stages/axis.d::computeClusterBasis. Inputs:
+    `cluster_face_pts` = list of poly-vert-position lists for faces in
+    this cluster. Output: (right, up, fwd) tuples — world-axis-snapped
+    per the AxisStage convention. None if no cluster face geometry."""
+    if not cluster_face_pts:
+        return None
+    nx = ny = nz = 0.0
+    cluster_verts = set()
+    for poly in cluster_face_pts:
+        n = _newell_normal(poly)
+        nx += n[0]; ny += n[1]; nz += n[2]
+        for v in poly:
+            cluster_verts.add(v)
+    if abs(nx) + abs(ny) + abs(nz) < 1e-9:
+        return None
+    # Snap normal to nearest world axis with sign.
+    ax, ay, az = abs(nx), abs(ny), abs(nz)
+    up_idx = 0 if (ax >= ay and ax >= az) else (1 if ay >= az else 2)
+    raw    = (nx, ny, nz)[up_idx]
+    sign   = 1.0 if raw >= 0 else -1.0
+    up     = _scale(WORLD_AXES[up_idx], sign)
+    # right = remaining axis with the largest cluster bbox extent.
+    cv  = list(cluster_verts)
+    mn  = [min(v[i] for v in cv) for i in range(3)]
+    mx  = [max(v[i] for v in cv) for i in range(3)]
+    ext = [mx[i] - mn[i] for i in range(3)]
+    right_idx = -1
+    best_ext  = -1.0
+    for k in range(3):
+        if k == up_idx: continue
+        if ext[k] > best_ext + 1e-6:
+            best_ext  = ext[k]
+            right_idx = k
+    if right_idx == -1:
+        return None
+    right = WORLD_AXES[right_idx]
+    fwd   = _cross(right, up)
+    return (right, up, fwd)
+
+
+def basis_matches(b_actual, b_pred, tol=1e-3):
+    """`b_actual` and `b_pred` are (right, up, fwd) triples."""
+    for ax_name, a, p in zip(("right", "up", "fwd"), b_actual, b_pred):
+        for i in range(3):
+            if abs(a[i] - p[i]) > tol:
+                return False, ax_name
+    return True, None
+
+
 def predict_pivots(mode, sel, clusters, border):
     """Returns list of acceptable pivots, or None for drag-dependent."""
     if mode in ("select", "selectauto"):
@@ -276,9 +352,14 @@ def run_case(path, port):
     post(f"{base}/api/command", f"actr.{acen_mode}")
 
     eval_state = get(f"{base}/api/toolpipe/eval")
-    vibe_center = tuple(eval_state["actionCenter"]["center"])
-    vibe_clusters_n     = len(eval_state["actionCenter"]["clusterCenters"])
-    vibe_axes_clusters  = len(eval_state["axis"]["clusterRight"])
+    vibe_center         = tuple(eval_state["actionCenter"]["center"])
+    vibe_cluster_centers = [tuple(c) for c in
+                            eval_state["actionCenter"]["clusterCenters"]]
+    vibe_axes_R = [tuple(v) for v in eval_state["axis"]["clusterRight"]]
+    vibe_axes_U = [tuple(v) for v in eval_state["axis"]["clusterUp"]]
+    vibe_axes_F = [tuple(v) for v in eval_state["axis"]["clusterFwd"]]
+    vibe_clusters_n    = len(vibe_cluster_centers)
+    vibe_axes_clusters = len(vibe_axes_R)
 
     pred = predict_pivots(acen_mode, sel, clusters, border)
     if pred is None:
@@ -297,13 +378,51 @@ def run_case(path, port):
             return "FAIL", (
                 f"local: expected {len(clusters)} clusterRight, got "
                 f"{vibe_axes_clusters}")
+        # Per-cluster basis prediction. Each cluster's set of polys
+        # comes from `face_vsets` filtered by cluster vertex membership.
+        # vibe3d's cluster ordering is by appearance in
+        # ActionCenterStage.computeLocalFaceClustersFull which mirrors
+        # union-find order; we match clusters by pivot proximity
+        # instead of by index to be order-agnostic.
+        cluster_polys = [[] for _ in clusters]
+        for fpts in face_vsets:
+            fset = set(fpts)
+            for ci, cv in enumerate(clusters):
+                if fset.issubset(set(cv)):
+                    cluster_polys[ci].append(fpts)
+                    break
+        # Match each predicted cluster to vibe3d's by pivot proximity.
+        for ci, cv in enumerate(clusters):
+            cen = bbox_center(cv)
+            # Find the vibe3d cluster index whose center is nearest.
+            best_vi = None; best_d2 = float("inf")
+            for vi, vc in enumerate(vibe_cluster_centers):
+                d2 = sum((vc[k] - cen[k])**2 for k in range(3))
+                if d2 < best_d2:
+                    best_d2, best_vi = d2, vi
+            if best_vi is None:
+                return "FAIL", f"cluster {ci}: no matching vibe3d cluster"
+            pred_basis = predict_cluster_basis(cluster_polys[ci])
+            if pred_basis is None:
+                continue   # cluster has no face geometry — skip basis check
+            actual = (vibe_axes_R[best_vi], vibe_axes_U[best_vi],
+                      vibe_axes_F[best_vi])
+            ok, mismatch_axis = basis_matches(actual, pred_basis)
+            if not ok:
+                return "FAIL", (
+                    f"cluster {ci} basis.{mismatch_axis} mismatch: "
+                    f"vibe3d={actual} pred={pred_basis}")
 
     if any(near(vibe_center, p) for p in pred):
         labels = ", ".join(
             f"({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})" for p in pred)
         extra = ""
         if acen_mode == "local" and len(clusters) >= 2:
-            extra = f"  [{vibe_clusters_n}c/axes]"
+            # Show one cluster's right axis as a tag — confirms the
+            # per-cluster basis check actually ran (above) and matched.
+            r0 = vibe_axes_R[0] if vibe_axes_R else (0, 0, 0)
+            extra = (f"  [{vibe_clusters_n}c, right[0]="
+                     f"({r0[0]:+.0f},{r0[1]:+.0f},{r0[2]:+.0f})]")
         return "PASS", (
             f"vibe3d=({vibe_center[0]:+.3f},{vibe_center[1]:+.3f},"
             f"{vibe_center[2]:+.3f}) ≈ MODO pred={labels}{extra}")
