@@ -16,6 +16,7 @@ import d_imgui.imgui_h;
 import std.math;
 import drag;
 import snap : snapCursor, SnapResult;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import toolpipe.packets : SnapPacket;
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ private:
                               //  i.e. dot(dragDelta, axisX/Y/Z) — see drawProperties)
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
+    SnapResult lastSnap;        // last snap query — drives the visual overlay
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
@@ -112,6 +114,12 @@ public:
         }
 
         handler.draw(shader, vp);
+
+        // Phase 7.3d: snap visual feedback. Yellow ring (highlighted)
+        // + filled disc (snapped) at the snap candidate's screen pixel.
+        // No-op when no recent snap (init/cleared SnapResult has
+        // highlighted=false).
+        drawSnapOverlay(lastSnap, vp);
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
@@ -127,6 +135,10 @@ public:
         }
         wholeMeshDrag = false;
         dragAxis = -1;
+        // 7.3d: drag is over — drop the snap highlight so it doesn't
+        // linger after the gizmo settles.
+        lastSnap = SnapResult.init;
+        clearLastSnap();
         // propInput holds basis-local components, so projecting via the
         // gizmo's basis. With identity basis this collapses to world XYZ.
         propInput = Vec3(dot(dragDelta, handler.axisX),
@@ -233,7 +245,9 @@ public:
     // SnapStage. Returns the (possibly-adjusted) world delta to apply
     // this frame. No-op when no pipeline is registered or snap is
     // disabled. The dragged element's own verts are excluded so a
-    // single-vert drag can't snap to itself.
+    // single-vert drag can't snap to itself. 7.3d: also stashes the
+    // SnapResult on the tool + global so draw() can render the
+    // overlay and HTTP /api/snap/last can read it.
     private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta,
                                   int sx, int sy)
     {
@@ -251,7 +265,11 @@ public:
         subj.selectedEdges    = mesh.selectedEdges.dup;
         subj.selectedFaces    = mesh.selectedFaces.dup;
         auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
-        if (!state.snap.enabled) return worldDelta;
+        if (!state.snap.enabled) {
+            lastSnap = SnapResult.init;
+            clearLastSnap();
+            return worldDelta;
+        }
 
         // Exclude verts the drag is moving — same set
         // buildVertexCacheIfNeeded already populated. Otherwise a
@@ -265,6 +283,8 @@ public:
         Vec3 desired = gizmoCenter + worldDelta;
         SnapResult sr = snapCursor(desired, sx, sy, cachedVp,
                                    *mesh, state.snap, exclude);
+        lastSnap = sr;
+        publishLastSnap(sr);
         if (sr.snapped) return sr.worldPos - gizmoCenter;
         return worldDelta;
     }

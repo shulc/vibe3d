@@ -1228,6 +1228,29 @@ void main(string[] args) {
             return buf.data;
         });
 
+        // Phase 7.3d: /api/snap/last — read-only snapshot of the
+        // most recent snap result any tool published via
+        // snap_render.publishLastSnap. Lets headless tests verify the
+        // visual-feedback wiring without a screenshot diff.
+        httpServer.setSnapLastProvider(() {
+            import std.array  : appender;
+            import std.format : format;
+            import snap_render : g_lastSnap;
+            auto buf = appender!string;
+            auto sr = g_lastSnap;
+            buf.put(format(
+                `{"snapped":%s,"highlighted":%s,"targetType":%d,`
+              ~ `"targetIndex":%d,"worldPos":[%f,%f,%f],`
+              ~ `"highlightPos":[%f,%f,%f]}`,
+                sr.snapped ? "true" : "false",
+                sr.highlighted ? "true" : "false",
+                cast(int)sr.targetType,
+                sr.targetIndex,
+                sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
+                sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
+            return buf.data;
+        });
+
         httpServer.setBevvertProvider((int vert) {
             import bevel : buildBevVert, populateBoundVerts, BevVert;
             import std.format : format;

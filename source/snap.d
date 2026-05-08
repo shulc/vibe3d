@@ -27,12 +27,12 @@ import toolpipe.packets : SnapPacket, SnapType;
 // ---------------------------------------------------------------------------
 
 struct SnapResult {
-    Vec3     worldPos;          /// snapped position; equals input when !snapped
-    Vec3     highlightPos;      /// candidate within outerRange (for pre-snap UI)
+    Vec3     worldPos     = Vec3(0, 0, 0); /// snapped position; equals input when !snapped
+    Vec3     highlightPos = Vec3(0, 0, 0); /// candidate within outerRange (for pre-snap UI)
     bool     snapped;           /// true iff input was within innerRange of a candidate
     bool     highlighted;       /// true iff any candidate within outerRange
-    SnapType targetType;        /// which type fired (for feedback rendering)
-    int      targetIndex;       /// mesh element index (vert/edge/face) or -1
+    SnapType targetType  = SnapType.None;  /// which type fired (for feedback rendering)
+    int      targetIndex = -1;             /// mesh element index (vert/edge/face) or -1
 }
 
 /// Snap the world position `cursorWorld` corresponding to screen pixel

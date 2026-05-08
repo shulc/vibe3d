@@ -404,6 +404,26 @@ unittest { // Grid snap dynamic step = 1.0
     postJson("/api/command", "tool.pipe.attr workplane mode auto");
 }
 
+// -------------------------------------------------------------------------
+// 7.3d: /api/snap/last — last SnapResult published by an interactive
+// tool's drag. Without a Move drag (no play-events here), the value
+// is the zero-init default. We verify the endpoint shape and that
+// defaults make sense.
+// -------------------------------------------------------------------------
+
+unittest { // /api/snap/last default — no drag in progress
+    resetCube();
+    auto j = getJson("/api/snap/last");
+    assert(j["snapped"].type     == JSONType.false_);
+    assert(j["highlighted"].type == JSONType.false_);
+    assert(j["targetIndex"].integer == -1,
+        "default targetIndex expected -1; got "
+        ~ j["targetIndex"].integer.to!string);
+    assert("worldPos"     in j);
+    assert("highlightPos" in j);
+    assert("targetType"   in j);
+}
+
 unittest { // multi-type combo picks closest across types
     resetCube();
     postJson("/api/command", "tool.pipe.attr snap enabled true");
