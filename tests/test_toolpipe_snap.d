@@ -201,7 +201,7 @@ unittest { // tiny range + far cursor => no snap
     postJson("/api/command", "tool.pipe.attr snap types vertex");
     postJson("/api/command", "tool.pipe.attr snap innerRange 1");
     postJson("/api/command", "tool.pipe.attr snap outerRange 2");
-    auto sr = querySnap(0.0, 0.0, 0.0, 999999, 999999);
+    auto sr = querySnap(0.0, 0.0, 0.0, 999_999, 999_999);
     assert(sr["snapped"].type == JSONType.false_,
         "expected no snap with tiny range + far cursor, got " ~ sr.toString);
     assert(sr["highlighted"].type == JSONType.false_,
@@ -402,6 +402,31 @@ unittest { // Grid snap dynamic step = 1.0
     assert(fabs(z - round(z)) < 1e-3,
         "Grid snap Z must be integer; got z=" ~ z.to!string);
     postJson("/api/command", "tool.pipe.attr workplane mode auto");
+}
+
+// -------------------------------------------------------------------------
+// 7.3e: snap.toggle command flips the master enable flag. Mirrors
+// MODO's `tool.snapState true` from inmapdefault.cfg's @x binding.
+// Bound to X in config/shortcuts.yaml.
+// -------------------------------------------------------------------------
+
+unittest { // snap.toggle flips enabled false→true
+    resetCube();
+    auto a0 = getSnapAttrs();
+    assert(a0["enabled"] == "false", "expected initial enabled=false");
+    postJson("/api/command", "snap.toggle");
+    auto a1 = getSnapAttrs();
+    assert(a1["enabled"] == "true",
+        "after snap.toggle expected true; got " ~ a1["enabled"]);
+}
+
+unittest { // snap.toggle is a true toggle (true→false on second call)
+    resetCube();
+    postJson("/api/command", "snap.toggle");
+    postJson("/api/command", "snap.toggle");
+    auto a = getSnapAttrs();
+    assert(a["enabled"] == "false",
+        "two toggles should restore false; got " ~ a["enabled"]);
 }
 
 // -------------------------------------------------------------------------

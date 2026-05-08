@@ -773,6 +773,11 @@ void main(string[] args) {
         new SelectConvertCommand(&mesh, cameraView, editMode, &editMode);
     reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh, cameraView, editMode);
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh, cameraView, editMode);
+    {
+        import commands.snap.toggle : SnapToggleCommand;
+        reg.commandFactories["snap.toggle"] = () => cast(Command)
+            new SnapToggleCommand(&mesh, cameraView, editMode);
+    }
     reg.commandFactories["file.load"] = () => cast(Command)
         new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["file.save"] = () => cast(Command)

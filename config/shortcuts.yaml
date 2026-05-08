@@ -22,6 +22,7 @@ commands:
   history.redo:          "Ctrl+Shift+Z"
   mesh.delete:           Delete
   mesh.remove:           Backspace
+  snap.toggle:           X
 
 editmodes:
   vertices: "1"
