@@ -917,6 +917,51 @@ void main(string[] args) {
             );
         });
         httpServer.setCameraDataProvider(() => cameraView.toJson());
+
+        // POST /api/camera — set live View. Accepts azimuth, elevation,
+        // distance (radians/world-units) and optional focus[x,y,z] +
+        // width/height. Used by the modo_diff cross-engine drag test
+        // to align vibe3d's camera with MODO's before replaying.
+        httpServer.setCameraSetHandler((JSONValue p) {
+            import math : Vec3;
+            float floatFrom(string field, float def) {
+                if (field !in p) return def;
+                auto n = p[field];
+                switch (n.type) {
+                    case JSONType.integer:  return cast(float)n.integer;
+                    case JSONType.uinteger: return cast(float)n.uinteger;
+                    case JSONType.float_:   return cast(float)n.floating;
+                    default: throw new Exception(
+                        "'" ~ field ~ "' must be a number");
+                }
+            }
+            if ("azimuth" in p)   cameraView.azimuth   = floatFrom("azimuth",   cameraView.azimuth);
+            if ("elevation" in p) cameraView.elevation = floatFrom("elevation", cameraView.elevation);
+            if ("distance" in p)  cameraView.distance  = floatFrom("distance",  cameraView.distance);
+            if ("focus" in p) {
+                auto f = p["focus"];
+                float comp(string k, float def) {
+                    if (k !in f.object) return def;
+                    auto n = f[k];
+                    switch (n.type) {
+                        case JSONType.integer:  return cast(float)n.integer;
+                        case JSONType.uinteger: return cast(float)n.uinteger;
+                        case JSONType.float_:   return cast(float)n.floating;
+                        default: throw new Exception(
+                            "focus." ~ k ~ " must be a number");
+                    }
+                }
+                cameraView.focus = Vec3(comp("x", cameraView.focus.x),
+                                        comp("y", cameraView.focus.y),
+                                        comp("z", cameraView.focus.z));
+            }
+            // Optional viewport resize.
+            if ("width" in p && "height" in p) {
+                cameraView.setSize(
+                    cast(int)floatFrom("width",  cameraView.width),
+                    cast(int)floatFrom("height", cameraView.height));
+            }
+        });
         httpServer.setSelectionDataProvider(() {
             import std.format : format;
             string modeName;
@@ -2792,6 +2837,7 @@ void main(string[] args) {
             httpServer.tickCommand();
             httpServer.tickSelection();
             httpServer.tickTransform();
+            httpServer.tickCameraSet();
             httpServer.tickRefire();
             httpServer.tickUndo();
         }

@@ -45,6 +45,15 @@ class HttpServer {
     private ToolPipeEvalProvider toolpipeEvalProvider;
     private alias ResetHandler = void delegate(string primitiveType, bool empty);
     private ResetHandler resetHandler;
+    // POST /api/camera — sync bridge to set the live View. Used by
+    // the modo_diff cross-engine drag test to align vibe3d's camera
+    // with MODO's before replaying a drag through /api/play-events.
+    private alias CameraSetHandler = void delegate(JSONValue params);
+    private CameraSetHandler cameraSetHandler;
+    private shared long camSetSubmittedEpoch;
+    private shared long camSetCompletedEpoch;
+    private JSONValue pendingCamSet;
+    private string    pendingCamSetError;
     private shared long resetSubmittedEpoch;
     private shared long resetCompletedEpoch;
     private string resetPendingType;     // primitive type for the in-flight reset
@@ -188,6 +197,13 @@ class HttpServer {
      */
     public void setResetHandler(ResetHandler handler) {
         this.resetHandler = handler;
+    }
+
+    /// Set the POST /api/camera handler. Called on the main thread with
+    /// the parsed JSON body — sets View azimuth/elevation/distance/focus
+    /// to the requested values.
+    public void setCameraSetHandler(CameraSetHandler handler) {
+        this.cameraSetHandler = handler;
     }
 
     /**
@@ -516,6 +532,39 @@ class HttpServer {
                 response.body = "{\"stages\":[]}";
                 response.headers["Content-Type"] = "application/json";
             }
+        } else if (request.path == "/api/camera" && request.method == "POST") {
+            if (cameraSetHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"camera-set handler not set"}`;
+            } else {
+                try {
+                    pendingCamSet = parseJSON(request.body);
+                    pendingCamSetError = "";
+                    long my = atomicOp!"+="(camSetSubmittedEpoch, 1);
+                    enum int maxIters = 2500;
+                    int iters = 0;
+                    while (atomicLoad(camSetCompletedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingCamSetError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingCamSetError.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingCamSetError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/camera") {
             if (cameraDataProvider !is null) {
                 try {
@@ -1081,6 +1130,24 @@ class HttpServer {
             }
         }
         atomicStore(xfCompletedEpoch, sub);
+    }
+
+    /// Tick camera-set — same pattern as tickTransform, for POST /api/camera.
+    public void tickCameraSet() {
+        long sub = atomicLoad(camSetSubmittedEpoch);
+        long cmp = atomicLoad(camSetCompletedEpoch);
+        if (sub <= cmp) return;
+        if (cameraSetHandler is null) {
+            pendingCamSetError = "camera-set handler not set";
+        } else {
+            try {
+                cameraSetHandler(pendingCamSet);
+                pendingCamSetError = "";
+            } catch (Exception e) {
+                pendingCamSetError = e.msg;
+            }
+        }
+        atomicStore(camSetCompletedEpoch, sub);
     }
 
     /**
