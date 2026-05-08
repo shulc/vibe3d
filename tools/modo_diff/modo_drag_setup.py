@@ -90,6 +90,13 @@ if primitive == "cube":
     lx.eval('tool.attr prim.cube segmentsX %d' % segments)
     lx.eval('tool.attr prim.cube segmentsY %d' % segments)
     lx.eval('tool.attr prim.cube segmentsZ %d' % segments)
+elif primitive == "sphere":
+    # Pin sides + segments so vibe3d (default 24/24 = 554 verts) and
+    # MODO (default 24/12 = 266 verts) produce the SAME mesh under the
+    # cross-engine drag test. Both engines support these attrs by name.
+    # 24/12 keeps the equator ring clean at Y=0 for sphere_top.
+    lx.eval('tool.attr prim.sphere sides 24')
+    lx.eval('tool.attr prim.sphere segments 12')
 lx.eval('tool.apply')
 lx.eval('tool.set "prim.%s" off 0' % primitive)
 

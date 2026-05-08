@@ -106,9 +106,13 @@ def setup_primitive(base, pattern):
              "prim.cube segmentsX:2 segmentsY:2 segmentsZ:2 "
              "sizeX:1 sizeY:1 sizeZ:1 sharp:true radius:0")
     elif pattern == "sphere_top":
-        # MODO default sphere has radius 0.5 and 32 segments. vibe3d's
-        # SphereTool has its own params — map to closest equivalent.
-        post(f"{base}/api/command", "prim.sphere")
+        # Pin sides+segments to MODO defaults (24/12 = 266 verts). MODO
+        # docs say the equator ring sits cleanly at Y=0 with 12 segments
+        # — required for the sphere_top selection to be the upper
+        # hemisphere with no equator-straddling polys. vibe3d's default
+        # is 24/24 (554 verts) — different mesh, breaks cross-engine.
+        post(f"{base}/api/command",
+             "prim.sphere sides:24 segments:12")
     else:
         raise ValueError(f"unknown pattern {pattern}")
 
