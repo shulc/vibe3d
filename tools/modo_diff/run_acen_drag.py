@@ -76,12 +76,18 @@ def _dot_v(a, b):
     return sum(a[i]*b[i] for i in range(3))
 
 
-def _project_axis_to_screen(cam, axis):
-    """World axis (unit vec) → unit (sx, sy) in screen-pixel space.
-    `cam` is state.json's camera dict (uses `fwd` only)."""
+def _camera_basis(cam):
+    """Returns (cam_right, cam_up, fwd) — orthonormal world-space basis
+    of the MODO viewport camera. fwd is the view direction (eye→focus)."""
     fwd = cam["fwd"]
     cam_right = _normalize_v(_cross_v(fwd, (0.0, 1.0, 0.0)))
     cam_up    = _normalize_v(_cross_v(cam_right, fwd))
+    return (cam_right, cam_up, fwd)
+
+
+def _project_axis_to_screen(cam, axis):
+    """World axis (unit vec) → unit (sx, sy) in screen-pixel space."""
+    cam_right, cam_up, _ = _camera_basis(cam)
     sx =  _dot_v(cam_right, axis)
     sy = -_dot_v(cam_up,    axis)   # screen Y inverted
     mag = math.sqrt(sx*sx + sy*sy)
@@ -90,20 +96,75 @@ def _project_axis_to_screen(cam, axis):
     return (sx / mag, sy / mag)
 
 
-def _resolve_handle_drag(cam, handle, drag_len):
-    """For handle ∈ {x,y,z,center}, return (start_x, start_y, dx, dy)
-    in MODO viewport pixels. Click sits 30 px from the gizmo screen
-    centre along the handle's projected axis (or AT the centre for the
-    "center" cube handle); drag is `drag_len` px along that same
-    direction (or +X for "center", since the cube handle drags in the
-    most-facing plane and screen-X gives the most reliable cross-camera
-    behaviour)."""
+def _world_to_screen(cam, world_point):
+    """Project a world-space point onto the viewport in pixels.
+    Returns (sx, sy) in MODO viewport coordinates (top-left origin).
+
+    Uses the camera basis (cam_right, cam_up, fwd) plus PixelSize() —
+    PixelSize is world units per pixel @ the workplane (depth =
+    `cam.distance` from eye); pixel size scales linearly with depth, so
+    at the point's view-distance we use
+    `pixel_size_at_point = pixel_size × (view_dist / workplane_depth)`.
+    """
+    cam_right, cam_up, fwd = _camera_basis(cam)
+    eye = cam["eye"]
     bx, by, bw, bh = cam["bounds"]
-    # Approximate gizmo centre at viewport centre — fine for our cases
-    # where the selection centroid sits near the camera focus.
-    cx = bx + bw * 0.5
-    cy = by + bh * 0.5
+    pixel_size_wp = cam["pixel_size"]
+    workplane_dist = cam["distance"]
+
+    view_vec = (world_point[0] - eye[0],
+                world_point[1] - eye[1],
+                world_point[2] - eye[2])
+    view_right = _dot_v(view_vec, cam_right)
+    view_up    = _dot_v(view_vec, cam_up)
+    view_dist  = _dot_v(view_vec, fwd)
+    if view_dist < 1e-3 or pixel_size_wp <= 0 or workplane_dist <= 0:
+        return (bx + bw * 0.5, by + bh * 0.5)
+
+    pixel_size_at_pt = pixel_size_wp * view_dist / workplane_dist
+    px_offset_x = view_right / pixel_size_at_pt
+    px_offset_y = -view_up   / pixel_size_at_pt
+    return (bx + bw * 0.5 + px_offset_x,
+            by + bh * 0.5 + px_offset_y)
+
+
+def _selection_bbox_center(state):
+    """Bounding-box center of the selected vertices recorded in
+    state.json. Used as the gizmo's world-space center for handle-pick
+    cases — close enough to MODO's ACEN.center across the modes we
+    actually test (auto/select/selectauto/border/element/local all
+    centre on or near the selection bbox; origin/none are different
+    but for those the gizmo position doesn't matter for cross-engine
+    parity since both engines also fall back to origin)."""
+    sel = state.get("selected_verts") or []
+    if not sel:
+        return (0.0, 0.0, 0.0)
+    mn = [min(v[i] for v in sel) for i in range(3)]
+    mx = [max(v[i] for v in sel) for i in range(3)]
+    return ((mn[0]+mx[0])*0.5, (mn[1]+mx[1])*0.5, (mn[2]+mx[2])*0.5)
+
+
+def _resolve_handle_drag(state, handle, drag_len, detected=None):
+    """For handle ∈ {x,y,z,center}, return (start_x, start_y, dx, dy)
+    in MODO viewport pixels.
+
+    `detected` (optional) is a {handle_name: (px, py)} dict produced
+    by detect_handles.py — the precise on-screen handle pixel
+    positions extracted from a viewport screenshot. When the requested
+    handle is in `detected`, that pixel becomes the click point;
+    otherwise we fall back to the analytical
+    selection-bbox-center + axis-projection path (works but doesn't
+    account for MODO's actual gizmo screen offset).
+
+    Drag delta in either path follows the screen projection of the
+    handle's natural drag axis (X arrow → world +X, etc.), so
+    direction sign + magnitude line up cross-engine."""
+    cam = state["camera"]
     if handle == "center":
+        if detected and "center" in detected:
+            cx, cy = detected["center"]
+        else:
+            cx, cy = _world_to_screen(cam, _selection_bbox_center(state))
         return (cx, cy, drag_len, 0)
     if handle not in ("x", "y", "z"):
         raise ValueError(f"unknown handle: {handle}")
@@ -111,8 +172,12 @@ def _resolve_handle_drag(cam, handle, drag_len):
             "y": (0.0, 1.0, 0.0),
             "z": (0.0, 0.0, 1.0)}[handle]
     sx, sy = _project_axis_to_screen(cam, axis)
-    start_x = cx + 30.0 * sx
-    start_y = cy + 30.0 * sy
+    if detected and handle in detected:
+        start_x, start_y = detected[handle]
+    else:
+        gx, gy = _world_to_screen(cam, _selection_bbox_center(state))
+        start_x = gx + 30.0 * sx
+        start_y = gy + 30.0 * sy
     return (start_x, start_y, drag_len * sx, drag_len * sy)
 
 
@@ -194,6 +259,45 @@ class Worker:
         subprocess.run(["import", "-window", "root", str(path)],
                        env=self.env(),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _detect_handles(self, state):
+        """Take a viewport screenshot and run detect_handles.py on it
+        to locate each colour-coded gizmo handle (X red, Y green, Z
+        blue, center cyan) by their saturated pixel clusters. Returns
+        {handle_name: (px, py)} in screen coords; missing handles are
+        omitted (caller falls back to analytical projection).
+        Returns {} on failure."""
+        png_path  = self.tmpdir / "handles.png"
+        json_path = self.tmpdir / "handles.json"
+        try: os.remove(png_path)
+        except OSError: pass
+        try: os.remove(json_path)
+        except OSError: pass
+        # Pre-frame the gizmo with a settle hover — without an active
+        # cursor over the viewport, MODO sometimes elides the gizmo
+        # render in headless mode (same fix as elsewhere).
+        cam = state.get("camera", {})
+        bnd = cam.get("bounds", [0, 0, 1426, 966])
+        cx = bnd[0] + bnd[2] // 2
+        cy = bnd[1] + bnd[3] // 2
+        self.xdo("mousemove", str(cx), str(cy))
+        time.sleep(0.15)
+        self.screenshot(png_path)
+        if not png_path.exists() or os.path.getsize(png_path) < 1000:
+            return {}
+        bx, by, bw, bh = bnd
+        r = subprocess.run(
+            ["python3", str(SCRIPT_DIR / "detect_handles.py"),
+             str(png_path), str(json_path),
+             "--region", f"{bx},{by},{bw},{bh}"],
+            capture_output=True, text=True)
+        if r.returncode != 0 or not json_path.exists():
+            return {}
+        try:
+            return {k: tuple(v) for k, v
+                    in json.loads(json_path.read_text()).items()}
+        except Exception:
+            return {}
 
     def click(self, x, y, settle=0.15):
         self.xdo("mousemove", str(x), str(y))
@@ -406,21 +510,27 @@ class Worker:
             self.cmd_bar(f"@{probe_script}")
             time.sleep(0.3)
 
-        # If `handle` was set, resolve the drag spec now from MODO's
-        # camera state (post view_pre) + the requested handle axis.
-        # The "drag direction" is +30 px along world X for the handle's
-        # natural drag axis (so the result is a meaningful translation
-        # that we can compare cross-engine).
+        # If `handle` was set, resolve the drag spec from MODO's
+        # camera state + the requested handle axis. We project the
+        # selection bbox center to screen via the camera basis +
+        # PixelSize and offset by 30 px along the axis projection.
+        #
+        # Screenshot-based detection (detect_handles.py) was tried
+        # here but doesn't pan out: headless modo_cl doesn't render
+        # the xfrm tool's gizmo handles into the viewport unless the
+        # viewport receives an actual interactive event (a real
+        # viewport click), which would itself perturb ACEN state.
+        # Analytical projection is close enough; detect_handles.py is
+        # kept around for offline diagnostics on screenshots produced
+        # via tools/modo_diff/screenshot_gizmo.py (which DOES get a
+        # gizmo render because that path uses an Xvfb-attached MODO
+        # instance with a real cursor over the viewport).
         if handle is not None:
             try:
                 state_now = json.loads(self.state_path.read_text())
-                cam = state_now.get("camera", {})
-                drag = _resolve_handle_drag(cam, handle, drag_len)
+                drag = _resolve_handle_drag(state_now, handle, drag_len)
             except Exception as e:
                 return "ERROR", f"could not resolve handle drag: {e}"
-            # Persist the resolved drag back to state.json so
-            # downstream consumers (cross_engine_drag.py, verifier)
-            # see the exact pixels we drove MODO with.
             state_now["camera"]["drag"] = [float(drag[0]), float(drag[1])]
             state_now["resolved_drag"]  = list(drag)
             self.state_path.write_text(json.dumps(state_now))
