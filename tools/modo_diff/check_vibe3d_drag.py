@@ -382,6 +382,196 @@ def test_move_asymmetric_local_x_arrow(base):
     return "PASS", "per-cluster axes verified — " + summary
 
 
+def test_scale_asymmetric_local_x_arrow(base):
+    """ACEN.Local + asymmetric + Scale + drag X arrow.
+
+    Top cluster scales along its `right` axis (+Z) → top's Z bbox
+    extent changes from 1.0; X stays 0.5. Bottom cluster scales along
+    its `right` (+X) → bottom's X changes from 0.5; Z stays 0.5."""
+    post(f"{base}/api/reset?empty=true", "")
+    post(f"{base}/api/command",
+         "prim.cube segmentsX:2 segmentsY:2 segmentsZ:2 "
+         "sizeX:1 sizeY:1 sizeZ:1 sharp:true radius:0")
+    model = get(f"{base}/api/model")
+    indices = find_asymmetric_face_indices(model)
+    if len(indices) != 3:
+        return "FAIL", f"expected 3 polys, found {len(indices)}"
+    post(f"{base}/api/select", {"mode": "polygons", "indices": indices})
+    post(f"{base}/api/command", "actr.local")
+    post(f"{base}/api/command", "tool.set scale")
+
+    cam = get(f"{base}/api/camera")
+    view_M, proj_M, vw, vh = camera_matrices(cam)
+    eval_state = get(f"{base}/api/toolpipe/eval")
+    cen   = eval_state["actionCenter"]["center"]
+    right = eval_state["axis"]["right"]
+    arrow_len = 0.5
+    tip_world  = [cen[i] + right[i] * arrow_len for i in range(3)]
+    tip_screen = project(tip_world, view_M, proj_M, vw, vh)
+    cen_screen = project(cen,       view_M, proj_M, vw, vh)
+    far_world  = [cen[i] + right[i] * (arrow_len + 0.4) for i in range(3)]
+    far_screen = project(far_world, view_M, proj_M, vw, vh)
+    if not (tip_screen and cen_screen and far_screen):
+        return "FAIL", "could not project X arrow"
+    sx = (cen_screen[0] + tip_screen[0]) * 0.5
+    sy = (cen_screen[1] + tip_screen[1]) * 0.5
+    ex = sx + (far_screen[0] - tip_screen[0])
+    ey = sy + (far_screen[1] - tip_screen[1])
+
+    pre = [tuple(v) for v in model["vertices"]]
+    log = build_drag_log(vw, vh, sx, sy, ex, ey, steps=20)
+    post(f"{base}/api/play-events", log)
+    if not wait_playback_done(base):
+        return "FAIL", "playback did not finish"
+    post_verts = [tuple(v) for v in get(f"{base}/api/model")["vertices"]]
+
+    # Cluster verts (same lookup as the move test).
+    sel_top    = [i for i, p in enumerate(pre)
+                  if p[1] > 0.4 and p[1] < 0.6 and
+                     -0.51 <= p[0] <= 0.01 and -0.51 <= p[2] <= 0.51]
+    sel_bottom = [i for i, p in enumerate(pre)
+                  if p[1] < -0.4 and p[1] > -0.6 and
+                     -0.01 <= p[0] <= 0.51 and -0.01 <= p[2] <= 0.51]
+    if len(sel_top) != 6 or len(sel_bottom) != 4:
+        return "FAIL", "selection mismatch"
+
+    def bbox_extents(rows):
+        mn = [min(rows[k][i] for k in range(len(rows))) for i in range(3)]
+        mx = [max(rows[k][i] for k in range(len(rows))) for i in range(3)]
+        return [mx[i] - mn[i] for i in range(3)]
+
+    pre_top_ext  = bbox_extents([pre[i] for i in sel_top])
+    post_top_ext = bbox_extents([post_verts[i] for i in sel_top])
+    pre_bot_ext  = bbox_extents([pre[i] for i in sel_bottom])
+    post_bot_ext = bbox_extents([post_verts[i] for i in sel_bottom])
+
+    # Top cluster scales along Z; X (and Y, untouched on Y arrow) stay.
+    top_z_changed = abs(post_top_ext[2] - pre_top_ext[2]) > 0.05
+    top_x_kept    = abs(post_top_ext[0] - pre_top_ext[0]) < 0.02
+    # Bottom cluster scales along X; Z stays.
+    bot_x_changed = abs(post_bot_ext[0] - pre_bot_ext[0]) > 0.05
+    bot_z_kept    = abs(post_bot_ext[2] - pre_bot_ext[2]) < 0.02
+
+    summary = (f"top Δext=({post_top_ext[0]-pre_top_ext[0]:+.2f},"
+               f"{post_top_ext[1]-pre_top_ext[1]:+.2f},"
+               f"{post_top_ext[2]-pre_top_ext[2]:+.2f}) "
+               f"bot Δext=({post_bot_ext[0]-pre_bot_ext[0]:+.2f},"
+               f"{post_bot_ext[1]-pre_bot_ext[1]:+.2f},"
+               f"{post_bot_ext[2]-pre_bot_ext[2]:+.2f})")
+    if not (top_z_changed and top_x_kept):
+        return "FAIL", "top didn't scale on Z; " + summary
+    if not (bot_x_changed and bot_z_kept):
+        return "FAIL", "bottom didn't scale on X; " + summary
+    return "PASS", "per-cluster axes verified — " + summary
+
+
+def test_rotate_asymmetric_local_x_ring(base):
+    """ACEN.Local + asymmetric + Rotate + drag X ring.
+
+    Each cluster rotates around its `right` axis. Verify per-cluster:
+      - all verts' distance to cluster pivot is preserved (rigid);
+      - all verts' component along the cluster's `right` axis (relative
+        to pivot) is preserved (so rotation is purely around `right`)."""
+    post(f"{base}/api/reset?empty=true", "")
+    post(f"{base}/api/command",
+         "prim.cube segmentsX:2 segmentsY:2 segmentsZ:2 "
+         "sizeX:1 sizeY:1 sizeZ:1 sharp:true radius:0")
+    model = get(f"{base}/api/model")
+    indices = find_asymmetric_face_indices(model)
+    if len(indices) != 3:
+        return "FAIL", f"expected 3 polys, found {len(indices)}"
+    post(f"{base}/api/select", {"mode": "polygons", "indices": indices})
+    post(f"{base}/api/command", "actr.local")
+    post(f"{base}/api/command", "tool.set rotate")
+
+    cam = get(f"{base}/api/camera")
+    view_M, proj_M, vw, vh = camera_matrices(cam)
+    eval_state = get(f"{base}/api/toolpipe/eval")
+    cen   = eval_state["actionCenter"]["center"]
+    up    = eval_state["axis"]["up"]
+    fwd   = eval_state["axis"]["fwd"]
+    cluster_centers = [tuple(c) for c in
+                       eval_state["actionCenter"]["clusterCenters"]]
+    cluster_right = [tuple(v) for v in eval_state["axis"]["clusterRight"]]
+    # X arc lies in the plane perpendicular to right (= YZ plane). A
+    # point on the arc at angle PI/2: cen + up * radius. The radius is
+    # computed dynamically (gizmoSize in handler.d) — reproduce here:
+    # radius = g_gizmoScreenFraction * depth / proj[5], where depth is
+    # the view-space Z of the gizmo center.
+    g_gizmo_screen_fraction = 0.55
+    cen_view = mat_mul_vec4(view_M, [cen[0], cen[1], cen[2], 1.0])
+    depth = max(1e-4, -cen_view[2])
+    radius = g_gizmo_screen_fraction * depth / proj_M[5]
+    pt_on_arc_world = [cen[i] + up[i] * radius for i in range(3)]
+    drag_end_world  = [cen[i] + up[i] * radius * 0.7
+                              + fwd[i] * radius * 0.7 for i in range(3)]
+    pt_screen  = project(pt_on_arc_world, view_M, proj_M, vw, vh)
+    end_screen = project(drag_end_world,   view_M, proj_M, vw, vh)
+    if not (pt_screen and end_screen):
+        return "FAIL", "could not project arc point"
+    sx, sy = pt_screen[0], pt_screen[1]
+    ex, ey = end_screen[0], end_screen[1]
+
+    pre = [tuple(v) for v in model["vertices"]]
+    log = build_drag_log(vw, vh, sx, sy, ex, ey, steps=30)
+    post(f"{base}/api/play-events", log)
+    if not wait_playback_done(base):
+        return "FAIL", "playback did not finish"
+    post_verts = [tuple(v) for v in get(f"{base}/api/model")["vertices"]]
+
+    sel_top    = [i for i, p in enumerate(pre)
+                  if p[1] > 0.4 and p[1] < 0.6 and
+                     -0.51 <= p[0] <= 0.01 and -0.51 <= p[2] <= 0.51]
+    sel_bottom = [i for i, p in enumerate(pre)
+                  if p[1] < -0.4 and p[1] > -0.6 and
+                     -0.01 <= p[0] <= 0.51 and -0.01 <= p[2] <= 0.51]
+
+    # Identify which vibe3d cluster index corresponds to top vs bottom
+    # by pivot proximity.
+    def nearest_cluster(target_y):
+        best = None; best_d = float("inf")
+        for ci, c in enumerate(cluster_centers):
+            d = abs(c[1] - target_y)
+            if d < best_d: best_d, best = d, ci
+        return best
+    top_cid    = nearest_cluster(+0.5)
+    bottom_cid = nearest_cluster(-0.5)
+    top_pivot    = cluster_centers[top_cid]
+    top_axis     = cluster_right[top_cid]
+    bottom_pivot = cluster_centers[bottom_cid]
+    bottom_axis  = cluster_right[bottom_cid]
+
+    def check_cluster(rows, pivot, axis):
+        any_moved = False
+        for i in rows:
+            d_pre  = tuple(pre[i][k]       - pivot[k] for k in range(3))
+            d_post = tuple(post_verts[i][k] - pivot[k] for k in range(3))
+            len_pre  = math.sqrt(sum(c*c for c in d_pre))
+            len_post = math.sqrt(sum(c*c for c in d_post))
+            # Distance to pivot preserved (rigid).
+            if abs(len_pre - len_post) > 0.02:
+                return False, f"vert {i} dist {len_pre:.3f}→{len_post:.3f}"
+            # Component along axis preserved (rotation around axis only).
+            ax_pre  = sum(d_pre[k]  * axis[k] for k in range(3))
+            ax_post = sum(d_post[k] * axis[k] for k in range(3))
+            if abs(ax_pre - ax_post) > 0.02:
+                return False, (f"vert {i} ax-component "
+                               f"{ax_pre:.3f}→{ax_post:.3f}")
+            if any(abs(post_verts[i][k] - pre[i][k]) > 1e-3 for k in range(3)):
+                any_moved = True
+        if not any_moved:
+            return False, "no rotation observed"
+        return True, "rigid rotation around cluster axis"
+
+    ok_top, msg_top       = check_cluster(sel_top,    top_pivot,    top_axis)
+    ok_bottom, msg_bottom = check_cluster(sel_bottom, bottom_pivot, bottom_axis)
+    if not ok_top:
+        return "FAIL", "top: " + msg_top
+    if not ok_bottom:
+        return "FAIL", "bottom: " + msg_bottom
+    return "PASS", "per-cluster rotation axis verified"
+
+
 def wait_ready(port, timeout=10):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -408,6 +598,8 @@ def main():
     cases = [
         ("move_top_y_arrow",            test_move_top_face),
         ("move_asymmetric_local_x",     test_move_asymmetric_local_x_arrow),
+        ("scale_asymmetric_local_x",    test_scale_asymmetric_local_x_arrow),
+        ("rotate_asymmetric_local_x",   test_rotate_asymmetric_local_x_ring),
     ]
     fail = 0
     for name, fn in cases:
