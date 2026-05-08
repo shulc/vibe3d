@@ -62,7 +62,10 @@ class ActionCenterStage : Stage {
         Left   = 5, Right  = 6,
     }
 
-    Mode mode = Mode.Auto;
+    // Default = None — matches MODO's pristine pulldown state (no
+    // center.* / axis.* tools registered until the user picks a
+    // preset). Tests that rely on a specific mode set it explicitly.
+    Mode mode = Mode.None;
     Vec3 userPlacedCenter = Vec3(0, 0, 0);  // valid when userPlaced is true
     bool userPlaced = false;                // Auto-mode click-outside marker
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual

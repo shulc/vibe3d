@@ -52,7 +52,9 @@ class AxisStage : Stage {
         None       = 10,
     }
 
-    Mode mode = Mode.Auto;
+    // Default = None — companion of ActionCenterStage's default (see
+    // its comment). Tests that need a specific mode set it explicitly.
+    Mode mode = Mode.None;
     Vec3 manualRight = Vec3(1, 0, 0);
     Vec3 manualUp    = Vec3(0, 1, 0);
     Vec3 manualFwd   = Vec3(0, 0, 1);

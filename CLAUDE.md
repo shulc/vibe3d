@@ -26,13 +26,17 @@ dub build            # Build the project
 Tests are D programs compiled with `dmd -unittest` and exercised via an HTTP API against a running vibe3d instance. The runner (`run_test.d`, an `rdmd` script) handles `dub build`, test compilation, vibe3d lifecycle, and reports pass/fail counts:
 
 ```bash
-./run_test.d                    # all tests
+./run_test.d                    # all tests (single worker)
+./run_test.d -j 4               # parallel — 4 workers, ~2.5× faster
+./run_test.d -j 8               # 8 workers — see flake note below
 ./run_test.d test_bevel         # one test (also accepts: bevel, tests/test_bevel.d)
 ./run_test.d bevel selection    # subset
 ./run_test.d -v test_bevel      # stream the test's stdout/stderr
 ./run_test.d --keep             # leave vibe3d running after tests finish (for debugging)
 ./run_test.d --no-build         # skip `dub build`
 ```
+
+Each worker gets its own port + scratch dir, so parallel runs don't trip over each other. **Flake note:** at `-j 8` two pre-existing race-condition flakes surface intermittently (`test_http_endpoint`, `test_toolpipe_axis`); they pass in isolation and at `-j 4`. Prefer `-j 4` for green-bar verification, `-j 8` only to maximise throughput on multi-core runs you'll re-trigger.
 
 The runner kills any stale `vibe3d --test` before starting, waits for the HTTP server to become responsive, and tears vibe3d down on exit (including SIGINT).
 

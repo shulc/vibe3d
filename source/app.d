@@ -2547,9 +2547,12 @@ void main(string[] args) {
 
         ImGui.PushStyleVar(ImGuiStyleVar.PopupRounding,   0.0f);
         ImGui.PushStyleVar(ImGuiStyleVar.PopupBorderSize, 1.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,   ImVec2(2, 2));
-        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,     ImVec2(0, 1));
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,    ImVec2(6, 4));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,   ImVec2(6, 6));
+        // Vertical gap between menu items ≈ button height (item height
+        // = font + 2*FramePadding.y ≈ 14+16 = 30; gap 8 reads as
+        // breathing room without wasting screen space).
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,     ImVec2(0, 8));
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,    ImVec2(12, 8));
     }
     void popPopupStyle() {
         ImGui.PopStyleVar(5);
@@ -2802,11 +2805,18 @@ void main(string[] args) {
                     // Phase: MODO `PopupFace=optionOrLabel` parity. When
                     // a popup action sets `dynamicLabel: true`, swap the
                     // static button label for whichever item's `checked:`
-                    // currently resolves true. Falls back to the static
-                    // label when nothing matches.
+                    // currently resolves true. The swap only fires when
+                    // the BUTTON-level `checked:` resolves true — so e.g.
+                    // ACEN's button (checked.notEquals "none") shows the
+                    // active mode name when pressed and falls back to
+                    // "Action Center" when state == none.
                     if (action.kind == ActionKind.popup && action.dynamicLabel) {
-                        string s = firstCheckedLabel(action.popupItems);
-                        if (s.length > 0) label = s;
+                        bool pressed = !action.checked.present
+                                       || popupItemChecked(action.checked);
+                        if (pressed) {
+                            string s = firstCheckedLabel(action.popupItems);
+                            if (s.length > 0) label = s;
+                        }
                     }
 
                     // Detect select.typeFrom <type> in the action's first
@@ -2842,8 +2852,21 @@ void main(string[] args) {
                                && popupItemChecked(action.checked));
 
                     string popupId = "##popup_" ~ btn.label;
+                    // Auto-grow the button when the (possibly dynamic)
+                    // label is wider than the default 85-px slot —
+                    // otherwise long ACEN modes like "Selection Center
+                    // Auto Axis" get clipped. CalcTextSize uses the
+                    // current font, plus 18 px for FramePadding (×2)
+                    // and a hair of slack so the text doesn't kiss the
+                    // border.
+                    float effW = btnW;
+                    {
+                        ImVec2 ts = ImGui.CalcTextSize(label);
+                        float need = ts.x + 18.0f;
+                        if (need > effW) effW = need;
+                    }
                     if (renderStyledButton(label, sc, on, /*isCommand=*/true,
-                                           ImVec2(btnW, 0))) {
+                                           ImVec2(effW, 0))) {
                         final switch (action.kind) {
                             case ActionKind.tool:
                                 activateToolById(action.id);
