@@ -273,15 +273,26 @@ class Worker:
         except OSError: pass
         try: os.remove(json_path)
         except OSError: pass
-        # Pre-frame the gizmo with a settle hover — without an active
-        # cursor over the viewport, MODO sometimes elides the gizmo
-        # render in headless mode (same fix as elsewhere).
         cam = state.get("camera", {})
         bnd = cam.get("bounds", [0, 0, 1426, 966])
         cx = bnd[0] + bnd[2] // 2
         cy = bnd[1] + bnd[3] // 2
+        # Wake up the gizmo render. Setup activated the tool via
+        # `lx.eval('tool.set "xfrm.move" on 0')` — that's a Python API
+        # call and doesn't always flag the viewport for a full redraw.
+        # Hover the cursor over the viewport AND send a settle delay
+        # so MODO catches up before we screenshot. (Hovering alone
+        # isn't always enough but combined with a 0.5s wait the
+        # gizmo reliably appears in our test scenes.)
         self.xdo("mousemove", str(cx), str(cy))
-        time.sleep(0.15)
+        time.sleep(0.3)
+        # A tiny mousemove "wiggle" forces MODO to retrigger viewport
+        # event handlers (it tracks mouse-over for handle hover-state
+        # which means it must re-render the gizmo on every move).
+        self.xdo("mousemove", str(cx + 1), str(cy + 1))
+        time.sleep(0.2)
+        self.xdo("mousemove", str(cx), str(cy))
+        time.sleep(0.3)
         self.screenshot(png_path)
         if not png_path.exists() or os.path.getsize(png_path) < 1000:
             return {}
@@ -469,6 +480,15 @@ class Worker:
                 f"{tool} {setup_drag_x} {setup_drag_y}",
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
+
+        # NOTE: we considered "waking up" the viewport gizmo render
+        # before the drag (so detect_handles.py could find handle
+        # pixels in a screenshot) via xdotool click + W key in the
+        # viewport. Both click-only and click+W variants either leave
+        # the gizmo unrendered or perturb MODO state in ways that
+        # break the subsequent dump_verts step. Reverted — handle-
+        # driven cases continue to use the analytical projection path
+        # in _resolve_handle_drag.
 
         # Optional `view_pre`: list of MODO eval commands run AFTER the
         # setup script (which creates the cube + selection) but BEFORE
