@@ -164,12 +164,16 @@ class Worker:
         self.click(RESET_ITEM_X, RESET_ITEM_Y); time.sleep(2)
         self.click(POPUP_OK_X,   POPUP_OK_Y);   time.sleep(3)
 
-    def mouse_drag(self, x, y, dx, dy):
+    def mouse_drag(self, x, y, dx, dy, step_px=20):
+        """Drag from (x, y) by (dx, dy) generating one xdotool mousemove
+        every `step_px` pixels (default 20). Exposed so the drag-formula
+        experiment can probe how MODO's per-event accumulation behaves
+        when N (event count) varies with the same total pixel offset."""
         self.xdo("mousemove", str(x), str(y))
         time.sleep(0.2)
         self.xdo("mousedown", "1")
         time.sleep(0.15)
-        steps = max(abs(dx), abs(dy)) // 20 or 1
+        steps = max(abs(dx), abs(dy)) // step_px or 1
         for i in range(1, steps + 1):
             self.xdo("mousemove", str(x + dx * i // steps),
                                   str(y + dy * i // steps))
@@ -292,7 +296,7 @@ class Worker:
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
 
-        self.mouse_drag(*drag)
+        self.mouse_drag(*drag, step_px=spec.get("step_px", 20))
         time.sleep(0.5)
 
         if not self.cmd_bar(

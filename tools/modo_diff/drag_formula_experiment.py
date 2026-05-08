@@ -32,30 +32,37 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Experimental drag matrix.  Each entry: (label, start_x, start_y, dx, dy)
 # Click start varied across screen quadrants; drag varied in length and
 # direction.  Camera stays at MODO default startup camera throughout.
+# Each entry: (label, start_x, start_y, dx, dy, step_px)
 EXPERIMENTS = [
-    # base case for sanity (matches our existing 100-px right drag)
-    ("baseline_100r",    1020, 560,  100,    0),
-    # length sweep at same start
-    ("len_50r",          1020, 560,   50,    0),
-    ("len_200r",         1020, 560,  200,    0),
-    ("len_400r",         1020, 560,  400,    0),
-    # direction sweep at same start
-    ("dir_down_100",     1020, 560,    0,  100),
-    ("dir_diag_100",     1020, 560,   71,   71),  # ≈ 100 px
-    ("dir_left_100",     1020, 560, -100,    0),
-    # start position sweep (workplane intersection depth varies)
-    ("start_top_100r",    700, 200,  100,    0),  # high in screen → far ws hit
-    ("start_bot_100r",    700, 800,  100,    0),  # low in screen → near ws hit
-    ("start_center_100r", 713, 487,  100,    0),  # viewport center
+    # baseline (default step_px=20)
+    ("step20_100r",      1020, 560,  100,    0,  20),
+    # step-size sweep at fixed total drag — the formula
+    # `world = c × 10 × N × (N+1)` predicts:
+    #   step=10 (N=10) → world ≈ 14.49  (4× more than step=20)
+    #   step=20 (N=5)  → world ≈ 3.95
+    #   step=40 (N=2)  → world ≈ 0.79   (5× less)
+    #   step=50 (N=2)  → world ≈ 0.79   (same N)
+    #   step=100(N=1)  → world ≈ 0.26   (single event)
+    # If the theory holds, we'll see this scaling. If MODO scales by
+    # total pixels (not event-count), all four would give same world.
+    ("step10_100r",      1020, 560,  100,    0,  10),
+    ("step40_100r",      1020, 560,  100,    0,  40),
+    ("step50_100r",      1020, 560,  100,    0,  50),
+    ("step100_100r",     1020, 560,  100,    0, 100),
+    # also: same N=10 different drag length to disentangle px from N
+    ("step5_50r",        1020, 560,   50,    0,   5),    # N=10, total=50px
+    ("step20_200r",      1020, 560,  200,    0,  20),    # N=10, total=200px
 ]
 
 
-def case_json(label, start_x, start_y, dx, dy, tool="move", pattern="single_top"):
+def case_json(label, start_x, start_y, dx, dy, step_px,
+              tool="move", pattern="single_top"):
     return {
         "tool":      tool,
         "pattern":   pattern,
         "acen_mode": "auto",
         "drag":      [start_x, start_y, dx, dy],
+        "step_px":   step_px,
         "_experiment": label,
     }
 
@@ -120,7 +127,7 @@ def main():
         scratch = Path("/tmp/drag_formula_cases")
         scratch.mkdir(exist_ok=True)
         for ex in EXPERIMENTS:
-            label, sx, sy, dx, dy = ex
+            label, sx, sy, dx, dy, step = ex
             spec_d = case_json(*ex)
             case_path = scratch / f"{label}.json"
             case_path.write_text(json.dumps(spec_d, indent=2))
@@ -145,6 +152,8 @@ def main():
                 rows.append({
                     "label":  label,
                     "px":     (sx, sy, dx, dy),
+                    "step":   step,
+                    "N":      max(abs(dx), abs(dy)) // step or 1,
                     "delta":  d,
                     "px_len": px_len,
                     "w_len":  w_len,
@@ -161,18 +170,21 @@ def main():
     print()
     print("=== drag formula experiment results ===")
     print()
-    print(f"{'label':<22} {'pixel drag':<22} {'world delta':<32} "
-          f"{'|d|':>8} {'|w|':>8} {'w/px':>10}")
-    print("-" * 110)
+    print(f"{'label':<18} {'drag':<14} {'step':>5} {'N':>4} "
+          f"{'world':<28} {'|w|':>8} {'predict':>8}")
+    print("-" * 100)
     for r in rows:
         if "status" in r and r["status"] != "PASS":
-            print(f"{r['label']:<22} ERROR: {r.get('msg', '?')}")
+            print(f"{r['label']:<18} ERROR: {r.get('msg', '?')}")
             continue
         sx, sy, dx, dy = r["px"]
-        d = r["delta"]
-        print(f"{r['label']:<22} ({sx:4d},{sy:4d}) +({dx:4d},{dy:4d})  "
-              f"({d[0]:+8.3f},{d[1]:+8.3f},{d[2]:+8.3f})  "
-              f"{r['px_len']:>8.1f} {r['w_len']:>8.3f} {r['ratio']:>10.5f}")
+        d  = r["delta"]
+        N  = r["N"]
+        # Theory: world ≈ c × 10 × N × (N+1), c ≈ 0.01317.
+        pred = 0.01317 * 10 * N * (N + 1)
+        print(f"{r['label']:<18} +({dx:4d},{dy:4d})  {r['step']:>5} {N:>4} "
+              f"({d[0]:+7.2f},{d[1]:+7.2f},{d[2]:+7.2f}) "
+              f"{r['w_len']:>8.3f} {pred:>8.3f}")
 
     # Print camera if available (from any successful row).
     for r in rows:
