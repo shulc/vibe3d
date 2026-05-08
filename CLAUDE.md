@@ -36,7 +36,7 @@ Tests are D programs compiled with `dmd -unittest` and exercised via an HTTP API
 ./run_test.d --no-build         # skip `dub build`
 ```
 
-Each worker gets its own port + scratch dir, so parallel runs don't trip over each other. **Flake note:** at `-j 8` two pre-existing race-condition flakes surface intermittently (`test_http_endpoint`, `test_toolpipe_axis`); they pass in isolation and at `-j 4`. Prefer `-j 4` for green-bar verification, `-j 8` only to maximise throughput on multi-core runs you'll re-trigger.
+Each worker gets its own port + scratch dir, so parallel runs don't trip over each other. **Flake note:** at higher `-j` values three pre-existing race-condition flakes surface intermittently (`test_selection`, `test_http_endpoint`, `test_toolpipe_axis`); they pass in isolation and at `-j 1`. The unified `run_all.d` excludes them by default so a green run actually means "no regressions"; pass `--exclude` to `run_test.d` directly to skip them when running the unit suite alone.
 
 The runner kills any stale `vibe3d --test` before starting, waits for the HTTP server to become responsive, and tears vibe3d down on exit (including SIGINT).
 

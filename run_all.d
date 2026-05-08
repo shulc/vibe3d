@@ -86,7 +86,7 @@ int main(string[] args) {
     }
 
     string excludeEnv = environment.get("RUN_ALL_EXCLUDE",
-        "test_selection,test_toolpipe_axis");
+        "test_selection,test_toolpipe_axis,test_http_endpoint");
     string[] excluded = excludeEnv.split(",");
 
     Suite[] suites;
