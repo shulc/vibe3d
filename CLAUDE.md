@@ -77,11 +77,38 @@ rdmd tools/modo_diff/run.d
 
 Headless MODO quirks (foundrycrashhandler pipe-deadlock, Python script invocation via `#python` shebang + `@filename`, selection via `modo.Polygon.select()` not `select.element`) are documented in `tools/modo_diff/README.md`. Workflow for capturing a new case from an interactive MODO session is in `doc/modo_diff_capture_workflow.md`.
 
+### ACEN drag verification: `tools/modo_diff/run_acen_drag.py`
+
+Drives a real `xfrm.move` / `TransformRotate` / `xfrm.scale` mouse drag in headless MODO via `xdotool`, dumps the resulting verts, and runs `verify_acen_drag.py` to check that each cluster moved consistently with the active `actr.<mode>` preset (Auto/Select/SelectAuto/Border/Element/Local/Origin/None — the last via `tool.clearTask`). Cases live in `tools/modo_diff/drag_cases/*.json`; each declares `tool`, `pattern`, `acen_mode`, optional `drag` pixel coords and `step_px` granularity.
+
+```bash
+./tools/modo_diff/run_acen_drag.py                 # all cases, single MODO
+./tools/modo_diff/run_acen_drag.py -j 4            # parallel — 4 MODO + Xvfb workers (~3.7× faster)
+./tools/modo_diff/run_acen_drag.py move_single_top_auto    # subset by stem
+./tools/modo_diff/run_acen_drag.py 'move_*_none'           # glob
+./tools/modo_diff/run_acen_drag.py --keep          # leave Xvfb / MODO running after
+```
+
+Each worker gets its own Xvfb display (`:99 + worker_id`) plus tmpdir, so workers don't fight over the global state.json the dump scripts produce. `-j 8` is supported but offers diminishing returns past `-j 4` on most hosts.
+
+### Cross-engine drag parity: `tools/modo_diff/cross_engine_drag.py`
+
+Re-runs each ACEN drag case against vibe3d through the SAME camera + screen pixels (HTTP `/api/camera`, `/api/play-events`) and compares post-drag vertex positions to MODO's. Useful to verify behavioural alignment at the drag-formula level — orthogonal to the per-stage state checks in `verify_acen_drag.py`.
+
+```bash
+./tools/modo_diff/cross_engine_drag.py --launch-vibe3d                           # all cases
+./tools/modo_diff/cross_engine_drag.py --launch-vibe3d --step-px 1000 'move_*'   # force N=1 (single-event drag — bypasses MODO's quadratic accumulation)
+./tools/modo_diff/cross_engine_drag.py --launch-vibe3d move_single_top_none      # one case
+```
+
+`--launch-vibe3d` spawns a vibe3d subprocess pinned to the same 1426×966 viewport MODO uses (cross-engine projection match). Without it, you must start `./vibe3d --test --viewport 1426x966` yourself first.
+
 ### Recommended order before commit
 
-1. `./run_test.d --no-build` (unit, ~10s).
+1. `./run_test.d --no-build -j 4` (unit, ~10s with 4 workers).
 2. `rdmd tools/blender_diff/run.d --no-build` (Blender, ~2 min).
-3. `rdmd tools/modo_diff/run.d --no-build` (MODO, ~30s; only if MODO is installed).
+3. `rdmd tools/modo_diff/run.d --no-build` (MODO bevel/prim, ~30s; only if MODO is installed).
+4. `./tools/modo_diff/run_acen_drag.py -j 4` (ACEN drag, only when ACEN/AXIS or transform tools were touched).
 
 A clean change should keep all three suites at their previous PASS / XFAIL counts. New XPASS means an `expected_fail` marker can be cleaned up; new FAIL is a regression.
 
