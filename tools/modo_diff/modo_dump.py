@@ -1,13 +1,21 @@
 #python
 # Apply a comparison case to MODO and dump the resulting geometry to JSON.
 #
-# Usage (called by run.d, not directly by user):
-#   modo_cl reads commands from stdin; the pipeline is:
-#       echo '@modo_dump.py
-#       app.quit' | modo_cl
-#   with environment variables:
+# Usage (called by run.d, not directly by user). Two argument paths:
+#
+#   1. Positional via @ args (preferred, single MODO session reusable):
+#       @modo_dump.py /path/to/case.json /path/to/out.json /path/to/log
+#      — chosen because lx.args() rebinds per @ invocation, so a long-
+#      lived modo_cl can run many cases via repeated @-loads from stdin
+#      (see tools/modo_diff/run.d's worker pool). Each call gets its own
+#      fresh paths without restarting MODO.
+#
+#   2. Environment fallback (legacy single-shot):
 #       MODO_CASE_PATH=/path/to/case.json
 #       MODO_OUT_PATH=/path/to/out.json
+#       MODO_LOG_PATH=/path/to/log
+#       echo '@modo_dump.py
+#       app.quit' | modo_cl
 #
 # Schema of case.json: same as blender_diff (see blender_dump.py / vibe3d_dump.d).
 # Currently supported ops: polygon_bevel.
@@ -28,9 +36,17 @@ import traceback
 
 EPS = 1e-4
 
-CASE_PATH = os.environ.get("MODO_CASE_PATH", "")
-OUT_PATH  = os.environ.get("MODO_OUT_PATH",  "")
-LOG_PATH  = os.environ.get("MODO_LOG_PATH",  "/tmp/modo_dump.log")
+# `lx.args()` returns positionals from the @ invocation. Three-arg form
+# wins; otherwise fall back to the legacy env vars.
+_args = list(lx.args())
+if len(_args) >= 3:
+    CASE_PATH = _args[0]
+    OUT_PATH  = _args[1]
+    LOG_PATH  = _args[2]
+else:
+    CASE_PATH = os.environ.get("MODO_CASE_PATH", "")
+    OUT_PATH  = os.environ.get("MODO_OUT_PATH",  "")
+    LOG_PATH  = os.environ.get("MODO_LOG_PATH",  "/tmp/modo_dump.log")
 
 LOG = open(LOG_PATH, "w")
 def log(*args):
@@ -672,4 +688,9 @@ except Exception:
     log(traceback.format_exc())
 finally:
     LOG.close()
-    lx.eval("app.quit")
+    # NB: don't `app.quit` here — `tools/modo_diff/run.d`'s long-lived
+    # worker pool reuses the same modo_cl across many cases, so killing
+    # the host process after one case would force-restart modo_cl per
+    # case and lose the parallelism win. The driver (run.d or whoever
+    # `printf '@modo_dump.py\napp.quit'`-pipes us) is responsible for
+    # quitting MODO when its work is done.

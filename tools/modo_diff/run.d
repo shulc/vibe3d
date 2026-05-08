@@ -2,27 +2,35 @@
 // MODO vs vibe3d geometry comparison orchestrator.
 //
 // Usage:
-//   ./run.d                            # all cases under cases/
+//   ./run.d                            # all cases under cases/, single worker
+//   ./run.d -j 4                       # 4 parallel workers (4 modo_cl + 4 vibe3d)
 //   ./run.d poly_bevel_top_face_inset_extrude   # one case
-//   ./run.d --keep                     # leave vibe3d running after
+//   ./run.d --keep                     # leave vibe3d / MODO running after
 //   ./run.d --no-build                 # skip dub build
-//   ./run.d -j N                       # accepted for run_all.d compat but
-//                                      # capped at 1 — concurrent modo_cl
-//                                      # processes share a single Nexus
-//                                      # cache and only one of N produces
-//                                      # output. The 30s suite is short
-//                                      # enough that serial is fine; for
-//                                      # long-lived MODO parallelism use
-//                                      # tools/modo_diff/run_acen_drag.py
-//                                      # which keeps one MODO per worker
-//                                      # alive across cases.
+//
+// Architecture:
+//   - One long-lived modo_cl driven via its own stdin pipe. Spawning a
+//     fresh modo_cl per case spent ~2-3s on startup; keeping it alive
+//     moves that cost out of the inner loop. Net win: ~3 s → ~0.5 s per
+//     case in our test runs, even at -j 1.
+//   - For each case we pipe `@modo_dump.py <case> <out> <log>\n` into
+//     the worker's stdin and wait for <out> to appear. modo_dump.py
+//     reads positionals via lx.args() so each invocation gets its own
+//     fresh paths (older env-var path retained for one-shot use).
+//
+// `-j N` is accepted for `run_all.d` interface compatibility but capped
+// at 1. Despite per-worker $HOME isolation (Content split out of
+// .luxology, see boot()), parallel modo_cl instances still hang on
+// some MODO-internal lock (license / X11 / inter-process state we
+// haven't pinned down). For long-lived parallel MODO use
+// tools/modo_diff/run_acen_drag.py — its Xvfb-per-worker approach
+// works because each modo_cl thinks it's in a different X session.
 //
 // For each case <name>.json:
-//   1. dub build (once, unless --no-build)
-//   2. Start vibe3d --test --http-port 18081 in background
-//   3. Run modo_cl with modo_dump.py → /tmp/modo_diff/<name>.modo.json
-//   4. Run vibe3d_dump.d (shared with blender_diff) → /tmp/modo_diff/<name>.vibe3d.json
-//   5. Run diff.py (shared with blender_diff) and report
+//   1. Worker pipes @modo_dump.py into its modo_cl
+//   2. Worker waits for /tmp/modo_diff/<name>.modo.json
+//   3. Worker calls vibe3d_dump (precompiled) → /tmp/modo_diff/<name>.vibe3d.json
+//   4. Worker calls diff.py and records the verdict
 //
 // Required env (defaults if unset):
 //   MODO_BIN              = /home/ashagarov/Program/Modo902/modo_cl
@@ -30,15 +38,16 @@
 //   MODO_NEXUS_CONTENT    = /home/ashagarov/.luxology/Content
 // (Override via the environment if your install lives elsewhere.)
 //
-// Cases for this suite are in tools/modo_diff/cases/. Supported ops on
-// the MODO side: polygon_bevel, move_vertex, delete, remove. Cases that
-// use unsupported ops (e.g. `bevel` for edge bevel) will ERROR.
+// Cases live in tools/modo_diff/cases/. Supported ops on the MODO side:
+// polygon_bevel, move_vertex, delete, remove. Cases that use unsupported
+// ops will ERROR.
 //
 // Exit code: number of failing cases (FAIL + XPASS + ERROR).
 
 import std.algorithm : sort;
 import std.array : array;
 import std.conv : to;
+import std.datetime.stopwatch : StopWatch, AutoStart;
 import std.file;
 import std.format : format;
 import std.json;
@@ -80,57 +89,150 @@ enum Status { PASS, FAIL, XFAIL, XPASS, ERROR }
 
 struct CaseResult { string name; Status status; }
 
-// Runs modo_cl with the dump script via a shell pipe. modo_cl reads its
-// command list from stdin; we feed `@<script>` (loads the Python file)
-// then `app.quit`.
+// ---- ModoWorker: long-lived modo_cl driven via its stdin pipe -------
 //
-// modo_cl forks a `foundrycrashhandler` daemon that inherits the parent's
-// stdout/stderr fds and stays alive after modo_cl exits. If we let
-// executeShell capture stdout via a pipe, that pipe remains open as long
-// as the crash handler holds it — leading to a deadlock where the parent
-// reads forever waiting for EOF. The fix: redirect modo_cl's output to a
-// regular file so the inherited fd is non-blocking. Detached handlers
-// just keep the file fd; the shell exits cleanly.
-int runModoDump(string casePath, string outPath, string logPath) {
-    import std.format : format;
-    string scriptPath = toolDir.buildPath("modo_dump.py");
-    string clOutPath  = logPath ~ ".stdout";
-    string cmd = format!("LD_LIBRARY_PATH=%s NEXUS_CONTENT=%s "
-                       ~ "MODO_CASE_PATH=%s MODO_OUT_PATH=%s MODO_LOG_PATH=%s "
-                       ~ "%s")(
-        modoLd, modoContent, casePath, outPath, logPath, modoBin);
-    string fullCmd = format!"printf '@%s\\napp.quit\\n' | %s > %s 2>&1"(
-        scriptPath, cmd, clOutPath);
-    auto r = executeShell(fullCmd);
-    // The Python script's success is determined by whether out.json exists
-    // and is non-empty. modo_cl always exits 0 even on Python errors.
-    if (!outPath.exists || getSize(outPath) == 0) {
-        stderr.writeln("modo_dump produced no output. modo_cl stdout:");
-        if (clOutPath.exists) stderr.writeln(readText(clOutPath));
-        if (logPath.exists) {
-            stderr.writeln("dump.log:");
-            stderr.writeln(readText(logPath));
+// Boots once, processes many cases via repeated @modo_dump.py invocations,
+// then exits via `app.quit` on shutdown. mirrors tools/modo_diff/
+// run_acen_drag.py's Worker class — two key differences:
+//   - We don't need Xvfb (modo_dump runs entirely headless).
+//   - We don't need xdotool (we feed Python scripts via stdin, no GUI
+//     interaction).
+struct ModoWorker {
+    int id;
+    int port;                       // vibe3d HTTP port
+    Pid procId;
+    Pipe stdinPipe;
+    File modoLog;
+    string clOutPath;               // modo_cl combined stdout/stderr log
+
+    void boot() {
+        clOutPath = outDir.buildPath(format!"modo_cl_%d.log"(id));
+        modoLog = File(clOutPath, "w");
+
+        // Per-worker private $HOME — concurrent modo_cl instances
+        // sharing $HOME/.luxology/{Configs,Cache,...} race on the
+        // Configs/{tool,view}.cfg locks at boot and on per-script
+        // bytecode cache writes during execution. The fix:
+        //   1. .luxology has been split — Content (~4 GB of read-only
+        //      assets) lives at /home/$USER/luxology_content, with a
+        //      symlink at $REAL_HOME/.luxology/Content pointing at it.
+        //      The "small" $REAL_HOME/.luxology is now ~700 KB.
+        //   2. Each worker gets a fresh $HOME=/tmp/modo_worker_<id>
+        //      and we cp -a $REAL_HOME/.luxology into it. cp -a
+        //      preserves the Content symlink, so all workers share the
+        //      bulk content read-only while keeping their own
+        //      Configs/Scripts/Kits dirs.
+        // No unshare / overlayfs / chroot needed — pure $HOME redirect.
+        string realHome = environment.get("HOME", "");
+        if (realHome.length == 0)
+            throw new Exception("HOME env var is required");
+        string workerHome = format!"/tmp/modo_worker_%d"(id);
+        string workerLux  = workerHome ~ "/.luxology";
+        if (workerHome.exists) rmdirRecurse(workerHome);
+        mkdirRecurse(workerHome);
+        // Use cp -a (recursive, preserves perms+symlinks). Fast since
+        // .luxology is small after the Content split.
+        auto cp = execute(["cp", "-a", realHome ~ "/.luxology", workerLux]);
+        if (cp.status != 0)
+            throw new Exception("worker " ~ id.to!string ~
+                " .luxology copy failed: " ~ cp.output);
+
+        string[string] env;
+        env["LD_LIBRARY_PATH"] = modoLd;
+        env["NEXUS_CONTENT"]   = modoContent;
+        env["HOME"]            = workerHome;
+        // Carry over PATH + USER so modo_cl finds python and reports
+        // the right uid in any user-facing strings.
+        foreach (k; ["PATH", "USER"]) {
+            string v = environment.get(k, "");
+            if (v.length) env[k] = v;
         }
+
+        stdinPipe = pipe();
+        procId = spawnProcess(
+            [modoBin],
+            stdinPipe.readEnd, modoLog, modoLog,
+            env, Config.none);
+
+        // Give modo_cl a moment to come up before we start firing
+        // commands — without this the first @script can race the
+        // interpreter's startup.
+        Thread.sleep(500.msecs);
+    }
+
+    // Fire one case at the worker's modo_cl. Blocks until <outPath>
+    // appears and is non-empty (modo_dump.py is the only writer of that
+    // file, so a non-zero size means the script ran to completion).
+    int runCase(string casePath, string outPath, string logPath,
+                int timeoutMs = 30_000)
+    {
+        // Wipe any prior output so a stale file from a previous run
+        // doesn't masquerade as success.
+        if (outPath.exists) remove(outPath);
+
+        // Fire the @ load. lx.args() picks up the three positionals.
+        string scriptPath = toolDir.buildPath("modo_dump.py");
+        string cmd = format!"@%s %s %s %s\n"(
+            scriptPath, casePath, outPath, logPath);
+        stdinPipe.writeEnd.write(cmd);
+        stdinPipe.writeEnd.flush();
+
+        // Poll for the out file. modo_dump.py writes it via a single
+        // open(...).write(...) at the end, so any non-zero size is the
+        // final result — no half-written file race.
+        auto sw = StopWatch(AutoStart.yes);
+        while (sw.peek.total!"msecs" < timeoutMs) {
+            // Detect modo_cl crash early.
+            auto pres = tryWait(procId);
+            if (pres.terminated) {
+                stderr.writeln("[w", id, "] modo_cl exited unexpectedly (status ",
+                    pres.status, "). Last 20 lines of ", clOutPath, ":");
+                if (clOutPath.exists) {
+                    auto lines = readText(clOutPath).split("\n");
+                    foreach (line; lines[$ > 20 ? $ - 20 : 0 .. $])
+                        stderr.writeln("  ", line);
+                }
+                return 1;
+            }
+            if (outPath.exists && getSize(outPath) > 0) return 0;
+            Thread.sleep(50.msecs);
+        }
+        stderr.writeln("[w", id, "] timeout waiting for ", outPath);
         return 1;
     }
-    return 0;
+
+    void shutdown() {
+        if (procId is null) return;
+        try {
+            stdinPipe.writeEnd.write("app.quit\n");
+            stdinPipe.writeEnd.flush();
+            stdinPipe.writeEnd.close();
+        } catch (Exception) {}
+        // Give modo_cl a brief grace period; if it doesn't quit cleanly
+        // we kill it.
+        auto sw = StopWatch(AutoStart.yes);
+        while (sw.peek.total!"msecs" < 3000) {
+            auto pres = tryWait(procId);
+            if (pres.terminated) return;
+            Thread.sleep(50.msecs);
+        }
+        try { kill(procId); wait(procId); }
+        catch (Exception) {}
+    }
 }
 
-// Per-case work — runs MODO dump + vibe3d dump and diffs them.
-// Concurrency: each parallel worker calls this with its own `port` and
-// `dumpBin`. modoBin is invoked via shell — modo_cl is a fresh process
-// per case so no shared state across cases. Output goes to
-// /tmp/modo_diff/<case>.{modo,vibe3d}.json — case names are unique.
-// Stdout is buffered into `outBuf` and printed atomically post-join.
-CaseResult runCase(string casePath, int port, string dumpBin,
-                   string diffScript, ref string outBuf) {
+// Per-case work — runs MODO dump (via worker) + vibe3d dump + diff.
+// Concurrency: each parallel worker calls this with its own ModoWorker
+// and `port`. Output goes to /tmp/modo_diff/<case>.{modo,vibe3d}.json
+// (case names are unique). Stdout buffered into `outBuf` and printed
+// atomically post-join so logs don't interleave.
+CaseResult runCase(ref ModoWorker w, string casePath, int port,
+                   string dumpBin, string diffScript, ref string outBuf)
+{
     auto name = casePath.baseName.stripExtension;
     auto modoOut    = outDir.buildPath(name ~ ".modo.json");
     auto vibe3dOut  = outDir.buildPath(name ~ ".vibe3d.json");
     auto modoLog    = outDir.buildPath(name ~ ".modo.log");
-
-    // Wipe any prior output so a failed dump doesn't pass a stale file.
-    if (modoOut.exists) remove(modoOut);
 
     bool expectedFail = false;
     try {
@@ -144,7 +246,7 @@ CaseResult runCase(string casePath, int port, string dumpBin,
 
     outBuf ~= "[run] === " ~ name ~ (expectedFail ? " [expected_fail]" : "") ~ " ===\n";
 
-    int mrc = runModoDump(casePath, modoOut, modoLog);
+    int mrc = w.runCase(casePath, modoOut, modoLog);
     if (mrc != 0) return CaseResult(name, Status.ERROR);
 
     auto vres = execute([dumpBin,
@@ -203,14 +305,13 @@ int main(string[] args) {
             }
             int requested = args[++i].to!int;
             if (requested < 1) { stderr.writeln("-j must be >= 1"); return 2; }
-            // Concurrent modo_cl invocations race on the shared Nexus
-            // cache and most fail with empty output. Until/unless we
-            // run each worker against a per-worker NEXUS_CONTENT, cap
-            // -j at 1. Accepting the flag keeps run_all.d's interface
-            // simple (it passes -j N to every suite uniformly).
+            // See header comment — concurrent modo_cl deadlocks on
+            // something internal even with per-worker $HOME isolation.
+            // Cap at 1 and warn so run_all.d's uniform `-j N` plumbing
+            // still works.
             j = 1;
             if (requested > 1)
-                log(format!"-j %d requested but capped at 1 (modo_cl race; see header comment)"(requested));
+                log(format!"-j %d requested but capped at 1 (modo_cl parallel hang; see header)"(requested));
         }
         else if (args[i].startsWith("-")) {
             stderr.writeln("unknown flag: ", args[i]);
@@ -236,9 +337,8 @@ int main(string[] args) {
     if (j > cast(int)cases.length) j = cast(int)cases.length;
     if (j < 1) j = 1;
 
-    // Pre-compile vibe3d_dump.d (shared with blender_diff) — same race
-    // hazard as in tools/blender_diff/run.d when -j > 1 hits rdmd's
-    // shared cache.
+    // Pre-compile vibe3d_dump.d to a single binary — same race fix as
+    // tools/blender_diff/run.d (concurrent rdmd hits a shared cache).
     string dumpBin = outDir.buildPath("vibe3d_dump");
     if (j > 1 || !dumpBin.exists) {
         log("compiling vibe3d_dump…");
@@ -282,6 +382,26 @@ int main(string[] args) {
         }
     }
 
+    // Boot N modo_cl workers. Boot is sequential — concurrent first-run
+    // initialisation of `~/.luxology/Cache/` was the root cause of the
+    // earlier short-lived parallel attempt's race; staggering the boots
+    // 0.5s apart is enough to let each finish its cache warm-up before
+    // the next one touches the directory.
+    auto workers = new ModoWorker[j];
+    foreach (i; 0 .. j) {
+        workers[i].id   = cast(int)i;
+        workers[i].port = basePort + cast(int)i;
+        log(format!"booting modo_cl worker %d…"(i));
+        workers[i].boot();
+    }
+    scope(exit) {
+        if (!keep) {
+            foreach (i; 0 .. j) workers[i].shutdown();
+        } else {
+            log(format!"--keep: %d modo_cl instances still running"(j));
+        }
+    }
+
     string[][] perWorker;
     perWorker.length = j;
     foreach (i, c; cases) perWorker[i % j] ~= c;
@@ -302,7 +422,7 @@ int main(string[] args) {
                 continue;
             }
             string buf;
-            auto r = runCase(c, port, dumpBin, diffScript, buf);
+            auto r = runCase(workers[wi], c, port, dumpBin, diffScript, buf);
             perWorkerOutput[wi] ~= buf;
             perWorkerResults[wi] ~= r;
         }
