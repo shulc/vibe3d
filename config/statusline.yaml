@@ -143,3 +143,47 @@ groups:
                 - label: Local
                   action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
                   checked: { path: "axis/mode", equals: "local" }
+  - title: snap
+    buttons:
+      # MODO-style Snapping pulldown. Master toggle on top (matches the
+      # @x keybind in inmapdefault.cfg → tool.snapState true), divider,
+      # then a checkbox per SnapType. Button face stays highlighted as
+      # long as snap is on. Mirrors resrc/_snap.cfg structure but
+      # scoped to vibe3d's seven supported types.
+      - label: "Snap"
+        action:
+          kind: popup
+          checked: { path: "snap/enabled", equals: "true" }
+          items:
+            - label: "Snap (X)"
+              action: { kind: command, id: snap.toggle }
+              checked: { path: "snap/enabled", equals: "true" }
+            - { kind: divider }
+            - { kind: header, label: "Geometry" }
+            - label: Vertex
+              action: { kind: script, lines: ["snap.toggleType vertex"] }
+              checked: { path: "snap/types/vertex", equals: "true" }
+            - label: Edge
+              action: { kind: script, lines: ["snap.toggleType edge"] }
+              checked: { path: "snap/types/edge", equals: "true" }
+            - label: Edge Center
+              action: { kind: script, lines: ["snap.toggleType edgeCenter"] }
+              checked: { path: "snap/types/edgeCenter", equals: "true" }
+            - label: Polygon
+              action: { kind: script, lines: ["snap.toggleType polygon"] }
+              checked: { path: "snap/types/polygon", equals: "true" }
+            - label: Polygon Center
+              action: { kind: script, lines: ["snap.toggleType polyCenter"] }
+              checked: { path: "snap/types/polyCenter", equals: "true" }
+            - { kind: divider }
+            - { kind: header, label: "Plane" }
+            - label: Grid
+              action: { kind: script, lines: ["snap.toggleType grid"] }
+              checked: { path: "snap/types/grid", equals: "true" }
+            - label: Workplane
+              action: { kind: script, lines: ["snap.toggleType workplane"] }
+              checked: { path: "snap/types/workplane", equals: "true" }
+            - { kind: divider }
+            - label: "Fixed Grid"
+              action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
+              checked: { path: "snap/fixedGrid", equals: "true" }

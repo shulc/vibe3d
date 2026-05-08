@@ -115,7 +115,31 @@ private:
                 else if (value == "false" || value == "0") { fixedGrid = false; return true; }
                 return false;
             case "fixedGridSize": fixedGridSize = parseFloat(value); return true;
+            case "fixedGridToggle":
+                fixedGrid = !fixedGrid;
+                return true;
+            // typeToggle <name> — flip a single type bit. Powers the
+            // Snap popup's per-type checkboxes via snap.toggleType.
+            case "typeToggle": {
+                uint bit = typeBit(value);
+                if (bit == 0) return false;
+                enabledTypes ^= bit;
+                return true;
+            }
             default: return false;
+        }
+    }
+
+    static uint typeBit(string name) {
+        switch (name) {
+            case "vertex":     return SnapType.Vertex;
+            case "edge":       return SnapType.Edge;
+            case "edgeCenter": return SnapType.EdgeCenter;
+            case "polygon":    return SnapType.Polygon;
+            case "polyCenter": return SnapType.PolyCenter;
+            case "grid":       return SnapType.Grid;
+            case "workplane":  return SnapType.Workplane;
+            default:           return 0;
         }
     }
 
@@ -137,8 +161,25 @@ private:
     }
 
     void publishState() {
-        setStatePath("snap/enabled", enabled ? "true" : "false");
-        setStatePath("snap/types",   typesLabel());
+        setStatePath("snap/enabled",   enabled   ? "true" : "false");
+        setStatePath("snap/types",     typesLabel());
+        setStatePath("snap/fixedGrid", fixedGrid ? "true" : "false");
+        // Per-type bits — drives the popup's checked-state on each
+        // type entry. Mirrors `enabledTypes & SnapType.<X>` truthiness.
+        setStatePath("snap/types/vertex",
+                     (enabledTypes & SnapType.Vertex)     ? "true" : "false");
+        setStatePath("snap/types/edge",
+                     (enabledTypes & SnapType.Edge)       ? "true" : "false");
+        setStatePath("snap/types/edgeCenter",
+                     (enabledTypes & SnapType.EdgeCenter) ? "true" : "false");
+        setStatePath("snap/types/polygon",
+                     (enabledTypes & SnapType.Polygon)    ? "true" : "false");
+        setStatePath("snap/types/polyCenter",
+                     (enabledTypes & SnapType.PolyCenter) ? "true" : "false");
+        setStatePath("snap/types/grid",
+                     (enabledTypes & SnapType.Grid)       ? "true" : "false");
+        setStatePath("snap/types/workplane",
+                     (enabledTypes & SnapType.Workplane)  ? "true" : "false");
     }
 
     static float parseFloat(string s) {

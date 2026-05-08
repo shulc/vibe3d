@@ -86,6 +86,7 @@ import commands.tool.attr     : ToolAttrCommand;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
+import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneRotateCommand, WorkplaneOffsetCommand,
                                 WorkplaneAlignToSelectionCommand;
@@ -777,6 +778,8 @@ void main(string[] args) {
         import commands.snap.toggle : SnapToggleCommand;
         reg.commandFactories["snap.toggle"] = () => cast(Command)
             new SnapToggleCommand(&mesh, cameraView, editMode);
+        reg.commandFactories["snap.toggleType"] = () => cast(Command)
+            new SnapToggleTypeCommand(&mesh, cameraView, editMode);
     }
     reg.commandFactories["file.load"] = () => cast(Command)
         new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
@@ -1371,6 +1374,15 @@ void main(string[] args) {
                             else if (pos[2].type == JSONType.false_)   sval = "false";
                             tpa.setAttrValue(sval);
                         }
+                    }
+                }
+            } else if (auto stt = cast(SnapToggleTypeCommand)cmd) {
+                // snap.toggleType <typeName>
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            stt.setTypeName(pos[0].str);
                     }
                 }
             }
@@ -2599,7 +2611,11 @@ void main(string[] args) {
                     ImGui.Separator();
                     break;
                 case PopupItemKind.header:
-                    ImGui.TextDisabled("%s", it.label.toStringz);
+                    // Pass D string directly — d_imgui's varargs path
+                    // segfaults when %s + toStringz (immutable char*)
+                    // are combined; the rest of the codebase passes D
+                    // strings as %s args (see lines 3202 / 3218).
+                    ImGui.TextDisabled("%s", it.label);
                     break;
                 case PopupItemKind.action:
                     bool checked = popupItemChecked(it.checked);

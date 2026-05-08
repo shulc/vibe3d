@@ -15,6 +15,7 @@ import std.net.curl;
 import std.json;
 import std.math : fabs;
 import std.conv : to;
+import std.string : indexOf;
 
 void main() {}
 
@@ -427,6 +428,36 @@ unittest { // snap.toggle is a true toggle (true→false on second call)
     auto a = getSnapAttrs();
     assert(a["enabled"] == "false",
         "two toggles should restore false; got " ~ a["enabled"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.3e popup: snap.toggleType <name> flips a single type bit. Powers
+// the Snap popup's per-type checkboxes — see config/statusline.yaml.
+// -------------------------------------------------------------------------
+
+unittest { // snap.toggleType vertex flips Vertex bit
+    resetCube();
+    // Default types include vertex — first toggle removes it.
+    postJson("/api/command", "snap.toggleType vertex");
+    auto a1 = getSnapAttrs();
+    assert(a1["types"].length == 0 || a1["types"].indexOf("vertex") < 0,
+        "after toggle vertex should be off; got " ~ a1["types"]);
+    // Second toggle re-adds.
+    postJson("/api/command", "snap.toggleType vertex");
+    auto a2 = getSnapAttrs();
+    assert(a2["types"].indexOf("vertex") >= 0,
+        "second toggle should re-enable vertex; got " ~ a2["types"]);
+}
+
+unittest { // snap.toggleType unknown type is rejected
+    resetCube();
+    // Bogus type goes through the command → setAttr error path; the
+    // HTTP response status differs but we only care that the mask
+    // wasn't mutated.
+    cast(void)post(baseUrl ~ "/api/command", "snap.toggleType bogus");
+    auto a = getSnapAttrs();
+    assert(a["types"] == "vertex,edgeCenter,polyCenter,grid",
+        "bogus type must not change mask; got " ~ a["types"]);
 }
 
 // -------------------------------------------------------------------------
