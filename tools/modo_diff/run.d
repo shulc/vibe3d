@@ -6,6 +6,16 @@
 //   ./run.d poly_bevel_top_face_inset_extrude   # one case
 //   ./run.d --keep                     # leave vibe3d running after
 //   ./run.d --no-build                 # skip dub build
+//   ./run.d -j N                       # accepted for run_all.d compat but
+//                                      # capped at 1 — concurrent modo_cl
+//                                      # processes share a single Nexus
+//                                      # cache and only one of N produces
+//                                      # output. The 30s suite is short
+//                                      # enough that serial is fine; for
+//                                      # long-lived MODO parallelism use
+//                                      # tools/modo_diff/run_acen_drag.py
+//                                      # which keeps one MODO per worker
+//                                      # alive across cases.
 //
 // For each case <name>.json:
 //   1. dub build (once, unless --no-build)
@@ -30,7 +40,9 @@ import std.algorithm : sort;
 import std.array : array;
 import std.conv : to;
 import std.file;
+import std.format : format;
 import std.json;
+import std.parallelism : parallel;
 import std.path : absolutePath, baseName, buildPath, dirName, stripExtension;
 import std.process;
 import std.stdio;
@@ -43,8 +55,9 @@ string toolDir;
 string blenderToolDir;       // for shared vibe3d_dump.d + diff.py
 string casesDir;
 string outDir;
-int    httpPort = 18081;     // distinct from blender_diff (18080) so both
-                             // suites can co-exist on the same machine
+int    basePort = 18081;     // distinct from blender_diff (18080) so both
+                             // suites can co-exist on the same machine.
+                             // Worker N uses port basePort + N.
 
 string modoBin;
 string modoLd;
@@ -103,7 +116,14 @@ int runModoDump(string casePath, string outPath, string logPath) {
     return 0;
 }
 
-CaseResult runCase(string casePath) {
+// Per-case work — runs MODO dump + vibe3d dump and diffs them.
+// Concurrency: each parallel worker calls this with its own `port` and
+// `dumpBin`. modoBin is invoked via shell — modo_cl is a fresh process
+// per case so no shared state across cases. Output goes to
+// /tmp/modo_diff/<case>.{modo,vibe3d}.json — case names are unique.
+// Stdout is buffered into `outBuf` and printed atomically post-join.
+CaseResult runCase(string casePath, int port, string dumpBin,
+                   string diffScript, ref string outBuf) {
     auto name = casePath.baseName.stripExtension;
     auto modoOut    = outDir.buildPath(name ~ ".modo.json");
     auto vibe3dOut  = outDir.buildPath(name ~ ".vibe3d.json");
@@ -118,27 +138,27 @@ CaseResult runCase(string casePath) {
         if ("expected_fail" in cj && cj["expected_fail"].type == JSONType.true_)
             expectedFail = true;
     } catch (Exception e) {
-        stderr.writeln("case JSON parse error: ", e.msg);
+        outBuf ~= "case JSON parse error: " ~ e.msg ~ "\n";
         return CaseResult(name, Status.ERROR);
     }
 
-    log("=== " ~ name ~ (expectedFail ? " [expected_fail]" : "") ~ " ===");
+    outBuf ~= "[run] === " ~ name ~ (expectedFail ? " [expected_fail]" : "") ~ " ===\n";
 
     int mrc = runModoDump(casePath, modoOut, modoLog);
     if (mrc != 0) return CaseResult(name, Status.ERROR);
 
-    auto vres = execute(["rdmd", blenderToolDir.buildPath("vibe3d_dump.d"),
-                         casePath, vibe3dOut, "--port", httpPort.to!string]);
+    auto vres = execute([dumpBin,
+                         casePath, vibe3dOut, "--port", port.to!string]);
     if (vres.status != 0) {
-        stderr.writeln(vres.output);
+        outBuf ~= vres.output ~ "\n";
         return CaseResult(name, Status.ERROR);
     }
     foreach (line; vres.output.split("\n"))
-        if (line.startsWith("[vibe3d_dump]")) writeln("  ", line);
+        if (line.startsWith("[vibe3d_dump]")) outBuf ~= "  " ~ line ~ "\n";
 
-    auto dres = execute(["python3", blenderToolDir.buildPath("diff.py"),
+    auto dres = execute(["python3", diffScript,
                          modoOut, vibe3dOut, "--case", casePath]);
-    write(dres.output);
+    outBuf ~= dres.output;
 
     bool diffOk = (dres.status == 0);
     Status s;
@@ -171,10 +191,27 @@ int main(string[] args) {
 
     bool keep = false;
     bool doBuild = true;
+    int  j = 1;
     string[] selected;
-    foreach (i; 1 .. args.length) {
+    for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--keep") keep = true;
         else if (args[i] == "--no-build") doBuild = false;
+        else if (args[i] == "-j" || args[i] == "--jobs") {
+            if (i + 1 >= args.length) {
+                stderr.writeln(args[i], " requires an integer argument");
+                return 2;
+            }
+            int requested = args[++i].to!int;
+            if (requested < 1) { stderr.writeln("-j must be >= 1"); return 2; }
+            // Concurrent modo_cl invocations race on the shared Nexus
+            // cache and most fail with empty output. Until/unless we
+            // run each worker against a per-worker NEXUS_CONTENT, cap
+            // -j at 1. Accepting the flag keeps run_all.d's interface
+            // simple (it passes -j N to every suite uniformly).
+            j = 1;
+            if (requested > 1)
+                log(format!"-j %d requested but capped at 1 (modo_cl race; see header comment)"(requested));
+        }
         else if (args[i].startsWith("-")) {
             stderr.writeln("unknown flag: ", args[i]);
             return 2;
@@ -187,35 +224,6 @@ int main(string[] args) {
         if (br.status != 0) { stderr.writeln(br.output); return br.status; }
     }
 
-    // Kill any stale vibe3d --test on our port (don't conflict with
-    // blender_diff which uses 18080).
-    spawnShell("pkill -f 'vibe3d --test --http-port " ~ httpPort.to!string
-               ~ "' >/dev/null 2>&1; true").wait();
-    Thread.sleep(200.msecs);
-
-    auto vibeLog = outDir.buildPath("vibe3d.log");
-    log("starting vibe3d --test --http-port " ~ httpPort.to!string
-        ~ " (log: " ~ vibeLog ~ ")");
-    auto logFile = File(vibeLog, "w");
-    auto vibePid = spawnProcess(
-        [repoRoot.buildPath("vibe3d"), "--test",
-         "--http-port", httpPort.to!string],
-        std.stdio.stdin, logFile, logFile,
-        null, Config.none, repoRoot);
-    scope(exit) {
-        if (!keep) {
-            kill(vibePid);
-            wait(vibePid);
-        } else {
-            log("--keep: vibe3d still running on :" ~ httpPort.to!string);
-        }
-    }
-
-    if (!waitForServer("http://localhost:" ~ httpPort.to!string ~ "/api/model")) {
-        stderr.writeln("vibe3d HTTP server didn't come up");
-        return 1;
-    }
-
     string[] cases;
     if (selected.length) {
         foreach (s; selected)
@@ -225,16 +233,85 @@ int main(string[] args) {
             cases ~= p;
         cases.sort();
     }
+    if (j > cast(int)cases.length) j = cast(int)cases.length;
+    if (j < 1) j = 1;
+
+    // Pre-compile vibe3d_dump.d (shared with blender_diff) — same race
+    // hazard as in tools/blender_diff/run.d when -j > 1 hits rdmd's
+    // shared cache.
+    string dumpBin = outDir.buildPath("vibe3d_dump");
+    if (j > 1 || !dumpBin.exists) {
+        log("compiling vibe3d_dump…");
+        auto cr = execute(["rdmd", "--build-only", "-of=" ~ dumpBin,
+                           blenderToolDir.buildPath("vibe3d_dump.d")]);
+        if (cr.status != 0) { stderr.writeln(cr.output); return cr.status; }
+    }
+
+    // Kill any stale vibe3d --test on our port range.
+    foreach (i; 0 .. j) {
+        spawnShell(format!"pkill -f 'vibe3d --test --http-port %d' >/dev/null 2>&1; true"
+                   (basePort + i)).wait();
+    }
+    Thread.sleep(200.msecs);
+
+    Pid[] vibePids;
+    foreach (i; 0 .. j) {
+        int port = basePort + i;
+        auto vibeLog = outDir.buildPath(format!"vibe3d_%d.log"(i));
+        log(format!"starting vibe3d --test --http-port %d (log: %s)"(port, vibeLog));
+        auto logFile = File(vibeLog, "w");
+        vibePids ~= spawnProcess(
+            [repoRoot.buildPath("vibe3d"), "--test",
+             "--http-port", port.to!string],
+            std.stdio.stdin, logFile, logFile,
+            null, Config.none, repoRoot);
+    }
+    scope(exit) {
+        if (!keep) {
+            foreach (p; vibePids) { kill(p); wait(p); }
+        } else {
+            log(format!"--keep: %d vibe3d instances still running on :%d..%d"
+                (j, basePort, basePort + j - 1));
+        }
+    }
+    foreach (i; 0 .. j) {
+        int port = basePort + i;
+        if (!waitForServer(format!"http://localhost:%d/api/model"(port))) {
+            stderr.writeln("vibe3d :", port, " didn't come up");
+            return 1;
+        }
+    }
+
+    string[][] perWorker;
+    perWorker.length = j;
+    foreach (i, c; cases) perWorker[i % j] ~= c;
+
+    CaseResult[][] perWorkerResults;
+    perWorkerResults.length = j;
+    string[] perWorkerOutput;
+    perWorkerOutput.length = j;
+
+    string diffScript = blenderToolDir.buildPath("diff.py");
+
+    foreach (wi, ref slice; parallel(perWorker, 1)) {
+        int port = basePort + cast(int)wi;
+        foreach (c; slice) {
+            if (!c.exists) {
+                perWorkerOutput[wi] ~= "case not found: " ~ c ~ "\n";
+                perWorkerResults[wi] ~= CaseResult(c.baseName.stripExtension, Status.ERROR);
+                continue;
+            }
+            string buf;
+            auto r = runCase(c, port, dumpBin, diffScript, buf);
+            perWorkerOutput[wi] ~= buf;
+            perWorkerResults[wi] ~= r;
+        }
+    }
+    foreach (wi; 0 .. j) write(perWorkerOutput[wi]);
 
     CaseResult[] results;
-    foreach (c; cases) {
-        if (!c.exists) {
-            stderr.writeln("case not found: ", c);
-            results ~= CaseResult(c.baseName.stripExtension, Status.ERROR);
-            continue;
-        }
-        results ~= runCase(c);
-    }
+    foreach (slice; perWorkerResults) results ~= slice;
+    results.sort!((a, b) => a.name < b.name);
 
     writeln("\n─────────────────────────────────────");
     int[Status] tally;
