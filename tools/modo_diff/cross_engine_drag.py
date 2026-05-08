@@ -18,9 +18,17 @@ Pipeline per case:
   5. GET /api/model; compare to MODO's after-verts vertex by vertex.
 
 Usage:
-  ./vibe3d --test &                           # vibe3d running on 8080
+  ./vibe3d --test --viewport 1426x966 &       # vibe3d running on 8080
+                                              # with viewport pinned to MODO's
+                                              # actual viewport size (1426x966
+                                              # in our default test setup) so
+                                              # the projection aspect matches.
   ./cross_engine_drag.py                      # all cases
   ./cross_engine_drag.py 'move_single_top_auto'
+
+The --viewport pin is independent of the SDL window size — even when
+window-manager chrome (titlebar, side panel, status bar) eats pixels,
+the camera's projection matrix uses the explicitly-pinned dimensions.
 
 Requires: a vibe3d --test instance running, MODO+Xvfb available.
 """

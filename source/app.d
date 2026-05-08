@@ -205,6 +205,7 @@ void main(string[] args) {
     bool testMode = false;
     ushort httpPort = 8080;       // Default port
     int  cliWinW = 800, cliWinH = 600;   // overridable via --window WxH
+    int  cliVpW = 0,    cliVpH = 0;      // overridable via --viewport WxH
 
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
@@ -243,6 +244,30 @@ void main(string[] args) {
             }
             cliWinW = parts[0].to!int;
             cliWinH = parts[1].to!int;
+        } else if (args[i] == "--viewport") {
+            // --viewport WxH (e.g. --viewport 1426x966) — pin the
+            // CAMERA viewport size used by the projection matrix and
+            // tools' screen-to-world math. Independent of the actual
+            // SDL window/framebuffer size — useful when window chrome
+            // (titlebar, side panel, status bar) eats pixels and we
+            // want vibe3d's projection to use a specific aspect/size
+            // anyway. Used by the modo_diff cross-engine drag test
+            // to match MODO's viewport (1426x966) regardless of how
+            // the SDL window ends up sized after window-manager chrome.
+            if (i + 1 >= args.length) {
+                writeln("Error: --viewport requires WxH (e.g. 1426x966)");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            import std.string : split;
+            auto parts = args[++i].split("x");
+            if (parts.length != 2) {
+                writeln("Error: --viewport arg must be WxH");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            cliVpW = parts[0].to!int;
+            cliVpH = parts[1].to!int;
         } else {
             writefln("Error: unknown argument '%s'", args[i]);
             import core.stdc.stdlib : exit;
@@ -377,7 +402,9 @@ void main(string[] args) {
     setReplayCurrentViewport(layout.vpX, layout.vpY, layout.vpW, layout.vpH, kFovY);
 
     // Camera
-    View cameraView = new View(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
+    int initVpW = (cliVpW > 0) ? cliVpW : layout.vpW;
+    int initVpH = (cliVpH > 0) ? cliVpH : layout.vpH;
+    View cameraView = new View(layout.vpX, layout.vpY, initVpW, initVpH);
 
     VertexCache vertexCache;
     vertexCache.resize(mesh.vertices.length);
@@ -2914,7 +2941,13 @@ void main(string[] args) {
         }
 
 
-        cameraView.setSize(layout.vpW, layout.vpH);
+        // --viewport pins the camera-projection viewport size regardless
+        // of the actual SDL window/layout dimensions. Otherwise track the
+        // window-derived layout viewport (default behaviour).
+        if (cliVpW > 0 && cliVpH > 0)
+            cameraView.setSize(cliVpW, cliVpH);
+        else
+            cameraView.setSize(layout.vpW, layout.vpH);
 
         Viewport vp = cameraView.viewport();
 
