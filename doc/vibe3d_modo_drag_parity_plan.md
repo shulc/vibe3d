@@ -22,20 +22,27 @@ the same numbers MODO produces, on the same case.
 | 3 — close behavioural gaps (ACEN.Border, Scale/Rotate AXIS.Local)  | 4–6  | ✅ done |
 | 4 — full matrix green (pivot + per-cluster axes)                   | 54   | ✅ 45/45 (excluding 9 drag-dependent `auto` skips); per-cluster basis verified for ACEN.Local with multi-cluster selections (asymmetric pattern) |
 
-vibe3d-side runs through `check_vibe3d_parity.py`:
-- builds the same primitive (cube/sphere) and selects the same polys;
-- runs `actr.<mode>`;
-- compares `/api/toolpipe/eval`'s center to the same prediction
-  `verify_acen_drag.py` validates against MODO.
+Three validation layers, run in order:
 
-So MODO ≡ prediction (verified by `run_acen_drag.py`) AND
-vibe3d ≡ prediction (verified here) ⇒ vibe3d ≡ MODO transitively.
+1. **MODO behaviour** — `run_acen_drag.py` (54 cells): real MODO
+   instance under Xvfb produces the expected pivot/delta for each
+   ACEN/AXIS preset.
+2. **vibe3d pipeline state** — `check_vibe3d_parity.py` (45 cells,
+   9 `auto` skipped): vibe3d's pipeline output matches the same
+   prediction (center, per-cluster pivots, per-cluster basis).
+3. **vibe3d end-to-end drag** — `check_vibe3d_drag.py` (4 cells):
+   synthesises real SDL_MOUSEBUTTONDOWN/MOTION/UP events through
+   `/api/play-events`, drives the actual tool. Validates the path
+   below the pipeline output: arrow-handle picking, screen→world
+   delta projection, per-cluster delta application in
+   {Move,Scale,Rotate}.applyXxx. Currently covers:
+   - move_top_y_arrow (sanity: full Move-tool round trip)
+   - move_asymmetric_local_x (per-cluster axes consumed for Move)
+   - scale_asymmetric_local_x (per-cluster axes consumed for Scale)
+   - rotate_asymmetric_local_x (per-cluster axes consumed for Rotate)
 
-Remaining gap: per-cluster AXIS basis for Scale and Rotate tools
-under ACEN.Local (Phase 4 of `acen_modo_parity_plan.md`). Move tool
-already consumes per-cluster basis correctly. The harness here only
-checks pivot positions, not basis vectors — extending the verifier
-to compare basis comes after Scale/Rotate pick up cluster axes.
+(1 ∧ 2 ∧ 3) ⇒ vibe3d ≡ MODO at every layer that's testable without
+running both engines on identical camera state.
 
 ## What we already have
 
