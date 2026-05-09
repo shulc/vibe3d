@@ -257,7 +257,15 @@ public:
                 constrainStartMX = e.x; constrainStartMY = e.y;
             }
             lastMX = e.x; lastMY = e.y;
-            dragDelta = Vec3(0, 0, 0);
+            // Phase 7.5h: dragDelta is the cumulative tool-session
+            // displacement, used by applyAbsoluteFromBaseline as the
+            // total transform from editBefore. Resetting on every drag
+            // start would zero the cumulative on the 2nd drag and the
+            // absolute-from-baseline path would snap verts back to
+            // baseline before the new motion event arrives. Only reset
+            // at the start of a NEW edit session.
+            if (!editIsOpen())
+                dragDelta = Vec3(0, 0, 0);
             buildVertexCacheIfNeeded();
             // Phase 7.5: capture the falloff packet before deciding on
             // wholeMeshDrag — when falloff is active, per-vertex weights
@@ -292,6 +300,12 @@ public:
         Vec3 hit;
         if (!computeClickRelocateHit(e.x, e.y, hit))
             return false;
+        // Phase 7.5h: relocate is conceptually a "new tool session at
+        // a different pivot". Commit any pending edit first so the
+        // previous drags' transform is baked in, then start fresh
+        // (dragDelta=0, fresh editBefore on the next beginEdit).
+        if (editIsOpen())
+            commitEdit("Move");
         handler.setPosition(hit);
         centerManual = true;
         // Notify ACEN so the user-placed point sticks across future
