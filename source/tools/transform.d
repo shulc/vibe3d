@@ -89,6 +89,14 @@ protected:
     // active frame of a slider drag, not on subsequent frames.
     protected bool editIsOpen() const { return editCapturing; }
 
+    // Phase 7.5: every TransformTool subclass (Move / Rotate / Scale)
+    // applies per-vertex transforms during drag, so the Falloff stage's
+    // per-vertex weight is meaningful for all of them. The actual
+    // weighting logic lands per subphase (7.5b Move, 7.5c Rotate /
+    // Scale). Until then this flag is harmless — there's no
+    // evaluateFalloff caller yet.
+    override bool consumesFalloff() const { return true; }
+
     // Begin recording an edit session. Captures the current positions of
     // the verts in vertexIndicesToProcess (must be filled by the caller —
     // typically via buildVertexCacheIfNeeded() right before this call).

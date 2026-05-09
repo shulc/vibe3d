@@ -59,6 +59,16 @@ class Tool {
     // Whether the named parameter widget should be enabled.
     bool paramEnabled(string name) const { return true; }
 
+    // Phase 7.5: opt-in flag for the WGHT (Falloff) stage. Tools that
+    // apply per-vertex transforms (Move / Rotate / Scale via the
+    // TransformTool base) override to `true` so their drag math
+    // multiplies per-vertex displacements by the falloff weight.
+    // Other tools (Bevel, primitive create-tools, Pen) leave it
+    // `false` — their geometry isn't per-vertex / has no meaningful
+    // falloff interpretation. See doc/falloff_plan.md §"Tool
+    // integration points" for the rationale.
+    bool consumesFalloff() const { return false; }
+
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}
 

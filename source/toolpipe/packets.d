@@ -96,14 +96,89 @@ struct WorkplanePacket {
     bool isAuto = true;
 }
 
-/// LXsP_TOOL_FALLOFF — soft-selection weight, populated by WGHT stage in
-/// 7.5. Stored as a delegate the stage hands back to the actor; default
-/// returns 1.0 for every vertex (rigid transform — current behaviour).
-alias FalloffWeightFn = float delegate(Vec3 worldPos, uint vertIdx);
+/// Falloff type — published by WGHT stage in phase 7.5. Single active
+/// type at a time (no Mix Mode in the MVP). Mirrors MODO's `tool.set
+/// falloff.<type> on` selection except we stash the choice on the
+/// stage instead of using one tool per type.
+enum FalloffType : uint {
+    None    = 0,   // 7.5a — packet present but `enabled = false`
+    Linear  = 1,   // 7.5b
+    Radial  = 2,   // 7.5c
+    Screen  = 3,   // 7.5d
+    Lasso   = 4,   // 7.5e
+}
 
+/// Per-shape attenuation curve. `t ∈ [0, 1]` is the normalised
+/// distance from full-influence to no-influence; the curve maps it
+/// to a weight ∈ [0, 1].
+///
+///   Linear  → 1 - t                    even attenuation
+///   EaseIn  → 1 - t²                   stronger near full-influence
+///   EaseOut → (1 - t)²                 stronger near zero-influence
+///   Smooth  → 1 - smoothstep(t)        S-curve (default)
+///   Custom  → cubic Hermite via in_/out_ tangents
+enum FalloffShape : ubyte {
+    Linear  = 0,
+    EaseIn  = 1,
+    EaseOut = 2,
+    Smooth  = 3,
+    Custom  = 4,
+}
+
+/// Lasso shape — the "Style" property in MODO's lasso falloff panel.
+/// Freehand stores an arbitrary polygon in `lassoPolyX/Y`; the other
+/// three styles are 2-corner shapes computed on the fly.
+enum LassoStyle : ubyte {
+    Freehand  = 0,
+    Rectangle = 1,
+    Circle    = 2,
+    Ellipse   = 3,
+}
+
+/// LXsP_TOOL_FALLOFF — soft-selection weight, populated by WGHT stage
+/// in 7.5. Value-typed (no `Object`-derived state), matching
+/// SnapPacket's pattern; `evaluateFalloff(packet, pos, vi, vp)` in
+/// `source/falloff.d` does the actual weight math, dispatched on
+/// `type`. Returns 1.0 for every vertex when `enabled == false`, so
+/// transform tools can blindly multiply by the weight without
+/// short-circuiting.
 struct FalloffPacket {
-    FalloffWeightFn weight;     // null → use defaultWeight
-    static float defaultWeight(Vec3 _, uint __) { return 1.0f; }
+    bool         enabled;
+    FalloffType  type        = FalloffType.None;
+    FalloffShape shape       = FalloffShape.Smooth;
+
+    // Linear: gradient between two world-space points. weight = 1.0
+    // at `start`, 0.0 at `end`, attenuated by `shape`.
+    Vec3         start       = Vec3(0, 0, 0);
+    Vec3         end         = Vec3(0, 1, 0);
+
+    // Radial: ellipsoid centred at `center` with per-axis radii
+    // `size`. weight = 1.0 at the centre, 0.0 outside the ellipsoid
+    // surface.
+    Vec3         center      = Vec3(0, 0, 0);
+    Vec3         size        = Vec3(1, 1, 1);
+
+    // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
+    // projected as an infinite cylinder along the camera-back axis.
+    // `transparent = false` means the falloff only affects camera-
+    // facing geometry (verts behind the camera get weight 0).
+    float        screenCx     = 0;
+    float        screenCy     = 0;
+    float        screenSize   = 64;
+    bool         transparent  = false;
+
+    // Lasso: screen-space polygon (Freehand) or 2-corner shape
+    // (Rectangle/Circle/Ellipse). Inside the polygon weight = 1.0;
+    // outside, attenuated across `softBorderPx` pixels via `shape`.
+    LassoStyle   lassoStyle   = LassoStyle.Freehand;
+    float[]      lassoPolyX;
+    float[]      lassoPolyY;
+    float        softBorderPx = 16;
+
+    // Custom shape (when `shape == FalloffShape.Custom`): cubic
+    // Hermite tangents at t=0 (in_) and t=1 (out_). Both ∈ [0, 1].
+    float        in_         = 0.5f;
+    float        out_        = 0.5f;
 }
 
 /// LXsP_TOOL_SYMMETRY — populated by SYMM stage in 7.6. Per-axis flags

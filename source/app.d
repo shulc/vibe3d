@@ -563,9 +563,11 @@ void main(string[] args) {
         import toolpipe.stages.actcenter : ActionCenterStage;
         import toolpipe.stages.axis      : AxisStage;
         import toolpipe.stages.snap      : SnapStage;
+        import toolpipe.stages.falloff   : FalloffStage;
         g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
         g_pipeCtx.pipeline.add(new AxisStage(&mesh, &editMode));
+        g_pipeCtx.pipeline.add(new FalloffStage());
     }
 
     Registry reg;
