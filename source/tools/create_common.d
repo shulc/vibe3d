@@ -8,6 +8,11 @@ import toolpipe.packets        : SubjectPacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
 
+import mesh : Mesh;
+import editmode : EditMode;
+import snap : SnapResult, snapCursor;
+import snap_render : publishLastSnap, clearLastSnap;
+
 // ---------------------------------------------------------------------------
 // Helpers shared by interactive Create-tools (BoxTool and the upcoming
 // SphereTool / CylinderTool / ConeTool / CapsuleTool / TorusTool / PenTool).
@@ -241,6 +246,51 @@ Vec3 transformDir(in float[16] m, Vec3 v) @nogc nothrow {
         m[1]*v.x + m[5]*v.y + m[9] *v.z,
         m[2]*v.x + m[6]*v.y + m[10]*v.z,
     );
+}
+
+/// Run SNAP against a workplane-local hit. Each Create-tool computes
+/// the cursor's intersection with the construction plane in LOCAL
+/// workplane coordinates via `rayPlaneIntersect(localEye, localRay,
+/// ...)`. Snap targets live in WORLD coordinates, so this helper:
+///
+///   1. Converts the local hit to world.
+///   2. Queries the SnapStage via the live ToolPipeContext.
+///   3. If a snap target was found, overwrites `hitLocal` with the
+///      target's world position transformed back to the tool's local
+///      frame.
+///   4. Returns the raw SnapResult so the tool can publish it for
+///      overlay rendering.
+///
+/// Falls through (leaves `hitLocal` untouched, returns `SnapResult.init`)
+/// when there's no toolpipe / SnapStage is disabled / no candidate
+/// within outerRange. `excludeVerts` is empty by default — Create-tools
+/// don't have a "moving set" the way MoveTool's drag does, and
+/// snapping a primitive's first corner to a selected vertex is a
+/// legitimate gesture.
+SnapResult snapLocalHit(ref Vec3 hitLocal,
+                        in WorkplaneFrame frame,
+                        int sx, int sy,
+                        const ref Viewport vp,
+                        const ref Mesh mesh,
+                        EditMode editMode,
+                        const(uint)[] excludeVerts = [])
+{
+    SnapResult sr;
+    if (g_pipeCtx is null) return sr;
+    SubjectPacket subj;
+    subj.mesh             = cast(Mesh*)&mesh;   // SnapStage doesn't mutate
+    subj.editMode         = editMode;
+    subj.selectedVertices = mesh.selectedVertices.dup;
+    subj.selectedEdges    = mesh.selectedEdges.dup;
+    subj.selectedFaces    = mesh.selectedFaces.dup;
+    auto state = g_pipeCtx.pipeline.evaluate(subj, vp);
+    if (!state.snap.enabled) return sr;
+
+    Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
+    sr = snapCursor(hitWorld, sx, sy, vp, mesh, state.snap, excludeVerts);
+    if (sr.snapped)
+        hitLocal = transformPoint(frame.toLocal, sr.worldPos);
+    return sr;
 }
 
 unittest {

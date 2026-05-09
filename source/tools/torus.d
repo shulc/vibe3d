@@ -15,7 +15,10 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
                               pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              transformPoint, transformDir;
+                              transformPoint, transformDir, snapLocalHit;
+import editmode : EditMode;
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : sin, cos, PI, abs, sqrt;
 
@@ -160,6 +163,9 @@ private:
     /// Workplane local↔world transform captured at choosePlane().
     WorkplaneFrame frame;
 
+    // Last snap query — drives the Idle-state cyan/yellow overlay.
+    SnapResult lastSnap;
+
     Vec3 startPoint;
     Vec3 currentPoint;
     Vec3 hpOrigin;
@@ -253,6 +259,9 @@ public:
         previewGpu.destroy();
 
         if (willCommit) commitTorusEdit(pre);
+
+        lastSnap = SnapResult.init;
+        clearLastSnap();
     }
 
     override void evaluate() {
@@ -303,6 +312,9 @@ public:
             if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return false;
+            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
             startPoint   = hit;
             currentPoint = hit;
             params_.axis = worldAxisIdxOf(planeNormal);
@@ -356,6 +368,20 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        if (state == TorusState.Idle) {
+            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
+            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
+            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
+            Vec3 hit;
+            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
+                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
+            } else {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+            }
+        }
         if (sizeDragIdx >= 0) {
             Vec3 outwardWorld = toWorldD(SIZE_AXES[sizeDragIdx]);
             bool skip;
@@ -390,6 +416,9 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 currentPoint = hit;
                 Vec3  d = currentPoint - startPoint;
                 float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
@@ -405,6 +434,9 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 // Magnitude of the projection onto planeNormal sets the tube
                 // thickness — the torus grows symmetrically about the major
                 // plane (no center shift; the cross-section is symmetric).
@@ -419,6 +451,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
         cachedVp = vp;
+        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == TorusState.Idle) return;
 
         immutable float[16] identity = identityMatrix;

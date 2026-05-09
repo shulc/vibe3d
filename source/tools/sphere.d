@@ -15,7 +15,10 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
                               pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              transformPoint, transformDir;
+                              transformPoint, transformDir, snapLocalHit;
+import editmode : EditMode;
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : sin, cos, acos, PI, abs, sqrt;
 
@@ -502,6 +505,9 @@ private:
 
     Viewport cachedVp;
 
+    // Last snap query — drives the Idle-state cyan/yellow overlay.
+    SnapResult lastSnap;
+
     // Move gizmo (axis-only).
     MoveHandler mover;
     int         moverDragAxis = -1;
@@ -632,6 +638,9 @@ public:
         previewGpu.destroy();
 
         if (willCommit) commitSphereEdit(pre);
+
+        lastSnap = SnapResult.init;
+        clearLastSnap();
     }
 
     override void evaluate() {
@@ -697,6 +706,12 @@ public:
             if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return false;
+            // Snap the click anchor to the closest pipeline-enabled
+            // target. hit is rewritten in place when a candidate is
+            // within the SnapStage's innerRange.
+            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
             startPoint   = hit;
             currentPoint = hit;
             // Keep params_.axis at its default (Y). Auto-rotating it to the
@@ -792,6 +807,23 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        // Idle-state live snap preview — show the cyan target where
+        // the first click would anchor the sphere. Frame isn't
+        // captured until the click; use the live workplane frame.
+        if (state == SphereState.Idle) {
+            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
+            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
+            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
+            Vec3 hit;
+            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
+                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
+            } else {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+            }
+        }
         if (radDragIdx >= 0) {
             // screenAxisDelta consumes WORLD origin + axis; RAD_AXES
             // entries are LOCAL outward directions (canonical ±X/±Y/±Z),
@@ -830,6 +862,9 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 currentPoint = hit;
                 if (dragUniform) syncParamsFromUniformDrag();
                 else             syncParamsFromBaseDrag();
@@ -848,6 +883,9 @@ public:
                                       localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
+                    lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                             *mesh, EditMode.Vertices);
+                    publishLastSnap(lastSnap);
                     Vec3  d = hit - baseAnchor;
                     float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
                     params_.cenX = baseAnchor.x;
@@ -864,6 +902,9 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 // Sphere center stays at baseAnchor; only the radius along
                 // planeNormal grows symmetrically as the user drags. Drag
                 // distance projected on normal == radius (sphere extends
@@ -883,6 +924,9 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
         cachedVp = vp;
+        // Snap overlay rendered even in Idle so the first-click target
+        // is highlighted before commit.
+        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == SphereState.Idle) return;
 
         immutable float[16] identity = identityMatrix;

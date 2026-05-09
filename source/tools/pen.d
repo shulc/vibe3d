@@ -15,7 +15,10 @@ import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
-                              transformPoint, transformDir;
+                              transformPoint, transformDir, snapLocalHit;
+import editmode : EditMode;
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : abs;
 
@@ -128,6 +131,12 @@ private:
     int  dragStartMX, dragStartMY;
 
     enum int DRAG_THRESHOLD_PX = 4;
+
+    // Last snap query — drives the cyan/yellow overlay. Refreshed on
+    // every motion event when the cursor is over the construction
+    // plane; consumed by clicks (which snap the placed vertex to the
+    // target's world position).
+    SnapResult lastSnap;
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, LitShader litShader,
@@ -246,6 +255,14 @@ public:
             if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return true;
+            // Snap the click position to the closest pipeline-enabled
+            // snap target (vertex / edge / face / grid). hit is rewritten
+            // in-place when a candidate falls within the SnapStage's
+            // innerRange. lastSnap stays populated so draw() can show
+            // the cyan element + yellow cursor marker.
+            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
             appendVertex(hit);
             params_.currentPoint = cast(int)vertices_.length - 1;
             syncPosFromCurrent();
@@ -276,6 +293,12 @@ public:
         if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                Vec3(0, 0, 0), planeNormal, hit))
             return true;
+
+        // Snap the placed vertex to the closest pipeline-enabled
+        // snap target — same convention as the first-click path.
+        lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                *mesh, EditMode.Vertices);
+        publishLastSnap(lastSnap);
 
         // Make Quads strip extension: after 2 anchor verts, each click adds
         // user (cursor) + auto (parallelogram extension). Skips the insert
@@ -312,6 +335,39 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        // Live snap preview — runs whenever a click would place / move
+        // a vertex, so the user sees the cyan target before committing.
+        // Skipped only when the user is hovering an existing in-progress
+        // vertex (next click selects it, doesn't place a new one).
+        bool overExisting = state == PenState.Drawing
+                            && findHoveredVert(e.x, e.y) >= 0;
+        if (!overExisting) {
+            // Frame is captured at first click; before that we still
+            // need one to convert local↔world. pickWorkplaneFrame gives
+            // the live frame the first click would lock onto.
+            WorkplaneFrame f = state == PenState.Drawing
+                ? frame
+                : pickWorkplaneFrame(cachedVp);
+            // Local plane normal varies per state too. choosePlane() in
+            // PenTool uses the camera-most-facing axis of the LIVE frame,
+            // which collapses to (0,1,0) in identity-frame auto-mode.
+            Vec3 pn = state == PenState.Drawing ? planeNormal : Vec3(0, 1, 0);
+            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
+            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
+            Vec3 hit;
+            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), pn, hit)) {
+                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
+            } else {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+            }
+        } else {
+            lastSnap = SnapResult.init;
+            clearLastSnap();
+        }
+
         if (!dragArmed) return false;
 
         if (!dragInitiated) {
@@ -329,6 +385,15 @@ public:
         if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                               Vec3(0, 0, 0), planeNormal, hit))
         {
+            // Snap the dragged vertex's new position too — same lastSnap
+            // already populated by the preview block above; reuse the
+            // already-computed snap target instead of re-querying. We
+            // exclude the dragged-vertex's own world position is moot
+            // here (the SnapStage walks `mesh` only, not the in-progress
+            // pen buffer), so no exclusion needed.
+            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
             vertices_[dragVertIdx] = hit;
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
             uploadPreview();
@@ -400,6 +465,10 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
         cachedVp = vp;
+        // Snap overlay (cyan element + yellow cursor marker) renders
+        // even in Idle so the user sees where the FIRST vertex would
+        // land if they clicked. Populated by onMouseMotion.
+        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == PenState.Idle) return;
 
         immutable float[16] identity = identityMatrix;
@@ -559,6 +628,9 @@ private:
         state = PenState.Idle;
         params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
+        // Drop the snap overlay so it doesn't linger.
+        lastSnap = SnapResult.init;
+        clearLastSnap();
     }
 
     // Mirror vertices_[currentPoint] into the params_.posX/Y/Z fields so the

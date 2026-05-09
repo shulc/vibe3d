@@ -15,7 +15,10 @@ import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               currentWorkplaneFrame,
-                              transformPoint, transformDir;
+                              transformPoint, transformDir, snapLocalHit;
+import editmode : EditMode;
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import params : Param;
 
 import ImGui = d_imgui;
@@ -1833,6 +1836,12 @@ private:
 
     Viewport cachedVp;
 
+    // Last snap query — drives the cyan/yellow overlay during the
+    // Idle state. Refreshed by onMouseMotion's hover preview and by
+    // the first click that moves the construction-plane hit onto a
+    // snap target.
+    SnapResult lastSnap;
+
     // Move gizmo (axis-only, no plane circles)
     MoveHandler mover;
     int         moverDragAxis = -1;   // 0/1/2 = X/Y/Z, -1 = none
@@ -1916,6 +1925,10 @@ public:
         previewGpu.destroy();
 
         if (willCommit) commitBoxEdit(pre);
+
+        // Drop the snap overlay so it doesn't linger after deactivate.
+        lastSnap = SnapResult.init;
+        clearLastSnap();
     }
 
     private void commitBoxEdit(MeshSnapshot pre) {
@@ -2006,6 +2019,12 @@ public:
             if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0,0,0), planeNormal, hit))
                 return false;
+            // Snap the click to the closest pipeline-enabled target.
+            // hit is rewritten in place when a candidate falls within
+            // the SnapStage's innerRange; lastSnap drives the overlay.
+            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
             startPoint   = hit;
             currentPoint = hit;
             // Ctrl at the first click jumps straight into a 3D uniform cube
@@ -2113,6 +2132,26 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        // Idle-state live snap preview. Before any clicks, show the
+        // cyan target where the first click would anchor the box.
+        // Frame isn't captured until the first click — use the live
+        // workplane frame, same one choosePlane() will lock onto.
+        if (state == BoxState.Idle) {
+            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
+            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
+            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
+            // Plane normal in local frame is +Y by construction (the
+            // workplane lies in local XZ).
+            Vec3 hit;
+            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
+                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
+            } else {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+            }
+        }
         if (edgeDragIdx >= 0) {
             // The handle pos lives in world (rendered via cachedVp); pass
             // the world version of the local axis we want to project the
@@ -2221,6 +2260,11 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0,0,0), planeNormal, hit))
             {
+                // Snap the dragged base-corner to the closest snap
+                // target. Falls through to raw `hit` when no snap fires.
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 currentPoint = hit;
                 if (dragUniform) syncParamsFromUniformDrag();
                 else             syncParamsFromBaseDrag();
@@ -2240,6 +2284,12 @@ public:
                                       localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
+                    // Snap the cursor's plane hit; cube radius then
+                    // becomes the distance from baseAnchor to the
+                    // snap target.
+                    lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                             *mesh, EditMode.Vertices);
+                    publishLastSnap(lastSnap);
                     Vec3  d = hit - baseAnchor;
                     float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
                     params_.cenX = baseAnchor.x;
@@ -2256,6 +2306,11 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
+                // Snap the height-drag hit too — useful for matching
+                // box top/bottom to an existing vertex's height.
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 // Signed projection of drag onto planeNormal — sign decides
                 // which side of the base the cuboid grows on; size is always
                 // positive (|signedH|).
@@ -2276,6 +2331,9 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
         cachedVp = vp;
+        // Snap overlay renders even in Idle so the user sees the cyan
+        // target before the first click anchors the box.
+        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == BoxState.Idle) return;
 
         immutable float[16] identity = identityMatrix;

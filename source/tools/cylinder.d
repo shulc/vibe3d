@@ -15,7 +15,10 @@ import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
 import tools.create_common : pickWorkplane, BuildPlane, pickWorkplaneGizmoBasis,
                               pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
-                              transformPoint, transformDir;
+                              transformPoint, transformDir, snapLocalHit;
+import editmode : EditMode;
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : sin, cos, PI, abs, sqrt;
 
@@ -216,6 +219,9 @@ private:
     /// upload / commit transforms vertices through `frame.toWorld`.
     WorkplaneFrame frame;
 
+    // Last snap query — drives the Idle-state cyan/yellow overlay.
+    SnapResult lastSnap;
+
     // Drag anchors — only valid for the matching state(s).
     Vec3 startPoint;
     Vec3 currentPoint;
@@ -324,6 +330,9 @@ public:
         previewGpu.destroy();
 
         if (willCommit) commitCylinderEdit(pre);
+
+        lastSnap = SnapResult.init;
+        clearLastSnap();
     }
 
     override void evaluate() {
@@ -380,6 +389,11 @@ public:
             if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                    Vec3(0, 0, 0), planeNormal, hit))
                 return false;
+            // Snap the click anchor to the closest pipeline-enabled
+            // target. Same convention as Box / Sphere / Pen.
+            lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                    *mesh, EditMode.Vertices);
+            publishLastSnap(lastSnap);
             startPoint   = hit;
             currentPoint = hit;
             // Set params_.axis = local axis index of plane normal so the
@@ -460,6 +474,21 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
+        // Idle-state live snap preview.
+        if (state == CylinderState.Idle) {
+            WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
+            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
+            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
+            Vec3 hit;
+            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
+                lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
+            } else {
+                lastSnap = SnapResult.init;
+                clearLastSnap();
+            }
+        }
         if (sizeDragIdx >= 0) {
             // SIZE_AXES are LOCAL outward directions; screenAxisDelta
             // consumes WORLD origin + axis, so route through toWorldD.
@@ -497,6 +526,9 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   Vec3(0, 0, 0), planeNormal, hit))
             {
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 currentPoint = hit;
                 if (dragUniform) syncParamsFromUniformDrag();
                 else             syncParamsFromBaseDrag();
@@ -511,6 +543,9 @@ public:
                                       localRay(e.x, e.y),
                                       baseAnchor, planeNormal, hit))
                 {
+                    lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                             *mesh, EditMode.Vertices);
+                    publishLastSnap(lastSnap);
                     Vec3  d = hit - baseAnchor;
                     float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
                     params_.cenX = baseAnchor.x;
@@ -527,6 +562,9 @@ public:
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
                                   hpOrigin, hpn, hit))
             {
+                lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
+                                         *mesh, EditMode.Vertices);
+                publishLastSnap(lastSnap);
                 // Box-style asymmetric grow: the disk drawn in DrawingBase is
                 // one face of the cylinder; the second drag extrudes the
                 // OTHER face along signedH. Center sits halfway between
@@ -552,6 +590,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
         cachedVp = vp;
+        drawSnapOverlay(lastSnap, vp, *mesh);
         if (state == CylinderState.Idle) return;
 
         immutable float[16] identity = identityMatrix;
