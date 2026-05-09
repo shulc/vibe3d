@@ -3135,6 +3135,22 @@ void main(string[] args) {
 
         // ---- Events ----
         while (SDL_PollEvent(&event)) {
+            // In --test mode, drop real keyboard/mouse input from the
+            // SDL queue so a stray click or keypress in the test window
+            // can't mutate state and break a running test. The test
+            // harness drives state via HTTP + EventPlayer's direct
+            // dispatch, both of which bypass this queue. SDL_QUIT and
+            // SDL_WINDOWEVENT stay routed so the window can still be
+            // closed (X button / SIGINT).
+            if (testMode &&
+                (event.type == SDL_KEYDOWN
+              || event.type == SDL_KEYUP
+              || event.type == SDL_TEXTINPUT
+              || event.type == SDL_MOUSEMOTION
+              || event.type == SDL_MOUSEBUTTONDOWN
+              || event.type == SDL_MOUSEBUTTONUP
+              || event.type == SDL_MOUSEWHEEL))
+                continue;
             if (!processEvent(&event)) {
                 running = false;
                 break;
