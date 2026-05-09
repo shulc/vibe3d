@@ -65,6 +65,14 @@ public:
         origVertices = mesh.vertices.dup;
     }
 
+    // Phase 7.5h: tool-session boundary — commit any pending edit
+    // before tool switch so the session lands as one undo entry.
+    override void deactivate() {
+        if (editIsOpen())
+            commitEdit("Rotate");
+        super.deactivate();
+    }
+
     override void update() {
         if (!active) return;
 
@@ -77,6 +85,11 @@ public:
         bool mutChanged = (currentMutVer != lastMutationVersion);
 
         if (selChanged || mutChanged) {
+            // Phase 7.5h: close out any pending edit FIRST so this
+            // session's drags + falloff tweaks land as one history
+            // entry (matches deactivate()).
+            if (editIsOpen() && selChanged)
+                commitEdit("Rotate");
             lastSelectionHash   = currentHash;
             lastMutationVersion = currentMutVer;
             vertexCacheDirty    = true;
@@ -103,12 +116,35 @@ public:
             }
         }
 
+        // Phase 7.5h: live falloff change → re-apply with new weights.
+        // Rotate's existing applyAbsoluteFromOrigCpuOnly already
+        // rebuilds verts from origVertices using the captured
+        // dragFalloff; just need to trigger it on packet change.
+        if (editIsOpen() && angleAccum != Vec3(0, 0, 0)) {
+            FalloffPacket live = currentFalloff();
+            if (!falloffPacketsEqual(live, dragFalloff)) {
+                dragFalloff = live;
+                buildVertexCacheIfNeeded();
+                applyAbsoluteFromOrigCpuOnly();
+                needsGpuUpdate = true;
+            }
+        }
+
         // Pull the gizmo center from the ACEN stage every frame: mode /
         // userPlaced changes don't bump the selection hash or mesh
         // mutation, so they would otherwise not propagate to the
         // visible gizmo.
-        cachedCenter = queryActionCenter();
-        handler.setPosition(cachedCenter);
+        //
+        // Phase 7.5h: skip while an edit session is open — handler
+        // position is maintained by drag / slider / click-relocate,
+        // and re-pulling on every frame can snap the pivot away from
+        // where the user expects after a falloff-driven rotation
+        // (selection bbox centroid drifts). Edit closes at deactivate
+        // / selection change; the next update() then re-pulls cleanly.
+        if (!editIsOpen()) {
+            cachedCenter = queryActionCenter();
+            handler.setPosition(cachedCenter);
+        }
     }
 
     // Snapshot Tool-Properties state at the start of an edit session, so
@@ -200,6 +236,11 @@ public:
             Vec3 hit;
             if (!computeClickRelocateHit(e.x, e.y, hit))
                 return false;
+            // Phase 7.5h: relocating to a new pivot is a new logical
+            // tool session — bake the prior session's rotations into
+            // one undo entry first, then start fresh.
+            if (editIsOpen())
+                commitEdit("Rotate");
             handler.setPosition(hit);
             centerManual = true;
             notifyAcenUserPlaced(hit);
@@ -291,7 +332,10 @@ public:
         propDeg = Vec3(angleAccum.x * 180.0f / PI,
                        angleAccum.y * 180.0f / PI,
                        angleAccum.z * 180.0f / PI);
-        commitEdit("Rotate");   // Phase C.3: land this drag as one undo entry.
+        // Phase 7.5h: don't commit at mouseUp — keep the edit open so
+        // mid-tool falloff changes / further drags re-apply onto the
+        // same origVertices baseline. Commit fires at deactivate /
+        // selection change / click-outside-relocate.
         return true;
     }
 
@@ -433,7 +477,9 @@ public:
                 needsGpuUpdate = true;
             }
         } else {
-            // Drag ended: commit final CPU state to GPU.
+            // Drag ended: commit final CPU state to GPU. 7.5h: don't
+            // commit the edit here either — props sliders are part of
+            // the same tool session as gizmo drags.
             if (propsDragging) {
                 gpu.upload(*mesh);
                 gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -441,7 +487,6 @@ public:
             } else {
                 needsGpuUpdate = true;
             }
-            commitEdit("Rotate");   // Phase C.3: land slider drag on undo stack.
         }
     }
 

@@ -62,6 +62,14 @@ public:
         activationCenter   = handler.center;
     }
 
+    // Phase 7.5h: tool-session boundary — bake pending edit into one
+    // undo entry on tool switch.
+    override void deactivate() {
+        if (editIsOpen())
+            commitEdit("Scale");
+        super.deactivate();
+    }
+
     override void update() {
         if (!active) return;
 
@@ -74,6 +82,11 @@ public:
         bool mutChanged = (currentMutVer != lastMutationVersion);
 
         if (selChanged || mutChanged) {
+            // Phase 7.5h: close out any pending edit FIRST so this
+            // session's drags + falloff tweaks land as one history
+            // entry.
+            if (editIsOpen() && selChanged)
+                commitEdit("Scale");
             lastSelectionHash   = currentHash;
             lastMutationVersion = currentMutVer;
             vertexCacheDirty    = true;
@@ -94,15 +107,37 @@ public:
             }
         }
 
+        // Phase 7.5h: live falloff change → re-apply with new weights.
+        // Scale's existing applyScaleFromActivationCpuOnly rebuilds
+        // verts from activationVertices using the captured dragFalloff;
+        // trigger it on packet change.
+        if (editIsOpen() && scaleAccum != Vec3(1, 1, 1)) {
+            FalloffPacket live = currentFalloff();
+            if (!falloffPacketsEqual(live, dragFalloff)) {
+                dragFalloff = live;
+                buildVertexCacheIfNeeded();
+                applyScaleFromActivationCpuOnly();
+                needsGpuUpdate = true;
+            }
+        }
+
         // Pull the gizmo center from the ACEN stage every frame: mode /
         // userPlaced changes don't bump the selection hash or mesh
         // mutation, so they would otherwise not propagate to the
         // visible gizmo. activationCenter (= scale pivot for the next
         // drag / prop-apply) tracks cachedCenter so a mid-tool ACEN
         // mode change reaches the next scale operation too.
-        cachedCenter = queryActionCenter();
-        activationCenter = cachedCenter;
-        handler.setPosition(cachedCenter);
+        //
+        // 7.5h: skip during an open edit — the active scale's pivot is
+        // activationCenter (captured when the session began), and re-
+        // pulling from ACEN here would drift it as the bbox-centroid
+        // of the deformed selection moves under non-uniform per-vertex
+        // weight.
+        if (!editIsOpen()) {
+            cachedCenter = queryActionCenter();
+            activationCenter = cachedCenter;
+            handler.setPosition(cachedCenter);
+        }
     }
 
     private void snapshotEditState() {
@@ -197,11 +232,18 @@ public:
         Vec3 hit;
         if (!computeClickRelocateHit(e.x, e.y, hit))
             return false;
+        // Phase 7.5h: relocating to a new pivot is a new logical tool
+        // session — bake the prior session into one undo entry first,
+        // then capture a fresh baseline at the new pivot.
+        if (editIsOpen())
+            commitEdit("Scale");
         handler.setPosition(hit);
         centerManual = true;
         notifyAcenUserPlaced(hit);
         activationVertices = mesh.vertices.dup;
         activationCenter   = hit;
+        scaleAccum         = Vec3(1, 1, 1);
+        propScale          = Vec3(1, 1, 1);
         return false;  // don't start a drag
     }
 
@@ -221,12 +263,19 @@ public:
 
         dragAxis = -1;
         propScale = scaleAccum;
-        activationVertices = mesh.vertices.dup;
-        activationCenter   = handler.center;
+        // Phase 7.5h: don't reset activationVertices / activationCenter
+        // here. The invariant is `mesh == scaleAlongBasis(activationVertices,
+        // activationCenter, ..., scaleAccum)`; resetting the baseline
+        // while leaving scaleAccum non-identity breaks it (next slider
+        // edit / falloff re-apply would compound scaleAccum onto an
+        // already-scaled baseline). Baseline lives until the session
+        // closes at deactivate / selection change / new tool session.
         // Drop the snap overlay so it doesn't linger after the drag.
         lastSnap = SnapResult.init;
         clearLastSnap();
-        commitEdit("Scale");   // Phase C.3: land this drag as one undo entry.
+        // 7.5h: don't commit at mouseUp — keep edit open so mid-tool
+        // falloff changes / further drags re-apply onto the same
+        // activationVertices baseline.
         return true;
     }
 
@@ -389,7 +438,9 @@ public:
                 needsGpuUpdate = true;
             }
         } else {
-            // Drag ended: commit final CPU state to GPU.
+            // Drag ended: commit final CPU state to GPU. 7.5h: don't
+            // commit the edit here — props sliders are part of the
+            // same tool session as gizmo drags.
             if (propsDragging) {
                 gpu.upload(*mesh);
                 gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -397,7 +448,6 @@ public:
             } else {
                 needsGpuUpdate = true;
             }
-            commitEdit("Scale");   // Phase C.3: land slider drag on undo stack.
         }
     }
 
