@@ -190,6 +190,10 @@ public:
         publishState();
     }
 
+    /// True iff a sticky click-outside pin is active (set via
+    /// `setUserPlaced`, cleared by `resetAuto` or a mode switch).
+    bool isUserPlaced() const { return userPlaced; }
+
     /// Switch into Manual mode and pin the center. Mirror of
     /// `setAutoUserPlaced` for callers that want strict "stay here"
     /// semantics regardless of selection changes.

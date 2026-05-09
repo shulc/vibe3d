@@ -147,6 +147,15 @@ public:
         // Sync cachedCenter to the actual post-move gizmo position so update()
         // does not snap it back to the pre-move centroid on the next frame.
         cachedCenter = handler.center;
+        // Sticky-pin follow: when ACEN.userPlaced is active (set by
+        // click-outside-relocate at drag start), update the pin to the
+        // post-drag handler position. Without this, the next update()
+        // frame asks ACEN for the center and gets back the original
+        // click point — snap-final position is lost and the gizmo
+        // visually jumps back. With snap on the jump is dramatic
+        // because the gizmo had locked onto a discrete snap target.
+        if (acenIsUserPlaced())
+            notifyAcenUserPlaced(handler.center);
         lastSelectionHash = computeSelectionHash();
         // Phase C.2: land this drag as one undo entry. No-op if the drag
         // didn't actually move any verts.

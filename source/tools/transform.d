@@ -269,6 +269,23 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
+    /// True iff the ACEN stage currently holds a sticky click-outside
+    /// pin. MoveTool reads this on mouse-up so it can update
+    /// `userPlacedCenter` to the post-drag handler position — without
+    /// it, the gizmo snaps back to the original click point on the
+    /// next `update()` (the pin is sticky, but its location was frozen
+    /// at click time).
+    bool acenIsUserPlaced() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return false;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return false;
+        return ac.isUserPlaced();
+    }
+
     /// True iff the current ACEN mode lets click-outside-gizmo relocate
     /// the gizmo. Per MODO 9: only Auto, None and Screen do — the other
     /// modes (Select / SelectAuto / Element / Local / Origin / Manual /
