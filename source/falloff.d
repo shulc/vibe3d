@@ -3,7 +3,8 @@ module falloff;
 import std.algorithm : max, min;
 import std.math      : sqrt;
 
-import math : Vec3, Viewport, projectToWindowFull, dot;
+import math : Vec3, Viewport, projectToWindowFull, dot,
+              pointInPolygon2D, closestOnSegment2DSquared;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape;
 
 // ---------------------------------------------------------------------------
@@ -48,8 +49,7 @@ float evaluateFalloff(const ref FalloffPacket cfg,
         case FalloffType.Screen:
             return screenWeight(cfg, pos, vp);
         case FalloffType.Lasso:
-            // Lands in 7.5e.
-            return 1.0f;
+            return lassoWeight(cfg, pos, vp);
     }
 }
 
@@ -121,6 +121,51 @@ private float screenWeight(const ref FalloffPacket cfg, Vec3 pos,
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
     return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+}
+
+/// Lasso falloff: project the vert to window pixels; weight = 1.0 if
+/// the projected point is inside the lasso polygon; otherwise the
+/// pixel distance to the nearest polygon edge is mapped to weight via
+/// `softBorderPx`. softBorderPx == 0 ⇒ binary inside/outside (1 / 0).
+///
+/// 7.5e ships only the Freehand style (polygon points in lassoPolyX/Y).
+/// Rectangle / Circle / Ellipse styles fall through to "polygon
+/// vertices only" — typical caller draws the rect/circle into the
+/// polygon arrays during the lasso input gesture. Verts behind the
+/// camera get weight = 0 unless `transparent` is set, mirroring the
+/// Screen falloff convention.
+private float lassoWeight(const ref FalloffPacket cfg, Vec3 pos,
+                          const ref Viewport vp)
+{
+    if (cfg.lassoPolyX.length < 3
+     || cfg.lassoPolyX.length != cfg.lassoPolyY.length)
+        return 1.0f;     // unset / malformed lasso → no falloff
+    float sx, sy, ndcZ;
+    if (!projectToWindowFull(pos, vp, sx, sy, ndcZ))
+        return cfg.transparent ? 1.0f : 0.0f;
+
+    bool inside = pointInPolygon2D(sx, sy,
+                                   cast(float[])cfg.lassoPolyX,
+                                   cast(float[])cfg.lassoPolyY);
+    if (inside) return 1.0f;
+    if (cfg.softBorderPx <= 1e-6f) return 0.0f;
+
+    // Closest screen-pixel distance to any polygon edge segment.
+    float bestD2 = float.infinity;
+    auto xs = cfg.lassoPolyX;
+    auto ys = cfg.lassoPolyY;
+    foreach (i; 0 .. xs.length) {
+        size_t j = (i + 1) % xs.length;
+        float t;
+        float d2 = closestOnSegment2DSquared(sx, sy,
+            xs[i], ys[i], xs[j], ys[j], t);
+        if (d2 < bestD2) bestD2 = d2;
+    }
+    float d = sqrt(bestD2);
+    float tt = d / cfg.softBorderPx;
+    if (tt <= 0.0f) return 1.0f;
+    if (tt >= 1.0f) return 0.0f;
+    return applyShape(tt, cfg.shape, cfg.in_, cfg.out_);
 }
 
 /// Map a normalised distance `t ∈ [0, 1]` (0 = full influence, 1 = no
@@ -244,5 +289,16 @@ unittest { // screen falloff: behind-camera handling
     p.transparent = false;
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 0.0f));
     p.transparent = true;
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
+}
+
+unittest { // lasso: empty / unset polygon falls through to weight = 1
+    import std.math : isClose;
+    FalloffPacket p;
+    p.enabled    = true;
+    p.type       = FalloffType.Lasso;
+    p.transparent = true;
+    Viewport vp;
+    // No polygon → no-op falloff (matches plan: "unset / malformed → 1").
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
 }

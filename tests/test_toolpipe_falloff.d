@@ -262,3 +262,38 @@ unittest { // none does not auto-size
     assert(a["start"] == "1,1,1",
         "start clobbered by switch-to-none: " ~ a["start"]);
 }
+
+// -------------------------------------------------------------------------
+// 7.5e: lassoPoly setAttr round-trip — "x1,y1;x2,y2;..." semicolon-
+// delimited screen-pixel polygon.
+// -------------------------------------------------------------------------
+
+unittest { // lassoPoly round-trip
+    resetCube();
+    postJson("/api/command",
+        `tool.pipe.attr falloff lassoPoly "10,20;30,40;50,60"`);
+    auto a = getFalloffAttrs();
+    assert(a["lassoPoly"] == "10,20;30,40;50,60",
+        "lassoPoly: " ~ a["lassoPoly"]);
+}
+
+unittest { // lassoPoly: < 3 points rejected
+    resetCube();
+    postJson("/api/command",
+        `tool.pipe.attr falloff lassoPoly "10,20;30,40;50,60"`);
+    cast(void)post(baseUrl ~ "/api/command",
+        `tool.pipe.attr falloff lassoPoly "1,2;3,4"`);
+    auto a = getFalloffAttrs();
+    assert(a["lassoPoly"] == "10,20;30,40;50,60",
+        "2-point polygon must be rejected; got " ~ a["lassoPoly"]);
+}
+
+unittest { // lassoClear empties the polygon
+    resetCube();
+    postJson("/api/command",
+        `tool.pipe.attr falloff lassoPoly "10,20;30,40;50,60"`);
+    postJson("/api/command", "tool.pipe.attr falloff lassoClear 1");
+    auto a = getFalloffAttrs();
+    assert(a["lassoPoly"] == "",
+        "lassoClear should empty polygon; got " ~ a["lassoPoly"]);
+}

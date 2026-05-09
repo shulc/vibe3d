@@ -159,10 +159,19 @@ class FalloffStage : Stage {
             ["screenSize",  format("%g", screenSize)],
             ["transparent", transparent ? "true" : "false"],
             ["lassoStyle",  lassoStyleLabel()],
+            ["lassoPoly",   lassoPolyStr()],
             ["softBorder",  format("%g", softBorderPx)],
             ["in",          format("%g", in_)],
             ["out",         format("%g", out_)],
         ];
+    }
+
+    string lassoPolyStr() const {
+        if (lassoPolyX.length == 0) return "";
+        string s = format("%g,%g", lassoPolyX[0], lassoPolyY[0]);
+        foreach (i; 1 .. lassoPolyX.length)
+            s ~= format(";%g,%g", lassoPolyX[i], lassoPolyY[i]);
+        return s;
     }
 
 private:
@@ -202,8 +211,42 @@ private:
             case "softBorder": softBorderPx = parseFloat(value); return true;
             case "in":         in_          = parseFloat(value); return true;
             case "out":        out_         = parseFloat(value); return true;
+            case "lassoPoly":  return parseLassoPoly(value);
+            case "lassoClear":
+                lassoPolyX.length = 0;
+                lassoPolyY.length = 0;
+                return true;
             default: return false;
         }
+    }
+
+    // Parse a "x1,y1;x2,y2;..." polygon. Empty string clears the
+    // polygon. Returns false on malformed input (odd token count,
+    // non-numeric, etc.) — leaves existing polygon intact.
+    bool parseLassoPoly(string value) {
+        if (value.length == 0) {
+            lassoPolyX.length = 0;
+            lassoPolyY.length = 0;
+            return true;
+        }
+        float[] xs;
+        float[] ys;
+        foreach (chunk; value.split(";")) {
+            auto t = chunk.strip;
+            if (t.length == 0) continue;
+            auto pair = t.split(",");
+            if (pair.length != 2) return false;
+            try {
+                xs ~= pair[0].strip.to!float;
+                ys ~= pair[1].strip.to!float;
+            } catch (Exception) {
+                return false;
+            }
+        }
+        if (xs.length < 3) return false;       // need a polygon, not a point/line
+        lassoPolyX = xs;
+        lassoPolyY = ys;
+        return true;
     }
 
     string typeLabel() const {
