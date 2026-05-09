@@ -110,8 +110,19 @@ public:
         // userPlaced changes don't bump the selection hash or mesh
         // mutation, so they would otherwise not propagate to the
         // visible gizmo.
-        cachedCenter = queryActionCenter();
-        handler.setPosition(cachedCenter);
+        //
+        // Phase 7.5h: skip when an edit session is open. Drag /
+        // slider / falloff-reapply already maintain handler.center;
+        // re-pulling from ACEN at this point would snap the gizmo
+        // to the bbox-centroid of the (possibly weighted) deformed
+        // selection, which doesn't match the drag-end position
+        // whenever falloff produced non-uniform per-vertex motion.
+        // Edit closes at deactivate / selection change — the next
+        // update() then re-pulls from ACEN cleanly.
+        if (!editIsOpen()) {
+            cachedCenter = queryActionCenter();
+            handler.setPosition(cachedCenter);
+        }
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
