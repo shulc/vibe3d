@@ -161,6 +161,50 @@ groups:
               - label: "Fixed Grid"
                 action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
                 checked: { path: "snap/fixedGrid", equals: "true" }
+      # Phase 7.5: Falloff (WGHT) pulldown. Type selection drives the
+      # FalloffStage; auto-size on switch fits the falloff to the
+      # current selection's bbox. Button face shows the active type
+      # (dynamicLabel: true → "Linear" / "Radial" / etc.); falls back
+      # to the static label when type=none. Pressed-state is "anything
+      # but none".
+      - label: "Falloff"
+        action:
+          kind: popup
+          dynamicLabel: true
+          checked: { path: "falloff/type", notEquals: "none" }
+          items:
+            - label: (none)
+              action: { kind: script, lines: ["tool.pipe.attr falloff type none"] }
+              checked: { path: "falloff/types/none", equals: "true" }
+            - label: Linear
+              action: { kind: script, lines: ["tool.pipe.attr falloff type linear"] }
+              checked: { path: "falloff/types/linear", equals: "true" }
+            - label: Radial
+              action: { kind: script, lines: ["tool.pipe.attr falloff type radial"] }
+              checked: { path: "falloff/types/radial", equals: "true" }
+            - label: Screen
+              action: { kind: script, lines: ["tool.pipe.attr falloff type screen"] }
+              checked: { path: "falloff/types/screen", equals: "true" }
+            - label: Lasso
+              action: { kind: script, lines: ["tool.pipe.attr falloff type lasso"] }
+              checked: { path: "falloff/types/lasso", equals: "true" }
+            - { kind: divider }
+            - { kind: header, label: "Shape" }
+            - label: Linear
+              action: { kind: script, lines: ["tool.pipe.attr falloff shape linear"] }
+              checked: { path: "falloff/shape", equals: "linear" }
+            - label: Ease In
+              action: { kind: script, lines: ["tool.pipe.attr falloff shape easeIn"] }
+              checked: { path: "falloff/shape", equals: "easeIn" }
+            - label: Ease Out
+              action: { kind: script, lines: ["tool.pipe.attr falloff shape easeOut"] }
+              checked: { path: "falloff/shape", equals: "easeOut" }
+            - label: Smooth
+              action: { kind: script, lines: ["tool.pipe.attr falloff shape smooth"] }
+              checked: { path: "falloff/shape", equals: "smooth" }
+            - label: Custom
+              action: { kind: script, lines: ["tool.pipe.attr falloff shape custom"] }
+              checked: { path: "falloff/shape", equals: "custom" }
       - label: "Work Plane"
         action:
           kind: popup
