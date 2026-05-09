@@ -16,34 +16,7 @@ groups:
         alt:
           label: "Convert P"
           action: { kind: script, lines: ["select.convert polygon"] }
-  - title: workplane
-    buttons:
-      - label: "Work Plane"
-        action:
-          kind: popup
-          # Highlight the button whenever the workplane is non-auto — visual
-          # cue that subsequent prim.* / move / rotate / scale tools will
-          # interpret coordinates relative to this plane, not world-XZ.
-          checked: { path: "workplane/auto", equals: "false" }
-          items:
-            - label: Auto
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
-              checked: { path: "workplane/auto", equals: "true" }
-            - label: World Y
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
-              checked: { path: "workplane/mode", equals: "worldY" }
-            - label: World X
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
-              checked: { path: "workplane/mode", equals: "worldX" }
-            - label: World Z
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
-              checked: { path: "workplane/mode", equals: "worldZ" }
-            - { kind: divider }
-            - label: Align To Selection
-              action: { kind: command, id: workplane.alignToSelection }
-            - label: Reset
-              action: { kind: command, id: workplane.reset }
-  - title: actioncenter
+  - title: toolpipe
     buttons:
       # MODO-style Action Center pulldown. Mirrors
       # resrc/701_frm_modomodes_actioncenters:sheet from the MODO 9
@@ -143,47 +116,73 @@ groups:
                 - label: Local
                   action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
                   checked: { path: "axis/mode", equals: "local" }
-  - title: snap
-    buttons:
       # MODO-style Snapping pulldown. Master toggle on top (matches the
       # @x keybind in inmapdefault.cfg → tool.snapState true), divider,
       # then a checkbox per SnapType. Button face stays highlighted as
       # long as snap is on. Mirrors resrc/_snap.cfg structure but
       # scoped to vibe3d's seven supported types.
       - label: "Snap"
+        action: { kind: command, id: snap.toggle }
+        checked: { path: "snap/enabled", equals: "true" }
+        alt:
+          label: "Options"
+          action:
+            kind: popup
+            items:
+              - label: "Snap (X)"
+                action: { kind: command, id: snap.toggle }
+                checked: { path: "snap/enabled", equals: "true" }
+              - { kind: divider }
+              - { kind: header, label: "Geometry" }
+              - label: Vertex
+                action: { kind: script, lines: ["snap.toggleType vertex"] }
+                checked: { path: "snap/types/vertex", equals: "true" }
+              - label: Edge
+                action: { kind: script, lines: ["snap.toggleType edge"] }
+                checked: { path: "snap/types/edge", equals: "true" }
+              - label: Edge Center
+                action: { kind: script, lines: ["snap.toggleType edgeCenter"] }
+                checked: { path: "snap/types/edgeCenter", equals: "true" }
+              - label: Polygon
+                action: { kind: script, lines: ["snap.toggleType polygon"] }
+                checked: { path: "snap/types/polygon", equals: "true" }
+              - label: Polygon Center
+                action: { kind: script, lines: ["snap.toggleType polyCenter"] }
+                checked: { path: "snap/types/polyCenter", equals: "true" }
+              - { kind: divider }
+              - { kind: header, label: "Plane" }
+              - label: Grid
+                action: { kind: script, lines: ["snap.toggleType grid"] }
+                checked: { path: "snap/types/grid", equals: "true" }
+              - label: Workplane
+                action: { kind: script, lines: ["snap.toggleType workplane"] }
+                checked: { path: "snap/types/workplane", equals: "true" }
+              - { kind: divider }
+              - label: "Fixed Grid"
+                action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
+                checked: { path: "snap/fixedGrid", equals: "true" }
+      - label: "Work Plane"
         action:
           kind: popup
-          checked: { path: "snap/enabled", equals: "true" }
+          # Highlight the button whenever the workplane is non-auto — visual
+          # cue that subsequent prim.* / move / rotate / scale tools will
+          # interpret coordinates relative to this plane, not world-XZ.
+          checked: { path: "workplane/auto", equals: "false" }
           items:
-            - label: "Snap (X)"
-              action: { kind: command, id: snap.toggle }
-              checked: { path: "snap/enabled", equals: "true" }
+            - label: Auto
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
+              checked: { path: "workplane/auto", equals: "true" }
+            - label: World Y
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
+              checked: { path: "workplane/mode", equals: "worldY" }
+            - label: World X
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
+              checked: { path: "workplane/mode", equals: "worldX" }
+            - label: World Z
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
+              checked: { path: "workplane/mode", equals: "worldZ" }
             - { kind: divider }
-            - { kind: header, label: "Geometry" }
-            - label: Vertex
-              action: { kind: script, lines: ["snap.toggleType vertex"] }
-              checked: { path: "snap/types/vertex", equals: "true" }
-            - label: Edge
-              action: { kind: script, lines: ["snap.toggleType edge"] }
-              checked: { path: "snap/types/edge", equals: "true" }
-            - label: Edge Center
-              action: { kind: script, lines: ["snap.toggleType edgeCenter"] }
-              checked: { path: "snap/types/edgeCenter", equals: "true" }
-            - label: Polygon
-              action: { kind: script, lines: ["snap.toggleType polygon"] }
-              checked: { path: "snap/types/polygon", equals: "true" }
-            - label: Polygon Center
-              action: { kind: script, lines: ["snap.toggleType polyCenter"] }
-              checked: { path: "snap/types/polyCenter", equals: "true" }
-            - { kind: divider }
-            - { kind: header, label: "Plane" }
-            - label: Grid
-              action: { kind: script, lines: ["snap.toggleType grid"] }
-              checked: { path: "snap/types/grid", equals: "true" }
-            - label: Workplane
-              action: { kind: script, lines: ["snap.toggleType workplane"] }
-              checked: { path: "snap/types/workplane", equals: "true" }
-            - { kind: divider }
-            - label: "Fixed Grid"
-              action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
-              checked: { path: "snap/fixedGrid", equals: "true" }
+            - label: Align To Selection
+              action: { kind: command, id: workplane.alignToSelection }
+            - label: Reset
+              action: { kind: command, id: workplane.reset }

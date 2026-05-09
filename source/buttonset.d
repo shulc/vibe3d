@@ -92,6 +92,13 @@ struct ButtonVariant {
 struct Button {
     string label;
     Action action;
+    // Optional state-query that drives the button's "pressed" appearance,
+    // independent of action.kind. Useful for `kind: command` / `kind: script`
+    // toggles whose on/off state lives somewhere else in the pipeline
+    // (e.g. Snap toggle reflecting `snap/enabled`). For `kind: popup` the
+    // legacy action-level `checked:` still works — button-level wins
+    // when both are set.
+    Checked checked;
     // Optional alternate behaviors keyed by modifier (MODO convention).
     // YAML keys: `ctrl`, `alt`, `shift`. Each block is itself a mini-button
     // entry: `label` + `action`. Combinations (e.g. ctrl+shift) are not
@@ -492,6 +499,8 @@ private Button parseButton(NodeT)(NodeT btnNode, string panelTitle, string group
     Button btn;
     btn.label  = btnNode["label"].as!string;
     btn.action = parseAction(btnNode["action"], btn.label, path);
+    if (btnNode.containsKey("checked"))
+        btn.checked = parseChecked(btnNode["checked"], btn.label, path);
     btn.ctrl   = parseModifierVariant(btnNode, "ctrl",  btn.label, path);
     btn.alt    = parseModifierVariant(btnNode, "alt",   btn.label, path);
     btn.shift  = parseModifierVariant(btnNode, "shift", btn.label, path);

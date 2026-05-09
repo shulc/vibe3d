@@ -2781,18 +2781,25 @@ void main(string[] args) {
             void renderButton(ref Button btn) {
                 // Pick which (label, action) to show based on the live
                 // modifier state. Priority: ctrl > alt > shift, single
-                // modifier only (combinations not supported yet).
+                // modifier only (combinations not supported yet). Each
+                // variant has its own popup ID so a popup opened via
+                // alt-click survives the user releasing Alt — see the
+                // BeginPopup loop at the end.
                 SDL_Keymod mods = SDL_GetModState();
-                string label  = btn.label;
-                Action action = btn.action;
+                string label   = btn.label;
+                Action action  = btn.action;
+                string variant = "";
                 if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
                     label = btn.ctrl.label;  action = btn.ctrl.action;
+                    variant = "_ctrl";
                 }
                 else if (btn.alt.present   && (mods & KMOD_ALT))   {
                     label = btn.alt.label;   action = btn.alt.action;
+                    variant = "_alt";
                 }
                 else if (btn.shift.present && (mods & KMOD_SHIFT)) {
                     label = btn.shift.label; action = btn.shift.action;
+                    variant = "_shift";
                 }
 
                 string sc;
@@ -2803,35 +2810,51 @@ void main(string[] args) {
                     if (auto sp = action.id in shortcuts.byCommandId)
                         sc = sp.display();
                 }
-                bool on = (action.kind == ActionKind.tool &&
-                           activeToolId == action.id)
-                       || (action.kind == ActionKind.popup
-                           && action.checked.present
-                           && popupItemChecked(action.checked));
+                // Visual "pressed" state. Button-level `checked:` wins
+                // (works for any action kind — used by toggle buttons
+                // like Snap whose state lives off in the pipeline).
+                // Otherwise fall back to legacy logic: tool-id match,
+                // or the popup action's own `checked:`.
+                bool on;
+                if (btn.checked.present)
+                    on = popupItemChecked(btn.checked);
+                else
+                    on = (action.kind == ActionKind.tool &&
+                          activeToolId == action.id)
+                      || (action.kind == ActionKind.popup
+                          && action.checked.present
+                          && popupItemChecked(action.checked));
                 // Scripts share the command's pale-blue palette (they're a
                 // sequence of commands, not a sticky-tool activation).
                 bool isCommand = (action.kind == ActionKind.command
                                || action.kind == ActionKind.script);
-                // Per-button popup ID — must be stable across frames and
-                // unique within the panel. Use the button label; popups
-                // are user-selected one-at-a-time so collisions across
-                // distinct popup-buttons would only happen with duplicate
-                // labels, which startup validation already rejects.
-                string popupId = "##popup_" ~ btn.label;
                 if (renderStyledButton(label, sc, on, isCommand, ImVec2(-1, 0))) {
                     if (action.kind == ActionKind.popup)
-                        ImGui.OpenPopup(popupId);
+                        ImGui.OpenPopup("##popup" ~ variant ~ "_" ~ btn.label);
                     else
                         dispatchAction(action);
                 }
-                if (action.kind == ActionKind.popup) {
+                // Render BeginPopup for EVERY popup variant the button
+                // declares, regardless of which one is currently
+                // active. Without this, a popup opened via alt-click
+                // would close the moment the user releases Alt — the
+                // BeginPopup branch below was previously gated on the
+                // current variant's kind == popup, so on the first
+                // post-release frame ImGui sees no BeginPopup for the
+                // open ID and treats it as closed.
+                void renderVariantPopup(string suf, ref Action a) {
+                    if (a.kind != ActionKind.popup) return;
                     pushPopupStyle();
                     scope(exit) popPopupStyle();
-                    if (ImGui.BeginPopup(popupId)) {
-                        renderPopupItems(action.popupItems);
+                    if (ImGui.BeginPopup("##popup" ~ suf ~ "_" ~ btn.label)) {
+                        renderPopupItems(a.popupItems);
                         ImGui.EndPopup();
                     }
                 }
+                renderVariantPopup("",       btn.action);
+                if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
+                if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
+                if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
             }
 
             if (activePanelIdx >= 0 && activePanelIdx < cast(int)panels.length) {
@@ -2919,18 +2942,25 @@ void main(string[] args) {
                     scope(exit) ImGui.PopID();
 
                     // Variant select (ctrl/alt/shift) — same convention
-                    // as side-panel buttons.
+                    // as side-panel buttons. Each variant gets a unique
+                    // popup-id suffix so the popup outlives the user
+                    // releasing the modifier (see the BeginPopup loop
+                    // at the end of this block).
                     SDL_Keymod mods = SDL_GetModState();
-                    string label  = btn.label;
-                    Action action = btn.action;
+                    string label   = btn.label;
+                    Action action  = btn.action;
+                    string variant = "";
                     if      (btn.ctrl.present  && (mods & KMOD_CTRL))  {
                         label = btn.ctrl.label;  action = btn.ctrl.action;
+                        variant = "_ctrl";
                     }
                     else if (btn.alt.present   && (mods & KMOD_ALT))   {
                         label = btn.alt.label;   action = btn.alt.action;
+                        variant = "_alt";
                     }
                     else if (btn.shift.present && (mods & KMOD_SHIFT)) {
                         label = btn.shift.label; action = btn.shift.action;
+                        variant = "_shift";
                     }
 
                     // Phase: MODO `PopupFace=optionOrLabel` parity. When
@@ -2975,14 +3005,25 @@ void main(string[] args) {
                     if (editModeId.length > 0) {
                         if (auto sp = editModeId in shortcuts.byEditMode) sc = sp.display();
                     }
-                    bool on = (editModeId == "vertices" && editMode == EditMode.Vertices)
-                           || (editModeId == "edges"    && editMode == EditMode.Edges)
-                           || (editModeId == "polygons" && editMode == EditMode.Polygons)
-                           || (action.kind == ActionKind.popup
-                               && action.checked.present
-                               && popupItemChecked(action.checked));
+                    // Visual "pressed" state. Button-level `btn.checked`
+                    // wins (works for any action kind — used by toggle
+                    // buttons whose state lives in the pipeline, e.g.
+                    // Snap reflecting `snap/enabled`). Otherwise fall
+                    // back to: editmode match, or popup action's own
+                    // `checked:`.
+                    bool on;
+                    if (btn.checked.present) {
+                        on = popupItemChecked(btn.checked);
+                    } else {
+                        on = (editModeId == "vertices" && editMode == EditMode.Vertices)
+                          || (editModeId == "edges"    && editMode == EditMode.Edges)
+                          || (editModeId == "polygons" && editMode == EditMode.Polygons)
+                          || (action.kind == ActionKind.popup
+                              && action.checked.present
+                              && popupItemChecked(action.checked));
+                    }
 
-                    string popupId = "##popup_" ~ btn.label;
+                    string popupId = "##popup" ~ variant ~ "_" ~ btn.label;
                     // Auto-grow the button when the (possibly dynamic)
                     // label is wider than the default 85-px slot —
                     // otherwise long ACEN modes like "Selection Center
@@ -3029,14 +3070,26 @@ void main(string[] args) {
                                 break;
                         }
                     }
-                    if (action.kind == ActionKind.popup) {
+                    // Render BeginPopup for EVERY popup variant the
+                    // button declares, regardless of which is currently
+                    // active under the live modifier state. Without
+                    // this, an alt-opened popup vanishes the moment
+                    // the user releases Alt — BeginPopup wouldn't be
+                    // called for that variant on the first post-
+                    // release frame and ImGui closes the popup.
+                    void renderVariantPopup(string suf, ref Action a) {
+                        if (a.kind != ActionKind.popup) return;
                         pushPopupStyle();
                         scope(exit) popPopupStyle();
-                        if (ImGui.BeginPopup(popupId)) {
-                            renderPopupItems(action.popupItems);
+                        if (ImGui.BeginPopup("##popup" ~ suf ~ "_" ~ btn.label)) {
+                            renderPopupItems(a.popupItems);
                             ImGui.EndPopup();
                         }
                     }
+                    renderVariantPopup("",       btn.action);
+                    if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
+                    if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
+                    if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
                 }
             }
         }
