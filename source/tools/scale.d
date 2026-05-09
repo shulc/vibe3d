@@ -17,6 +17,7 @@ import std.math : sqrt;
 
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
+import falloff : evaluateFalloff;
 
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,9 @@ public:
             dragScaleAccum = Vec3(1, 1, 1);
 
             buildVertexCacheIfNeeded();
-            wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
+            bool falloffActive = captureFalloffForDrag();
+            wholeMeshDrag = !falloffActive
+                && (vertexProcessCount == cast(int)mesh.vertices.length);
             if (wholeMeshDrag) {
                 dragStartVertices  = mesh.vertices.dup;
                 dragStartScaleAccum = scaleAccum;
@@ -348,7 +351,11 @@ public:
         if (zActive || zDone) { if (propScale.z < 0) propScale.z = 0; scaleAccum.z = propScale.z; }
 
         buildVertexCacheIfNeeded();
-        bool wholeMesh = (vertexProcessCount == cast(int)mesh.vertices.length);
+        // Phase 7.5: re-capture falloff per active frame; per-vertex
+        // weight breaks the wholeMesh GPU bypass fast path.
+        bool falloffActive = captureFalloffForDrag();
+        bool wholeMesh = !falloffActive
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
 
         // Phase C.3: snapshot pre-drag state on the FIRST active frame
         // only (before beginEdit() opens the session); subsequent frames
@@ -431,16 +438,23 @@ private:
     // Apply an incremental scale factor to cached vertex indices (partial
     // selection path). Scaling happens along the gizmo's basis — workplane
     // axes when non-auto, world XYZ when auto.
+    //
+    // Phase 7.5: each vertex's per-axis scale is blended toward 1.0 by
+    // the falloff weight. Effective factor = 1 + (factor - 1) * weight,
+    // so weight=1 keeps the full `factor`, weight=0 leaves the vert
+    // untouched, weight=0.5 halves the deviation from 1.0.
     void applyScaleAxesFactor(bool sx, bool sy, bool sz, float factor) {
         auto cp = queryClusterPivots();
         auto ap = queryClusterAxes();
-        float fx = sx ? factor : 1.0f;
-        float fy = sy ? factor : 1.0f;
-        float fz = sz ? factor : 1.0f;
         foreach (vi; vertexIndicesToProcess) {
             Vec3 pivot = pivotFor(vi, cp, handler.center);
             Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
             axesFor(vi, ap, cp, ax, ay, az);
+            float w = falloffWeight(vi);
+            float fEff = 1.0f + (factor - 1.0f) * w;
+            float fx = sx ? fEff : 1.0f;
+            float fy = sy ? fEff : 1.0f;
+            float fz = sz ? fEff : 1.0f;
             mesh.vertices[vi] = scaleAlongBasis(mesh.vertices[vi], pivot,
                                                 ax, ay, az, fx, fy, fz);
         }
@@ -466,6 +480,10 @@ private:
 
     // Apply scale from activationVertices to CPU vertices only (no GPU).
     // Uses current scaleAccum for all three basis axes.
+    // Phase 7.5: per-axis factor blended toward 1.0 by falloff weight,
+    // evaluated at the activation-time vert position so the weight
+    // doesn't drift as the slider scales the vert through the falloff
+    // field.
     void applyScaleFromActivationCpuOnly() {
         if (activationVertices.length == 0) return;
         auto cp = queryClusterPivots();
@@ -474,9 +492,15 @@ private:
             Vec3 pivot = pivotFor(vi, cp, activationCenter);
             Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
             axesFor(vi, ap, cp, ax, ay, az);
+            float w = dragFalloff.enabled
+                ? evaluateFalloff(dragFalloff, activationVertices[vi],
+                                  cast(int)vi, cachedVp)
+                : 1.0f;
+            float sx = 1.0f + (scaleAccum.x - 1.0f) * w;
+            float sy = 1.0f + (scaleAccum.y - 1.0f) * w;
+            float sz = 1.0f + (scaleAccum.z - 1.0f) * w;
             mesh.vertices[vi] = scaleAlongBasis(activationVertices[vi], pivot,
-                                                ax, ay, az,
-                                                scaleAccum.x, scaleAccum.y, scaleAccum.z);
+                                                ax, ay, az, sx, sy, sz);
         }
     }
 

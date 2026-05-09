@@ -17,6 +17,7 @@ import d_imgui.imgui_h;
 
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
+import falloff : evaluateFalloff;
 
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
@@ -211,7 +212,12 @@ public:
 
         // Build vertex cache now so we know whether this is a whole-mesh drag.
         buildVertexCacheIfNeeded();
-        wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
+        // Phase 7.5: capture falloff packet — when active, force the
+        // per-vertex CPU path (gpuMatrix's single-rotation-uniform fast
+        // path is incompatible with per-vertex angle scaling).
+        bool falloffActive = captureFalloffForDrag();
+        wholeMeshDrag = !falloffActive
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
         if (wholeMeshDrag) {
             // Snapshot current vertex positions — GPU is in sync with these.
             dragStartVertices = mesh.vertices.dup;
@@ -389,7 +395,12 @@ public:
         angleAccum.y = propDeg.y * PI / 180.0f;
         angleAccum.z = propDeg.z * PI / 180.0f;
         buildVertexCacheIfNeeded();
-        bool wholeMesh = (vertexProcessCount == cast(int)mesh.vertices.length);
+        // Phase 7.5: re-capture falloff each active frame; gates the
+        // wholeMesh GPU bypass off when the per-vertex weight breaks
+        // the single-uniform fast path.
+        bool falloffActive = captureFalloffForDrag();
+        bool wholeMesh = !falloffActive
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
 
         // Phase C.3: snapshot pre-drag positions on first active frame so
         // commitEdit at slider release has a baseline. beginEdit is
@@ -484,6 +495,12 @@ private:
     // angleAccum.x/.y/.z are interpreted around the gizmo's basis (workplane
     // axis1/normal/axis2 when non-auto, world XYZ when auto). With per-cluster
     // basis active, each cluster uses its own (right, up, fwd).
+    //
+    // Phase 7.5: each per-axis angle is scaled by the falloff weight,
+    // evaluated at the ORIGINAL vert position (origVertices[i]). Using
+    // the original position keeps the weight stable across the slider
+    // drag — otherwise the vert "drifts" through the falloff field as
+    // it rotates.
     void applyAbsoluteFromOrigCpuOnly() {
         if (origVertices.length != mesh.vertices.length) return;
         auto cp = queryClusterPivots();
@@ -495,9 +512,13 @@ private:
             Vec3 axY = axisFor(i, 1, ap, cp, handler.axisY);
             Vec3 axZ = axisFor(i, 2, ap, cp, handler.axisZ);
             Vec3 v = origVertices[i];
-            if (angleAccum.x != 0) v = rotateVec(v, pivot, axX, angleAccum.x);
-            if (angleAccum.y != 0) v = rotateVec(v, pivot, axY, angleAccum.y);
-            if (angleAccum.z != 0) v = rotateVec(v, pivot, axZ, angleAccum.z);
+            float w = dragFalloff.enabled
+                ? evaluateFalloff(dragFalloff, origVertices[i], cast(int)i, cachedVp)
+                : 1.0f;
+            if (w == 0.0f) { mesh.vertices[i] = v; continue; }
+            if (angleAccum.x != 0) v = rotateVec(v, pivot, axX, angleAccum.x * w);
+            if (angleAccum.y != 0) v = rotateVec(v, pivot, axY, angleAccum.y * w);
+            if (angleAccum.z != 0) v = rotateVec(v, pivot, axZ, angleAccum.z * w);
             mesh.vertices[i] = v;
         }
     }
@@ -516,6 +537,10 @@ private:
     // partial selection. When ACEN.Local + AXIS.Local publish per-cluster
     // pivots/basis, each cluster rotates around ITS pivot using ITS axis
     // (matches MODO actr.local + axis.local).
+    //
+    // Phase 7.5: each vertex's rotation is scaled by the falloff weight.
+    // Soft-twist effect — verts near full-influence rotate by `angle`,
+    // verts in the falloff transition rotate by `angle * weight(vi)`.
     void applyRotationVec(Vec3 axisVec, float angle) {
         auto cp = queryClusterPivots();
         auto ap = queryClusterAxes();
@@ -529,7 +554,9 @@ private:
             Vec3 ax    = (axisIdx >= 0)
                        ? axisFor(vi, axisIdx, ap, cp, axisVec)
                        : axisVec;
-            mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, ax, angle);
+            float w = falloffWeight(vi);
+            if (w == 0.0f) continue;
+            mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, ax, angle * w);
         }
         needsGpuUpdate = true;
     }

@@ -44,12 +44,12 @@ float evaluateFalloff(const ref FalloffPacket cfg,
         case FalloffType.Linear:
             return linearWeight(cfg, pos);
         case FalloffType.Radial:
+            return radialWeight(cfg, pos);
         case FalloffType.Screen:
         case FalloffType.Lasso:
-            // Land in 7.5c / 7.5d / 7.5e. Until then, pretend the
-            // falloff is full-influence everywhere so type-switch
-            // probes (e.g. status-bar pulldown) don't make the
-            // selection vanish.
+            // Land in 7.5d / 7.5e. Until then, pretend the falloff is
+            // full-influence everywhere so type-switch probes (e.g.
+            // status-bar pulldown) don't make the selection vanish.
             return 1.0f;
     }
 }
@@ -65,6 +65,38 @@ private float linearWeight(const ref FalloffPacket cfg, Vec3 pos) {
     if (ax2 < 1e-12f) return 1.0f;   // degenerate line — full influence
     Vec3  rel  = pos - cfg.start;
     float t    = dot(rel, axis) / ax2;
+    if (t <= 0.0f) return 1.0f;
+    if (t >= 1.0f) return 0.0f;
+    return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+}
+
+/// Radial (ellipsoid) falloff: weight is 1.0 at `center`, 0.0 on or
+/// outside the ellipsoid surface defined by `center ± size` per axis,
+/// attenuated across the volume by `shape`. `size` components ≤ 0
+/// degenerate that axis to "no extent" — the corresponding factor is
+/// dropped from the distance (so a flat `size = (1, 0, 1)` ellipsoid
+/// becomes a 2D disc on the XZ plane that ignores Y).
+private float radialWeight(const ref FalloffPacket cfg, Vec3 pos) {
+    Vec3 d = pos - cfg.center;
+    float sum = 0.0f;
+    bool any = false;
+    if (cfg.size.x > 1e-9f) {
+        float u = d.x / cfg.size.x;
+        sum += u * u;
+        any = true;
+    }
+    if (cfg.size.y > 1e-9f) {
+        float u = d.y / cfg.size.y;
+        sum += u * u;
+        any = true;
+    }
+    if (cfg.size.z > 1e-9f) {
+        float u = d.z / cfg.size.z;
+        sum += u * u;
+        any = true;
+    }
+    if (!any) return 1.0f;       // degenerate ellipsoid — full influence everywhere
+    float t = sqrt(sum);
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
     return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
@@ -154,4 +186,24 @@ unittest { // disabled packet returns 1.0 regardless of type
     p.type    = FalloffType.Linear;
     Viewport vp;
     assert(isClose(evaluateFalloff(p, Vec3(0, 1, 0), 0, vp), 1.0f));
+}
+
+unittest { // radial falloff: center = 1, surface = 0, outside = 0
+    import std.math : isClose;
+    FalloffPacket p;
+    p.enabled = true;
+    p.type    = FalloffType.Radial;
+    p.shape   = FalloffShape.Linear;
+    p.center  = Vec3(0, 0, 0);
+    p.size    = Vec3(1, 1, 1);
+    Viewport vp;
+    assert(isClose(evaluateFalloff(p, Vec3(0,    0, 0), 0, vp), 1.0f));
+    assert(isClose(evaluateFalloff(p, Vec3(1,    0, 0), 0, vp), 0.0f));
+    assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0), 0, vp), 0.5f));
+    // Outside the unit sphere → 0.
+    assert(isClose(evaluateFalloff(p, Vec3(2,    0, 0), 0, vp), 0.0f));
+    // Anisotropic ellipsoid: size=(2,1,1), point at x=1.
+    p.size = Vec3(2, 1, 1);
+    assert(isClose(evaluateFalloff(p, Vec3(1, 0, 0), 0, vp), 0.5f));
+    assert(isClose(evaluateFalloff(p, Vec3(0, 1, 0), 0, vp), 0.0f));
 }
