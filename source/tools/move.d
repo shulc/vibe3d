@@ -294,8 +294,35 @@ public:
                                    *mesh, state.snap, exclude);
         lastSnap = sr;
         publishLastSnap(sr);
-        if (sr.snapped) return sr.worldPos - gizmoCenter;
+        if (sr.snapped)
+            return constrainSnapDelta(sr.worldPos - gizmoCenter);
         return worldDelta;
+    }
+
+    // Project a raw snap delta (snapTarget - gizmoCenter) onto the active
+    // drag axis / plane so an off-axis snap candidate doesn't smear the
+    // selection across axes. For an X-arrow drag with snap to a vertex
+    // at (Tx, Ty, Tz), this returns ((Tx - Gx) * axisX) — i.e. the gizmo
+    // moves only along X to the snap target's X coordinate. Mirrors
+    // MODO's "axis-locked snap" semantics.
+    //
+    // The centerBox handle (dragAxis==3) is intentionally NOT constrained:
+    // it's the "free move" handle, and the user expectation is that
+    // grabbing it + snapping lands the gizmo exactly at the snap point in
+    // 3D. The explicit plane circles (4/5/6) keep their plane lock — the
+    // user picked that plane on purpose.
+    private Vec3 constrainSnapDelta(Vec3 delta) {
+        // Single-axis drag — keep only the component along the locked axis.
+        if (dragAxis == 0) return handler.axisX * dot(delta, handler.axisX);
+        if (dragAxis == 1) return handler.axisY * dot(delta, handler.axisY);
+        if (dragAxis == 2) return handler.axisZ * dot(delta, handler.axisZ);
+        // Plane circles — strip the component along the plane normal.
+        if (dragAxis == 4) return delta - handler.axisZ * dot(delta, handler.axisZ);
+        if (dragAxis == 5) return delta - handler.axisX * dot(delta, handler.axisX);
+        if (dragAxis == 6) return delta - handler.axisY * dot(delta, handler.axisY);
+        // dragAxis == 3 (centerBox) and any unrecognised value: pass
+        // through the full 3D snap delta.
+        return delta;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
