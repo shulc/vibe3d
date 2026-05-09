@@ -36,8 +36,8 @@ class SnapStage : Stage {
                          | SnapType.EdgeCenter
                          | SnapType.PolyCenter
                          | SnapType.Grid;
-    float  innerRangePx  = 8.0f;
-    float  outerRangePx  = 24.0f;
+    float  innerRangePx  = 24.0f;
+    float  outerRangePx  = 40.0f;
     bool   fixedGrid     = false;
     float  fixedGridSize = 1.0f;
 

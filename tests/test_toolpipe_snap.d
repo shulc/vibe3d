@@ -68,8 +68,8 @@ void resetCube() {
     // doesn't include comma.
     postJson("/api/command",
         `tool.pipe.attr snap types "vertex,edgeCenter,polyCenter,grid"`);
-    postJson("/api/command", "tool.pipe.attr snap innerRange 8");
-    postJson("/api/command", "tool.pipe.attr snap outerRange 24");
+    postJson("/api/command", "tool.pipe.attr snap innerRange 24");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 40");
 }
 
 // -------------------------------------------------------------------------
@@ -96,8 +96,8 @@ unittest { // defaults
         "default enabled expected false, got " ~ a["enabled"]);
     assert(a["types"] == "vertex,edgeCenter,polyCenter,grid",
         "default types: " ~ a["types"]);
-    assert(a["innerRange"] == "8", "innerRange: " ~ a["innerRange"]);
-    assert(a["outerRange"] == "24", "outerRange: " ~ a["outerRange"]);
+    assert(a["innerRange"] == "24", "innerRange: " ~ a["innerRange"]);
+    assert(a["outerRange"] == "40", "outerRange: " ~ a["outerRange"]);
 }
 
 // -------------------------------------------------------------------------
