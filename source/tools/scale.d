@@ -18,6 +18,8 @@ import std.math : sqrt;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
+import falloff_render : drawFalloffOverlay;
+import toolpipe.packets : FalloffPacket;
 
 
 // ---------------------------------------------------------------------------
@@ -160,6 +162,8 @@ public:
         // candidate. Populated by updateLiveSnapPreview() during idle
         // hover (click-outside-relocate hint).
         drawSnapOverlay(lastSnap, vp, *mesh);
+        FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff();
+        drawFalloffOverlay(fp, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {

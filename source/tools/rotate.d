@@ -18,6 +18,8 @@ import d_imgui.imgui_h;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
+import falloff_render : drawFalloffOverlay;
+import toolpipe.packets : FalloffPacket;
 
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
@@ -178,6 +180,8 @@ public:
         // reflects whatever the last preview frame produced and can
         // freeze — acceptable for now.
         drawSnapOverlay(lastSnap, vp, *mesh);
+        FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff();
+        drawFalloffOverlay(fp, vp);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {

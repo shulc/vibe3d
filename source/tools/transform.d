@@ -291,6 +291,26 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
+    /// Live falloff packet for rendering the viewport overlay. Walks
+    /// the toolpipe each call — fine because draw() runs at most once
+    /// per frame and the upstream stages (WORK / ACEN / etc.) are all
+    /// cheap. Idle-state preview reads this; during drag the rendered
+    /// overlay matches the captured `dragFalloff` (slight redundancy
+    /// but they're in lockstep when no setAttr fires mid-drag).
+    FalloffPacket currentFalloff() {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.packets  : SubjectPacket;
+        if (g_pipeCtx is null) return FalloffPacket.init;
+        SubjectPacket subj;
+        subj.mesh             = mesh;
+        subj.editMode         = *editMode;
+        subj.selectedVertices = mesh.selectedVertices.dup;
+        subj.selectedEdges    = mesh.selectedEdges.dup;
+        subj.selectedFaces    = mesh.selectedFaces.dup;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        return state.falloff;
+    }
+
     /// Phase 7.5: snapshot the FalloffPacket at the start of a drag so
     /// per-vertex weight evaluation has stable input through the
     /// drag. Tools call this from onMouseButtonDown after they've set

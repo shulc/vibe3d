@@ -19,6 +19,7 @@ import snap : snapCursor, SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import toolpipe.packets : SnapPacket, FalloffPacket, FalloffType;
 import falloff : evaluateFalloff;
+import falloff_render : drawFalloffOverlay;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -123,6 +124,13 @@ public:
         // snapped to (vertex / edge / face). No-op when no recent snap
         // (init/cleared SnapResult has highlighted=false).
         drawSnapOverlay(lastSnap, vp, *mesh);
+
+        // Phase 7.5g: falloff overlay (passive — just visualises where
+        // influence ramps from full to zero). During a drag the
+        // captured `dragFalloff` is rendered for stability; otherwise
+        // the live toolpipe state.
+        FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff();
+        drawFalloffOverlay(fp, vp);
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
