@@ -6,6 +6,8 @@ import math : Vec3, Viewport;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
+import toolpipe.packets : FalloffPacket;
+import falloff : evaluateFalloff;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires gpu+caches; the tool just calls this delegate
@@ -50,6 +52,12 @@ protected:
                                  // applySnapToDelta) AND by updateLiveSnapPreview()
                                  // — gives the user a "if you click here, gizmo
                                  // lands HERE" hint before any drag.
+    // Phase 7.5: falloff packet snapshot, captured at drag start so
+    // per-vertex weight evaluation doesn't re-walk the toolpipe on
+    // every motion event. Refreshed by captureFalloffForDrag(); the
+    // packet's `enabled` flag stays false (default-init) until that
+    // gets called, so any tool that hasn't opted in sees weight=1.0.
+    FalloffPacket dragFalloff;
 
     // Whole-mesh GPU bypass (Rotate + Scale use these; Move uses gpuOffset instead)
     bool   wholeMeshDrag;
@@ -281,6 +289,43 @@ protected:
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return;
         ac.setUserPlaced(worldHit);
+    }
+
+    /// Phase 7.5: snapshot the FalloffPacket at the start of a drag so
+    /// per-vertex weight evaluation has stable input through the
+    /// drag. Tools call this from onMouseButtonDown after they've set
+    /// up `cachedVp`; lazy-evaluating per-frame would re-run every
+    /// upstream stage too. No-op when no toolpipe is registered.
+    /// Returns true iff falloff is active in the captured packet —
+    /// callers use this to gate the whole-mesh GPU bypass off (the
+    /// per-vertex weight breaks the "single uniform translation"
+    /// assumption gpuMatrix relies on).
+    bool captureFalloffForDrag() {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.packets  : SubjectPacket;
+        if (g_pipeCtx is null) {
+            dragFalloff = FalloffPacket.init;
+            return false;
+        }
+        SubjectPacket subj;
+        subj.mesh             = mesh;
+        subj.editMode         = *editMode;
+        subj.selectedVertices = mesh.selectedVertices.dup;
+        subj.selectedEdges    = mesh.selectedEdges.dup;
+        subj.selectedFaces    = mesh.selectedFaces.dup;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        dragFalloff = state.falloff;
+        return dragFalloff.enabled;
+    }
+
+    /// Per-vertex weight for the captured drag-falloff packet. Returns
+    /// 1.0 when falloff is disabled — same convention as the snap.d
+    /// short-circuit. Callers can blindly multiply per-vertex deltas
+    /// by this without checking dragFalloff.enabled themselves.
+    protected float falloffWeight(int vi) {
+        if (!dragFalloff.enabled) return 1.0f;
+        if (vi < 0 || vi >= cast(int)mesh.vertices.length) return 1.0f;
+        return evaluateFalloff(dragFalloff, mesh.vertices[vi], vi, cachedVp);
     }
 
     /// True iff the ACEN stage currently holds a sticky click-outside

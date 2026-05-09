@@ -567,7 +567,7 @@ void main(string[] args) {
         g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
         g_pipeCtx.pipeline.add(new AxisStage(&mesh, &editMode));
-        g_pipeCtx.pipeline.add(new FalloffStage());
+        g_pipeCtx.pipeline.add(new FalloffStage(&mesh, &editMode));
     }
 
     Registry reg;

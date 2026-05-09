@@ -945,6 +945,65 @@ struct Mesh {
         return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
     }
 
+    /// Selection bbox extent (min, max) along world axes. Falls back
+    /// to the whole geometry when nothing is selected, mirroring the
+    /// `selectionBBoxCenter*` family. `seen` is false only on an
+    /// empty mesh — caller can synthesise a sensible default. Used by
+    /// the FalloffStage's auto-size path (phase 7.5).
+    void selectionBBoxMinMaxVertices(out Vec3 mn, out Vec3 mx, out bool seen) const {
+        bool any = hasAnySelected(selectedVertices);
+        mn = Vec3(float.infinity, float.infinity, float.infinity);
+        mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        seen = false;
+        foreach (i, v; vertices) {
+            if (any && !(i < selectedVertices.length && selectedVertices[i])) continue;
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+            seen = true;
+        }
+    }
+
+    void selectionBBoxMinMaxEdges(out Vec3 mn, out Vec3 mx, out bool seen) const {
+        bool any = hasAnySelected(selectedEdges);
+        bool[] vis = new bool[](vertices.length);
+        mn = Vec3(float.infinity, float.infinity, float.infinity);
+        mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        seen = false;
+        foreach (i, edge; edges) {
+            if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
+            foreach (vi; edge) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = vertices[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+    }
+
+    void selectionBBoxMinMaxFaces(out Vec3 mn, out Vec3 mx, out bool seen) const {
+        bool any = hasAnySelected(selectedFaces);
+        bool[] vis = new bool[](vertices.length);
+        mn = Vec3(float.infinity, float.infinity, float.infinity);
+        mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        seen = false;
+        foreach (i, face; faces) {
+            if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
+            foreach (vi; face) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = vertices[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+    }
+
     Vec3 selectionBBoxCenterEdges() const {
         bool any = hasAnySelected(selectedEdges);
         bool[] vis = new bool[](vertices.length);

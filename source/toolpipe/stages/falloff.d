@@ -3,8 +3,11 @@ module toolpipe.stages.falloff;
 import std.format    : format;
 import std.conv      : to;
 import std.string    : split, strip;
+import std.math      : abs;
 
-import math : Vec3;
+import math : Vec3, dot;
+import mesh : Mesh;
+import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : ToolState;
 import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, LassoStyle;
@@ -65,13 +68,36 @@ class FalloffStage : Stage {
     float in_  = 0.5f;
     float out_ = 0.5f;
 
-    this() { publishState(); }
+    // Optional refs for auto-size on `setAttr("type", ...)`. Phase 7.5a
+    // shipped without them (None type doesn't auto-size); 7.5b wires
+    // them in app.d's initToolPipe so Linear / Radial / Screen / Lasso
+    // can pre-fit to the active selection. nullable: unit tests that
+    // bypass the app-level wiring still work; auto-size becomes a
+    // no-op.
+    private Mesh*     mesh_;
+    private EditMode* editMode_;
+
+    // Last workplane normal cached at evaluate(). Used by autoSize() to
+    // orient Linear's start→end along the construction-plane normal —
+    // matches MODO's "the line stands up out of the work plane"
+    // convention.
+    private Vec3 lastWpNormal_ = Vec3(0, 1, 0);
+
+    this(Mesh* mesh = null, EditMode* editMode = null) {
+        this.mesh_     = mesh;
+        this.editMode_ = editMode;
+        publishState();
+    }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Wght; }
     override string   id()       const                          { return "falloff"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWght; }
 
     override void evaluate(ref ToolState state) {
+        // WORK stage has run before us (ord 0x30 < ord 0x90), so
+        // state.workplane is populated. Cache its normal so autoSize()
+        // (called from setAttr) can run without re-walking the pipe.
+        lastWpNormal_              = state.workplane.normal;
         state.falloff.enabled      = (type != FalloffType.None);
         state.falloff.type         = type;
         state.falloff.shape        = shape;
@@ -92,8 +118,21 @@ class FalloffStage : Stage {
     }
 
     override bool setAttr(string name, string value) {
+        FalloffType prev = type;
         bool ok = applySetAttr(name, value);
-        if (ok) publishState();
+        if (ok) {
+            // MODO convention: switching the falloff type while a
+            // tool is active auto-sizes the new falloff to the
+            // current selection's bbox. Mirrors selection_falloffs
+            // .html: "the act of simply selecting the falloff type
+            // automatically scales the falloff to the bounding box
+            // size of the active selection". Only fires on a real
+            // type change (not no-op set-to-current); the user can
+            // still manually re-tune attrs after auto-size.
+            if (name == "type" && type != prev && type != FalloffType.None)
+                autoSize();
+            publishState();
+        }
         return ok;
     }
 
@@ -228,5 +267,61 @@ private:
 
     static string vec3Str(Vec3 v) {
         return format("%g,%g,%g", v.x, v.y, v.z);
+    }
+
+    // Pre-fit Linear / Radial / Screen / Lasso to the current selection
+    // bbox, so the user gets an immediately useful starting point on
+    // type switch (matches MODO behaviour). Each type uses what it
+    // needs from the bbox; the others' attrs are left alone.
+    void autoSize() {
+        if (mesh_ is null || editMode_ is null) return;
+        Vec3 bbMin, bbMax;
+        bool seen;
+        final switch (*editMode_) {
+            case EditMode.Vertices:
+                mesh_.selectionBBoxMinMaxVertices(bbMin, bbMax, seen); break;
+            case EditMode.Edges:
+                mesh_.selectionBBoxMinMaxEdges   (bbMin, bbMax, seen); break;
+            case EditMode.Polygons:
+                mesh_.selectionBBoxMinMaxFaces   (bbMin, bbMax, seen); break;
+        }
+        if (!seen) return;
+        Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
+        Vec3 bbHalf   = (bbMax - bbMin) * 0.5f;
+
+        final switch (type) {
+            case FalloffType.None: break;
+            case FalloffType.Linear: {
+                // Anchor the line through bbCenter, oriented along the
+                // workplane normal, length = bbox extent along that
+                // normal. Falls back to a unit-Y line at the bbox
+                // centre when the projected extent is zero (flat
+                // selection in the construction plane).
+                Vec3  n   = lastWpNormal_;
+                float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
+                          + abs(bbHalf.z * n.z);
+                if (ext < 1e-6f) ext = 0.5f;
+                start = bbCenter - n * ext;
+                end   = bbCenter + n * ext;
+                break;
+            }
+            case FalloffType.Radial:
+                // Centre at bbox centre; per-axis radii = bbox half-
+                // extents (so the ellipsoid surface touches the bbox).
+                center = bbCenter;
+                size   = Vec3(
+                    bbHalf.x > 1e-6f ? bbHalf.x : 0.5f,
+                    bbHalf.y > 1e-6f ? bbHalf.y : 0.5f,
+                    bbHalf.z > 1e-6f ? bbHalf.z : 0.5f,
+                );
+                break;
+            case FalloffType.Screen:
+            case FalloffType.Lasso:
+                // Screen / Lasso need the live viewport to project
+                // bbCenter to pixels — done at first evaluate() under
+                // each type's auto-size hook. No-op here; left at
+                // their defaults until that lands.
+                break;
+        }
     }
 }

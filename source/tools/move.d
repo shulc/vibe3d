@@ -17,7 +17,8 @@ import std.math;
 import drag;
 import snap : snapCursor, SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
-import toolpipe.packets : SnapPacket;
+import toolpipe.packets : SnapPacket, FalloffPacket, FalloffType;
+import falloff : evaluateFalloff;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -206,7 +207,14 @@ public:
             lastMX = e.x; lastMY = e.y;
             dragDelta = Vec3(0, 0, 0);
             buildVertexCacheIfNeeded();
-            wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
+            // Phase 7.5: capture the falloff packet before deciding on
+            // wholeMeshDrag — when falloff is active, per-vertex weights
+            // break the gpuMatrix single-uniform fast path, so we must
+            // fall through to the per-vertex CPU + deferred-upload
+            // route regardless of selection size.
+            bool falloffActive = captureFalloffForDrag();
+            wholeMeshDrag = !falloffActive
+                && (vertexProcessCount == cast(int)mesh.vertices.length);
             beginEdit();   // Phase C.2: snapshot pre-drag positions for undo.
             return true;
         }
@@ -243,7 +251,9 @@ public:
         lastMX = e.x; lastMY = e.y;
         dragDelta = Vec3(0, 0, 0);
         buildVertexCacheIfNeeded();
-        wholeMeshDrag = (vertexProcessCount == cast(int)mesh.vertices.length);
+        bool falloffActiveOutside = captureFalloffForDrag();
+        wholeMeshDrag = !falloffActiveOutside
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
         if (ctrl) {
             ctrlConstrain = true;
             constrainStartMX = e.x; constrainStartMY = e.y;
@@ -469,6 +479,12 @@ public:
                 Vec3 delta = ax*localDiff.x + ay*localDiff.y + az*localDiff.z;
                 dragDelta += delta;
                 buildVertexCacheIfNeeded();
+                // Phase 7.5: re-capture falloff at every props-slider
+                // frame. A stable snapshot would diverge if the user
+                // tweaks falloff attrs mid-drag; props sliders are
+                // low-frequency input so the per-frame pipeline.evaluate
+                // is cheap.
+                captureFalloffForDrag();
                 beginEdit();
                 applyDeltaImmediate(delta);
                 handler.setPosition(handler.center + delta);
@@ -493,11 +509,24 @@ private:
     }
 
     // Apply delta immediately to cached vertex indices (very fast inner loop).
+    // Phase 7.5: when falloff is active on the captured drag packet,
+    // multiply each per-vertex displacement by the falloff weight.
+    // Falloff-off path stays a tight 3-add loop with no extra work.
     void applyDeltaImmediate(Vec3 delta) {
+        if (!dragFalloff.enabled) {
+            foreach (vi; vertexIndicesToProcess) {
+                mesh.vertices[vi].x += delta.x;
+                mesh.vertices[vi].y += delta.y;
+                mesh.vertices[vi].z += delta.z;
+            }
+            return;
+        }
         foreach (vi; vertexIndicesToProcess) {
-            mesh.vertices[vi].x += delta.x;
-            mesh.vertices[vi].y += delta.y;
-            mesh.vertices[vi].z += delta.z;
+            float w = falloffWeight(vi);
+            if (w == 0.0f) continue;
+            mesh.vertices[vi].x += delta.x * w;
+            mesh.vertices[vi].y += delta.y * w;
+            mesh.vertices[vi].z += delta.z * w;
         }
     }
 

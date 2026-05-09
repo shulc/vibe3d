@@ -188,3 +188,77 @@ unittest { // malformed Vec3 rejected
     assert(a["center"] == "1,2,3",
         "malformed Vec3 must not change state; got " ~ a["center"]);
 }
+
+// -------------------------------------------------------------------------
+// 7.5b: switching type to linear auto-sizes start/end to the selection
+// bbox, oriented along the workplane normal. With workplane=worldY a
+// default cube produces start=(0,-0.5,0), end=(0,0.5,0) (centred on
+// origin, length = bbox Y extent = 1).
+// -------------------------------------------------------------------------
+
+unittest { // auto-size linear on type switch
+    resetCube();
+    // Force workplane to worldY so the auto-size axis is deterministic.
+    postJson("/api/command", "tool.pipe.attr workplane mode worldY");
+    // Whole-mesh "selection" — no explicit selection means selectionBBox*
+    // falls back to all geometry, mirroring the rest of vibe3d's
+    // bbox-with-empty-selection convention.
+    postJson("/api/command", "tool.pipe.attr falloff type linear");
+    auto a = getFalloffAttrs();
+    assert(a["type"]  == "linear", "type: " ~ a["type"]);
+    assert(a["start"] == "0,-0.5,0",
+        "auto-size start expected 0,-0.5,0; got " ~ a["start"]);
+    assert(a["end"]   == "0,0.5,0",
+        "auto-size end expected 0,0.5,0; got " ~ a["end"]);
+    postJson("/api/command", "tool.pipe.attr workplane mode auto");
+}
+
+// -------------------------------------------------------------------------
+// 7.5b: switching type to radial auto-sizes center+size to the selection
+// bbox half-extents (cube → center=(0,0,0), size=(0.5,0.5,0.5)).
+// -------------------------------------------------------------------------
+
+unittest { // auto-size radial on type switch
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff type radial");
+    auto a = getFalloffAttrs();
+    assert(a["type"]   == "radial");
+    assert(a["center"] == "0,0,0",
+        "auto-size center expected 0,0,0; got " ~ a["center"]);
+    assert(a["size"]   == "0.5,0.5,0.5",
+        "auto-size size expected 0.5,0.5,0.5; got " ~ a["size"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.5b: setting the same type as the current one does NOT auto-size —
+// the user can manually tune start/end and a no-op type set should
+// preserve those edits.
+// -------------------------------------------------------------------------
+
+unittest { // no auto-size on no-op type set
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff type linear");
+    postJson("/api/command", `tool.pipe.attr falloff start "10,20,30"`);
+    postJson("/api/command", `tool.pipe.attr falloff end "40,50,60"`);
+    // Re-set to linear: should leave start/end alone.
+    postJson("/api/command", "tool.pipe.attr falloff type linear");
+    auto a = getFalloffAttrs();
+    assert(a["start"] == "10,20,30",
+        "start clobbered by no-op type set: " ~ a["start"]);
+    assert(a["end"]   == "40,50,60",
+        "end clobbered by no-op type set: " ~ a["end"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.5b: switching back to None doesn't auto-size (no geometry to fit).
+// -------------------------------------------------------------------------
+
+unittest { // none does not auto-size
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff type linear");
+    postJson("/api/command", `tool.pipe.attr falloff start "1,1,1"`);
+    postJson("/api/command", "tool.pipe.attr falloff type none");
+    auto a = getFalloffAttrs();
+    assert(a["start"] == "1,1,1",
+        "start clobbered by switch-to-none: " ~ a["start"]);
+}
