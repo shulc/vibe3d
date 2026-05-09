@@ -5,7 +5,8 @@ import std.conv      : to;
 import std.string    : split, strip;
 import std.math      : abs;
 
-import math : Vec3, dot;
+import math : Vec3, Viewport, dot, projectToWindowFull;
+import std.math : sqrt;
 import mesh : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
@@ -83,6 +84,13 @@ class FalloffStage : Stage {
     // convention.
     private Vec3 lastWpNormal_ = Vec3(0, 1, 0);
 
+    // Last viewport cached at evaluate(). Used by autoSize() for Screen
+    // type to project the selection bbox centroid into window pixels.
+    // Default-init produces a degenerate viewport — autoSize() guards
+    // against that with a "did we ever evaluate?" flag.
+    private Viewport lastVp_;
+    private bool     lastVpValid_ = false;
+
     this(Mesh* mesh = null, EditMode* editMode = null) {
         this.mesh_     = mesh;
         this.editMode_ = editMode;
@@ -98,6 +106,8 @@ class FalloffStage : Stage {
         // state.workplane is populated. Cache its normal so autoSize()
         // (called from setAttr) can run without re-walking the pipe.
         lastWpNormal_              = state.workplane.normal;
+        lastVp_                    = state.view;
+        lastVpValid_               = true;
         state.falloff.enabled      = (type != FalloffType.None);
         state.falloff.type         = type;
         state.falloff.shape        = shape;
@@ -315,12 +325,43 @@ private:
                     bbHalf.z > 1e-6f ? bbHalf.z : 0.5f,
                 );
                 break;
-            case FalloffType.Screen:
+            case FalloffType.Screen: {
+                // Project bbCenter to window pixels; place screenCx/Cy
+                // there. screenSize = max projected bbox extent in
+                // pixels (one of the 8 corners furthest from the
+                // centroid pixel). Falls back to defaults when
+                // projection fails or no live viewport has been
+                // captured yet.
+                if (!lastVpValid_) break;
+                float cx, cy, ndcZ;
+                if (!projectToWindowFull(bbCenter, lastVp_, cx, cy, ndcZ))
+                    break;
+                screenCx = cx;
+                screenCy = cy;
+                float maxR = 0.0f;
+                foreach (i; 0 .. 8) {
+                    Vec3 corner = Vec3(
+                        (i & 1) ? bbMax.x : bbMin.x,
+                        (i & 2) ? bbMax.y : bbMin.y,
+                        (i & 4) ? bbMax.z : bbMin.z,
+                    );
+                    float kx, ky, knz;
+                    if (!projectToWindowFull(corner, lastVp_, kx, ky, knz))
+                        continue;
+                    float dx = kx - cx;
+                    float dy = ky - cy;
+                    float r = sqrt(dx * dx + dy * dy);
+                    if (r > maxR) maxR = r;
+                }
+                // Screen-radius must be > 0 — a degenerate value would
+                // make every vert weight = 0/0. Fall back to a 64-px
+                // default (matches the FalloffPacket initializer).
+                screenSize = maxR > 1.0f ? maxR : 64.0f;
+                break;
+            }
             case FalloffType.Lasso:
-                // Screen / Lasso need the live viewport to project
-                // bbCenter to pixels — done at first evaluate() under
-                // each type's auto-size hook. No-op here; left at
-                // their defaults until that lands.
+                // Lasso polygon needs the user's input gesture (7.5e);
+                // nothing meaningful to auto-size.
                 break;
         }
     }

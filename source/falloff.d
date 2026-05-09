@@ -46,10 +46,9 @@ float evaluateFalloff(const ref FalloffPacket cfg,
         case FalloffType.Radial:
             return radialWeight(cfg, pos);
         case FalloffType.Screen:
+            return screenWeight(cfg, pos, vp);
         case FalloffType.Lasso:
-            // Land in 7.5d / 7.5e. Until then, pretend the falloff is
-            // full-influence everywhere so type-switch probes (e.g.
-            // status-bar pulldown) don't make the selection vanish.
+            // Lands in 7.5e.
             return 1.0f;
     }
 }
@@ -97,6 +96,28 @@ private float radialWeight(const ref FalloffPacket cfg, Vec3 pos) {
     }
     if (!any) return 1.0f;       // degenerate ellipsoid — full influence everywhere
     float t = sqrt(sum);
+    if (t <= 0.0f) return 1.0f;
+    if (t >= 1.0f) return 0.0f;
+    return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+}
+
+/// Screen falloff: window-pixel disc at (screenCx, screenCy) radius
+/// `screenSize`, projected as an infinite cylinder along the camera-
+/// back axis. Weight = 1.0 at the disc centre, 0.0 at radius, attenuated
+/// across `screenSize` by `shape`. When `transparent == false`, verts
+/// behind the camera (projection failed) get weight = 0 — facing-only
+/// semantics.
+private float screenWeight(const ref FalloffPacket cfg, Vec3 pos,
+                           const ref Viewport vp)
+{
+    float sx, sy, ndcZ;
+    if (!projectToWindowFull(pos, vp, sx, sy, ndcZ))
+        return cfg.transparent ? 1.0f : 0.0f;
+    float dx = sx - cfg.screenCx;
+    float dy = sy - cfg.screenCy;
+    float dist = sqrt(dx * dx + dy * dy);
+    if (cfg.screenSize < 1e-6f) return 1.0f;     // degenerate disc
+    float t = dist / cfg.screenSize;
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
     return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
@@ -206,4 +227,22 @@ unittest { // radial falloff: center = 1, surface = 0, outside = 0
     p.size = Vec3(2, 1, 1);
     assert(isClose(evaluateFalloff(p, Vec3(1, 0, 0), 0, vp), 0.5f));
     assert(isClose(evaluateFalloff(p, Vec3(0, 1, 0), 0, vp), 0.0f));
+}
+
+unittest { // screen falloff: behind-camera handling
+    import std.math : isClose;
+    // Default Viewport has zero matrices; projectToWindowFull returns
+    // false. Verifies the transparent / facing-only branch.
+    FalloffPacket p;
+    p.enabled    = true;
+    p.type       = FalloffType.Screen;
+    p.shape      = FalloffShape.Linear;
+    p.screenCx   = 100;
+    p.screenCy   = 100;
+    p.screenSize = 50;
+    Viewport vp;
+    p.transparent = false;
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 0.0f));
+    p.transparent = true;
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
 }
