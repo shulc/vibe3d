@@ -496,12 +496,13 @@ def test_rotate_asymmetric_local_x_ring(base):
     # X arc lies in the plane perpendicular to right (= YZ plane). A
     # point on the arc at angle PI/2: cen + up * radius. The radius is
     # computed dynamically (gizmoSize in handler.d) — reproduce here:
-    # radius = g_gizmoScreenFraction * depth / proj[5], where depth is
-    # the view-space Z of the gizmo center.
-    g_gizmo_screen_fraction = 0.55
+    # radius = 2 * px * depth / (proj[5] * vp.height), where depth is
+    # the view-space Z of the gizmo center and px is the target pixel
+    # length of the gizmo arm (90 px default, matches MODO).
+    g_gizmo_pixels = 90.0
     cen_view = mat_mul_vec4(view_M, [cen[0], cen[1], cen[2], 1.0])
     depth = max(1e-4, -cen_view[2])
-    radius = g_gizmo_screen_fraction * depth / proj_M[5]
+    radius = 2.0 * g_gizmo_pixels * depth / (proj_M[5] * vh)
     pt_on_arc_world = [cen[i] + up[i] * radius for i in range(3)]
     drag_end_world  = [cen[i] + up[i] * radius * 0.7
                               + fwd[i] * radius * 0.7 for i in range(3)]

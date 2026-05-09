@@ -25,22 +25,38 @@ private ThickLineState g_thickLine;
 
 // ---------------------------------------------------------------------------
 // Global gizmo scale — shared by MoveHandler, RotateHandler, ScaleHandler.
-// Change via setGizmoScreenFraction() at runtime.
+// Change via setGizmoPixels() at runtime. The unit is screen pixels (the
+// target on-screen length of the main gizmo arm) and the result is
+// independent of viewport height — matching MODO's xfrm.move/rotate/scale
+// gizmos, which stay ~90 px tall regardless of window size. The previous
+// semantic was "fraction of viewport height", which made the gizmo grow
+// with the window.
 // ---------------------------------------------------------------------------
 
-private float g_gizmoScreenFraction = 0.18f;  // matches MODO's ~90px gizmo
-                                                // arm at vp height 966
+private float g_gizmoPixels = 90.0f;  // matches MODO's ~90px gizmo arm at
+                                       // any vp height
 
-void setGizmoScreenFraction(float f) { g_gizmoScreenFraction = f; }
-float getGizmoScreenFraction()       { return g_gizmoScreenFraction; }
+void  setGizmoPixels(float px)  { g_gizmoPixels = px; }
+float getGizmoPixels()          { return g_gizmoPixels; }
 
-// World-space size for a gizmo element at `pos` so that it occupies a constant
-// fraction of the screen height regardless of FOV or camera distance.
-// `scale` lets callers produce smaller/larger variants (e.g. 0.04 for box handles).
+// World-space size for a gizmo element at `pos` so that it occupies a
+// constant pixel size on screen, regardless of FOV, camera distance, or
+// window size. `scale` lets callers produce smaller/larger variants
+// (e.g. 0.04 for box handles → ~3.6 px at the default 90-px target).
+//
+// Derivation: in column-major perspective, an NDC delta `dy_ndc` covers
+// `dy_ndc * vp.height / 2` pixels, and a world-space length `L` at
+// view-space depth `Z` produces `dy_ndc = L * proj[5] / Z`. Solving for L
+// given a target pixel count:
+//     L = 2 * px * Z / (proj[5] * vp.height)
 float gizmoSize(Vec3 pos, const ref Viewport vp, float scale = 1.0f) {
     float depth = -(vp.view[2]*pos.x + vp.view[6]*pos.y + vp.view[10]*pos.z + vp.view[14]);
     if (depth < 1e-4f) depth = 1e-4f;
-    return g_gizmoScreenFraction * scale * depth / vp.proj[5];
+    // Defensive: a zero-height viewport (pre-init / off-screen) would
+    // divide by zero. Fall back to a 1-px-equivalent so the gizmo is
+    // visible but tiny rather than NaN.
+    float vh = vp.height > 0 ? cast(float)vp.height : 1.0f;
+    return 2.0f * g_gizmoPixels * scale * depth / (vp.proj[5] * vh);
 }
 
 void initThickLineProgram(GLuint prog, int screenW, int screenH) {

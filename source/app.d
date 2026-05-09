@@ -490,12 +490,13 @@ void main(string[] args) {
     EditMode          pendingSelBeforeMode;
     bool              pendingSelOpen = false;
 
-    // Gizmo size: 9 levels — packed below 0.40 (where common values live)
-    // and stretched above. Default index 2 = 0.18, matching MODO's
-    // xfrm.move/rotate/scale handle screen length at default settings.
-    enum float[9] gizmoLevels = [0.10f, 0.14f, 0.18f, 0.25f, 0.34f,
-                                  0.45f, 0.60f, 0.78f, 1.0f];
-    int gizmoLevelIdx = 2;  // = 0.18, matches MODO
+    // Gizmo size in screen pixels: 9 levels — clustered around the MODO
+    // default (90 px) and stretched upward for users who prefer a larger
+    // hit area. Independent of viewport height, matching MODO's
+    // xfrm.move/rotate/scale gizmos.
+    enum float[9] gizmoLevels = [50.0f, 70.0f, 90.0f, 120.0f, 160.0f,
+                                  220.0f, 290.0f, 380.0f, 480.0f];
+    int gizmoLevelIdx = 2;  // = 90 px, matches MODO
 
     Tool   activeTool   = null;
     string activeToolId = "";
@@ -1804,13 +1805,13 @@ void main(string[] args) {
             case SDLK_MINUS:
                 if (gizmoLevelIdx > 0) {
                     --gizmoLevelIdx;
-                    setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
+                    setGizmoPixels(gizmoLevels[gizmoLevelIdx]);
                 }
                 break;
             case SDLK_EQUALS:
                 if (gizmoLevelIdx < cast(int)gizmoLevels.length - 1) {
                     ++gizmoLevelIdx;
-                    setGizmoScreenFraction(gizmoLevels[gizmoLevelIdx]);
+                    setGizmoPixels(gizmoLevels[gizmoLevelIdx]);
                 }
                 break;
             default: break;

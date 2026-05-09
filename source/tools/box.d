@@ -6,7 +6,7 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
-import handler : MoveHandler, BoxHandler, getGizmoScreenFraction, gizmoSize;
+import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize;
 import drag;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
