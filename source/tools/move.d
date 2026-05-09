@@ -116,10 +116,11 @@ public:
         handler.draw(shader, vp);
 
         // Phase 7.3d: snap visual feedback. Yellow ring (highlighted)
-        // + filled disc (snapped) at the snap candidate's screen pixel.
-        // No-op when no recent snap (init/cleared SnapResult has
-        // highlighted=false).
-        drawSnapOverlay(lastSnap, vp);
+        // + filled disc (snapped) at the snap candidate's screen pixel,
+        // plus a cyan highlight on the actual mesh element being
+        // snapped to (vertex / edge / face). No-op when no recent snap
+        // (init/cleared SnapResult has highlighted=false).
+        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
