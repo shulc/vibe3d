@@ -97,6 +97,14 @@ protected:
     // active frame of a slider drag, not on subsequent frames.
     protected bool editIsOpen() const { return editCapturing; }
 
+    // Phase 7.5h: read-only accessors for the in-flight edit snapshot.
+    // MoveTool's "absolute-from-baseline" path rebuilds mesh.vertices
+    // each motion event from these arrays + the running dragDelta, so
+    // a mid-tool falloff change can re-apply with new weights instead
+    // of being baked into the previous incremental mutation.
+    protected uint[] editIndices() { return editIdx; }
+    protected Vec3[] editBaseline() { return editBefore; }
+
     // Phase 7.5: every TransformTool subclass (Move / Rotate / Scale)
     // applies per-vertex transforms during drag, so the Falloff stage's
     // per-vertex weight is meaningful for all of them. The actual
@@ -346,6 +354,49 @@ protected:
         if (!dragFalloff.enabled) return 1.0f;
         if (vi < 0 || vi >= cast(int)mesh.vertices.length) return 1.0f;
         return evaluateFalloff(dragFalloff, mesh.vertices[vi], vi, cachedVp);
+    }
+
+    /// Per-vertex weight evaluated at an explicit world position. Used
+    /// by absolute-from-baseline paths (MoveTool's re-apply-from-
+    /// editBefore loop) so the weight stays anchored to the pre-edit
+    /// vert position — otherwise verts on the falloff boundary would
+    /// drift through the field as they move under the transform.
+    protected float falloffWeightAt(Vec3 worldPos, int vi) {
+        if (!dragFalloff.enabled) return 1.0f;
+        return evaluateFalloff(dragFalloff, worldPos, vi, cachedVp);
+    }
+
+    /// Phase 7.5h: structural equality for FalloffPacket — drives
+    /// MoveTool.update()'s "did the user tweak falloff mid-tool?"
+    /// detection. Compares the fields used by evaluateFalloff; ignores
+    /// status-bar-only flags. Treats the lasso polygon as a length +
+    /// element comparison (slice identity isn't enough since setAttr
+    /// rebuilds the array).
+    protected static bool falloffPacketsEqual(const ref FalloffPacket a,
+                                              const ref FalloffPacket b) {
+        if (a.enabled != b.enabled) return false;
+        if (a.type    != b.type)    return false;
+        if (a.shape   != b.shape)   return false;
+        if (a.in_     != b.in_)     return false;
+        if (a.out_    != b.out_)    return false;
+        // Per-type fields. Cheap to compare all of them.
+        if (a.start.x  != b.start.x  || a.start.y  != b.start.y  || a.start.z  != b.start.z)  return false;
+        if (a.end.x    != b.end.x    || a.end.y    != b.end.y    || a.end.z    != b.end.z)    return false;
+        if (a.center.x != b.center.x || a.center.y != b.center.y || a.center.z != b.center.z) return false;
+        if (a.size.x   != b.size.x   || a.size.y   != b.size.y   || a.size.z   != b.size.z)   return false;
+        if (a.screenCx     != b.screenCx)     return false;
+        if (a.screenCy     != b.screenCy)     return false;
+        if (a.screenSize   != b.screenSize)   return false;
+        if (a.transparent  != b.transparent)  return false;
+        if (a.lassoStyle   != b.lassoStyle)   return false;
+        if (a.softBorderPx != b.softBorderPx) return false;
+        if (a.lassoPolyX.length != b.lassoPolyX.length) return false;
+        if (a.lassoPolyY.length != b.lassoPolyY.length) return false;
+        foreach (i; 0 .. a.lassoPolyX.length)
+            if (a.lassoPolyX[i] != b.lassoPolyX[i]) return false;
+        foreach (i; 0 .. a.lassoPolyY.length)
+            if (a.lassoPolyY[i] != b.lassoPolyY[i]) return false;
+        return true;
     }
 
     /// True iff the ACEN stage currently holds a sticky click-outside

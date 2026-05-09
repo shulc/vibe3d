@@ -56,6 +56,16 @@ public:
         propInput = Vec3(0, 0, 0);
     }
 
+    // Phase 7.5h: tool-session boundary — commit any pending edit
+    // before we hand off control. After this returns the open edit is
+    // baked into a single history entry covering every drag + falloff
+    // tweak in this session.
+    override void deactivate() {
+        if (editIsOpen())
+            commitEdit("Move");
+        super.deactivate();
+    }
+
     // Recompute gizmo center from current selection / mesh state (with caching).
     override void update() {
         if (!active) return;
@@ -66,14 +76,34 @@ public:
 
         uint  currentHash   = computeSelectionHash();
         ulong currentMutVer = mesh.mutationVersion;
-        // Reset per-drag scratch on selection / geometry change.
+        // Reset per-drag scratch on selection / geometry change. 7.5h:
+        // close out any pending edit FIRST so this session's drag +
+        // falloff tweaks land as one history entry — matches what
+        // deactivate() does on tool switch.
         if (currentHash != lastSelectionHash || currentMutVer != lastMutationVersion) {
+            if (editIsOpen())
+                commitEdit("Move");
             lastSelectionHash   = currentHash;
             lastMutationVersion = currentMutVer;
             vertexCacheDirty    = true;
             centerManual        = false;
             dragDelta = Vec3(0, 0, 0);
             propInput = Vec3(0, 0, 0);
+        }
+
+        // Phase 7.5h: live falloff change detection. When an edit is
+        // open and the user tweaks falloff via the status-bar pulldown
+        // / property panel / HTTP, re-snapshot the packet and rebuild
+        // the affected verts from baseline. Without this the new
+        // falloff would only kick in on the NEXT drag motion event.
+        if (editIsOpen() && dragDelta != Vec3(0, 0, 0)) {
+            FalloffPacket live = currentFalloff();
+            if (!falloffPacketsEqual(live, dragFalloff)) {
+                dragFalloff = live;
+                buildVertexCacheIfNeeded();
+                applyAbsoluteFromBaseline();
+                needsGpuUpdate = true;
+            }
         }
 
         // Pull the gizmo center from the ACEN stage every frame: mode /
@@ -168,9 +198,12 @@ public:
         if (acenIsUserPlaced())
             notifyAcenUserPlaced(handler.center);
         lastSelectionHash = computeSelectionHash();
-        // Phase C.2: land this drag as one undo entry. No-op if the drag
-        // didn't actually move any verts.
-        commitEdit("Move");
+        // Phase 7.5h: don't commit at mouseUp — keep the edit open so
+        // mid-tool falloff changes (or further drags onto other axes)
+        // re-apply onto the same baseline. Commit fires at deactivate
+        // / selection change / new tool session start. The user gets
+        // ONE undo entry per tool session, matching MODO's
+        // tool-pipe-style "live tool" semantics.
         return true;
     }
 
@@ -426,6 +459,11 @@ public:
         // mouse delta onto EACH cluster's basis. Each cluster moves in
         // its own world direction, matching MODO's empirical actr.local
         // + xfrm.move behaviour.
+        //
+        // Phase 7.5h: bump dragDelta BEFORE applyDelta so the absolute-
+        // from-baseline path (taken when falloff + edit-open) sees the
+        // up-to-date total.
+        dragDelta += worldDelta;
         auto cp = queryClusterPivots();
         auto ap = queryClusterAxes();
         if (cp.active && ap.active && dragAxis <= 2) {
@@ -438,7 +476,6 @@ public:
         // Update gizmo position immediately (uses world delta — gizmo
         // sits at the global ACEN center). Per-cluster verts have
         // already been moved above; this is just visual feedback.
-        dragDelta += worldDelta;
         handler.setPosition(handler.center + worldDelta);
 
         if (wholeMeshDrag) {
@@ -505,7 +542,9 @@ public:
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             wholeMeshDrag = false;
-            commitEdit("Move");
+            // 7.5h: don't commit here either — props sliders are part
+            // of the same tool session as gizmo drags. Commit fires at
+            // deactivate / selection change.
         }
     }
 
@@ -520,7 +559,18 @@ private:
     // Phase 7.5: when falloff is active on the captured drag packet,
     // multiply each per-vertex displacement by the falloff weight.
     // Falloff-off path stays a tight 3-add loop with no extra work.
+    //
+    // 7.5h: when an edit session is open AND falloff is active, switch
+    // to absolute-from-baseline (rebuild mesh.vertices from editBefore
+    // + dragDelta * weight). This is what makes mid-tool falloff
+    // changes re-apply cleanly — re-running this function with a new
+    // dragFalloff produces the right verts without "incremental
+    // mutation drift".
     void applyDeltaImmediate(Vec3 delta) {
+        if (dragFalloff.enabled && editIsOpen()) {
+            applyAbsoluteFromBaseline();
+            return;
+        }
         if (!dragFalloff.enabled) {
             foreach (vi; vertexIndicesToProcess) {
                 mesh.vertices[vi].x += delta.x;
@@ -529,12 +579,35 @@ private:
             }
             return;
         }
+        // Edit session not open (e.g. tests bypass beginEdit); fall back
+        // to per-vertex incremental with weight evaluated at the live
+        // post-mutation position.
         foreach (vi; vertexIndicesToProcess) {
             float w = falloffWeight(vi);
             if (w == 0.0f) continue;
             mesh.vertices[vi].x += delta.x * w;
             mesh.vertices[vi].y += delta.y * w;
             mesh.vertices[vi].z += delta.z * w;
+        }
+    }
+
+    // Rebuild mesh.vertices for verts in the open edit session: mesh[vi]
+    // = editBefore[i] + dragDelta * weight(editBefore[i]). Idempotent —
+    // running it twice produces the same result. The weight is anchored
+    // to the BASELINE position (not the live mutated one) so a vert
+    // doesn't drift through the falloff field as it moves.
+    private void applyAbsoluteFromBaseline() {
+        auto idx  = editIndices();
+        auto base = editBaseline();
+        if (idx.length != base.length) return;
+        foreach (i; 0 .. idx.length) {
+            uint vi = idx[i];
+            if (vi >= mesh.vertices.length) continue;
+            Vec3 baseline = base[i];
+            float w = falloffWeightAt(baseline, cast(int)vi);
+            mesh.vertices[vi].x = baseline.x + dragDelta.x * w;
+            mesh.vertices[vi].y = baseline.y + dragDelta.y * w;
+            mesh.vertices[vi].z = baseline.z + dragDelta.z * w;
         }
     }
 
