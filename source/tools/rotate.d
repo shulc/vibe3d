@@ -15,6 +15,9 @@ import std.math;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, clearLastSnap;
+
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
 //              rotates selected vertices around the dragged axis.
@@ -166,6 +169,14 @@ public:
 
         if (dragAxis >= 0 && (dragStartDir.x != 0 || dragStartDir.y != 0 || dragStartDir.z != 0))
             drawRotationSector(vp);
+
+        // Cyan element + yellow cursor marker for the active snap
+        // candidate. Populated by updateLiveSnapPreview() during idle
+        // hover (click-outside-relocate hint). Drag-time snap math
+        // for rotation isn't wired yet, so during a drag this overlay
+        // reflects whatever the last preview frame produced and can
+        // freeze — acceptable for now.
+        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -262,6 +273,10 @@ public:
 
         dragAxis   = -1;
         totalAngle = 0;
+        // Drop the snap overlay so it doesn't linger after the drag.
+        // (No-op when the live-preview already cleared it.)
+        lastSnap = SnapResult.init;
+        clearLastSnap();
         import std.math : PI;
         propDeg = Vec3(angleAccum.x * 180.0f / PI,
                        angleAccum.y * 180.0f / PI,
@@ -271,7 +286,15 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
-        if (!active || dragAxis == -1) return false;
+        if (!active) return false;
+        if (dragAxis == -1) {
+            // Live snap preview during idle hover — same convention as
+            // MoveTool. hitTestAxes >= 0 means cursor is over an arc
+            // (would start a rotate drag, not a relocate), so the
+            // preview suppresses itself there.
+            updateLiveSnapPreview(e.x, e.y, hitTestAxes(e.x, e.y));
+            return false;
+        }
 
         Vec3 center = handler.center;
 

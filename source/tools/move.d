@@ -32,7 +32,8 @@ private:
                               //  i.e. dot(dragDelta, axisX/Y/Z) — see drawProperties)
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
-    SnapResult lastSnap;        // last snap query — drives the visual overlay
+    // (lastSnap moved to TransformTool — same semantics, also drives
+    // the live click-outside snap preview now.)
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
@@ -327,7 +328,16 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
-        if (!active || dragAxis == -1) return false;
+        if (!active) return false;
+        if (dragAxis == -1) {
+            // Idle hover: refresh the live click-outside snap preview
+            // so the cyan overlay shows where the gizmo would land if
+            // the user clicked right now. hitTestAxes returns >= 0
+            // when the cursor is on a gizmo handle (would start a
+            // drag, not a relocate) — preview is suppressed there.
+            updateLiveSnapPreview(e.x, e.y, hitTestAxes(e.x, e.y));
+            return false;
+        }
 
         // Ctrl-constrain: wait for initial movement to determine which of the two
         // in-plane axes to lock to, then switch dragAxis to that axis (0/1/2).

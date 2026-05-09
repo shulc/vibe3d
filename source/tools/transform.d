@@ -5,6 +5,7 @@ import editmode;
 import math : Vec3, Viewport;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
+import snap : SnapResult;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires gpu+caches; the tool just calls this delegate
@@ -44,6 +45,11 @@ protected:
     bool     centerManual;       // true = update() must not recompute handler center
     Vec3     cachedCenter;       // gizmo center, recomputed when selection hash changes
     bool     needsGpuUpdate;     // deferred GPU upload flag, flushed in draw()
+    SnapResult lastSnap;         // last snap query — drives the cyan/yellow overlay
+                                 // in draw(). Populated by drag-snap (MoveTool's
+                                 // applySnapToDelta) AND by updateLiveSnapPreview()
+                                 // — gives the user a "if you click here, gizmo
+                                 // lands HERE" hint before any drag.
 
     // Whole-mesh GPU bypass (Rotate + Scale use these; Move uses gpuOffset instead)
     bool   wholeMeshDrag;
@@ -317,13 +323,33 @@ protected:
     /// or the click ray is parallel to the projection plane. Callers
     /// must have already checked `acenAllowsClickRelocate()`.
     bool computeClickRelocateHit(int sx, int sy, out Vec3 worldHit) {
+        if (!computeClickRelocateHitRaw(sx, sy, worldHit)) return false;
+        // If SNAP is enabled, override the plane projection with the
+        // snap target's world position. The user's click-outside
+        // becomes a "place pivot ON this vertex / edge / face" gesture.
+        // We don't exclude any verts — the gizmo isn't moving anything
+        // yet, so it's legal to pin it to a selected vert too.
+        SnapResult sr = evaluateSnap(worldHit, sx, sy);
+        publishSnap(sr);
+        if (sr.snapped) worldHit = sr.worldPos;
+        return true;
+    }
+
+    // Geometry-only click-relocate: project the cursor ray onto the
+    // appropriate plane for the current ACEN mode (most-facing world
+    // plane through origin for Auto/None; camera-perpendicular through
+    // selection center for Screen). Returns false in modes that don't
+    // allow click-relocate. No snap, no side-effects — pure geometry.
+    // Used by computeClickRelocateHit (which then optionally snaps the
+    // result) and by updateLiveSnapPreview (which decides separately
+    // what to do with the hit).
+    protected bool computeClickRelocateHitRaw(int sx, int sy, out Vec3 worldHit) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
         import tools.create_common         : pickMostFacingPlane;
         import math : screenRay, rayPlaneIntersect;
         Vec3 dir = screenRay(sx, sy, cachedVp);
-        // Default (no ACEN stage) — Auto semantics.
         auto mode = ActionCenterStage.Mode.Auto;
         if (g_pipeCtx !is null) {
             auto ac = cast(ActionCenterStage)
@@ -354,6 +380,61 @@ protected:
             case ActionCenterStage.Mode.Border:
                 return false;
         }
+    }
+
+    // Run the SNAP stage against (rawHit, sx, sy). Returns the snap
+    // result without side-effects on lastSnap or the global publish
+    // channel — caller decides whether to publish. Empty exclude is
+    // appropriate for click-relocate / live-preview paths (no drag
+    // active, so no "moving set" to exclude); MoveTool's drag-time
+    // path inlines its own snapCursor call with proper exclusions.
+    protected SnapResult evaluateSnap(Vec3 rawHit, int sx, int sy) {
+        import toolpipe.pipeline   : g_pipeCtx;
+        import toolpipe.packets    : SubjectPacket;
+        import snap                : snapCursor;
+        SnapResult sr;
+        if (g_pipeCtx is null) return sr;
+        SubjectPacket subj;
+        subj.mesh             = mesh;
+        subj.editMode         = *editMode;
+        subj.selectedVertices = mesh.selectedVertices.dup;
+        subj.selectedEdges    = mesh.selectedEdges.dup;
+        subj.selectedFaces    = mesh.selectedFaces.dup;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        if (!state.snap.enabled) return sr;
+        return snapCursor(rawHit, sx, sy, cachedVp, *mesh, state.snap, []);
+    }
+
+    // Mirror a SnapResult onto both the tool's local lastSnap and the
+    // global publish channel (drives /api/snap/last and the cyan
+    // overlay rendered from each tool's draw()).
+    protected void publishSnap(SnapResult sr) {
+        import snap_render : publishLastSnap;
+        lastSnap = sr;
+        publishLastSnap(sr);
+    }
+
+    // Live "where would the gizmo land if I clicked right now" preview.
+    // Each transform tool calls this from onMouseMotion when no drag
+    // is active. Updates lastSnap so draw() can render the cyan/yellow
+    // overlay before the user has clicked. Cleared (no-op overlay)
+    // when:
+    //   - dragging (active drag owns the overlay).
+    //   - cursor is ON a gizmo handle (`hitTestResult >= 0`) — clicking
+    //     would start a drag, not a relocate, so a snap hint there
+    //     would be misleading.
+    //   - ACEN mode forbids click-relocate (Select/Element/Local/...).
+    //   - Click-relocate ray missed (parallel to projection plane).
+    //   - SnapStage disabled (evaluateSnap returns init).
+    void updateLiveSnapPreview(int sx, int sy, int hitTestResult) {
+        SnapResult fresh;  // default-init = highlighted=false → no overlay
+        scope(exit) publishSnap(fresh);
+        if (dragAxis >= 0)            return;
+        if (hitTestResult >= 0)        return;
+        if (!acenAllowsClickRelocate())return;
+        Vec3 hit;
+        if (!computeClickRelocateHitRaw(sx, sy, hit)) return;
+        fresh = evaluateSnap(hit, sx, sy);
     }
 
     // Bbox center of the current selection, independent of the ACEN

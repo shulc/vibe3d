@@ -15,6 +15,9 @@ import d_imgui.imgui_h;
 
 import std.math : sqrt;
 
+import snap : SnapResult;
+import snap_render : drawSnapOverlay, clearLastSnap;
+
 
 // ---------------------------------------------------------------------------
 // ScaleTool : TransformTool — shows ScaleHandler at selection/mesh center; scales
@@ -151,6 +154,11 @@ public:
         handler.setScaleAccum(dragScaleAccum);
         handler.activeDragAxis = dragAxis;
         handler.draw(shader, vp);
+
+        // Cyan element + yellow cursor marker for the active snap
+        // candidate. Populated by updateLiveSnapPreview() during idle
+        // hover (click-outside-relocate hint).
+        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
@@ -208,12 +216,22 @@ public:
         propScale = scaleAccum;
         activationVertices = mesh.vertices.dup;
         activationCenter   = handler.center;
+        // Drop the snap overlay so it doesn't linger after the drag.
+        lastSnap = SnapResult.init;
+        clearLastSnap();
         commitEdit("Scale");   // Phase C.3: land this drag as one undo entry.
         return true;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
-        if (!active || dragAxis == -1) return false;
+        if (!active) return false;
+        if (dragAxis == -1) {
+            // Live snap preview during idle hover — same convention as
+            // Move/Rotate. hitTestAxes >= 0 = on a scale handle
+            // (would start a drag), so the preview suppresses itself.
+            updateLiveSnapPreview(e.x, e.y, hitTestAxes(e.x, e.y));
+            return false;
+        }
 
         Vec3 center = handler.center;
 
