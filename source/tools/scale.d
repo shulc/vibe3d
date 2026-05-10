@@ -199,11 +199,19 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
         FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff();
         drawFalloffOverlay(fp, vp);
+        if (fp.enabled) {
+            ensureFalloffGizmo();
+            falloffGizmo.draw(shader, vp, fp);
+        }
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
+        FalloffPacket curFp = currentFalloff();
+        if (falloffGizmo !is null
+         && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp))
+            return true;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
@@ -248,6 +256,8 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
+            return true;
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
         if (wholeMeshDrag) {
@@ -281,6 +291,8 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active) return false;
+        if (falloffGizmo !is null && falloffGizmo.isDragging())
+            return falloffGizmo.onMouseMotion(e, cachedVp);
         if (dragAxis == -1) {
             // Live snap preview during idle hover — same convention as
             // Move/Rotate. hitTestAxes >= 0 = on a scale handle

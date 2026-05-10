@@ -172,9 +172,24 @@ public:
         // the live toolpipe state.
         FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff();
         drawFalloffOverlay(fp, vp);
+
+        // Phase 7.5h+: interactive endpoint handles for linear falloff.
+        // Lazy-built; renders on top of the passive overlay so the cyan
+        // boxes are visible regardless of the camera angle / handle
+        // overlap with the move arrows.
+        if (fp.enabled) {
+            ensureFalloffGizmo();
+            falloffGizmo.draw(shader, vp, fp);
+        }
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        // Falloff endpoint drag releases independently of MoveTool's
+        // dragAxis. End the gizmo drag first; if it consumed, the move
+        // tool wasn't dragging anyway so the rest of this method's
+        // commit-GPU path doesn't apply.
+        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
+            return true;
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
         ctrlConstrain = false;
@@ -247,6 +262,14 @@ public:
         SDL_Keymod mods = SDL_GetModState();
         bool ctrl = (mods & KMOD_CTRL) != 0;
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+
+        // Falloff endpoint handles take priority over the move arrows
+        // when the click lands on one — otherwise an X-arrow drag and a
+        // falloff start handle near each other would conflict.
+        FalloffPacket curFp = currentFalloff();
+        if (falloffGizmo !is null
+         && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp))
+            return true;
 
         ctrlConstrain = false;
         dragAxis = hitTestAxes(e.x, e.y);
@@ -405,6 +428,12 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active) return false;
+        // Falloff endpoint drag in progress — route to the gizmo, which
+        // pushes the new world position through FalloffStage.setAttr.
+        // The mid-tool falloff change pipeline (Phase 7.5h) re-applies
+        // weighting onto the open edit baseline on the next update().
+        if (falloffGizmo !is null && falloffGizmo.isDragging())
+            return falloffGizmo.onMouseMotion(e, cachedVp);
         if (dragAxis == -1) {
             // Idle hover: refresh the live click-outside snap preview
             // so the cyan overlay shows where the gizmo would land if

@@ -8,6 +8,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
 import toolpipe.packets : FalloffPacket;
 import falloff : evaluateFalloff;
+import falloff_handles : FalloffLinearGizmo;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires gpu+caches; the tool just calls this delegate
@@ -58,6 +59,13 @@ protected:
     // packet's `enabled` flag stays false (default-init) until that
     // gets called, so any tool that hasn't opted in sees weight=1.0.
     FalloffPacket dragFalloff;
+
+    // Phase 7.5h+: interactive falloff endpoint handles. Built lazily
+    // on first draw() that sees a Linear-typed enabled falloff packet,
+    // so non-falloff sessions don't allocate GL buffers. Owned by the
+    // base class because all three TransformTool subclasses (Move /
+    // Rotate / Scale) need the same dispatch wiring.
+    FalloffLinearGizmo falloffGizmo;
 
     // Whole-mesh GPU bypass (Rotate + Scale use these; Move uses gpuOffset instead)
     bool   wholeMeshDrag;
@@ -397,6 +405,15 @@ protected:
         foreach (i; 0 .. a.lassoPolyY.length)
             if (a.lassoPolyY[i] != b.lassoPolyY[i]) return false;
         return true;
+    }
+
+    /// Lazy-construct the falloff endpoint gizmo. Called from each
+    /// subclass's draw() once the live falloff packet is observed.
+    /// Constructing eagerly in the ctor would allocate GL VAO/VBO for
+    /// tools that may never see a falloff in their lifetime.
+    protected void ensureFalloffGizmo() {
+        if (falloffGizmo is null)
+            falloffGizmo = new FalloffLinearGizmo();
     }
 
     /// True iff the ACEN stage currently holds a sticky click-outside

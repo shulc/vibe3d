@@ -218,12 +218,22 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
         FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff();
         drawFalloffOverlay(fp, vp);
+        if (fp.enabled) {
+            ensureFalloffGizmo();
+            falloffGizmo.draw(shader, vp, fp);
+        }
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+        // Falloff endpoint handles claim the click first — see MoveTool
+        // for the rationale (priority over xfrm gizmo arrows).
+        FalloffPacket curFp = currentFalloff();
+        if (falloffGizmo !is null
+         && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp))
+            return true;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis < 0) {
             // Click outside gizmo: relocate ACEN to the click projected
@@ -296,6 +306,8 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
+        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
+            return true;
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
         float effectiveAngle = (SDL_GetModState() & KMOD_CTRL) ? lastSnappedAngle : totalAngle;
         if (dragAxis == 0) angleAccum.x += effectiveAngle;
@@ -341,6 +353,8 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
         if (!active) return false;
+        if (falloffGizmo !is null && falloffGizmo.isDragging())
+            return falloffGizmo.onMouseMotion(e, cachedVp);
         if (dragAxis == -1) {
             // Live snap preview during idle hover — same convention as
             // MoveTool. hitTestAxes >= 0 means cursor is over an arc

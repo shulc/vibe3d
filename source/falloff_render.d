@@ -29,11 +29,13 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
 
     auto dl = ImGui.GetForegroundDrawList();
 
-    // Cyan-with-purple-tint for falloff overlays so they don't conflict
-    // with snap (cyan) or selection (orange). Two intensities — the
-    // ring/outline at full alpha, the fill semi-transparent.
-    enum uint outlineCol = IM_COL32(160, 110, 220, 230);
-    enum uint fillCol    = IM_COL32(160, 110, 220,  60);
+    // Cyan to match MODO 9's linear-falloff overlay (cyan boxes at the
+    // endpoints, faint connecting line). Snap uses a similar cyan but
+    // never co-occurs with a falloff overlay (snap visualises hover
+    // candidates; falloff visualises an active stage attribute) so the
+    // colour clash is acceptable. Selection orange is unaffected.
+    enum uint outlineCol = IM_COL32(100, 220, 230, 230);
+    enum uint fillCol    = IM_COL32(100, 220, 230,  60);
 
     final switch (cfg.type) {
         case FalloffType.None: return;
@@ -47,12 +49,19 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
 private void drawLinear(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
                         const ref Viewport vp, uint col)
 {
+    // Thin (1 px) connecting line + small endpoint markers — matches
+    // MODO 9's overlay where the endpoints are the visual anchor and
+    // the line is barely visible. The interactive draggable handles
+    // (FalloffLinearGizmo from falloff_handles.d) render OVER this
+    // passive overlay as 3D BoxHandlers — the ImGui markers still
+    // appear behind them so the visualisation is coherent at any
+    // camera angle.
     float ax, ay, anz, bx, by, bnz;
     if (!projectToWindowFull(cfg.start, vp, ax, ay, anz)) return;
     if (!projectToWindowFull(cfg.end,   vp, bx, by, bnz)) return;
-    dl.AddLine(ImVec2(ax, ay), ImVec2(bx, by), col, 2.0f);
-    dl.AddCircleFilled(ImVec2(ax, ay), 6.0f, col, 16);   // start = full influence
-    dl.AddCircle      (ImVec2(bx, by), 6.0f, col, 16, 2.0f); // end = zero
+    dl.AddLine(ImVec2(ax, ay), ImVec2(bx, by), col, 1.0f);
+    dl.AddCircleFilled(ImVec2(ax, ay), 4.0f, col, 16);   // start = full influence
+    dl.AddCircleFilled(ImVec2(bx, by), 4.0f, col, 16);   // end   = zero
 }
 
 private void drawRadial(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
