@@ -71,6 +71,16 @@ PATTERNS = {
         "segments":  1,
         "polys":     None,   # signals "select faces with centroid.y > 0"
     },
+    # Cube subdivided 5×5×5, with the entire +Y face selected (25 polys
+    # → one cluster of 36 verts at y=0.5 with X,Z ∈ {-0.5..+0.5} on a
+    # 6×6 grid). Used by the falloff test to expose a vert-population
+    # spanning the full falloff range so per-vertex weights vary
+    # within a single connected cluster.
+    "top_face_seg5": {
+        "primitive": "cube",
+        "segments":  5,
+        "polys":     None,   # signals "select faces with centroid.y > 0.49"
+    },
 }
 
 if pattern not in PATTERNS:
@@ -133,6 +143,8 @@ for p in mesh.geometry.polygons:
     if targets is None:
         if pattern == "sphere_top":
             pick = poly_centroid_y(p) > 0.001
+        elif pattern == "top_face_seg5":
+            pick = poly_centroid_y(p) > 0.49
     else:
         pick = vert_set(p) in targets
     if pick:

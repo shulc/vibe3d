@@ -175,8 +175,12 @@ private float lassoWeight(const ref FalloffPacket cfg, Vec3 pos,
 ///   EaseIn  → 1 - t²                 stronger near full-influence
 ///   EaseOut → (1 - t)²               stronger near zero-influence
 ///   Smooth  → 1 - smoothstep(t)      S-curve (default)
-///   Custom  → cubic Hermite interp from (0,1) to (1,0) with
-///             tangents -in_ at t=0 and -out_ at t=1
+///   Custom  → cubic Bezier from (0,1) to (1,0) with control points
+///             P1 = (1/3, (2-out_)/3), P2 = (2/3, (1+in_)/3) — at
+///             in_=out_=0 both control points lie on the linear
+///             baseline so the curve degenerates to y=1-t. Matches
+///             MODO 9's `falloff.linear` Custom shape bit-for-bit
+///             (verified by tools/modo_diff probing the in/out grid).
 float applyShape(float t, FalloffShape shape, float in_, float out_) {
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
@@ -196,18 +200,18 @@ float applyShape(float t, FalloffShape shape, float in_, float out_) {
             return 1.0f - s;
         }
         case FalloffShape.Custom: {
-            // Cubic Hermite from (t=0, w=1) to (t=1, w=0). Tangents:
-            //   m0 = -in_   (negative because the curve is descending)
-            //   m1 = -out_
-            // w(t) = h00*1 + h10*m0 + h01*0 + h11*m1
-            //      = h00 - in_*h10 - out_*h11
-            float t2 = t * t;
-            float t3 = t2 * t;
-            float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
-            float h10 = t3 - 2.0f * t2 + t;
-            float h11 = t3 - t2;
-            float w = h00 - in_ * h10 - out_ * h11;
-            // Clamp — extreme tangents can overshoot [0, 1].
+            // Cubic Bezier from (0,1) to (1,0), control y-coords
+            // (2-out_)/3 (P1) and (1+in_)/3 (P2). At in_=out_=0 both
+            // control points sit on y=1-t and the curve collapses to
+            // the linear baseline. Compact algebraic form:
+            //   w(t) = (1-t) + in_·t²·(1-t) - out_·t·(1-t)²
+            // in_  raises the curve in the second half (P2 above line)
+            // out_ lowers the curve in the first half (P1 below line)
+            float u = 1.0f - t;
+            float w = u + in_ * t * t * u - out_ * t * u * u;
+            // Clamp — extreme p0/p1 can still drive w outside [0, 1]
+            // (the Bezier hull doesn't bound y when control points
+            // stray above 1 or below 0).
             if (w < 0.0f) w = 0.0f;
             if (w > 1.0f) w = 1.0f;
             return w;
@@ -223,6 +227,16 @@ unittest { // applyShape endpoints + linear midpoint
     assert(isClose(applyShape(0.5f, FalloffShape.EaseIn,  0.5f, 0.5f), 0.75f));
     assert(isClose(applyShape(0.5f, FalloffShape.EaseOut, 0.5f, 0.5f), 0.25f));
     assert(isClose(applyShape(0.5f, FalloffShape.Smooth,  0.5f, 0.5f), 0.5f));
+    // Custom Bezier: at in=out=0 collapses to linear (P1, P2 sit on the
+    // baseline). MODO 9 parity verified by tools/modo_diff/drag_cases.
+    assert(isClose(applyShape(0.5f, FalloffShape.Custom, 0.0f, 0.0f), 0.5f));
+    assert(isClose(applyShape(0.2f, FalloffShape.Custom, 0.0f, 0.0f), 0.8f));
+    // in=1, out=0 lifts P2 → curve sits above linear (more weight in
+    // the second half). t=0.5: w = 0.5 + 1·0.25·0.5 = 0.625.
+    assert(isClose(applyShape(0.5f, FalloffShape.Custom, 1.0f, 0.0f), 0.625f));
+    // in=0, out=1 lowers P1 → curve sits below linear. t=0.5:
+    // w = 0.5 - 0.25·0.5 = 0.375.
+    assert(isClose(applyShape(0.5f, FalloffShape.Custom, 0.0f, 1.0f), 0.375f));
 }
 
 unittest { // linear falloff: vert at start = 1, at end = 0

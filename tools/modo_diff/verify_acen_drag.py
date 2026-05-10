@@ -370,6 +370,171 @@ def verify_move(mode, sel, clusters_pre, verts_before, verts_after,
     return 1
 
 
+def apply_falloff_shape(t, shape, in_, out_):
+    """Map normalised distance t∈[0,1] (0=full influence, 1=no influence)
+    to weight w∈[0,1] per the shape preset. Mirror of source/falloff.d's
+    `applyShape` (line 180+)."""
+    if t <= 0.0: return 1.0
+    if t >= 1.0: return 0.0
+    if shape == "linear":
+        return 1.0 - t
+    if shape == "easeIn":
+        return 1.0 - t * t
+    if shape == "easeOut":
+        u = 1.0 - t
+        return u * u
+    if shape == "smooth":
+        # smoothstep(t) = 3t² - 2t³; falling complement → 1 - smoothstep(t)
+        s = t * t * (3.0 - 2.0 * t)
+        return 1.0 - s
+    if shape == "custom":
+        # Cubic Bezier from (0,1) to (1,0) with control point y-coords
+        # (2-out_)/3 (P1) and (1+in_)/3 (P2). Matches MODO 9's
+        # falloff.linear Custom shape — at in_=out_=0 both control
+        # points lie on the linear baseline y=1-t, so the curve
+        # collapses to plain linear (verified empirically by probing
+        # MODO with (in,out) ∈ {0,1}²; matches source/falloff.d's new
+        # Custom branch added after that probe).
+        u = 1.0 - t
+        w = u + in_ * t * t * u - out_ * t * u * u
+        if w < 0.0: w = 0.0
+        if w > 1.0: w = 1.0
+        return w
+    # Unknown shape — fall back to linear (already-defensive behaviour).
+    return 1.0 - t
+
+
+def evaluate_linear_falloff(pos, start, end, shape="linear",
+                            in_=0.0, out_=0.0):
+    """MODO-style linear falloff weight. Project (pos - start) onto the
+    axis (end - start), clamp t = dot/|axis|² to [0,1], pass through
+    the shape attenuation. Off-axis distance is ignored — Linear in
+    MODO is band-shaped, not cone-shaped. Matches source/falloff.d:55."""
+    ax = tuple(end[i] - start[i] for i in range(3))
+    ax_sq = sum(a * a for a in ax)
+    if ax_sq < 1e-12:
+        return 1.0
+    rel = tuple(pos[i] - start[i] for i in range(3))
+    t = sum(rel[i] * ax[i] for i in range(3)) / ax_sq
+    return apply_falloff_shape(t, shape, in_, out_)
+
+
+def verify_move_falloff(falloff, sel, verts_before, verts_after, sel_set):
+    """Per-vertex weighted-translation check. xfrm.move with falloff
+    applies `Δ_ref * weight(v)` per selected vert; we recover Δ_ref
+    from the highest-weight pre-vert (which received the full delta)
+    and verify every other selected vert hit the predicted weighted
+    position. Verts with weight=0 stay put.
+
+    Pairing is delta-direction-aware so the gradient of partial
+    movements doesn't confuse it: anchor on max-weight pre-vert,
+    accept the candidate Δ_ref that produces a valid post-vert match
+    for ALL pre-verts under the falloff weighting."""
+    ftype = falloff.get("type", "linear")
+    start = falloff.get("start", [0.0, 0.0, 0.0])
+    end   = falloff.get("end",   [0.0, 1.0, 0.0])
+    shape = falloff.get("shape", "linear")
+    in_   = float(falloff.get("in",  0.0))
+    out_  = float(falloff.get("out", 0.0))
+    if ftype != "linear":
+        print(f"\033[31m  FAIL\033[0m: unsupported falloff type '{ftype}'")
+        return 1
+
+    untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
+        verts_before, verts_after, sel_set)
+    print(f"  untouched verts preserved: {untouched_ok}  "
+          f"({len(untouched_pre)} verts)")
+
+    # weight for each selected pre-vert
+    weights = [evaluate_linear_falloff(v, start, end, shape, in_, out_)
+               for v in sel]
+    w_min = min(weights)
+    w_max = max(weights)
+    extra = ""
+    if shape == "custom":
+        extra = f"  in={in_:g} out={out_:g}"
+    print(f"  falloff: linear  shape={shape}{extra}  "
+          f"start={tuple(start)}  end={tuple(end)}")
+    print(f"  per-vert weights: {len(sel)} verts, "
+          f"range [{w_min:.3f} .. {w_max:.3f}]")
+
+    if w_max < 0.5:
+        print(f"\033[31m  FAIL\033[0m: no vert has weight ≥ 0.5; can't "
+              f"recover Δ_ref. Check falloff start/end vs selection.")
+        return 1
+
+    # Anchor: pre-vert with max weight (likely == 1.0).
+    anchor_i = max(range(len(sel)), key=lambda i: weights[i])
+    anchor   = sel[anchor_i]
+    w_anchor = weights[anchor_i]
+
+    # Try each available post-vert as the anchor's match. The right
+    # Δ_ref is the one that lets EVERY pre-vert (including weight=0
+    # ones, which must match a post equal to the pre) find a unique
+    # post-vert at `pre + weight * Δ_ref`.
+    n_sel = len(sel)
+    n_post = len(moved_after)
+    if n_post < n_sel:
+        # weight=0 verts stayed at pre-positions; they may match
+        # untouched_pre but split_moved_unmoved already filtered those
+        # out (sel verts aren't in untouched_pre). So all n_sel verts
+        # MUST appear in moved_after.
+        print(f"\033[31m  FAIL\033[0m: moved_after has {n_post} verts but "
+              f"selection has {n_sel}. Some selected verts vanished.")
+        return 1
+
+    best_delta = None
+    best_match = None
+    best_err   = float("inf")
+    for cand_j in range(n_post):
+        cand_post = moved_after[cand_j]
+        cand_delta = tuple((cand_post[k] - anchor[k]) / w_anchor
+                           for k in range(3))
+        # Try to match every pre-vert against moved_after using this Δ.
+        used = set()
+        ok = True
+        total_err = 0.0
+        match = [None] * n_sel
+        for i, v in enumerate(sel):
+            w = weights[i]
+            tgt = tuple(v[k] + w * cand_delta[k] for k in range(3))
+            best_j = None
+            best_d = float("inf")
+            for j in range(n_post):
+                if j in used: continue
+                p = moved_after[j]
+                d = sum((p[k] - tgt[k]) ** 2 for k in range(3))
+                if d < best_d:
+                    best_d = d; best_j = j
+            if best_j is None or best_d > TOL * TOL:
+                ok = False; break
+            used.add(best_j)
+            match[i] = best_j
+            total_err += best_d
+        if ok and total_err < best_err:
+            best_err = total_err
+            best_delta = cand_delta
+            best_match = match
+
+    if best_delta is None:
+        print(f"\033[31m  FAIL\033[0m: no Δ_ref candidate produced a "
+              f"consistent per-vert weighted-move match.")
+        return 1
+
+    rms = (best_err / n_sel) ** 0.5
+    print(f"  recovered Δ_ref ≈ "
+          f"({best_delta[0]:+.4f}, {best_delta[1]:+.4f}, {best_delta[2]:+.4f})")
+    print(f"  per-vert match rms = {rms:.5f}  (TOL={TOL})")
+
+    if untouched_ok and rms < TOL:
+        print(f"\033[32m  PASS\033[0m: linear-falloff move — every vert "
+              f"moved by weight × Δ_ref.")
+        return 0
+    print(f"\033[31m  FAIL\033[0m: linear-falloff move — per-vert "
+          f"weighted match failed.")
+    return 1
+
+
 def verify_rotate(mode, sel, clusters_pre, verts_before, verts_after, sel_set):
     """xfrm.rotate (TransformRotate) is a rigid rotation around the ACEN
     pivot. Vertex distances from the pivot are preserved. The pivot
@@ -510,8 +675,19 @@ def main():
     border   = [tuple(v) for v in state.get("border_verts", [])] or None
     sel_set  = {(round(v[0], 4), round(v[1], 4), round(v[2], 4)) for v in sel}
 
-    print(f"mode: {mode}   pattern: {pattern}   tool: {tool}")
+    falloff = state.get("falloff")
+
+    print(f"mode: {mode}   pattern: {pattern}   tool: {tool}"
+          f"{'   falloff: ' + falloff['type'] if falloff else ''}")
     print(f"  selection: {len(sel)} unique verts in {len(clusters)} cluster(s)")
+
+    # Falloff dispatch: per-vertex weighted transforms break the
+    # rigid-cluster assumptions in verify_move/verify_rotate, so when
+    # a Falloff stage is present we route to a falloff-aware verifier.
+    # Currently only move + linear is implemented.
+    if falloff is not None and tool == "move":
+        return verify_move_falloff(falloff, sel,
+                                   verts_before, verts_after, sel_set)
 
     if tool == "rotate":
         return verify_rotate(mode, sel, clusters,

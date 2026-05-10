@@ -1,0 +1,11 @@
+{
+  "_comment": "Linear falloff along +Z, ACEN none, xfrm.move. Cube segments=5 with the entire +Y face selected (25 polys → 1 cluster, 36 verts at y=0.5 on a 6×6 XZ grid). Falloff start (0,0,-0.5) → weight 1.0, end (0,0,+0.5) → weight 0.0; six Z bands give six discrete weight levels (1.0/0.8/0.6/0.4/0.2/0.0). Default drag (+100 px right) plus xfrm.move's per-vertex weight scaling produces a six-tier X displacement gradient — the verifier reads state['falloff'], computes weights, and checks each vert moved by weight × Δ_ref.",
+  "tool": "move",
+  "pattern": "top_face_seg5",
+  "acen_mode": "none",
+  "falloff": {
+    "type":  "linear",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

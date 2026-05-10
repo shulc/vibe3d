@@ -1,0 +1,12 @@
+{
+  "_comment": "Linear falloff along +Z with EaseOut shape (w=(1-t)²): weight drops sharply near the start, plateaus low near the end. ACEN none, xfrm.move.",
+  "tool": "move",
+  "pattern": "top_face_seg5",
+  "acen_mode": "none",
+  "falloff": {
+    "type":  "linear",
+    "shape": "easeOut",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

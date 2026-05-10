@@ -212,7 +212,7 @@ def check_prereqs():
             print(red(f"ERROR: {d} missing"))
             sys.exit(2)
     for f in ("modo_drag_setup.py", "modo_dump_verts.py",
-              "verify_acen_drag.py"):
+              "modo_falloff_setup.py", "verify_acen_drag.py"):
         if not (SCRIPT_DIR / f).is_file():
             print(red(f"ERROR: missing {SCRIPT_DIR / f}"))
             sys.exit(2)
@@ -222,7 +222,8 @@ def copy_scripts():
     """Scripts are shared (same content for every worker); the worker
     distinguishes itself via the tmpdir argument it passes."""
     print(blue("=== copying MODO scripts ==="))
-    for name in ("modo_drag_setup.py", "modo_dump_verts.py"):
+    for name in ("modo_drag_setup.py", "modo_dump_verts.py",
+                 "modo_falloff_setup.py"):
         for dst in (USER_SCRIPTS, SYSTEM_SCRIPTS):
             shutil.copy(SCRIPT_DIR / name, dst / name)
 
@@ -415,10 +416,69 @@ class Worker:
         ax, ay = self._ui_xy(rel_x, rel_y)
         self.click(ax, ay, settle)
 
+    def _activate_modo_window(self):
+        """Bring MODO to the foreground — required under most Wayland
+        compositors before xdotool's keystrokes get delivered to MODO
+        (otherwise they go to whatever window the compositor thinks
+        is focused). Cached lookup of the window id avoids the
+        re-search cost."""
+        if not getattr(self, "_modo_wid", None):
+            r = subprocess.run(
+                ["xdotool", "search", "--name", "modo"],
+                env=self.env(), capture_output=True, text=True)
+            wid = r.stdout.strip().split("\n")[0] if r.stdout.strip() else ""
+            if not wid:
+                return
+            self._modo_wid = wid
+        subprocess.run(
+            ["xdotool", "windowactivate", self._modo_wid],
+            env=self.env(), capture_output=True)
+        time.sleep(0.05)
+
+    def _type_text(self, text):
+        """Type `text` via xdotool. Avoids `xdotool type` because that
+        sends Unicode that gets re-mapped through the active keyboard
+        layout — under Wayland with a Russian/Ukrainian/etc. layout
+        active, ASCII input becomes Cyrillic and MODO's command bar
+        rejects it. `xdotool key` with explicit keysyms bypasses the
+        layout: each US-ASCII char is mapped to its named keysym
+        (slash / period / at / underscore / etc.) and sent
+        unambiguously."""
+        symmap = {
+            " ": "space", "/": "slash", ".": "period", "_": "underscore",
+            "@": "at", "-": "minus", "+": "plus", "=": "equal",
+            ":": "colon", ";": "semicolon", ",": "comma",
+            "(": "parenleft", ")": "parenright",
+            "[": "bracketleft", "]": "bracketright",
+            "{": "braceleft", "}": "braceright",
+            '"': "quotedbl", "'": "apostrophe",
+            "*": "asterisk", "?": "question", "!": "exclam",
+            "<": "less", ">": "greater",
+            "\\": "backslash", "|": "bar", "&": "ampersand",
+            "#": "numbersign", "$": "dollar", "%": "percent",
+            "^": "asciicircum", "~": "asciitilde", "`": "grave",
+            "\n": "Return", "\t": "Tab",
+        }
+        keys = []
+        for ch in text:
+            if ch in symmap:
+                keys.append(symmap[ch])
+            else:
+                keys.append(ch)
+        if not keys:
+            return
+        self.xdo("key", "--delay", "20", *keys)
+
     def cmd_bar(self, cmd, wait_for=None, timeout=8.0):
+        # In visible mode the MODO window may not have keyboard
+        # focus from the WM (focus follows compositor focus, not
+        # mouse). Pre-activate it so xdotool's keystrokes land in
+        # MODO. No-op-ish under matchbox-fullscreen but cheap.
+        if self.visible:
+            self._activate_modo_window()
         self.click_ui(CMD_BAR_X, CMD_BAR_Y)
-        time.sleep(0.15)
-        self.xdo("type", "--delay", "20", cmd)
+        time.sleep(0.2)
+        self._type_text(cmd)
         time.sleep(0.15)
         self.xdo("key", "Return")
         if wait_for is None:
@@ -610,6 +670,7 @@ class Worker:
         acen_mode = spec["acen_mode"]
         handle    = spec.get("handle")             # x|y|z|center, optional
         drag_len  = spec.get("drag_pixels", 100)
+        falloff   = spec.get("falloff")            # {type, start, end}, optional
         # When `handle` is set, we resolve the drag start/length from
         # camera + axis after the setup script has dumped state.json
         # (camera info is unknown until then). Fall back to the raw
@@ -636,6 +697,37 @@ class Worker:
                 f"{tool} {setup_drag_x} {setup_drag_y}",
                 wait_for=str(self.state_path), timeout=8):
             return "ERROR", "setup did not produce state.json"
+
+        # Optional Falloff stage: pushed into the toolpipe AFTER setup
+        # (which already activated ACEN + xfrm.<tool>). MODO's slot
+        # system places `falloff.<type>` in WGHT independent of
+        # activation order, so per-vertex weights apply at drag time.
+        # The helper script also patches state.json with the falloff
+        # config so verify_acen_drag.py can recompute weights and check
+        # per-vertex deltas.
+        if falloff is not None:
+            ftype = falloff.get("type", "linear")
+            start = falloff.get("start", [0.0, 0.0, 0.0])
+            end   = falloff.get("end",   [0.0, 1.0, 0.0])
+            shape = falloff.get("shape", "linear")
+            p0    = float(falloff.get("in",  0.0))
+            p1    = float(falloff.get("out", 0.0))
+            if ftype != "linear":
+                return "ERROR", f"unsupported falloff type: {ftype}"
+            if len(start) != 3 or len(end) != 3:
+                return "ERROR", f"falloff start/end must be [x,y,z]"
+            if shape not in ("linear", "easeIn", "easeOut", "smooth", "custom"):
+                return "ERROR", f"unsupported falloff shape: {shape}"
+            sentinel = self.tmpdir / "modo_falloff.done"
+            try: os.remove(sentinel)
+            except OSError: pass
+            if not self.cmd_bar(
+                    f"@modo_falloff_setup.py {self.tmpdir} {ftype} "
+                    f"{start[0]} {start[1]} {start[2]} "
+                    f"{end[0]} {end[1]} {end[2]} "
+                    f"{shape} {p0} {p1}",
+                    wait_for=str(sentinel), timeout=8):
+                return "ERROR", "falloff setup did not complete"
 
         # Wake up viewport gizmo render so detect_handles.py finds
         # the handle pixels in the screenshot. Sequence:

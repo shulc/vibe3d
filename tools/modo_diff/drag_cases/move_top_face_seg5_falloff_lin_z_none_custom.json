@@ -1,0 +1,14 @@
+{
+  "_comment": "Linear falloff along +Z with Custom shape, in=out=0. Custom is a cubic Bezier from (0,1) to (1,0) with control y-coords (2-out)/3 and (1+in)/3 — at in=out=0 both controls sit on the linear baseline so the curve degenerates to y=1-t. Formula verified bit-for-bit against MODO 9 by probing the (in,out) ∈ {0,1}² grid (see commit history).",
+  "tool": "move",
+  "pattern": "top_face_seg5",
+  "acen_mode": "none",
+  "falloff": {
+    "type":  "linear",
+    "shape": "custom",
+    "in":    0.0,
+    "out":   0.0,
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "_comment": "Linear falloff along +Z with Smooth shape (w = 1 - smoothstep(t)): S-curve attenuation, symmetric around t=0.5. ACEN none, xfrm.move.",
+  "tool": "move",
+  "pattern": "top_face_seg5",
+  "acen_mode": "none",
+  "falloff": {
+    "type":  "linear",
+    "shape": "smooth",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

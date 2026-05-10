@@ -186,7 +186,12 @@ PATTERN_POLYS = {
         _v(( 0.0, -0.5,  0.0), (0.5, -0.5,  0.0),
            (0.5, -0.5,  0.5), (0.0, -0.5,  0.5)),
     ],
-    "sphere_top": "centroidY>0",
+    "sphere_top":     "centroidY>0",
+    # Cube subdivided 5×5×5, entire +Y face selected (mirrors the
+    # MODO-side `top_face_seg5` pattern). Selector is "centroidY>0.49"
+    # since the top-face polys live exactly at y=0.5 while the side
+    # ring of polys span y∈[-0.5,0.5] but with centroid Y far below 0.49.
+    "top_face_seg5": "topFaceY>0.49",
 }
 
 
@@ -204,6 +209,10 @@ def setup_primitive(base, pattern):
         # comparison. vibe3d's default is 24/24 (554 verts).
         post(f"{base}/api/command",
              "prim.sphere sides:24 segments:12")
+    elif pattern == "top_face_seg5":
+        post(f"{base}/api/command",
+             "prim.cube segmentsX:5 segmentsY:5 segmentsZ:5 "
+             "sizeX:1 sizeY:1 sizeZ:1 sharp:true radius:0")
     else:
         raise ValueError(f"unknown pattern {pattern}")
 
@@ -216,6 +225,12 @@ def find_face_indices(model, pattern):
         for fi, f in enumerate(faces):
             ys = [verts[i][1] for i in f]
             if sum(ys) / max(1, len(ys)) > 0.001:
+                indices.append(fi)
+        return indices
+    if pattern == "top_face_seg5":
+        for fi, f in enumerate(faces):
+            ys = [verts[i][1] for i in f]
+            if sum(ys) / max(1, len(ys)) > 0.49:
                 indices.append(fi)
         return indices
     targets = PATTERN_POLYS[pattern]
@@ -351,6 +366,26 @@ def run_case(case_path, worker, base, args_step_px=None):
         post(f"{base}/api/command", "tool.set scale")
     else:  # move
         post(f"{base}/api/command", "tool.set move")
+
+    # Optional falloff stage. `type` must be set FIRST — FalloffStage
+    # auto-fits start/end to the selection bbox on a real type change
+    # (mirrors MODO behaviour); subsequent start/end attrs override
+    # those auto-fit values with the case-spec ones, matching the
+    # MODO-side modo_falloff_setup.py flow.
+    falloff = spec.get("falloff")
+    if falloff is not None:
+        ftype = falloff.get("type", "linear")
+        post(f"{base}/api/command",
+             f"tool.pipe.attr falloff type {ftype}")
+        if ftype == "linear":
+            sx, sy, sz = falloff["start"]
+            ex, ey, ez = falloff["end"]
+            post(f"{base}/api/command",
+                 f"tool.pipe.attr falloff start {sx},{sy},{sz}")
+            post(f"{base}/api/command",
+                 f"tool.pipe.attr falloff end {ex},{ey},{ez}")
+            post(f"{base}/api/command",
+                 f"tool.pipe.attr falloff shape linear")
 
     # 4) Set vibe3d's camera to MODO's (after reset, before drag).
     cam_vibe = modo_to_vibe3d_camera(cam_modo)

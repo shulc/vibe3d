@@ -1,0 +1,12 @@
+{
+  "_comment": "Linear falloff along +Z with EaseIn shape (w=1-t²): weight stays high near the start, drops sharply near the end. ACEN none, xfrm.move. Same geometry/drag as the linear-shape case; only the per-vert weight curve changes.",
+  "tool": "move",
+  "pattern": "top_face_seg5",
+  "acen_mode": "none",
+  "falloff": {
+    "type":  "linear",
+    "shape": "easeIn",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}
