@@ -3234,6 +3234,26 @@ void main(string[] args) {
             if (ImGui.Begin("Tool Properties")) {
                 propertyPanel.draw(activeTool);   // schema-driven params first
                 activeTool.drawProperties();      // tool-specific custom UI after
+
+                // Phase 7.9: each enabled tool-pipe stage with a params()
+                // schema gets its own collapsible section below the
+                // active tool's properties — MODO-style data-driven
+                // composition where the same Tool Properties window
+                // surfaces both the active tool AND the stages that
+                // modulate it (Workplane, ACEN, AXIS, Snap, Falloff).
+                // Stages without a schema (e.g. NopStage placeholders,
+                // or older stages that haven't been migrated yet)
+                // collapse to nothing.
+                if (g_pipeCtx !is null) {
+                    import toolpipe.stage : Stage;
+                    foreach (s; g_pipeCtx.pipeline.all()) {
+                        if (!s.enabled) continue;
+                        auto stage = cast(Stage)s;
+                        if (stage is null || stage.params().length == 0) continue;
+                        if (ImGui.CollapsingHeader(stage.id()))
+                            propertyPanel.drawProvider(stage);
+                    }
+                }
             }
             ImGui.End();
             popPanelChromeStyle();

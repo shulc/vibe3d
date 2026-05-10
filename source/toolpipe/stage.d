@@ -1,6 +1,11 @@
 module toolpipe.stage;
 
 import toolpipe.pipeline : ToolState;
+import params : Param, ParamProvider;
+import math   : Vec3;
+import std.conv   : to;
+import std.format : format;
+import std.string : split, strip;
 
 // ---------------------------------------------------------------------------
 // MODO Tool Pipe task codes (from LXSDK_661446/include/lxtool.h).
@@ -79,7 +84,7 @@ enum ubyte ordPost = 0xF1;
 // concrete stages (Workplane, ActionCenter, Snap, Falloff, Symmetry, etc.)
 // land in 7.1+ as subclasses of this base.
 // ---------------------------------------------------------------------------
-abstract class Stage {
+abstract class Stage : ParamProvider {
     abstract TaskCode taskCode() const pure nothrow @nogc @safe;
     abstract string   id()       const;
     abstract ubyte    ordinal()  const pure nothrow @nogc @safe;
@@ -95,19 +100,39 @@ abstract class Stage {
     bool enabled = true;
 
     // ------------------------------------------------------------------
+    // Schema (Phase 7.9): typed `Param[]` registry — same shape as
+    // `Tool.params()`. PropertyPanel renders this via the shared
+    // ParamProvider interface so stage attrs appear in Tool Properties
+    // alongside the active tool's params, MODO-style.
+    //
+    // The default `setAttr` / `listAttrs` below derive their behaviour
+    // from this schema (string-parse / stringify per-Param.kind) so
+    // concrete stages only override `params()` — no setAttr boilerplate.
+    // Stages that need attrs outside the standard kinds (e.g. lasso
+    // polygon arrays) override setAttr/listAttrs themselves.
+    // ------------------------------------------------------------------
+    Param[] params() { return []; }
+    bool    paramEnabled(string name) const { return true; }
+    void    onParamChanged(string name)      {}
+
+    // ------------------------------------------------------------------
     // Attribute mutation (HTTP `tool.pipe.attr <stageId> <name> <value>`).
     //
-    // Default impls are no-ops; concrete stages override to expose
-    // panel-editable fields. Returning `false` from `setAttr` signals
-    // "unknown attribute" to the HTTP layer, which surfaces it as an
-    // error.
+    // Default impls inspect params() and parse `value` per the matching
+    // Param's kind. Returning `false` signals "unknown attribute" to
+    // the HTTP layer, which surfaces it as an error. Concrete stages
+    // override only when they need attrs the standard kinds don't
+    // cover (lasso polygon arrays, custom-formatted enums, etc.).
     //
-    // listAttrs returns (name, value) pairs for the inspection endpoint
-    // (`/api/toolpipe`). Pairs are passed through verbatim — values are
-    // stringified by the stage itself (no JSON typing).
+    // listAttrs stringifies the same params() schema — used by the
+    // `/api/toolpipe` inspection endpoint. Order matches params().
     // ------------------------------------------------------------------
-    bool setAttr(string name, string value) { return false; }
-    string[2][] listAttrs() const { return []; }
+    bool setAttr(string name, string value) {
+        return defaultStageSetAttr(this, name, value);
+    }
+    string[2][] listAttrs() const {
+        return defaultStageListAttrs(cast(Stage)this);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,4 +151,89 @@ class NopStage : Stage {
     override TaskCode taskCode() const pure nothrow @nogc @safe { return code_; }
     override string   id()       const                          { return id_; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ord_; }
+}
+
+// ---------------------------------------------------------------------------
+// Default schema-driven setAttr / listAttrs helpers — shared by Stage's
+// default impls. Walk the params() registry, parse `value` per Param.kind
+// for setAttr, stringify each Param's pointer-target for listAttrs.
+//
+// Vec3-as-string format: "x,y,z" (matches `tool.pipe.attr falloff start
+// 0,0.5,0` from the existing HTTP tests). Enum kind matches by wireTag
+// (string for Param.Kind.Enum, intEnumValues.wireTag for IntEnum). Bool
+// accepts true/false/1/0. Unknown attr name → return false.
+// ---------------------------------------------------------------------------
+
+bool defaultStageSetAttr(Stage s, string name, string value) {
+    foreach (ref p; s.params()) {
+        if (p.name != name) continue;
+        bool ok = parseInto(p, value);
+        if (ok) s.onParamChanged(name);
+        return ok;
+    }
+    return false;
+}
+
+string[2][] defaultStageListAttrs(Stage s) {
+    string[2][] out_;
+    foreach (ref p; s.params())
+        out_ ~= [p.name, stringifyParam(p)];
+    return out_;
+}
+
+// Parse `value` per `p.kind` and write into the Param's typed pointer.
+// Returns false on parse failure (caller surfaces as "rejected attr").
+private bool parseInto(ref Param p, string value) {
+    final switch (p.kind) {
+        case Param.Kind.Bool:
+            if (value == "true"  || value == "1") { *p.bptr = true;  return true; }
+            if (value == "false" || value == "0") { *p.bptr = false; return true; }
+            return false;
+        case Param.Kind.Int:
+            try { *p.iptr = value.strip.to!int; return true; }
+            catch (Exception) { return false; }
+        case Param.Kind.Float:
+            try { *p.fptr = value.strip.to!float; return true; }
+            catch (Exception) { return false; }
+        case Param.Kind.Enum:
+            // Accept the wire tag exactly as listed in p.enumValues[i][0].
+            foreach (ref ev; p.enumValues)
+                if (ev[0] == value) { *p.sptr = value; return true; }
+            return false;
+        case Param.Kind.IntEnum:
+            foreach (ref ev; p.intEnumValues)
+                if (ev.wireTag == value) { *p.iePtr = ev.value; return true; }
+            return false;
+        case Param.Kind.String:
+            *p.sptr = value;
+            return true;
+        case Param.Kind.Vec3_:
+            auto parts = value.split(",");
+            if (parts.length != 3) return false;
+            try {
+                p.vptr.x = parts[0].strip.to!float;
+                p.vptr.y = parts[1].strip.to!float;
+                p.vptr.z = parts[2].strip.to!float;
+                return true;
+            } catch (Exception) { return false; }
+        case Param.Kind.IntArray:   return false;   // out of scope
+        case Param.Kind.Vec3Array:  return false;   // out of scope
+    }
+}
+
+private string stringifyParam(ref Param p) {
+    final switch (p.kind) {
+        case Param.Kind.Bool:    return *p.bptr ? "true" : "false";
+        case Param.Kind.Int:     return format("%d", *p.iptr);
+        case Param.Kind.Float:   return format("%g", *p.fptr);
+        case Param.Kind.Enum:    return *p.sptr;
+        case Param.Kind.IntEnum:
+            foreach (ref ev; p.intEnumValues)
+                if (ev.value == *p.iePtr) return ev.wireTag;
+            return format("%d", *p.iePtr);
+        case Param.Kind.String:    return *p.sptr;
+        case Param.Kind.Vec3_:     return format("%g,%g,%g", p.vptr.x, p.vptr.y, p.vptr.z);
+        case Param.Kind.IntArray:  return "";
+        case Param.Kind.Vec3Array: return "";
+    }
 }

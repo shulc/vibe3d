@@ -5,13 +5,13 @@ import bindbc.opengl;
 
 import math;
 import shader;
-import params : Param, ParamHints;
+import params : Param, ParamHints, ParamProvider;
 
 // ---------------------------------------------------------------------------
 // Tool — base class for all editing tools
 // ---------------------------------------------------------------------------
 
-class Tool {
+class Tool : ParamProvider {
     // Human-readable name shown in the UI.
     string name() const { return "Tool"; }
 

@@ -13,6 +13,7 @@ import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : ToolState;
 import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, LassoStyle;
 import popup_state       : setStatePath;
+import params            : Param, ParamHints, IntEnumEntry;
 
 // ---------------------------------------------------------------------------
 // FalloffStage — Phase 7.5 of doc/phase7_plan.md / doc/falloff_plan.md.
@@ -172,6 +173,102 @@ class FalloffStage : Stage {
         foreach (i; 1 .. lassoPolyX.length)
             s ~= format(";%g,%g", lassoPolyX[i], lassoPolyY[i]);
         return s;
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 7.9: Param[] schema for the Tool Properties panel. PropertyPanel
+    // writes new values directly through the typed pointers in each Param;
+    // onParamChanged() below mirrors the side-effects of setAttr (autoSize
+    // on type change, publishState on every change) so the UI path produces
+    // the same observable behaviour as the HTTP `tool.pipe.attr` path.
+    //
+    // Lasso polygon (lassoPolyX/Y arrays) isn't exposed here — there's no
+    // single-line widget for it; users edit the lasso via direct viewport
+    // gesture, not numeric input. setAttr still accepts "lassoPoly" via
+    // the `applySetAttr` switch above.
+    // ------------------------------------------------------------------
+    override Param[] params() {
+        // No active falloff → expose no schema, so the Tool Properties
+        // iteration in app.d hides the section entirely (type=None
+        // means falloff isn't modulating anything; no useful config
+        // to show). The status-bar pulldown still controls type.
+        // Falloff's own setAttr override below handles HTTP attr writes
+        // independently of this list.
+        if (type == FalloffType.None) return [];
+
+        // Type selection lives in the status-bar Falloff pulldown, NOT
+        // the Tool Properties panel — switching type in the panel
+        // would conflict with auto-size + setStatePath flow that the
+        // status pulldown owns. Tool Properties only exposes the
+        // CONFIG of the active type.
+        IntEnumEntry[] shapeEntries = [
+            IntEnumEntry(cast(int)FalloffShape.Linear,  "linear",  "Linear"),
+            IntEnumEntry(cast(int)FalloffShape.EaseIn,  "easeIn",  "Ease-In"),
+            IntEnumEntry(cast(int)FalloffShape.EaseOut, "easeOut", "Ease-Out"),
+            IntEnumEntry(cast(int)FalloffShape.Smooth,  "smooth",  "Smooth"),
+            IntEnumEntry(cast(int)FalloffShape.Custom,  "custom",  "Custom"),
+        ];
+        IntEnumEntry[] lassoEntries = [
+            IntEnumEntry(cast(int)LassoStyle.Freehand,  "freehand", "Freehand"),
+            IntEnumEntry(cast(int)LassoStyle.Rectangle, "rect",     "Rectangle"),
+            IntEnumEntry(cast(int)LassoStyle.Circle,    "circle",   "Circle"),
+            IntEnumEntry(cast(int)LassoStyle.Ellipse,   "ellipse",  "Ellipse"),
+        ];
+        return [
+            Param.intEnum_("shape", "Shape", cast(int*)&shape,
+                           shapeEntries, cast(int)FalloffShape.Smooth),
+            Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
+                .widget(ParamHints.Widget.Slider),
+            Param.float_("out", "Out", &out_, 0.5f).min(0.0f).max(1.0f)
+                .widget(ParamHints.Widget.Slider),
+            Param.vec3_ ("start",  "Start",  &start,  Vec3(0, 0, 0)),
+            Param.vec3_ ("end",    "End",    &end,    Vec3(0, 1, 0)),
+            Param.vec3_ ("center", "Center", &center, Vec3(0, 0, 0)),
+            Param.vec3_ ("size",   "Size",   &size,   Vec3(1, 1, 1)),
+            Param.float_("screenCx",   "Screen Cx",   &screenCx,   0.0f),
+            Param.float_("screenCy",   "Screen Cy",   &screenCy,   0.0f),
+            Param.float_("screenSize", "Screen Size", &screenSize, 64.0f),
+            Param.bool_ ("transparent", "Transparent", &transparent, false),
+            Param.intEnum_("lassoStyle", "Lasso Style",
+                           cast(int*)&lassoStyle, lassoEntries,
+                           cast(int)LassoStyle.Freehand),
+            Param.float_("softBorder", "Soft Border", &softBorderPx, 16.0f),
+        ];
+    }
+
+    override bool paramEnabled(string name) const {
+        // Hide irrelevant fields per active type — same logic MODO's
+        // sheet `Filter` would apply, hard-coded here for the all-in-one
+        // schema (vs splitting into per-type sub-sheets).
+        switch (name) {
+            case "in":         case "out":
+                return shape == FalloffShape.Custom;
+            case "start":      case "end":
+                return type == FalloffType.Linear;
+            case "center":     case "size":
+                return type == FalloffType.Radial;
+            case "screenCx":   case "screenCy":   case "screenSize":
+            case "transparent":
+                return type == FalloffType.Screen;
+            case "lassoStyle": case "softBorder":
+                return type == FalloffType.Lasso;
+            case "shape":
+                return type != FalloffType.None;
+            default:
+                return true;
+        }
+    }
+
+    override void onParamChanged(string name) {
+        // Mirror setAttr's side-effects so PropertyPanel (which writes
+        // through the typed pointer directly, bypassing setAttr's
+        // string-parse path) still triggers autoSize on type changes
+        // and publishes state for the status-bar pulldown.
+        // autoSize is a no-op for type=None; cheap to call always on
+        // type change without prev-value tracking.
+        if (name == "type" && type != FalloffType.None)
+            autoSize();
+        publishState();
     }
 
 private:

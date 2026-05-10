@@ -4,6 +4,28 @@ import math : Vec3;
 import std.json : JSONValue, JSONType;
 
 // ---------------------------------------------------------------------------
+// ParamProvider — anything that publishes a Param[] schema.
+//
+// Implemented by `Tool` (existing) and `Stage` (Phase 7.9) so the same
+// `PropertyPanel` machinery renders a tool's properties or a tool-pipe
+// stage's properties without caring which class they came from.
+//
+// `paramEnabled` lets the provider grey-out individual rows (e.g. a
+// Custom-shape `in_` slider is greyed when shape != custom). Default
+// `true` for everything.
+//
+// `onParamChanged` fires AFTER PropertyPanel has written the new value
+// through the typed pointer in the matching Param. Providers override
+// to react (re-evaluate preview, publish state, etc.).
+// ---------------------------------------------------------------------------
+
+interface ParamProvider {
+    Param[] params();
+    bool    paramEnabled(string name) const;
+    void    onParamChanged(string name);
+}
+
+// ---------------------------------------------------------------------------
 // ParamHints — optional rendering / validation hints for one parameter.
 // ---------------------------------------------------------------------------
 
