@@ -4,6 +4,7 @@ import std.math : sin, cos, sqrt, PI;
 
 import math : Vec3, Viewport, projectToWindowFull;
 import toolpipe.packets : FalloffPacket, FalloffType, LassoStyle;
+import falloff : applyShape;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -49,19 +50,59 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
 private void drawLinear(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
                         const ref Viewport vp, uint col)
 {
-    // Thin (1 px) connecting line + small endpoint markers — matches
-    // MODO 9's overlay where the endpoints are the visual anchor and
-    // the line is barely visible. The interactive draggable handles
-    // (FalloffLinearGizmo from falloff_handles.d) render OVER this
-    // passive overlay as 3D BoxHandlers — the ImGui markers still
-    // appear behind them so the visualisation is coherent at any
-    // camera angle.
+    // Thin connecting line + endpoint markers + a perpendicular
+    // weight-curve "profile" — matches MODO 9's linear-falloff
+    // overlay. The profile traces w(t) at sample points along the
+    // segment, offset perpendicular to the segment in screen space
+    // by w(t) × max_height. For shape=linear w(t)=1−t collapses to a
+    // triangle (max offset at start, zero at end); curved shapes
+    // (easeIn / easeOut / smooth / custom) trace the actual function.
+    //
+    // Rendered in screen space because: (a) the "perpendicular"
+    // direction has no canonical 3D choice for an arbitrary segment
+    // (any vector in the plane perpendicular to start→end works), and
+    // (b) MODO renders it screen-space too — the profile's job is
+    // visual confirmation of the shape preset, not a 3D measurement.
     float ax, ay, anz, bx, by, bnz;
     if (!projectToWindowFull(cfg.start, vp, ax, ay, anz)) return;
     if (!projectToWindowFull(cfg.end,   vp, bx, by, bnz)) return;
-    dl.AddLine(ImVec2(ax, ay), ImVec2(bx, by), col, 1.0f);
     dl.AddCircleFilled(ImVec2(ax, ay), 4.0f, col, 16);   // start = full influence
     dl.AddCircleFilled(ImVec2(bx, by), 4.0f, col, 16);   // end   = zero
+
+    // Profile: mirrored perpendicular offset w(t) × max_h on both
+    // sides of the segment — for shape=linear this draws a thin
+    // double-sided isoceles triangle (max width at start, zero at
+    // end); curved shapes (easeIn / easeOut / smooth / custom) trace
+    // the actual w(t) function. The start→end connecting line is
+    // omitted on purpose — the triangle's two slanted edges already
+    // imply the segment direction, and the empty middle reads as the
+    // falloff axis.
+    float dxs = bx - ax;
+    float dys = by - ay;
+    float L   = sqrt(dxs*dxs + dys*dys);
+    if (L < 4.0f) return;          // degenerate; segment is a dot on screen
+    float pxd = -dys / L;          // perpendicular unit (rotate +90° CCW)
+    float pyd =  dxs / L;
+    float maxH = 0.25f * L;
+    if (maxH < 12.0f) maxH = 12.0f;
+    if (maxH > 80.0f) maxH = 80.0f;
+    enum int N = 32;               // sample count — smooth enough for any shape
+    ImVec2[N + 1] top;
+    ImVec2[N + 1] bot;
+    foreach (i; 0 .. N + 1) {
+        float t = cast(float)i / N;
+        float w = applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+        float xa = ax + dxs * t;
+        float ya = ay + dys * t;
+        top[i] = ImVec2(xa + pxd * maxH * w, ya + pyd * maxH * w);
+        bot[i] = ImVec2(xa - pxd * maxH * w, ya - pyd * maxH * w);
+    }
+    dl.AddPolyline(top.ptr, N + 1, col, ImDrawFlags.None, 1.0f);
+    dl.AddPolyline(bot.ptr, N + 1, col, ImDrawFlags.None, 1.0f);
+    // Closing perpendicular at start — connects top profile's first
+    // point to bot profile's first point, sealing the lens/triangle
+    // shape at the full-influence end.
+    dl.AddLine(top[0], bot[0], col, 1.0f);
 }
 
 private void drawRadial(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
