@@ -1,0 +1,12 @@
+{
+  "_comment": "Linear falloff along +Z, ACEN select (pivot = selection bbox centre = (0, 0.5, 0)), TransformRotate. Per-vert angle = base × weight(v). Verifier checks (a) distance from pivot is preserved per vert (rigid rotation invariant) and (b) per-vert rotation angle scales with falloff weight.",
+  "tool": "rotate",
+  "pattern": "top_face_seg5",
+  "acen_mode": "select",
+  "falloff": {
+    "type":  "linear",
+    "shape": "linear",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

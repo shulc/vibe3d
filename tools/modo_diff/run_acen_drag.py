@@ -503,7 +503,13 @@ class Worker:
         """Drag from (x, y) by (dx, dy) generating one xdotool mousemove
         every `step_px` pixels (default 20). Exposed so the drag-formula
         experiment can probe how MODO's per-event accumulation behaves
-        when N (event count) varies with the same total pixel offset."""
+        when N (event count) varies with the same total pixel offset.
+
+        Handle-driven cases (`_resolve_handle_drag`) deliver float drag
+        tuples; mouse_drag coerces every coord/step to int internally
+        because xdotool only accepts integer pixels and Python 3.14's
+        `range()` rejects float endpoints."""
+        x, y, dx, dy = int(x), int(y), int(dx), int(dy)
         self.xdo("mousemove", str(x), str(y))
         time.sleep(0.2)
         self.xdo("mousedown", "1")
@@ -707,24 +713,32 @@ class Worker:
         # per-vertex deltas.
         if falloff is not None:
             ftype = falloff.get("type", "linear")
-            start = falloff.get("start", [0.0, 0.0, 0.0])
-            end   = falloff.get("end",   [0.0, 1.0, 0.0])
             shape = falloff.get("shape", "linear")
             p0    = float(falloff.get("in",  0.0))
             p1    = float(falloff.get("out", 0.0))
-            if ftype != "linear":
+            if ftype not in ("linear", "radial"):
                 return "ERROR", f"unsupported falloff type: {ftype}"
-            if len(start) != 3 or len(end) != 3:
-                return "ERROR", f"falloff start/end must be [x,y,z]"
             if shape not in ("linear", "easeIn", "easeOut", "smooth", "custom"):
                 return "ERROR", f"unsupported falloff shape: {shape}"
+            # Per-type position attrs feed into the helper as args 2..7
+            # (helper interprets per ftype).
+            if ftype == "linear":
+                a = falloff.get("start", [0.0, 0.0, 0.0])
+                b = falloff.get("end",   [0.0, 1.0, 0.0])
+                if len(a) != 3 or len(b) != 3:
+                    return "ERROR", f"falloff start/end must be [x,y,z]"
+            else:  # radial
+                a = falloff.get("center", [0.0, 0.0, 0.0])
+                b = falloff.get("size",   [1.0, 1.0, 1.0])
+                if len(a) != 3 or len(b) != 3:
+                    return "ERROR", f"falloff center/size must be [x,y,z]"
             sentinel = self.tmpdir / "modo_falloff.done"
             try: os.remove(sentinel)
             except OSError: pass
             if not self.cmd_bar(
                     f"@modo_falloff_setup.py {self.tmpdir} {ftype} "
-                    f"{start[0]} {start[1]} {start[2]} "
-                    f"{end[0]} {end[1]} {end[2]} "
+                    f"{a[0]} {a[1]} {a[2]} "
+                    f"{b[0]} {b[1]} {b[2]} "
                     f"{shape} {p0} {p1}",
                     wait_for=str(sentinel), timeout=8):
                 return "ERROR", "falloff setup did not complete"

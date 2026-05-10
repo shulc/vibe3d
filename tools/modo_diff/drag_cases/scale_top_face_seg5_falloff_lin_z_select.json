@@ -1,0 +1,12 @@
+{
+  "_comment": "Linear falloff along +Z, ACEN select (pivot = bbox centre = (0, 0.5, 0)), xfrm.scale. Per-vert axis-factor = 1 + (k - 1)·weight(v) — verts at the falloff start (z=-0.5, weight=1) scale by full factor k, verts at the end (weight=0) don't scale. The default drag at screen pixel (1020, 560) hits xfrm.scale's gizmo handle producing a single-axis scale (typically +X for the test camera).",
+  "tool": "scale",
+  "pattern": "top_face_seg5",
+  "acen_mode": "select",
+  "falloff": {
+    "type":  "linear",
+    "shape": "linear",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

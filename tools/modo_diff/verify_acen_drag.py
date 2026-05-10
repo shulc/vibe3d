@@ -419,6 +419,46 @@ def evaluate_linear_falloff(pos, start, end, shape="linear",
     return apply_falloff_shape(t, shape, in_, out_)
 
 
+def evaluate_radial_falloff(pos, center, size, shape="linear",
+                            in_=0.0, out_=0.0):
+    """MODO-style radial (ellipsoid) falloff. Computes the normalised
+    ellipsoid distance d = sqrt(sum((pos[i]-center[i])/size[i])²) over
+    nonzero-size axes, clamps to [0,1], passes through shape. Axes
+    with size ≤ 0 are dropped from the distance. Matches
+    source/falloff.d:78."""
+    s = 0.0
+    any_axis = False
+    for i in range(3):
+        if size[i] > 1e-9:
+            u = (pos[i] - center[i]) / size[i]
+            s += u * u
+            any_axis = True
+    if not any_axis:
+        return 1.0
+    import math
+    t = math.sqrt(s)
+    return apply_falloff_shape(t, shape, in_, out_)
+
+
+def evaluate_falloff_weight(pos, falloff):
+    """Dispatch by falloff.type. Reads type/shape/in/out + per-type
+    geometry attrs from the falloff dict (as published in state.json
+    by modo_falloff_setup.py)."""
+    ftype = falloff.get("type", "linear")
+    shape = falloff.get("shape", "linear")
+    in_   = float(falloff.get("in",  0.0))
+    out_  = float(falloff.get("out", 0.0))
+    if ftype == "linear":
+        start = falloff.get("start", [0.0, 0.0, 0.0])
+        end   = falloff.get("end",   [0.0, 1.0, 0.0])
+        return evaluate_linear_falloff(pos, start, end, shape, in_, out_)
+    if ftype == "radial":
+        center = falloff.get("center", [0.0, 0.0, 0.0])
+        size   = falloff.get("size",   [1.0, 1.0, 1.0])
+        return evaluate_radial_falloff(pos, center, size, shape, in_, out_)
+    return 1.0
+
+
 def verify_move_falloff(falloff, sel, verts_before, verts_after, sel_set):
     """Per-vertex weighted-translation check. xfrm.move with falloff
     applies `Δ_ref * weight(v)` per selected vert; we recover Δ_ref
@@ -431,12 +471,10 @@ def verify_move_falloff(falloff, sel, verts_before, verts_after, sel_set):
     accept the candidate Δ_ref that produces a valid post-vert match
     for ALL pre-verts under the falloff weighting."""
     ftype = falloff.get("type", "linear")
-    start = falloff.get("start", [0.0, 0.0, 0.0])
-    end   = falloff.get("end",   [0.0, 1.0, 0.0])
     shape = falloff.get("shape", "linear")
     in_   = float(falloff.get("in",  0.0))
     out_  = float(falloff.get("out", 0.0))
-    if ftype != "linear":
+    if ftype not in ("linear", "radial"):
         print(f"\033[31m  FAIL\033[0m: unsupported falloff type '{ftype}'")
         return 1
 
@@ -446,15 +484,22 @@ def verify_move_falloff(falloff, sel, verts_before, verts_after, sel_set):
           f"({len(untouched_pre)} verts)")
 
     # weight for each selected pre-vert
-    weights = [evaluate_linear_falloff(v, start, end, shape, in_, out_)
-               for v in sel]
+    weights = [evaluate_falloff_weight(v, falloff) for v in sel]
     w_min = min(weights)
     w_max = max(weights)
     extra = ""
     if shape == "custom":
         extra = f"  in={in_:g} out={out_:g}"
-    print(f"  falloff: linear  shape={shape}{extra}  "
-          f"start={tuple(start)}  end={tuple(end)}")
+    if ftype == "linear":
+        start = tuple(falloff.get("start", [0.0, 0.0, 0.0]))
+        end   = tuple(falloff.get("end",   [0.0, 1.0, 0.0]))
+        print(f"  falloff: linear  shape={shape}{extra}  "
+              f"start={start}  end={end}")
+    else:  # radial
+        center = tuple(falloff.get("center", [0.0, 0.0, 0.0]))
+        size   = tuple(falloff.get("size",   [1.0, 1.0, 1.0]))
+        print(f"  falloff: radial  shape={shape}{extra}  "
+              f"center={center}  size={size}")
     print(f"  per-vert weights: {len(sel)} verts, "
           f"range [{w_min:.3f} .. {w_max:.3f}]")
 
@@ -525,6 +570,17 @@ def verify_move_falloff(falloff, sel, verts_before, verts_after, sel_set):
     print(f"  recovered Δ_ref ≈ "
           f"({best_delta[0]:+.4f}, {best_delta[1]:+.4f}, {best_delta[2]:+.4f})")
     print(f"  per-vert match rms = {rms:.5f}  (TOL={TOL})")
+    # Sanity: a "no movement" drag matches trivially (Δ_ref = 0 with
+    # any weights). For our cases that means MODO didn't pick up the
+    # drag — usually because the falloff stage stole the drag handler.
+    # Reject sub-TOL Δ_ref as a false positive.
+    delta_mag = sum(d * d for d in best_delta) ** 0.5
+    if delta_mag < TOL:
+        print(f"\033[31m  FAIL\033[0m: |Δ_ref| = {delta_mag:.5f} < TOL "
+              f"— drag did not move any verts (engine may have ignored "
+              f"the drag, e.g. because the falloff tool stole the drag "
+              f"handler).")
+        return 1
 
     if untouched_ok and rms < TOL:
         print(f"\033[32m  PASS\033[0m: linear-falloff move — every vert "
@@ -532,6 +588,294 @@ def verify_move_falloff(falloff, sel, verts_before, verts_after, sel_set):
         return 0
     print(f"\033[31m  FAIL\033[0m: linear-falloff move — per-vert "
           f"weighted match failed.")
+    return 1
+
+
+def verify_scale_falloff(falloff, mode, sel, verts_before, verts_after,
+                         sel_set):
+    """Per-vertex weighted-scale check. xfrm.scale with falloff applies
+    `post = (pre - pivot) · (1 + (k - 1)·weight(v)) + pivot` per vert,
+    where k is the (per-axis) scale factor recovered from the drag.
+    For uniform-scale drags k is the same on all 3 axes; per-axis-scale
+    drags expose three independent k values.
+
+    Strategy:
+      1. Pick pivot from `mode` (single-global-pivot modes only).
+      2. weight=0 verts pin to themselves (post = pre).
+      3. Recover per-axis k from weight≈1 anchor verts: k_axis =
+         (post.axis - pivot.axis) / (pre.axis - pivot.axis), averaged.
+      4. Predict post per vert and 1-to-1 pair with moved_after, then
+         report rms.
+    """
+    if mode in ("select", "selectauto", "border"):
+        pivot = bbox_center(sel)
+    elif mode == "origin":
+        pivot = (0.0, 0.0, 0.0)
+    else:
+        print(f"  SKIP: scale-falloff verification unsupported for "
+              f"mode='{mode}' (no single global pivot).")
+        return 0
+
+    untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
+        verts_before, verts_after, sel_set)
+    print(f"  untouched verts preserved: {untouched_ok}  "
+          f"({len(untouched_pre)} verts)")
+    print(f"  pivot: ({pivot[0]:+.4f}, {pivot[1]:+.4f}, {pivot[2]:+.4f})")
+
+    weights = [evaluate_falloff_weight(v, falloff) for v in sel]
+    w_max = max(weights)
+    print(f"  per-vert weights: {len(sel)} verts, "
+          f"range [{min(weights):.3f} .. {w_max:.3f}]")
+    if w_max < 0.99:
+        print(f"\033[31m  FAIL\033[0m: no weight=1 anchor verts; can't "
+              f"recover full-scale factor reference.")
+        return 1
+
+    # weight=0 verts pin to themselves so they don't get poached.
+    used = set()
+    pair_idx = [None] * len(sel)
+    for i, v in enumerate(sel):
+        if weights[i] >= 1e-3: continue
+        for j in range(len(moved_after)):
+            if j in used: continue
+            p = moved_after[j]
+            if all(abs(p[k] - v[k]) < TOL for k in range(3)):
+                used.add(j); pair_idx[i] = j; break
+
+    # Brute-force the (uniform) scale factor k. For each candidate k,
+    # predict every vert's post under `1 + (k-1)·weight` per axis and
+    # 1-to-1 greedy pair with moved_after; pick the k with smallest
+    # total residual. (Greedy anchor-by-closest matching mismatches
+    # weight=1 verts when partial-weight verts land geometrically
+    # closer to the pre position — same hazard as rotate's anchor row
+    # collinearity.) Default test camera + drag produces uniform scale,
+    # so a single k suffices; per-axis variants would extend this loop
+    # over a 3D grid.
+    best = (None, float("inf"), None)   # k, err, pair_map
+    # Sweep k ∈ [-3, 3] in 0.02 steps (avoids k=1 collapse to identity).
+    n_steps = 301
+    for step in range(n_steps):
+        k_try = -3.0 + step * (6.0 / (n_steps - 1))
+        if abs(k_try - 1.0) < 0.001: continue
+        preds = []
+        for i in range(len(sel)):
+            rel = tuple(sel[i][a] - pivot[a] for a in range(3))
+            f = 1.0 + (k_try - 1.0) * weights[i]
+            preds.append(tuple(rel[a] * f + pivot[a] for a in range(3)))
+        used2 = set(); err = 0.0; ok = True
+        pmap = [None] * len(sel)
+        for i, p in enumerate(preds):
+            bj = None; bd = float("inf")
+            for j in range(len(moved_after)):
+                if j in used2: continue
+                d2 = sum((p[a] - moved_after[j][a])**2 for a in range(3))
+                if d2 < bd: bd, bj = d2, j
+            if bj is None: ok = False; break
+            used2.add(bj); pmap[i] = bj; err += bd
+            if err >= best[1]: ok = False; break
+        if ok and err < best[1]:
+            best = (k_try, err, pmap)
+    k, _, pair_idx = best
+    if k is None:
+        print(f"\033[31m  FAIL\033[0m: no k candidate produced a valid "
+              f"1-to-1 pairing.")
+        return 1
+    print(f"  recovered uniform scale factor k = {k:.4f}")
+
+    err = 0.0; n = 0
+    for i in range(len(sel)):
+        rel = tuple(sel[i][a] - pivot[a] for a in range(3))
+        f = 1.0 + (k - 1.0) * weights[i]
+        pred = tuple(rel[a] * f + pivot[a] for a in range(3))
+        p = moved_after[pair_idx[i]]
+        err += sum((p[a] - pred[a]) ** 2 for a in range(3)); n += 1
+    rms = (err / max(1, n)) ** 0.5
+    print(f"  per-vert weighted-scale rms = {rms:.5f}  (TOL={TOL})")
+
+    if untouched_ok and rms < TOL:
+        print(f"\033[32m  PASS\033[0m: linear-falloff scale — every "
+              f"vert scaled by 1 + (k-1)·weight around pivot.")
+        return 0
+    print(f"\033[31m  FAIL\033[0m: linear-falloff scale — weighted "
+          f"prediction doesn't match observed posts.")
+    return 1
+
+
+def verify_rotate_falloff(falloff, mode, sel, verts_before, verts_after,
+                          sel_set):
+    """Per-vertex weighted-rotation check. MODO's xfrm.rotate with
+    falloff applies post = pre + weight·(R(pre) - pre) — a CHORD-lerp
+    between identity and the full rotation, NOT an arc-rotation by
+    base_angle·weight. (Empirically observed: at weight<1 the chord
+    interpolation pulls the vert inside the rotation circle, shrinking
+    its distance from the pivot.) The rigid full-rotation R is shared
+    across all selected verts; we recover it from the highest-weight
+    pre/post pair via Kabsch fit over the weight≈1 verts.
+
+    Strategy:
+      1. Pick pivot from `mode` (single-global-pivot modes only).
+      2. Identify weight≈1 verts; recover R (3×3 rotation) by Kabsch
+         on (pre, post) pairs — these verts have post = R(pre) since
+         lerp coefficient is 1.
+      3. For each remaining pre-vert v, predict
+         post_pred = pre + weight·(R(pre - pivot) + pivot - pre).
+         Match every actual post-vert to its predicted target by
+         minimum-distance assignment.
+
+    Modes without a single global pivot (auto, local, none) get a
+    SKIP — the test infrastructure can't disambiguate them here.
+    """
+    import math
+    if mode in ("select", "selectauto", "border"):
+        pivot = bbox_center(sel)
+    elif mode == "origin":
+        pivot = (0.0, 0.0, 0.0)
+    else:
+        print(f"  SKIP: rotate-falloff verification unsupported for "
+              f"mode='{mode}' (no single global pivot).")
+        return 0
+
+    untouched_ok, untouched_pre, moved_after = split_moved_unmoved(
+        verts_before, verts_after, sel_set)
+    print(f"  untouched verts preserved: {untouched_ok}  "
+          f"({len(untouched_pre)} verts)")
+    print(f"  pivot: ({pivot[0]:+.4f}, {pivot[1]:+.4f}, {pivot[2]:+.4f})")
+
+    weights = [evaluate_falloff_weight(v, falloff) for v in sel]
+    w_max = max(weights)
+    print(f"  per-vert weights: {len(sel)} verts, "
+          f"range [{min(weights):.3f} .. {w_max:.3f}]")
+    if w_max < 0.99:
+        print(f"\033[31m  FAIL\033[0m: no weight=1 verts; Kabsch fit "
+              f"needs the full-rotation reference verts.")
+        return 1
+
+    # Step 1: pin weight≈0 verts (post == pre) so they don't get
+    # poached by partial-weight matching.
+    used = set()
+    pair_idx = [None] * len(sel)
+    for i, v in enumerate(sel):
+        if weights[i] >= 1e-3: continue
+        for j in range(len(moved_after)):
+            if j in used: continue
+            p = moved_after[j]
+            if all(abs(p[k] - v[k]) < TOL for k in range(3)):
+                used.add(j); pair_idx[i] = j; break
+
+    # Step 2: identify weight≈1 anchor verts; pair each with its
+    # rigid-rotation post-image (radius preserved exactly). Greedy
+    # by smallest Δr to break ties between the 6 corner-row verts.
+    def rsq(p):
+        return sum((p[i] - pivot[i]) ** 2 for i in range(3))
+    anchors = [i for i in range(len(sel)) if weights[i] >= 0.99]
+    for i in anchors:
+        pre_r = rsq(sel[i]) ** 0.5
+        best_j, best_d = None, float("inf")
+        for j in range(len(moved_after)):
+            if j in used: continue
+            dr = abs(rsq(moved_after[j]) ** 0.5 - pre_r)
+            if dr < best_d: best_d, best_j = dr, j
+        if best_j is None or best_d > TOL:
+            print(f"\033[31m  FAIL\033[0m: anchor vert #{i} (w=1) could "
+                  f"not be paired by radius (best Δr={best_d:.4f})")
+            return 1
+        used.add(best_j); pair_idx[i] = best_j
+
+    # Step 3: brute-force the (axis, base_angle) pair. We try a small
+    # set of canonical world axes — for our default-camera test cases,
+    # the dragged-rotation axis MODO picks always lies along world Y
+    # (horizontal screen drag → camera-up rotation → ≈ +Y for the
+    # default test view). For each candidate axis, sweep base_angle
+    # in 1° steps over [0, 360°] and pick the (axis, angle) that
+    # minimises total per-vert prediction residual under the
+    # arc-rotation model — `rotateVec(pre - pivot, axis, angle·w) +
+    # pivot` per vert, matching vibe3d's `source/tools/rotate.d:568`.
+    # A full Kabsch fit would be cleaner but degenerates on the
+    # weight=1 anchor row of `top_face_seg5` (all 6 anchors lie on
+    # one line in the y=0.5/z=-0.5 plane — Kabsch needs non-coplanar
+    # pairs to recover the axis unambiguously).
+    def vsub(a, b): return tuple(a[i] - b[i] for i in range(3))
+    def axis_angle_rot(v, ax, ang):
+        c = math.cos(ang); s = math.sin(ang); k = 1.0 - c
+        x, y, z = ax
+        return (
+            v[0]*(c + x*x*k)     + v[1]*(x*y*k - z*s) + v[2]*(x*z*k + y*s),
+            v[0]*(x*y*k + z*s)   + v[1]*(c + y*y*k)   + v[2]*(y*z*k - x*s),
+            v[0]*(x*z*k - y*s)   + v[1]*(y*z*k + x*s) + v[2]*(c + z*z*k),
+        )
+    candidate_axes = [
+        ( 0.0,  1.0,  0.0),  # +Y (camera-up for default test view)
+        ( 0.0, -1.0,  0.0),  # -Y
+        ( 1.0,  0.0,  0.0),  # +X
+        ( 0.0,  0.0,  1.0),  # +Z
+    ]
+    best = (None, None, float("inf"), None)   # axis, angle, err, pair_map
+    for ax in candidate_axes:
+        for deg in range(0, 360):
+            ang = math.radians(deg)
+            preds = []
+            for i in range(len(sel)):
+                rel = vsub(sel[i], pivot)
+                p = axis_angle_rot(rel, ax, ang * weights[i])
+                preds.append((p[0]+pivot[0], p[1]+pivot[1], p[2]+pivot[2]))
+            # 1-to-1 greedy pair pred → moved_after.
+            used2 = set(); err = 0.0; ok = True
+            pmap = [None] * len(sel)
+            for i, p in enumerate(preds):
+                bj = None; bd = float("inf")
+                for j in range(len(moved_after)):
+                    if j in used2: continue
+                    d2 = sum((p[k]-moved_after[j][k])**2 for k in range(3))
+                    if d2 < bd: bd, bj = d2, j
+                if bj is None: ok = False; break
+                used2.add(bj); pmap[i] = bj; err += bd
+                if err >= best[2]: ok = False; break
+            if ok and err < best[2]:
+                best = (ax, ang, err, pmap)
+    axis, angle, _, best_map = best
+    print(f"  recovered base rotation = {math.degrees(angle):+.3f}°  "
+          f"axis ≈ ({axis[0]:+.3f}, {axis[1]:+.3f}, {axis[2]:+.3f})")
+
+    # Step 4: use the matching from the best brute-force candidate.
+    # The earlier weight=0/weight=1 pin-pairings were heuristics; the
+    # brute-force matching is tied directly to the recovered (axis,
+    # angle) and is internally consistent.
+    pair_idx = best_map
+    pred = [None] * len(sel)
+    for i in range(len(sel)):
+        rel = vsub(sel[i], pivot)
+        rotated = axis_angle_rot(rel, axis, angle * weights[i])
+        pred[i] = tuple(rotated[k] + pivot[k] for k in range(3))
+
+    # Match unpaired pre-verts to nearest-pred unused posts.
+    err = 0.0
+    n = 0
+    for i in range(len(sel)):
+        if pair_idx[i] is not None:
+            p = moved_after[pair_idx[i]]
+            d2 = sum((p[k] - pred[i][k]) ** 2 for k in range(3))
+            err += d2; n += 1
+            continue
+        best_j, best_d = None, float("inf")
+        for j in range(len(moved_after)):
+            if j in used: continue
+            d2 = sum((moved_after[j][k] - pred[i][k]) ** 2 for k in range(3))
+            if d2 < best_d: best_d, best_j = d2, j
+        if best_j is None:
+            print(f"\033[31m  FAIL\033[0m: vert #{i} (w={weights[i]:.3f}) "
+                  f"has no available post-pair candidate.")
+            return 1
+        used.add(best_j); pair_idx[i] = best_j
+        err += best_d; n += 1
+    rms = (err / max(1, n)) ** 0.5
+    print(f"  per-vert arc-rotation rms = {rms:.5f}  (TOL={TOL})")
+
+    if untouched_ok and rms < TOL:
+        print(f"\033[32m  PASS\033[0m: linear-falloff rotate — every "
+              f"vert rotated by base_angle × weight around pivot.")
+        return 0
+    print(f"\033[31m  FAIL\033[0m: linear-falloff rotate — arc-rotation "
+          f"prediction doesn't match observed posts.")
     return 1
 
 
@@ -684,10 +1028,15 @@ def main():
     # Falloff dispatch: per-vertex weighted transforms break the
     # rigid-cluster assumptions in verify_move/verify_rotate, so when
     # a Falloff stage is present we route to a falloff-aware verifier.
-    # Currently only move + linear is implemented.
     if falloff is not None and tool == "move":
         return verify_move_falloff(falloff, sel,
                                    verts_before, verts_after, sel_set)
+    if falloff is not None and tool == "rotate":
+        return verify_rotate_falloff(falloff, mode, sel,
+                                     verts_before, verts_after, sel_set)
+    if falloff is not None and tool == "scale":
+        return verify_scale_falloff(falloff, mode, sel,
+                                    verts_before, verts_after, sel_set)
 
     if tool == "rotate":
         return verify_rotate(mode, sel, clusters,
