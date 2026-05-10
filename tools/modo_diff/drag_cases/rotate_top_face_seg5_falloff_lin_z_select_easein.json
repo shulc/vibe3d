@@ -1,0 +1,12 @@
+{
+  "_comment": "Linear falloff along +Z with easeIn shape, ACEN select pivot=(0,0.5,0), xfrm.rotate. Same geometry/drag as the linear-shape variant; per-vert weight curve is easeIn instead of linear.",
+  "tool": "rotate",
+  "pattern": "top_face_seg5",
+  "acen_mode": "select",
+  "falloff": {
+    "type":  "linear",
+    "shape": "easeIn",
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}

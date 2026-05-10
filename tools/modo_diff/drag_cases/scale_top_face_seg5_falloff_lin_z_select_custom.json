@@ -1,0 +1,14 @@
+{
+  "_comment": "Linear falloff along +Z with Custom shape, in=out=0 (default cubic Bezier collapses to linear baseline). ACEN select pivot=(0,0.5,0), xfrm.scale.",
+  "tool": "scale",
+  "pattern": "top_face_seg5",
+  "acen_mode": "select",
+  "falloff": {
+    "type":  "linear",
+    "shape": "custom",
+    "in":    0.0,
+    "out":   0.0,
+    "start": [0.0, 0.0, -0.5],
+    "end":   [0.0, 0.0,  0.5]
+  }
+}
