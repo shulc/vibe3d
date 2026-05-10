@@ -2658,38 +2658,17 @@ void main(string[] args) {
         return "";
     }
 
-    // LightWave-style popup chrome: re-skin ImGui's default dark popup to
-    // match the panel grey + beige hover used elsewhere. Push BEFORE
-    // `BeginPopup` (PopupBg / PopupRounding / PopupBorderSize must be set
-    // when the popup window is created); pop after `EndPopup` (or after a
-    // skipped popup frame — Push/Pop must balance regardless of whether
-    // BeginPopup returned true).
+    // LightWave-style popup chrome — extracted to source/imgui_style.d
+    // so non-app code (toolpipe stages' drawProperties) can re-use the
+    // same look. Thin wrappers retained for the existing App-side call
+    // sites; same Push/Pop balance contract as before.
     void pushPopupStyle() {
-        ImVec4 popupBg  = ImVec4(0.561f, 0.561f, 0.561f, 1.0f);  // (143,143,143)
-        ImVec4 hov      = ImVec4(0.773f, 0.773f, 0.718f, 1.0f);  // (197,197,183)
-        ImVec4 active   = ImVec4(1.0f,   1.0f,   1.0f,   1.0f);
-        ImVec4 sep      = ImVec4(0.0f,   0.0f,   0.0f,   1.0f);
-        ImVec4 disabled = ImVec4(0.235f, 0.235f, 0.235f, 1.0f);  // dark grey
-
-        ImGui.PushStyleColor(ImGuiCol.PopupBg,       popupBg);
-        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, hov);      // MenuItem hover
-        ImGui.PushStyleColor(ImGuiCol.Header,        active);   // MenuItem selected
-        ImGui.PushStyleColor(ImGuiCol.HeaderActive,  active);   // MenuItem clicked
-        ImGui.PushStyleColor(ImGuiCol.Separator,     sep);
-        ImGui.PushStyleColor(ImGuiCol.TextDisabled,  disabled);
-
-        ImGui.PushStyleVar(ImGuiStyleVar.PopupRounding,   0.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.PopupBorderSize, 1.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,   ImVec2(6, 6));
-        // Vertical gap between menu items ≈ button height (item height
-        // = font + 2*FramePadding.y ≈ 14+16 = 30; gap 8 reads as
-        // breathing room without wasting screen space).
-        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,     ImVec2(0, 8));
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,    ImVec2(12, 8));
+        import imgui_style : pushPopupStyle;
+        pushPopupStyle();
     }
     void popPopupStyle() {
-        ImGui.PopStyleVar(5);
-        ImGui.PopStyleColor(6);
+        import imgui_style : popPopupStyle;
+        popPopupStyle();
     }
 
     // LightWave-style section header: dark slate-blue band with centered white
@@ -3249,9 +3228,12 @@ void main(string[] args) {
                     foreach (s; g_pipeCtx.pipeline.all()) {
                         if (!s.enabled) continue;
                         auto stage = cast(Stage)s;
-                        if (stage is null || stage.params().length == 0) continue;
-                        if (ImGui.CollapsingHeader(stage.id()))
+                        if (stage is null) continue;
+                        if (stage.params().length == 0) continue;
+                        if (ImGui.CollapsingHeader(stage.displayName())) {
                             propertyPanel.drawProvider(stage);
+                            stage.drawProperties();
+                        }
                     }
                 }
             }

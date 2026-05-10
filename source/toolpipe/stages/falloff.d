@@ -15,6 +15,10 @@ import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, LassoStyle;
 import popup_state       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry;
 
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+import imgui_style       : pushPopupStyle, popPopupStyle;
+
 // ---------------------------------------------------------------------------
 // FalloffStage — Phase 7.5 of doc/phase7_plan.md / doc/falloff_plan.md.
 // Sits at LXs_ORD_WGHT = 0x90 (after AXIS 0x70, before PINK 0xB0).
@@ -201,62 +205,58 @@ class FalloffStage : Stage {
         // would conflict with auto-size + setStatePath flow that the
         // status pulldown owns. Tool Properties only exposes the
         // CONFIG of the active type.
-        IntEnumEntry[] shapeEntries = [
-            IntEnumEntry(cast(int)FalloffShape.Linear,  "linear",  "Linear"),
-            IntEnumEntry(cast(int)FalloffShape.EaseIn,  "easeIn",  "Ease-In"),
-            IntEnumEntry(cast(int)FalloffShape.EaseOut, "easeOut", "Ease-Out"),
-            IntEnumEntry(cast(int)FalloffShape.Smooth,  "smooth",  "Smooth"),
-            IntEnumEntry(cast(int)FalloffShape.Custom,  "custom",  "Custom"),
-        ];
+        //
+        // Filter params() per active type so the panel shows ONLY
+        // type-relevant fields (start/end for Linear, center/size for
+        // Radial, etc.) — irrelevant fields are hidden, not greyed.
+        // HTTP `tool.pipe.attr falloff <attr>` still works for any
+        // attr regardless of active type because FalloffStage's own
+        // setAttr override (below) covers them all independently.
         IntEnumEntry[] lassoEntries = [
             IntEnumEntry(cast(int)LassoStyle.Freehand,  "freehand", "Freehand"),
             IntEnumEntry(cast(int)LassoStyle.Rectangle, "rect",     "Rectangle"),
             IntEnumEntry(cast(int)LassoStyle.Circle,    "circle",   "Circle"),
             IntEnumEntry(cast(int)LassoStyle.Ellipse,   "ellipse",  "Ellipse"),
         ];
-        return [
-            Param.intEnum_("shape", "Shape", cast(int*)&shape,
-                           shapeEntries, cast(int)FalloffShape.Smooth),
-            Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
-                .widget(ParamHints.Widget.Slider),
-            Param.float_("out", "Out", &out_, 0.5f).min(0.0f).max(1.0f)
-                .widget(ParamHints.Widget.Slider),
-            Param.vec3_ ("start",  "Start",  &start,  Vec3(0, 0, 0)),
-            Param.vec3_ ("end",    "End",    &end,    Vec3(0, 1, 0)),
-            Param.vec3_ ("center", "Center", &center, Vec3(0, 0, 0)),
-            Param.vec3_ ("size",   "Size",   &size,   Vec3(1, 1, 1)),
-            Param.float_("screenCx",   "Screen Cx",   &screenCx,   0.0f),
-            Param.float_("screenCy",   "Screen Cy",   &screenCy,   0.0f),
-            Param.float_("screenSize", "Screen Size", &screenSize, 64.0f),
-            Param.bool_ ("transparent", "Transparent", &transparent, false),
-            Param.intEnum_("lassoStyle", "Lasso Style",
-                           cast(int*)&lassoStyle, lassoEntries,
-                           cast(int)LassoStyle.Freehand),
-            Param.float_("softBorder", "Soft Border", &softBorderPx, 16.0f),
-        ];
-    }
 
-    override bool paramEnabled(string name) const {
-        // Hide irrelevant fields per active type — same logic MODO's
-        // sheet `Filter` would apply, hard-coded here for the all-in-one
-        // schema (vs splitting into per-type sub-sheets).
-        switch (name) {
-            case "in":         case "out":
-                return shape == FalloffShape.Custom;
-            case "start":      case "end":
-                return type == FalloffType.Linear;
-            case "center":     case "size":
-                return type == FalloffType.Radial;
-            case "screenCx":   case "screenCy":   case "screenSize":
-            case "transparent":
-                return type == FalloffType.Screen;
-            case "lassoStyle": case "softBorder":
-                return type == FalloffType.Lasso;
-            case "shape":
-                return type != FalloffType.None;
-            default:
-                return true;
+        Param[] ps;
+        // Shape preset is rendered via drawProperties() as a status-bar-
+        // style popup-button (matches MODO's visual language); kept out
+        // of the schema list. HTTP `tool.pipe.attr falloff shape <v>`
+        // still works through FalloffStage's setAttr override.
+        // In/Out tangent params are Custom-shape-only.
+        if (shape == FalloffShape.Custom) {
+            ps ~= Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
+                       .widget(ParamHints.Widget.Slider);
+            ps ~= Param.float_("out", "Out", &out_, 0.5f).min(0.0f).max(1.0f)
+                       .widget(ParamHints.Widget.Slider);
         }
+        // Per-type geometry config.
+        final switch (type) {
+            case FalloffType.None:
+                break;   // unreachable due to early-return above
+            case FalloffType.Linear:
+                ps ~= Param.vec3_("start", "Start", &start, Vec3(0, 0, 0));
+                ps ~= Param.vec3_("end",   "End",   &end,   Vec3(0, 1, 0));
+                break;
+            case FalloffType.Radial:
+                ps ~= Param.vec3_("center", "Center", &center, Vec3(0, 0, 0));
+                ps ~= Param.vec3_("size",   "Size",   &size,   Vec3(1, 1, 1));
+                break;
+            case FalloffType.Screen:
+                ps ~= Param.float_("screenCx",   "Screen Cx",   &screenCx,   0.0f);
+                ps ~= Param.float_("screenCy",   "Screen Cy",   &screenCy,   0.0f);
+                ps ~= Param.float_("screenSize", "Screen Size", &screenSize, 64.0f);
+                ps ~= Param.bool_ ("transparent", "Transparent", &transparent, false);
+                break;
+            case FalloffType.Lasso:
+                ps ~= Param.intEnum_("lassoStyle", "Lasso Style",
+                                     cast(int*)&lassoStyle, lassoEntries,
+                                     cast(int)LassoStyle.Freehand);
+                ps ~= Param.float_("softBorder", "Soft Border", &softBorderPx, 16.0f);
+                break;
+        }
+        return ps;
     }
 
     override void onParamChanged(string name) {
@@ -269,6 +269,102 @@ class FalloffStage : Stage {
         if (name == "type" && type != FalloffType.None)
             autoSize();
         publishState();
+    }
+
+    override string displayName() const {
+        // Header label baked from active type — mirrors MODO's
+        // "Linear Falloff" / "Radial Falloff" section titles. The
+        // status-bar Falloff pulldown owns type selection; the Tool
+        // Properties section reflects whichever type is active.
+        final switch (type) {
+            case FalloffType.None:   return "Falloff";
+            case FalloffType.Linear: return "Linear Falloff";
+            case FalloffType.Radial: return "Radial Falloff";
+            case FalloffType.Screen: return "Screen Falloff";
+            case FalloffType.Lasso:  return "Lasso Falloff";
+        }
+    }
+
+    override void drawProperties() {
+        if (type == FalloffType.None) return;
+
+        // Shape popup-button — matches the status-bar Falloff pulldown
+        // visual (button face shows current shape, click opens popup
+        // with checkmarks). Standard ImGui.Combo would render a
+        // chevron; the bare button keeps the Tool Properties panel
+        // visually consistent with the status row. pushPopupStyle()
+        // applies the same LightWave grey / beige hover / flat black
+        // border the status-bar popups use (imgui_style.d).
+        static immutable string[5] shapeUiLabels = [
+            "Linear", "Ease-In", "Ease-Out", "Smooth", "Custom",
+        ];
+        string buttonLabel = "Shape: " ~ shapeUiLabels[cast(int)shape];
+        if (ImGui.Button(buttonLabel))
+            ImGui.OpenPopup("##falloffShapePopup");
+        // Push BEFORE BeginPopup — PopupBg / PopupRounding / PopupBorder
+        // must be set when the popup window is created. Pop after
+        // (regardless of whether BeginPopup returned true) so Push/Pop
+        // stays balanced even when the popup isn't open this frame.
+        pushPopupStyle();
+        if (ImGui.BeginPopup("##falloffShapePopup")) {
+            foreach (i; 0 .. 5) {
+                bool selected = (cast(int)shape == cast(int)i);
+                if (ImGui.MenuItem(shapeUiLabels[i], "", selected)) {
+                    shape = cast(FalloffShape)i;
+                    publishState();
+                }
+            }
+            ImGui.EndPopup();
+        }
+        popPopupStyle();
+
+        // Auto-size + Reverse: Linear-only (operate on start/end). For
+        // Radial / Screen / Lasso the analogous "fit to selection" is
+        // already covered by autoSize() called on type-switch — no
+        // separate per-axis variant makes sense.
+        if (type != FalloffType.Linear) return;
+        ImGui.Text("Auto size:");
+        ImGui.SameLine();
+        if (ImGui.Button("X##fAuto")) { autoSizeAxis(0); publishState(); }
+        ImGui.SameLine();
+        if (ImGui.Button("Y##fAuto")) { autoSizeAxis(1); publishState(); }
+        ImGui.SameLine();
+        if (ImGui.Button("Z##fAuto")) { autoSizeAxis(2); publishState(); }
+        if (ImGui.Button("Reverse")) {
+            Vec3 t = start; start = end; end = t;
+            publishState();
+        }
+    }
+
+    /// Fit the Linear-falloff start/end through the selection bbox
+    /// centre along world axis `axis` (0/1/2 = X/Y/Z), with length =
+    /// bbox extent along that axis. Mirrors the existing autoSize()
+    /// for Linear but takes the axis explicitly instead of using the
+    /// current workplane normal — surfaces the per-axis Auto Size
+    /// buttons in Tool Properties.
+    void autoSizeAxis(int axis) {
+        if (mesh_ is null || editMode_ is null) return;
+        Vec3 bbMin, bbMax;
+        bool seen;
+        final switch (*editMode_) {
+            case EditMode.Vertices:
+                mesh_.selectionBBoxMinMaxVertices(bbMin, bbMax, seen); break;
+            case EditMode.Edges:
+                mesh_.selectionBBoxMinMaxEdges   (bbMin, bbMax, seen); break;
+            case EditMode.Polygons:
+                mesh_.selectionBBoxMinMaxFaces   (bbMin, bbMax, seen); break;
+        }
+        if (!seen) return;
+        Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
+        Vec3 bbHalf   = (bbMax - bbMin) * 0.5f;
+        Vec3 n = (axis == 0) ? Vec3(1, 0, 0)
+               : (axis == 1) ? Vec3(0, 1, 0)
+                             : Vec3(0, 0, 1);
+        float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
+                  + abs(bbHalf.z * n.z);
+        if (ext < 1e-6f) ext = 0.5f;
+        start = bbCenter - n * ext;
+        end   = bbCenter + n * ext;
     }
 
 private:

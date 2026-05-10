@@ -115,6 +115,20 @@ abstract class Stage : ParamProvider {
     bool    paramEnabled(string name) const { return true; }
     void    onParamChanged(string name)      {}
 
+    /// Header label for the stage's section in Tool Properties. Default
+    /// = `id()` (wire key, e.g. "falloff"); concrete stages override
+    /// for richer dynamic labels (e.g. "Linear Falloff" with the
+    /// active type baked in). The wire key from id() stays canonical
+    /// for HTTP / scripts; this is purely a UI presentation hook.
+    string displayName() const { return id(); }
+
+    /// Custom ImGui block rendered AFTER the schema-driven params()
+    /// inside the stage's collapsible section in Tool Properties.
+    /// Use for controls that don't fit a single Param (multi-button
+    /// rows, popup menus, action-style buttons that mutate state but
+    /// have no input field). Default no-op — opt in by overriding.
+    void drawProperties() {}
+
     // ------------------------------------------------------------------
     // Attribute mutation (HTTP `tool.pipe.attr <stageId> <name> <value>`).
     //
