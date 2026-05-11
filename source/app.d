@@ -2847,10 +2847,6 @@ void main(string[] args) {
     }
 
     void drawSidePanel() {
-        int selCount     = countSelected(mesh.selectedVertices);
-        int selEdgeCount = countSelected(mesh.selectedEdges);
-        int selFaceCount = countSelected(mesh.selectedFaces);
-
         pushPanelChromeStyle();
         ImGui.SetNextWindowPos(layout.sidePos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.sideSize, ImGuiCond.Always);
