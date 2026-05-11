@@ -1,0 +1,198 @@
+module toolpipe.stages.symmetry;
+
+import std.format : format;
+
+import math    : Vec3;
+import mesh    : Mesh;
+import editmode : EditMode;
+import toolpipe.stage    : Stage, TaskCode, ordSymm;
+import toolpipe.pipeline : ToolState;
+import toolpipe.packets  : SymmetryPacket;
+import popup_state       : setStatePath;
+
+// ---------------------------------------------------------------------------
+// SymmetryStage — phase 7.6 of doc/phase7_plan.md / doc/phase7_6_symm_plan.md.
+// Sits at LXs_ORD_SYMM = 0x31 (between WORK 0x30 and SNAP 0x40).
+//
+// Publishes a SymmetryPacket describing the mirror plane (X / Y / Z plus
+// an optional offset, or the active workplane when `useWorkplane` is on)
+// and — once 7.6b lands — a per-vertex pairing snapshot the consumer
+// tools use to mirror per-vertex deltas during drag.
+//
+// 7.6a (this commit) ships only the master toggle + plane resolution —
+// the pair table stays empty (`enabled = false` ⇒ no pairing work at
+// all; `enabled = true` exposes a length-0 pairOf / onPlane until the
+// 7.6b pairing algorithm lands). Tools have no integration yet, so the
+// rest of the editor sees a no-op packet either way.
+//
+// HTTP setAttr keys:
+//   `enabled`      : "true" / "false"
+//   `axis`         : "x" / "y" / "z" (lowercase; case-insensitive parse)
+//   `offset`       : float, world units along the chosen axis
+//   `useWorkplane` : "true" / "false"
+//   `topology`     : "true" / "false" — schema-only in v1 (always
+//                    falls back to position pairing in the evaluator)
+//   `epsilon`      : float, world-space pairing tolerance
+// ---------------------------------------------------------------------------
+class SymmetryStage : Stage {
+    bool  enabled       = false;
+    int   axisIndex     = 0;          // 0=X 1=Y 2=Z (meaningful when enabled)
+    float offset        = 0.0f;
+    bool  useWorkplane  = false;
+    bool  topology      = false;      // reserved
+    float epsilonWorld  = 1e-4f;
+
+private:
+    // Injected refs (mirrors FalloffStage / ActionCenterStage shape).
+    // Phase 7.6a doesn't consume them yet, but the constructor takes
+    // them so the 7.6b pairing pass can land without touching the
+    // initToolPipe call site again.
+    Mesh*     mesh_;
+    EditMode* editMode_;
+
+public:
+    this(Mesh* mesh = null, EditMode* editMode = null) {
+        this.mesh_     = mesh;
+        this.editMode_ = editMode;
+        publishState();
+    }
+
+    override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Symm; }
+    override string   id()       const                          { return "symmetry"; }
+    override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordSymm; }
+
+    override void evaluate(ref ToolState state) {
+        state.symmetry.enabled      = enabled;
+        state.symmetry.topology     = topology;
+        state.symmetry.epsilonWorld = epsilonWorld;
+        state.symmetry.useWorkplane = useWorkplane;
+        state.symmetry.offset       = offset;
+
+        // Resolve plane. `useWorkplane` overrides axisIndex+offset; WORK
+        // stage has already run (ord 0x30 < SYMM 0x31) so workplane is
+        // populated. Disabled symmetry still publishes a sane plane
+        // (axis-aligned, offset=0) so downstream code can read it
+        // without an "is the plane valid?" guard.
+        if (enabled && useWorkplane) {
+            state.symmetry.axisIndex   = -1;
+            state.symmetry.planePoint  = state.workplane.center;
+            state.symmetry.planeNormal = state.workplane.normal;
+        } else {
+            int ax = enabled ? axisIndex : -1;
+            state.symmetry.axisIndex   = ax;
+            state.symmetry.planeNormal = axisVec(axisIndex);
+            state.symmetry.planePoint  = axisVec(axisIndex) * offset;
+        }
+
+        // Phase 7.6a: pair table is not built yet. Publish empty slices
+        // so consumers see a defined-but-empty shape; the 7.6b stage
+        // overrides this with the real pair snapshot.
+        state.symmetry.pairOf  = null;
+        state.symmetry.onPlane = null;
+
+        // Backwards-compat fields the phase-7.0 stub already declared.
+        // Derived from axisIndex / offset so any code still reading
+        // axisFlags[] or pivot keeps working through the migration.
+        state.symmetry.axisFlags[0] = enabled && axisIndex == 0;
+        state.symmetry.axisFlags[1] = enabled && axisIndex == 1;
+        state.symmetry.axisFlags[2] = enabled && axisIndex == 2;
+        state.symmetry.pivot        = state.symmetry.planePoint;
+    }
+
+    override bool setAttr(string name, string value) {
+        bool ok = applySetAttr(name, value);
+        if (ok) publishState();
+        return ok;
+    }
+
+    override string[2][] listAttrs() const {
+        return [
+            ["enabled",      enabled ? "true" : "false"],
+            ["axis",         axisLabel(axisIndex)],
+            ["offset",       format("%g", offset)],
+            ["useWorkplane", useWorkplane ? "true" : "false"],
+            ["topology",     topology ? "true" : "false"],
+            ["epsilon",      format("%g", epsilonWorld)],
+        ];
+    }
+
+    override string displayName() const {
+        import std.string : toUpper;
+        if (!enabled) return "Symmetry";
+        if (useWorkplane) return "Symmetry: Workplane";
+        return format("Symmetry: %s", axisLabel(axisIndex).toUpper);
+    }
+
+private:
+    bool applySetAttr(string name, string value) {
+        switch (name) {
+            case "enabled":
+                if      (value == "true"  || value == "1") { enabled = true;  return true; }
+                else if (value == "false" || value == "0") { enabled = false; return true; }
+                return false;
+            case "axis":
+                if      (value == "x" || value == "X") { axisIndex = 0; return true; }
+                else if (value == "y" || value == "Y") { axisIndex = 1; return true; }
+                else if (value == "z" || value == "Z") { axisIndex = 2; return true; }
+                return false;
+            case "offset":
+                try {
+                    import std.conv : to;
+                    import std.string : strip;
+                    offset = value.strip.to!float;
+                    return true;
+                } catch (Exception) { return false; }
+            case "useWorkplane":
+                if      (value == "true"  || value == "1") { useWorkplane = true;  return true; }
+                else if (value == "false" || value == "0") { useWorkplane = false; return true; }
+                return false;
+            case "topology":
+                if      (value == "true"  || value == "1") { topology = true;  return true; }
+                else if (value == "false" || value == "0") { topology = false; return true; }
+                return false;
+            case "epsilon":
+                try {
+                    import std.conv : to;
+                    import std.string : strip;
+                    float v = value.strip.to!float;
+                    if (v <= 0.0f) return false;
+                    epsilonWorld = v;
+                    return true;
+                } catch (Exception) { return false; }
+            default: return false;
+        }
+    }
+
+    void publishState() {
+        // Drives the status-bar Symmetry pulldown (added in 7.6e) — same
+        // checked-state convention as the SNAP / FALLOFF pulldowns.
+        setStatePath("symmetry/enabled", enabled ? "true" : "false");
+        setStatePath("symmetry/axis",    axisLabel(axisIndex));
+        setStatePath("symmetry/useWorkplane",
+                     useWorkplane ? "true" : "false");
+        // Per-axis bits — drive the per-row checkmark in the popup.
+        setStatePath("symmetry/axes/x", (enabled && axisIndex == 0) ? "true" : "false");
+        setStatePath("symmetry/axes/y", (enabled && axisIndex == 1) ? "true" : "false");
+        setStatePath("symmetry/axes/z", (enabled && axisIndex == 2) ? "true" : "false");
+        setStatePath("symmetry/axes/off", enabled ? "false" : "true");
+    }
+
+    static Vec3 axisVec(int ax) {
+        switch (ax) {
+            case 0:  return Vec3(1, 0, 0);
+            case 1:  return Vec3(0, 1, 0);
+            case 2:  return Vec3(0, 0, 1);
+            default: return Vec3(1, 0, 0);
+        }
+    }
+
+    static string axisLabel(int ax) {
+        switch (ax) {
+            case 0:  return "x";
+            case 1:  return "y";
+            case 2:  return "z";
+            default: return "x";
+        }
+    }
+}
+

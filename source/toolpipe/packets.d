@@ -181,11 +181,44 @@ struct FalloffPacket {
     float        out_        = 0.5f;
 }
 
-/// LXsP_TOOL_SYMMETRY — populated by SYMM stage in 7.6. Per-axis flags
-/// for X/Y/Z mirroring; default = no symmetry.
+/// LXsP_TOOL_SYMMETRY — populated by SYMM stage in 7.6. Mirrors MODO's
+/// `ILxSymmetryPacket` (LXSDK_661446/include/lxtool.h:526). v1 ships
+/// X / Y / Z plane axes with optional offset; arbitrary-axis support is
+/// reserved (axisIndex == -1) but no UX path enters it.
+///
+/// `pairOf` / `onPlane` are the per-vertex pairing snapshot the SYMM
+/// stage rebuilds when `Mesh.mutationVersion` changes; consumers see a
+/// stable view for the duration of one `pipeline.evaluate`.
+/// `pairOf[i] == -1` means "no mirror within `epsilonWorld`" OR
+/// "on the plane" (the latter is distinguished by `onPlane[i] == true`).
+///
+/// `axisFlags[3]` / `pivot` are the original phase-7.0 stub fields;
+/// kept derived so any pre-7.6 code that read them keeps working
+/// (`axisFlags[axisIndex] == true` when enabled; pivot = axis * offset).
 struct SymmetryPacket {
-    bool[3] axisFlags;
-    Vec3    pivot = Vec3(0, 0, 0);
+    bool         enabled      = false;        // master on/off
+    int          axisIndex    = -1;           // 0=X 1=Y 2=Z; -1 when disabled
+    float        offset       = 0.0f;         // plane = axis * offset
+    bool         useWorkplane = false;        // mirror ≡ workplane (overrides axis/offset)
+    bool         topology     = false;        // reserved; v1 = false
+    float        epsilonWorld = 1e-4f;        // pairing tolerance
+
+    // Cached plane (populated by SymmetryStage.evaluate from the axis /
+    // offset / workplane fields above):
+    Vec3         planePoint   = Vec3(0, 0, 0);
+    Vec3         planeNormal  = Vec3(1, 0, 0);  // normalized
+
+    // Per-vertex pairing snapshot. Length matches `subject.mesh.vertices`
+    // when `enabled` (otherwise empty). Indices into `mesh.vertices`,
+    // or -1 (= unpaired or on-plane — see `onPlane`).
+    int[]        pairOf;
+    bool[]       onPlane;
+
+    // Backwards-compat fields the phase-7.0 stub already declared. The
+    // stage populates them from `axisIndex` / `offset` so any code that
+    // reads them keeps working through the migration.
+    bool[3]      axisFlags;
+    Vec3         pivot = Vec3(0, 0, 0);
 }
 
 /// Geometry-snap candidate-type bitmask. Multiple types can be enabled

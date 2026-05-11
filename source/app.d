@@ -564,6 +564,8 @@ void main(string[] args) {
         import toolpipe.stages.axis      : AxisStage;
         import toolpipe.stages.snap      : SnapStage;
         import toolpipe.stages.falloff   : FalloffStage;
+        import toolpipe.stages.symmetry  : SymmetryStage;
+        g_pipeCtx.pipeline.add(new SymmetryStage(&mesh, &editMode));
         g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
         g_pipeCtx.pipeline.add(new AxisStage(&mesh, &editMode));
