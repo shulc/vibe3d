@@ -43,6 +43,16 @@ string[string] getFalloffAttrs() {
 void resetCube() {
     postJson("/api/reset", `{"primitive":"cube"}`);
     postJson("/api/command", "tool.pipe.attr falloff type none");
+    // Tools that auto-size on type-switch (e.g. D.1 `xfrm.twist`'s
+    // linear-falloff path) leave start/end / center/size at auto-fit
+    // values rather than their packet defaults. Reset explicitly so
+    // a previous test running in the same worker doesn't poison the
+    // "defaults" assertions below.
+    postJson("/api/command", `tool.pipe.attr falloff start "0,0,0"`);
+    postJson("/api/command", `tool.pipe.attr falloff end "0,1,0"`);
+    postJson("/api/command", `tool.pipe.attr falloff center "0,0,0"`);
+    postJson("/api/command", `tool.pipe.attr falloff size "1,1,1"`);
+    postJson("/api/command", "tool.pipe.attr falloff transparent false");
 }
 
 // -------------------------------------------------------------------------
