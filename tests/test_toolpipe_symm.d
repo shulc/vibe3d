@@ -503,3 +503,129 @@ unittest { // face pick: a face symmetric to itself doesn't double-select
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/reset", "");
 }
+
+// -------------------------------------------------------------------------
+// 7.6 (BaseSide): clicking a polygon on the +X side and translating
+// PERPENDICULARLY to the symmetry plane gives symmetric expansion —
+// both sides end up further from the plane by the same amount. Before
+// the BaseSide drive rule, the lower-index side drove and a +X
+// translate would push v0 across the plane, breaking the geometry.
+// -------------------------------------------------------------------------
+
+unittest { // pick +X face, translate +X → symmetric expansion
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // face 3 = +X face ({1,2,6,5}). Auto-symmetry adds face 2 = -X
+    // face ({0,4,7,3}). BaseSide should anchor on +X (face 3's centroid).
+    postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[1,0,0]}`);
+    // Expected (cube of half-extent 0.5 + +1 translate driven from +X):
+    //   +X face verts (1,2,5,6) at x = +0.5 + 1 = +1.5
+    //   -X face verts (0,3,4,7) at x = -(+1.5) = -1.5 (mirror write)
+    foreach (i; [1, 2, 5, 6]) {
+        auto v = vertexAt(i);
+        assert(approxEq(v[0],  1.5),
+            "v" ~ i.to!string ~ ".x expected +1.5, got " ~ v[0].to!string);
+    }
+    foreach (i; [0, 3, 4, 7]) {
+        auto v = vertexAt(i);
+        assert(approxEq(v[0], -1.5),
+            "v" ~ i.to!string ~ ".x expected -1.5 (mirror), got " ~ v[0].to!string);
+    }
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+unittest { // pick -X face, translate +X → symmetric collapse / cross-plane
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // face 2 = -X face ({0,4,7,3}). Auto-symmetry adds face 3 = +X face.
+    // BaseSide anchors on -X (face 2's centroid). User drags +X by 1
+    // (TOWARD the plane and beyond), face 2 moves +X, face 3 follows
+    // with mirrored delta (-X): both cross to the OTHER side at ±0.5.
+    postJson("/api/select", `{"mode":"polygons","indices":[2]}`);
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[1,0,0]}`);
+    foreach (i; [0, 3, 4, 7]) {
+        auto v = vertexAt(i);
+        assert(approxEq(v[0],  0.5),
+            "v" ~ i.to!string ~ " (-X face, base side, dragged +X): expected +0.5, got "
+            ~ v[0].to!string);
+    }
+    foreach (i; [1, 2, 5, 6]) {
+        auto v = vertexAt(i);
+        assert(approxEq(v[0], -0.5),
+            "v" ~ i.to!string ~ " (+X face, mirror): expected -0.5, got "
+            ~ v[0].to!string);
+    }
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+// -------------------------------------------------------------------------
+// 7.6 (BaseSide use case): select with symmetry on, then turn symmetry
+// OFF, then translate — both originally-symm-selected sides remain in
+// the selection and move together as a single unit (no mirror pass).
+// -------------------------------------------------------------------------
+
+unittest { // pick face3 w/ symm, disable symm, translate → both faces move together
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    // Selection should be both face 2 and face 3 at this point.
+    assert(faceSelection().length == 2);
+    // Turn off symmetry. Selection survives.
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    assert(faceSelection().length == 2, "selection should survive symm off");
+    // Translate +X. With symmetry off, NO mirror pass — both faces
+    // shift by +X uniformly. Cube becomes a +X-translated cube.
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[1,0,0]}`);
+    foreach (i; 0 .. 8) {
+        auto v = vertexAt(i);
+        // Each vert's X = original_x + 1; original X was ±0.5.
+        // So |X - sign*0.5 - 1| < eps where sign = sign(original).
+        bool isPos = (i == 1 || i == 2 || i == 5 || i == 6);
+        double want = isPos ? 1.5 : 0.5;
+        assert(approxEq(v[0], want),
+            "v" ~ i.to!string ~ " expected x=" ~ want.to!string
+            ~ ", got " ~ v[0].to!string);
+    }
+    postJson("/api/reset", "");
+}
+
+// -------------------------------------------------------------------------
+// 7.6 (BaseSide): /api/toolpipe/eval exposes baseSide and vertSign.
+// -------------------------------------------------------------------------
+
+unittest { // baseSide reflects pick anchor
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    auto j = getJson("/api/toolpipe/eval");
+    auto bs = j["symmetry"]["baseSide"].integer;
+    assert(bs == 1, "+X pick should set baseSide=+1, got " ~ bs.to!string);
+
+    postJson("/api/select", `{"mode":"polygons","indices":[2]}`);
+    j = getJson("/api/toolpipe/eval");
+    bs = j["symmetry"]["baseSide"].integer;
+    assert(bs == -1, "-X pick should set baseSide=-1, got " ~ bs.to!string);
+
+    auto vs = j["symmetry"]["vertSign"].array;
+    assert(vs.length == 8, "vertSign should be 8 long");
+    foreach (i; 0 .. 8) {
+        // Even-index cube layout (0,3,4,7 are -X; 1,2,5,6 are +X).
+        bool isPos = (i == 1 || i == 2 || i == 5 || i == 6);
+        long want = isPos ? 1 : -1;
+        assert(vs[i].integer == want,
+            "vertSign[" ~ i.to!string ~ "] expected " ~ want.to!string
+            ~ ", got " ~ vs[i].integer.to!string);
+    }
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}

@@ -2,7 +2,7 @@ module toolpipe.stages.symmetry;
 
 import std.format : format;
 
-import math    : Vec3;
+import math    : Vec3, dot;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
@@ -44,6 +44,12 @@ class SymmetryStage : Stage {
     bool  topology      = false;      // reserved
     float epsilonWorld  = 1e-4f;
 
+    // MODO's `BaseSide` — which side of the plane the user last
+    // anchored on. Updated by `anchorAt(pos)` after every pick that
+    // happens with symmetry enabled. Default +1 so unset state
+    // produces predictable behaviour (positive side drives).
+    int   baseSide      = +1;
+
 private:
     // Injected refs (mirrors FalloffStage / ActionCenterStage shape).
     // `mesh_` is required for pairing — null-mesh callers skip the
@@ -63,6 +69,7 @@ private:
     float  cachedEpsilon_         = float.nan;
     int[]  cachedPairOf_;
     bool[] cachedOnPlane_;
+    int[]  cachedVertSign_;
     bool   cachedReady_           = false;
 
 public:
@@ -111,19 +118,22 @@ public:
                 cachedMutationVersion_ != mesh_.mutationVersion;
             if (!cachedReady_ || planeChanged || meshChanged) {
                 rebuildPairing(*mesh_, state.symmetry,
-                               cachedPairOf_, cachedOnPlane_);
+                               cachedPairOf_, cachedOnPlane_, cachedVertSign_);
                 cachedMutationVersion_ = mesh_.mutationVersion;
                 cachedPlanePoint_      = state.symmetry.planePoint;
                 cachedPlaneNormal_     = state.symmetry.planeNormal;
                 cachedEpsilon_         = epsilonWorld;
                 cachedReady_           = true;
             }
-            state.symmetry.pairOf  = cachedPairOf_;
-            state.symmetry.onPlane = cachedOnPlane_;
+            state.symmetry.pairOf   = cachedPairOf_;
+            state.symmetry.onPlane  = cachedOnPlane_;
+            state.symmetry.vertSign = cachedVertSign_;
         } else {
-            state.symmetry.pairOf  = null;
-            state.symmetry.onPlane = null;
+            state.symmetry.pairOf   = null;
+            state.symmetry.onPlane  = null;
+            state.symmetry.vertSign = null;
         }
+        state.symmetry.baseSide = baseSide;
 
         // Backwards-compat fields the phase-7.0 stub already declared.
         // Derived from axisIndex / offset so any code still reading
@@ -140,6 +150,48 @@ public:
         return ok;
     }
 
+    /// MODO `SetBase` analogue. Update `baseSide` from a world-space
+    /// anchor point — typically the centroid of the element the user
+    /// just clicked while symmetry was active. Off-plane anchors set
+    /// `baseSide` to the side they land on; on-plane anchors leave the
+    /// existing `baseSide` untouched (the user clicked something
+    /// straddling the plane; previous anchor stays canonical).
+    void anchorAt(Vec3 pos) {
+        // Resolve the current plane the same way `evaluate` does so a
+        // caller invoking `anchorAt` between evaluates picks up the
+        // live axis / offset / workplane state.
+        Vec3 planePt, planeN;
+        currentPlane(planePt, planeN);
+        float d = dot(pos - planePt, planeN);
+        if (d >  epsilonWorld) baseSide = +1;
+        else if (d < -epsilonWorld) baseSide = -1;
+        // |d| <= epsilon ⇒ leave baseSide unchanged.
+        publishState();
+    }
+
+    /// Resolve `(planePoint, planeNormal)` from the stage's current
+    /// axis / offset / workplane state. Mirrors the head of `evaluate`
+    /// — split out so `anchorAt` can compute the plane without
+    /// requiring a full pipeline pass first.
+    private void currentPlane(out Vec3 planePt, out Vec3 planeN) {
+        if (enabled && useWorkplane) {
+            // Without a fresh pipeline pass we can't reach the
+            // upstream WorkplaneStage. Fall back to the cached
+            // workplane snapshot from the last `evaluate`; if there
+            // was none, default to world XZ.
+            if (cachedReady_) {
+                planePt = cachedPlanePoint_;
+                planeN  = cachedPlaneNormal_;
+            } else {
+                planePt = Vec3(0, 0, 0);
+                planeN  = Vec3(0, 1, 0);
+            }
+            return;
+        }
+        planeN  = axisVec(axisIndex);
+        planePt = axisVec(axisIndex) * offset;
+    }
+
     override string[2][] listAttrs() const {
         return [
             ["enabled",      enabled ? "true" : "false"],
@@ -148,6 +200,7 @@ public:
             ["useWorkplane", useWorkplane ? "true" : "false"],
             ["topology",     topology ? "true" : "false"],
             ["epsilon",      format("%g", epsilonWorld)],
+            ["baseSide",     format("%d", baseSide)],
         ];
     }
 

@@ -1155,10 +1155,11 @@ void main(string[] args) {
             buf.put(`,"clusterFwd":`);    putVec3List(state.axis.clusterFwd);
             buf.put(`},"symmetry":{"enabled":`);
             buf.put(state.symmetry.enabled ? "true" : "false");
-            buf.put(format(`,"axisIndex":%d,"useWorkplane":%s,"topology":%s`,
+            buf.put(format(`,"axisIndex":%d,"useWorkplane":%s,"topology":%s,"baseSide":%d`,
                            state.symmetry.axisIndex,
                            state.symmetry.useWorkplane ? "true" : "false",
-                           state.symmetry.topology     ? "true" : "false"));
+                           state.symmetry.topology     ? "true" : "false",
+                           state.symmetry.baseSide));
             buf.put(`,"planePoint":`);  putVec3(state.symmetry.planePoint);
             buf.put(`,"planeNormal":`); putVec3(state.symmetry.planeNormal);
             buf.put(`,"pairOf":[`);
@@ -1170,6 +1171,11 @@ void main(string[] args) {
             foreach (i, op; state.symmetry.onPlane) {
                 if (i) buf.put(",");
                 buf.put(op ? "true" : "false");
+            }
+            buf.put(`],"vertSign":[`);
+            foreach (i, s; state.symmetry.vertSign) {
+                if (i) buf.put(",");
+                buf.put(format(`%d`, s));
             }
             buf.put(`]}}`);
             return buf.data;

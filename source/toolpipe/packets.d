@@ -214,6 +214,21 @@ struct SymmetryPacket {
     int[]        pairOf;
     bool[]       onPlane;
 
+    // Per-vertex pre-translate side of the symmetry plane: -1 / 0 / +1.
+    // Built alongside `pairOf` by `rebuildPairing` from the snapshot
+    // mesh, so it stays stable through one operation even if a
+    // translate would push a vertex across the plane mid-op. `0` means
+    // the vert is on the plane (and `onPlane[i]` is also true).
+    int[]        vertSign;
+
+    // MODO's `BaseSide` (lxtool.h:562) — which side of the plane the
+    // user last anchored on. Drives the mirror loop's choice of
+    // "user side" when a symmetric pair is fully selected (e.g.
+    // 7.6c auto-add put both sides in the same selection). Default
+    // +1 so unset state behaves predictably; `SymmetryStage.anchorAt`
+    // updates it from a world-space anchor point.
+    int          baseSide = +1;
+
     // Backwards-compat fields the phase-7.0 stub already declared. The
     // stage populates them from `axisIndex` / `offset` so any code that
     // reads them keeps working through the migration.

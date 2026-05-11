@@ -127,11 +127,12 @@ uint mirrorFace(const ref Mesh m, const ref SymmetryPacket sp, uint fi)
 
 /// Build the per-vertex pairing table for `mesh` under the plane in
 /// `sp` (uses `sp.planePoint`, `sp.planeNormal`, `sp.epsilonWorld`,
-/// `sp.axisIndex`). Writes results into `outPairOf` and `outOnPlane`
-/// (allocated to `mesh.vertices.length` if shorter).
+/// `sp.axisIndex`). Writes results into `outPairOf`, `outOnPlane`, and
+/// `outVertSign` (allocated to `mesh.vertices.length` if shorter).
 ///
 /// Algorithm (O(n log n)):
-///   1. Walk every vertex `i`, compute `mirror[i] = mirrorPosition(v[i])`.
+///   1. Walk every vertex `i`, compute `mirror[i] = mirrorPosition(v[i])`
+///      and `outVertSign[i] = sign(dot(v[i] - planePoint, planeNormal))`.
 ///   2. Build an index `idx[]` of all vertices sorted by their dominant-
 ///      axis coordinate.
 ///   3. For each `i`, binary-search `idx[]` for the range of vertices
@@ -146,20 +147,29 @@ uint mirrorFace(const ref Mesh m, const ref SymmetryPacket sp, uint fi)
 /// algorithm still works (it just picks one orthogonal axis as the sort
 /// key); the v1 stage only emits axis-aligned planes anyway.
 void rebuildPairing(const ref Mesh mesh, const ref SymmetryPacket sp,
-                    ref int[] outPairOf, ref bool[] outOnPlane)
+                    ref int[] outPairOf, ref bool[] outOnPlane,
+                    ref int[] outVertSign)
 {
     size_t n = mesh.vertices.length;
-    if (outPairOf.length  != n) outPairOf.length  = n;
-    if (outOnPlane.length != n) outOnPlane.length = n;
+    if (outPairOf.length   != n) outPairOf.length   = n;
+    if (outOnPlane.length  != n) outOnPlane.length  = n;
+    if (outVertSign.length != n) outVertSign.length = n;
 
     if (n == 0) return;
 
-    // Pre-compute mirror positions + on-plane flags.
+    // Pre-compute mirror positions + on-plane flags + per-vertex side.
+    // `vertSign` is captured here (pre-translate) so consumers like
+    // `applySymmetryMirror` keep a stable view of which side each
+    // vertex started on — even if a perpendicular translate would
+    // push a selected vertex across the plane mid-operation.
     auto mirrored = new Vec3[](n);
     foreach (i; 0 .. n) {
         mirrored[i]  = mirrorPosition(sp, mesh.vertices[i]);
         outOnPlane[i] = isOnPlane(sp, mesh.vertices[i]);
         outPairOf[i]  = -1;
+        float d = dot(mesh.vertices[i] - sp.planePoint, sp.planeNormal);
+        if (abs(d) <= sp.epsilonWorld) outVertSign[i] = 0;
+        else                           outVertSign[i] = d > 0 ? +1 : -1;
     }
 
     // Pick the search axis: the dominant component of `planeNormal`.
@@ -249,8 +259,7 @@ private size_t upperBound(const float[] sortedCoords, float target) pure nothrow
 // vertex back onto the plane.
 //
 // Convention: `selected[]` is a per-vertex bool mask of "verts the
-// caller already moved" (the symmetric counterparts the caller did NOT
-// move). For each such `vi`:
+// caller already moved". For each such `vi`:
 //   • if `onPlane[vi]`: project `mesh.vertices[vi]` back onto the plane.
 //   • else if `pairOf[vi] = mi` and `mi != vi`: set
 //     `mesh.vertices[mi] = mirrorPosition(mesh.vertices[vi])`.
@@ -260,9 +269,17 @@ private size_t upperBound(const float[] sortedCoords, float target) pure nothrow
 // the mirror pass touched. Caller MUST size it to `mesh.vertices.length`
 // before the call.
 //
-// If both `vi` and its mirror `mi` are in `selected[]` (the user
-// selected both sides — e.g. whole mesh), the lower-index side drives
-// the mirror so each pair fires exactly once.
+// **BaseSide drive rule.** When both `vi` and its mirror `mi` are in
+// `selected[]` (the user picked both sides — e.g. via 7.6c's symmetric
+// auto-add, or by shift-click), the side matching `sp.baseSide`
+// (`-1`/`+1`) drives. The non-base side is skipped on its own
+// iteration so its mirror write happens exactly once and from the
+// user-anchored side. This matters when a perpendicular translate
+// would otherwise push the lower-index vertex across the plane and
+// flip the implicit drive direction.
+//
+// For lone-selected verts (mirror is NOT in `selected[]`), `vi`
+// always drives — there's no ambiguity.
 // ---------------------------------------------------------------------------
 void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
                          const(bool)[] selected,
@@ -278,10 +295,16 @@ void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
         }
         int mi = sp.pairOf[i];
         if (mi < 0 || mi == cast(int)i) continue;
-        // If the mirror is also in `selected[]`, only the lower-index
-        // side drives so the pair fires once.
-        if (mi < cast(int)i && mi < cast(int)selected.length && selected[mi])
-            continue;
+        bool mirrorAlsoSelected =
+            (mi < cast(int)selected.length) && selected[mi];
+        if (mirrorAlsoSelected) {
+            // Both sides selected — only the base-side vertex drives.
+            // `vertSign[i]` is the PRE-translate side, so the rule
+            // stays stable through a perpendicular drag that crosses
+            // the plane.
+            int iSign = (i < sp.vertSign.length) ? sp.vertSign[i] : 0;
+            if (iSign != sp.baseSide) continue;
+        }
         mesh.vertices[mi] = mirrorPosition(sp, mesh.vertices[i]);
         if (mi < cast(int)outAlsoTouched.length)
             outAlsoTouched[mi] = true;

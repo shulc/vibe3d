@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import snapshot : SelectionSnapshot;
+import math : Vec3;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : SubjectPacket;
 import toolpipe.stage    : TaskCode;
@@ -49,6 +50,19 @@ class MeshSelect : Command {
         auto symm = captureSymmetryPacket();
         bool symmActive = symm.enabled
                        && symm.pairOf.length == mesh.vertices.length;
+
+        // Phase 7.6 (BaseSide): anchor the symmetry stage on the FIRST
+        // user-passed index's world-space centroid. Subsequent
+        // mirror-move / rotate / scale operations consult `baseSide`
+        // to decide which side of a fully-mirrored pair drives the
+        // deformation. Updated even if the anchor sits on the plane
+        // (no-op there — `anchorAt` keeps the previous baseSide).
+        if (symmActive && indices.length > 0) {
+            Vec3 anchor = computeAnchor(mode, indices[0]);
+            if (auto sym = cast(SymmetryStage)
+                          g_pipeCtx.pipeline.findByTask(TaskCode.Symm))
+                sym.anchorAt(anchor);
+        }
 
         int max;
         switch (mode) {
@@ -101,6 +115,33 @@ class MeshSelect : Command {
                                     "', expected vertices/edges/polygons");
         }
         return true;
+    }
+
+    /// World-space anchor for the picked element — used as the input
+    /// to `SymmetryStage.anchorAt`. Vertices anchor at their position;
+    /// edges / polygons at their vertex centroid.
+    private Vec3 computeAnchor(string m, int firstIdx) {
+        if (m == "vertices") {
+            if (firstIdx < 0 || firstIdx >= cast(int)mesh.vertices.length)
+                return Vec3(0, 0, 0);
+            return mesh.vertices[firstIdx];
+        }
+        if (m == "edges") {
+            if (firstIdx < 0 || firstIdx >= cast(int)mesh.edges.length)
+                return Vec3(0, 0, 0);
+            auto e = mesh.edges[firstIdx];
+            return (mesh.vertices[e[0]] + mesh.vertices[e[1]]) * 0.5f;
+        }
+        if (m == "polygons") {
+            if (firstIdx < 0 || firstIdx >= cast(int)mesh.faces.length)
+                return Vec3(0, 0, 0);
+            auto f = mesh.faces[firstIdx];
+            if (f.length == 0) return Vec3(0, 0, 0);
+            Vec3 sum = Vec3(0, 0, 0);
+            foreach (vi; f) sum = sum + mesh.vertices[vi];
+            return sum * (1.0f / cast(float)f.length);
+        }
+        return Vec3(0, 0, 0);
     }
 
     /// Snapshot the live SymmetryPacket via the global toolpipe. Gated
