@@ -2202,17 +2202,25 @@ void main(string[] args) {
             bool[] visible = pvVisCache.get(*pv, cameraView.eye, vp);
             float closestSqS = 16.0f;
             int   best      = -1;
-            foreach_reverse (pi; 0 .. pv.vertices.length) {
-                uint origin = subpatchPreview.trace.vertOrigin[pi];
-                if (origin == uint.max) continue;
-                if (!visible[pi]) continue;
+            // Iterate CAGE verts via the reverse cage→preview map
+            // rather than scanning the (potentially 500 K+) preview
+            // verts. With subpatchDepth=3 on an 8 K-poly cage the
+            // preview has ~530 K verts but only ~8 K carry a cage
+            // origin — iterating preview did 522 K wasted reads per
+            // mouse motion.
+            const cageMap = subpatchPreview.cageVertPreview;
+            foreach_reverse (cageI; 0 .. mesh.vertices.length) {
+                if (cageI >= cageMap.length) continue;
+                uint pi = cageMap[cageI];
+                if (pi == uint.max) continue;
+                if (pi >= visible.length || !visible[pi]) continue;
                 float sx, sy, ndcZ;
                 if (!projectToWindow(pv.vertices[pi], vp, sx, sy, ndcZ)) continue;
                 float ddx = sx - mx, ddy = sy - my;
                 float d2  = ddx*ddx + ddy*ddy;
                 if (d2 >= closestSqS) continue;
                 closestSqS = d2;
-                best       = cast(int)origin;
+                best       = cast(int)cageI;
             }
             if (best >= 0) {
                 hoveredVertex = best;

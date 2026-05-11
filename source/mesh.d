@@ -2566,6 +2566,15 @@ struct SubpatchPreview {
     ulong         sourceVersion = ulong.max;
     int           depth         = -1;
 
+    /// Reverse-lookup: for each CAGE vertex index, the preview-mesh
+    /// vertex that carries its smoothed position (`uint.max` if no
+    /// preview vert traces back to this cage vert). Built alongside
+    /// `trace.vertOrigin[]` so the picking pipeline can iterate the
+    /// 8 K cage verts instead of the 500 K+ preview verts at
+    /// `subpatchDepth=3` (saves a ~60× factor in the per-frame
+    /// hover-pick inner loop on subpatch meshes).
+    uint[] cageVertPreview;
+
     void rebuildIfStale(ref const Mesh source, int d) {
         if (sourceVersion == source.mutationVersion && depth == d)
             return;
@@ -2575,6 +2584,7 @@ struct SubpatchPreview {
     void rebuild(ref const Mesh source, int d) {
         depth         = d;
         sourceVersion = source.mutationVersion;
+        cageVertPreview.length = 0;
         if (d <= 0 || !source.hasAnySubpatch()) {
             mesh   = Mesh.init;
             trace  = SubpatchTrace.init;
@@ -2588,6 +2598,19 @@ struct SubpatchPreview {
         mesh   = step.mesh;
         trace  = step.trace;
         active = true;
+        // Build the reverse cage→preview map in one O(preview) pass.
+        cageVertPreview = new uint[](source.vertices.length);
+        cageVertPreview[] = uint.max;
+        foreach (pi, origin; trace.vertOrigin) {
+            if (origin == uint.max) continue;
+            if (origin >= cageVertPreview.length) continue;
+            // First preview vert that maps back wins; multiple preview
+            // verts may carry the same cage origin (e.g. corner verts
+            // shared between sub-faces) but their smoothed positions
+            // are identical, so the first one is canonical.
+            if (cageVertPreview[origin] == uint.max)
+                cageVertPreview[origin] = cast(uint)pi;
+        }
     }
 }
 
