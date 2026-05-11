@@ -381,3 +381,125 @@ unittest { // on-plane vertex projected
     postJson("/api/command", "tool.pipe.attr symmetry enabled false");
     postJson("/api/reset", "");
 }
+
+// -------------------------------------------------------------------------
+// 7.6c: symmetric selection — picking one vertex / edge / face also
+// selects its mirror counterpart when symmetry is on.
+// -------------------------------------------------------------------------
+
+JSONValue getSelection() {
+    return parseJSON(cast(string) get(baseUrl ~ "/api/selection"));
+}
+
+int[] vertexSelection() {
+    auto j = getSelection();
+    int[] out_;
+    foreach (idx; j["selectedVertices"].array)
+        out_ ~= cast(int)idx.integer;
+    return out_;
+}
+
+int[] edgeSelection() {
+    auto j = getSelection();
+    int[] out_;
+    foreach (idx; j["selectedEdges"].array)
+        out_ ~= cast(int)idx.integer;
+    return out_;
+}
+
+int[] faceSelection() {
+    auto j = getSelection();
+    int[] out_;
+    foreach (idx; j["selectedFaces"].array)
+        out_ ~= cast(int)idx.integer;
+    return out_;
+}
+
+bool selContains(int[] sel, int idx) {
+    foreach (s; sel) if (s == idx) return true;
+    return false;
+}
+
+unittest { // vertex pick adds mirror with symmetry on
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    auto sel = vertexSelection();
+    assert(selContains(sel, 0), "v0 missing from selection");
+    assert(selContains(sel, 1),
+        "v1 (X-mirror of v0) should be auto-selected; got " ~ sel.to!string);
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+unittest { // vertex pick: no mirror when symmetry is off
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    auto sel = vertexSelection();
+    assert(selContains(sel, 0));
+    assert(!selContains(sel, 1),
+        "v1 must NOT be auto-selected when symmetry is off; got " ~ sel.to!string);
+    postJson("/api/reset", "");
+}
+
+unittest { // edge pick adds mirror edge
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // Cube edge 0 = (0,3): both verts on -X side → mirror edge is (1,2)
+    // (both on +X). Pick edge 0; mirror should auto-add.
+    postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    auto edges = edgeSelection();
+    assert(selContains(edges, 0), "edge 0 missing from selection");
+    // Find the edge connecting verts 1 and 2 — that's the mirror.
+    auto j = parseJSON(cast(string) get(baseUrl ~ "/api/model"));
+    int mirrorEi = -1;
+    foreach (i, e; j["edges"].array) {
+        auto pair = e.array;
+        int a = cast(int)pair[0].integer;
+        int b = cast(int)pair[1].integer;
+        bool hits12 = (a == 1 && b == 2) || (a == 2 && b == 1);
+        if (hits12) { mirrorEi = cast(int)i; break; }
+    }
+    assert(mirrorEi >= 0, "couldn't locate mirror edge in mesh");
+    assert(selContains(edges, mirrorEi),
+        "mirror edge (verts 1↔2) idx=" ~ mirrorEi.to!string
+        ~ " should be auto-selected; got " ~ edges.to!string);
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+unittest { // face pick adds mirror face
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // Cube face 2 = -X face (vertex set {0,3,7,4}); X-mirror is face 3
+    // = +X face (vertex set {1,2,6,5}). Pick face 2; auto-select 3.
+    postJson("/api/select", `{"mode":"polygons","indices":[2]}`);
+    auto faces = faceSelection();
+    assert(selContains(faces, 2), "face 2 missing from selection");
+    assert(selContains(faces, 3),
+        "face 3 (mirror of -X face) should be auto-selected; got "
+        ~ faces.to!string);
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+unittest { // face pick: a face symmetric to itself doesn't double-select
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // Cube face 0 = -Z face (vertex set {0,1,2,3}); X-mirror is itself
+    // (the face spans both sides of X=0). mirrorFace returns ~0u, the
+    // selection should contain only face 0.
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto faces = faceSelection();
+    assert(selContains(faces, 0), "face 0 missing");
+    assert(faces.length == 1,
+        "face 0 should be its own mirror across X — selection should be "
+        ~ "length 1, got " ~ faces.length.to!string ~ " (" ~ faces.to!string ~ ")");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}

@@ -48,6 +48,83 @@ int mirrorVertex(const ref SymmetryPacket sp, int vi) pure nothrow @nogc @safe {
     return sp.pairOf[vi];
 }
 
+/// Per-edge mirror lookup. Returns `~0u` (matches `Mesh.edgeIndex`'s
+/// "no such edge" sentinel) when either endpoint is unpaired / on-
+/// plane or the mirrored endpoints aren't connected by an edge in
+/// the mesh. Self-mirror (both endpoints on the plane) is treated as
+/// "no mirror" — the edge is already its own counterpart.
+uint mirrorEdge(const ref Mesh m, const ref SymmetryPacket sp, uint ei)
+{
+    if (!sp.enabled || ei >= m.edges.length) return ~0u;
+    if (sp.pairOf.length != m.vertices.length) return ~0u;
+    uint a = m.edges[ei][0];
+    uint b = m.edges[ei][1];
+    int ma = sp.pairOf[a];
+    int mb = sp.pairOf[b];
+    // On-plane endpoints map to themselves: the user-visible "mirror
+    // edge" of an edge with one endpoint on the plane is the same
+    // edge if the other endpoint is also on-plane (the plane line
+    // segment), otherwise the edge whose far endpoint is `pairOf[b]`.
+    if (ma < 0 && sp.onPlane[a]) ma = cast(int)a;
+    if (mb < 0 && sp.onPlane[b]) mb = cast(int)b;
+    if (ma < 0 || mb < 0) return ~0u;
+    if (ma == cast(int)a && mb == cast(int)b) return ~0u;       // self
+    return m.edgeIndex(cast(uint)ma, cast(uint)mb);
+}
+
+/// Per-face mirror lookup. Returns `~0u` when no face has a matching
+/// mirrored vertex set, or when the face is its own mirror (all
+/// vertices on-plane).
+///
+/// Search strategy: build the mirrored vertex SET (order doesn't
+/// matter — the mirrored face winds backwards), then linear-scan
+/// `mesh.faces` for a face with the same vertex set. O(F * V_per_face)
+/// per query; fine for editor-sized meshes (cube = 6 faces). When
+/// large meshes start showing up the consumer should switch to a
+/// hash-keyed lookup.
+uint mirrorFace(const ref Mesh m, const ref SymmetryPacket sp, uint fi)
+{
+    if (!sp.enabled || fi >= m.faces.length) return ~0u;
+    if (sp.pairOf.length != m.vertices.length) return ~0u;
+
+    const(uint)[] face = m.faces[fi];
+    if (face.length == 0) return ~0u;
+
+    auto mirrored = new uint[](face.length);
+    bool allOnPlane = true;
+    foreach (i, v; face) {
+        int mv = sp.pairOf[v];
+        if (mv < 0 && sp.onPlane[v]) {
+            mv = cast(int)v;            // on-plane vert is its own mirror
+        } else if (mv < 0) {
+            return ~0u;                  // unpaired vert → no mirror face
+        } else {
+            allOnPlane = false;
+        }
+        mirrored[i] = cast(uint)mv;
+    }
+    if (allOnPlane) return ~0u;          // face IS its own mirror
+
+    // Compare sorted vert sets. The mirrored face winds backwards
+    // (orientation flips across a plane), but the SET of verts is
+    // what identifies the face in vibe3d's data structure.
+    auto sortedMirror = mirrored.dup;
+    import std.algorithm : sort;
+    sort(sortedMirror);
+
+    foreach (gi; 0 .. m.faces.length) {
+        if (m.faces[gi].length != mirrored.length) continue;
+        auto sortedG = m.faces[gi].dup;
+        sort(sortedG);
+        bool match = true;
+        foreach (k; 0 .. sortedG.length) {
+            if (sortedG[k] != sortedMirror[k]) { match = false; break; }
+        }
+        if (match) return cast(uint)gi;
+    }
+    return ~0u;
+}
+
 /// Build the per-vertex pairing table for `mesh` under the plane in
 /// `sp` (uses `sp.planePoint`, `sp.planeNormal`, `sp.epsilonWorld`,
 /// `sp.axisIndex`). Writes results into `outPairOf` and `outOnPlane`
