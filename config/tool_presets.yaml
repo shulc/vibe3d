@@ -1,0 +1,83 @@
+# Tool presets — declarative "compound" tools built by wrapping a base
+# tool and configuring one or more toolpipe stages on activate. Mirrors
+# MODO's `<hash type="ToolPreset" key="...">` blocks in
+# `resrc/presets.cfg` (e.g. `xfrm.shear`, `xfrm.twist`, `xfrm.softDrag`):
+# each preset names a base tool + per-pipe-stage attributes.
+#
+# When activated via `tool.set <preset-id>`:
+#   1. The base tool's factory runs (Move / Rotate / Scale / ...).
+#   2. For each `pipe.<stageId>` block, `setAttr(key, value)` is called
+#      on the matching toolpipe stage. Values stringify the same way
+#      `tool.pipe.attr <stageId> <name> <value>` does — bool as
+#      "true"/"false", floats / vec3s as raw, etc.
+#
+# Adding a new preset = editing this file. No code change required
+# unless the preset needs behaviour the existing stages can't express.
+presets:
+  # ----- Deform sub-tab (D.1 of doc/deform_plan.md) ---------------
+  - id: xfrm.softDrag
+    base: move
+    pipe:
+      falloff:
+        type: screen
+        transparent: "true"
+
+  - id: xfrm.softMove
+    base: move
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.softRotate
+    base: rotate
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.softScale
+    base: scale
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.twist
+    base: rotate
+    pipe:
+      falloff:
+        type: linear
+
+  - id: xfrm.swirl
+    base: rotate
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.shear
+    base: move
+    pipe:
+      falloff:
+        type: linear
+
+  - id: xfrm.taper
+    base: scale
+    pipe:
+      falloff:
+        type: linear
+
+  - id: xfrm.bulge
+    base: scale
+    pipe:
+      falloff:
+        type: radial
+
+  # ----- Transform sub-tab ----------------------------------------
+  # `move.element` mirrors MODO's `tool.set ElementMove` — the Move
+  # tool with ACEN + AXIS pinned to Element so the gizmo lands on
+  # the selected component's centroid.
+  - id: move.element
+    base: move
+    pipe:
+      actionCenter:
+        mode: element
+      axis:
+        mode: element

@@ -106,6 +106,17 @@ public:
         return null;
     }
 
+    /// Return the stage with the given `id()` (e.g. "falloff",
+    /// "actionCenter", "snap", "symmetry"), or null. Used by the
+    /// tool-preset loader to apply attrs by stage name, mirroring
+    /// the `tool.pipe.attr <stageId> ...` HTTP wire format.
+    Stage findById(string id) {
+        foreach (s; stages_)
+            if (s.id() == id)
+                return s;
+        return null;
+    }
+
     /// Read-only view of the registered stages, in pipeline order.
     const(Stage)[] all() const {
         return stages_;

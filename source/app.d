@@ -579,26 +579,6 @@ void main(string[] args) {
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
-    // Phase 7.2d: `move.element` is the same MoveTool with ACEN +
-    // AXIS pre-set to Element. Activating switches the modes; the
-    // tool itself reads them through state.actionCenter / state.axis
-    // and shows the gizmo at the selected element's centroid.
-    reg.toolFactories["move.element"] = () {
-        auto t = new MoveTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        import toolpipe.stages.actcenter : ActionCenterStage;
-        import toolpipe.stages.axis      : AxisStage;
-        import toolpipe.stage            : TaskCode;
-        if (g_pipeCtx !is null) {
-            if (auto ac = cast(ActionCenterStage)
-                          g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
-                ac.setAttr("mode", "element");
-            if (auto ax = cast(AxisStage)
-                          g_pipeCtx.pipeline.findByTask(TaskCode.Axis))
-                ax.setAttr("mode", "element");
-        }
-        return cast(Tool)t;
-    };
     reg.toolFactories["rotate"] = () {
         auto t = new RotateTool(&mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
@@ -609,88 +589,6 @@ void main(string[] args) {
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
-
-    // ----- Deform presets (D.1 of doc/deform_plan.md) ----- Each
-    // preset wraps an existing transform tool and configures the
-    // FalloffStage on activate. Mirrors MODO's `xfrm.softDrag` /
-    // `xfrm.twist` / etc. — same base mechanics, different falloff
-    // shape. No new mechanics; pure orchestration over Move/Rotate/
-    // Scale + FalloffStage.
-    void configureFalloff(string type, bool transparent = false) {
-        import toolpipe.stage          : TaskCode;
-        import toolpipe.stages.falloff : FalloffStage;
-        if (g_pipeCtx is null) return;
-        auto f = cast(FalloffStage)
-                 g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
-        if (f is null) return;
-        f.setAttr("type", type);
-        f.setAttr("transparent", transparent ? "true" : "false");
-    }
-    // Move + Screen falloff (transparent). MODO `xfrm.softDrag`.
-    reg.toolFactories["xfrm.softDrag"] = () {
-        auto t = new MoveTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("screen", /*transparent=*/true);
-        return cast(Tool)t;
-    };
-    // Move + Radial falloff. MODO `SoftSelectionMove`.
-    reg.toolFactories["xfrm.softMove"] = () {
-        auto t = new MoveTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("radial");
-        return cast(Tool)t;
-    };
-    // Rotate + Radial falloff. MODO `SoftSelectionRotate`.
-    reg.toolFactories["xfrm.softRotate"] = () {
-        auto t = new RotateTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("radial");
-        return cast(Tool)t;
-    };
-    // Scale + Radial falloff. MODO `SoftSelectionScale`.
-    reg.toolFactories["xfrm.softScale"] = () {
-        auto t = new ScaleTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("radial");
-        return cast(Tool)t;
-    };
-    // Rotate + Linear falloff. MODO `xfrm.twist`.
-    reg.toolFactories["xfrm.twist"] = () {
-        auto t = new RotateTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("linear");
-        return cast(Tool)t;
-    };
-    // Rotate + Radial falloff. MODO `Swirl` (visually identical to
-    // softRotate but ships under the canonical MODO id).
-    reg.toolFactories["xfrm.swirl"] = () {
-        auto t = new RotateTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("radial");
-        return cast(Tool)t;
-    };
-    // Move + Linear falloff. MODO `xfrm.shear`.
-    reg.toolFactories["xfrm.shear"] = () {
-        auto t = new MoveTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("linear");
-        return cast(Tool)t;
-    };
-    // Scale + Linear falloff. MODO `xfrm.taper`.
-    reg.toolFactories["xfrm.taper"] = () {
-        auto t = new ScaleTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("linear");
-        return cast(Tool)t;
-    };
-    // Scale + Radial falloff. MODO `xfrm.pole` (a.k.a. Bulge).
-    reg.toolFactories["xfrm.bulge"] = () {
-        auto t = new ScaleTool(&mesh, &gpu, &editMode);
-        t.setUndoBindings(history, vxEditFactory);
-        configureFalloff("radial");
-        return cast(Tool)t;
-    };
-
     reg.toolFactories["bevel"]  = () {
         auto t = new BevelTool(&mesh, &gpu, &editMode);
         t.setUndoBindings(history, bevelEditFactory);
@@ -940,6 +838,19 @@ void main(string[] args) {
     reg.commandFactories["history.show"] = () => cast(Command)
         new HistoryShow(&mesh, cameraView, editMode,
                         () { showHistoryPanel = !showHistoryPanel; });
+
+    // Tool presets — declarative `base tool + pipe-stage attrs`
+    // bundles loaded from `config/tool_presets.yaml`. Mirrors MODO's
+    // `<hash type="ToolPreset">` blocks in `resrc/presets.cfg`.
+    // Each entry registers as a new `reg.toolFactories[id]` that
+    // calls the named base factory and then applies `setAttr` per
+    // pipe stage. Done AFTER all base factories are registered so
+    // `registerToolPresets` can look up bases by id.
+    {
+        import tool_presets : loadToolPresets, registerToolPresets;
+        auto presets = loadToolPresets("config/tool_presets.yaml");
+        registerToolPresets(reg, presets);
+    }
 
     // Snapshot every registered command/tool's `supportedModes()`
     // into the registry's cache so button rendering can auto-disable
