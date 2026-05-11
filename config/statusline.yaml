@@ -191,31 +191,6 @@ groups:
             # Shape preset moved to Tool Properties → Falloff section
             # (Phase 7.9). Status-bar pulldown owns only the type, not
             # the per-type config.
-      - label: "Work Plane"
-        action:
-          kind: popup
-          # Highlight the button whenever the workplane is non-auto — visual
-          # cue that subsequent prim.* / move / rotate / scale tools will
-          # interpret coordinates relative to this plane, not world-XZ.
-          checked: { path: "workplane/auto", equals: "false" }
-          items:
-            - label: Auto
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
-              checked: { path: "workplane/auto", equals: "true" }
-            - label: World Y
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
-              checked: { path: "workplane/mode", equals: "worldY" }
-            - label: World X
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
-              checked: { path: "workplane/mode", equals: "worldX" }
-            - label: World Z
-              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
-              checked: { path: "workplane/mode", equals: "worldZ" }
-            - { kind: divider }
-            - label: Align To Selection
-              action: { kind: command, id: workplane.alignToSelection }
-            - label: Reset
-              action: { kind: command, id: workplane.reset }
       # Phase 7.6: Symmetry (SYMM) — MODO SymmetryPopover.cfg parity.
       # Click   → master toggle (symmetry.toggle).
       # Alt+click → Options popup (axis pick + workplane).
@@ -260,4 +235,29 @@ groups:
               - { kind: divider }
               - label: Workplane
                 action: { kind: script, lines: ["tool.pipe.attr symmetry useWorkplane 1"] }
-                checked: { path: "symmetry/useWorkplane", equals: "true" }
+                checked: { path: "symmetry/useWorkplane", equals: "true" }            
+      - label: "Work Plane"
+        action:
+          kind: popup
+          # Highlight the button whenever the workplane is non-auto — visual
+          # cue that subsequent prim.* / move / rotate / scale tools will
+          # interpret coordinates relative to this plane, not world-XZ.
+          checked: { path: "workplane/auto", equals: "false" }
+          items:
+            - label: Auto
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
+              checked: { path: "workplane/auto", equals: "true" }
+            - label: World Y
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
+              checked: { path: "workplane/mode", equals: "worldY" }
+            - label: World X
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
+              checked: { path: "workplane/mode", equals: "worldX" }
+            - label: World Z
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
+              checked: { path: "workplane/mode", equals: "worldZ" }
+            - { kind: divider }
+            - label: Align To Selection
+              action: { kind: command, id: workplane.alignToSelection }
+            - label: Reset
+              action: { kind: command, id: workplane.reset }
