@@ -602,6 +602,54 @@ unittest { // pick face3 w/ symm, disable symm, translate → both faces move to
 // 7.6 (BaseSide): /api/toolpipe/eval exposes baseSide and vertSign.
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// 7.6 (BaseSide gizmo): when symmetry auto-adds the mirror polygon to the
+// selection, the action center (gizmo position) lands on the BASE side,
+// not on the symmetry plane. Without this filter the centroid of {face2,
+// face3} would be (0,0,0) — gizmo clipped to axis instead of the picked
+// half.
+// -------------------------------------------------------------------------
+
+unittest { // gizmo follows the picked half — face on +X
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // We need a mode that uses selection centroid. Auto is the default
+    // when ACEN is set; for deterministic test, force `select` mode.
+    postJson("/api/command", "tool.pipe.attr actionCenter mode select");
+
+    postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    auto j = getJson("/api/toolpipe/eval");
+    auto c = j["actionCenter"]["center"].array;
+    double cx = c[0].floating, cy = c[1].floating, cz = c[2].floating;
+    // face 3 = +X face; its centroid is (+0.5, 0, 0).
+    assert(approxEq(cx,  0.5) && approxEq(cy, 0.0) && approxEq(cz, 0.0),
+        "gizmo center should be at face-3 centroid (+0.5,0,0); got ("
+        ~ cx.to!string ~ "," ~ cy.to!string ~ "," ~ cz.to!string ~ ")");
+
+    postJson("/api/command", "tool.pipe.attr actionCenter mode none");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+unittest { // gizmo follows the picked half — face on -X
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/command", "tool.pipe.attr actionCenter mode select");
+
+    postJson("/api/select", `{"mode":"polygons","indices":[2]}`);
+    auto j = getJson("/api/toolpipe/eval");
+    auto c = j["actionCenter"]["center"].array;
+    double cx = c[0].floating;
+    assert(approxEq(cx, -0.5),
+        "gizmo center on -X pick: expected x=-0.5, got " ~ cx.to!string);
+
+    postJson("/api/command", "tool.pipe.attr actionCenter mode none");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
 unittest { // baseSide reflects pick anchor
     postJson("/api/reset", "");
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");

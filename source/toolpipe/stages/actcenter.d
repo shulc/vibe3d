@@ -7,6 +7,7 @@ import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
 import toolpipe.pipeline : ToolState;
+import toolpipe.packets  : SymmetryPacket;
 import popup_state       : setStatePath;
 
 // ---------------------------------------------------------------------------
@@ -117,6 +118,34 @@ public:
         lastWpCenter_ = state.workplane.center;
         lastWpNormal_ = state.workplane.normal;
         state.actionCenter.center = computeCenter();
+
+        // Phase 7.6 (BaseSide gizmo): when symmetry is on and the
+        // selection contains BOTH sides of the plane (via 7.6c
+        // auto-add or explicit multi-pick), the raw selection
+        // centroid sits ON the symmetry plane — the gizmo lands at
+        // the axis of symmetry instead of the user's clicked half.
+        // Restrict the centroid to base-side verts so the gizmo
+        // follows the side the user anchored on.
+        //
+        // Modes that compute non-centroid pivots are exempt:
+        //   Origin / Manual — fixed world / sticky pin.
+        //   Element / Local — per-element / per-cluster pivots, the
+        //                     symmetry-restricted variant lives in
+        //                     their own cluster math.
+        // userPlaced (sticky click-outside) is also exempt — the user
+        // picked an explicit world point, not a selection-derived one.
+        if (state.symmetry.enabled
+         && state.symmetry.vertSign.length == state.symmetry.pairOf.length
+         && state.symmetry.vertSign.length > 0
+         && !userPlaced
+         && mode != Mode.Origin && mode != Mode.Manual
+         && mode != Mode.Element && mode != Mode.Local)
+        {
+            Vec3 baseCen;
+            if (baseSideCentroid(state.symmetry, baseCen))
+                state.actionCenter.center = baseCen;
+        }
+
         state.actionCenter.isAuto = (mode == Mode.Auto && !userPlaced);
         state.actionCenter.type   = cast(int)mode;
 
@@ -693,6 +722,55 @@ private:
             case EditMode.Edges:    return mesh_.selectionBBoxCenterEdges();
             case EditMode.Polygons: return mesh_.selectionBBoxCenterFaces();
         }
+    }
+
+    // Phase 7.6 (BaseSide gizmo): centroid of the current selection
+    // restricted to base-side verts. Used to keep the gizmo on the
+    // user-clicked half when 7.6c auto-adds the mirror counterpart
+    // (raw centroid would sit on the plane otherwise).
+    //
+    // Returns false when there are no base-side verts in the active
+    // selection — caller leaves the original centroid in place.
+    bool baseSideCentroid(const ref SymmetryPacket sp, out Vec3 result) const
+    {
+        if (mesh_ is null || editMode_ is null) return false;
+        if (sp.vertSign.length != mesh_.vertices.length) return false;
+
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        bool[] visited = new bool[](mesh_.vertices.length);
+
+        void touch(uint vi) {
+            if (vi >= visited.length || visited[vi]) return;
+            visited[vi] = true;
+            if (sp.vertSign[vi] != sp.baseSide) return;
+            sum   = sum + mesh_.vertices[vi];
+            count += 1;
+        }
+
+        final switch (*editMode_) {
+            case EditMode.Vertices:
+                foreach (vi; 0 .. mesh_.vertices.length)
+                    if (vi < mesh_.selectedVertices.length
+                     && mesh_.selectedVertices[vi])
+                        touch(cast(uint)vi);
+                break;
+            case EditMode.Edges:
+                foreach (ei; 0 .. mesh_.edges.length)
+                    if (ei < mesh_.selectedEdges.length
+                     && mesh_.selectedEdges[ei])
+                        foreach (vi; mesh_.edges[ei]) touch(vi);
+                break;
+            case EditMode.Polygons:
+                foreach (fi; 0 .. mesh_.faces.length)
+                    if (fi < mesh_.selectedFaces.length
+                     && mesh_.selectedFaces[fi])
+                        foreach (vi; mesh_.faces[fi]) touch(vi);
+                break;
+        }
+        if (count == 0) return false;
+        result = sum * (1.0f / cast(float)count);
+        return true;
     }
 
     // Strict selection centroid — falls back to all-geometry only if
