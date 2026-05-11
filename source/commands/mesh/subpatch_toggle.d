@@ -19,6 +19,10 @@ class SubpatchToggle : Command {
 
     override string name() const { return "mesh.subpatch_toggle"; }
 
+    override EditMode[] supportedModes() const {
+        return [EditMode.Polygons];
+    }
+
     override bool apply() {
         // Subpatch toggles a per-face flag, so the operation is
         // meaningful only when the user is in Polygons mode and can

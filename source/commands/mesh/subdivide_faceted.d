@@ -28,6 +28,10 @@ class SubdivideFaceted : Command {
 
     override string name() const { return "mesh.subdivide_faceted"; }
 
+    override EditMode[] supportedModes() const {
+        return [EditMode.Polygons];
+    }
+
     override bool apply() {
         // Same polygon-mode guard as `mesh.subdivide`: selection-aware
         // subdivision reads `mesh.selectedFaces`, which is only

@@ -28,6 +28,10 @@ class Subdivide : Command {
 
     override string name() const { return "mesh.subdivide"; }
 
+    override EditMode[] supportedModes() const {
+        return [EditMode.Polygons];
+    }
+
     override bool apply() {
         // Subdivide is a polygon-mode operation — its selection-aware
         // behaviour (`catmullClarkSelected` vs full `catmullClark`)

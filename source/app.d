@@ -859,6 +859,14 @@ void main(string[] args) {
         new HistoryShow(&mesh, cameraView, editMode,
                         () { showHistoryPanel = !showHistoryPanel; });
 
+    // Snapshot every registered command/tool's `supportedModes()`
+    // into the registry's cache so button rendering can auto-disable
+    // rows whose target doesn't accept the current edit mode (e.g.
+    // `mesh.subdivide` is polygon-only, `bevel` is edge-/polygon-only).
+    // Done after every `reg.{command,tool}Factories[*]` assignment so
+    // the cache covers every registered id.
+    reg.cacheSupportedModes();
+
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
     ShortcutTable shortcuts         = loadShortcuts("config/shortcuts.yaml");
@@ -2882,8 +2890,19 @@ void main(string[] args) {
                 // sequence of commands, not a sticky-tool activation).
                 bool isCommand = (action.kind == ActionKind.command
                                || action.kind == ActionKind.script);
+                // Auto-grey rows whose target action declares
+                // restricted `supportedModes()` excluding the current
+                // edit mode. `btn.disabled` (explicit YAML flag) wins
+                // when set. Script / popup actions aren't checked —
+                // their target isn't a single id.
+                bool modeBlocked = false;
+                if (action.kind == ActionKind.command)
+                    modeBlocked = reg.isModeBlocked("command", action.id, editMode);
+                else if (action.kind == ActionKind.tool)
+                    modeBlocked = reg.isModeBlocked("tool", action.id, editMode);
+                bool effDisabled = btn.disabled || modeBlocked;
                 if (renderStyledButton(label, sc, on, isCommand,
-                                       ImVec2(-1, 0), btn.disabled)) {
+                                       ImVec2(-1, 0), effDisabled)) {
                     if (action.kind == ActionKind.popup)
                         ImGui.OpenPopup("##popup" ~ variant ~ "_" ~ btn.label);
                     else

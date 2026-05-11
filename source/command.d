@@ -62,6 +62,16 @@ class Command {
     // size).
     void paramHints(string name, ref ParamHints hints) {}
 
+    // Edit modes in which this command makes sense. The status-bar /
+    // side-panel button auto-disables when the current `editMode` is
+    // not in this list — visual cue that the row is "available but
+    // not in this mode". `apply()` may also throw defensively (e.g.
+    // mesh.subdivide enforces Polygons inside apply too). Default:
+    // every mode — most commands are mode-agnostic.
+    EditMode[] supportedModes() const {
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+    }
+
     this(Mesh* mesh, ref View view, EditMode editMode) {
         this.mesh = mesh;
         this.view = view;

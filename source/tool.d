@@ -6,6 +6,7 @@ import bindbc.opengl;
 import math;
 import shader;
 import params : Param, ParamHints, ParamProvider;
+import editmode : EditMode;
 
 // ---------------------------------------------------------------------------
 // Tool — base class for all editing tools
@@ -96,4 +97,14 @@ class Tool : ParamProvider {
     // edge-mode), override this to false and let drawProperties() own
     // rendering — preventing duplicate widgets.
     bool renderParamsAsPanel() const { return true; }
+
+    // Edit modes in which this tool makes sense. Side-panel /
+    // status-bar buttons auto-disable when the current edit mode is
+    // not in this list. Default: every mode (most tools are mode-
+    // agnostic — Move / Rotate / Scale operate on whatever the
+    // current selection projects to). Specialised tools (BevelTool
+    // only meaningful on edges, etc.) override.
+    EditMode[] supportedModes() const {
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+    }
 }
