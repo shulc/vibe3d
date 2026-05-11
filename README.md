@@ -2,7 +2,7 @@
 
 Простой 3D-редактор полигональных мешей, вдохновлённый MODO и LightWave3D. Написан на D с использованием OpenGL 3.3 Core Profile, SDL2 и Dear ImGui.
 
-![vibe3d](https://github.com/user-attachments/assets/33f67c74-7ed0-40fa-92e6-379573164d1f)
+![vibe3d](https://github.com/user-attachments/assets/105f697f-b65f-45b1-b240-f20641aa7984)
 
 ## Возможности
 
