@@ -175,6 +175,26 @@ unittest { // negative epsilon rejected
         "negative epsilon must be rejected; got " ~ a["epsilon"]);
 }
 
+// -------------------------------------------------------------------------
+// `symmetry.toggle` flips the master enable flag.
+// -------------------------------------------------------------------------
+
+unittest { // toggle on / off
+    resetCube();
+    auto a0 = getSymmetryAttrs();
+    assert(a0["enabled"] == "false", "starting state should be off");
+
+    auto r1 = postJson("/api/command", "symmetry.toggle");
+    assert(r1["status"].str == "ok", r1.toString);
+    assert(getSymmetryAttrs()["enabled"] == "true",
+        "after toggle, enabled should be true");
+
+    auto r2 = postJson("/api/command", "symmetry.toggle");
+    assert(r2["status"].str == "ok", r2.toString);
+    assert(getSymmetryAttrs()["enabled"] == "false",
+        "after second toggle, enabled should be false");
+}
+
 unittest { // unknown attr rejected
     resetCube();
     auto r = postJson("/api/command", "tool.pipe.attr symmetry nosuchattr 1");

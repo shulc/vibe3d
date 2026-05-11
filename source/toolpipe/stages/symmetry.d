@@ -290,6 +290,21 @@ private:
         setStatePath("symmetry/axes/y", (enabled && axisIndex == 1) ? "true" : "false");
         setStatePath("symmetry/axes/z", (enabled && axisIndex == 2) ? "true" : "false");
         setStatePath("symmetry/axes/off", enabled ? "false" : "true");
+
+        // Drives the button-level `dynamicLabel` on the status-bar
+        // Symmetry button. When symmetry is on, the button face flips
+        // to "Symmetry: X" / "Symmetry: Y" / "Symmetry: Z" /
+        // "Symmetry: Workplane"; empty string when off so the YAML
+        // static label "Symmetry" stays.
+        if (!enabled) {
+            setStatePath("symmetry/displayName", "");
+        } else if (useWorkplane) {
+            setStatePath("symmetry/displayName", "Symmetry: Workplane");
+        } else {
+            import std.string : toUpper;
+            setStatePath("symmetry/displayName",
+                "Symmetry: " ~ axisLabel(axisIndex).toUpper);
+        }
     }
 
     static Vec3 axisVec(int ax) {

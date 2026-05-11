@@ -99,6 +99,14 @@ struct Button {
     // legacy action-level `checked:` still works — button-level wins
     // when both are set.
     Checked checked;
+    // Optional state-path override for the visible label. When the path
+    // resolves to a non-empty string at render time, that value replaces
+    // the static `label`. Useful for command-kind toggles that want to
+    // surface the current state on the button face (e.g. Symmetry
+    // showing "Symmetry: X" when enabled, "Symmetry" when off) —
+    // `action.dynamicLabel` covers the popup case but is gated on a
+    // popup action kind, so command/script buttons need this alt path.
+    string dynamicLabelPath;
     // Optional alternate behaviors keyed by modifier (MODO convention).
     // YAML keys: `ctrl`, `alt`, `shift`. Each block is itself a mini-button
     // entry: `label` + `action`. Combinations (e.g. ctrl+shift) are not
@@ -501,6 +509,11 @@ private Button parseButton(NodeT)(NodeT btnNode, string panelTitle, string group
     btn.action = parseAction(btnNode["action"], btn.label, path);
     if (btnNode.containsKey("checked"))
         btn.checked = parseChecked(btnNode["checked"], btn.label, path);
+    if (btnNode.containsKey("dynamicLabel")) {
+        auto dl = btnNode["dynamicLabel"];
+        if (dl.containsKey("path"))
+            btn.dynamicLabelPath = dl["path"].as!string;
+    }
     btn.ctrl   = parseModifierVariant(btnNode, "ctrl",  btn.label, path);
     btn.alt    = parseModifierVariant(btnNode, "alt",   btn.label, path);
     btn.shift  = parseModifierVariant(btnNode, "shift", btn.label, path);

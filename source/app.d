@@ -787,6 +787,11 @@ void main(string[] args) {
         reg.commandFactories["snap.toggleType"] = () => cast(Command)
             new SnapToggleTypeCommand(&mesh, cameraView, editMode);
     }
+    {
+        import commands.symmetry.toggle : SymmetryToggleCommand;
+        reg.commandFactories["symmetry.toggle"] = () => cast(Command)
+            new SymmetryToggleCommand(&mesh, cameraView, editMode);
+    }
     reg.commandFactories["file.load"] = () => cast(Command)
         new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["file.save"] = () => cast(Command)
@@ -2998,6 +3003,16 @@ void main(string[] args) {
                             string s = firstCheckedLabel(action.popupItems);
                             if (s.length > 0) label = s;
                         }
+                    }
+                    // Button-level dynamicLabel — works for ANY action
+                    // kind (command/script/popup). Reads a state path
+                    // directly; if non-empty, replaces the static label.
+                    // No modifier-variant override (alt/ctrl/shift) —
+                    // those carry their own static labels that always win.
+                    if (btn.dynamicLabelPath.length > 0 && variant.length == 0) {
+                        import popup_state : getStatePath;
+                        string dyn = getStatePath(btn.dynamicLabelPath);
+                        if (dyn.length > 0) label = dyn;
                     }
 
                     // Detect select.typeFrom <type> in the action's first

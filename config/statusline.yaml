@@ -216,44 +216,48 @@ groups:
               action: { kind: command, id: workplane.alignToSelection }
             - label: Reset
               action: { kind: command, id: workplane.reset }
-      # Phase 7.6: Symmetry (SYMM) pulldown. Mirrors MODO's
-      # SymmetryPopover.cfg — Off / X / Y / Z toggle plus workplane
-      # alignment. Button face shows the active axis when symmetry is
-      # on ("X" / "Y" / "Z") and "Off" when disabled, both wrapped in
-      # the static "Symmetry" base label (firstCheckedLabel from the
-      # popup items drives `dynamicLabel`). Pressed-state mirrors
-      # `symmetry/enabled`.
+      # Phase 7.6: Symmetry (SYMM) — MODO SymmetryPopover.cfg parity.
+      # Click   → master toggle (symmetry.toggle).
+      # Alt+click → Options popup (axis pick + workplane).
+      # Button face: static "Symmetry" when off; flips to
+      # "Symmetry: X" / "Symmetry: Y" / "Symmetry: Z" /
+      # "Symmetry: Workplane" when on (driven by the button-level
+      # `dynamicLabel` state path the SymmetryStage publishes).
+      # Pressed-state mirrors `symmetry/enabled`.
       - label: "Symmetry"
-        action:
-          kind: popup
-          dynamicLabel: true
-          checked: { path: "symmetry/enabled", equals: "true" }
-          items:
-            - label: Off
-              action: { kind: script, lines: ["tool.pipe.attr symmetry enabled false"] }
-              checked: { path: "symmetry/axes/off", equals: "true" }
-            - label: X
-              action:
-                kind: script
-                lines:
-                  - "tool.pipe.attr symmetry enabled true"
-                  - "tool.pipe.attr symmetry axis x"
-              checked: { path: "symmetry/axes/x", equals: "true" }
-            - label: Y
-              action:
-                kind: script
-                lines:
-                  - "tool.pipe.attr symmetry enabled true"
-                  - "tool.pipe.attr symmetry axis y"
-              checked: { path: "symmetry/axes/y", equals: "true" }
-            - label: Z
-              action:
-                kind: script
-                lines:
-                  - "tool.pipe.attr symmetry enabled true"
-                  - "tool.pipe.attr symmetry axis z"
-              checked: { path: "symmetry/axes/z", equals: "true" }
-            - { kind: divider }
-            - label: Workplane
-              action: { kind: script, lines: ["tool.pipe.attr symmetry useWorkplane 1"] }
-              checked: { path: "symmetry/useWorkplane", equals: "true" }
+        action: { kind: command, id: symmetry.toggle }
+        checked: { path: "symmetry/enabled", equals: "true" }
+        dynamicLabel: { path: "symmetry/displayName" }
+        alt:
+          label: "Options"
+          action:
+            kind: popup
+            items:
+              - label: Off
+                action: { kind: script, lines: ["tool.pipe.attr symmetry enabled false"] }
+                checked: { path: "symmetry/axes/off", equals: "true" }
+              - label: X
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis x"
+                checked: { path: "symmetry/axes/x", equals: "true" }
+              - label: Y
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis y"
+                checked: { path: "symmetry/axes/y", equals: "true" }
+              - label: Z
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis z"
+                checked: { path: "symmetry/axes/z", equals: "true" }
+              - { kind: divider }
+              - label: Workplane
+                action: { kind: script, lines: ["tool.pipe.attr symmetry useWorkplane 1"] }
+                checked: { path: "symmetry/useWorkplane", equals: "true" }
