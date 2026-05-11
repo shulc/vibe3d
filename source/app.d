@@ -3485,6 +3485,61 @@ void main(string[] args) {
         glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
         glBindVertexArray(0);
 
+        // Phase 7.6e: translucent gridded plane drawn at the symmetry
+        // plane when SYMM is on. Same gridShader / VAO as the
+        // workplane grid; only the model matrix changes, mapping the
+        // local XZ plane onto whichever axis the SYMM stage published.
+        // Pale orange to match MODO's "symmetry is on" cue and keep it
+        // distinct from the workplane grid's gray.
+        {
+            import toolpipe.stages.symmetry : SymmetryStage;
+            auto sym = cast(SymmetryStage)
+                       g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+            if (sym !is null && sym.enabled) {
+                Vec3 n, a1, a2;
+                Vec3 c;
+                if (sym.useWorkplane) {
+                    if (auto wpst = cast(WorkplaneStage)
+                                    g_pipeCtx.pipeline.findByTask(TaskCode.Work)) {
+                        wpst.currentBasis(n, a1, a2);
+                        c = wpst.center;
+                    } else {
+                        n = Vec3(0, 1, 0); a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
+                    }
+                } else {
+                    final switch (sym.axisIndex) {
+                        case 0:
+                            n  = Vec3(1, 0, 0);
+                            a1 = Vec3(0, 1, 0); a2 = Vec3(0, 0, 1);
+                            c  = Vec3(sym.offset, 0, 0); break;
+                        case 1:
+                            n  = Vec3(0, 1, 0);
+                            a1 = Vec3(1, 0, 0); a2 = Vec3(0, 0, 1);
+                            c  = Vec3(0, sym.offset, 0); break;
+                        case 2:
+                            n  = Vec3(0, 0, 1);
+                            a1 = Vec3(1, 0, 0); a2 = Vec3(0, 1, 0);
+                            c  = Vec3(0, 0, sym.offset); break;
+                    }
+                }
+                float[16] symModel = [
+                    a1.x, a1.y, a1.z, 0,
+                    n.x,  n.y,  n.z,  0,
+                    a2.x, a2.y, a2.z, 0,
+                    c.x,  c.y,  c.z,  1,
+                ];
+                gridShader.useProgram(symModel, cameraView,
+                    cameraView.distance * 2.0f,
+                    cast(float)cameraView.width * scaleX, cast(float)cameraView.height * scaleY,
+                    cast(float)layout.vpX * scaleX, cast(float)layout.vpGlY * scaleY);
+                glBindVertexArray(gridVao);
+                // Pale orange — matches MODO's toolbar-button accent.
+                glUniform3f(gridShader.locColor, 0.85f, 0.5f, 0.15f);
+                glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+                glBindVertexArray(0);
+            }
+        }
+
         // glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
 

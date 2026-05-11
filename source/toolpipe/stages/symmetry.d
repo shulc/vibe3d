@@ -10,6 +10,7 @@ import toolpipe.pipeline : ToolState;
 import toolpipe.packets  : SymmetryPacket;
 import popup_state       : setStatePath;
 import symmetry          : rebuildPairing;
+import params            : Param, IntEnumEntry;
 
 // ---------------------------------------------------------------------------
 // SymmetryStage — phase 7.6 of doc/phase7_plan.md / doc/phase7_6_symm_plan.md.
@@ -155,6 +156,33 @@ public:
         if (!enabled) return "Symmetry";
         if (useWorkplane) return "Symmetry: Workplane";
         return format("Symmetry: %s", axisLabel(axisIndex).toUpper);
+    }
+
+    // Tool Properties panel — exposes the user-facing knobs whenever
+    // symmetry is on. Hidden when off (same convention as FalloffStage
+    // hides its config when type=None). The status-bar pulldown stays
+    // the canonical place to flip enabled / axis; the property panel
+    // is for fine-tuning offset and epsilon.
+    override Param[] params() {
+        if (!enabled) return [];
+        IntEnumEntry[] axisEntries = [
+            IntEnumEntry(0, "x", "X"),
+            IntEnumEntry(1, "y", "Y"),
+            IntEnumEntry(2, "z", "Z"),
+        ];
+        Param[] ps;
+        ps ~= Param.intEnum_("axis", "Axis", &axisIndex, axisEntries, 0);
+        ps ~= Param.float_  ("offset", "Offset", &offset, 0.0f);
+        ps ~= Param.bool_   ("useWorkplane", "Workplane", &useWorkplane, false);
+        ps ~= Param.float_  ("epsilon", "Epsilon", &epsilonWorld, 1e-4f);
+        return ps;
+    }
+
+    override void onParamChanged(string name) {
+        // Mirror setAttr's side-effect: refresh the status-bar state
+        // paths so the pulldown highlights re-sync after a Tool
+        // Properties edit.
+        publishState();
     }
 
 private:
