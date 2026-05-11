@@ -97,7 +97,9 @@ class MeshTransform : Command {
         // auto-size operations that expect a freshly-set workplane).
         SymmetryPacket symm;
         bool           symmActive = false;
-        if (kind == "translate" && g_pipeCtx !is null) {
+        if ((kind == "translate" || kind == "rotate" || kind == "scale")
+         && g_pipeCtx !is null)
+        {
             auto symStage = cast(SymmetryStage)
                             g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
             if (symStage !is null && symStage.enabled) {

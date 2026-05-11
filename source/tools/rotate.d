@@ -271,7 +271,11 @@ public:
         // per-vertex CPU path (gpuMatrix's single-rotation-uniform fast
         // path is incompatible with per-vertex angle scaling).
         bool falloffActive = captureFalloffForDrag();
-        wholeMeshDrag = !falloffActive
+        // Phase 7.6d: capture symmetry too; the per-vertex mirror pass
+        // breaks the single-uniform-rotation gpuMatrix fast path the
+        // same way falloff does.
+        bool symmActive    = captureSymmetryForDrag();
+        wholeMeshDrag = !falloffActive && !symmActive
             && (vertexProcessCount == cast(int)mesh.vertices.length);
         if (wholeMeshDrag) {
             // Snapshot current vertex positions — GPU is in sync with these.
@@ -461,7 +465,8 @@ public:
         // wholeMesh GPU bypass off when the per-vertex weight breaks
         // the single-uniform fast path.
         bool falloffActive = captureFalloffForDrag();
-        bool wholeMesh = !falloffActive
+        bool symmActive    = captureSymmetryForDrag();
+        bool wholeMesh = !falloffActive && !symmActive
             && (vertexProcessCount == cast(int)mesh.vertices.length);
 
         // Phase C.3: snapshot pre-drag positions on first active frame so
@@ -584,6 +589,8 @@ private:
             if (angleAccum.z != 0) v = rotateVec(v, pivot, axZ, angleAccum.z * w);
             mesh.vertices[i] = v;
         }
+        // Phase 7.6d: mirror after the absolute-from-orig rebuild.
+        applySymmetryToDrag();
     }
 
     // Compose the current angleAccum into a single 4x4 rotation matrix around the pivot.
@@ -621,6 +628,13 @@ private:
             if (w == 0.0f) continue;
             mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, ax, angle * w);
         }
+        // Phase 7.6d: mirror selected-vertex positions to their plane
+        // counterparts. For rotation the mirror direction is implicit
+        // in the position math (mirror of a rotation around pivot P
+        // with axis A by angle θ equals rotation around mirror(P) with
+        // mirror(A) by −θ — the position-mirror function captures this
+        // automatically).
+        applySymmetryToDrag();
         needsGpuUpdate = true;
     }
 

@@ -650,6 +650,75 @@ unittest { // gizmo follows the picked half — face on -X
     postJson("/api/reset", "");
 }
 
+// -------------------------------------------------------------------------
+// 7.6d: rotate + scale mirror via /api/transform. Position-mirror is
+// rotation-equivariant (mirror of "rotate around P by θ with axis A" =
+// "rotate around mirror(P) by -θ with mirror(A)") and scale-equivariant
+// for axis-aligned planes — same applySymmetryMirror helper works for
+// move / rotate / scale.
+// -------------------------------------------------------------------------
+
+unittest { // rotate +X face around Y axis with X-symm → mirror rotates the other way
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // Pick face 3 (+X face) only — selectedFaces becomes [2, 3] via
+    // symm auto-add. baseSide = +1 (face 3's centroid).
+    postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    // Rotate by 90° around Y, pivot at +X face centroid (+0.5, 0, 0).
+    import std.math : PI;
+    auto resp = postJson("/api/transform",
+        `{"kind":"rotate","axis":[0,1,0],"angle":` ~ (PI / 2.0).to!string
+        ~ `,"pivot":[0.5,0,0]}`);
+    assert(resp["status"].str == "ok", "rotate failed: " ~ resp.toString);
+
+    // Original cube +X face verts (1,2,6,5) at x=+0.5; after 90° rot
+    // around Y at pivot (+0.5,0,0):
+    //   v1 (+0.5,-0.5,-0.5): relative (0,-0.5,-0.5) → rotate Y+90° →
+    //       relative (-0.5,-0.5,0); + pivot → (0,-0.5,0)
+    //   v2 (+0.5,+0.5,-0.5): (0,+0.5,-0.5) → (-0.5,+0.5,0); → (0,+0.5,0)
+    //   v5 (+0.5,-0.5,+0.5): (0,-0.5,+0.5) → (+0.5,-0.5,0); → (+1,-0.5,0)
+    //   v6 (+0.5,+0.5,+0.5): (0,+0.5,+0.5) → (+0.5,+0.5,0); → (+1,+0.5,0)
+    auto v1 = vertexAt(1);
+    auto v2 = vertexAt(2);
+    assert(approxEq(v1[0], 0) && approxEq(v1[1], -0.5) && approxEq(v1[2], 0),
+        "v1 after rot: got " ~ v1[0].to!string ~ "," ~ v1[1].to!string ~ "," ~ v1[2].to!string);
+    assert(approxEq(v2[0], 0) && approxEq(v2[1],  0.5) && approxEq(v2[2], 0),
+        "v2 after rot: got " ~ v2[0].to!string ~ "," ~ v2[1].to!string ~ "," ~ v2[2].to!string);
+
+    // The mirror counterparts (v0, v3) must be mirror_X images of v1, v2:
+    auto v0 = vertexAt(0);
+    auto v3 = vertexAt(3);
+    assert(approxEq(v0[0], -v1[0]) && approxEq(v0[1], v1[1]) && approxEq(v0[2], v1[2]),
+        "v0 should be mirror of v1; got " ~ v0[0].to!string ~ "," ~ v0[1].to!string ~ "," ~ v0[2].to!string);
+    assert(approxEq(v3[0], -v2[0]) && approxEq(v3[1], v2[1]) && approxEq(v3[2], v2[2]),
+        "v3 should be mirror of v2");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+unittest { // scale +X face along Y with X-symm → mirror scales too
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    // Scale Y by 2× around pivot (+0.5, 0, 0).
+    auto resp = postJson("/api/transform",
+        `{"kind":"scale","factor":[1,2,1],"pivot":[0.5,0,0]}`);
+    assert(resp["status"].str == "ok", "scale failed: " ~ resp.toString);
+
+    // v2 was at (+0.5,+0.5,-0.5); after Y×2 at pivot (.,0,.) → (+0.5,+1,-0.5).
+    auto v2 = vertexAt(2);
+    assert(approxEq(v2[1], 1.0),
+        "v2.y after Y×2 scale: expected 1.0, got " ~ v2[1].to!string);
+    // Mirror v3 must match the mirrored position of v2.
+    auto v3 = vertexAt(3);
+    assert(approxEq(v3[0], -v2[0]) && approxEq(v3[1], v2[1]) && approxEq(v3[2], v2[2]),
+        "v3 should be mirror_X of v2");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
 unittest { // baseSide reflects pick anchor
     postJson("/api/reset", "");
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");

@@ -219,7 +219,10 @@ public:
 
             buildVertexCacheIfNeeded();
             bool falloffActive = captureFalloffForDrag();
-            wholeMeshDrag = !falloffActive
+            bool symmActive    = captureSymmetryForDrag();
+            // Phase 7.6d: symmetry mirror breaks the single-uniform
+            // scale gpuMatrix fast path the same way falloff does.
+            wholeMeshDrag = !falloffActive && !symmActive
                 && (vertexProcessCount == cast(int)mesh.vertices.length);
             if (wholeMeshDrag) {
                 dragStartVertices  = mesh.vertices.dup;
@@ -419,7 +422,8 @@ public:
         // Phase 7.5: re-capture falloff per active frame; per-vertex
         // weight breaks the wholeMesh GPU bypass fast path.
         bool falloffActive = captureFalloffForDrag();
-        bool wholeMesh = !falloffActive
+        bool symmActive    = captureSymmetryForDrag();
+        bool wholeMesh = !falloffActive && !symmActive
             && (vertexProcessCount == cast(int)mesh.vertices.length);
 
         // Phase C.3: snapshot pre-drag state on the FIRST active frame
@@ -524,6 +528,12 @@ private:
             mesh.vertices[vi] = scaleAlongBasis(mesh.vertices[vi], pivot,
                                                 ax, ay, az, fx, fy, fz);
         }
+        // Phase 7.6d: mirror selected-vertex positions to their plane
+        // counterparts. For axis-aligned symmetry planes scaling is
+        // already mirror-equivariant (scale factors are signless), so
+        // the position-mirror pass produces the correct symmetric
+        // result without per-cluster axis flipping.
+        applySymmetryToDrag();
         needsGpuUpdate = true;
     }
 
@@ -568,6 +578,8 @@ private:
             mesh.vertices[vi] = scaleAlongBasis(activationVertices[vi], pivot,
                                                 ax, ay, az, sx, sy, sz);
         }
+        // Phase 7.6d: same mirror pass as applyScaleAxesFactor.
+        applySymmetryToDrag();
     }
 
     int hitTestAxes(int mx, int my) {
