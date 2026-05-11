@@ -2199,7 +2199,15 @@ void main(string[] args) {
         // positions) and translate hits back to cage indices via the trace.
         if (subpatchPreview.active) {
             const pv = &subpatchPreview.mesh;
-            bool[] visible = pvVisCache.get(*pv, cameraView.eye, vp);
+            // Visibility test runs on the CAGE mesh (~8 K verts /
+            // ~5 K front-faces ≈ 40 M ops, manageable) rather than
+            // the preview (~530 K verts × ~250 K front-faces ≈ 133 G
+            // ops — would saturate a core for seconds on every
+            // cache miss). Cage-vert visibility is a good-enough
+            // proxy for the preview's smoothed-vert visibility for
+            // picking purposes; the smoothed position is close to
+            // the cage position relative to the camera.
+            bool[] visible = meshVisCache.get(mesh, cameraView.eye, vp);
             float closestSqS = 16.0f;
             int   best      = -1;
             // Iterate CAGE verts via the reverse cage→preview map
@@ -2210,10 +2218,10 @@ void main(string[] args) {
             // mouse motion.
             const cageMap = subpatchPreview.cageVertPreview;
             foreach_reverse (cageI; 0 .. mesh.vertices.length) {
+                if (cageI >= visible.length || !visible[cageI]) continue;
                 if (cageI >= cageMap.length) continue;
                 uint pi = cageMap[cageI];
                 if (pi == uint.max) continue;
-                if (pi >= visible.length || !visible[pi]) continue;
                 float sx, sy, ndcZ;
                 if (!projectToWindow(pv.vertices[pi], vp, sx, sy, ndcZ)) continue;
                 float ddx = sx - mx, ddy = sy - my;
@@ -2284,22 +2292,29 @@ void main(string[] args) {
         float closest   = 6.0f;
         float closestSq = closest * closest;
 
-        // In subpatch mode, iterate preview segments that trace back to cage
-        // edges; any hit promotes to the cage index via the trace so the
-        // whole polyline of that cage edge is treated as a single edge.
+        // In subpatch mode, iterate CAGE edges (~16 K) using smoothed
+        // endpoint positions from the preview rather than scanning
+        // the ~M preview edges at subpatchDepth=3. Same cage-iter
+        // trick as pickVertices / pickFaces — pre-fix this branch
+        // ran `pv.visibleVertices()` on a 530 K-vert preview
+        // (~133 G ops per cache miss) and walked every preview
+        // edge.
         if (subpatchPreview.active) {
             const pv = &subpatchPreview.mesh;
-            bool[] visible = pvVisCache.get(*pv, cameraView.eye, vp);
+            bool[] visible = meshVisCache.get(mesh, cameraView.eye, vp);
+            const cageMap = subpatchPreview.cageVertPreview;
             int bestCage = -1;
-            foreach (i; 0 .. pv.edges.length) {
-                uint cageEi = subpatchPreview.trace.edgeOrigin[i];
-                if (cageEi == uint.max) continue;
-                uint a = pv.edges[i][0], b = pv.edges[i][1];
+            foreach (i; 0 .. mesh.edges.length) {
+                uint a = mesh.edges[i][0], b = mesh.edges[i][1];
+                if (a >= visible.length || b >= visible.length) continue;
                 if (!visible[a] || !visible[b]) continue;
+                if (a >= cageMap.length || b >= cageMap.length) continue;
+                uint pa = cageMap[a], pb = cageMap[b];
+                if (pa == uint.max || pb == uint.max) continue;
 
                 float ax, ay, aZ, bx, by, bZ;
-                if (!projectToWindow(pv.vertices[a], vp, ax, ay, aZ)) continue;
-                if (!projectToWindow(pv.vertices[b], vp, bx, by, bZ)) continue;
+                if (!projectToWindow(pv.vertices[pa], vp, ax, ay, aZ)) continue;
+                if (!projectToWindow(pv.vertices[pb], vp, bx, by, bZ)) continue;
 
                 float minX = ax < bx ? ax : bx, maxX = ax < bx ? bx : ax;
                 float minY = ay < by ? ay : by, maxY = ay < by ? by : ay;
@@ -2312,7 +2327,7 @@ void main(string[] args) {
                                                     ax, ay, bx, by, t);
                 if (d2 >= closestSq) continue;
                 closestSq = d2;
-                bestCage  = cast(int)cageEi;
+                bestCage  = cast(int)i;
             }
             if (bestCage >= 0) {
                 hoveredEdge = bestCage;
@@ -2406,37 +2421,68 @@ void main(string[] args) {
         Vec3  rayDir   = screenRay(cast(float)mx, cast(float)my, vp);
         float bestDist = float.infinity;
 
-        // Subpatch mode: project preview faces, translate hit to cage.
+        // Subpatch mode: iterate CAGE faces (not the ~500 K preview
+        // faces at subpatchDepth=3), using each cage corner's
+        // smoothed position from the preview. Approximates the
+        // subpatch face outline as a polygon through its smoothed
+        // cage corners — accurate enough for hover-picking on
+        // typical quad / tri cages, and reduces per-frame work by
+        // ~60×. Pre-fix this branch did `new float[]` × 3 per
+        // preview face → 1.5 M GC allocs / frame on an 8 K-cage
+        // mesh (perf showed ~6 % CPU in `_d_newarrayT` /
+        // `smallAlloc` alone).
         if (subpatchPreview.active) {
             const pv = &subpatchPreview.mesh;
+            const cageMap = subpatchPreview.cageVertPreview;
+            float[32] sxsBuf, sysBuf;
             int bestCage = -1;
-            foreach (fi; 0 .. pv.faces.length) {
-                const(uint)[] face = pv.faces[fi];
-                if (face.length < 3) continue;
-                Vec3 n = pv.faceNormal(cast(uint)fi);
-                if (dot(n, pv.vertices[face[0]] - cameraView.eye) >= 0) continue;
+            foreach (fi; 0 .. mesh.faces.length) {
+                const(uint)[] cageFace = mesh.faces[fi];
+                if (cageFace.length < 3) continue;
+                if (cageFace.length > sxsBuf.length) continue;   // n-gon overflow guard
 
-                int len = cast(int)face.length;
-                auto sx  = new float[](len);
-                auto sy  = new float[](len);
-                auto ndz = new float[](len);
+                // Project smoothed cage-corner positions. Bail if
+                // any corner traces are missing (rare: cage has more
+                // verts than preview maps; defensive).
+                auto sxs = sxsBuf[0 .. cageFace.length];
+                auto sys = sysBuf[0 .. cageFace.length];
                 bool ok = true;
-                for (int j = 0; j < len; j++) {
-                    if (!projectToWindowFull(pv.vertices[face[j]], vp,
-                                             sx[j], sy[j], ndz[j])) { ok = false; break; }
+                Vec3 firstSmoothed;
+                foreach (k, cv; cageFace) {
+                    if (cv >= cageMap.length || cageMap[cv] == uint.max) { ok = false; break; }
+                    uint pi = cageMap[cv];
+                    float sx, sy, ndz;
+                    if (!projectToWindowFull(pv.vertices[pi], vp, sx, sy, ndz)) {
+                        ok = false; break;
+                    }
+                    sxs[k] = sx;
+                    sys[k] = sy;
+                    if (k == 0) firstSmoothed = pv.vertices[pi];
                 }
                 if (!ok) continue;
-                if (!pointInPolygon2D(cast(float)mx, cast(float)my, sx, sy)) continue;
 
-                Vec3 hit;
-                if (!rayPlaneIntersect(cameraView.eye, rayDir,
-                                       pv.vertices[face[0]], n, hit)) continue;
-                Vec3  toHit = hit - cameraView.eye;
-                if (dot(toHit, rayDir) <= 0) continue;     // behind camera
-                float d2 = toHit.x*toHit.x + toHit.y*toHit.y + toHit.z*toHit.z;
-                if (d2 < bestDist) {
-                    bestDist = d2;
-                    bestCage = cast(int)subpatchPreview.trace.faceOrigin[fi];
+                // Backface cull on the smoothed cage polygon.
+                if (cageFace.length >= 3) {
+                    uint p1 = cageMap[cageFace[1]];
+                    uint p2 = cageMap[cageFace[2]];
+                    if (p1 == uint.max || p2 == uint.max) continue;
+                    Vec3 n = cross(pv.vertices[p1] - firstSmoothed,
+                                   pv.vertices[p2] - firstSmoothed);
+                    if (dot(n, firstSmoothed - cameraView.eye) >= 0) continue;
+
+                    if (!pointInPolygon2D(cast(float)mx, cast(float)my,
+                                          sxs, sys)) continue;
+
+                    Vec3 hit;
+                    if (!rayPlaneIntersect(cameraView.eye, rayDir,
+                                           firstSmoothed, n, hit)) continue;
+                    Vec3  toHit = hit - cameraView.eye;
+                    if (dot(toHit, rayDir) <= 0) continue;
+                    float d2 = toHit.x*toHit.x + toHit.y*toHit.y + toHit.z*toHit.z;
+                    if (d2 < bestDist) {
+                        bestDist = d2;
+                        bestCage = cast(int)fi;
+                    }
                 }
             }
             if (bestCage >= 0) {
