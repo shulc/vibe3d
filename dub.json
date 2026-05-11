@@ -42,5 +42,12 @@
 			"version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
 			"repository": "git+https://github.com/shulc/D-YAML.git"
 		}
+	},
+	"buildTypes": {
+		"profile-fp": {
+			"_comment": "Profiling build: -gs forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`.",
+			"buildOptions": ["debugMode", "debugInfo", "optimize"],
+			"dflags": ["-gs"]
+		}
 	}
 }

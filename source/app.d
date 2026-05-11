@@ -422,6 +422,16 @@ void main(string[] args) {
     EdgeCache edgeCache;
     edgeCache.resize(mesh.edges.length);
 
+    // VisibilityCache for `mesh.visibleVertices(eye, vp)` — recomputed
+    // only when (mutationVersion, eye, view-matrix) changes. Without
+    // it, every SDL_MOUSEMOTION re-runs the O(V × F_front) nested
+    // loop (perf measured 98.46% CPU on 8 K-vert meshes). One cache
+    // per source: `meshVisCache` for the editable mesh, `pvVisCache`
+    // for the subpatch-preview mesh.
+    import visibility_cache : VisibilityCache;
+    VisibilityCache meshVisCache;
+    VisibilityCache pvVisCache;
+
     GpuMesh gpu;
     gpu.init();
     scope(exit) gpu.destroy();
@@ -1957,7 +1967,7 @@ void main(string[] args) {
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
-                bool[] visible = mesh.visibleVertices(cameraView.eye, vp2);
+                bool[] visible = meshVisCache.get(mesh, cameraView.eye, vp2);
 
                 // In subpatch mode iterate preview geometry and translate
                 // hits back to cage indices via the trace. A cage element is
@@ -1966,7 +1976,7 @@ void main(string[] args) {
                 // cage behavior).
                 bool preview = subpatchPreview.active;
                 const pv = preview ? &subpatchPreview.mesh : null;
-                bool[] pvVisible = preview ? pv.visibleVertices(cameraView.eye, vp2) : null;
+                bool[] pvVisible = preview ? pvVisCache.get(*pv, cameraView.eye, vp2) : null;
 
                 if (editMode == EditMode.Polygons) {
                     if (!shift && !ctrl)
@@ -2189,7 +2199,7 @@ void main(string[] args) {
         // positions) and translate hits back to cage indices via the trace.
         if (subpatchPreview.active) {
             const pv = &subpatchPreview.mesh;
-            bool[] visible = pv.visibleVertices(cameraView.eye, vp);
+            bool[] visible = pvVisCache.get(*pv, cameraView.eye, vp);
             float closestSqS = 16.0f;
             int   best      = -1;
             foreach_reverse (pi; 0 .. pv.vertices.length) {
@@ -2221,7 +2231,7 @@ void main(string[] args) {
 
         // A vertex is visible if at least one adjacent face is front-facing.
         // Geometry-exact: replaces unreliable depth-buffer test (near=0.001).
-        bool[] vertexVisible = mesh.visibleVertices(cameraView.eye, vp);
+        bool[] vertexVisible = meshVisCache.get(mesh, cameraView.eye, vp);
 
         foreach_reverse (i; 0 .. mesh.vertices.length) {
             if (!vertexVisible[i]) continue;
@@ -2271,7 +2281,7 @@ void main(string[] args) {
         // whole polyline of that cage edge is treated as a single edge.
         if (subpatchPreview.active) {
             const pv = &subpatchPreview.mesh;
-            bool[] visible = pv.visibleVertices(cameraView.eye, vp);
+            bool[] visible = pvVisCache.get(*pv, cameraView.eye, vp);
             int bestCage = -1;
             foreach (i; 0 .. pv.edges.length) {
                 uint cageEi = subpatchPreview.trace.edgeOrigin[i];
@@ -2310,7 +2320,7 @@ void main(string[] args) {
 
         // A vertex is visible if at least one adjacent face is front-facing.
         // Computed once here — O(faces), replaces unreliable depth-buffer test.
-        bool[] vertexVisible = mesh.visibleVertices(cameraView.eye, vp);
+        bool[] vertexVisible = meshVisCache.get(mesh, cameraView.eye, vp);
 
         foreach (i; 0 .. mesh.edges.length) {
             uint a = mesh.edges[i][0], b = mesh.edges[i][1];
