@@ -2603,7 +2603,12 @@ void main(string[] args) {
         ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
         // Suppress ImGui's built-in text rendering for disabled rows —
         // we draw the engraved label ourselves after the bevel pass.
-        bool rawClicked = ImGui.Button(disabled ? "" : label, size);
+        // Visible text empty (everything before "##"), ID derived from
+        // the original label so ImGui's per-window ItemAdd doesn't
+        // collide when multiple disabled rows are stacked (empty ID
+        // at window root → assert).
+        string btnLabel = disabled ? ("##" ~ label) : label;
+        bool rawClicked = ImGui.Button(btnLabel, size);
         bool clicked    = rawClicked && !disabled;
         ImGui.PopStyleVar();
         ImGui.PopStyleColor(3);
