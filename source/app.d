@@ -28,6 +28,7 @@ import view;
 import shader;
 import viewcache;
 import lwo;
+import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 
 import tools.transform;
 import tools.move;
@@ -1983,8 +1984,8 @@ void main(string[] args) {
                         }
                         foreach (fi; 0 .. mesh.faces.length) {
                             if (!cageVisited[fi] || !cageAllInside[fi]) continue;
-                            if (ctrl) mesh.deselectFace(cast(int)fi);
-                            else      mesh.selectFace(cast(int)fi);
+                            symmetricSelectFace(&mesh, cameraView, editMode,
+                                                cast(int)fi, /*deselect=*/ctrl);
                         }
                     } else {
                         foreach (fi; 0 .. mesh.faces.length) {
@@ -2002,8 +2003,8 @@ void main(string[] args) {
                                 }
                             }
                             if (allInside) {
-                                if (ctrl) mesh.deselectFace(cast(int)fi);
-                                else      mesh.selectFace(cast(int)fi);
+                                symmetricSelectFace(&mesh, cameraView, editMode,
+                                                    cast(int)fi, /*deselect=*/ctrl);
                             }
                         }
                     }
@@ -2018,8 +2019,8 @@ void main(string[] args) {
                             float sx, sy, ndcZ;
                             if (!projectToWindow(pv.vertices[pi], vp2, sx, sy, ndcZ)) continue;
                             if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                                if (ctrl) mesh.deselectVertex(cast(int)cage);
-                                else      mesh.selectVertex(cast(int)cage);
+                                symmetricSelectVertex(&mesh, cameraView, editMode,
+                                                      cast(int)cage, /*deselect=*/ctrl);
                             }
                         }
                     } else {
@@ -2028,8 +2029,8 @@ void main(string[] args) {
                             float sx, sy, ndcZ;
                             if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
                             if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                                if (ctrl) mesh.deselectVertex(cast(int)vi);
-                                else      mesh.selectVertex(cast(int)vi);
+                                symmetricSelectVertex(&mesh, cameraView, editMode,
+                                                      cast(int)vi, /*deselect=*/ctrl);
                             }
                         }
                     }
@@ -2058,8 +2059,8 @@ void main(string[] args) {
                         }
                         foreach (ei; 0 .. mesh.edges.length) {
                             if (!cageVisited[ei] || !cageAllInside[ei]) continue;
-                            if (ctrl) mesh.deselectEdge(cast(int)ei);
-                            else      mesh.selectEdge(cast(int)ei);
+                            symmetricSelectEdge(&mesh, cameraView, editMode,
+                                                cast(int)ei, /*deselect=*/ctrl);
                         }
                     } else {
                         foreach (ei; 0 .. mesh.edges.length) {
@@ -2070,8 +2071,8 @@ void main(string[] args) {
                             if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
                             if (pointInPolygon2D(sxa, sya, pxs, pys) &&
                                 pointInPolygon2D(sxb, syb, pxs, pys)) {
-                                if (ctrl) mesh.deselectEdge(cast(int)ei);
-                                else      mesh.selectEdge(cast(int)ei);
+                                symmetricSelectEdge(&mesh, cameraView, editMode,
+                                                    cast(int)ei, /*deselect=*/ctrl);
                             }
                         }
                     }
@@ -2194,9 +2195,11 @@ void main(string[] args) {
             if (best >= 0) {
                 hoveredVertex = best;
                 if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    mesh.selectVertex(hoveredVertex);
+                    symmetricSelectVertex(&mesh, cameraView, editMode,
+                                          hoveredVertex, /*deselect=*/false);
                 else if (dragMode == DragMode.SelectRemove)
-                    mesh.deselectVertex(hoveredVertex);
+                    symmetricSelectVertex(&mesh, cameraView, editMode,
+                                          hoveredVertex, /*deselect=*/true);
             }
             return;
         }
@@ -2232,9 +2235,11 @@ void main(string[] args) {
         if (candidate >= 0) {
             hoveredVertex = candidate;
             if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                mesh.selectVertex(hoveredVertex);
+                symmetricSelectVertex(&mesh, cameraView, editMode,
+                                      hoveredVertex, /*deselect=*/false);
             else if (dragMode == DragMode.SelectRemove)
-                mesh.deselectVertex(hoveredVertex);
+                symmetricSelectVertex(&mesh, cameraView, editMode,
+                                      hoveredVertex, /*deselect=*/true);
         }
     }
 
@@ -2282,9 +2287,11 @@ void main(string[] args) {
             if (bestCage >= 0) {
                 hoveredEdge = bestCage;
                 if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    mesh.selectEdge(hoveredEdge);
+                    symmetricSelectEdge(&mesh, cameraView, editMode,
+                                        hoveredEdge, /*deselect=*/false);
                 else if (dragMode == DragMode.SelectRemove)
-                    mesh.deselectEdge(hoveredEdge);
+                    symmetricSelectEdge(&mesh, cameraView, editMode,
+                                        hoveredEdge, /*deselect=*/true);
             }
             return;
         }
@@ -2342,9 +2349,11 @@ void main(string[] args) {
 
         if (hoveredEdge >= 0) {
             if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                mesh.selectEdge(hoveredEdge);
+                symmetricSelectEdge(&mesh, cameraView, editMode,
+                                    hoveredEdge, /*deselect=*/false);
             else if (dragMode == DragMode.SelectRemove)
-                mesh.deselectEdge(hoveredEdge);
+                symmetricSelectEdge(&mesh, cameraView, editMode,
+                                    hoveredEdge, /*deselect=*/true);
         }
     }
 
@@ -2403,9 +2412,11 @@ void main(string[] args) {
             if (bestCage >= 0) {
                 hoveredFace = bestCage;
                 if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    mesh.selectFace(hoveredFace);
+                    symmetricSelectFace(&mesh, cameraView, editMode,
+                                        hoveredFace, /*deselect=*/false);
                 else if (dragMode == DragMode.SelectRemove)
-                    mesh.deselectFace(hoveredFace);
+                    symmetricSelectFace(&mesh, cameraView, editMode,
+                                        hoveredFace, /*deselect=*/true);
             }
             return;
         }
@@ -2484,9 +2495,11 @@ void main(string[] args) {
 
         if (hoveredFace >= 0) {
             if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                mesh.selectFace(hoveredFace);
+                symmetricSelectFace(&mesh, cameraView, editMode,
+                                    hoveredFace, /*deselect=*/false);
             else if (dragMode == DragMode.SelectRemove)
-                mesh.deselectFace(hoveredFace);
+                symmetricSelectFace(&mesh, cameraView, editMode,
+                                    hoveredFace, /*deselect=*/true);
         }
     }
 
