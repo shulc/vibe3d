@@ -108,6 +108,8 @@ unittest { // no-schema command yields empty args string
     // mesh.subdivide has no user-set params in its schema beyond defaults;
     // mesh.delete has no schema at all. Use subdivide since it always succeeds.
     postSelect("vertices", [0]);
+    // mesh.subdivide is a polygon-mode op.
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto r = postCmd("mesh.subdivide");
     if (r["status"].str != "ok") return; // skip if not applicable in current env
 
@@ -128,6 +130,7 @@ unittest { // redo stack entries are also structured objects
     resetCube();
 
     postSelect("vertices", [0]);
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto r = postCmd("mesh.subdivide");
     if (r["status"].str != "ok") return;
 
@@ -154,6 +157,7 @@ unittest { // array.length on undo/redo still works after format change
     resetCube();
 
     postSelect("vertices", [0]);
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     post("http://localhost:8080/api/command", `{"id":"mesh.subdivide"}`);
 
     auto h = getHistory();

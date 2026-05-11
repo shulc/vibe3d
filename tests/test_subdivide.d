@@ -20,6 +20,12 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 
 void resetCube() {
     post("http://localhost:8080/api/reset", "");
+    // Subdivide / subdivide_faceted / subpatch_toggle all require
+    // Polygons edit mode (guard added with phase-7.6 SYMM work — see
+    // commands/mesh/subdivide.d). Reset leaves edit mode at Vertices,
+    // so switch explicitly. Tests that exercise the guard itself
+    // switch back to vertex / edge mode after this helper.
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
 }
 
 JSONValue model() {
@@ -130,6 +136,59 @@ unittest { // subdivide only one selected face → topology grows by less than f
 // ---------------------------------------------------------------------------
 // Faceted subdivide
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Edit-mode guard — subdivide / subdivide_faceted / subpatch_toggle all
+// operate on faces; refuse to run in Vertices / Edges modes so a stale face
+// selection from a previous polygon session doesn't silently scope the op.
+// ---------------------------------------------------------------------------
+
+unittest { // subdivide refused in vertices mode
+    resetCube();
+    // resetCube leaves us in polygon mode — switch to vertex for the
+    // guard test.
+    auto r = post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    assert(parseJSON(cast(string)r)["status"].str == "ok");
+    auto resp = post("http://localhost:8080/api/command", "mesh.subdivide");
+    auto j = parseJSON(cast(string)resp);
+    assert(j["status"].str != "ok",
+        "mesh.subdivide should fail in vertex mode, got " ~ resp);
+    // Mesh unchanged — still cube.
+    auto m = model();
+    assert(m["vertexCount"].integer == 8,
+        "mesh shouldn't change when subdivide is refused");
+}
+
+unittest { // subdivide_faceted refused in edges mode
+    resetCube();
+    post("http://localhost:8080/api/command", "select.typeFrom edge");
+    auto resp = post("http://localhost:8080/api/command",
+                     "mesh.subdivide_faceted");
+    auto j = parseJSON(cast(string)resp);
+    assert(j["status"].str != "ok",
+        "mesh.subdivide_faceted should fail in edges mode, got " ~ resp);
+    auto m = model();
+    assert(m["vertexCount"].integer == 8);
+}
+
+unittest { // subpatch_toggle refused in vertices mode
+    resetCube();
+    post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    auto resp = post("http://localhost:8080/api/command",
+                     "mesh.subpatch_toggle");
+    auto j = parseJSON(cast(string)resp);
+    assert(j["status"].str != "ok",
+        "mesh.subpatch_toggle should fail in vertex mode, got " ~ resp);
+}
+
+unittest { // subdivide allowed in polygon mode (resetCube already sets it)
+    resetCube();
+    auto resp = post("http://localhost:8080/api/command", "mesh.subdivide");
+    assert(parseJSON(cast(string)resp)["status"].str == "ok",
+        "mesh.subdivide should succeed in polygon mode, got " ~ resp);
+    auto m = model();
+    assert(m["vertexCount"].integer == 26);
+}
 
 unittest { // faceted subdivide on cube — same topology as CC, but verts stay on
            // the original cube faces (no smoothing pull-in).

@@ -30,6 +30,8 @@ private JSONValue postJson(string url, string body_) {
 private void resetCube()  { post("http://localhost:8080/api/reset", ""); }
 
 private void subdivide() {
+    // mesh.subdivide requires polygon edit mode.
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto resp = postJson("http://localhost:8080/api/command",
                          `{"id":"mesh.subdivide"}`);
     assert(resp["status"].str == "ok", "subdivide failed: " ~ resp.toString());

@@ -29,6 +29,17 @@ class Subdivide : Command {
     override string name() const { return "mesh.subdivide"; }
 
     override bool apply() {
+        // Subdivide is a polygon-mode operation — its selection-aware
+        // behaviour (`catmullClarkSelected` vs full `catmullClark`)
+        // reads `mesh.selectedFaces`, which the user can only curate
+        // visually while in Polygons mode. Refuse in Vertices / Edges
+        // modes so a stale face selection from a previous polygon
+        // session doesn't silently scope the subdivision.
+        if (editMode != EditMode.Polygons)
+            throw new Exception(
+                "mesh.subdivide requires Polygons edit mode "
+                ~ "(switch via `select.typeFrom polygon` or press 3)");
+
         // Full mesh snapshot — Catmull-Clark replaces the entire mesh
         // (verts, edges, faces, selection, etc.).
         snap = MeshSnapshot.capture(*mesh);

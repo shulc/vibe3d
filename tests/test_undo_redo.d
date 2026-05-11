@@ -252,6 +252,8 @@ unittest { // rotate then undo
 
 unittest { // mesh.subdivide: subdivides cube to 26 verts; undo → back to 8
     resetCube();
+    // mesh.subdivide requires polygon edit mode (face-level op).
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto m = getModel();
     int origVertCount = cast(int)m["vertices"].array.length;
     int origFaceCount = cast(int)m["faces"].array.length;
@@ -282,6 +284,7 @@ unittest { // mesh.subdivide: subdivides cube to 26 verts; undo → back to 8
 
 unittest { // mesh.subdivide_faceted: same shape as Catmull-Clark, no smoothing
     resetCube();
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto m = getModel();
     int origVertCount = cast(int)m["vertices"].array.length;
     int origFaceCount = cast(int)m["faces"].array.length;
@@ -371,6 +374,9 @@ unittest { // /api/redo on empty stack returns noop
 unittest { // /api/history returns {undo:[...], redo:[...]} with labels
     resetCube();
     postSelect("vertices", [0]);
+    // mesh.subdivide requires polygon mode — switch (non-undoable, so
+    // history shape is unaffected).
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     postCommand(`{"id":"mesh.subdivide"}`);
 
     auto h = getHistory();
@@ -459,6 +465,9 @@ unittest { // mixed: select v0, translate, subdivide, undo×3, redo×3
     resetCube();
     postSelect("vertices", [0]);
     postTransform(`{"kind":"translate","delta":[1,0,0]}`);
+    // mesh.subdivide requires polygon mode (non-undoable switch, so
+    // the undo×3 / redo×3 below still walk select / translate / subdivide).
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     postCommand(`{"id":"mesh.subdivide"}`);
 
     // Snapshot post-subdivide vert count for later redo verification.

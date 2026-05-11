@@ -20,6 +20,15 @@ class SubpatchToggle : Command {
     override string name() const { return "mesh.subpatch_toggle"; }
 
     override bool apply() {
+        // Subpatch toggles a per-face flag, so the operation is
+        // meaningful only when the user is in Polygons mode and can
+        // see / curate the face selection. Refuse in other modes so a
+        // stale face selection doesn't silently flip the wrong faces.
+        if (editMode != EditMode.Polygons)
+            throw new Exception(
+                "mesh.subpatch_toggle requires Polygons edit mode "
+                ~ "(switch via `select.typeFrom polygon` or press 3)");
+
         // Snapshot just isSubpatch[] — only field we mutate.
         origSubpatch = mesh.isSubpatch.dup;
         captured     = true;

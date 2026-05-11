@@ -12,6 +12,8 @@ void main() {}
 
 void resetCube() {
     post("http://localhost:8080/api/reset", "");
+    // mesh.subpatch_toggle requires Polygons edit mode (face-level op).
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
 }
 
 void runCmd(string id) {

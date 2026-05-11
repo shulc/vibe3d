@@ -132,6 +132,8 @@ unittest { // successful replay response body contains "line" field
 
     // mesh.subdivide has no position-dependent preconditions — reliable target.
     postSelect("vertices", [0]);
+    // mesh.subdivide is polygon-mode-only.
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto sr = postCmd("mesh.subdivide");
     if (sr["status"].str != "ok") return; // skip if not applicable
 

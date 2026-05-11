@@ -52,6 +52,10 @@ unittest { // save → load round-trip preserves cube topology
     assert(getSize(path) > 0, "saved file is empty");
 
     // Mutate the scene, then reload to confirm the file actually drives geometry.
+    // mesh.subdivide requires polygon edit mode — switch via the argstring
+    // form (runCmd wraps everything in {"id": ...}, which doesn't accept
+    // positional args).
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     runCmd("mesh.subdivide");
     auto mutated = model();
     assert(mutated["vertexCount"].integer == 26,

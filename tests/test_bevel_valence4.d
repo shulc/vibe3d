@@ -36,6 +36,8 @@ private void resetCube() {
 }
 
 private void subdivide() {
+    // mesh.subdivide requires polygon edit mode (face-level op).
+    post("http://localhost:8080/api/command", "select.typeFrom polygon");
     auto resp = postJson("http://localhost:8080/api/command",
                          `{"id":"mesh.subdivide"}`);
     assert(resp["status"].str == "ok", "subdivide failed: " ~ resp.toString());

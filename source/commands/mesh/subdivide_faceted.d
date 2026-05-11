@@ -29,6 +29,14 @@ class SubdivideFaceted : Command {
     override string name() const { return "mesh.subdivide_faceted"; }
 
     override bool apply() {
+        // Same polygon-mode guard as `mesh.subdivide`: selection-aware
+        // subdivision reads `mesh.selectedFaces`, which is only
+        // curatable in Polygons mode.
+        if (editMode != EditMode.Polygons)
+            throw new Exception(
+                "mesh.subdivide_faceted requires Polygons edit mode "
+                ~ "(switch via `select.typeFrom polygon` or press 3)");
+
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
         const bool[] mask = mesh.hasAnySelectedFaces()
