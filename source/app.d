@@ -991,6 +991,12 @@ void main(string[] args) {
             }
         }
         void checkButton(ref Button btn) {
+            // Disabled placeholders are non-dispatching by construction
+            // (renderStyledButton suppresses the click); their `action`
+            // id may legitimately reference a not-yet-registered tool /
+            // command. Skip the registry check so the YAML can document
+            // future entries without blocking the build.
+            if (btn.disabled) return;
             check(btn.action);
             if (btn.ctrl.present)  check(btn.ctrl.action);
             if (btn.alt.present)   check(btn.alt.action);

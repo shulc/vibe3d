@@ -83,6 +83,66 @@ panels:
           - { label: Remove, action: { kind: command, id: mesh.remove } }
           - { label: Merge, action: { kind: command, id: vert.merge } }
           - { label: Join,  action: { kind: command, id: vert.join } }
+
+  # Deform palette — mirrors MODO's frm_modoTools_Deform layout. D.1
+  # of doc/deform_plan.md ships the 9 transform+falloff presets; the
+  # remaining MODO tools (Element Move, Flex, Push, Bend, Vortex,
+  # Sculpt, Smooth, Jitter, Quantize, Linear/Radial Align, Flare)
+  # are listed as disabled placeholders so the panel matches MODO's
+  # visual surface and future subphases (D.2..D.8) flip the flag
+  # one at a time as they land.
+  - title: Deform
+    items:
+      - title: Move
+        buttons:
+          - { label: "Element Move", disable: true,
+              action: { kind: tool, id: xfrm.elementMove } }
+          - { label: "Flex", disable: true,
+              action: { kind: tool, id: xfrm.flex } }
+          - { label: "Soft Drag",
+              action: { kind: tool, id: xfrm.softDrag } }
+          - { label: "Soft Move",
+              action: { kind: tool, id: xfrm.softMove } }
+          - { label: "Shear",
+              action: { kind: tool, id: xfrm.shear } }
+          - { label: "Smooth", disable: true,
+              action: { kind: command, id: mesh.smooth } }
+          - { label: "Jitter", disable: true,
+              action: { kind: command, id: mesh.jitter } }
+          - { label: "Quantize", disable: true,
+              action: { kind: command, id: mesh.quantize } }
+      - title: Rotate
+        buttons:
+          - { label: "Soft Rotate",
+              action: { kind: tool, id: xfrm.softRotate } }
+          - { label: "Twist",
+              action: { kind: tool, id: xfrm.twist } }
+          - { label: "Bend", disable: true,
+              action: { kind: tool, id: xfrm.bend } }
+          - { label: "Vortex", disable: true,
+              action: { kind: tool, id: xfrm.vortex } }
+          - { label: "Swirl",
+              action: { kind: tool, id: xfrm.swirl } }
+      - title: Scale
+        buttons:
+          - { label: "Soft Scale",
+              action: { kind: tool, id: xfrm.softScale } }
+          - { label: "Push", disable: true,
+              action: { kind: tool, id: xfrm.push } }
+          - { label: "Sculpt", disable: true,
+              action: { kind: tool, id: xfrm.sculpt } }
+          - { label: "Taper",
+              action: { kind: tool, id: xfrm.taper } }
+          - { label: "Bulge",
+              action: { kind: tool, id: xfrm.bulge } }
+          - { label: "Flare", disable: true,
+              action: { kind: tool, id: xfrm.flare } }
+      - title: Align
+        buttons:
+          - { label: "Radial Align", disable: true,
+              action: { kind: command, id: mesh.radial_align } }
+          - { label: "Linear Align", disable: true,
+              action: { kind: command, id: mesh.linear_align } }
   - title: Selection
     items:
       - title: Grow / Shrink
