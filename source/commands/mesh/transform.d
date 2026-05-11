@@ -8,6 +8,11 @@ import view;
 import editmode;
 import viewcache;
 import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
+import toolpipe.pipeline : g_pipeCtx;
+import toolpipe.packets  : SubjectPacket, SymmetryPacket;
+import toolpipe.stage    : TaskCode;
+import toolpipe.stages.symmetry : SymmetryStage;
+import symmetry          : applySymmetryMirror, projectOnPlane;
 // GpuMesh lives in mesh.d, already imported above.
 
 /// Transform the selected vertices by translate / rotate / scale. Replaces
@@ -75,13 +80,64 @@ class MeshTransform : Command {
                     foreach (vi; mesh.faces[i]) vmask[vi] = true;
         }
 
-        // Snapshot the touched verts only. revert() restores them.
+        // Phase 7.6b: snapshot the symmetry packet BEFORE the transform
+        // mutates the mesh — the pair table is built from
+        // `mesh.vertices`, so the moment we touch a selected vertex the
+        // SymmetryStage's cache would get invalidated against a
+        // half-mutated mesh and rebuild against the wrong positions.
+        // Capturing the slice header here keeps `pairOf` / `onPlane`
+        // anchored to the symmetric pre-mutation mesh.
+        //
+        // We only fire pipeline.evaluate when the SymmetryStage is
+        // actually enabled — pipeline.evaluate has cross-stage side
+        // effects (FalloffStage caches the upstream workplane normal
+        // every evaluate; firing it from a transform path that never
+        // touched symmetry would leak workplane state into the
+        // falloff stage's auto-size cache, breaking subsequent
+        // auto-size operations that expect a freshly-set workplane).
+        SymmetryPacket symm;
+        bool           symmActive = false;
+        if (kind == "translate" && g_pipeCtx !is null) {
+            auto symStage = cast(SymmetryStage)
+                            g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+            if (symStage !is null && symStage.enabled) {
+                SubjectPacket subj;
+                subj.mesh             = mesh;
+                subj.editMode         = editMode;
+                subj.selectedVertices = mesh.selectedVertices.dup;
+                subj.selectedEdges    = mesh.selectedEdges.dup;
+                subj.selectedFaces    = mesh.selectedFaces.dup;
+                auto vp = view.viewport();
+                auto state = g_pipeCtx.pipeline.evaluate(subj, vp);
+                if (state.symmetry.enabled
+                 && state.symmetry.pairOf.length == mesh.vertices.length)
+                {
+                    symm       = state.symmetry;
+                    symmActive = true;
+                }
+            }
+        }
+
+        // Snapshot the touched verts only. revert() restores them. With
+        // symmetry active we also capture each selected vert's mirror
+        // counterpart so revert undoes the mirror write too.
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
         foreach (i; 0 .. mesh.vertices.length) {
             if (vmask[i]) {
                 touchedIdx  ~= cast(uint)i;
                 touchedPrev ~= mesh.vertices[i];
+            }
+        }
+        if (symmActive) {
+            foreach (vi; 0 .. mesh.vertices.length) {
+                if (!vmask[vi]) continue;
+                if (symm.onPlane[vi]) continue;
+                int mi = symm.pairOf[vi];
+                if (mi < 0 || mi == cast(int)vi) continue;
+                if (vmask[mi]) continue;
+                touchedIdx  ~= cast(uint)mi;
+                touchedPrev ~= mesh.vertices[mi];
             }
         }
         captured = true;
@@ -120,6 +176,15 @@ class MeshTransform : Command {
             default:
                 throw new Exception("invalid kind '" ~ kind ~
                                     "', expected translate/rotate/scale");
+        }
+
+        // Phase 7.6b: symmetry mirror pass. Uses the pair table
+        // captured BEFORE the switch above; mirrors each selected
+        // vertex's new position into its plane-counterpart, and
+        // projects on-plane selected verts back onto the plane.
+        if (symmActive) {
+            auto alsoTouched = new bool[](mesh.vertices.length);
+            applySymmetryMirror(mesh, symm, vmask, alsoTouched);
         }
 
         ++mesh.mutationVersion;

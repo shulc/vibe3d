@@ -9,6 +9,7 @@ import toolpipe.stage    : Stage, TaskCode, ordSymm;
 import toolpipe.pipeline : ToolState;
 import toolpipe.packets  : SymmetryPacket;
 import popup_state       : setStatePath;
+import symmetry          : rebuildPairing;
 
 // ---------------------------------------------------------------------------
 // SymmetryStage — phase 7.6 of doc/phase7_plan.md / doc/phase7_6_symm_plan.md.
@@ -44,11 +45,24 @@ class SymmetryStage : Stage {
 
 private:
     // Injected refs (mirrors FalloffStage / ActionCenterStage shape).
-    // Phase 7.6a doesn't consume them yet, but the constructor takes
-    // them so the 7.6b pairing pass can land without touching the
-    // initToolPipe call site again.
+    // `mesh_` is required for pairing — null-mesh callers skip the
+    // rebuild and publish an empty pair table (the editor never has a
+    // null mesh; unit tests that bypass app.d's pipe init do).
     Mesh*     mesh_;
     EditMode* editMode_;
+
+    // Pairing cache. Rebuilt when (mesh.mutationVersion, plane,
+    // epsilon) change. `cachedReady_` toggles to true after the first
+    // successful rebuild so a stage that's enabled mid-session can
+    // publish a stale-empty packet for one frame before the cache
+    // catches up on the next evaluate.
+    ulong  cachedMutationVersion_ = ulong.max;
+    Vec3   cachedPlanePoint_      = Vec3(0, 0, 0);
+    Vec3   cachedPlaneNormal_     = Vec3(0, 0, 0);
+    float  cachedEpsilon_         = float.nan;
+    int[]  cachedPairOf_;
+    bool[] cachedOnPlane_;
+    bool   cachedReady_           = false;
 
 public:
     this(Mesh* mesh = null, EditMode* editMode = null) {
@@ -84,11 +98,31 @@ public:
             state.symmetry.planePoint  = axisVec(axisIndex) * offset;
         }
 
-        // Phase 7.6a: pair table is not built yet. Publish empty slices
-        // so consumers see a defined-but-empty shape; the 7.6b stage
-        // overrides this with the real pair snapshot.
-        state.symmetry.pairOf  = null;
-        state.symmetry.onPlane = null;
+        // Phase 7.6b: rebuild the pair table on cache miss. Caches keyed
+        // on (mutationVersion, plane, epsilon). When disabled we publish
+        // empty slices — keeps the per-frame fast path allocation-free.
+        if (enabled && mesh_ !is null && mesh_.vertices.length > 0) {
+            bool planeChanged =
+                cachedPlanePoint_  != state.symmetry.planePoint  ||
+                cachedPlaneNormal_ != state.symmetry.planeNormal ||
+                cachedEpsilon_     != epsilonWorld;
+            bool meshChanged =
+                cachedMutationVersion_ != mesh_.mutationVersion;
+            if (!cachedReady_ || planeChanged || meshChanged) {
+                rebuildPairing(*mesh_, state.symmetry,
+                               cachedPairOf_, cachedOnPlane_);
+                cachedMutationVersion_ = mesh_.mutationVersion;
+                cachedPlanePoint_      = state.symmetry.planePoint;
+                cachedPlaneNormal_     = state.symmetry.planeNormal;
+                cachedEpsilon_         = epsilonWorld;
+                cachedReady_           = true;
+            }
+            state.symmetry.pairOf  = cachedPairOf_;
+            state.symmetry.onPlane = cachedOnPlane_;
+        } else {
+            state.symmetry.pairOf  = null;
+            state.symmetry.onPlane = null;
+        }
 
         // Backwards-compat fields the phase-7.0 stub already declared.
         // Derived from axisIndex / offset so any code still reading

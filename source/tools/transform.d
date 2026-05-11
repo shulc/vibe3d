@@ -6,9 +6,10 @@ import math : Vec3, Viewport;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
-import toolpipe.packets : FalloffPacket;
+import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import falloff : evaluateFalloff;
 import falloff_handles : FalloffLinearGizmo;
+import symmetry : applySymmetryMirror;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires gpu+caches; the tool just calls this delegate
@@ -59,6 +60,14 @@ protected:
     // packet's `enabled` flag stays false (default-init) until that
     // gets called, so any tool that hasn't opted in sees weight=1.0.
     FalloffPacket dragFalloff;
+
+    // Phase 7.6b: symmetry packet snapshot. Same pattern as dragFalloff
+    // — captured at drag start so the per-vertex mirror lookup is
+    // stable through the drag (mesh.mutationVersion only bumps at
+    // beginEdit baseline write; we don't want pairOf reshuffling
+    // mid-drag). Refreshed by captureSymmetryForDrag(); default-init
+    // (`enabled = false`) until that gets called.
+    SymmetryPacket dragSymmetry;
 
     // Phase 7.5h+: interactive falloff endpoint handles. Built lazily
     // on first draw() that sees a Linear-typed enabled falloff packet,
@@ -352,6 +361,48 @@ protected:
         auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
         dragFalloff = state.falloff;
         return dragFalloff.enabled;
+    }
+
+    /// Phase 7.6b: snapshot the SymmetryPacket at drag start. Same
+    /// shape as captureFalloffForDrag — the pair table needs to stay
+    /// stable for the duration of one drag so mirror writes don't
+    /// reshuffle mid-stroke (mesh.mutationVersion would otherwise bump
+    /// at beginEdit and trigger a rebuild). Returns `true` iff
+    /// symmetry is active in the captured packet; tools use this to
+    /// gate the whole-mesh GPU bypass off (the per-vertex mirror
+    /// breaks the "single uniform translation" assumption).
+    bool captureSymmetryForDrag() {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.packets  : SubjectPacket;
+        if (g_pipeCtx is null) {
+            dragSymmetry = SymmetryPacket.init;
+            return false;
+        }
+        SubjectPacket subj;
+        subj.mesh             = mesh;
+        subj.editMode         = *editMode;
+        subj.selectedVertices = mesh.selectedVertices.dup;
+        subj.selectedEdges    = mesh.selectedEdges.dup;
+        subj.selectedFaces    = mesh.selectedFaces.dup;
+        auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
+        dragSymmetry = state.symmetry;
+        return dragSymmetry.enabled;
+    }
+
+    /// Phase 7.6b: invoke the symmetry mirror pass on the verts that
+    /// the active drag is moving (vertexIndicesToProcess). Writes
+    /// mirror positions into `mesh.vertices[mi]` for every selected
+    /// `vi` and projects on-plane selected verts back onto the plane.
+    /// Updates `toProcess[]` so the deferred partial-upload picks up
+    /// the mirror writes too. No-op when `dragSymmetry.enabled` is
+    /// false.
+    protected void applySymmetryToDrag() {
+        if (!dragSymmetry.enabled) return;
+        if (dragSymmetry.pairOf.length != mesh.vertices.length) return;
+        // Build a per-vertex selected mask from vertexIndicesToProcess.
+        // The base TransformTool already keeps `toProcess[]` in sync
+        // with vertexIndicesToProcess — re-use it directly.
+        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
     }
 
     /// Per-vertex weight for the captured drag-falloff packet. Returns

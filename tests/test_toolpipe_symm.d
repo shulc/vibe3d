@@ -181,3 +181,203 @@ unittest { // unknown attr rejected
     assert(r["status"].str != "ok",
         "unknown attr should fail, got " ~ r.toString);
 }
+
+// -------------------------------------------------------------------------
+// 7.6b: pair table — default cube (8 verts) → 4 X-symmetric pairs when
+// the X-plane is active. Layout from test_transform.d:
+//   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
+//   v4=(-,-,+)  v5=(+,-,+)  v6=(+,+,+)  v7=(-,+,+)
+// Mirror across X=0: (0↔1), (2↔3), (4↔5), (6↔7).
+// -------------------------------------------------------------------------
+
+unittest { // pairOf cube X
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+
+    auto j = getJson("/api/toolpipe/eval");
+    auto sym = j["symmetry"];
+    assert(sym["enabled"].type == JSONType.true_, sym.toString);
+    auto po = sym["pairOf"].array;
+    assert(po.length == 8, "pairOf should be 8 long, got "
+        ~ po.length.to!string);
+    // Wait for the pair table to settle. The toolpipe eval rebuilds
+    // pairing on first read with a freshly-enabled stage.
+    int[8] expected = [1, 0, 3, 2, 5, 4, 7, 6];
+    foreach (i; 0 .. 8) {
+        assert(po[i].integer == expected[i],
+            "pairOf[" ~ i.to!string ~ "] expected "
+            ~ expected[i].to!string ~ ", got "
+            ~ po[i].integer.to!string);
+    }
+    // None of the cube's 8 verts lie on X=0 (they sit at ±0.5).
+    auto op = sym["onPlane"].array;
+    foreach (i; 0 .. 8) {
+        assert(op[i].type == JSONType.false_,
+            "onPlane[" ~ i.to!string ~ "] expected false, got "
+            ~ op[i].toString);
+    }
+}
+
+unittest { // pairOf cube Y
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis y");
+
+    auto j = getJson("/api/toolpipe/eval");
+    auto po = j["symmetry"]["pairOf"].array;
+    // Y-mirror of cube layout (above):
+    //   v0(-,-,-)↔v3(-,+,-)  v1(+,-,-)↔v2(+,+,-)
+    //   v4(-,-,+)↔v7(-,+,+)  v5(+,-,+)↔v6(+,+,+)
+    int[8] expected = [3, 2, 1, 0, 7, 6, 5, 4];
+    foreach (i; 0 .. 8) {
+        assert(po[i].integer == expected[i],
+            "Y-pairOf[" ~ i.to!string ~ "] expected "
+            ~ expected[i].to!string ~ ", got "
+            ~ po[i].integer.to!string);
+    }
+}
+
+unittest { // pairOf cube Z
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis z");
+
+    auto j = getJson("/api/toolpipe/eval");
+    auto po = j["symmetry"]["pairOf"].array;
+    // Z-mirror:
+    //   v0(-,-,-)↔v4(-,-,+)  v1(+,-,-)↔v5(+,-,+)
+    //   v2(+,+,-)↔v6(+,+,+)  v3(-,+,-)↔v7(-,+,+)
+    int[8] expected = [4, 5, 6, 7, 0, 1, 2, 3];
+    foreach (i; 0 .. 8) {
+        assert(po[i].integer == expected[i],
+            "Z-pairOf[" ~ i.to!string ~ "] expected "
+            ~ expected[i].to!string ~ ", got "
+            ~ po[i].integer.to!string);
+    }
+}
+
+unittest { // pairOf empty when disabled
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    auto j = getJson("/api/toolpipe/eval");
+    auto po = j["symmetry"]["pairOf"].array;
+    assert(po.length == 0, "disabled stage should publish empty pair table");
+}
+
+// -------------------------------------------------------------------------
+// 7.6b: vert.symmetrize-style move via /api/transform translate.
+// MeshTransform consults the SYMM packet — selecting vert 0 and translating
+// (0, 1, 0) should also translate vert 1 (its X-mirror).
+// -------------------------------------------------------------------------
+
+bool approxEq(double a, double b) {
+    import std.math : fabs;
+    return fabs(a - b) < 1e-4;
+}
+
+double[3] vertexAt(int idx) {
+    auto m = parseJSON(cast(string) get(baseUrl ~ "/api/model"));
+    auto v = m["vertices"].array[idx].array;
+    return [v[0].floating, v[1].floating, v[2].floating];
+}
+
+unittest { // translate one corner with X-symm → mirror also moves
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    // Select vert 0 = (-0.5, -0.5, -0.5) only.
+    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[0,1,0]}`);
+
+    auto v0 = vertexAt(0);
+    auto v1 = vertexAt(1);
+    assert(approxEq(v0[0], -0.5) && approxEq(v0[1], 0.5) && approxEq(v0[2], -0.5),
+        "v0 should have moved to (-0.5,0.5,-0.5), got "
+        ~ v0[0].to!string ~ "," ~ v0[1].to!string ~ "," ~ v0[2].to!string);
+    assert(approxEq(v1[0], 0.5) && approxEq(v1[1], 0.5) && approxEq(v1[2], -0.5),
+        "v1 (mirror) should have moved to (0.5,0.5,-0.5), got "
+        ~ v1[0].to!string ~ "," ~ v1[1].to!string ~ "," ~ v1[2].to!string);
+    // Other corners untouched.
+    auto v2 = vertexAt(2);
+    assert(approxEq(v2[0],  0.5) && approxEq(v2[1],  0.5) && approxEq(v2[2], -0.5),
+        "v2 should be unchanged, got "
+        ~ v2[0].to!string ~ "," ~ v2[1].to!string ~ "," ~ v2[2].to!string);
+
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+// -------------------------------------------------------------------------
+// 7.6b: translating along the symmetry axis itself — both corners move
+// AWAY from the plane symmetrically.
+// -------------------------------------------------------------------------
+
+unittest { // translate along the X axis with X-symm → mirror moves opposite
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[-1,0,0]}`);
+    auto v0 = vertexAt(0);
+    auto v1 = vertexAt(1);
+    // v0 moved from -0.5 to -1.5; mirror at -(-1.5) = 1.5
+    assert(approxEq(v0[0], -1.5), "v0.x expected -1.5, got " ~ v0[0].to!string);
+    assert(approxEq(v1[0],  1.5), "v1.x expected  1.5, got " ~ v1[0].to!string);
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+// -------------------------------------------------------------------------
+// 7.6b: revert restores both the moved vert AND its mirror counterpart.
+// MeshTransform extends touchedIdx with the mirror so /api/undo unwinds it.
+// -------------------------------------------------------------------------
+
+unittest { // undo restores mirror
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[0,2,0]}`);
+    // sanity
+    auto preUndo = vertexAt(1);
+    assert(approxEq(preUndo[1], 1.5), "pre-undo v1.y: " ~ preUndo[1].to!string);
+
+    postJson("/api/undo", "");
+    auto v0 = vertexAt(0);
+    auto v1 = vertexAt(1);
+    assert(approxEq(v0[1], -0.5) && approxEq(v1[1], -0.5),
+        "undo should restore both v0 and v1 to y=-0.5, got "
+        ~ v0[1].to!string ~ ", " ~ v1[1].to!string);
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}
+
+// -------------------------------------------------------------------------
+// 7.6b: when a selected vertex lies ON the plane, the translate gets
+// projected onto the plane (the perpendicular component is stripped).
+// Setup: use offset to put the plane at X=-0.5, select vert 0 at
+// (-0.5,-0.5,-0.5). Translate (1, 1, 1) → vert 0 should move by (0, 1, 1)
+// because the X component (perpendicular to the plane) is projected out.
+// -------------------------------------------------------------------------
+
+unittest { // on-plane vertex projected
+    postJson("/api/reset", "");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled true");
+    postJson("/api/command", "tool.pipe.attr symmetry axis x");
+    postJson("/api/command", "tool.pipe.attr symmetry offset -0.5");
+    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/transform",
+        `{"kind":"translate","delta":[1,1,1]}`);
+    auto v0 = vertexAt(0);
+    // X projected onto plane (perpendicular stripped) → stays at -0.5.
+    assert(approxEq(v0[0], -0.5) && approxEq(v0[1], 0.5) && approxEq(v0[2], 0.5),
+        "on-plane v0 should have X projected back: ("
+        ~ v0[0].to!string ~ "," ~ v0[1].to!string ~ "," ~ v0[2].to!string ~ ")");
+    postJson("/api/command", "tool.pipe.attr symmetry offset 0");
+    postJson("/api/command", "tool.pipe.attr symmetry enabled false");
+    postJson("/api/reset", "");
+}

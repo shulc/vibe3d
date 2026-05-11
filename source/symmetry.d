@@ -1,0 +1,212 @@
+module symmetry;
+
+import std.algorithm : sort, max;
+import std.math      : abs;
+
+import math : Vec3, dot;
+import mesh : Mesh;
+import toolpipe.packets : SymmetryPacket;
+
+// ---------------------------------------------------------------------------
+// Symmetry — phase 7.6b math helpers and per-vertex pairing builder.
+//
+// The SymmetryStage owns the cache + lifecycle (`rebuildPairing` is called
+// from `Stage.evaluate` whenever `Mesh.mutationVersion` or the plane has
+// changed); tools and the headless `mesh.transform` consume the published
+// `SymmetryPacket` and call `mirrorPosition` / `applySymmetryMirror` per
+// frame.
+// ---------------------------------------------------------------------------
+
+/// Mirror a world-space point across the plane described by `sp`.
+/// `sp.planeNormal` must be unit length (the stage normalises it).
+/// `pos_mirror = pos - 2 * dot(pos - planePoint, normal) * normal`.
+Vec3 mirrorPosition(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @safe {
+    float d = dot(pos - sp.planePoint, sp.planeNormal);
+    return pos - sp.planeNormal * (2.0f * d);
+}
+
+/// Project a world-space point onto the plane described by `sp`. Used
+/// for on-plane vertices when the user drags them with symmetry on — the
+/// projection keeps them anchored to the plane instead of drifting off
+/// (matches MODO's "center vertex stays on the symmetry plane" rule).
+Vec3 projectOnPlane(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @safe {
+    float d = dot(pos - sp.planePoint, sp.planeNormal);
+    return pos - sp.planeNormal * d;
+}
+
+/// Is `pos` on the plane within `sp.epsilonWorld`?
+bool isOnPlane(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @safe {
+    float d = dot(pos - sp.planePoint, sp.planeNormal);
+    return abs(d) <= sp.epsilonWorld;
+}
+
+/// Per-vertex mirror lookup. Returns -1 when the vertex is on-plane,
+/// unpaired, or out of range (callers should treat all of these as
+/// "no mirror to drive").
+int mirrorVertex(const ref SymmetryPacket sp, int vi) pure nothrow @nogc @safe {
+    if (vi < 0 || vi >= cast(int)sp.pairOf.length) return -1;
+    return sp.pairOf[vi];
+}
+
+/// Build the per-vertex pairing table for `mesh` under the plane in
+/// `sp` (uses `sp.planePoint`, `sp.planeNormal`, `sp.epsilonWorld`,
+/// `sp.axisIndex`). Writes results into `outPairOf` and `outOnPlane`
+/// (allocated to `mesh.vertices.length` if shorter).
+///
+/// Algorithm (O(n log n)):
+///   1. Walk every vertex `i`, compute `mirror[i] = mirrorPosition(v[i])`.
+///   2. Build an index `idx[]` of all vertices sorted by their dominant-
+///      axis coordinate.
+///   3. For each `i`, binary-search `idx[]` for the range of vertices
+///      whose dominant coord lies within `epsilon` of `mirror[i]`'s, then
+///      linear-scan that window for a 3D match within `epsilon`.
+///   4. On-plane vertices (within `epsilon` of the plane) are tagged in
+///      `outOnPlane[]`; their mirror is themselves so `outPairOf[i] = -1`.
+///
+/// Axis-aligned planes get the cheapest search axis automatically — the
+/// dominant axis of `planeNormal` is the axis the mirror MOST changes,
+/// so it has the highest discrimination power. For arbitrary axes the
+/// algorithm still works (it just picks one orthogonal axis as the sort
+/// key); the v1 stage only emits axis-aligned planes anyway.
+void rebuildPairing(const ref Mesh mesh, const ref SymmetryPacket sp,
+                    ref int[] outPairOf, ref bool[] outOnPlane)
+{
+    size_t n = mesh.vertices.length;
+    if (outPairOf.length  != n) outPairOf.length  = n;
+    if (outOnPlane.length != n) outOnPlane.length = n;
+
+    if (n == 0) return;
+
+    // Pre-compute mirror positions + on-plane flags.
+    auto mirrored = new Vec3[](n);
+    foreach (i; 0 .. n) {
+        mirrored[i]  = mirrorPosition(sp, mesh.vertices[i]);
+        outOnPlane[i] = isOnPlane(sp, mesh.vertices[i]);
+        outPairOf[i]  = -1;
+    }
+
+    // Pick the search axis: the dominant component of `planeNormal`.
+    // For an axis-aligned plane (normal == ±X/±Y/±Z) this is exact; for
+    // arbitrary planes it's a heuristic that still narrows the candidate
+    // window enough to stay below O(n).
+    int sortAxis = dominantAxis(sp.planeNormal);
+
+    // idx sorted by sortAxis coord. We sort vertex INDICES, not the
+    // verts themselves, so the per-axis lookup that follows is a clean
+    // index → coord lookup.
+    auto idx = new int[](n);
+    foreach (i; 0 .. n) idx[i] = cast(int)i;
+    sort!((a, b) => axisCoord(mesh.vertices[a], sortAxis)
+                 <  axisCoord(mesh.vertices[b], sortAxis))(idx);
+
+    // For binary search we need a parallel coord array.
+    auto sortedCoords = new float[](n);
+    foreach (k; 0 .. n)
+        sortedCoords[k] = axisCoord(mesh.vertices[idx[k]], sortAxis);
+
+    float eps = sp.epsilonWorld;
+    foreach (i; 0 .. n) {
+        if (outOnPlane[i]) continue;   // own mirror; pairOf[i] stays -1
+
+        float target = axisCoord(mirrored[i], sortAxis);
+        // Binary-search the left + right bounds of [target - eps,
+        // target + eps] in sortedCoords. Phobos' `std.range.assumeSorted`
+        // would do this in one call; the open-coded loop avoids dragging
+        // another import + a closure into a hot path.
+        size_t lo = lowerBound(sortedCoords, target - eps);
+        size_t hi = upperBound(sortedCoords, target + eps);
+
+        int best = -1;
+        float bestDist = eps * eps;        // squared (cheap compare)
+        for (size_t k = lo; k < hi; ++k) {
+            int j = idx[k];
+            if (j == cast(int)i) continue; // can't pair to self off-plane
+            Vec3 d = mesh.vertices[j] - mirrored[i];
+            float d2 = d.x * d.x + d.y * d.y + d.z * d.z;
+            if (d2 <= bestDist) {
+                bestDist = d2;
+                best     = j;
+            }
+        }
+        outPairOf[i] = best;
+    }
+}
+
+private int dominantAxis(Vec3 n) pure nothrow @nogc @safe {
+    float ax = abs(n.x), ay = abs(n.y), az = abs(n.z);
+    if (ax >= ay && ax >= az) return 0;
+    if (ay >= ax && ay >= az) return 1;
+    return 2;
+}
+
+private float axisCoord(Vec3 v, int axis) pure nothrow @nogc @safe {
+    return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+}
+
+// Smallest k with sortedCoords[k] >= target. Returns sortedCoords.length
+// when target is larger than every element.
+private size_t lowerBound(const float[] sortedCoords, float target) pure nothrow @nogc @safe {
+    size_t lo = 0, hi = sortedCoords.length;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (sortedCoords[mid] < target) lo = mid + 1;
+        else                            hi = mid;
+    }
+    return lo;
+}
+
+// Smallest k with sortedCoords[k] > target.
+private size_t upperBound(const float[] sortedCoords, float target) pure nothrow @nogc @safe {
+    size_t lo = 0, hi = sortedCoords.length;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (sortedCoords[mid] <= target) lo = mid + 1;
+        else                             hi = mid;
+    }
+    return lo;
+}
+
+// ---------------------------------------------------------------------------
+// applySymmetryMirror — copy mirrored positions from each selected
+// vertex `vi` into its mirror `mi`, then snap any on-plane selected
+// vertex back onto the plane.
+//
+// Convention: `selected[]` is a per-vertex bool mask of "verts the
+// caller already moved" (the symmetric counterparts the caller did NOT
+// move). For each such `vi`:
+//   • if `onPlane[vi]`: project `mesh.vertices[vi]` back onto the plane.
+//   • else if `pairOf[vi] = mi` and `mi != vi`: set
+//     `mesh.vertices[mi] = mirrorPosition(mesh.vertices[vi])`.
+//
+// `outAlsoTouched` is OR-ed with `mi` for each mirror write — callers
+// use it to extend GPU upload / undo snapshot sets to cover the verts
+// the mirror pass touched. Caller MUST size it to `mesh.vertices.length`
+// before the call.
+//
+// If both `vi` and its mirror `mi` are in `selected[]` (the user
+// selected both sides — e.g. whole mesh), the lower-index side drives
+// the mirror so each pair fires exactly once.
+// ---------------------------------------------------------------------------
+void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
+                         const(bool)[] selected,
+                         bool[] outAlsoTouched)
+{
+    if (!sp.enabled) return;
+    if (sp.pairOf.length != mesh.vertices.length) return;
+    foreach (i; 0 .. mesh.vertices.length) {
+        if (i >= selected.length || !selected[i]) continue;
+        if (sp.onPlane[i]) {
+            mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);
+            continue;
+        }
+        int mi = sp.pairOf[i];
+        if (mi < 0 || mi == cast(int)i) continue;
+        // If the mirror is also in `selected[]`, only the lower-index
+        // side drives so the pair fires once.
+        if (mi < cast(int)i && mi < cast(int)selected.length && selected[mi])
+            continue;
+        mesh.vertices[mi] = mirrorPosition(sp, mesh.vertices[i]);
+        if (mi < cast(int)outAlsoTouched.length)
+            outAlsoTouched[mi] = true;
+    }
+}

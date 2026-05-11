@@ -296,7 +296,11 @@ public:
             // fall through to the per-vertex CPU + deferred-upload
             // route regardless of selection size.
             bool falloffActive = captureFalloffForDrag();
-            wholeMeshDrag = !falloffActive
+            // Phase 7.6b: capture the symmetry packet too; mirror pass
+            // breaks the gpuMatrix single-uniform fast path the same
+            // way falloff does, so it gates wholeMeshDrag off.
+            bool symmActive    = captureSymmetryForDrag();
+            wholeMeshDrag = !falloffActive && !symmActive
                 && (vertexProcessCount == cast(int)mesh.vertices.length);
             beginEdit();   // Phase C.2: snapshot pre-drag positions for undo.
             return true;
@@ -341,7 +345,8 @@ public:
         dragDelta = Vec3(0, 0, 0);
         buildVertexCacheIfNeeded();
         bool falloffActiveOutside = captureFalloffForDrag();
-        wholeMeshDrag = !falloffActiveOutside
+        bool symmActiveOutside    = captureSymmetryForDrag();
+        wholeMeshDrag = !falloffActiveOutside && !symmActiveOutside
             && (vertexProcessCount == cast(int)mesh.vertices.length);
         if (ctrl) {
             ctrlConstrain = true;
@@ -631,6 +636,10 @@ private:
                 mesh.vertices[vi].y += delta.y;
                 mesh.vertices[vi].z += delta.z;
             }
+            // Phase 7.6b: write mirror positions for selected verts'
+            // pair counterparts; on-plane selected verts get projected
+            // back onto the plane. No-op when symmetry is disabled.
+            applySymmetryToDrag();
             return;
         }
         // Edit session not open (e.g. tests bypass beginEdit); fall back
@@ -643,6 +652,7 @@ private:
             mesh.vertices[vi].y += delta.y * w;
             mesh.vertices[vi].z += delta.z * w;
         }
+        applySymmetryToDrag();
     }
 
     // Rebuild mesh.vertices for verts in the open edit session: mesh[vi]
@@ -663,6 +673,10 @@ private:
             mesh.vertices[vi].y = baseline.y + dragDelta.y * w;
             mesh.vertices[vi].z = baseline.z + dragDelta.z * w;
         }
+        // Phase 7.6b: same mirror pass that applyDeltaImmediate runs.
+        // After absolute-from-baseline finishes the selected verts, the
+        // mirror writes pick up their final positions and propagate.
+        applySymmetryToDrag();
     }
 
     // Per-cluster delta: project the screen-mouse motion onto each
