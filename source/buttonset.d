@@ -99,6 +99,12 @@ struct Button {
     // legacy action-level `checked:` still works — button-level wins
     // when both are set.
     Checked checked;
+    // YAML `disable: true` — placeholder / not-yet-implemented row.
+    // Background and bevel render as normal; the label is drawn with
+    // an engraved (dark text + 1-px highlight shadow) look and the
+    // button doesn't react to hover or click. MODO-side-panel
+    // convention for "tool listed in this panel but not implemented".
+    bool disabled;
     // Optional state-path override for the visible label. When the path
     // resolves to a non-empty string at render time, that value replaces
     // the static `label`. Useful for command-kind toggles that want to
@@ -514,6 +520,10 @@ private Button parseButton(NodeT)(NodeT btnNode, string panelTitle, string group
         if (dl.containsKey("path"))
             btn.dynamicLabelPath = dl["path"].as!string;
     }
+    if (btnNode.containsKey("disable"))
+        btn.disabled = btnNode["disable"].as!bool;
+    else if (btnNode.containsKey("disabled"))
+        btn.disabled = btnNode["disabled"].as!bool;
     btn.ctrl   = parseModifierVariant(btnNode, "ctrl",  btn.label, path);
     btn.alt    = parseModifierVariant(btnNode, "alt",   btn.label, path);
     btn.shift  = parseModifierVariant(btnNode, "shift", btn.label, path);

@@ -2560,7 +2560,7 @@ void main(string[] args) {
     // renders as pure white when `on` (active) or `held` (mouse down).
     // Returns true when the button is clicked this frame.
     bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
-                            ImVec2 size) {
+                            ImVec2 size, bool disabled = false) {
         ImVec4 bgNormal, bgHover;
         uint   bevelLightN, bevelDarkN, bevelLightH, bevelDarkH;
         if (isCommand) {
@@ -2580,21 +2580,50 @@ void main(string[] args) {
         }
 
         ImVec4 white = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
+        // Disabled buttons keep the normal bg / bevel but freeze hover
+        // and active responses (MODO convention — disabled rows don't
+        // visually react to the cursor at all).
+        if (disabled) {
+            ImGui.PushStyleColor(ImGuiCol.Button,        bgNormal);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, bgNormal);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  bgNormal);
+        } else {
+            ImGui.PushStyleColor(ImGuiCol.Button,        on ? white : bgNormal);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, on ? white : bgHover);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  white);
+        }
         ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, ImVec2(0.0f, 0.5f));
-        bool clicked = ImGui.Button(label, size);
+        // Suppress ImGui's built-in text rendering for disabled rows —
+        // we draw the engraved label ourselves after the bevel pass.
+        bool rawClicked = ImGui.Button(disabled ? "" : label, size);
+        bool clicked    = rawClicked && !disabled;
         ImGui.PopStyleVar();
         ImGui.PopStyleColor(3);
 
-        bool held = ImGui.IsItemActive();
+        bool held = !disabled && ImGui.IsItemActive();
         drawButtonOutline();
         if (!on && !held) {
-            bool hov = ImGui.IsItemHovered();
+            bool hov = !disabled && ImGui.IsItemHovered();
             drawRaisedBevel(hov ? bevelLightH : bevelLightN,
                             hov ? bevelDarkH  : bevelDarkN,
                             false);
+        }
+
+        // Disabled-engrave: dark text body + 1-px (+1, +1) highlight
+        // shadow. Matches MODO sidepanel "Rounder / Extrude / Lathe"
+        // greyed-but-readable look — bg/bevel unchanged, only the
+        // label rendering differs.
+        if (disabled) {
+            ImVec2 rmin = ImGui.GetItemRectMin();
+            ImVec2 rmax = ImGui.GetItemRectMax();
+            ImVec2 ts   = ImGui.CalcTextSize(label);
+            ImVec2 tp   = ImVec2(rmin.x + 6.0f,
+                                 rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f);
+            uint shadowCol = IM_COL32(245, 245, 231, 200);
+            uint textCol   = IM_COL32( 95,  90,  78, 255);
+            ImGui.GetWindowDrawList().AddText(ImVec2(tp.x + 1, tp.y + 1),
+                                              shadowCol, label);
+            ImGui.GetWindowDrawList().AddText(tp, textCol, label);
         }
 
         if (shortcut.length > 0) {
@@ -2853,7 +2882,8 @@ void main(string[] args) {
                 // sequence of commands, not a sticky-tool activation).
                 bool isCommand = (action.kind == ActionKind.command
                                || action.kind == ActionKind.script);
-                if (renderStyledButton(label, sc, on, isCommand, ImVec2(-1, 0))) {
+                if (renderStyledButton(label, sc, on, isCommand,
+                                       ImVec2(-1, 0), btn.disabled)) {
                     if (action.kind == ActionKind.popup)
                         ImGui.OpenPopup("##popup" ~ variant ~ "_" ~ btn.label);
                     else
