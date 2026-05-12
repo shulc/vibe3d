@@ -1,121 +1,257 @@
-/// OpenSubdiv evaluator integration for vibe3d's SubpatchPreview.
+/// OpenSubdiv integration for vibe3d's Catmull-Clark needs.
 ///
-/// Two roles:
-///   1. `benchOsdJson` — HTTP-exposed benchmark that times OSD's
-///      stencil eval against vibe3d's own catmullClark recursion.
-///   2. `OsdAccel` — the production back-end SubpatchPreview uses for
-///      every uniform-CC subdivision (all cage faces marked
-///      `isSubpatch`). Builds OSD topology + stencil table once per
-///      cage-topology change, emits the limit Mesh + SubpatchTrace
-///      directly, then refresh()es per-frame in one SpMV.
+///   * `OsdAccel` is the production back-end for SubpatchPreview's
+///     subdivision-surface preview — builds an OSD topology + stencil
+///     table once per cage-topology change and refresh()es per drag
+///     frame in one SpMV.
 ///
-/// Selective subpatch (some faces marked, others not) stays on the
-/// recursive vibe3d path — OpenSubdiv subdivides every face, so the
-/// stitching of refined-vs-unrefined subsets falls to vibe3d's
-/// catmullClarkSelected.
+///   * `catmullClarkOsd` is the OSD-driven replacement for the
+///     formerly-CPU `catmullClark` / `catmullClarkSelected` functions,
+///     used by the permanent `mesh.subdivide` command. Single CC pass
+///     over the cage (or its `faceMask` subset). For partial subsets
+///     it preserves the standard "widened polygon" handling on the
+///     boundary so the result stays manifold (no T-junctions across
+///     refined/un-refined faces).
 module subpatch_osd;
 
-import std.datetime.stopwatch : StopWatch;
-import std.format             : format;
-import math                   : Vec3;
-import mesh                   : Mesh, SubpatchTrace, catmullClark, makeCube, edgeKey;
+import math : Vec3;
+import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
 import osd.c;
 
-/// Build a synthetic cage by Catmull-Clark-refining a unit cube `pre`
-/// times. preLevel=0 → 8 verts / 6 faces, =1 → 26 / 24, =2 → 98 / 96,
-/// =3 → 386 / 384, =4 → 1538 / 1536. Useful as a deterministic
-/// benchmark input so numbers are reproducible across runs.
-Mesh syntheticCage(int preLevel) {
-    Mesh m = makeCube();
-    foreach (_; 0 .. preLevel) m = catmullClark(m);
-    return m;
-}
-
-/// Bench OSD stencil eval against vibe3d's catmullClark recursion for
-/// the same cage and the same target depth. Both produce limit
-/// positions; OSD's path is "build stencils once, SpMV per frame", and
-/// vibe3d's is "recurse depth times per frame". Returns JSON suitable
-/// for HTTP responses.
+/// One Catmull-Clark refinement of `cage` via OpenSubdiv. When
+/// `faceMask` is empty (or all-true) every face is refined and the
+/// result is OSD's level-1 limit mesh verbatim. When `faceMask` is
+/// partial, only marked faces are refined; un-marked faces are
+/// passed through with boundary-edge "widening" — any boundary edge
+/// the marked subset bisects gets its OSD edge-point inserted into
+/// the adjacent un-marked face's vert list so the result is still
+/// manifold (no T-junction across the refinement boundary).
 ///
-/// `iters` controls how many OSD eval iterations to time (averaged).
-/// One warm-up call is run before the timed loop so the first eval's
-/// cold-cache cost doesn't pollute the average.
-string benchOsdJson(ref const Mesh cage, int level, int iters)
-{
+/// Returns `Mesh.init` when OSD can't build a topology (degenerate
+/// input or empty subset).
+Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
     immutable int nv = cast(int)cage.vertices.length;
     immutable int nf = cast(int)cage.faces.length;
+    if (nv == 0 || nf == 0) return Mesh.init;
 
-    // Flatten cage topology into the contiguous int arrays OSD wants.
-    int[] faceVertCounts = new int[](nf);
-    int[] faceVertIndices;
-    foreach (fi, face; cage.faces) {
-        faceVertCounts[fi] = cast(int)face.length;
-        foreach (vi; face) faceVertIndices ~= cast(int)vi;
-    }
-    float[] cageXyz = new float[](3 * nv);
-    foreach (vi, v; cage.vertices) {
-        cageXyz[3*vi + 0] = v.x;
-        cageXyz[3*vi + 1] = v.y;
-        cageXyz[3*vi + 2] = v.z;
+    // Detect selection mode: are ALL faces (effectively) marked?
+    bool anyUnmarked = false;
+    foreach (fi; 0 .. nf) {
+        immutable bool marked =
+            (faceMask.length == 0)
+            || ((fi < faceMask.length) && faceMask[fi]);
+        if (!marked) { anyUnmarked = true; break; }
     }
 
-    StopWatch sw;
-
-    // ---- OSD: topology + stencil-table build ---------------------------
-    sw.start();
-    auto topo = osdc_topology_create(
-        nv, nf,
-        faceVertCounts.ptr, faceVertIndices.ptr,
-        level);
-    sw.stop();
-    double osdBuildMs = sw.peek.total!"nsecs" / 1e6;
-    if (topo is null) {
-        return `{"error":"osdc_topology_create returned null","cage":` ~
-               format(`{"verts":%d,"faces":%d}}`, nv, nf);
+    // ---- Build sub-cage from the marked subset (whole cage when
+    // ----  faceMask is empty / all-true).
+    int[] cageToSub = new int[](nv);
+    cageToSub[] = -1;
+    int[] subToCage;
+    int[] markedFaceIndices;     // cage face idx of each sub-cage face
+    int   subNumVerts    = 0;
+    int   subTotalIndices = 0;
+    foreach (fi; 0 .. nf) {
+        immutable bool marked =
+            (faceMask.length == 0)
+            || ((fi < faceMask.length) && faceMask[fi]);
+        if (!marked) continue;
+        markedFaceIndices ~= cast(int)fi;
+        subTotalIndices  += cast(int)cage.faces[fi].length;
+        foreach (cvi; cage.faces[fi]) {
+            if (cageToSub[cvi] == -1) {
+                cageToSub[cvi] = subNumVerts++;
+                subToCage ~= cvi;
+            }
+        }
     }
-    scope (exit) osdc_topology_destroy(topo);
+    immutable int subNumFaces = cast(int)markedFaceIndices.length;
+    if (subNumFaces == 0) return Mesh.init;
 
-    immutable int osdLimitVerts = osdc_topology_limit_vert_count(topo);
-    immutable int osdLimitFaces = osdc_topology_limit_face_count(topo);
+    int[] sfvc = new int[](subNumFaces);
+    int[] sfvi = new int[](subTotalIndices);
+    {
+        int faceCursor = 0, idxCursor = 0;
+        foreach (fi; markedFaceIndices) {
+            sfvc[faceCursor] = cast(int)cage.faces[fi].length;
+            foreach (cvi; cage.faces[fi])
+                sfvi[idxCursor++] = cageToSub[cvi];
+            ++faceCursor;
+        }
+    }
 
-    // ---- OSD: average eval cost ----------------------------------------
-    auto limitXyz = new float[](3 * osdLimitVerts);
-    osdc_evaluate(topo, cageXyz.ptr, limitXyz.ptr);   // warm-up
-    sw.reset();
-    sw.start();
-    foreach (_; 0 .. iters)
-        osdc_evaluate(topo, cageXyz.ptr, limitXyz.ptr);
-    sw.stop();
-    double osdEvalAvgMs = sw.peek.total!"nsecs" / 1e6 / iters;
+    float[] cageXyz = new float[](3 * subNumVerts);
+    foreach (svi, cvi; subToCage) {
+        Vec3 v = cage.vertices[cvi];
+        cageXyz[3*svi + 0] = v.x;
+        cageXyz[3*svi + 1] = v.y;
+        cageXyz[3*svi + 2] = v.z;
+    }
 
-    // ---- vibe3d: recursive catmullClark for the same depth -------------
-    // First refinement seeds `refined` from `cage` (Mesh holds slices,
-    // so `Mesh refined = cage;` would alias and fail the const cast —
-    // catmullClark returns a fresh value-mesh, side-stepping that).
-    sw.reset();
-    sw.start();
-    Mesh refined = catmullClark(cage);
-    foreach (_; 1 .. level)
-        refined = catmullClark(refined);
-    sw.stop();
-    double vibe3dRefineMs = sw.peek.total!"nsecs" / 1e6;
-    immutable int vibe3dLimitVerts = cast(int)refined.vertices.length;
-    immutable int vibe3dLimitFaces = cast(int)refined.faces.length;
+    // ---- OSD topology at depth 1 + read back limit topology.
+    auto osd = osdc_topology_create(
+        subNumVerts, subNumFaces, sfvc.ptr, sfvi.ptr, 1);
+    if (osd is null) return Mesh.init;
+    scope (exit) osdc_topology_destroy(osd);
 
-    immutable double speedup =
-        osdEvalAvgMs > 0 ? vibe3dRefineMs / osdEvalAvgMs : 0.0;
+    immutable int limitV   = osdc_topology_limit_vert_count(osd);
+    immutable int limitF   = osdc_topology_limit_face_count(osd);
+    immutable int limitIdx = osdc_topology_limit_index_count(osd);
 
-    return format(
-        `{"level":%d,"iters":%d,`
-        ~ `"cage":{"verts":%d,"faces":%d},`
-        ~ `"osd":{"buildMs":%.3f,"evalAvgMs":%.3f,"limitVerts":%d,"limitFaces":%d},`
-        ~ `"vibe3d":{"refineMs":%.3f,"limitVerts":%d,"limitFaces":%d},`
-        ~ `"speedupVsVibe3d":%.2f}`,
-        level, iters,
-        nv, nf,
-        osdBuildMs, osdEvalAvgMs, osdLimitVerts, osdLimitFaces,
-        vibe3dRefineMs, vibe3dLimitVerts, vibe3dLimitFaces,
-        speedup);
+    int[] limitFC = new int[](limitF);
+    int[] limitFI = new int[](limitIdx);
+    int[] faceOriginsRaw = new int[](limitF);
+    int[] vertOriginsRaw = new int[](limitV);
+    osdc_topology_limit_topology(osd, limitFC.ptr, limitFI.ptr);
+    osdc_topology_face_origins(osd, faceOriginsRaw.ptr);
+    osdc_topology_vert_origins(osd, vertOriginsRaw.ptr);
+
+    Vec3[] osdVerts = new Vec3[](limitV);
+    osdc_evaluate(osd, cageXyz.ptr, cast(float*)osdVerts.ptr);
+
+    Mesh result;
+
+    if (!anyUnmarked) {
+        // Full refinement — OSD's output IS the result mesh.
+        result.vertices = osdVerts;
+        result.faces.length = limitF;
+        int cursor = 0;
+        foreach (k; 0 .. limitF) {
+            result.faces[k].length = limitFC[k];
+            foreach (j; 0 .. limitFC[k])
+                result.faces[k][j] = cast(uint)limitFI[cursor++];
+        }
+        // Edges direct from OSD.
+        immutable int limitE = osdc_topology_limit_edge_count(osd);
+        int[] limitEV = new int[](2 * limitE);
+        osdc_topology_limit_edges(osd, limitEV.ptr);
+        result.edges.length = limitE;
+        foreach (k; 0 .. limitE) {
+            result.edges[k] = [
+                cast(uint)limitEV[2*k + 0],
+                cast(uint)limitEV[2*k + 1],
+            ];
+        }
+        // Per-face subpatch flag inherits from the parent cage face.
+        result.isSubpatch = new bool[](limitF);
+        foreach (k; 0 .. limitF) {
+            int parent = faceOriginsRaw[k];
+            int cageFi = markedFaceIndices[parent];
+            if (cageFi < cast(int)cage.isSubpatch.length)
+                result.isSubpatch[k] = cage.isSubpatch[cageFi];
+        }
+    } else {
+        // ---- Selective: stitch OSD output with un-marked cage faces.
+        //
+        // 1. Build cage-vert → result-vert idx map:
+        //      In-subset cage verts map to their OSD vert-point idx
+        //      (corner-pinned, sitting at the original cage position
+        //      because the shim configures EDGE_AND_CORNER boundary).
+        //      Out-of-subset cage verts get appended after the OSD
+        //      verts.
+        int[] cageToNew = new int[](nv);
+        cageToNew[] = -1;
+        foreach (osdIdx, origin; vertOriginsRaw) {
+            if (origin < 0) continue;
+            int cageVi = subToCage[origin];
+            if (cageToNew[cageVi] == -1)
+                cageToNew[cageVi] = cast(int)osdIdx;
+        }
+        result.vertices = osdVerts.dup;
+        foreach (cageVi; 0 .. nv) {
+            if (cageToNew[cageVi] != -1) continue;
+            cageToNew[cageVi] = cast(int)result.vertices.length;
+            result.vertices ~= cage.vertices[cageVi];
+        }
+
+        // 2. Map each cage edge to its OSD edge-point (limit-vert
+        //    idx) if it lies on the refined subset's boundary. We
+        //    don't get this from OSD directly in cage-edge space —
+        //    walk OSD's input-edge list (sub-cage edges), pair the
+        //    endpoint cage verts via subToCage, look up the cage
+        //    edge through cage.edgeIndexMap.
+        immutable int inEdges = osdc_topology_input_edge_count(osd);
+        int[] inEdgeVerts    = new int[](2 * inEdges);
+        int[] inEdgeChildren = new int[](inEdges);
+        osdc_topology_input_edges          (osd, inEdgeVerts.ptr);
+        osdc_topology_input_edge_children  (osd, inEdgeChildren.ptr);
+
+        uint[uint] cageEdgeToOsdEdgePt;   // cage edge idx → OSD limit vert
+        foreach (se; 0 .. inEdges) {
+            uint cv0 = subToCage[inEdgeVerts[2*se + 0]];
+            uint cv1 = subToCage[inEdgeVerts[2*se + 1]];
+            if (auto p = edgeKey(cv0, cv1) in cage.edgeIndexMap) {
+                cageEdgeToOsdEdgePt[*p] = cast(uint)inEdgeChildren[se];
+            }
+        }
+
+        // 3. Marked faces: OSD output, indices already in result-vert
+        //    space (OSD limit-vert idx == result-vert idx for the
+        //    leading limitV slots).
+        result.faces.length = limitF;
+        result.isSubpatch.length = limitF;
+        int cursor = 0;
+        foreach (k; 0 .. limitF) {
+            result.faces[k].length = limitFC[k];
+            foreach (j; 0 .. limitFC[k])
+                result.faces[k][j] = cast(uint)limitFI[cursor++];
+            int parent = faceOriginsRaw[k];
+            int cageFi = markedFaceIndices[parent];
+            if (cageFi < cast(int)cage.isSubpatch.length)
+                result.isSubpatch[k] = cage.isSubpatch[cageFi];
+        }
+
+        // 4. Un-marked faces: walk each cage edge, insert the OSD
+        //    edge-point if the adjacent marked face subdivided this
+        //    edge (T-junction widening — keeps the mesh manifold).
+        foreach (fi; 0 .. nf) {
+            immutable bool marked =
+                (fi < faceMask.length) && faceMask[fi];
+            if (marked) continue;
+            const(uint)[] face = cage.faces[fi];
+            uint[] widened;
+            foreach (i; 0 .. face.length) {
+                uint v0 = face[i];
+                uint v1 = face[(i + 1) % face.length];
+                widened ~= cast(uint)cageToNew[v0];
+                if (auto cei = edgeKey(v0, v1) in cage.edgeIndexMap) {
+                    if (auto ep = *cei in cageEdgeToOsdEdgePt)
+                        widened ~= *ep;
+                }
+            }
+            result.faces ~= widened;
+            result.isSubpatch ~= (fi < cage.isSubpatch.length)
+                ? cage.isSubpatch[fi] : false;
+        }
+
+        // 5. Rebuild edges via dedup'd face-edge walk (vibe3d's
+        //    addFace pattern). OSD's limit-edges array only covers
+        //    the refined subset; widened un-marked faces add edges
+        //    that aren't in OSD's view.
+        uint[ulong] edgeLookup;
+        foreach (face; result.faces) {
+            foreach (i; 0 .. face.length) {
+                uint a = face[i];
+                uint b = face[(i + 1) % face.length];
+                ulong key = edgeKey(a, b);
+                if (key !in edgeLookup) {
+                    result.edges ~= [a, b];
+                    edgeLookup[key] = cast(uint)(result.edges.length - 1);
+                }
+            }
+        }
+    }
+
+    // Selection masks sized to the new mesh; rebuild loops; bump
+    // versions so downstream caches treat this as a fresh state
+    // distinct from Mesh.init.
+    result.selectedVertices.length = result.vertices.length;
+    result.selectedEdges.length    = result.edges.length;
+    result.selectedFaces.length    = result.faces.length;
+    result.mutationVersion = 1;
+    result.topologyVersion = 1;
+    result.buildLoops();
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,4 +626,47 @@ unittest {
         if (preview.vertices[i] != before[i]) ++moved;
     }
     assert(moved > 0, "selective refresh did not move any preview vert");
+}
+
+// ---------------------------------------------------------------------------
+// catmullClarkOsd — full pass.  One CC on the whole cube cage.
+// 8 cage verts / 6 quads → 26 verts / 24 quads / 48 edges, no
+// unmarked faces, no widening.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh cage = makeCube();
+    Mesh refined = catmullClarkOsd(cage);
+    assert(refined.vertices.length == 26, "L1 cube → 26 verts");
+    assert(refined.faces.length    == 24, "L1 cube → 24 quads");
+    assert(refined.edges.length    == 48, "L1 cube → 48 edges");
+    foreach (face; refined.faces) assert(face.length == 4, "all quads");
+}
+
+// ---------------------------------------------------------------------------
+// catmullClarkOsd — selective.  Mark one cube face, refine.  Marked
+// face splits into 4 quads (4 face-pt, 4 edge-pt, 4 vert-pt). The 4
+// adjacent un-marked side faces each get one OSD edge-point inserted
+// into their vert list (T-junction widening) → quads become pentagons.
+// The 1 opposite un-marked face stays a quad.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh cage = makeCube();
+    bool[] mask = new bool[](cage.faces.length);
+    mask[0] = true;   // mark cube face 0 only
+
+    Mesh refined = catmullClarkOsd(cage, mask);
+
+    // Faces: 4 sub-quads from face 0 + 4 widened pentagons + 1 unchanged quad
+    assert(refined.faces.length == 9,
+           "selective L1 cube → 4 sub + 4 widened + 1 unchanged");
+
+    // Count face-vert counts: expect 4 quads + 4 pentagons + 1 quad
+    int quads = 0, pentas = 0;
+    foreach (face; refined.faces) {
+        if (face.length == 4) ++quads;
+        else if (face.length == 5) ++pentas;
+    }
+    assert(quads == 5, "expected 5 quads (4 sub + 1 opposite-face), got "
+                       ~ quads.stringof);
+    assert(pentas == 4, "expected 4 widened pentagons (one per side face)");
 }

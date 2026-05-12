@@ -6,6 +6,7 @@ import view;
 import editmode;
 import viewcache;
 import snapshot : MeshSnapshot;
+import subpatch_osd : catmullClarkOsd;
 
 class Subdivide : Command {
     private GpuMesh*        gpu;
@@ -45,13 +46,16 @@ class Subdivide : Command {
                 ~ "(switch via `select.typeFrom polygon` or press 3)");
 
         // Full mesh snapshot — Catmull-Clark replaces the entire mesh
-        // (verts, edges, faces, selection, etc.).
+        // (verts, edges, faces, selection, etc.). One OSD pass handles
+        // both full and selected-faces variants; an empty mask
+        // refines the whole cage, a non-empty mask refines only the
+        // marked faces and widens adjacent un-marked faces around the
+        // OSD edge-points (T-junction handling).
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
-        if (mesh.hasAnySelectedFaces())
-            *mesh = catmullClarkSelected(*mesh, mesh.selectedFaces);
-        else
-            *mesh = catmullClark(*mesh);
+        bool[] mask = mesh.hasAnySelectedFaces()
+                      ? mesh.selectedFaces : null;
+        *mesh = catmullClarkOsd(*mesh, mask);
         mesh.resetSelection();
         refreshCaches();
         return true;

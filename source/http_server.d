@@ -576,29 +576,6 @@ class HttpServer {
                 response.body = "{\"error\":\"snap last provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/osd-bench" && request.method == "POST") {
-            // Quick OpenSubdiv evaluator benchmark — synthesises a cage
-            // by pre-refining a unit cube and times OSD stencil eval
-            // against vibe3d's own catmullClark recursion. Self-
-            // contained (no app state), so served straight from the
-            // HTTP thread. Body: {"preLevel":N,"level":M,"iters":K}.
-            try {
-                import std.json : parseJSON;
-                import subpatch_osd : syntheticCage, benchOsdJson;
-                auto body_ = parseJSON(request.body);
-                int pre   = cast(int)body_["preLevel"].integer;
-                int level = cast(int)body_["level"].integer;
-                int iters = cast(int)body_["iters"].integer;
-                auto cage = syntheticCage(pre);
-                response.statusCode = 200;
-                response.body = benchOsdJson(cage, level, iters);
-                response.headers["Content-Type"] = "application/json";
-            } catch (Exception e) {
-                response.statusCode = 500;
-                response.body = "{\"error\":\"osd bench failed\",\"message\":\""
-                              ~ e.msg.replace("\"", "\\\"") ~ "\"}";
-                response.headers["Content-Type"] = "application/json";
-            }
         } else if (request.path == "/api/snap" && request.method == "POST") {
             if (snapQueryProvider !is null) {
                 try {
