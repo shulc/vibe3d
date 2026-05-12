@@ -1623,22 +1623,33 @@ struct Mesh {
         }
 
         // Anchor walk — boundary verts walk back to the open start.
-        void anchorOneVert(size_t vi) {
-            if (vertLoop[vi] == ~0u) return;
-            uint cur  = vertLoop[vi];
-            uint orig = cur;
-            foreach (_; 0 .. faces.length + 4) {
-                if (loops[cur].twin == ~0u) break;
-                uint back = loops[loops[cur].twin].next;
-                if (back == orig) break;
-                cur = back;
+        // Skip entirely on closed-manifold meshes (no boundary edges)
+        // — see the matching block in `buildLoops` for the perf note.
+        bool hasBoundary = false;
+        foreach (ei; 0 .. edges.length) {
+            if (edgeLoopA[ei] != -1 && edgeLoopB[ei] == -1) {
+                hasBoundary = true;
+                break;
             }
-            vertLoop[vi] = cur;
         }
-        if (vertices.length >= PARALLEL_BUILD_MIN) {
-            foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
-        } else {
-            foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
+        if (hasBoundary) {
+            void anchorOneVert(size_t vi) {
+                if (vertLoop[vi] == ~0u) return;
+                uint cur  = vertLoop[vi];
+                uint orig = cur;
+                foreach (_; 0 .. faces.length + 4) {
+                    if (loops[cur].twin == ~0u) break;
+                    uint back = loops[loops[cur].twin].next;
+                    if (back == orig) break;
+                    cur = back;
+                }
+                vertLoop[vi] = cur;
+            }
+            if (vertices.length >= PARALLEL_BUILD_MIN) {
+                foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
+            } else {
+                foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
+            }
         }
     }
 }
