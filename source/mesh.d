@@ -2638,17 +2638,28 @@ struct GpuMesh {
     // Maps each VBO face (position in faceTriStart/Count) to its cage face
     // index. Populated for subpatch uploads; empty in cage mode.
     uint[] faceOriginGpu;
+    // Maps each vertex VBO entry to a source (cage) vertex index. In cage
+    // mode VBO index == cage vertex index. In subpatch mode entries with
+    // `vertOrigin[vi] == uint.max` were skipped during upload, so this
+    // map translates back. Used by gpu_select.d for vertex picking.
+    uint[] vertOriginGpu;
+    // Per-triangle-vertex source face index, parallel to faceVbo (one
+    // uint per face-VBO vertex). All three corners of a face's triangle
+    // fan get the same face index. Drives gpu_select.d's face-ID pass.
+    GLuint faceIdVbo;
 
     void init() {
         glGenVertexArrays(1, &faceVao); glGenBuffers(1, &faceVbo);
         glGenVertexArrays(1, &edgeVao); glGenBuffers(1, &edgeVbo);
         glGenVertexArrays(1, &vertVao); glGenBuffers(1, &vertVbo);
+        glGenBuffers(1, &faceIdVbo);
     }
 
     void destroy() {
         glDeleteVertexArrays(1, &faceVao); glDeleteBuffers(1, &faceVbo);
         glDeleteVertexArrays(1, &edgeVao); glDeleteBuffers(1, &edgeVbo);
         glDeleteVertexArrays(1, &vertVao); glDeleteBuffers(1, &vertVbo);
+        glDeleteBuffers(1, &faceIdVbo);
     }
 
     // When `edgeOrigin`/`vertOrigin` are provided (same length as the mesh's
@@ -2672,12 +2683,14 @@ struct GpuMesh {
         // Faces — interleaved [pos(3) + normal(3)] per vertex, flat shading.
         enum FACE_STRIDE = 6;
         float[] faceData;
+        // Parallel uint-per-vertex face-index array — see GpuMesh.faceIdVbo.
+        uint[]  faceIdData;
         faceTriStart.length = 0;
         faceTriCount.length = 0;
         faceOriginGpu.length = 0;
         if (faceOrigin.length > 0)
             faceOriginGpu = faceOrigin.dup;
-        foreach (face; mesh.faces) {
+        foreach (fi, face; mesh.faces) {
             int start = cast(int)(faceData.length / FACE_STRIDE);
             if (face.length >= 3) {
                 // Flat normal from the first triangle of the face.
@@ -2694,6 +2707,7 @@ struct GpuMesh {
                     foreach (idx; [face[0], face[i], face[i+1]]) {
                         Vec3 v = mesh.vertices[idx];
                         faceData ~= [v.x, v.y, v.z, n.x, n.y, n.z];
+                        faceIdData ~= cast(uint)fi;
                     }
                 }
             }
@@ -2712,6 +2726,21 @@ struct GpuMesh {
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, FACE_STRIDE * float.sizeof,
                               cast(void*)(3 * float.sizeof));
         glEnableVertexAttribArray(1);
+
+        // Parallel face-ID VBO, not bound to faceVao — gpu_select.d builds
+        // its own VAO combining faceVbo (position at attr 0) with this
+        // buffer (face index at attr 1). Always upload at least one
+        // sentinel uint so the buffer is non-zero-sized even for empty
+        // meshes; glDrawArrays with vertex count 0 won't touch it but
+        // glBufferData(0, null) is poorly defined on some drivers.
+        glBindBuffer(GL_ARRAY_BUFFER, faceIdVbo);
+        if (faceIdData.length > 0) {
+            glBufferData(GL_ARRAY_BUFFER, faceIdData.length * uint.sizeof,
+                         faceIdData.ptr, GL_DYNAMIC_DRAW);
+        } else {
+            uint zero = 0;
+            glBufferData(GL_ARRAY_BUFFER, uint.sizeof, &zero, GL_DYNAMIC_DRAW);
+        }
 
         // Edges — skip derived edges (edgeOrigin[ei] == uint.max). When a
         // filter is provided, remember each surviving segment's cage origin
@@ -2733,11 +2762,19 @@ struct GpuMesh {
         glEnableVertexAttribArray(0);
 
         // Vertex points — skip derived vertices (vertOrigin[vi] == uint.max).
+        // `vertOriginGpu` records, for each surviving VBO entry, the cage
+        // vertex index it came from. In cage mode (no filter) the map is
+        // identity; subpatch uploads populate it from `vertOrigin` so
+        // gpu_select.d can translate VBO indices back to cage indices.
         float[] vertData;
         int     kept = 0;
+        vertOriginGpu.length = 0;
         foreach (vi, v; mesh.vertices) {
             if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
             vertData ~= [v.x, v.y, v.z];
+            vertOriginGpu ~= (vertOrigin.length > 0)
+                ? vertOrigin[vi]
+                : cast(uint)vi;
             ++kept;
         }
         vertCount = kept;

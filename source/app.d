@@ -437,15 +437,14 @@ void main(string[] args) {
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
-    // Offscreen ID-buffer edge picker — see source/gpu_select.d for why
-    // (heuristic endpoint / midpoint visibility tests rejected edges
-    // the user could clearly see). Renders into a R32UI FBO sized to
-    // the 3D viewport on demand; `pickEdges` reads back a small window
-    // around the cursor.
-    import gpu_select : GpuEdgeSelect;
-    auto gpuEdgeSelect = new GpuEdgeSelect();
-    gpuEdgeSelect.init();
-    scope(exit) gpuEdgeSelect.destroy();
+    // Offscreen ID-buffer picker shared by pickVertices / pickEdges /
+    // pickFaces. Heuristic-visibility tests rejected elements the user
+    // could clearly see; GPU per-pixel depth-test sidesteps that.
+    // See source/gpu_select.d.
+    import gpu_select : GpuSelectBuffer, SelectMode;
+    auto gpuSelect = new GpuSelectBuffer();
+    gpuSelect.init();
+    scope(exit) gpuSelect.destroy();
 
     // Grid: lines on XZ plane + axis lines
     GLuint gridVao, gridVbo;
@@ -2210,91 +2209,23 @@ void main(string[] args) {
         int mx, my;
         queryMouse(mx, my);
 
-        // In subpatch mode, cage positions differ from what the user sees.
-        // Project the preview's original-derived verts (which carry smoothed
-        // positions) and translate hits back to cage indices via the trace.
-        if (subpatchPreview.active) {
-            const pv = &subpatchPreview.mesh;
-            // Visibility test runs on the CAGE mesh (~8 K verts /
-            // ~5 K front-faces ≈ 40 M ops, manageable) rather than
-            // the preview (~530 K verts × ~250 K front-faces ≈ 133 G
-            // ops — would saturate a core for seconds on every
-            // cache miss). Cage-vert visibility is a good-enough
-            // proxy for the preview's smoothed-vert visibility for
-            // picking purposes; the smoothed position is close to
-            // the cage position relative to the camera.
-            bool[] visible = meshVisCache.get(mesh, cameraView.eye, vp);
-            float closestSqS = 16.0f;
-            int   best      = -1;
-            // Iterate CAGE verts via the reverse cage→preview map
-            // rather than scanning the (potentially 500 K+) preview
-            // verts. With subpatchDepth=3 on an 8 K-poly cage the
-            // preview has ~530 K verts but only ~8 K carry a cage
-            // origin — iterating preview did 522 K wasted reads per
-            // mouse motion.
-            const cageMap = subpatchPreview.cageVertPreview;
-            foreach_reverse (cageI; 0 .. mesh.vertices.length) {
-                if (cageI >= visible.length || !visible[cageI]) continue;
-                if (cageI >= cageMap.length) continue;
-                uint pi = cageMap[cageI];
-                if (pi == uint.max) continue;
-                float sx, sy, ndcZ;
-                if (!projectToWindow(pv.vertices[pi], vp, sx, sy, ndcZ)) continue;
-                float ddx = sx - mx, ddy = sy - my;
-                float d2  = ddx*ddx + ddy*ddy;
-                if (d2 >= closestSqS) continue;
-                closestSqS = d2;
-                best       = cast(int)cageI;
-            }
-            if (best >= 0) {
-                hoveredVertex = best;
-                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    symmetricSelectVertex(&mesh, cameraView, editMode,
-                                          hoveredVertex, /*deselect=*/false);
-                else if (dragMode == DragMode.SelectRemove)
-                    symmetricSelectVertex(&mesh, cameraView, editMode,
-                                          hoveredVertex, /*deselect=*/true);
-            }
-            return;
-        }
+        // Offscreen ID buffer: GPU rasterises every cage vertex as a 1-px
+        // point with `gl_VertexID + 1` as the ID, depth-tested against
+        // the face surface so verts inside / behind opaque geometry
+        // drop out. Subpatch mode maps VBO indices back to cage indices
+        // via gpu.vertOriginGpu inside GpuSelectBuffer.pick.
+        enum int PICK_RADIUS_PX = 4;
+        int hit = gpuSelect.pick(SelectMode.Vertex, mx, my, PICK_RADIUS_PX,
+                                  mesh, gpu, vp);
+        if (hit < 0) return;
 
-        float closestSq = 16.0f;  // 4.0f^2
-        int candidate = -1;
-
-        // A vertex is visible if at least one adjacent face is front-facing.
-        // Geometry-exact: replaces unreliable depth-buffer test (near=0.001).
-        bool[] vertexVisible = meshVisCache.get(mesh, cameraView.eye, vp);
-
-        foreach_reverse (i; 0 .. mesh.vertices.length) {
-            if (!vertexVisible[i]) continue;
-
-            if (!vertexCache.valid[i]) {
-                if (!projectToWindow(mesh.vertices[i], vp,
-                                    vertexCache.sx[i], vertexCache.sy[i], vertexCache.ndcZ[i])) {
-                    vertexCache.valid[i] = false;
-                    continue;
-                }
-                vertexCache.valid[i] = true;
-            }
-
-            float dx = vertexCache.sx[i] - mx;
-            float dy = vertexCache.sy[i] - my;
-            float d2 = dx*dx + dy*dy;
-            if (d2 >= closestSq) continue;
-
-            closestSq = d2;
-            candidate = cast(int)i;
-        }
-
-        if (candidate >= 0) {
-            hoveredVertex = candidate;
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                symmetricSelectVertex(&mesh, cameraView, editMode,
-                                      hoveredVertex, /*deselect=*/false);
-            else if (dragMode == DragMode.SelectRemove)
-                symmetricSelectVertex(&mesh, cameraView, editMode,
-                                      hoveredVertex, /*deselect=*/true);
-        }
+        hoveredVertex = hit;
+        if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+            symmetricSelectVertex(&mesh, cameraView, editMode,
+                                  hoveredVertex, /*deselect=*/false);
+        else if (dragMode == DragMode.SelectRemove)
+            symmetricSelectVertex(&mesh, cameraView, editMode,
+                                  hoveredVertex, /*deselect=*/true);
     }
 
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
@@ -2306,26 +2237,13 @@ void main(string[] args) {
         int mx, my;
         queryMouse(mx, my);
 
-        // Refresh the offscreen ID buffer (no-op when nothing changed
-        // since the last render) and read back a small window around
-        // the cursor. The GPU depth-tested the buffer, so the returned
-        // ID is exactly the cage edge whose pixel sits closest to the
-        // cursor among those NOT occluded by any face — equivalent to
-        // what the user sees on screen.
-        gpuEdgeSelect.update(mesh, gpu, vp);
+        // Offscreen ID buffer: GPU depth-tested per pixel, so the
+        // returned ID is exactly the cage edge whose pixel sits closest
+        // to the cursor among those NOT occluded by any face. The
+        // picker handles its own cache + subpatch VBO→cage translation.
         enum int PICK_RADIUS_PX = 6;
-        int hit = gpuEdgeSelect.pick(mx, my, PICK_RADIUS_PX, vp);
-
-        // Subpatch mode: the GPU buffer holds PREVIEW segment IDs;
-        // translate via the segment→cage map. Subpatch previews never
-        // hide cage edges in `gpu.upload`, so every segment carries an
-        // origin (uint.max never appears in this slot).
-        if (subpatchPreview.active && hit >= 0
-            && hit < gpu.edgeOriginGpu.length)
-        {
-            uint cage = gpu.edgeOriginGpu[hit];
-            hit = (cage == uint.max) ? -1 : cast(int)cage;
-        }
+        int hit = gpuSelect.pick(SelectMode.Edge, mx, my, PICK_RADIUS_PX,
+                                  mesh, gpu, vp);
 
         if (hit < 0) return;
         hoveredEdge = hit;
@@ -2345,173 +2263,24 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
-        // Surface depth at the cursor pixel via ray-vs-plane intersection.
-        // Centroid NDC-Z (the previous heuristic) ordered faces incorrectly
-        // when a small face nested inside a larger occluder had its centroid
-        // pulled closer to the camera by being off-center — e.g. a cylinder
-        // inscribed in a cube: the side quad most facing the camera sits
-        // ~0.05 closer to the camera than the cube's centered face, so the
-        // cylinder won the depth test through the cube wall. Ray-plane gives
-        // the actual world-space depth at the click point.
-        Vec3  rayDir   = screenRay(cast(float)mx, cast(float)my, vp);
-        float bestDist = float.infinity;
 
-        // Subpatch mode: iterate CAGE faces (not the ~500 K preview
-        // faces at subpatchDepth=3), using each cage corner's
-        // smoothed position from the preview. Approximates the
-        // subpatch face outline as a polygon through its smoothed
-        // cage corners — accurate enough for hover-picking on
-        // typical quad / tri cages, and reduces per-frame work by
-        // ~60×. Pre-fix this branch did `new float[]` × 3 per
-        // preview face → 1.5 M GC allocs / frame on an 8 K-cage
-        // mesh (perf showed ~6 % CPU in `_d_newarrayT` /
-        // `smallAlloc` alone).
-        if (subpatchPreview.active) {
-            const pv = &subpatchPreview.mesh;
-            const cageMap = subpatchPreview.cageVertPreview;
-            float[32] sxsBuf, sysBuf;
-            int bestCage = -1;
-            foreach (fi; 0 .. mesh.faces.length) {
-                const(uint)[] cageFace = mesh.faces[fi];
-                if (cageFace.length < 3) continue;
-                if (cageFace.length > sxsBuf.length) continue;   // n-gon overflow guard
+        // Offscreen ID buffer: every triangle gets its source face index
+        // as the rasterised colour, GPU picks the closest face per pixel
+        // automatically. Single-pixel readback (r=0) — faces tile the
+        // screen so any pixel inside a face's silhouette resolves to
+        // that face. Subpatch translation via gpu.faceOriginGpu inside
+        // GpuSelectBuffer.pick.
+        int hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
+                                  mesh, gpu, vp);
+        if (hit < 0) return;
 
-                // Project smoothed cage-corner positions. Bail if
-                // any corner traces are missing (rare: cage has more
-                // verts than preview maps; defensive).
-                auto sxs = sxsBuf[0 .. cageFace.length];
-                auto sys = sysBuf[0 .. cageFace.length];
-                bool ok = true;
-                Vec3 firstSmoothed;
-                foreach (k, cv; cageFace) {
-                    if (cv >= cageMap.length || cageMap[cv] == uint.max) { ok = false; break; }
-                    uint pi = cageMap[cv];
-                    float sx, sy, ndz;
-                    if (!projectToWindowFull(pv.vertices[pi], vp, sx, sy, ndz)) {
-                        ok = false; break;
-                    }
-                    sxs[k] = sx;
-                    sys[k] = sy;
-                    if (k == 0) firstSmoothed = pv.vertices[pi];
-                }
-                if (!ok) continue;
-
-                // Backface cull on the smoothed cage polygon.
-                if (cageFace.length >= 3) {
-                    uint p1 = cageMap[cageFace[1]];
-                    uint p2 = cageMap[cageFace[2]];
-                    if (p1 == uint.max || p2 == uint.max) continue;
-                    Vec3 n = cross(pv.vertices[p1] - firstSmoothed,
-                                   pv.vertices[p2] - firstSmoothed);
-                    if (dot(n, firstSmoothed - cameraView.eye) >= 0) continue;
-
-                    if (!pointInPolygon2D(cast(float)mx, cast(float)my,
-                                          sxs, sys)) continue;
-
-                    Vec3 hit;
-                    if (!rayPlaneIntersect(cameraView.eye, rayDir,
-                                           firstSmoothed, n, hit)) continue;
-                    Vec3  toHit = hit - cameraView.eye;
-                    if (dot(toHit, rayDir) <= 0) continue;
-                    float d2 = toHit.x*toHit.x + toHit.y*toHit.y + toHit.z*toHit.z;
-                    if (d2 < bestDist) {
-                        bestDist = d2;
-                        bestCage = cast(int)fi;
-                    }
-                }
-            }
-            if (bestCage >= 0) {
-                hoveredFace = bestCage;
-                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    symmetricSelectFace(&mesh, cameraView, editMode,
-                                        hoveredFace, /*deselect=*/false);
-                else if (dragMode == DragMode.SelectRemove)
-                    symmetricSelectFace(&mesh, cameraView, editMode,
-                                        hoveredFace, /*deselect=*/true);
-            }
-            return;
-        }
-
-        // Quick screen-space bounds check first (if cache available)
-        bool useBoundsCache = faceCache.minX.length >= mesh.faces.length;
-
-        foreach (fi; 0 .. mesh.faces.length) {
-            uint[] face = mesh.faces[fi];
-            if (face.length < 3) continue;
-
-            // Back-face culling: skip faces whose normal points away from camera.
-            Vec3 faceN = mesh.faceNormal(cast(uint)fi);
-            if (dot(faceN, mesh.vertices[face[0]] - cameraView.eye) >= 0) continue;
-
-            // Quick bounds check if cached — avoids expensive projection.
-            if (useBoundsCache && faceCache.valid[fi]) {
-                if (mx < faceCache.minX[fi] || mx > faceCache.maxX[fi] ||
-                    my < faceCache.minY[fi] || my > faceCache.maxY[fi])
-                    continue;
-            }
-
-            // Project all vertices of this face (reuse vertex cache).
-            int len = cast(int)face.length;
-            float[] tempSx = new float[](len);
-            float[] tempSy = new float[](len);
-            bool allOk = true;
-            for (int j = 0; j < len; j++) {
-                uint vi = face[j];
-                if (!vertexCache.valid[vi]) {
-                    // Use projectToWindowFull so off-screen vertices are still
-                    // projected; only vertices behind the camera (w<=0) are rejected.
-                    float sx, sy, ndcZ;
-                    if (!projectToWindowFull(mesh.vertices[vi], vp, sx, sy, ndcZ)) {
-                        allOk = false;
-                        break;
-                    }
-                    vertexCache.sx[vi] = sx;
-                    vertexCache.sy[vi] = sy;
-                    vertexCache.ndcZ[vi] = ndcZ;
-                    vertexCache.valid[vi] = true;
-                }
-                tempSx[j] = vertexCache.sx[vi];
-                tempSy[j] = vertexCache.sy[vi];
-            }
-            if (!allOk) continue;
-
-            // Compute and cache bounds if not yet cached; re-check bounds.
-            if (useBoundsCache && !faceCache.valid[fi]) {
-                float localMinX = float.infinity, localMaxX = -float.infinity;
-                float localMinY = float.infinity, localMaxY = -float.infinity;
-                foreach (sx; tempSx) { if (sx < localMinX) localMinX = sx; if (sx > localMaxX) localMaxX = sx; }
-                foreach (sy; tempSy) { if (sy < localMinY) localMinY = sy; if (sy > localMaxY) localMaxY = sy; }
-                faceCache.minX[fi] = localMinX; faceCache.maxX[fi] = localMaxX;
-                faceCache.minY[fi] = localMinY; faceCache.maxY[fi] = localMaxY;
-                faceCache.valid[fi] = true;
-                if (mx < localMinX || mx > localMaxX || my < localMinY || my > localMaxY)
-                    continue;
-            }
-
-            if (!pointInPolygon2D(cast(float)mx, cast(float)my, tempSx, tempSy)) continue;
-
-            // Ray-plane depth at the cursor pixel — gives the actual surface
-            // depth at the click point instead of the centroid's depth, so a
-            // small face nested inside a larger occluder no longer wins the
-            // ordering through the wall. Skip on parallel ray (denom→0) or
-            // hits behind the camera.
-            Vec3 hit;
-            if (!rayPlaneIntersect(cameraView.eye, rayDir,
-                                   mesh.vertices[face[0]], faceN, hit)) continue;
-            Vec3  toHit = hit - cameraView.eye;
-            if (dot(toHit, rayDir) <= 0) continue;
-            float d2 = toHit.x*toHit.x + toHit.y*toHit.y + toHit.z*toHit.z;
-            if (d2 < bestDist) { bestDist = d2; hoveredFace = cast(int)fi; }
-        }
-
-        if (hoveredFace >= 0) {
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                symmetricSelectFace(&mesh, cameraView, editMode,
-                                    hoveredFace, /*deselect=*/false);
-            else if (dragMode == DragMode.SelectRemove)
-                symmetricSelectFace(&mesh, cameraView, editMode,
-                                    hoveredFace, /*deselect=*/true);
-        }
+        hoveredFace = hit;
+        if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+            symmetricSelectFace(&mesh, cameraView, editMode,
+                                hoveredFace, /*deselect=*/false);
+        else if (dragMode == DragMode.SelectRemove)
+            symmetricSelectFace(&mesh, cameraView, editMode,
+                                hoveredFace, /*deselect=*/true);
     }
 
     // Bind the picker delegate forward-declared at handleMouseMotion's
