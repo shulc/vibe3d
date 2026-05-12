@@ -1414,6 +1414,7 @@ struct Mesh {
     /// Rebuild the half-edge loop structure from the current faces/vertices.
     /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
     void buildLoops() {
+
         // Pre-compute total loop count + per-face start offset in one
         // pass. Lets pass 1 below run in parallel — each face writes
         // to a disjoint loops[faceLoop[fi] .. faceLoop[fi]+N] slice.
@@ -1458,10 +1459,12 @@ struct Mesh {
         } else {
             foreach (fi; 0 .. faces.length) fillOneFace(fi);
         }
+
         // Serial vertLoop seed pass — every loop writes vertLoop[its vert].
         foreach (idx; 0 .. total) {
             vertLoop[loops[idx].vert] = cast(uint)idx;
         }
+
 
         // Pass 2: rebuild edgeIndexMap (serial — AA insert isn't
         // thread-safe) and fill loopEdge in parallel (D AAs ARE safe
@@ -1481,6 +1484,7 @@ struct Mesh {
         } else {
             foreach (idx; 0 .. total) fillLoopEdge(idx);
         }
+
 
         // Pass 3: twin pairing via (max 2) loops-per-edge. The slot
         // assignment (first → A, second → B) needs serial order to
@@ -1510,8 +1514,98 @@ struct Mesh {
             foreach (idx; 0 .. total) fillTwin(idx);
         }
 
+
         // Anchor walk — independent per vertex; for boundary verts,
         // walk back via next(twin(cur)) until the open start.
+        void anchorOneVert(size_t vi) {
+            if (vertLoop[vi] == ~0u) return;
+            uint cur  = vertLoop[vi];
+            uint orig = cur;
+            foreach (_; 0 .. faces.length + 4) {
+                if (loops[cur].twin == ~0u) break;
+                uint back = loops[loops[cur].twin].next;
+                if (back == orig) break;
+                cur = back;
+            }
+            vertLoop[vi] = cur;
+        }
+        if (vertices.length >= PARALLEL_BUILD_MIN) {
+            foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
+        } else {
+            foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
+        }
+    }
+
+    /// Like `buildLoops` but takes pre-built `loopEdge` and `faceLoop`
+    /// from the caller (catmullClarkTracked builds them deterministically
+    /// during face emit). Skips the edgeIndexMap AA build AND the
+    /// loopEdge AA-lookup pass — together ~100 ms at L3 on an 8 K-vert
+    /// cage subpatch preview, the single biggest cost on the Tab path.
+    ///
+    /// `edgeIndexMap` is left null on the resulting mesh; the subpatch
+    /// preview pipeline doesn't query it (bevel / select-loop /
+    /// symmetry all run on the cage, which builds edgeIndexMap via the
+    /// regular `buildLoops` path). Callers that DO need the AA should
+    /// use `buildLoops` instead.
+    void buildLoopsAfterEmit(uint[] preFaceLoop, uint[] preLoopEdge) {
+        enum size_t PARALLEL_BUILD_MIN = 4096;
+
+        size_t total = preLoopEdge.length;
+        loops.length    = total;
+        vertLoop.length = vertices.length;
+        vertLoop[]      = ~0u;
+        loopEdge        = preLoopEdge;
+        faceLoop        = preFaceLoop;
+
+        // Pass 1: fill vert, face, next, prev — disjoint per face.
+        void fillOneFace(size_t fi) {
+            auto face = faces[fi];
+            uint li = faceLoop[fi];
+            uint N = cast(uint)face.length;
+            foreach (i; 0 .. N) {
+                loops[li + i].vert = face[i];
+                loops[li + i].face = cast(uint)fi;
+                loops[li + i].next = li + (i + 1) % N;
+                loops[li + i].prev = li + (i + N - 1) % N;
+                loops[li + i].twin = ~0u;
+            }
+        }
+        if (faces.length >= PARALLEL_BUILD_MIN) {
+            foreach (fi; parallel(iota(faces.length))) fillOneFace(fi);
+        } else {
+            foreach (fi; 0 .. faces.length) fillOneFace(fi);
+        }
+        // vertLoop seed — serial (multiple faces may write the same vert).
+        foreach (idx; 0 .. total) {
+            vertLoop[loops[idx].vert] = cast(uint)idx;
+        }
+
+        // Twin pairing via loops-per-edge (max 2). Same as buildLoops.
+        int[] edgeLoopA = new int[](edges.length);
+        int[] edgeLoopB = new int[](edges.length);
+        edgeLoopA[] = -1;
+        edgeLoopB[] = -1;
+        foreach (idx; 0 .. total) {
+            uint ei = loopEdge[idx];
+            if (ei == ~0u) continue;
+            if (edgeLoopA[ei] == -1) edgeLoopA[ei] = cast(int)idx;
+            else                     edgeLoopB[ei] = cast(int)idx;
+        }
+        void fillTwin(size_t idx) {
+            uint ei = loopEdge[idx];
+            if (ei == ~0u) return;
+            int a = edgeLoopA[ei];
+            int b = edgeLoopB[ei];
+            if (b == -1) return;
+            loops[idx].twin = (a == cast(int)idx) ? cast(uint)b : cast(uint)a;
+        }
+        if (total >= PARALLEL_BUILD_MIN) {
+            foreach (idx; parallel(iota(total))) fillTwin(idx);
+        } else {
+            foreach (idx; 0 .. total) fillTwin(idx);
+        }
+
+        // Anchor walk — boundary verts walk back to the open start.
         void anchorOneVert(size_t vi) {
             if (vertLoop[vi] == ~0u) return;
             uint cur  = vertLoop[vi];
@@ -2407,6 +2501,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     uint nF = cast(uint)m.faces.length;
     uint nE = cast(uint)m.edges.length;
 
+
     bool isSelected(size_t fi) {
         return fi < inTrace.subpatch.length && inTrace.subpatch[fi];
     }
@@ -2503,6 +2598,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         }
     }
 
+
     // Helpers — `inout` slice into the CSR index array for one row.
     const(uint)[] vertFacesOf(uint vi) {
         return vertFacesIdx[vertFacesOff[vi] .. vertFacesOff[vi + 1]];
@@ -2550,6 +2646,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     // version saves a few hundred ms; the threshold guards small
     // meshes where dispatch overhead would dominate.
     Vec3[] edgePoints = new Vec3[](nE);
+
     enum uint PARALLEL_EDGE_MIN = 4096;
     void computeOneEdgePoint(uint ei) {
         if (!edgeActive[ei]) return;
@@ -2569,6 +2666,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     } else {
         foreach (ei; 0 .. nE) computeOneEdgePoint(ei);
     }
+
 
 
     Vec3[] newVerts = new Vec3[](nV);
@@ -2748,6 +2846,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     // Pre-allocate output face arrays + parallel origin/subpatch trace
     // arrays. Direct index-assignment — no addFaceFast, no per-face
     // edge AA dedup (the edges are already populated above).
+
     result.faces.length = outFCount;
     uint[] faceOriginAcc = new uint[](outFCount);
     bool[] subpatchAcc   = new bool[](outFCount);
@@ -2757,6 +2856,18 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     // allocs (each `[vi0, mFwd, cIdx, mBack]` was a fresh GC array)
     // and the per-non-selected-face `widened.reserve` + `~=` growth.
     uint[] loopPool = new uint[](outNL);
+    // loopEdge follows the same layout as loopPool: loopEdge[k] is
+    // the output edge index that connects loopPool[k] to its next
+    // sibling in the same face. Filling it inline removes the AA
+    // build + AA lookup pass inside buildLoops (~100 ms at L3 on the
+    // user's 6 K-vert cage). The deterministic edge layout (see the
+    // edges enumeration above) gives us each output edge's slot
+    // without any hash lookup.
+    uint[] outLoopEdge = new uint[](outNL);
+    // Per-output-face start index into the flat loop pool (=
+    // result.faceLoop). Computed inline so buildLoopsAfterEmit can
+    // skip the per-face cumulative walk.
+    uint[] outFaceLoop = new uint[](outFCount);
     // Face emit — disjoint writes per cage face into known slots of
     // result.faces / loopPool / faceOriginAcc / subpatchAcc (offsets
     // pre-computed above). Independent across `fi`, no allocations
@@ -2768,6 +2879,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         uint len = cast(uint)face.length;
         if (isSelected(fi)) {
             uint cIdx = faceCentroidIdx[fi];
+            uint radialFaceBase = radialBase + radialOff[fi];
             foreach (i; 0 .. len) {
                 uint vi0   = face[i];
                 uint eFwd  = edgeOfSide(fi, i);
@@ -2778,7 +2890,23 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
                 loopPool[loopCursor + 1] = mFwd;
                 loopPool[loopCursor + 2] = cIdx;
                 loopPool[loopCursor + 3] = mBack;
+                // Output edge index for each of the 4 quad loops.
+                //   L0 (vi0  → mFwd) : half of cage edge eFwd. Two
+                //     halves at cageEdgeOff[eFwd] / +1; pick the
+                //     half that starts at vi0.
+                //   L1 (mFwd → cIdx) : radial of side i.
+                //   L2 (cIdx → mBack): radial of side (i-1+len)%len.
+                //   L3 (mBack → vi0) : other half of cage edge eBack.
+                uint fwdSlot0 = cageEdgeOff[eFwd]
+                              + (vi0 == m.edges[eFwd][0] ? 0 : 1);
+                uint backSlot = cageEdgeOff[eBack]
+                              + (vi0 == m.edges[eBack][1] ? 1 : 0);
+                outLoopEdge[loopCursor    ] = fwdSlot0;
+                outLoopEdge[loopCursor + 1] = radialFaceBase + i;
+                outLoopEdge[loopCursor + 2] = radialFaceBase + (i + len - 1) % len;
+                outLoopEdge[loopCursor + 3] = backSlot;
                 result.faces[outFi] = loopPool[loopCursor .. loopCursor + 4];
+                outFaceLoop[outFi]  = loopCursor;
                 loopCursor += 4;
                 faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
                 subpatchAcc  [outFi] = true;
@@ -2787,13 +2915,28 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         } else {
             uint faceStart = loopCursor;
             foreach (i; 0 .. len) {
-                loopPool[loopCursor++] = face[i];
-                uint ei = edgeOfSide(fi, i);
-                if (edgeMidIdx[ei] != uint.max) {
-                    loopPool[loopCursor++] = edgeMidIdx[ei];
+                uint v0   = face[i];
+                uint v1   = face[(i + 1) % len];
+                uint ei   = edgeOfSide(fi, i);
+                bool act  = edgeMidIdx[ei] != uint.max;
+                // Loop at v0 — edge to next loop:
+                //   active   ei : edge = (v0, mid_i)        → half slot
+                //   inactive ei : edge = (v0, v1)           → only slot
+                loopPool[loopCursor] = v0;
+                if (act) {
+                    outLoopEdge[loopCursor++] = cageEdgeOff[ei]
+                        + (v0 == m.edges[ei][0] ? 0 : 1);
+                    // Loop at mid_i — edge to next loop = (mid, v1) =
+                    // other half of cage edge ei.
+                    loopPool[loopCursor] = edgeMidIdx[ei];
+                    outLoopEdge[loopCursor++] = cageEdgeOff[ei]
+                        + (v1 == m.edges[ei][1] ? 1 : 0);
+                } else {
+                    outLoopEdge[loopCursor++] = cageEdgeOff[ei];
                 }
             }
             result.faces[outFi] = loopPool[faceStart .. loopCursor];
+            outFaceLoop[outFi]  = faceStart;
             faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
             subpatchAcc  [outFi] = false;
         }
@@ -2809,7 +2952,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     ++result.mutationVersion;
 
 
-    result.buildLoops();
+    result.buildLoopsAfterEmit(outFaceLoop, outLoopEdge);
 
 
     outTrace.faceOrigin = faceOriginAcc;
