@@ -30,9 +30,17 @@ import shader : compileShader;
 // translates back to a cage element via gpu.vertOriginGpu /
 // gpu.edgeOriginGpu / gpu.faceOriginGpu after readback.
 //
-// Cache key: (mode, mesh.mutationVersion, view, proj, FBO size). One
+// Cache key: (mode, gpu.uploadVersion, view, proj, FBO size). One
 // cache slot per mode so flipping edit modes 1/2/3 doesn't churn the
 // buffer; camera and mesh changes invalidate all three slots.
+//
+// Why `uploadVersion` and not `mesh.mutationVersion`: the transform
+// tools (Move/Rotate/Scale) mutate `mesh.vertices` directly during a
+// drag WITHOUT bumping mutationVersion — that's intentional, keeps
+// symmetry pair-table / falloff caches stable mid-drag. But they DO
+// re-upload the changed verts to GPU via uploadSelectedVertices each
+// frame. uploadVersion catches those partial uploads so the picker
+// FBO is rebuilt against the new VBO contents.
 // ---------------------------------------------------------------------------
 
 enum SelectMode {
@@ -138,7 +146,7 @@ private:
     // invalidate; mesh/camera changes invalidate all three.
     struct Slot {
         bool      valid;
-        ulong     mutVer;
+        ulong     uploadVer;
         float[16] view;
         float[16] proj;
         int       w, h;
@@ -197,14 +205,14 @@ public:
 
         Slot* slot = &slots[mode];
         if (!slot.valid
-            || slot.mutVer != mesh.mutationVersion
+            || slot.uploadVer != gpu.uploadVersion
             || slot.w != fboW || slot.h != fboH
             || !matricesEqual(slot.view, vp.view)
             || !matricesEqual(slot.proj, vp.proj))
         {
             renderMode(mode, gpu, vp);
             slot.valid  = true;
-            slot.mutVer = mesh.mutationVersion;
+            slot.uploadVer = gpu.uploadVersion;
             slot.view   = vp.view;
             slot.proj   = vp.proj;
             slot.w      = fboW;
@@ -269,7 +277,7 @@ public:
 
     /// Force all three cache slots to re-render on the next pick. The
     /// main loop doesn't need to call this — slots auto-invalidate on
-    /// (mutVer, view, proj, size) changes — but the FBO resize path
+    /// (uploadVer, view, proj, size) changes — but the FBO resize path
     /// uses it internally.
     void invalidate() {
         foreach (ref s; slots) s.valid = false;

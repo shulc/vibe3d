@@ -3342,6 +3342,18 @@ struct GpuMesh {
     // fan get the same face index. Drives gpu_select.d's face-ID pass.
     GLuint faceIdVbo;
 
+    // Bumps on every VBO write (full upload, refreshPositions, partial
+    // uploadSelectedVertices). Distinct from Mesh.mutationVersion: the
+    // transform tools (Move / Rotate / Scale) mutate `mesh.vertices`
+    // directly during drag WITHOUT bumping mutationVersion, on purpose
+    // (symmetry pair-table / falloff caches must stay stable mid-drag,
+    // see TransformTool.captureSymmetryForDrag). That leaves the picker
+    // FBO cache stale w.r.t. the actual GPU buffers — gpu_select.d
+    // keys on `uploadVersion` instead so it re-renders whenever the
+    // VBO contents change, regardless of whether the structural mesh
+    // version moved.
+    ulong  uploadVersion;
+
     void init() {
         glGenVertexArrays(1, &faceVao); glGenBuffers(1, &faceVbo);
         glGenVertexArrays(1, &edgeVao); glGenBuffers(1, &edgeVbo);
@@ -3374,6 +3386,7 @@ struct GpuMesh {
             ++(cast(Mesh*)&mesh).mutationVersion;
             return;
         }
+        ++uploadVersion;
         // Faces — interleaved [pos(3) + normal(3)] per vertex, flat shading.
         enum FACE_STRIDE = 6;
         float[] faceData;
@@ -3503,15 +3516,24 @@ struct GpuMesh {
                           const uint[] vertOrigin = null) {
         if (faceTriStart.length != mesh.faces.length)
             return;   // layout mismatch — caller should fall back to upload().
+        ++uploadVersion;
 
         enum FACE_STRIDE = 6;
 
         // Face VBO: re-fan each face's triangles from its first three
         // verts. Normal recomputed per face (one cross + one sqrt).
         // faceTriStart already maps fi → first vertex in the VBO.
+        //
+        // glMapBufferRange with GL_MAP_WRITE_BIT (no invalidate) — same
+        // preservation contract as uploadSelectedVertices: degenerate faces
+        // (face.length < 3) are skipped, and we rely on their existing VBO
+        // bytes being intact so they don't reappear as garbage triangles.
         if (faceVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-            float* fp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            float* fp = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+                GL_MAP_WRITE_BIT);
             if (fp) {
                 foreach (fi, face; mesh.faces) {
                     if (face.length < 3) continue;
@@ -3558,7 +3580,10 @@ struct GpuMesh {
         // VBO segment order matches the kept-edge walk in `upload`.
         if (edgeVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
-            float* ep = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            float* ep = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
+                GL_MAP_WRITE_BIT);
             if (ep) {
                 int seg = 0;
                 foreach (ei, edge; mesh.edges) {
@@ -3580,7 +3605,10 @@ struct GpuMesh {
         // VBO order matches the kept-vert walk in `upload`.
         if (vertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
-            float* vp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            float* vp = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
+                GL_MAP_WRITE_BIT);
             if (vp) {
                 int seg = 0;
                 foreach (vi, v; mesh.vertices) {
@@ -3605,6 +3633,7 @@ struct GpuMesh {
             ++(cast(Mesh*)&mesh).mutationVersion;
             return;
         }
+        ++uploadVersion;
         enum FACE_STRIDE = 6;
 
         // O(faces × verts_per_face): for each face check if any vertex moved.
@@ -3621,12 +3650,24 @@ struct GpuMesh {
             }
         }
 
-        // Use glMapBuffer for all three VBOs: 3 driver round-trips total instead of
-        // one per updated face/edge/vertex (which could be thousands of calls).
+        // Map each VBO once and scatter-write only the changed slots: 3 driver
+        // round-trips total instead of N glBufferSubData per updated element.
+        //
+        // glMapBufferRange + GL_MAP_WRITE_BIT (no invalidate flag) is the
+        // spec-guaranteed way to keep un-written bytes intact. Plain
+        // glMapBuffer(GL_WRITE_ONLY) is technically equivalent on paper but
+        // some drivers (Mesa among them) treat WRITE_ONLY as a discard hint
+        // and orphan the buffer — the un-updated faces then come back as
+        // garbage geometry on unmap, which manifests as "wireframe but no
+        // fill" for the faces not on the active selection during a
+        // partial-vert drag.
 
         if (anyFaceUpdate) {
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-            float* fp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            float* fp = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+                GL_MAP_WRITE_BIT);
             if (fp) {
                 for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
                     if (!faceNeedsUpdate[fi]) continue;
@@ -3669,7 +3710,10 @@ struct GpuMesh {
 
         if (anyEdgeUpdate) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
-            float* ep = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            float* ep = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
+                GL_MAP_WRITE_BIT);
             if (ep) {
                 foreach (ei, edge; mesh.edges) {
                     if (!edgeNeedsUpdate[ei]) continue;
@@ -3684,7 +3728,10 @@ struct GpuMesh {
 
         // Vertex points.
         glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
-        float* vp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+        float* vp = cast(float*)glMapBufferRange(
+            GL_ARRAY_BUFFER, 0,
+            cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
+            GL_MAP_WRITE_BIT);
         if (vp) {
             foreach (vi, needsUpdate; toUpdate) {
                 if (!needsUpdate) continue;
