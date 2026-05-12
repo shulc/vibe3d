@@ -2208,14 +2208,17 @@ struct SubpatchPreview {
                         targetFaceVbo, targetFaceVertCount))
             {
                 lastRefreshFannedOut = true;
+                // limitGlVbo already has fresh positions from the
+                // fan-out's GPU eval. Just copy them out to keep
+                // preview.vertices in sync — refresh() would re-run
+                // osdc_gl_evaluate redundantly. Net win this step: one
+                // GPU eval per drag frame instead of two.
+                osdAccel.readLimitIntoPreview(mesh);
+            } else {
+                // Fan-out unavailable / layout mismatch — full CPU
+                // (or GPU-with-readback) eval path.
+                osdAccel.refresh(source, mesh);
             }
-            // Always run osdAccel.refresh so preview.mesh.vertices
-            // stays fresh — vibe3d's edge + vert VBOs are written
-            // from the CPU side and several other consumers (lasso
-            // vis test below the threshold, debug overlays) read
-            // preview.vertices too. Phase 3c would drop this when
-            // those consumers migrate.
-            osdAccel.refresh(source, mesh);
             ++mesh.mutationVersion;
             sourceVersion = source.mutationVersion;
             return;

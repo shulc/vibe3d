@@ -994,9 +994,7 @@ struct OsdAccel {
     /// OSD's transform-feedback stencil kernel into the limit VBO,
     /// then reads the limit positions back into preview.vertices so
     /// existing consumers (gpu.upload, picking, drawing) see the
-    /// new positions unchanged. The readback is what's keeping this
-    /// "Phase 3a" — Phase 3b will eliminate it by having vibe3d's
-    /// face VBO consume limitGlVbo directly.
+    /// new positions unchanged.
     private void refreshViaGpu(ref Mesh preview) {
         import bindbc.opengl;
         glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
@@ -1017,9 +1015,20 @@ struct OsdAccel {
             return;
         }
 
-        // Read back limit positions. Vec3 is 3 tightly-packed floats,
-        // so this writes straight into preview.vertices' backing
-        // memory — no permutation, no per-vert loop.
+        readLimitIntoPreview(preview);
+    }
+
+    /// Phase 3b — readback limitGlVbo into preview.vertices WITHOUT
+    /// re-running the GPU eval. Used after refreshIntoFaceVbo (which
+    /// already populated limitGlVbo via osdc_gl_evaluate) to keep
+    /// preview.vertices fresh for CPU-side consumers (edge / vert
+    /// VBO refresh inside refreshNonFacePositions, lasso-vis test,
+    /// debug overlays) — avoids the redundant second eval that
+    /// `refresh(cage, preview)` would do.
+    void readLimitIntoPreview(ref Mesh preview) {
+        import bindbc.opengl;
+        if (limitGlVbo == 0) return;
+        if (preview.vertices.length != limitVertCount) return;
         glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
         glGetBufferSubData(GL_ARRAY_BUFFER, 0,
             cast(GLsizeiptr)(preview.vertices.length * Vec3.sizeof),

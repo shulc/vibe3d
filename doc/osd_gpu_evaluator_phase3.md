@@ -15,10 +15,56 @@
 * Phase 3a — vibe3d commit `c7c3d7c`. OsdAccel.refresh routes through
   `osdc_gl_evaluate` then `glGetBufferSubData`-readbacks the limit
   positions into `preview.vertices` so the existing gpu.upload /
-  picking / lasso paths see fresh data. Correct, production-wired,
-  no perf win (readback cost ≈ CPU eval cost).
-* **Phase 3b — eliminate the readback. NOT YET DONE.** Below: the
-  concrete refactor required, scope notes, and code sketches.
+  picking / lasso paths see fresh data. Correct, production-wired.
+* Phase 3b — done across four commits (`de2843f` step 1, `14f582e`
+  step 2, `c1b7fd7` step 3, this commit step 4):
+  * Step 1 — fan-out shader + cornerToLimit / cornerToFaceId /
+    faceFirstVerts TBOs + `OsdAccel.refreshIntoFaceVbo`.
+  * Step 2 — `GpuMesh.refreshNonFacePositions` (edge + vert VBOs only).
+  * Step 3 — `SubpatchPreview.rebuildIfStale` accepts
+    `targetFaceVbo` + sets `lastRefreshFannedOut`; main loop calls
+    `refreshNonFacePositions` when set, `refreshPositions` otherwise.
+  * Step 4 — readback dedupe: when fan-out runs the GPU eval, the
+    redundant second eval inside `osdAccel.refresh` is skipped via
+    new `osdAccel.readLimitIntoPreview` which just copies the
+    already-populated `limitGlVbo` out via `glGetBufferSubData`.
+
+### What Phase 3b achieves
+
+* One GPU eval per drag frame (was two in the naive Step 3 wire-up
+  because refresh re-evaluated).
+* Face VBO write is GPU-driven via transform feedback — drops the
+  bulk of the 6 MB / drag-frame CPU→GPU position upload that
+  `refreshPositions` used to do for the face stream.
+* Architecture lays the groundwork for Phase 3c — GPU fan-out paths
+  for edge + vert VBOs would let us drop the readback entirely.
+
+### What Phase 3b doesn't do (yet)
+
+* The CPU-side `preview.vertices` is still kept fresh on every drag
+  frame because `GpuMesh.refreshNonFacePositions` reads it for edge
+  + vert VBO updates, and the lasso visibility path (below the 4 K
+  threshold guard) iterates it too. The readback to maintain
+  `preview.vertices` is a `glGetBufferSubData` from `limitGlVbo` —
+  bandwidth-bound, ~0.1 ms per MB, sync-stalling. For the user's 8 K
+  cage / 133 K preview-vert workload it's ~1.5 MB → roughly 1 ms.
+
+### Phase 3c (future)
+
+To drop the readback altogether: GPU fan-out shaders for edges + verts.
+Sketch:
+
+* edgeVbo: per-kept-edge × 2 positions. Shader pulls (a, b) limit
+  verts → emits 6 floats. Same TBO setup pattern as the face fan-out.
+* vertVbo: per-kept-vert position. Where `vertOrigin` filter doesn't
+  remove anything, a `glCopyBufferSubData` from `limitGlVbo` works
+  directly. Otherwise a tiny fan-out shader.
+
+Lasso path: the 4 K-vert threshold already short-circuits visibility
+to "all visible" on large previews (commit `4d4b6fa`), so it
+doesn't need `preview.vertices` at the sizes where it'd matter for
+perf. Below the threshold, an opt-in readback once per lasso mouse-
+up suffices — drag-frame readback isn't needed.
 
 ## What blocks the simple drop-in
 
