@@ -437,6 +437,16 @@ void main(string[] args) {
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
+    // Offscreen ID-buffer edge picker — see source/gpu_select.d for why
+    // (heuristic endpoint / midpoint visibility tests rejected edges
+    // the user could clearly see). Renders into a R32UI FBO sized to
+    // the 3D viewport on demand; `pickEdges` reads back a small window
+    // around the cursor.
+    import gpu_select : GpuEdgeSelect;
+    auto gpuEdgeSelect = new GpuEdgeSelect();
+    gpuEdgeSelect.init();
+    scope(exit) gpuEdgeSelect.destroy();
+
     // Grid: lines on XZ plane + axis lines
     GLuint gridVao, gridVbo;
     int    gridOnlyVertCount; // vertex count of plain grid lines (before axes)
@@ -2295,117 +2305,36 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
-        float closest   = 6.0f;
-        float closestSq = closest * closest;
 
-        // In subpatch mode, iterate CAGE edges (~16 K) using smoothed
-        // endpoint positions from the preview rather than scanning
-        // the ~M preview edges at subpatchDepth=3. Same cage-iter
-        // trick as pickVertices / pickFaces — pre-fix this branch
-        // ran `pv.visibleVertices()` on a 530 K-vert preview
-        // (~133 G ops per cache miss) and walked every preview
-        // edge.
-        if (subpatchPreview.active) {
-            const pv = &subpatchPreview.mesh;
-            bool[] visible = meshVisCache.get(mesh, cameraView.eye, vp);
-            const cageMap = subpatchPreview.cageVertPreview;
-            int bestCage = -1;
-            foreach (i; 0 .. mesh.edges.length) {
-                uint a = mesh.edges[i][0], b = mesh.edges[i][1];
-                if (a >= visible.length || b >= visible.length) continue;
-                if (!visible[a] || !visible[b]) continue;
-                if (a >= cageMap.length || b >= cageMap.length) continue;
-                uint pa = cageMap[a], pb = cageMap[b];
-                if (pa == uint.max || pb == uint.max) continue;
+        // Refresh the offscreen ID buffer (no-op when nothing changed
+        // since the last render) and read back a small window around
+        // the cursor. The GPU depth-tested the buffer, so the returned
+        // ID is exactly the cage edge whose pixel sits closest to the
+        // cursor among those NOT occluded by any face — equivalent to
+        // what the user sees on screen.
+        gpuEdgeSelect.update(mesh, gpu, vp);
+        enum int PICK_RADIUS_PX = 6;
+        int hit = gpuEdgeSelect.pick(mx, my, PICK_RADIUS_PX, vp);
 
-                float ax, ay, aZ, bx, by, bZ;
-                if (!projectToWindow(pv.vertices[pa], vp, ax, ay, aZ)) continue;
-                if (!projectToWindow(pv.vertices[pb], vp, bx, by, bZ)) continue;
-
-                float minX = ax < bx ? ax : bx, maxX = ax < bx ? bx : ax;
-                float minY = ay < by ? ay : by, maxY = ay < by ? by : ay;
-                if (mx < minX - closest || mx > maxX + closest ||
-                    my < minY - closest || my > maxY + closest)
-                    continue;
-
-                float t;
-                float d2 = closestOnSegment2DSquared(cast(float)mx, cast(float)my,
-                                                    ax, ay, bx, by, t);
-                if (d2 >= closestSq) continue;
-                closestSq = d2;
-                bestCage  = cast(int)i;
-            }
-            if (bestCage >= 0) {
-                hoveredEdge = bestCage;
-                if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                    symmetricSelectEdge(&mesh, cameraView, editMode,
-                                        hoveredEdge, /*deselect=*/false);
-                else if (dragMode == DragMode.SelectRemove)
-                    symmetricSelectEdge(&mesh, cameraView, editMode,
-                                        hoveredEdge, /*deselect=*/true);
-            }
-            return;
+        // Subpatch mode: the GPU buffer holds PREVIEW segment IDs;
+        // translate via the segment→cage map. Subpatch previews never
+        // hide cage edges in `gpu.upload`, so every segment carries an
+        // origin (uint.max never appears in this slot).
+        if (subpatchPreview.active && hit >= 0
+            && hit < gpu.edgeOriginGpu.length)
+        {
+            uint cage = gpu.edgeOriginGpu[hit];
+            hit = (cage == uint.max) ? -1 : cast(int)cage;
         }
 
-        // A vertex is visible if at least one adjacent face is front-facing.
-        // Computed once here — O(faces), replaces unreliable depth-buffer test.
-        bool[] vertexVisible = meshVisCache.get(mesh, cameraView.eye, vp);
-
-        foreach (i; 0 .. mesh.edges.length) {
-            uint a = mesh.edges[i][0], b = mesh.edges[i][1];
-
-            // Edge is selectable only if both endpoints are visible.
-            if (!vertexVisible[a] || !vertexVisible[b]) continue;
-
-            // Use vertex cache to avoid duplicate projections
-            if (!vertexCache.valid[a]) {
-                if (!projectToWindow(mesh.vertices[a], vp,
-                                      vertexCache.sx[a], vertexCache.sy[a], vertexCache.ndcZ[a])) {
-                    vertexCache.valid[a] = false;
-                    continue;
-                }
-                vertexCache.valid[a] = true;
-            }
-            if (!vertexCache.valid[b]) {
-                if (!projectToWindow(mesh.vertices[b], vp,
-                                      vertexCache.sx[b], vertexCache.sy[b], vertexCache.ndcZ[b])) {
-                    vertexCache.valid[b] = false;
-                    continue;
-                }
-                vertexCache.valid[b] = true;
-            }
-
-            // Quick bounding rectangle check (O(1) vs O(1) for segment distance)
-            float minX, maxX, minY, maxY;
-            if (vertexCache.sx[a] < vertexCache.sx[b]) { minX = vertexCache.sx[a]; maxX = vertexCache.sx[b]; }
-            else                                        { minX = vertexCache.sx[b]; maxX = vertexCache.sx[a]; }
-            if (vertexCache.sy[a] < vertexCache.sy[b]) { minY = vertexCache.sy[a]; maxY = vertexCache.sy[b]; }
-            else                                        { minY = vertexCache.sy[b]; maxY = vertexCache.sy[a]; }
-
-            float boundsMargin = closest;
-            if (mx < minX - boundsMargin || mx > maxX + boundsMargin ||
-                my < minY - boundsMargin || my > maxY + boundsMargin)
-                continue;  // mouse far from this edge's bounding box
-
-            // Now check distance to line segment (expensive operation)
-            float t;
-            float d2 = closestOnSegment2DSquared(cast(float)mx, cast(float)my,
-                                                  vertexCache.sx[a], vertexCache.sy[a],
-                                                  vertexCache.sx[b], vertexCache.sy[b], t);
-            if (d2 >= closestSq) continue;
-
-            closestSq = d2;
-            hoveredEdge = cast(int)i;
-        }
-
-        if (hoveredEdge >= 0) {
-            if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-                symmetricSelectEdge(&mesh, cameraView, editMode,
-                                    hoveredEdge, /*deselect=*/false);
-            else if (dragMode == DragMode.SelectRemove)
-                symmetricSelectEdge(&mesh, cameraView, editMode,
-                                    hoveredEdge, /*deselect=*/true);
-        }
+        if (hit < 0) return;
+        hoveredEdge = hit;
+        if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
+            symmetricSelectEdge(&mesh, cameraView, editMode,
+                                hoveredEdge, /*deselect=*/false);
+        else if (dragMode == DragMode.SelectRemove)
+            symmetricSelectEdge(&mesh, cameraView, editMode,
+                                hoveredEdge, /*deselect=*/true);
     }
 
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
