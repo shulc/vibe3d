@@ -684,6 +684,8 @@ void main(string[] args) {
         auto factory = id in reg.toolFactories;
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
+        // Per-id pre-activate hook — see activateToolById.
+        if (auto hook = id in reg.preActivate) (*hook)();
         auto t = (*factory)();
         setActiveTool(t);
         activeToolId = id;
@@ -950,6 +952,10 @@ void main(string[] args) {
     void activateToolById(string id) {
         if (activeToolId == id) { setActiveTool(null); activeToolId = ""; }
         else {
+            // Run any per-id pre-activate hook (tool presets push their
+            // pipe-stage attrs here — kept out of the factory so
+            // `cacheSupportedModes` doesn't apply them at startup).
+            if (auto hook = id in reg.preActivate) (*hook)();
             setActiveTool(reg.toolFactories[id]());
             activeToolId = id;
         }

@@ -64,16 +64,21 @@ ToolPreset[] loadToolPresets(string path) {
     return presets;
 }
 
-/// Register every preset as a factory in `reg.toolFactories`. The
-/// closure each preset produces calls the named base factory then
-/// applies the preset's pipe attrs via `Stage.setAttr`. Throws if a
-/// preset references an unknown base tool.
+/// Register every preset as a factory + preActivate hook in `reg`.
+/// The factory just constructs the base tool (pure — no toolpipe
+/// mutation); the preActivate hook applies the preset's pipe attrs
+/// via `Stage.setAttr` and runs only when the preset is actually
+/// selected by the user. Splitting the two means `cacheSupportedModes`
+/// can enumerate every factory at startup without leaving the global
+/// toolpipe configured by whichever preset's setAttr ran last.
+/// Throws if a preset references an unknown base tool.
 void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
     foreach (ref p; presets) {
         if ((p.base in reg.toolFactories) is null)
             throw new Exception(format(
                 "tool_presets: preset '%s' references unknown base '%s'",
                 p.id, p.base));
+
         // Capture by VALUE so each closure sees its own preset (D's
         // `foreach (ref)` over array elements closes by reference,
         // every closure would otherwise share the last iteration's
@@ -85,18 +90,21 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                     throw new Exception(format(
                         "tool_presets: base '%s' for preset '%s' vanished",
                         presetCopy.base, presetCopy.id));
-                auto t = (*baseFactory)();
-                if (g_pipeCtx !is null) {
-                    foreach (stageId, attrs; presetCopy.pipeAttrs) {
-                        auto stage = g_pipeCtx.pipeline.findById(stageId);
-                        if (stage is null) continue;
-                        foreach (k, v; attrs)
-                            stage.setAttr(k, v);
-                    }
+                return (*baseFactory)();
+            };
+        }
+        void delegate() makePreActivate(ToolPreset presetCopy) {
+            return () {
+                if (g_pipeCtx is null) return;
+                foreach (stageId, attrs; presetCopy.pipeAttrs) {
+                    auto stage = g_pipeCtx.pipeline.findById(stageId);
+                    if (stage is null) continue;
+                    foreach (k, v; attrs)
+                        stage.setAttr(k, v);
                 }
-                return t;
             };
         }
         reg.toolFactories[p.id] = makeFactory(p);
+        reg.preActivate[p.id]   = makePreActivate(p);
     }
 }

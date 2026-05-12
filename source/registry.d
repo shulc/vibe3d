@@ -26,9 +26,20 @@ struct AppContext {
 alias ToolFactory    = Tool    delegate();
 alias CommandFactory = Command delegate();
 
+alias PreActivate = void delegate();
+
 struct Registry {
     ToolFactory[string]    toolFactories;
     CommandFactory[string] commandFactories;
+
+    // Per-tool side-effect hook run RIGHT BEFORE the factory in the
+    // user-driven activation path (NOT in `cacheSupportedModes`, so
+    // enumerating every factory at startup doesn't mutate global
+    // state). Populated for tool presets in `registerToolPresets`,
+    // which want to push pipe-stage attrs (e.g. `actionCenter.mode =
+    // element` for `move.element`) when the preset is actually
+    // selected.
+    PreActivate[string] preActivate;
 
     // Cached `supportedModes()` per command/tool id — populated once
     // at app startup via `cacheSupportedModes()` after all factory
