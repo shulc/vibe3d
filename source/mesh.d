@@ -2602,30 +2602,31 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     foreach (ei; 0 .. nE) if (edgeActive[ei])   edgeMidIdx[ei]      = outVCount++;
     foreach (fi; 0 .. nF) if (isSelected(fi))   faceCentroidIdx[fi] = outVCount++;
 
-    // Pre-count output faces AND total loops (sum of face.length over
-    // emitted faces). Each selected cage face emits `len` quads (4
-    // loops each); each non-selected face emits one widened face with
-    // (len + active_sides_of_fi) loops. Pre-counting both lets us
-    // allocate `result.faces` + a single flat `loopPool` whose
-    // slices the face entries reference — replaces the per-face heap
-    // literal `[vi0, mFwd, cIdx, mBack]` allocation (~500 K small
-    // GC allocs at L3) with one contiguous buffer.
-    uint outFCount = 0;
-    uint outNL = 0;
+    // Pre-count output faces AND total loops AND per-cage-face start
+    // offsets into both. Cage face fi contributes `len(fi)` output
+    // faces / `4*len` pool loops if selected; otherwise 1 output face
+    // / `(len + active_sides)` pool loops. Knowing where each cage
+    // face's slice of `result.faces` and `loopPool` starts lets the
+    // face-emit pass parallelise — each cage face writes to disjoint
+    // slots.
+    uint[] cageFaceOutFi    = new uint[](nF + 1);
+    uint[] cageFaceLoopOff  = new uint[](nF + 1);
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
         if (isSelected(fi)) {
-            outFCount += len;
-            outNL     += 4 * len;
+            cageFaceOutFi  [fi + 1] = cageFaceOutFi  [fi] + len;
+            cageFaceLoopOff[fi + 1] = cageFaceLoopOff[fi] + 4 * len;
         } else {
-            outFCount += 1;
+            cageFaceOutFi  [fi + 1] = cageFaceOutFi  [fi] + 1;
             uint widenedLen = len;
             foreach (i; 0 .. len) {
                 if (edgeActive[edgeOfSide(fi, i)]) widenedLen++;
             }
-            outNL += widenedLen;
+            cageFaceLoopOff[fi + 1] = cageFaceLoopOff[fi] + widenedLen;
         }
     }
+    uint outFCount = cageFaceOutFi  [nF];
+    uint outNL     = cageFaceLoopOff[nF];
 
     // Output trace — composed with inTrace so it targets the ultimate source.
     SubpatchTrace outTrace;
@@ -2717,10 +2718,14 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     // allocs (each `[vi0, mFwd, cIdx, mBack]` was a fresh GC array)
     // and the per-non-selected-face `widened.reserve` + `~=` growth.
     uint[] loopPool = new uint[](outNL);
-    uint outFi      = 0;
-    uint loopCursor = 0;
-
-    foreach (fi, face; m.faces) {
+    // Face emit — disjoint writes per cage face into known slots of
+    // result.faces / loopPool / faceOriginAcc / subpatchAcc (offsets
+    // pre-computed above). Independent across `fi`, no allocations
+    // inside → parallelises cleanly.
+    void emitOneCageFace(uint fi) {
+        uint outFi      = cageFaceOutFi  [fi];
+        uint loopCursor = cageFaceLoopOff[fi];
+        const(uint)[] face = m.faces[fi];
         uint len = cast(uint)face.length;
         if (isSelected(fi)) {
             uint cIdx = faceCentroidIdx[fi];
@@ -2752,15 +2757,14 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             result.faces[outFi] = loopPool[faceStart .. loopCursor];
             faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
             subpatchAcc  [outFi] = false;
-            outFi++;
         }
     }
-    // outFi / loopCursor must equal pre-counted totals — assertion
-    // catches a mismatched pre-count if emit logic changes.
-    assert(outFi == outFCount,
-        "catmullClarkTracked: outFi mismatch — pre-count is wrong");
-    assert(loopCursor == outNL,
-        "catmullClarkTracked: loopCursor mismatch — outNL pre-count is wrong");
+    enum uint PARALLEL_FACE_MIN = 4096;
+    if (nF >= PARALLEL_FACE_MIN) {
+        foreach (fi; parallel(iota(nF))) emitOneCageFace(fi);
+    } else {
+        foreach (fi; 0 .. nF) emitOneCageFace(fi);
+    }
     // mutationVersion isn't tracked by individual face writes; bump
     // once now to mirror what addFaceFast did per-call.
     ++result.mutationVersion;
