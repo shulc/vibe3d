@@ -1990,7 +1990,24 @@ void main(string[] args) {
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
-                bool[] visible = meshVisCache.get(mesh, cameraView.eye, vp2);
+                // Mesh.visibleVertices is O(V × F) — fine on small cages but
+                // explodes on heavy imports (an 8K-vert cage with a depth-2
+                // subpatch preview reaches ~133K preview verts × ~132K
+                // preview faces ≈ 17 G ops, multi-minute hang on lasso
+                // mouse-up). Skip the occlusion test above the threshold
+                // and treat every vert as visible — lasso may pick a few
+                // verts the user can't actually see, but it returns
+                // immediately. The proper fix is a GPU-pick-buffer-based
+                // lasso pass; this guard is the cheap interim.
+                enum size_t VIS_OCCLUSION_LIMIT = 4_000;
+                bool[] makeAllVisible(size_t n) {
+                    auto a = new bool[](n); a[] = true; return a;
+                }
+                bool[] visible =
+                    (mesh.vertices.length > VIS_OCCLUSION_LIMIT
+                        || mesh.faces.length > VIS_OCCLUSION_LIMIT)
+                    ? makeAllVisible(mesh.vertices.length)
+                    : meshVisCache.get(mesh, cameraView.eye, vp2);
 
                 // In subpatch mode iterate preview geometry and translate
                 // hits back to cage indices via the trace. A cage element is
@@ -1999,7 +2016,12 @@ void main(string[] args) {
                 // cage behavior).
                 bool preview = subpatchPreview.active;
                 const pv = preview ? &subpatchPreview.mesh : null;
-                bool[] pvVisible = preview ? pvVisCache.get(*pv, cameraView.eye, vp2) : null;
+                bool[] pvVisible = preview
+                    ? ((pv.vertices.length > VIS_OCCLUSION_LIMIT
+                            || pv.faces.length > VIS_OCCLUSION_LIMIT)
+                        ? makeAllVisible(pv.vertices.length)
+                        : pvVisCache.get(*pv, cameraView.eye, vp2))
+                    : null;
 
                 if (editMode == EditMode.Polygons) {
                     if (!shift && !ctrl)
