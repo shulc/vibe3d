@@ -2556,6 +2556,57 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
+    /// Edge + vertex VBO position refresh — the subset of
+    /// `refreshPositions` that skips the face VBO. Used by Phase 3b's
+    /// OSD GPU fan-out path, which writes the face VBO itself; the
+    /// edge / vert VBOs still come from CPU `mesh.vertices` because
+    /// OSD's stencil output is per-limit-vert only and vibe3d's
+    /// edge / vert VBOs need their own layout.
+    void refreshNonFacePositions(ref const Mesh mesh,
+                                  const uint[] edgeOrigin = null,
+                                  const uint[] vertOrigin = null) {
+        if (edgeVertCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
+            float* ep = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+            if (ep) {
+                int seg = 0;
+                foreach (ei, edge; mesh.edges) {
+                    if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max)
+                        continue;
+                    Vec3 a = mesh.vertices[edge[0]];
+                    Vec3 b = mesh.vertices[edge[1]];
+                    int k = seg * 6;
+                    ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
+                    ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
+                    seg++;
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+        }
+        if (vertCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
+            float* vp = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+            if (vp) {
+                int seg = 0;
+                foreach (vi, v; mesh.vertices) {
+                    if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max)
+                        continue;
+                    int k = seg * 3;
+                    vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
+                    seg++;
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
     // Drag-fast path: re-upload every VBO in full, but skip the GC churn
     // that the array-growth `~=` loops in `upload()` impose. Despite the
     // name + `toUpdate` mask, this no longer takes a partial-write
