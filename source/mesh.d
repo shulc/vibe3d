@@ -2364,26 +2364,73 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     foreach (i, e; m.edges)
         edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
 
-    uint[][] edgeFaces = new uint[][](nE);
-    uint[][] vertFaces = new uint[][](nV);
-    uint[][] vertEdges = new uint[][](nV);
-
+    // CSR adjacency — flat arrays + per-key offsets instead of jagged
+    // `uint[][]`. Two passes: count, then cumulative-sum into offsets,
+    // then scatter. Replaces ~6M individual jagged-slice `~=` appends
+    // (with their reallocations) at L3 with a fixed number of flat
+    // allocations.
+    uint[] vertFacesCnt = new uint[](nV);
+    uint[] edgeFacesCnt = new uint[](nE);
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
-        foreach (vi; face) vertFaces[vi] ~= cast(uint)fi;
+        foreach (vi; face) vertFacesCnt[vi]++;
         foreach (i; 0 .. len) {
             uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
-            edgeFaces[ei] ~= cast(uint)fi;
+            edgeFacesCnt[ei]++;
         }
     }
-    foreach (ei, e; m.edges) {
-        vertEdges[e[0]] ~= cast(uint)ei;
-        vertEdges[e[1]] ~= cast(uint)ei;
+    uint[] vertFacesOff = new uint[](nV + 1);
+    uint[] edgeFacesOff = new uint[](nE + 1);
+    foreach (i; 0 .. nV) vertFacesOff[i + 1] = vertFacesOff[i] + vertFacesCnt[i];
+    foreach (i; 0 .. nE) edgeFacesOff[i + 1] = edgeFacesOff[i] + edgeFacesCnt[i];
+    uint[] vertFacesIdx = new uint[](vertFacesOff[nV]);
+    uint[] edgeFacesIdx = new uint[](edgeFacesOff[nE]);
+    {
+        uint[] vfPos = new uint[](nV);
+        uint[] efPos = new uint[](nE);
+        foreach (fi, face; m.faces) {
+            uint len = cast(uint)face.length;
+            foreach (vi; face) {
+                vertFacesIdx[vertFacesOff[vi] + vfPos[vi]++] = cast(uint)fi;
+            }
+            foreach (i; 0 .. len) {
+                uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
+                edgeFacesIdx[edgeFacesOff[ei] + efPos[ei]++] = cast(uint)fi;
+            }
+        }
+    }
+    // vertEdges CSR — each edge contributes to exactly its two endpoints,
+    // so per-vertex count is exact and the fill is a single pass.
+    uint[] vertEdgesCnt = new uint[](nV);
+    foreach (e; m.edges) { vertEdgesCnt[e[0]]++; vertEdgesCnt[e[1]]++; }
+    uint[] vertEdgesOff = new uint[](nV + 1);
+    foreach (i; 0 .. nV) vertEdgesOff[i + 1] = vertEdgesOff[i] + vertEdgesCnt[i];
+    uint[] vertEdgesIdx = new uint[](vertEdgesOff[nV]);
+    {
+        uint[] vePos = new uint[](nV);
+        foreach (ei, e; m.edges) {
+            vertEdgesIdx[vertEdgesOff[e[0]] + vePos[e[0]]++] = cast(uint)ei;
+            vertEdgesIdx[vertEdgesOff[e[1]] + vePos[e[1]]++] = cast(uint)ei;
+        }
+    }
+    // Helpers — `inout` slice into the CSR index array for one row.
+    const(uint)[] vertFacesOf(uint vi) {
+        return vertFacesIdx[vertFacesOff[vi] .. vertFacesOff[vi + 1]];
+    }
+    const(uint)[] edgeFacesOf(uint ei) {
+        return edgeFacesIdx[edgeFacesOff[ei] .. edgeFacesOff[ei + 1]];
+    }
+    const(uint)[] vertEdgesOf(uint vi) {
+        return vertEdgesIdx[vertEdgesOff[vi] .. vertEdgesOff[vi + 1]];
+    }
+    uint edgeFaceCount(uint ei) {
+        return edgeFacesOff[ei + 1] - edgeFacesOff[ei];
     }
 
     bool[] edgeActive         = new bool[](nE);
     bool[] edgeSmoothInterior = new bool[](nE);
-    foreach (ei, fList; edgeFaces) {
+    foreach (ei; 0 .. nE) {
+        auto fList = edgeFacesOf(ei);
         bool anySel = false, allSel = fList.length > 0;
         foreach (fi; fList) {
             if (isSelected(fi)) anySel = true;
@@ -2395,9 +2442,10 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
 
     bool[] vertInterior = new bool[](nV);
     foreach (vi; 0 .. nV) {
-        if (vertFaces[vi].length == 0) continue;
+        auto fList = vertFacesOf(cast(uint)vi);
+        if (fList.length == 0) continue;
         bool allSel = true;
-        foreach (fi; vertFaces[vi])
+        foreach (fi; fList)
             if (!isSelected(fi)) { allSel = false; break; }
         vertInterior[vi] = allSel;
     }
@@ -2413,8 +2461,9 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         Vec3 a = m.vertices[m.edges[ei][0]];
         Vec3 b = m.vertices[m.edges[ei][1]];
         if (edgeSmoothInterior[ei]) {
-            Vec3 f0 = facePoints[edgeFaces[ei][0]];
-            Vec3 f1 = facePoints[edgeFaces[ei][1]];
+            auto efs = edgeFacesOf(cast(uint)ei);
+            Vec3 f0 = facePoints[efs[0]];
+            Vec3 f1 = facePoints[efs[1]];
             edgePoints[ei] = (a + b + f0 + f1) * 0.25f;
         } else {
             edgePoints[ei] = (a + b) * 0.5f;
@@ -2428,15 +2477,16 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             continue;
         }
         Vec3 v = m.vertices[vi];
+        auto veList = vertEdgesOf(cast(uint)vi);
         bool meshBoundary = false;
-        foreach (ei; vertEdges[vi])
-            if (edgeFaces[ei].length < 2) { meshBoundary = true; break; }
+        foreach (ei; veList)
+            if (edgeFaceCount(ei) < 2) { meshBoundary = true; break; }
 
         if (meshBoundary) {
             Vec3 sum = v;
             int  cnt = 1;
-            foreach (ei; vertEdges[vi]) {
-                if (edgeFaces[ei].length >= 2) continue;
+            foreach (ei; veList) {
+                if (edgeFaceCount(ei) >= 2) continue;
                 Vec3 ea = m.vertices[m.edges[ei][0]];
                 Vec3 eb = m.vertices[m.edges[ei][1]];
                 sum += (ea + eb) * 0.5f;
@@ -2444,15 +2494,16 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             }
             newVerts[vi] = sum * (1.0f / cast(float)cnt);
         } else {
-            uint  n  = cast(uint)vertFaces[vi].length;
+            auto vfList = vertFacesOf(cast(uint)vi);
+            uint  n  = cast(uint)vfList.length;
             float fn = cast(float)n;
             Vec3 F = Vec3(0, 0, 0);
-            foreach (fi; vertFaces[vi]) F += facePoints[fi];
+            foreach (fi; vfList) F += facePoints[fi];
             F = F / fn;
 
             Vec3 R = Vec3(0, 0, 0);
-            uint ne = cast(uint)vertEdges[vi].length;
-            foreach (ei; vertEdges[vi]) {
+            uint ne = cast(uint)veList.length;
+            foreach (ei; veList) {
                 Vec3 ea = m.vertices[m.edges[ei][0]];
                 Vec3 eb = m.vertices[m.edges[ei][1]];
                 R += (ea + eb) * 0.5f;
@@ -2472,6 +2523,16 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     foreach (ei; 0 .. nE) if (edgeActive[ei])   edgeMidIdx[ei]      = outVCount++;
     foreach (fi; 0 .. nF) if (isSelected(fi))   faceCentroidIdx[fi] = outVCount++;
 
+    // Pre-count output faces: each selected cage face emits `len` quads;
+    // each non-selected face emits one widened face. Lets us allocate
+    // `result.faces`, `faceOriginAcc`, `subpatchAcc` to their final
+    // length up-front and avoid both the per-face `~=` reallocations
+    // and addFaceFast's `idx.dup` (~500 K small heap allocs at L3).
+    uint outFCount = 0;
+    foreach (fi, face; m.faces) {
+        outFCount += isSelected(fi) ? cast(uint)face.length : 1;
+    }
+
     // Output trace — composed with inTrace so it targets the ultimate source.
     SubpatchTrace outTrace;
     outTrace.vertOrigin = new uint[](outVCount);
@@ -2487,17 +2548,36 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     foreach (fi; 0 .. nF) if (isSelected(fi))
         result.vertices[faceCentroidIdx[fi]] = facePoints[fi];
 
-    // Track face origin + subpatch flag as we emit faces, and remember edge
-    // origin per output-edge-key for a final fill after buildLoops.
-    uint[] faceOriginAcc;
-    bool[] subpatchAcc;
+    // Pre-allocate output face arrays + the parallel origin/subpatch
+    // trace arrays. We still build edges via `result.addEdgeFast` (AA
+    // dedup) — that's a separate optimisation pass.
+    result.faces.length = outFCount;
+    uint[] faceOriginAcc = new uint[](outFCount);
+    bool[] subpatchAcc   = new bool[](outFCount);
+    uint outFi = 0;
     uint[ulong] outEdgeOrigin;
+    uint[ulong] resultEdgeLookup;
 
     void emitOutEdge(uint a, uint b, uint origin) {
         outEdgeOrigin[edgeKey(a, b)] = origin;
     }
+    // Inline addFaceFast minus the .dup — the slice we pass in is a
+    // fresh array (heap literal or freshly-built `widened`) and never
+    // re-used by the caller, so storing the slice directly is safe.
+    // Also writes to a pre-allocated `result.faces[outFi]` slot.
+    void addOutFace(uint[] idx) {
+        result.faces[outFi] = idx;
+        foreach (i; 0 .. cast(uint)idx.length) {
+            uint a = idx[i];
+            uint b = idx[(i + 1) % idx.length];
+            ulong key = edgeKey(a, b);
+            if (key !in resultEdgeLookup) {
+                result.edges ~= [a, b];
+                resultEdgeLookup[key] = cast(uint)(result.edges.length - 1);
+            }
+        }
+    }
 
-    uint[ulong] resultEdgeLookup;
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
         if (isSelected(fi)) {
@@ -2510,9 +2590,10 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
                 uint eBack = edgeLookup[edgeKey(vim1, vi0)];
                 uint mFwd  = edgeMidIdx[eFwd];
                 uint mBack = edgeMidIdx[eBack];
-                result.addFaceFast(resultEdgeLookup, [vi0, mFwd, cIdx, mBack]);
-                faceOriginAcc ~= inTrace.faceOrigin[fi];
-                subpatchAcc   ~= true;
+                addOutFace([vi0, mFwd, cIdx, mBack]);
+                faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
+                subpatchAcc  [outFi] = true;
+                outFi++;
                 // Quad edges: (vi0,mFwd) along eFwd, (mBack,vi0) along eBack,
                 // (mFwd,cIdx) and (cIdx,mBack) are new radial edges.
                 emitOutEdge(vi0,  mFwd, inTrace.edgeOrigin[eFwd]);
@@ -2522,6 +2603,9 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             }
         } else {
             uint[] widened;
+            // Worst case capacity — every edge active → doubles
+            // vertex count. Reserving avoids per-`~=` reallocations.
+            widened.reserve(len * 2);
             foreach (i; 0 .. len) {
                 uint v0 = face[i];
                 uint v1 = face[(i + 1) % len];
@@ -2536,11 +2620,19 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
                     emitOutEdge(v0, v1, inTrace.edgeOrigin[ei]);
                 }
             }
-            result.addFaceFast(resultEdgeLookup, widened);
-            faceOriginAcc ~= inTrace.faceOrigin[fi];
-            subpatchAcc   ~= false;
+            addOutFace(widened);
+            faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
+            subpatchAcc  [outFi] = false;
+            outFi++;
         }
     }
+    // outFi must equal outFCount; assertion catches a mismatched
+    // pre-count if the emit logic above ever changes.
+    assert(outFi == outFCount,
+        "catmullClarkTracked: outFi mismatch — pre-count is wrong");
+    // mutationVersion isn't tracked by individual face writes; bump
+    // once now to mirror what addFaceFast did per-call.
+    ++result.mutationVersion;
 
     result.buildLoops();
 
