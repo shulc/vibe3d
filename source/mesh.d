@@ -2360,13 +2360,52 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         return fi < inTrace.subpatch.length && inTrace.subpatch[fi];
     }
 
-    uint[ulong] edgeLookup;
-    foreach (i, e; m.edges)
-        edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+    // Edge index per (face, side) — reuse m.loopEdge if loops are
+    // already built (the cage mesh is always loop-built; intermediate
+    // step.mesh has buildLoops called at the bottom of this function).
+    // Drops the `edgeLookup` AA: ~1 M hash inserts at function entry
+    // plus ~4 M hash lookups across adjacency-build / radial-enum /
+    // face-emit, replaced with O(1) array indexing.
+    //
+    // The flat array stores edge indices side-by-side per face — same
+    // layout as m.loops: `faceEdgeIdx[m.faceLoop[fi] + i]` = edge of
+    // (face[i], face[(i+1) % len]). When m.loopEdge is populated we
+    // alias it directly; otherwise (defensive — shouldn't happen on
+    // any path that reaches this function in practice) we build a
+    // local copy via the AA-backed fallback.
+    const(uint)[] faceEdgeIdx;
+    const(uint)[] faceLoopStart;
+    uint[ulong]   edgeLookup;   // only populated by the fallback path
+    if (m.loopEdge.length > 0 && m.faceLoop.length == m.faces.length) {
+        faceEdgeIdx   = m.loopEdge;
+        faceLoopStart = m.faceLoop;
+    } else {
+        foreach (i, e; m.edges)
+            edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+        uint total = 0;
+        foreach (face; m.faces) total += cast(uint)face.length;
+        auto localFaceLoop = new uint[](nF);
+        auto localFEI      = new uint[](total);
+        uint cursor = 0;
+        foreach (fi, face; m.faces) {
+            localFaceLoop[fi] = cursor;
+            uint len = cast(uint)face.length;
+            foreach (i; 0 .. len) {
+                ulong key = edgeKey(face[i], face[(i + 1) % len]);
+                localFEI[cursor + i] = edgeLookup[key];
+            }
+            cursor += len;
+        }
+        faceEdgeIdx   = localFEI;
+        faceLoopStart = localFaceLoop;
+    }
+    uint edgeOfSide(size_t fi, uint i) {
+        return faceEdgeIdx[faceLoopStart[fi] + i];
+    }
 
     // CSR adjacency — flat arrays + per-key offsets instead of jagged
     // `uint[][]`. Two passes: count, then cumulative-sum into offsets,
-    // then scatter. Replaces ~6M individual jagged-slice `~=` appends
+    // then scatter. Replaces ~6 M individual jagged-slice `~=` appends
     // (with their reallocations) at L3 with a fixed number of flat
     // allocations.
     uint[] vertFacesCnt = new uint[](nV);
@@ -2375,8 +2414,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         uint len = cast(uint)face.length;
         foreach (vi; face) vertFacesCnt[vi]++;
         foreach (i; 0 .. len) {
-            uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
-            edgeFacesCnt[ei]++;
+            edgeFacesCnt[edgeOfSide(fi, i)]++;
         }
     }
     uint[] vertFacesOff = new uint[](nV + 1);
@@ -2394,7 +2432,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
                 vertFacesIdx[vertFacesOff[vi] + vfPos[vi]++] = cast(uint)fi;
             }
             foreach (i; 0 .. len) {
-                uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
+                uint ei = edgeOfSide(fi, i);
                 edgeFacesIdx[edgeFacesOff[ei] + efPos[ei]++] = cast(uint)fi;
             }
         }
@@ -2604,9 +2642,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         uint base = radialBase + radialOff[fi];
         uint len = cast(uint)face.length;
         foreach (i; 0 .. len) {
-            uint v0 = face[i];
-            uint v1 = face[(i + 1) % len];
-            uint ei = edgeLookup[edgeKey(v0, v1)];
+            uint ei = edgeOfSide(fi, i);
             uint mid = edgeMidIdx[ei];
             result.edges[base + i] = [cIdx, mid];
             outTrace.edgeOrigin[base + i] = uint.max;
@@ -2626,11 +2662,9 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         if (isSelected(fi)) {
             uint cIdx = faceCentroidIdx[fi];
             foreach (i; 0 .. len) {
-                uint vi0  = face[i];
-                uint vi1  = face[(i + 1) % len];
-                uint vim1 = face[(i + len - 1) % len];
-                uint eFwd  = edgeLookup[edgeKey(vi0, vi1)];
-                uint eBack = edgeLookup[edgeKey(vim1, vi0)];
+                uint vi0   = face[i];
+                uint eFwd  = edgeOfSide(fi, i);
+                uint eBack = edgeOfSide(fi, (i + len - 1) % len);
                 uint mFwd  = edgeMidIdx[eFwd];
                 uint mBack = edgeMidIdx[eBack];
                 // Heap literal — fresh array each iteration, safe to
@@ -2646,10 +2680,8 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             // count. Reserving avoids per-`~=` reallocations.
             widened.reserve(len * 2);
             foreach (i; 0 .. len) {
-                uint v0 = face[i];
-                uint v1 = face[(i + 1) % len];
-                widened ~= v0;
-                uint ei = edgeLookup[edgeKey(v0, v1)];
+                widened ~= face[i];
+                uint ei = edgeOfSide(fi, i);
                 if (edgeMidIdx[ei] != uint.max) {
                     widened ~= edgeMidIdx[ei];
                 }
