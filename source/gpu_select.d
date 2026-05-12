@@ -217,29 +217,53 @@ public:
         // VBO index → cage element index. Cage uploads → identity for
         // verts (vertOriginGpu[k] == k) and empty edge/face maps (we
         // pass-through). Subpatch uploads populate the maps.
+        //
+        // Final bounds check against the current `mesh` is the safety
+        // net for stale-VBO picks: this code path can fire from a
+        // mid-event-batch pickFaces (handleMouseMotion → doSelectPickAt)
+        // after a tool already mutated `mesh` but BEFORE the once-per-
+        // frame gpu.upload at app.d's main loop catches up. The cache
+        // slot here is keyed by mesh.mutationVersion, so it dutifully
+        // re-renders the FBO — but the source VBOs (faceIdVbo,
+        // faceOriginGpu, edgeOriginGpu, vertOriginGpu) still describe
+        // the previous topology, so the translated ID can exceed the
+        // shrunken mesh. Out-of-range → -1.
+        int cage;
         final switch (mode) {
             case SelectMode.Vertex:
                 if (gpuId < gpu.vertOriginGpu.length) {
                     uint v = gpu.vertOriginGpu[gpuId];
-                    return (v == uint.max) ? -1 : cast(int)v;
+                    if (v == uint.max) return -1;
+                    cage = cast(int)v;
+                } else {
+                    cage = gpuId;
                 }
-                return gpuId;
+                return (cage >= 0 && cage < cast(int)mesh.vertices.length)
+                       ? cage : -1;
             case SelectMode.Edge:
                 if (gpu.edgeOriginGpu.length > 0
                     && gpuId < gpu.edgeOriginGpu.length)
                 {
                     uint c = gpu.edgeOriginGpu[gpuId];
-                    return (c == uint.max) ? -1 : cast(int)c;
+                    if (c == uint.max) return -1;
+                    cage = cast(int)c;
+                } else {
+                    cage = gpuId;
                 }
-                return gpuId;
+                return (cage >= 0 && cage < cast(int)mesh.edges.length)
+                       ? cage : -1;
             case SelectMode.Face:
                 if (gpu.faceOriginGpu.length > 0
                     && gpuId < gpu.faceOriginGpu.length)
                 {
                     uint c = gpu.faceOriginGpu[gpuId];
-                    return (c == uint.max) ? -1 : cast(int)c;
+                    if (c == uint.max) return -1;
+                    cage = cast(int)c;
+                } else {
+                    cage = gpuId;
                 }
-                return gpuId;
+                return (cage >= 0 && cage < cast(int)mesh.faces.length)
+                       ? cage : -1;
         }
     }
 
