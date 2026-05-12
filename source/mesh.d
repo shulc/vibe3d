@@ -3319,16 +3319,14 @@ struct SubpatchPreview {
             return;
         }
 
-        // ---- OSD-driven uniform path -------------------------------
-        // When every cage face is subpatch-marked, build the entire
-        // preview (mesh + trace) directly from OpenSubdiv — skips the
-        // recursive catmullClarkTracked descent and the per-level
-        // SubdivCache plumbing. Selective subpatch (mixed marks) falls
-        // through to the legacy path below; OSD subdivides every face,
-        // so the stitching of refined / unrefined subsets is what
-        // catmullClarkSelected handles.
-        if (source.allSubpatch()
-            && osdAccel.buildPreview(source, d, mesh, trace))
+        // ---- OSD-driven path (uniform AND selective) ----------------
+        // OsdAccel.buildPreview extracts the subpatch-marked subset (the
+        // whole cage when `allSubpatch`, just a slice otherwise), feeds
+        // it to OpenSubdiv, and produces the limit Mesh + trace. Non-
+        // subpatch faces of the cage are absent from the preview in
+        // the selective case — explicit trade-off documented at
+        // OsdAccel.buildPreview.
+        if (osdAccel.buildPreview(source, d, mesh, trace))
         {
             active = true;
             cageVertPreview = new uint[](source.vertices.length);
@@ -3342,7 +3340,8 @@ struct SubpatchPreview {
             return;
         }
 
-        // ---- Legacy recursive path (selective subpatch only) -------
+        // ---- Legacy recursive fallback (OSD topology creation failed
+        // — degenerate cage; should not happen for valid inputs) ----
         levels.length = d;
         auto t0 = SubpatchTrace.identity(source, source.isSubpatch);
         levels[0].step = catmullClarkTracked(source, t0, &levels[0].cache);
