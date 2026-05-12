@@ -376,7 +376,15 @@ private:
         glReadPixels(x0, y0, rw, rh, GL_RED_INTEGER, GL_UNSIGNED_INT, buf.ptr);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        int  bestDist = int.max;
+        // The (2r+1)² readback window includes corner pixels with
+        // manhattan distance up to 2r — without a cap, an element at
+        // (r, r) gets picked from `2r` pixels away even though the
+        // search radius is `r`. Cap the manhattan distance to `r`
+        // (so the effective hit-region is a diamond, not the bounding
+        // square) to match the screen-space tolerance the per-pick
+        // call site asked for. r == 0 (face pick) still works — only
+        // the exact pixel is considered.
+        int  bestDist = r + 1;
         uint bestId   = 0;
         foreach (j; 0 .. rh) foreach (i; 0 .. rw) {
             uint id = buf[j * rw + i];
@@ -384,6 +392,7 @@ private:
             int px = x0 + i;
             int py = y0 + j;
             int d  = abs(px - vx) + abs(py - fbY);
+            if (d > r) continue;
             if (d < bestDist) { bestDist = d; bestId = id; }
         }
         if (bestId == 0) return -1;
