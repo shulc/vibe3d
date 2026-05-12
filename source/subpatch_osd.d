@@ -375,11 +375,43 @@ struct OsdAccel {
             cageScratchXyz[3*svi + 2] = v.z;
         }
 
+        // Depth cap by sub-cage size. Subpatch preview face count
+        // grows by ~4× per level; the stencil-table builder OSD runs
+        // inside `osdc_topology_create` peaks at several × the final
+        // limit-table footprint. Beyond ~1.5 M limit faces the build
+        // can blow several GB of working memory and the process is
+        // killed (SIGBUS / OOM) before any error is observable on
+        // the D side. Cap the depth so the worst case stays in a
+        // few hundred MB — the user can still set higher
+        // `subpatchDepth` and we just refine fewer times.
+        enum long MAX_LIMIT_FACES = 1_500_000;
+        int effectiveLevel = level;
+        long projected = cast(long)subNumFaces;
+        long mul = 1L;
+        foreach (k; 0 .. level) mul *= 4L;
+        projected = cast(long)subNumFaces * mul;
+        while (effectiveLevel > 1 && projected > MAX_LIMIT_FACES) {
+            --effectiveLevel;
+            projected /= 4L;
+        }
+        if (effectiveLevel != level) {
+            import std.stdio : stderr;
+            try {
+                stderr.writefln(
+                    "[subpatch_osd] capping subpatch depth %d -> %d "
+                    ~ "(sub-cage %d faces, projected %d limit faces "
+                    ~ "exceeds %d cap)",
+                    level, effectiveLevel,
+                    subNumFaces, projected * (1L << (2 * (level - effectiveLevel))),
+                    MAX_LIMIT_FACES);
+            } catch (Exception) {}
+        }
+
         // ---- Build OSD topology + stencil table on the sub-cage -----
         osd = osdc_topology_create(
             subNumVerts, subNumFaces,
             subFaceVertCounts.ptr, subFaceVertIndices.ptr,
-            level);
+            effectiveLevel);
         if (osd is null) { clear(); return false; }
 
         immutable int limitVerts   = osdc_topology_limit_vert_count(osd);
