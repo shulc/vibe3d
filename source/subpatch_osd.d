@@ -18,6 +18,13 @@ import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
 import osd.c;
 
+/// Global gate for the GPU stencil evaluator. App.d flips this to true
+/// after SDL+OpenGL are loaded and the smoke test passes; it stays
+/// false in headless contexts (`dub test`, future CLI tools) so
+/// OsdAccel.buildPreview doesn't try to call GL functions without a
+/// context and segfault.
+__gshared bool g_osdGpuEnabled = false;
+
 /// One-shot startup verification of the OSD GL evaluator. Builds a
 /// tiny cube cage, evaluates limit positions both on CPU and on GPU
 /// via transform feedback, returns the max per-component delta.
@@ -369,18 +376,41 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
 // `buildPreview` on the new mask.
 // ---------------------------------------------------------------------------
 struct OsdAccel {
-    private osdc_topology_t* osd;
-    private float[] cageScratchXyz;    // tightly-packed cage positions
+    import bindbc.opengl : GLuint;
+
+    private osdc_topology_t*     osd;
+    private osdc_gl_evaluator_t* glEval;    // null when no GL context
+    private GLuint               cageGlVbo;  // 0 = uninitialised
+    private GLuint               limitGlVbo;
+    private float[]              cageScratchXyz;     // CPU scratch
+    private float[]              limitScratchXyz;    // readback buffer
+    private int                  limitVertCount;
     bool valid;
 
-    /// Free the OSD handle and reset state. Idempotent.
+    /// Free the OSD handle, GL evaluator + VBOs, and CPU scratches.
+    /// Idempotent.
     void clear() {
+        import bindbc.opengl : glDeleteBuffers;
+        if (glEval !is null) {
+            osdc_gl_destroy(glEval);
+            glEval = null;
+        }
+        if (cageGlVbo != 0) {
+            glDeleteBuffers(1, &cageGlVbo);
+            cageGlVbo = 0;
+        }
+        if (limitGlVbo != 0) {
+            glDeleteBuffers(1, &limitGlVbo);
+            limitGlVbo = 0;
+        }
         if (osd !is null) {
             osdc_topology_destroy(osd);
             osd = null;
         }
-        cageScratchXyz.length = 0;
-        valid                 = false;
+        cageScratchXyz.length  = 0;
+        limitScratchXyz.length = 0;
+        limitVertCount         = 0;
+        valid                  = false;
     }
 
     /// Free OSD resources at scope exit. The struct is owned by
@@ -523,6 +553,29 @@ struct OsdAccel {
         immutable int limitFaces   = osdc_topology_limit_face_count(osd);
         immutable int limitIndices = osdc_topology_limit_index_count(osd);
         immutable int limitEdges   = osdc_topology_limit_edge_count(osd);
+        limitVertCount = limitVerts;
+
+        // ---- Try to spin up the GL evaluator -------------------------
+        // Gated on `g_osdGpuEnabled` — app.d sets it after GL init +
+        // smoke-test succeeds. Without an active GL context (e.g.
+        // `dub test` runs) osdc_gl_create would segfault, so we
+        // simply skip and the refresh path stays on CPU eval.
+        glEval = g_osdGpuEnabled ? osdc_gl_create(osd) : null;
+        if (glEval !is null) {
+            import bindbc.opengl;
+            glGenBuffers(1, &cageGlVbo);
+            glGenBuffers(1, &limitGlVbo);
+            glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                cast(GLsizeiptr)(3 * nv * float.sizeof),
+                null, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                cast(GLsizeiptr)(3 * limitVerts * float.sizeof),
+                null, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            limitScratchXyz.length = 3 * limitVerts;
+        }
 
         // ---- Read OSD limit topology + origin arrays -----------------
         int[] faceCounts     = new int[](limitFaces);
@@ -599,7 +652,9 @@ struct OsdAccel {
     }
 
     /// Hot per-frame call: re-eval OSD's stencils against the current
-    /// cage positions and write straight into `preview.vertices`.
+    /// cage positions and write the limit positions into
+    /// `preview.vertices`. Routes through the GPU evaluator when one
+    /// was built at `buildPreview` time; falls back to CPU otherwise.
     void refresh(ref const Mesh cage, ref Mesh preview) {
         assert(valid, "OsdAccel.refresh called on invalid accel");
         assert(cage.vertices.length * 3 == cageScratchXyz.length,
@@ -610,8 +665,50 @@ struct OsdAccel {
             cageScratchXyz[3*vi + 1] = v.y;
             cageScratchXyz[3*vi + 2] = v.z;
         }
-        osdc_evaluate(osd, cageScratchXyz.ptr,
-                      cast(float*)preview.vertices.ptr);
+
+        if (glEval !is null && cageGlVbo != 0 && limitGlVbo != 0) {
+            refreshViaGpu(preview);
+        } else {
+            osdc_evaluate(osd, cageScratchXyz.ptr,
+                          cast(float*)preview.vertices.ptr);
+        }
+    }
+
+    /// GPU eval path. Pumps cage positions into the cage VBO, runs
+    /// OSD's transform-feedback stencil kernel into the limit VBO,
+    /// then reads the limit positions back into preview.vertices so
+    /// existing consumers (gpu.upload, picking, drawing) see the
+    /// new positions unchanged. The readback is what's keeping this
+    /// "Phase 3a" — Phase 3b will eliminate it by having vibe3d's
+    /// face VBO consume limitGlVbo directly.
+    private void refreshViaGpu(ref Mesh preview) {
+        import bindbc.opengl;
+        glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0,
+            cast(GLsizeiptr)(cageScratchXyz.length * float.sizeof),
+            cageScratchXyz.ptr);
+
+        int ok = osdc_gl_evaluate(glEval, cageGlVbo, limitGlVbo);
+        if (!ok) {
+            // GPU eval failed at runtime (shader compile lost between
+            // create and now?). One-time fall back to CPU eval —
+            // dropping the GL state so subsequent calls take the CPU
+            // path until buildPreview re-runs.
+            osdc_gl_destroy(glEval);
+            glEval = null;
+            osdc_evaluate(osd, cageScratchXyz.ptr,
+                          cast(float*)preview.vertices.ptr);
+            return;
+        }
+
+        // Read back limit positions. Vec3 is 3 tightly-packed floats,
+        // so this writes straight into preview.vertices' backing
+        // memory — no permutation, no per-vert loop.
+        glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
+        glGetBufferSubData(GL_ARRAY_BUFFER, 0,
+            cast(GLsizeiptr)(preview.vertices.length * Vec3.sizeof),
+            preview.vertices.ptr);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 }
 

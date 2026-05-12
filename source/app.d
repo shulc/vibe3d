@@ -461,8 +461,13 @@ void main(string[] args) {
     // canary that the Phase 2 plumbing is sound before we depend on
     // it.
     {
-        import subpatch_osd : runGlEvaluatorSmokeTest;
-        runGlEvaluatorSmokeTest();
+        import subpatch_osd : runGlEvaluatorSmokeTest, g_osdGpuEnabled;
+        immutable float delta = runGlEvaluatorSmokeTest();
+        // Sub-mm match against CPU eval → the GPU stencil kernel
+        // works on this host's GL driver; enable it for production
+        // subpatch refresh.
+        if (delta >= 0.0f && delta < 1e-3f)
+            g_osdGpuEnabled = true;
     }
 
     // Grid: lines on XZ plane + axis lines
