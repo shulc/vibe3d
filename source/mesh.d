@@ -2561,14 +2561,29 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     foreach (ei; 0 .. nE) if (edgeActive[ei])   edgeMidIdx[ei]      = outVCount++;
     foreach (fi; 0 .. nF) if (isSelected(fi))   faceCentroidIdx[fi] = outVCount++;
 
-    // Pre-count output faces: each selected cage face emits `len` quads;
-    // each non-selected face emits one widened face. Lets us allocate
-    // `result.faces`, `faceOriginAcc`, `subpatchAcc` to their final
-    // length up-front and avoid both the per-face `~=` reallocations
-    // and addFaceFast's `idx.dup` (~500 K small heap allocs at L3).
+    // Pre-count output faces AND total loops (sum of face.length over
+    // emitted faces). Each selected cage face emits `len` quads (4
+    // loops each); each non-selected face emits one widened face with
+    // (len + active_sides_of_fi) loops. Pre-counting both lets us
+    // allocate `result.faces` + a single flat `loopPool` whose
+    // slices the face entries reference — replaces the per-face heap
+    // literal `[vi0, mFwd, cIdx, mBack]` allocation (~500 K small
+    // GC allocs at L3) with one contiguous buffer.
     uint outFCount = 0;
+    uint outNL = 0;
     foreach (fi, face; m.faces) {
-        outFCount += isSelected(fi) ? cast(uint)face.length : 1;
+        uint len = cast(uint)face.length;
+        if (isSelected(fi)) {
+            outFCount += len;
+            outNL     += 4 * len;
+        } else {
+            outFCount += 1;
+            uint widenedLen = len;
+            foreach (i; 0 .. len) {
+                if (edgeActive[edgeOfSide(fi, i)]) widenedLen++;
+            }
+            outNL += widenedLen;
+        }
     }
 
     // Output trace — composed with inTrace so it targets the ultimate source.
@@ -2655,7 +2670,14 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     result.faces.length = outFCount;
     uint[] faceOriginAcc = new uint[](outFCount);
     bool[] subpatchAcc   = new bool[](outFCount);
-    uint outFi = 0;
+    // Flat loop pool — one contiguous uint[] holding every output
+    // face's vertex indices end-to-end. Each result.faces[k] is a
+    // slice into this pool. Replaces ~500 K per-face heap-literal
+    // allocs (each `[vi0, mFwd, cIdx, mBack]` was a fresh GC array)
+    // and the per-non-selected-face `widened.reserve` + `~=` growth.
+    uint[] loopPool = new uint[](outNL);
+    uint outFi      = 0;
+    uint loopCursor = 0;
 
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
@@ -2667,35 +2689,37 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
                 uint eBack = edgeOfSide(fi, (i + len - 1) % len);
                 uint mFwd  = edgeMidIdx[eFwd];
                 uint mBack = edgeMidIdx[eBack];
-                // Heap literal — fresh array each iteration, safe to
-                // store the slice directly (no `.dup`).
-                result.faces[outFi] = [vi0, mFwd, cIdx, mBack];
+                loopPool[loopCursor    ] = vi0;
+                loopPool[loopCursor + 1] = mFwd;
+                loopPool[loopCursor + 2] = cIdx;
+                loopPool[loopCursor + 3] = mBack;
+                result.faces[outFi] = loopPool[loopCursor .. loopCursor + 4];
+                loopCursor += 4;
                 faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
                 subpatchAcc  [outFi] = true;
                 outFi++;
             }
         } else {
-            uint[] widened;
-            // Worst case capacity — every edge active → doubles vertex
-            // count. Reserving avoids per-`~=` reallocations.
-            widened.reserve(len * 2);
+            uint faceStart = loopCursor;
             foreach (i; 0 .. len) {
-                widened ~= face[i];
+                loopPool[loopCursor++] = face[i];
                 uint ei = edgeOfSide(fi, i);
                 if (edgeMidIdx[ei] != uint.max) {
-                    widened ~= edgeMidIdx[ei];
+                    loopPool[loopCursor++] = edgeMidIdx[ei];
                 }
             }
-            result.faces[outFi] = widened;
+            result.faces[outFi] = loopPool[faceStart .. loopCursor];
             faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
             subpatchAcc  [outFi] = false;
             outFi++;
         }
     }
-    // outFi must equal outFCount; assertion catches a mismatched
-    // pre-count if the emit logic above ever changes.
+    // outFi / loopCursor must equal pre-counted totals — assertion
+    // catches a mismatched pre-count if emit logic changes.
     assert(outFi == outFCount,
         "catmullClarkTracked: outFi mismatch — pre-count is wrong");
+    assert(loopCursor == outNL,
+        "catmullClarkTracked: loopCursor mismatch — outNL pre-count is wrong");
     // mutationVersion isn't tracked by individual face writes; bump
     // once now to mirror what addFaceFast did per-call.
     ++result.mutationVersion;
