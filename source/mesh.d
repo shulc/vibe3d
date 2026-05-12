@@ -3074,11 +3074,24 @@ void refreshSubdivPositions(ref const Mesh prev, ref const SubdivCache cache,
         return cache.edgeFacesOff[ei + 1] - cache.edgeFacesOff[ei];
     }
 
+    // Hot inner loops below avoid `Vec3` operator overloads — they
+    // showed up in profiling at ~25% self-time across `+`, `-`, `*`,
+    // `/`, `+=` calls because each operator returns a fresh Vec3 (one
+    // `emplaceInitializer` per op). Plain float accumulators inline
+    // cleanly and let the compiler keep everything in registers.
+
     // facePoints — centroid of each selected face.
     Vec3[] facePoints = new Vec3[](nF);
     foreach (fi; 0 .. nF) {
-        if (cache.faceCentroidIdx[fi] != uint.max)
-            facePoints[fi] = prev.faceCentroid(cast(uint)fi);
+        if (cache.faceCentroidIdx[fi] == uint.max) continue;
+        const uint[] face = prev.faces[fi];
+        float sx = 0, sy = 0, sz = 0;
+        foreach (vi; face) {
+            Vec3 p = prev.vertices[vi];
+            sx += p.x; sy += p.y; sz += p.z;
+        }
+        float inv = 1.0f / cast(float)face.length;
+        facePoints[fi] = Vec3(sx * inv, sy * inv, sz * inv);
     }
 
     // edgePoints — C-C edge formula or simple midpoint.
@@ -3090,9 +3103,15 @@ void refreshSubdivPositions(ref const Mesh prev, ref const SubdivCache cache,
         Vec3 b = prev.vertices[prev.edges[ei][1]];
         if (cache.edgeSmoothInterior[ei]) {
             auto efs = edgeFacesOf(ei);
-            edgePoints[ei] = (a + b + facePoints[efs[0]] + facePoints[efs[1]]) * 0.25f;
+            Vec3 f0 = facePoints[efs[0]];
+            Vec3 f1 = facePoints[efs[1]];
+            edgePoints[ei] = Vec3((a.x + b.x + f0.x + f1.x) * 0.25f,
+                                  (a.y + b.y + f0.y + f1.y) * 0.25f,
+                                  (a.z + b.z + f0.z + f1.z) * 0.25f);
         } else {
-            edgePoints[ei] = (a + b) * 0.5f;
+            edgePoints[ei] = Vec3((a.x + b.x) * 0.5f,
+                                  (a.y + b.y) * 0.5f,
+                                  (a.z + b.z) * 0.5f);
         }
     }
     if (nE >= PARALLEL_EDGE_MIN) {
@@ -3116,31 +3135,44 @@ void refreshSubdivPositions(ref const Mesh prev, ref const SubdivCache cache,
         foreach (ei; veList)
             if (edgeFaceCount(ei) < 2) { meshBoundary = true; break; }
         if (meshBoundary) {
-            Vec3 sum = v;
-            int  cnt = 1;
+            float sx = v.x, sy = v.y, sz = v.z;
+            int   cnt = 1;
             foreach (ei; veList) {
                 if (edgeFaceCount(ei) >= 2) continue;
-                sum += (prev.vertices[prev.edges[ei][0]]
-                      + prev.vertices[prev.edges[ei][1]]) * 0.5f;
+                Vec3 ea = prev.vertices[prev.edges[ei][0]];
+                Vec3 eb = prev.vertices[prev.edges[ei][1]];
+                sx += (ea.x + eb.x) * 0.5f;
+                sy += (ea.y + eb.y) * 0.5f;
+                sz += (ea.z + eb.z) * 0.5f;
                 cnt++;
             }
-            newVerts[vi] = sum * (1.0f / cast(float)cnt);
+            float inv = 1.0f / cast(float)cnt;
+            newVerts[vi] = Vec3(sx * inv, sy * inv, sz * inv);
         } else {
             auto vfList = vertFacesOf(vi);
             float fn = cast(float)vfList.length;
-            Vec3 F = Vec3(0, 0, 0);
-            foreach (fi; vfList) F += facePoints[fi];
-            F = F / fn;
-            Vec3 R = Vec3(0, 0, 0);
+            float Fx = 0, Fy = 0, Fz = 0;
+            foreach (fi; vfList) {
+                Vec3 fp = facePoints[fi];
+                Fx += fp.x; Fy += fp.y; Fz += fp.z;
+            }
+            Fx /= fn; Fy /= fn; Fz /= fn;
+            float Rx = 0, Ry = 0, Rz = 0;
             uint ne = cast(uint)veList.length;
             foreach (ei; veList) {
-                R += (prev.vertices[prev.edges[ei][0]]
-                    + prev.vertices[prev.edges[ei][1]]) * 0.5f;
+                Vec3 ea = prev.vertices[prev.edges[ei][0]];
+                Vec3 eb = prev.vertices[prev.edges[ei][1]];
+                Rx += (ea.x + eb.x) * 0.5f;
+                Ry += (ea.y + eb.y) * 0.5f;
+                Rz += (ea.z + eb.z) * 0.5f;
             }
-            R = R / cast(float)ne;
-            newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
-                                (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
-                                (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
+            float invE = 1.0f / cast(float)ne;
+            Rx *= invE; Ry *= invE; Rz *= invE;
+            float w = fn - 3.0f;
+            float invF = 1.0f / fn;
+            newVerts[vi] = Vec3((Fx + 2.0f * Rx + w * v.x) * invF,
+                                (Fy + 2.0f * Ry + w * v.y) * invF,
+                                (Fz + 2.0f * Rz + w * v.z) * invF);
         }
     }
     if (nV >= PARALLEL_VERT_MIN) {
@@ -3446,6 +3478,121 @@ struct GpuMesh {
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
 
+        glBindVertexArray(0);
+    }
+
+    /// Refresh vertex POSITIONS only — assumes the face / edge / vert
+    /// VBO layouts (vertex count, face triangulation, faceTriStart
+    /// offsets, faceIdVbo, edgeOriginGpu, …) all match what the last
+    /// full `upload()` produced. Walks the mesh and writes new
+    /// pos + (face) normal into the existing buffers via glMapBuffer
+    /// — zero array `~=`, zero CPU-side reallocation, zero topology
+    /// metadata churn.
+    ///
+    /// Used by the subpatch preview path: when topologyVersion is
+    /// unchanged (mesh moved but didn't change topology), the
+    /// SubpatchPreview's level meshes are refreshed in place via
+    /// `refreshSubdivPositions`, and the GPU buffers can be refreshed
+    /// the same way instead of rebuilding faceData / edgeData /
+    /// vertData arrays from scratch. On the user's 6 K-vert cage
+    /// sphere drag (~393 K preview verts) this drops the `upload`
+    /// hot path from ~16 % of CPU + ~12 % memmove + ~10 % GC
+    /// expandArrayUsed to a single mapped-buffer write per VBO.
+    void refreshPositions(ref const Mesh mesh,
+                          const uint[] edgeOrigin = null,
+                          const uint[] vertOrigin = null) {
+        if (faceTriStart.length != mesh.faces.length)
+            return;   // layout mismatch — caller should fall back to upload().
+
+        enum FACE_STRIDE = 6;
+
+        // Face VBO: re-fan each face's triangles from its first three
+        // verts. Normal recomputed per face (one cross + one sqrt).
+        // faceTriStart already maps fi → first vertex in the VBO.
+        if (faceVertCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
+            float* fp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            if (fp) {
+                foreach (fi, face; mesh.faces) {
+                    if (face.length < 3) continue;
+                    immutable uint i0 = face[0];
+                    Vec3 v0 = mesh.vertices[i0];
+                    Vec3 v1 = mesh.vertices[face[1]];
+                    Vec3 v2 = mesh.vertices[face[2]];
+                    float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+                    float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
+                    float cx = ay*bz - az*by;
+                    float cy = az*bx - ax*bz;
+                    float cz = ax*by - ay*bx;
+                    float nlen = sqrt(cx*cx + cy*cy + cz*cz);
+                    float nx, ny, nz;
+                    if (nlen > 1e-6f) { float inv = 1.0f/nlen; nx=cx*inv; ny=cy*inv; nz=cz*inv; }
+                    else              { nx=0; ny=1; nz=0; }
+                    int k = faceTriStart[fi] * FACE_STRIDE;
+                    // Fan-triangulate around face[0]; write [pos, normal]
+                    // per vertex with hand-rolled inner loop — avoids the
+                    // `foreach (idx; [..])` literal-array GC alloc and the
+                    // Vec3 operator-overload temporaries that dominated
+                    // an earlier profile.
+                    for (size_t i = 1; i + 1 < face.length; i++) {
+                        immutable uint ia = i0;
+                        immutable uint ib = face[i];
+                        immutable uint ic = face[i+1];
+                        Vec3 va = mesh.vertices[ia];
+                        Vec3 vb = mesh.vertices[ib];
+                        Vec3 vc = mesh.vertices[ic];
+                        fp[k++] = va.x; fp[k++] = va.y; fp[k++] = va.z;
+                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
+                        fp[k++] = vb.x; fp[k++] = vb.y; fp[k++] = vb.z;
+                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
+                        fp[k++] = vc.x; fp[k++] = vc.y; fp[k++] = vc.z;
+                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
+                    }
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+        }
+
+        // Edge VBO: subpatch mode filters out edges whose
+        // edgeOrigin[ei] == uint.max (derived edges that aren't shown).
+        // VBO segment order matches the kept-edge walk in `upload`.
+        if (edgeVertCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
+            float* ep = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            if (ep) {
+                int seg = 0;
+                foreach (ei, edge; mesh.edges) {
+                    if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max)
+                        continue;
+                    Vec3 a = mesh.vertices[edge[0]];
+                    Vec3 b = mesh.vertices[edge[1]];
+                    int k = seg * 6;
+                    ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
+                    ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
+                    seg++;
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+        }
+
+        // Vertex VBO: subpatch mode filters out verts whose
+        // vertOrigin[vi] == uint.max (edge mids / face centroids).
+        // VBO order matches the kept-vert walk in `upload`.
+        if (vertCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
+            float* vp = cast(float*)glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+            if (vp) {
+                int seg = 0;
+                foreach (vi, v; mesh.vertices) {
+                    if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max)
+                        continue;
+                    int k = seg * 3;
+                    vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
+                    seg++;
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+        }
         glBindVertexArray(0);
     }
 

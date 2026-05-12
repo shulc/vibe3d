@@ -396,6 +396,14 @@ void main(string[] args) {
     // while the preview is active.
     ulong gpuUploadedVersion = ulong.max;
     bool  gpuUploadedPreview;
+    // Source topologyVersion of the last FULL preview upload. When this
+    // matches the current preview's source topology, the preview mesh
+    // layout (#faces, fan order, edge / vert filter mask) is identical
+    // to what's already on the GPU — only positions changed, so we can
+    // scatter-update via glMapBuffer instead of rebuilding the
+    // ~50 MB faceData/edgeData/vertData arrays from scratch on every
+    // drag frame. `ulong.max` ⇒ no preview uploaded yet, force full.
+    ulong gpuUploadedPreviewTopVersion = ulong.max;
 
     Layout layout;
     layout.resize(winW, winH);
@@ -3257,13 +3265,37 @@ void main(string[] args) {
             if ((wantPreview && (versionChanged || stateChanged)) ||
                 (!wantPreview && stateChanged))
             {
-                if (wantPreview)
-                    gpu.upload(subpatchPreview.mesh,
-                               subpatchPreview.trace.edgeOrigin,
-                               subpatchPreview.trace.vertOrigin,
-                               subpatchPreview.trace.faceOrigin);
-                else
+                if (wantPreview) {
+                    // Position-only fast path: if the previously-uploaded
+                    // preview was built against the same source topology,
+                    // the preview's face/edge/vert layout is identical and
+                    // we can scatter-update positions through
+                    // glMapBuffer. Only fall through to the full upload
+                    // when topology actually changed (Tab toggle on a new
+                    // face selection, edge added, snapshot restore, etc.)
+                    // or when transitioning preview off/on.
+                    bool topoSame = !stateChanged
+                        && gpuUploadedPreviewTopVersion
+                           == subpatchPreview.sourceTopologyVersion;
+                    if (topoSame) {
+                        gpu.refreshPositions(subpatchPreview.mesh,
+                                             subpatchPreview.trace.edgeOrigin,
+                                             subpatchPreview.trace.vertOrigin);
+                    } else {
+                        gpu.upload(subpatchPreview.mesh,
+                                   subpatchPreview.trace.edgeOrigin,
+                                   subpatchPreview.trace.vertOrigin,
+                                   subpatchPreview.trace.faceOrigin);
+                        gpuUploadedPreviewTopVersion =
+                            subpatchPreview.sourceTopologyVersion;
+                    }
+                } else {
                     gpu.upload(mesh);
+                    // Cage upload — invalidate the preview-topology
+                    // marker so the next preview activation triggers a
+                    // full upload.
+                    gpuUploadedPreviewTopVersion = ulong.max;
+                }
                 gpuUploadedVersion = mesh.mutationVersion;
                 gpuUploadedPreview = wantPreview;
             }
