@@ -282,8 +282,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
 // ---------------------------------------------------------------------------
 struct OsdAccel {
     private osdc_topology_t* osd;
-    private float[]  cageScratchXyz;    // tightly-packed sub-cage positions
-    private uint[]   subToCage;          // sub-cage vi → cage vi
+    private float[] cageScratchXyz;    // tightly-packed cage positions
     bool valid;
 
     /// Free the OSD handle and reset state. Idempotent.
@@ -293,7 +292,6 @@ struct OsdAccel {
             osd = null;
         }
         cageScratchXyz.length = 0;
-        subToCage.length      = 0;
         valid                 = false;
     }
 
@@ -303,15 +301,16 @@ struct OsdAccel {
     /// SubpatchPreview instances) leak-clean.
     ~this() { clear(); }
 
-    /// Build OSD topology + stencil table from the subpatch-marked
-    /// subset of `cage` at `level`, then emit the limit Mesh
-    /// (verts/edges/faces/loops) and SubpatchTrace directly from OSD's
-    /// output. Caches the OSD handle and sub-cage → cage map so
-    /// subsequent `refresh` calls run a single SpMV against the cage's
-    /// new positions.
+    /// Build OSD topology + stencil table for `cage` at `level`, emit
+    /// the limit Mesh (verts/edges/faces/loops) and SubpatchTrace.
+    /// Selective subpatch (mixed isSubpatch flags) tags every edge /
+    /// vert that touches an un-marked face with infinite sharpness —
+    /// OSD then smooths the marked-region interior and keeps the
+    /// un-marked region flat, with a sharp crease at the boundary.
+    /// Matches the LightWave / MODO visual model.
     ///
-    /// Returns false (and clears state) when no cage face is subpatch-
-    /// marked or OSD topology creation fails on the resulting sub-cage.
+    /// Returns false (and clears state) on degenerate input or OSD
+    /// topology-creation failure.
     bool buildPreview(ref const Mesh cage, int level,
                        out Mesh outMesh, out SubpatchTrace outTrace)
     {
@@ -321,75 +320,88 @@ struct OsdAccel {
         immutable int nf = cast(int)cage.faces.length;
         if (nv == 0 || nf == 0 || level < 1) return false;
 
-        // ---- Identify the subpatch-marked subset ---------------------
-        // Build sub-cage verts (subToCage[] / cageToSub[]) and faces
-        // (sub-cage vert space). cage.isSubpatch may be shorter than
-        // cage.faces if a Mesh hasn't normalised its mask — treat
-        // missing entries as `false`.
-        int[] cageToSub = new int[](nv);
-        cageToSub[] = -1;
-        int subNumVerts = 0;
-        int subNumFaces = 0;
-        int subTotalIndices = 0;
+        // ---- Flatten cage topology -----------------------------------
+        int[] faceVertCounts  = new int[](nf);
+        int[] faceVertIndices;
+        foreach (fi, face; cage.faces) {
+            faceVertCounts[fi] = cast(int)face.length;
+            foreach (vi; face) faceVertIndices ~= cast(int)vi;
+        }
+        cageScratchXyz.length = 3 * nv;
+        foreach (vi, v; cage.vertices) {
+            cageScratchXyz[3*vi + 0] = v.x;
+            cageScratchXyz[3*vi + 1] = v.y;
+            cageScratchXyz[3*vi + 2] = v.z;
+        }
+
+        // ---- Selective-subpatch sharpness arrays ---------------------
+        // For each cage edge that touches at least one un-marked face:
+        // crease at SHARPNESS_INFINITE so OSD doesn't smooth across it.
+        // For each cage vert that has at least one un-marked incident
+        // face: corner-sharpen so the vert stays at the cage position.
+        // Uniform-subpatch case (every face marked) → empty arrays,
+        // standard smooth CC.
+        bool anyMarked   = false;
+        bool anyUnmarked = false;
         foreach (fi; 0 .. nf) {
             immutable bool marked =
                 (fi < cage.isSubpatch.length) && cage.isSubpatch[fi];
-            if (!marked) continue;
-            ++subNumFaces;
-            subTotalIndices += cast(int)cage.faces[fi].length;
-            foreach (cvi; cage.faces[fi]) {
-                if (cageToSub[cvi] == -1) {
-                    cageToSub[cvi] = subNumVerts;
-                    subToCage ~= cvi;
-                    ++subNumVerts;
-                }
-            }
+            if (marked) anyMarked = true;
+            else        anyUnmarked = true;
         }
-        if (subNumFaces == 0 || subNumVerts == 0) { clear(); return false; }
+        if (!anyMarked) { clear(); return false; }
 
-        // Per-cage-face index of each sub-face — feeds trace.faceOrigin.
-        int[] subToCageFace = new int[](subNumFaces);
-        int[] subFaceVertCounts  = new int[](subNumFaces);
-        int[] subFaceVertIndices = new int[](subTotalIndices);
-        {
-            int faceCursor = 0;
-            int idxCursor  = 0;
-            foreach (fi; 0 .. nf) {
+        int[]   creasePairs;
+        float[] creaseWeights;
+        int[]   cornerVerts;
+        float[] cornerWeights;
+        enum float SHARP_INF = 10.0f;     // OSD treats >= 10 as infinity
+
+        if (anyUnmarked) {
+            // Tag verts that ANY un-marked face touches.
+            bool[] vertHasUnmarked = new bool[](nv);
+            // Per-edge: count marked vs un-marked adjacency to decide
+            // crease vs smooth. Edge → (markedFaces, unmarkedFaces).
+            int[2][] edgeFaces;
+            edgeFaces.length = cage.edges.length;
+            foreach (fi, face; cage.faces) {
                 immutable bool marked =
                     (fi < cage.isSubpatch.length) && cage.isSubpatch[fi];
-                if (!marked) continue;
-                subToCageFace[faceCursor] = cast(int)fi;
-                subFaceVertCounts[faceCursor] = cast(int)cage.faces[fi].length;
-                foreach (cvi; cage.faces[fi])
-                    subFaceVertIndices[idxCursor++] = cageToSub[cvi];
-                ++faceCursor;
+                foreach (i; 0 .. face.length) {
+                    uint a = face[i];
+                    uint b = face[(i + 1) % face.length];
+                    if (!marked) {
+                        vertHasUnmarked[a] = true;
+                        vertHasUnmarked[b] = true;
+                    }
+                    if (auto p = edgeKey(a, b) in cage.edgeIndexMap) {
+                        if (marked) ++edgeFaces[*p][0];
+                        else        ++edgeFaces[*p][1];
+                    }
+                }
+            }
+            // Crease: any cage edge with at least one un-marked face.
+            foreach (ei, e; cage.edges) {
+                if (edgeFaces[ei][1] == 0) continue;
+                creasePairs   ~= cast(int)e[0];
+                creasePairs   ~= cast(int)e[1];
+                creaseWeights ~= SHARP_INF;
+            }
+            // Corner: any cage vert touching an un-marked face.
+            foreach (vi; 0 .. nv) {
+                if (!vertHasUnmarked[vi]) continue;
+                cornerVerts   ~= cast(int)vi;
+                cornerWeights ~= SHARP_INF;
             }
         }
 
-        // ---- Sub-cage positions in OSD's contiguous float[] format ---
-        cageScratchXyz.length = 3 * subNumVerts;
-        foreach (svi, cvi; subToCage) {
-            Vec3 v = cage.vertices[cvi];
-            cageScratchXyz[3*svi + 0] = v.x;
-            cageScratchXyz[3*svi + 1] = v.y;
-            cageScratchXyz[3*svi + 2] = v.z;
-        }
-
-        // Depth cap by sub-cage size. Subpatch preview face count
-        // grows by ~4× per level; the stencil-table builder OSD runs
-        // inside `osdc_topology_create` peaks at several × the final
-        // limit-table footprint. Beyond ~1.5 M limit faces the build
-        // can blow several GB of working memory and the process is
-        // killed (SIGBUS / OOM) before any error is observable on
-        // the D side. Cap the depth so the worst case stays in a
-        // few hundred MB — the user can still set higher
-        // `subpatchDepth` and we just refine fewer times.
+        // ---- Depth cap so OSD's stencil build stays in memory --------
         enum long MAX_LIMIT_FACES = 1_500_000;
         int effectiveLevel = level;
-        long projected = cast(long)subNumFaces;
+        long projected = cast(long)nf;
         long mul = 1L;
         foreach (k; 0 .. level) mul *= 4L;
-        projected = cast(long)subNumFaces * mul;
+        projected = cast(long)nf * mul;
         while (effectiveLevel > 1 && projected > MAX_LIMIT_FACES) {
             --effectiveLevel;
             projected /= 4L;
@@ -399,19 +411,24 @@ struct OsdAccel {
             try {
                 stderr.writefln(
                     "[subpatch_osd] capping subpatch depth %d -> %d "
-                    ~ "(sub-cage %d faces, projected %d limit faces "
-                    ~ "exceeds %d cap)",
-                    level, effectiveLevel,
-                    subNumFaces, projected * (1L << (2 * (level - effectiveLevel))),
+                    ~ "(cage %d faces, projected %d limit faces exceeds %d)",
+                    level, effectiveLevel, nf,
+                    cast(long)nf * (1L << (2 * level)),
                     MAX_LIMIT_FACES);
             } catch (Exception) {}
         }
 
-        // ---- Build OSD topology + stencil table on the sub-cage -----
-        osd = osdc_topology_create(
-            subNumVerts, subNumFaces,
-            subFaceVertCounts.ptr, subFaceVertIndices.ptr,
-            effectiveLevel);
+        // ---- Build OSD topology + stencil table ----------------------
+        osd = osdc_topology_create_sharp(
+            nv, nf,
+            faceVertCounts.ptr, faceVertIndices.ptr,
+            effectiveLevel,
+            cast(int)(creasePairs.length / 2),
+            creasePairs.length   ? creasePairs.ptr   : null,
+            creaseWeights.length ? creaseWeights.ptr : null,
+            cast(int)cornerVerts.length,
+            cornerVerts.length    ? cornerVerts.ptr    : null,
+            cornerWeights.length  ? cornerWeights.ptr  : null);
         if (osd is null) { clear(); return false; }
 
         immutable int limitVerts   = osdc_topology_limit_vert_count(osd);
@@ -419,7 +436,7 @@ struct OsdAccel {
         immutable int limitIndices = osdc_topology_limit_index_count(osd);
         immutable int limitEdges   = osdc_topology_limit_edge_count(osd);
 
-        // ---- Read OSD limit topology + origin / input-edge arrays ----
+        // ---- Read OSD limit topology + origin arrays -----------------
         int[] faceCounts     = new int[](limitFaces);
         int[] faceIndices    = new int[](limitIndices);
         int[] edgeVertsRaw   = new int[](2 * limitEdges);
@@ -433,33 +450,7 @@ struct OsdAccel {
         osdc_topology_vert_origins(osd, vertOriginsRaw.ptr);
         osdc_topology_edge_origins(osd, edgeOriginsRaw.ptr);
 
-        // OSD's `edge_origins[i]` is a sub-cage edge index. To map it
-        // to a cage edge index we walk OSD's input-edge endpoint list,
-        // translate sub-cage verts → cage verts via subToCage, then
-        // look up the cage edge through cage's edgeIndexMap. Cage edge
-        // lookup needs `buildLoops()` to have been run on `cage`
-        // beforehand (which vibe3d does after every cage mutation).
-        immutable int inputEdgeCount = osdc_topology_input_edge_count(osd);
-        int[] inputEdgeVerts = new int[](2 * inputEdgeCount);
-        osdc_topology_input_edges(osd, inputEdgeVerts.ptr);
-
-        uint[] subEdgeToCageEdge = new uint[](inputEdgeCount);
-        foreach (se; 0 .. inputEdgeCount) {
-            uint sv0 = cast(uint)inputEdgeVerts[2*se + 0];
-            uint sv1 = cast(uint)inputEdgeVerts[2*se + 1];
-            uint cv0 = subToCage[sv0];
-            uint cv1 = subToCage[sv1];
-            if (auto p = edgeKey(cv0, cv1) in cage.edgeIndexMap)
-                subEdgeToCageEdge[se] = *p;
-            else
-                subEdgeToCageEdge[se] = uint.max;
-        }
-
         // ---- Build preview Mesh.vertices via direct stencil eval -----
-        // Vec3 is { float x, y, z; } — 12 bytes tightly packed, so the
-        // backing array can be reinterpreted as a tightly-packed float
-        // stream. Eval writes straight into preview.vertices' backing
-        // memory: no copy, no permutation, no intermediate buffer.
         outMesh.vertices = new Vec3[](limitVerts);
         osdc_evaluate(osd, cageScratchXyz.ptr,
                       cast(float*)outMesh.vertices.ptr);
@@ -473,7 +464,7 @@ struct OsdAccel {
             ];
         }
 
-        // ---- Build preview Mesh.faces (n-gon arrays per face) --------
+        // ---- Build preview Mesh.faces --------------------------------
         outMesh.faces.length = limitFaces;
         int cursor = 0;
         foreach (fi; 0 .. limitFaces) {
@@ -483,59 +474,53 @@ struct OsdAccel {
                 outMesh.faces[fi][k] = cast(uint)faceIndices[cursor++];
         }
 
-        // Fresh value-mesh: bump versions so downstream caches treat it
-        // as a new mesh state, not the default `Mesh.init` (= 0).
         outMesh.mutationVersion = 1;
         outMesh.topologyVersion = 1;
         outMesh.buildLoops();
 
-        // ---- Build SubpatchTrace, mapping sub-cage indices → cage ----
+        // ---- SubpatchTrace ------------------------------------------
+        // OSD's `*_origins[i]` are now cage indices directly (full cage
+        // is the input). Map -1 → uint.max for the introduced-by-
+        // subdivision case.
         outTrace.vertOrigin = new uint[](limitVerts);
         outTrace.edgeOrigin = new uint[](limitEdges);
         outTrace.faceOrigin = new uint[](limitFaces);
         foreach (i, o; vertOriginsRaw)
-            outTrace.vertOrigin[i] =
-                (o < 0) ? uint.max : subToCage[o];
+            outTrace.vertOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
         foreach (i, o; edgeOriginsRaw)
-            outTrace.edgeOrigin[i] =
-                (o < 0) ? uint.max : subEdgeToCageEdge[o];
+            outTrace.edgeOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
         foreach (i, o; faceOriginsRaw)
-            outTrace.faceOrigin[i] = cast(uint)subToCageFace[o];
-
-        // Every limit face descends from a subpatch-marked sub-cage
-        // face — keep that flag on the preview so any downstream code
-        // that re-checks `isSubpatch` sees a consistent fully-marked
-        // preview.
+            outTrace.faceOrigin[i] = cast(uint)o;
+        // Per-preview-face subpatch flag inherits from its cage parent.
         outTrace.subpatch = new bool[](limitFaces);
-        outTrace.subpatch[] = true;
+        outMesh.isSubpatch.length = limitFaces;
+        foreach (i, o; faceOriginsRaw) {
+            bool parentMarked =
+                (o >= 0) && (o < cast(int)cage.isSubpatch.length)
+                && cage.isSubpatch[o];
+            outTrace.subpatch[i] = parentMarked;
+            outMesh.isSubpatch[i] = parentMarked;
+        }
 
-        // Resize selection masks to match the new vert/edge/face counts
-        // so callers can drive selection without a trip through
-        // resetSelection.
         outMesh.selectedVertices.length = limitVerts;
         outMesh.selectedEdges.length    = limitEdges;
         outMesh.selectedFaces.length    = limitFaces;
-        outMesh.isSubpatch.length       = limitFaces;
-        outMesh.isSubpatch[]            = true;
 
         valid = true;
         return true;
     }
 
     /// Hot per-frame call: re-eval OSD's stencils against the current
-    /// cage positions and write straight into `preview.vertices`. Only
-    /// the sub-cage subset is sampled — `subToCage[]` filters out
-    /// cage verts that don't participate in the subpatch input.
+    /// cage positions and write straight into `preview.vertices`.
     void refresh(ref const Mesh cage, ref Mesh preview) {
         assert(valid, "OsdAccel.refresh called on invalid accel");
-        assert(subToCage.length * 3 == cageScratchXyz.length,
-               "sub-cage layout changed without buildPreview");
+        assert(cage.vertices.length * 3 == cageScratchXyz.length,
+               "cage vert count changed without buildPreview");
 
-        foreach (svi, cvi; subToCage) {
-            Vec3 v = cage.vertices[cvi];
-            cageScratchXyz[3*svi + 0] = v.x;
-            cageScratchXyz[3*svi + 1] = v.y;
-            cageScratchXyz[3*svi + 2] = v.z;
+        foreach (vi, v; cage.vertices) {
+            cageScratchXyz[3*vi + 0] = v.x;
+            cageScratchXyz[3*vi + 1] = v.y;
+            cageScratchXyz[3*vi + 2] = v.z;
         }
         osdc_evaluate(osd, cageScratchXyz.ptr,
                       cast(float*)preview.vertices.ptr);
@@ -606,14 +591,12 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     Mesh cage = makeCube();
-    // buildLoops populates cage.edgeIndexMap, which OsdAccel uses to
-    // map sub-cage edges back to cage edges. makeCube already calls
-    // buildLoops, but call it explicitly so the unittest documents the
-    // invariant.
     cage.buildLoops();
     cage.isSubpatch.length = cage.faces.length;
 
-    // Mark a single face (cage face 0).
+    // Mark a single face (cage face 0). The other 5 cage faces stay
+    // un-marked and should keep their flat polygonal shape via OSD's
+    // crease/corner sharpness.
     cage.setSubpatch(0, true);
 
     OsdAccel       accel;
@@ -622,32 +605,21 @@ unittest {
     bool ok = accel.buildPreview(cage, 2, preview, trace);
     assert(ok && accel.valid, "OsdAccel.buildPreview failed on selective cube");
 
-    // Single cage face at depth 2 → 4 quads at L1, 16 quads at L2.
-    // Vert count via Euler: cage face is a 4-vert quad.
-    // L1: 4 face-children + 4 edge-children + 4 vert-children = 12.
-    // L2: 16 face-children + 16+8=24 edge-children (interior + bdry)
-    //     + 12 vert-children = 52.
-    // (Boundary edge subdivision adds one edge per boundary edge per
-    // level alongside the interior subdivision; exact number depends
-    // on OSD's boundary handling — assert via counts we just compute
-    // dynamically rather than hard-code, and verify trace shapes.)
-    assert(preview.faces.length == 16,
-           "selective L2 cube face → 16 quads");
+    // Full cube fed to OSD at depth 2 → 6 cage faces × 4² = 96 limit
+    // faces. Sharpness flag prevents the un-marked regions from
+    // smoothing, but they DO get refined topologically.
+    assert(preview.faces.length == 96,
+           "selective L2 cube preview should keep all 6 cage faces, "
+           ~ "subdivided into 16 quads each = 96 total");
 
-    // Every preview face traces back to the one marked cage face.
-    foreach (o; trace.faceOrigin)
-        assert(o == 0, "selective face origin must point at cage face 0");
-
-    // trace.vertOrigin entries that aren't uint.max must reference
-    // verts of the marked cage face (cage face 0). makeCube's first
-    // face uses verts {0, 1, 3, 2}.
-    immutable uint[4] expected = [0, 1, 3, 2];
-    foreach (o; trace.vertOrigin) {
-        if (o == uint.max) continue;
-        bool inSet = false;
-        foreach (e; expected) if (o == e) { inSet = true; break; }
-        assert(inSet, "vertOrigin must reference a vert of cage face 0");
+    // trace.subpatch should be true for the 16 quads tracing back to
+    // cage face 0, false for the other 80.
+    int markedChildren = 0, unmarkedChildren = 0;
+    foreach (i, b; trace.subpatch) {
+        if (b) ++markedChildren; else ++unmarkedChildren;
     }
+    assert(markedChildren   == 16);
+    assert(unmarkedChildren == 80);
 
     // Refresh after a cage edit moves the preview.
     Vec3[] before = preview.vertices.dup;
