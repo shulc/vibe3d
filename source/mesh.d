@@ -1419,6 +1419,8 @@ struct Mesh {
         faceLoop.length = faces.length;
         vertLoop.length = vertices.length;
         vertLoop[]      = ~0u;
+        loopEdge.length = total;
+        loopEdge[]      = ~0u;
 
         // First pass: fill vert, face, next, prev
         uint li = 0;
@@ -1436,33 +1438,45 @@ struct Mesh {
             li += N;
         }
 
-        // Second pass: fill twin via directed-edge map
-        uint[ulong] dirMap;
-        foreach (idx; 0 .. total) {
-            uint u = loops[idx].vert;
-            uint v = loops[loops[idx].next].vert;
-            dirMap[(cast(ulong)u << 32) | v] = cast(uint)idx;
-        }
-        foreach (idx; 0 .. total) {
-            uint u = loops[idx].vert;
-            uint v = loops[loops[idx].next].vert;
-            if (auto p = ((cast(ulong)v << 32) | u) in dirMap)
-                loops[idx].twin = *p;
-        }
-
-        // Third pass: fill loopEdge, rebuild edgeIndexMap, and anchor vertLoop at the open start
-        // of each fan.
-        //
-        // loopEdge[li] = index in edges[] for the undirected edge of loop li.
-        loopEdge.length = total;
-        loopEdge[]      = ~0u;
-        edgeIndexMap    = null;
+        // Second pass: rebuild edgeIndexMap and populate loopEdge.
+        // edgeIndexMap is the mesh-wide (undirected) edgeKey → edge
+        // index AA — kept for external callers; building it costs ~nE
+        // inserts and the loopEdge fill ~total lookups.
+        edgeIndexMap = null;
         foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
         foreach (idx; 0 .. total) {
             uint u = loops[idx].vert;
             uint v = loops[loops[idx].next].vert;
             if (auto p = edgeKey(u, v) in edgeIndexMap) loopEdge[idx] = *p;
         }
+
+        // Third pass: fill twin via the (max 2) loops-per-edge pairing
+        // we just computed in loopEdge. Replaces the previous directed-
+        // edge AA (`dirMap`) — ~total inserts + ~total lookups — with
+        // two flat int[] slots per edge. Manifold meshes have ≤ 2
+        // loops per edge by construction (addFaceFast / catmullClark
+        // both produce manifold output); a 3-loop edge would overflow
+        // here and silently drop a twin — same loss the old `dirMap`
+        // had (later writer overwrote the earlier (u,v) entry).
+        int[] edgeLoopA = new int[](edges.length);
+        int[] edgeLoopB = new int[](edges.length);
+        edgeLoopA[] = -1;
+        edgeLoopB[] = -1;
+        foreach (idx; 0 .. total) {
+            uint ei = loopEdge[idx];
+            if (ei == ~0u) continue;
+            if (edgeLoopA[ei] == -1) edgeLoopA[ei] = cast(int)idx;
+            else                     edgeLoopB[ei] = cast(int)idx;
+        }
+        foreach (idx; 0 .. total) {
+            uint ei = loopEdge[idx];
+            if (ei == ~0u) continue;
+            int a = edgeLoopA[ei];
+            int b = edgeLoopB[ei];
+            if (b == -1) continue;                  // boundary edge
+            loops[idx].twin = (a == cast(int)idx) ? cast(uint)b : cast(uint)a;
+        }
+
         // For boundary vertices, vertLoop was set to an arbitrary loop.
         // Walk backward (via next(twin(cur))) until cur.twin == ~0u (open start)
         // or we detect a closed ring (back == original start).
