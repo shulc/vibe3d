@@ -77,6 +77,10 @@ struct Param {
     string label;         // UI label
     Kind   kind;
     ParamHints hints;
+    // UI-only flag: when true, the Property Panel skips this param.
+    // The schema entry stays so the headless HTTP/JSON injector and
+    // argstring serialisation continue to see it.
+    bool   hidden_;
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
@@ -233,6 +237,7 @@ struct Param {
     Param step(float v)               { hints.hasStep = true; hints.step_ = v; return this; }
     Param fmt(string f)               { hints.hasFmt  = true; hints.fmt   = f; return this; }
     Param widget(ParamHints.Widget w) { hints.widget = w; return this; }
+    Param hidden()                    { hidden_ = true; return this; }
 }
 
 // ---------------------------------------------------------------------------

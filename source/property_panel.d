@@ -49,6 +49,7 @@ class PropertyPanel {
     void drawProvider(ParamProvider p) {
         if (p is null) return;
         foreach (ref par; p.params()) {
+            if (par.hidden_) continue;
             bool enabled = p.paramEnabled(par.name);
             if (!enabled) ImGui.BeginDisabled();
             bool changed = drawParamWidget(par);

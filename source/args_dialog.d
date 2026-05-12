@@ -49,6 +49,7 @@ class ArgsDialog {
                 ImGuiWindowFlags.AlwaysAutoResize))
         {
             foreach (ref p; active.params()) {
+                if (p.hidden_) continue;
                 bool enabled = active.paramEnabled(p.name);
                 if (!enabled) ImGui.BeginDisabled();
                 bool changed = drawParamWidget(p);

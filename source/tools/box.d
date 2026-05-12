@@ -2428,11 +2428,15 @@ public:
             Param.float_("radius",    "Radius",          &params_.radius,    0.0f).min(0.0f),
             Param.int_(  "segmentsR", "Radius Segments", &params_.segmentsR, 3  ).min(1).max(64),
             Param.bool_( "sharp",     "Sharp",           &params_.sharp,     false),
+            // axis is auto-picked from the most-facing workplane normal
+            // at choosePlane() time; hidden from the Property Panel but
+            // retained in the schema for headless prim.cube parity tests
+            // that set axis explicitly via JSON.
             Param.intEnum_("axis", "Axis", cast(int*)&params_.axis,
                 [IntEnumEntry(0, "x", "X"),
                  IntEnumEntry(1, "y", "Y"),
                  IntEnumEntry(2, "z", "Z")],
-                1),
+                1).hidden(),
         ];
     }
 
@@ -2483,9 +2487,15 @@ public:
 
         // Schema is the source of truth for tweaks made via property panel.
         // Rebuild preview directly from params_, bypassing the interactive
-        // drag-state mapping in buildCuboid().
+        // drag-state mapping in buildCuboid(). Vertices are emitted in
+        // LOCAL workplane space, so transform them through `frame.toWorld`
+        // before uploading — otherwise a non-identity workplane (auto-mode
+        // with X/Z-facing camera, or any aligned workplane) drops the
+        // preview at the local origin while commit puts it at the world
+        // origin, making the box appear to "jump" on commit.
         previewMesh.clear();
         buildCuboidParametric(&previewMesh, params_);
+        applyFrameToMesh(&previewMesh);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
     }
@@ -2756,6 +2766,16 @@ private:
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 1, 0);
         }
+        // Align the rounded-cap primary axis with the construction-plane
+        // normal so the cap orientation tracks the most-facing plane
+        // rather than the hard-coded local-Y default.
+        params_.axis = worldAxisIdxOf(planeNormal);
+    }
+
+    static int worldAxisIdxOf(Vec3 v) {
+        if (abs(v.x) > 0.5f) return 0;
+        if (abs(v.y) > 0.5f) return 1;
+        return 2;
     }
 
     // ---- Local ↔ world helpers (workplane refactor step 2) ----------------
