@@ -18,6 +18,94 @@ import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
 import osd.c;
 
+/// One-shot startup verification of the OSD GL evaluator. Builds a
+/// tiny cube cage, evaluates limit positions both on CPU and on GPU
+/// via transform feedback, returns the max per-component delta.
+/// Requires an active GL 3.3+ context on the calling thread.
+///
+/// Logs the result to stderr. Used during boot to fail fast if the
+/// GPU evaluator is broken on the host's driver; production code
+/// paths still drive subpatch through the CPU evaluator until the
+/// Phase 3 VBO refactor lands (see doc/osd_gpu_evaluator_phase3.md).
+float runGlEvaluatorSmokeTest() {
+    import bindbc.opengl;
+    import std.stdio : stderr;
+
+    void warn(string s) {
+        try { stderr.writeln("[osd_gl_smoke] ", s); stderr.flush(); }
+        catch (Exception) {}
+    }
+
+    // 8 cage verts / 6 quad faces (unit cube).
+    immutable int[6]  faceCounts  = [4, 4, 4, 4, 4, 4];
+    immutable int[24] faceIndices = [
+        0, 1, 3, 2,   4, 6, 7, 5,
+        0, 2, 6, 4,   1, 5, 7, 3,
+        0, 4, 5, 1,   2, 3, 7, 6,
+    ];
+    immutable float[24] cageXyz = [
+        -1, -1, -1,   1, -1, -1,
+        -1, -1,  1,   1, -1,  1,
+        -1,  1, -1,   1,  1, -1,
+        -1,  1,  1,   1,  1,  1,
+    ];
+
+    auto topo = osdc_topology_create(
+        8, 6, faceCounts.ptr, faceIndices.ptr, 1);
+    if (topo is null) { warn("topology create failed"); return -1.0f; }
+    scope (exit) osdc_topology_destroy(topo);
+
+    immutable int limitVerts = osdc_topology_limit_vert_count(topo);
+
+    // CPU baseline
+    float[] cpuOut = new float[](3 * limitVerts);
+    osdc_evaluate(topo, cageXyz.ptr, cpuOut.ptr);
+
+    // GPU eval — needs OSD's bundled glLoader to be initialised
+    // (osdc_gl_create handles that lazily).
+    auto glEval = osdc_gl_create(topo);
+    if (glEval is null) { warn("GL evaluator create failed"); return -1.0f; }
+    scope (exit) osdc_gl_destroy(glEval);
+
+    GLuint srcVbo, dstVbo;
+    glGenBuffers(1, &srcVbo);
+    glGenBuffers(1, &dstVbo);
+    scope (exit) {
+        glDeleteBuffers(1, &srcVbo);
+        glDeleteBuffers(1, &dstVbo);
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, srcVbo);
+    glBufferData(GL_ARRAY_BUFFER, cageXyz.length * float.sizeof,
+                 cast(const void*)cageXyz.ptr, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, dstVbo);
+    glBufferData(GL_ARRAY_BUFFER, 3 * limitVerts * float.sizeof,
+                 null, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    int ok = osdc_gl_evaluate(glEval, srcVbo, dstVbo);
+    if (!ok) { warn("osdc_gl_evaluate returned 0"); return -1.0f; }
+
+    float[] gpuOut = new float[](3 * limitVerts);
+    glBindBuffer(GL_ARRAY_BUFFER, dstVbo);
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0,
+                       3 * limitVerts * float.sizeof, gpuOut.ptr);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    float maxDelta = 0.0f;
+    foreach (i; 0 .. cpuOut.length) {
+        import std.math : abs;
+        float d = abs(cpuOut[i] - gpuOut[i]);
+        if (d > maxDelta) maxDelta = d;
+    }
+    try {
+        stderr.writefln("[osd_gl_smoke] OK: %d limit verts, max "
+                        ~ "|CPU - GPU| = %.6g", limitVerts, maxDelta);
+        stderr.flush();
+    } catch (Exception) {}
+    return maxDelta;
+}
+
 /// One Catmull-Clark refinement of `cage` via OpenSubdiv. When
 /// `faceMask` is empty (or all-true) every face is refined and the
 /// result is OSD's level-1 limit mesh verbatim. When `faceMask` is

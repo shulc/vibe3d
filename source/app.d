@@ -454,6 +454,17 @@ void main(string[] args) {
     gpuSelect.init();
     scope(exit) gpuSelect.destroy();
 
+    // One-shot validation that the OSD GL evaluator works on this
+    // host's GL driver. Production paths still drive subpatch through
+    // the CPU evaluator (the GPU path is wired but not consumed yet —
+    // see doc/osd_gpu_evaluator_phase3.md); this log line gives us a
+    // canary that the Phase 2 plumbing is sound before we depend on
+    // it.
+    {
+        import subpatch_osd : runGlEvaluatorSmokeTest;
+        runGlEvaluatorSmokeTest();
+    }
+
     // Grid: lines on XZ plane + axis lines
     GLuint gridVao, gridVbo;
     int    gridOnlyVertCount; // vertex count of plain grid lines (before axes)
