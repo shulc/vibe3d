@@ -3524,16 +3524,20 @@ struct GpuMesh {
         // verts. Normal recomputed per face (one cross + one sqrt).
         // faceTriStart already maps fi → first vertex in the VBO.
         //
-        // glMapBufferRange with GL_MAP_WRITE_BIT (no invalidate) — same
-        // preservation contract as uploadSelectedVertices: degenerate faces
-        // (face.length < 3) are skipped, and we rely on their existing VBO
-        // bytes being intact so they don't reappear as garbage triangles.
+        // Map with INVALIDATE_BUFFER_BIT — explicit driver-side orphan,
+        // we'll fill the entire buffer below. The two skipped-face
+        // patterns (face.length < 3) still write zero into those slots
+        // implicitly: we don't touch them, but the orphaned allocation
+        // starts as uninitialised garbage. That's tolerable because the
+        // skipped faces have faceTriCount[fi] == 0, so drawFaces never
+        // dereferences those bytes — they're not referenced by any draw
+        // call.
         if (faceVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
             float* fp = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
                 cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
-                GL_MAP_WRITE_BIT);
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (fp) {
                 foreach (fi, face; mesh.faces) {
                     if (face.length < 3) continue;
@@ -3583,7 +3587,7 @@ struct GpuMesh {
             float* ep = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
                 cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
-                GL_MAP_WRITE_BIT);
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (ep) {
                 int seg = 0;
                 foreach (ei, edge; mesh.edges) {
@@ -3608,7 +3612,7 @@ struct GpuMesh {
             float* vp = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
                 cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
-                GL_MAP_WRITE_BIT);
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (vp) {
                 int seg = 0;
                 foreach (vi, v; mesh.vertices) {
@@ -3624,7 +3628,18 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
-    // Optimized: update only selected vertices on GPU (much faster for large meshes)
+    // Drag-fast path: re-upload every VBO in full, but skip the GC churn
+    // that the array-growth `~=` loops in `upload()` impose. Despite the
+    // name + `toUpdate` mask, this no longer takes a partial-write
+    // shortcut — `glMapBufferRange + GL_MAP_WRITE_BIT` alone (no invalidate)
+    // sounds spec-safe but Mesa orphans the backing store anyway, leaving
+    // un-touched faces as garbage. The map-with-invalidate path orphans
+    // EXPLICITLY (the driver hands us a fresh allocation) and we fill it
+    // from scratch — so every byte in the buffer ends up well-defined.
+    //
+    // `toUpdate` is retained in the signature for caller compatibility but
+    // ignored here; the drag tools always pass the same mesh ref through
+    // and we touch the full topology either way.
     void uploadSelectedVertices(ref const Mesh mesh, const bool[] toUpdate) {
         // Preview is currently displayed; cage-indexed scatter writes would
         // corrupt the VBO. Signal a mutation and let the main loop rebuild
@@ -3636,89 +3651,60 @@ struct GpuMesh {
         ++uploadVersion;
         enum FACE_STRIDE = 6;
 
-        // O(faces × verts_per_face): for each face check if any vertex moved.
-        // Previous code was O(moved_verts × faces × verts_per_face) — n² on large meshes.
-        bool[] faceNeedsUpdate = new bool[](mesh.faces.length);
-        bool anyFaceUpdate = false;
-        for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
-            foreach (vi; mesh.faces[fi]) {
-                if (vi < toUpdate.length && toUpdate[vi]) {
-                    faceNeedsUpdate[fi] = true;
-                    anyFaceUpdate = true;
-                    break;
-                }
-            }
-        }
-
-        // Map each VBO once and scatter-write only the changed slots: 3 driver
-        // round-trips total instead of N glBufferSubData per updated element.
-        //
-        // glMapBufferRange + GL_MAP_WRITE_BIT (no invalidate flag) is the
-        // spec-guaranteed way to keep un-written bytes intact. Plain
-        // glMapBuffer(GL_WRITE_ONLY) is technically equivalent on paper but
-        // some drivers (Mesa among them) treat WRITE_ONLY as a discard hint
-        // and orphan the buffer — the un-updated faces then come back as
-        // garbage geometry on unmap, which manifests as "wireframe but no
-        // fill" for the faces not on the active selection during a
-        // partial-vert drag.
-
-        if (anyFaceUpdate) {
+        // Face VBO — flat-shaded fan triangulation, one normal per face.
+        if (faceVertCount > 0 && faceTriStart.length == mesh.faces.length) {
             glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
             float* fp = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
                 cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
-                GL_MAP_WRITE_BIT);
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (fp) {
-                for (int fi = 0; fi < cast(int)mesh.faces.length; fi++) {
-                    if (!faceNeedsUpdate[fi]) continue;
-                    const(uint[]) face = mesh.faces[fi];
+                foreach (fi, face; mesh.faces) {
                     if (face.length < 3) continue;
-
-                    Vec3 v0 = mesh.vertices[face[0]];
+                    immutable uint i0 = face[0];
+                    Vec3 v0 = mesh.vertices[i0];
                     Vec3 v1 = mesh.vertices[face[1]];
                     Vec3 v2 = mesh.vertices[face[2]];
-                    Vec3 cr = cross(v1 - v0, v2 - v0);
-                    float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-                    Vec3 n = nlen > 1e-6f
-                        ? cr / nlen
-                        : Vec3(0, 1, 0);
-
+                    float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+                    float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
+                    float cx = ay*bz - az*by;
+                    float cy = az*bx - ax*bz;
+                    float cz = ax*by - ay*bx;
+                    float nlen = sqrt(cx*cx + cy*cy + cz*cz);
+                    float nx, ny, nz;
+                    if (nlen > 1e-6f) { float inv = 1.0f/nlen; nx=cx*inv; ny=cy*inv; nz=cz*inv; }
+                    else              { nx=0; ny=1; nz=0; }
                     int k = faceTriStart[fi] * FACE_STRIDE;
                     for (size_t i = 1; i + 1 < face.length; i++) {
-                        foreach (idx; [face[0], face[i], face[i + 1]]) {
-                            Vec3 v = mesh.vertices[idx];
-                            fp[k++] = v.x; fp[k++] = v.y; fp[k++] = v.z;
-                            fp[k++] = n.x; fp[k++] = n.y; fp[k++] = n.z;
-                        }
+                        Vec3 va = mesh.vertices[i0];
+                        Vec3 vb = mesh.vertices[face[i]];
+                        Vec3 vc = mesh.vertices[face[i+1]];
+                        fp[k++] = va.x; fp[k++] = va.y; fp[k++] = va.z;
+                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
+                        fp[k++] = vb.x; fp[k++] = vb.y; fp[k++] = vb.z;
+                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
+                        fp[k++] = vc.x; fp[k++] = vc.y; fp[k++] = vc.z;
+                        fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
                     }
                 }
                 glUnmapBuffer(GL_ARRAY_BUFFER);
             }
         }
 
-        // O(edges): for each edge check if either endpoint moved.
-        bool anyEdgeUpdate = false;
-        bool[] edgeNeedsUpdate = new bool[](mesh.edges.length);
-        for (int ei = 0; ei < cast(int)mesh.edges.length; ei++) {
-            uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
-            if ((a < toUpdate.length && toUpdate[a]) ||
-                (b < toUpdate.length && toUpdate[b])) {
-                edgeNeedsUpdate[ei] = true;
-                anyEdgeUpdate = true;
-            }
-        }
-
-        if (anyEdgeUpdate) {
+        // Edge VBO — VBO segment index == cage edge index in cage mode
+        // (subpatch upload would have populated edgeOriginGpu and gone
+        // through the suppressCageUpload early-return above, so we're
+        // guaranteed unfiltered here).
+        if (edgeVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
             float* ep = cast(float*)glMapBufferRange(
                 GL_ARRAY_BUFFER, 0,
                 cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
-                GL_MAP_WRITE_BIT);
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (ep) {
+                int k = 0;
                 foreach (ei, edge; mesh.edges) {
-                    if (!edgeNeedsUpdate[ei]) continue;
                     Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
-                    int k = cast(int)ei * 6;
                     ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
                     ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
                 }
@@ -3726,20 +3712,20 @@ struct GpuMesh {
             }
         }
 
-        // Vertex points.
-        glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
-        float* vp = cast(float*)glMapBufferRange(
-            GL_ARRAY_BUFFER, 0,
-            cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
-            GL_MAP_WRITE_BIT);
-        if (vp) {
-            foreach (vi, needsUpdate; toUpdate) {
-                if (!needsUpdate) continue;
-                Vec3 v = mesh.vertices[vi];
-                int k = cast(int)vi * 3;
-                vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
+        // Vertex VBO — same invariant: cage upload places vi at vbo slot vi.
+        if (vertCount > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
+            float* vp = cast(float*)glMapBufferRange(
+                GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
+                GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+            if (vp) {
+                foreach (vi, v; mesh.vertices) {
+                    int k = cast(int)vi * 3;
+                    vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
+                }
+                glUnmapBuffer(GL_ARRAY_BUFFER);
             }
-            glUnmapBuffer(GL_ARRAY_BUFFER);
         }
 
         glBindVertexArray(0);
