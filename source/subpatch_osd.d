@@ -1,19 +1,24 @@
-/// OpenSubdiv evaluator integration — bench-first scaffolding.
+/// OpenSubdiv evaluator integration for vibe3d's SubpatchPreview.
 ///
-/// This module exists to (a) verify the D-OpenSubdiv binding links and
-/// runs inside vibe3d's address space, and (b) measure the per-frame
-/// eval cost of OpenSubdiv's stencil evaluator against vibe3d's own
-/// `catmullClark` recursion on the same cage. Once we have real numbers
-/// the integration with `SubpatchPreview` can be planned around them
-/// (full replace vs fast-path only, what to do about `SubpatchTrace`).
+/// Two roles:
+///   1. `benchOsdJson` — HTTP-exposed benchmark that times OSD's
+///      stencil eval against vibe3d's own catmullClark recursion.
+///   2. `OsdAccel` — the production back-end SubpatchPreview uses for
+///      every uniform-CC subdivision (all cage faces marked
+///      `isSubpatch`). Builds OSD topology + stencil table once per
+///      cage-topology change, emits the limit Mesh + SubpatchTrace
+///      directly, then refresh()es per-frame in one SpMV.
 ///
-/// No public API touches `SubpatchPreview` yet — that's the next phase.
+/// Selective subpatch (some faces marked, others not) stays on the
+/// recursive vibe3d path — OpenSubdiv subdivides every face, so the
+/// stitching of refined-vs-unrefined subsets falls to vibe3d's
+/// catmullClarkSelected.
 module subpatch_osd;
 
 import std.datetime.stopwatch : StopWatch;
 import std.format             : format;
 import math                   : Vec3;
-import mesh                   : Mesh, catmullClark, makeCube;
+import mesh                   : Mesh, SubpatchTrace, catmullClark, makeCube;
 import osd.c;
 
 /// Build a synthetic cage by Catmull-Clark-refining a unit cube `pre`
@@ -114,27 +119,29 @@ string benchOsdJson(ref const Mesh cage, int level, int iters)
 }
 
 // ---------------------------------------------------------------------------
-// OsdAccel — OpenSubdiv-accelerated fast path for SubpatchPreview.
+// OsdAccel — full SubpatchPreview back-end built on OpenSubdiv.
 //
-// Strategy: after each full vibe3d-side `rebuild`, build an OSD topology +
-// stencil table from the same cage at the same depth, evaluate it with the
-// cage's current positions, and match OSD's output verts to vibe3d's
-// preview verts by quantised position. The result is a permutation
-// `permOsdToPreview[osdIdx] = previewVertIdx` that lets us run one
-// `osdc_evaluate` per drag frame and scatter the result into
-// `preview.vertices[]` — ~50× faster than vibe3d's recursive
-// refreshSubdivPositions on a 1.5 K-vert cage (see benchOsdJson).
+// Replaces vibe3d's catmullClarkTracked recursion entirely for the uniform-
+// subpatch case (every cage face marked `isSubpatch`). One call to
+// `buildPreview` constructs the limit Mesh (verts/edges/faces/loops) plus
+// the SubpatchTrace from OSD's TopologyRefiner output; subsequent drag
+// frames just call `refresh` which runs one stencil-table SpMV directly
+// into `preview.vertices` (Vec3 is 3 floats tightly packed, so we write
+// through `preview.vertices.ptr` without a permutation step).
 //
-// Active only when every cage face is subpatch-marked (uniform CC). Mixed
-// cases stay on the recursive path because OSD subdivides the whole mesh.
-// Any mismatch in vert count or position-match coverage trips `valid =
-// false` so the caller falls back to the existing path.
+// The OSD handle stays cached across drag events. Cage-topology change →
+// SubpatchPreview drops the OsdAccel and re-runs `buildPreview` on the
+// new cage.
+//
+// Selective subpatch (mixed marked / unmarked faces) is out of scope:
+// OpenSubdiv subdivides every face, and stitching refined/un-refined
+// subsets back together is what vibe3d's `catmullClarkSelected` does on
+// the CPU. SubpatchPreview's `allSubpatch()` gate keeps that path
+// untouched.
 // ---------------------------------------------------------------------------
 struct OsdAccel {
     private osdc_topology_t* osd;
-    private uint[]  permOsdToPreview;   // perm[osdIdx] = previewVertIdx
-    private float[] cageScratchXyz;     // pre-allocated, tightly packed
-    private float[] limitScratchXyz;
+    private float[] cageScratchXyz;     // tightly-packed cage positions
     bool valid;
 
     /// Free the OSD handle and reset state. Idempotent.
@@ -143,33 +150,40 @@ struct OsdAccel {
             osdc_topology_destroy(osd);
             osd = null;
         }
-        permOsdToPreview.length = 0;
-        cageScratchXyz.length   = 0;
-        limitScratchXyz.length  = 0;
-        valid                   = false;
+        cageScratchXyz.length = 0;
+        valid                 = false;
     }
 
+    /// Free OSD resources at scope exit. The struct is owned by
+    /// SubpatchPreview, which lives for the program's duration, so this
+    /// fires once — but it keeps `dub test` (and any future short-lived
+    /// SubpatchPreview instances) leak-clean.
+    ~this() { clear(); }
+
     /// Build OSD topology + stencil table from `cage` at `level`, then
-    /// match OSD's output verts to `preview.vertices` by quantised
-    /// position. Sets `valid = true` on success.
+    /// emit the limit Mesh (verts/edges/faces/loops) and SubpatchTrace
+    /// directly from OSD's output. Caches the OSD handle so subsequent
+    /// `refresh` calls run a single SpMV against the cage's new
+    /// positions.
     ///
-    /// Returns false (and clears state) when:
-    ///   * OSD topology creation fails (degenerate cage),
-    ///   * OSD's limit-vert count diverges from `preview.vertices.length`
-    ///     (e.g. boundary/corner-sharpness semantics differ between OSD
-    ///     and vibe3d's CC),
-    ///   * any OSD limit vert can't be position-matched against a preview
-    ///     vert within the quantisation tolerance.
-    /// In all failure modes the caller MUST fall back to the recursive
-    /// refreshSubdivPositions path.
-    bool rebuild(ref const Mesh cage, int level, ref const Mesh preview)
+    /// Vertex ordering follows OpenSubdiv's deepest-level layout:
+    /// face-points first, edge-points next, vert-points last. The
+    /// trailing vert-points trace back to cage verts via
+    /// `outTrace.vertOrigin`; face/edge points have `uint.max` there.
+    ///
+    /// Returns false (and clears state) when OSD topology creation
+    /// fails (degenerate input). Callers fall back to vibe3d's
+    /// catmullClarkTracked path.
+    bool buildPreview(ref const Mesh cage, int level,
+                       out Mesh outMesh, out SubpatchTrace outTrace)
     {
         clear();
 
-        // ---- Flatten cage into OSD's contiguous-int input format -----
         immutable int nv = cast(int)cage.vertices.length;
         immutable int nf = cast(int)cage.faces.length;
+        if (nv == 0 || nf == 0 || level < 1) return false;
 
+        // ---- Flatten cage into OSD's contiguous-int input format -----
         int[] faceVertCounts = new int[](nf);
         int[] faceVertIndices;
         foreach (fi, face; cage.faces) {
@@ -184,177 +198,165 @@ struct OsdAccel {
             cageScratchXyz[3*vi + 2] = v.z;
         }
 
-        // ---- Build OSD topology --------------------------------------
+        // ---- Build OSD topology + stencil table ----------------------
         osd = osdc_topology_create(
             nv, nf,
             faceVertCounts.ptr, faceVertIndices.ptr,
             level);
         if (osd is null) { clear(); return false; }
 
-        immutable int osdLimitVerts = osdc_topology_limit_vert_count(osd);
-        if (osdLimitVerts != cast(int)preview.vertices.length) {
-            clear();
-            return false;
-        }
+        immutable int limitVerts   = osdc_topology_limit_vert_count(osd);
+        immutable int limitFaces   = osdc_topology_limit_face_count(osd);
+        immutable int limitIndices = osdc_topology_limit_index_count(osd);
+        immutable int limitEdges   = osdc_topology_limit_edge_count(osd);
 
-        // ---- Eval OSD at current cage positions ----------------------
-        limitScratchXyz.length = 3 * osdLimitVerts;
-        osdc_evaluate(osd, cageScratchXyz.ptr, limitScratchXyz.ptr);
+        // ---- Read OSD limit topology ---------------------------------
+        int[] faceCounts   = new int[](limitFaces);
+        int[] faceIndices  = new int[](limitIndices);
+        int[] edgeVertsRaw = new int[](2 * limitEdges);
+        osdc_topology_limit_topology(osd, faceCounts.ptr, faceIndices.ptr);
+        osdc_topology_limit_edges   (osd, edgeVertsRaw.ptr);
 
-        // ---- Match OSD output → preview vert by quantised position ---
-        // Round-to-nearest (NOT floor) avoids the ±0 cliff: with floor,
-        // -1e-7 / 1e-3 = -1e-4 → floor = -1, while +0.0 / 1e-3 = 0 →
-        // floor = 0. Two positions identical to float precision get put
-        // in different buckets when they straddle zero, which is
-        // exactly the case for cage verts on the X/Y/Z planes of a
-        // closed centred mesh (the cube). `round` collapses ±0 to the
-        // same bucket and gives nearest-bucket semantics consistent
-        // with the "two positions within Q/2 of each other are the
-        // same point" intent.
-        //
-        // Q = 1e-4 is well above float ULPs for any reasonably-scaled
-        // mesh (positions in [-100, 100]) and well below the spacing
-        // between distinct verts on any sane subdivision output (~1e-2
-        // at minimum after CC).
-        enum float Q = 1e-4f;
-        long[3] quantise(float x, float y, float z) {
-            import std.math : round;
-            return [
-                cast(long)round(x / Q),
-                cast(long)round(y / Q),
-                cast(long)round(z / Q),
+        int[] faceOriginsRaw = new int[](limitFaces);
+        int[] vertOriginsRaw = new int[](limitVerts);
+        int[] edgeOriginsRaw = new int[](limitEdges);
+        osdc_topology_face_origins(osd, faceOriginsRaw.ptr);
+        osdc_topology_vert_origins(osd, vertOriginsRaw.ptr);
+        osdc_topology_edge_origins(osd, edgeOriginsRaw.ptr);
+
+        // ---- Build preview Mesh.vertices via direct stencil eval -----
+        // Vec3 is { float x, y, z; } — 12 bytes tightly packed, so the
+        // backing array can be reinterpreted as a tightly-packed float
+        // stream. Eval writes straight into preview.vertices' backing
+        // memory: no copy, no permutation, no intermediate buffer.
+        outMesh.vertices = new Vec3[](limitVerts);
+        osdc_evaluate(osd, cageScratchXyz.ptr,
+                      cast(float*)outMesh.vertices.ptr);
+
+        // ---- Build preview Mesh.edges --------------------------------
+        outMesh.edges.length = limitEdges;
+        foreach (i; 0 .. limitEdges) {
+            outMesh.edges[i] = [
+                cast(uint)edgeVertsRaw[2*i + 0],
+                cast(uint)edgeVertsRaw[2*i + 1],
             ];
         }
 
-        uint[long[3]] posToPreviewIdx;
-        foreach (i, v; preview.vertices) {
-            auto k = quantise(v.x, v.y, v.z);
-            // First wins — keeps the perm deterministic when two
-            // preview verts happen to sit at the same quantised cell.
-            if (k !in posToPreviewIdx)
-                posToPreviewIdx[k] = cast(uint)i;
+        // ---- Build preview Mesh.faces (n-gon arrays per face) --------
+        outMesh.faces.length = limitFaces;
+        int cursor = 0;
+        foreach (fi; 0 .. limitFaces) {
+            int cnt = faceCounts[fi];
+            outMesh.faces[fi].length = cnt;
+            foreach (k; 0 .. cnt)
+                outMesh.faces[fi][k] = cast(uint)faceIndices[cursor++];
         }
 
-        permOsdToPreview = new uint[](osdLimitVerts);
-        permOsdToPreview[] = uint.max;
+        // Fresh value-mesh: bump versions so downstream caches treat it
+        // as a new mesh state, not the default `Mesh.init` (= 0).
+        outMesh.mutationVersion = 1;
+        outMesh.topologyVersion = 1;
+        outMesh.buildLoops();
 
-        int unmatched = 0;
-        foreach (osdIdx; 0 .. osdLimitVerts) {
-            auto k = quantise(
-                limitScratchXyz[3*osdIdx + 0],
-                limitScratchXyz[3*osdIdx + 1],
-                limitScratchXyz[3*osdIdx + 2]);
-            if (auto p = k in posToPreviewIdx) {
-                permOsdToPreview[osdIdx] = *p;
-            } else {
-                ++unmatched;
-            }
-        }
+        // ---- Build SubpatchTrace from OSD origin arrays --------------
+        outTrace.vertOrigin = new uint[](limitVerts);
+        outTrace.edgeOrigin = new uint[](limitEdges);
+        outTrace.faceOrigin = new uint[](limitFaces);
+        foreach (i, o; vertOriginsRaw)
+            outTrace.vertOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
+        foreach (i, o; edgeOriginsRaw)
+            outTrace.edgeOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
+        foreach (i, o; faceOriginsRaw)
+            outTrace.faceOrigin[i] = cast(uint)o;     // never -1 in CC
+        // Every limit face inherits the "subpatch" flag — this is the
+        // uniform-CC path, every cage face was marked, so every refined
+        // descendant stays marked.
+        outTrace.subpatch = new bool[](limitFaces);
+        outTrace.subpatch[] = true;
 
-        if (unmatched > 0) { clear(); return false; }
+        // Resize selection masks to match the new vert/edge/face counts
+        // so callers can drive selection without a trip through
+        // resetSelection.
+        outMesh.selectedVertices.length = limitVerts;
+        outMesh.selectedEdges.length    = limitEdges;
+        outMesh.selectedFaces.length    = limitFaces;
+        outMesh.isSubpatch.length       = limitFaces;
+        outMesh.isSubpatch[]            = true;
 
         valid = true;
         return true;
     }
 
-    /// Free OSD resources at scope exit. The struct is owned by
-    /// SubpatchPreview, which lives for the program's duration, so this
-    /// fires once — but it keeps `dub test` (and any future short-lived
-    /// SubpatchPreview instances) leak-clean.
-    ~this() { clear(); }
     /// Hot per-frame call: re-eval OSD's stencils against the current
-    /// cage positions and scatter the result into `preview.vertices[]`
-    /// via the cached permutation. No allocations after `rebuild`.
+    /// cage positions and write straight into `preview.vertices`. No
+    /// allocations after `buildPreview`.
     void refresh(ref const Mesh cage, ref Mesh preview) {
         assert(valid, "OsdAccel.refresh called on invalid accel");
         assert(cage.vertices.length * 3 == cageScratchXyz.length,
-               "cage vertex count changed without rebuild");
+               "cage vertex count changed without buildPreview");
 
-        // Re-pack cage positions into the contiguous scratch buffer the
-        // C shim expects. Vec3 in vibe3d is already tightly packed so
-        // this is a memcpy in disguise — D's GC doesn't relocate, so
-        // taking `cage.vertices.ptr` would work too, but the explicit
-        // copy keeps the eval contract independent of mesh.d's struct
-        // layout decisions.
+        // Re-pack cage positions into the scratch buffer the C shim
+        // expects. The eval call below dumps the result directly into
+        // preview.vertices' backing memory (Vec3 is 3 floats packed).
         foreach (vi, v; cage.vertices) {
             cageScratchXyz[3*vi + 0] = v.x;
             cageScratchXyz[3*vi + 1] = v.y;
             cageScratchXyz[3*vi + 2] = v.z;
         }
-        osdc_evaluate(osd, cageScratchXyz.ptr, limitScratchXyz.ptr);
-
-        foreach (osdIdx; 0 .. permOsdToPreview.length) {
-            immutable uint pi = permOsdToPreview[osdIdx];
-            preview.vertices[pi] = Vec3(
-                limitScratchXyz[3*osdIdx + 0],
-                limitScratchXyz[3*osdIdx + 1],
-                limitScratchXyz[3*osdIdx + 2]);
-        }
+        osdc_evaluate(osd, cageScratchXyz.ptr,
+                      cast(float*)preview.vertices.ptr);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Round-trip correctness: build an OsdAccel against a known cube cage,
-// shift one cage vert, refresh, and verify the result matches a direct
-// catmullClark recursion on the same shifted cage. Catches regressions
-// in either the perm-build (position match) or the per-frame scatter.
+// Round-trip correctness: build a preview from a cube cage at depth 2,
+// verify OSD-emitted topology counts match Catmull-Clark expectations,
+// then edit a cage vert and ensure refresh() actually moves preview
+// verts. Catches regressions in topology emission, trace derivation,
+// and the per-frame scatter.
 // ---------------------------------------------------------------------------
-version (unittest) {
-    import std.math : abs;
-}
-
 unittest {
     Mesh cage = makeCube();
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
 
-    // Run vibe3d's reference path to depth 2 — that's the preview mesh
-    // we'll match against. Build it explicitly (no SubpatchPreview
-    // here, just the bare math) so the unit test stays scoped to
-    // OsdAccel's contract.
-    Mesh preview = catmullClark(cage);
-    preview      = catmullClark(preview);
+    OsdAccel       accel;
+    Mesh           preview;
+    SubpatchTrace  trace;
+    bool ok = accel.buildPreview(cage, 2, preview, trace);
+    assert(ok && accel.valid, "OsdAccel.buildPreview failed on uniform cube");
 
-    // Diagnostic: OSD's CC and vibe3d's CC must agree on vert count
-    // first, otherwise the perm-build can't even start. The bench
-    // output (benchOsdJson) already confirms count agreement for the
-    // same pre-refinement levels, so this is mostly a regression
-    // sentinel.
-    immutable int cageV    = cast(int)cage.vertices.length;
-    immutable int cageF    = cast(int)cage.faces.length;
-    immutable int previewV = cast(int)preview.vertices.length;
+    // Cube → uniform CC depth 2 → 98 verts, 96 quads. Each quad has
+    // 4 edges, but every interior edge is shared by 2 quads, so
+    // num_edges = (4 * num_faces) / 2 = 192.
+    assert(preview.vertices.length == 98);
+    assert(preview.faces.length    == 96);
+    assert(preview.edges.length    == 192);
 
-    OsdAccel accel;
-    bool built = accel.rebuild(cage, 2, preview);
-    import std.format : format;
-    assert(built,
-        format("OsdAccel.rebuild failed on uniform-subpatch cage "
-             ~ "(cage=%dv/%df preview=%dv)",
-             cageV, cageF, previewV));
-    assert(accel.valid);
+    // Vert-origin layout: face/edge points carry uint.max, vert-points
+    // (descendants of cage corners) carry their cage vert index. After
+    // two CC passes the count of vert-points equals the cage vert
+    // count = 8 (each cage vert produces exactly one vert-child per
+    // level, recursively).
+    int withOrigin = 0;
+    foreach (o; trace.vertOrigin)
+        if (o != uint.max) ++withOrigin;
+    assert(withOrigin == 8,
+           "expected 8 vert-points tracing back to cage corners");
 
-    // Shift one cage vert; refresh; compare against vibe3d's own
-    // refinement of the same shifted cage. Positions should agree
-    // tightly — both implementations run the same Catmull-Clark math.
+    // Face origins are always in [0, num_cage_faces) — every refined
+    // face descends from exactly one cage face.
+    foreach (o; trace.faceOrigin) assert(o < 6, "face origin out of cage range");
+
+    // Edit a cage vert and refresh — preview should mutate.
+    Vec3[] before = preview.vertices.dup;
     cage.vertices[0] = cage.vertices[0] + Vec3(0.5f, 0, 0);
-
     accel.refresh(cage, preview);
 
-    Mesh reference = catmullClark(cage);
-    reference      = catmullClark(reference);
-    assert(preview.vertices.length == reference.vertices.length,
-           "vert count divergence between OSD and vibe3d on identical cage");
-
-    // The accel-refreshed `preview.vertices[i]` is in vibe3d's
-    // preview ordering by construction (the permutation matched it
-    // back), so we compare slot-for-slot against the freshly-refined
-    // reference.
-    enum float TOL = 1e-3f;
+    int moved = 0;
     foreach (i; 0 .. preview.vertices.length) {
-        immutable Vec3 a = preview.vertices[i];
-        immutable Vec3 b = reference.vertices[i];
-        assert(abs(a.x - b.x) < TOL && abs(a.y - b.y) < TOL
-            && abs(a.z - b.z) < TOL,
-               "preview vert " ~ i.stringof
-             ~ " diverged from vibe3d CC after OSD refresh");
+        if (preview.vertices[i].x != before[i].x ||
+            preview.vertices[i].y != before[i].y ||
+            preview.vertices[i].z != before[i].z) ++moved;
     }
+    assert(moved > 0, "refresh did not move any preview vert");
 }

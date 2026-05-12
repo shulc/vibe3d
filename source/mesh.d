@@ -3291,6 +3291,31 @@ struct SubpatchPreview {
             active = false;
             return;
         }
+
+        // ---- OSD-driven uniform path -------------------------------
+        // When every cage face is subpatch-marked, build the entire
+        // preview (mesh + trace) directly from OpenSubdiv — skips the
+        // recursive catmullClarkTracked descent and the per-level
+        // SubdivCache plumbing. Selective subpatch (mixed marks) falls
+        // through to the legacy path below; OSD subdivides every face,
+        // so the stitching of refined / unrefined subsets is what
+        // catmullClarkSelected handles.
+        if (source.allSubpatch()
+            && osdAccel.buildPreview(source, d, mesh, trace))
+        {
+            active = true;
+            cageVertPreview = new uint[](source.vertices.length);
+            cageVertPreview[] = uint.max;
+            foreach (pi, origin; trace.vertOrigin) {
+                if (origin == uint.max) continue;
+                if (origin >= cageVertPreview.length) continue;
+                if (cageVertPreview[origin] == uint.max)
+                    cageVertPreview[origin] = cast(uint)pi;
+            }
+            return;
+        }
+
+        // ---- Legacy recursive path (selective subpatch only) -------
         levels.length = d;
         auto t0 = SubpatchTrace.identity(source, source.isSubpatch);
         levels[0].step = catmullClarkTracked(source, t0, &levels[0].cache);
@@ -3316,14 +3341,6 @@ struct SubpatchPreview {
             if (cageVertPreview[origin] == uint.max)
                 cageVertPreview[origin] = cast(uint)pi;
         }
-
-        // Phase 2: try to build the OSD acceleration. Only activates
-        // when every cage face is subpatch-marked (OpenSubdiv subdivides
-        // the whole mesh; selective subpatch stays on vibe3d's existing
-        // recursive path). Failure modes (OSD vert count mismatch,
-        // position-match coverage gap) trip the fallback automatically.
-        if (source.allSubpatch())
-            osdAccel.rebuild(source, d, mesh);
     }
 
     /// Topology unchanged → just push the new positions through the
