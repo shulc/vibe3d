@@ -2481,23 +2481,13 @@ public:
 
     /// Re-evaluate the preview from params_ after a schema slider change.
     /// Called by PropertyPanel immediately after onParamChanged().
+    /// uploadPreview() picks uploadBase / uploadCuboid based on state and
+    /// goes through applyFrameToMesh — same path as the interactive drag,
+    /// so a slider tweak and a mouse-driven update produce identical
+    /// previews in world space.
     override void evaluate() {
-        // No preview exists yet in Idle — nothing to update.
         if (state == BoxState.Idle) return;
-
-        // Schema is the source of truth for tweaks made via property panel.
-        // Rebuild preview directly from params_, bypassing the interactive
-        // drag-state mapping in buildCuboid(). Vertices are emitted in
-        // LOCAL workplane space, so transform them through `frame.toWorld`
-        // before uploading — otherwise a non-identity workplane (auto-mode
-        // with X/Z-facing camera, or any aligned workplane) drops the
-        // preview at the local origin while commit puts it at the world
-        // origin, making the box appear to "jump" on commit.
-        previewMesh.clear();
-        buildCuboidParametric(&previewMesh, params_);
-        applyFrameToMesh(&previewMesh);
-        previewMesh.buildLoops();
-        previewGpu.upload(previewMesh);
+        uploadPreview();
     }
 
 private:
