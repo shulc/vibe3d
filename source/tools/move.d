@@ -366,9 +366,24 @@ public:
     private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta,
                                   int sx, int sy)
     {
-        import toolpipe.pipeline   : g_pipeCtx;
-        import toolpipe.packets    : SubjectPacket;
+        import toolpipe.pipeline      : g_pipeCtx;
+        import toolpipe.packets       : SubjectPacket;
+        import toolpipe.stage         : TaskCode;
+        import toolpipe.stages.snap   : SnapStage;
         if (g_pipeCtx is null) return worldDelta;
+
+        // Fast path: when SnapStage is disabled the pipeline evaluate +
+        // 3 × `.dup` of the selection arrays add ~1 ms per mouse motion
+        // event for no benefit. Check the stage's `enabled` flag
+        // directly first — only run the full pipeline.evaluate (and
+        // the costly snap candidate search) when snap is on.
+        auto snapStage = cast(SnapStage)
+                         g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+        if (snapStage is null || !snapStage.enabled) {
+            lastSnap = SnapResult.init;
+            clearLastSnap();
+            return worldDelta;
+        }
 
         // pipeline.evaluate so SNAP picks up upstream WORK state
         // (workplane center / normal / axes used by Grid +

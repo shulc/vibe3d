@@ -654,12 +654,21 @@ protected:
         bool active() const { return centers.length >= 2; }
     }
     ClusterPivots queryClusterPivots() {
-        import toolpipe.pipeline           : g_pipeCtx;
-        import toolpipe.stage              : TaskCode;
-        import toolpipe.packets            : SubjectPacket;
+        import toolpipe.pipeline             : g_pipeCtx;
+        import toolpipe.stage                : TaskCode;
+        import toolpipe.packets              : SubjectPacket;
+        import toolpipe.stages.actcenter     : ActionCenterStage;
         ClusterPivots out_;
         if (g_pipeCtx is null) return out_;
-        if (g_pipeCtx.pipeline.findByTask(TaskCode.Acen) is null) return out_;
+        // Fast path: per-cluster pivots only exist when ACEN.mode is
+        // Local. Anything else (Auto / Select / Element / …) → empty
+        // ClusterPivots. Skip the full pipeline.evaluate (~1 ms on
+        // 8 K-vert meshes) and the per-cluster solve unless we
+        // actually need it.
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null || ac.mode != ActionCenterStage.Mode.Local)
+            return out_;
         SubjectPacket subj;
         auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
         out_.centers   = state.actionCenter.clusterCenters;
@@ -677,12 +686,17 @@ protected:
         bool active() const { return right.length >= 2; }
     }
     ClusterAxes queryClusterAxes() {
-        import toolpipe.pipeline           : g_pipeCtx;
-        import toolpipe.stage              : TaskCode;
-        import toolpipe.packets            : SubjectPacket;
+        import toolpipe.pipeline         : g_pipeCtx;
+        import toolpipe.stage            : TaskCode;
+        import toolpipe.packets          : SubjectPacket;
+        import toolpipe.stages.axis      : AxisStage;
         ClusterAxes out_;
         if (g_pipeCtx is null) return out_;
-        if (g_pipeCtx.pipeline.findByTask(TaskCode.Axis) is null) return out_;
+        // Fast path: per-cluster axes only when AXIS.mode is Local.
+        auto ax = cast(AxisStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Axis);
+        if (ax is null || ax.mode != AxisStage.Mode.Local)
+            return out_;
         SubjectPacket subj;
         auto state = g_pipeCtx.pipeline.evaluate(subj, cachedVp);
         out_.right = state.axis.clusterRight;
