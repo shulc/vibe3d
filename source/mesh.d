@@ -1515,24 +1515,41 @@ struct Mesh {
         }
 
 
-        // Anchor walk — independent per vertex; for boundary verts,
-        // walk back via next(twin(cur)) until the open start.
-        void anchorOneVert(size_t vi) {
-            if (vertLoop[vi] == ~0u) return;
-            uint cur  = vertLoop[vi];
-            uint orig = cur;
-            foreach (_; 0 .. faces.length + 4) {
-                if (loops[cur].twin == ~0u) break;
-                uint back = loops[loops[cur].twin].next;
-                if (back == orig) break;
-                cur = back;
+        // Anchor walk — independent per vertex; for BOUNDARY verts,
+        // walk back via next(twin(cur)) until the open start of the
+        // fan. For closed meshes (every edge has both A and B loops)
+        // the walk just re-traverses a closed ring and ends at `orig`
+        // — the resulting vertLoop[vi] is some loop in the same ring
+        // we started in, which is what we already had. Detect that
+        // case ONCE and skip the per-vertex walk entirely — it's the
+        // single biggest cost (~29% of CPU during a subpatch-mode
+        // sphere drag profile) for closed-manifold inputs, which are
+        // the common case in subpatch preview meshes.
+        bool hasBoundary = false;
+        foreach (ei; 0 .. edges.length) {
+            if (edgeLoopA[ei] != -1 && edgeLoopB[ei] == -1) {
+                hasBoundary = true;
+                break;
             }
-            vertLoop[vi] = cur;
         }
-        if (vertices.length >= PARALLEL_BUILD_MIN) {
-            foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
-        } else {
-            foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
+        if (hasBoundary) {
+            void anchorOneVert(size_t vi) {
+                if (vertLoop[vi] == ~0u) return;
+                uint cur  = vertLoop[vi];
+                uint orig = cur;
+                foreach (_; 0 .. faces.length + 4) {
+                    if (loops[cur].twin == ~0u) break;
+                    uint back = loops[loops[cur].twin].next;
+                    if (back == orig) break;
+                    cur = back;
+                }
+                vertLoop[vi] = cur;
+            }
+            if (vertices.length >= PARALLEL_BUILD_MIN) {
+                foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
+            } else {
+                foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
+            }
         }
     }
 
