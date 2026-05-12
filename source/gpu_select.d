@@ -255,10 +255,18 @@ private:
     void renderMode(SelectMode mode, ref const GpuMesh gpu, ref const Viewport vp)
     {
         // Save state we touch so the main renderer survives unchanged.
+        // pickXxx is called mid-frame between shader.useProgram and
+        // gpu.drawEdges — the latter assumes the program bound when
+        // pick() was invoked is still active when it returns, so we
+        // MUST restore glUseProgram here. Same for VAO bindings.
         GLint prevFbo;
         GLint[4] prevVp;
+        GLint prevProgram;
+        GLint prevVao;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
         glGetIntegerv(GL_VIEWPORT, prevVp.ptr);
+        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
         GLboolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
         GLboolean prevPolyOff   = glIsEnabled(GL_POLYGON_OFFSET_FILL);
 
@@ -317,7 +325,8 @@ private:
                 break;
         }
 
-        glBindVertexArray(0);
+        glBindVertexArray(cast(GLuint)prevVao);
+        glUseProgram(cast(GLuint)prevProgram);
         glBindFramebuffer(GL_FRAMEBUFFER, cast(GLuint)prevFbo);
         glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
         if (!prevDepthTest) glDisable(GL_DEPTH_TEST);
