@@ -1727,7 +1727,7 @@ struct VertexDartRange {
         uint twinPrev = _loops[prevLi].twin;
         if (twinPrev == ~0u) { _done = true; return; }
         if (++_steps >= MAX_STEPS) {
-            debug assert(false, "VertexDartRange: MAX_STEPS exceeded — degenerate mesh or infinite loop");
+            warnMaxStepsExceeded("VertexDartRange");
             _done = true;
             return;
         }
@@ -1738,6 +1738,33 @@ struct VertexDartRange {
 
     /// Save a copy so the range can be used as a ForwardRange.
     @property VertexDartRange save() const { return this; }
+}
+
+/// One-time-per-session stderr warning shared by the three half-edge
+/// vertex-walk ranges (Dart / Neighbor / Edge). Triggered when a walk
+/// fails to return to its starting dart inside MAX_STEPS — typically
+/// non-manifold edges in an imported mesh (LWO files commonly share
+/// an edge across 3+ faces, which breaks the unique-twin invariant
+/// the walk relies on).
+///
+/// Old behaviour was `debug assert(false, …)`, which crashed debug
+/// builds on every degenerate walk; release builds were already
+/// gracefully truncating via `_done = true`. The assert was hiding
+/// the fact that the underlying topology problem deserves a fix at
+/// build-loops time (treat non-manifold edges as boundaries so twins
+/// stay well-defined) — log once so the issue stays visible without
+/// being a hard stop.
+private __gshared bool maxStepsWarned = false;
+private void warnMaxStepsExceeded(string rangeName) nothrow {
+    if (maxStepsWarned) return;
+    maxStepsWarned = true;
+    try {
+        import std.stdio : stderr;
+        stderr.writefln(
+            "[mesh] %s: MAX_STEPS exceeded — non-manifold cage edges " ~
+            "(walk truncated; selection / loop ops may be incomplete).",
+            rangeName);
+    } catch (Exception) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -1826,7 +1853,7 @@ struct VertexNeighborRange {
         uint twinPrev = _loops[prevLi].twin;
         if (twinPrev == ~0u) { _atExtra = true; return; }
         if (++_steps >= MAX_STEPS) {
-            debug assert(false, "VertexNeighborRange: MAX_STEPS exceeded");
+            warnMaxStepsExceeded("VertexNeighborRange");
             _done = true;
             return;
         }
@@ -1883,7 +1910,7 @@ struct VertexEdgeRange {
         uint twinPrev = _loops[prevLi].twin;
         if (twinPrev == ~0u) { _atExtra = true; return; }  // boundary: emit extra next
         if (++_steps >= MAX_STEPS) {
-            debug assert(false, "VertexEdgeRange: MAX_STEPS exceeded — degenerate mesh");
+            warnMaxStepsExceeded("VertexEdgeRange");
             _done = true;
             return;
         }
