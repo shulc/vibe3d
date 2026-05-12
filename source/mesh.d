@@ -2173,17 +2173,48 @@ struct SubpatchPreview {
     import subpatch_osd : OsdAccel;
     OsdAccel      osdAccel;
 
-    void rebuildIfStale(ref const Mesh source, int d) {
+    /// Phase 3b — set by the most recent rebuildIfStale fast-path
+    /// when the OSD GPU fan-out wrote vibe3d's face VBO directly.
+    /// Main loop reads this to skip the duplicate face-VBO write
+    /// inside its standard `gpu.refreshPositions` call (uses
+    /// refreshNonFacePositions instead).
+    bool lastRefreshFannedOut;
+
+    /// `targetFaceVbo` (and `targetFaceVertCount`) wire the GPU fan-
+    /// out path: when non-zero, the position-only fast path tries
+    /// `osdAccel.refreshIntoFaceVbo` against this VBO before falling
+    /// back to the CPU readback. The caller (app.d main loop) passes
+    /// gpu.faceVbo + gpu.faceVertCount.
+    void rebuildIfStale(ref const Mesh source, int d,
+                         GLuint targetFaceVbo = 0,
+                         int targetFaceVertCount = 0) {
+        lastRefreshFannedOut = false;
         if (sourceVersion == source.mutationVersion && depth == d)
             return;
         // Position-only fast path: cage topology + depth unchanged →
-        // ask OSD's stencil table for new limit positions and write
-        // straight into mesh.vertices.
+        // ask OSD's stencil table for new limit positions.
         if (active
             && depth == d
             && sourceTopologyVersion == source.topologyVersion
             && osdAccel.valid)
         {
+            // Try GPU fan-out: writes positions+normals straight into
+            // the caller's face VBO, no CPU readback for that data.
+            // Falls back to the CPU/readback path when the layout
+            // doesn't line up (different topology already uploaded)
+            // or when the GL eval wasn't built (no GL context).
+            if (targetFaceVbo != 0 && osdAccel.canFanOut
+                && osdAccel.refreshIntoFaceVbo(source,
+                        targetFaceVbo, targetFaceVertCount))
+            {
+                lastRefreshFannedOut = true;
+            }
+            // Always run osdAccel.refresh so preview.mesh.vertices
+            // stays fresh — vibe3d's edge + vert VBOs are written
+            // from the CPU side and several other consumers (lasso
+            // vis test below the threshold, debug overlays) read
+            // preview.vertices too. Phase 3c would drop this when
+            // those consumers migrate.
             osdAccel.refresh(source, mesh);
             ++mesh.mutationVersion;
             sourceVersion = source.mutationVersion;
