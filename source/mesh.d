@@ -670,6 +670,18 @@ struct Mesh {
     bool hasAnySelectedEdges() const { return hasAnySelected(selectedEdges); }
     bool hasAnySelectedFaces() const { return hasAnySelected(selectedFaces); }
     bool hasAnySubpatch() const        { return hasAnySelected(isSubpatch); }
+    /// True iff every face is subpatch-marked AND there's at least one
+    /// face. Gates the OSD-accelerated SubpatchPreview fast path:
+    /// OpenSubdiv subdivides the WHOLE mesh, so selective subpatch
+    /// (some faces marked, others not) keeps the existing vibe3d
+    /// catmullClarkSelected path.
+    bool allSubpatch() const {
+        if (faces.length == 0) return false;
+        if (isSubpatch.length < faces.length) return false;
+        foreach (i; 0 .. faces.length)
+            if (!isSubpatch[i]) return false;
+        return true;
+    }
 
     void setSubpatch(size_t idx, bool on) {
         if (idx >= isSubpatch.length) return;
@@ -3230,6 +3242,17 @@ struct SubpatchPreview {
     /// hover-pick inner loop on subpatch meshes).
     uint[] cageVertPreview;
 
+    /// OpenSubdiv-accelerated fast path for `refreshPositions`. Built
+    /// after each full vibe3d-side rebuild when every cage face is
+    /// subpatch-marked (uniform CC, the common case). When valid, the
+    /// per-drag-frame refresh runs one stencil-table SpMV instead of
+    /// vibe3d's recursive `refreshSubdivPositions` — ~50× faster on a
+    /// 1.5 K-vert cage (see subpatch_osd.benchOsdJson). Selective
+    /// subpatch and any boundary/sharpness divergence from OSD's CC
+    /// trips the fallback to the recursive path automatically.
+    import subpatch_osd : OsdAccel;
+    OsdAccel      osdAccel;
+
     void rebuildIfStale(ref const Mesh source, int d) {
         if (sourceVersion == source.mutationVersion && depth == d)
             return;
@@ -3257,6 +3280,11 @@ struct SubpatchPreview {
         sourceTopologyVersion = source.topologyVersion;
         cageVertPreview.length = 0;
         levels.length          = 0;
+        // Topology-changed rebuild invalidates any OSD acceleration we
+        // had — counts / vert positions are about to differ. Drop it
+        // here, rebuild at the bottom of this function once the new
+        // preview mesh + trace are populated.
+        osdAccel.clear();
         if (d <= 0 || !source.hasAnySubpatch()) {
             mesh   = Mesh.init;
             trace  = SubpatchTrace.init;
@@ -3288,12 +3316,32 @@ struct SubpatchPreview {
             if (cageVertPreview[origin] == uint.max)
                 cageVertPreview[origin] = cast(uint)pi;
         }
+
+        // Phase 2: try to build the OSD acceleration. Only activates
+        // when every cage face is subpatch-marked (OpenSubdiv subdivides
+        // the whole mesh; selective subpatch stays on vibe3d's existing
+        // recursive path). Failure modes (OSD vert count mismatch,
+        // position-match coverage gap) trip the fallback automatically.
+        if (source.allSubpatch())
+            osdAccel.rebuild(source, d, mesh);
     }
 
     /// Topology unchanged → just push the new positions through the
     /// cached level adjacency. Each level reads its predecessor's
     /// (now updated) vertices and writes its own.
+    ///
+    /// When `osdAccel.valid`, runs a single OpenSubdiv stencil SpMV
+    /// instead of the recursive descent — ~50× faster on a 1.5 K-vert
+    /// cage. The accel was built and matched against this same preview
+    /// mesh's vert ordering during the last `rebuild`, so the result
+    /// lands directly in `mesh.vertices[]` without touching the cached
+    /// per-level adjacency.
     private void refreshPositions(ref const Mesh source) {
+        if (osdAccel.valid) {
+            osdAccel.refresh(source, mesh);
+            ++mesh.mutationVersion;
+            return;
+        }
         const(Mesh)* prev = &source;
         foreach (k; 0 .. levels.length) {
             refreshSubdivPositions(*prev, levels[k].cache, levels[k].step.mesh);
