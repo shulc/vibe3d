@@ -4025,6 +4025,15 @@ struct GpuMesh {
     }
 
     // Draw vertex dots (call AFTER picking so hovered/selected state is current)
+    /// `hovered` and `selected` are CAGE-indexed. In cage mode the VBO
+    /// is also cage-indexed (vertOriginGpu is the identity), so a slot
+    /// lookup is direct. In subpatch mode the VBO holds only "vert-
+    /// point" preview verts (cage origin recorded in vertOriginGpu)
+    /// and most cage-vert indices have no VBO slot — translate
+    /// through vertOriginGpu the same way drawEdges does. Without
+    /// this, hovering on the subdivided surface highlighted the wrong
+    /// preview vert because the cage index from picking was being
+    /// used as a raw glDrawArrays offset.
     void drawVertices(GLint locColor, int hovered, const bool[] selected) {
         glBindVertexArray(vertVao);
 
@@ -4036,14 +4045,27 @@ struct GpuMesh {
         // Selected and hovered — drawn without depth test so they show through faces.
         glDisable(GL_DEPTH_TEST);
 
+        int cageOf(int vboIdx) {
+            if (vboIdx >= cast(int)vertOriginGpu.length) return -1;
+            uint c = vertOriginGpu[vboIdx];
+            return (c == uint.max) ? -1 : cast(int)c;
+        }
+
         glPointSize(10.0f);
         glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-        foreach (i; 0 .. selected.length)
-            if (selected[i]) glDrawArrays(GL_POINTS, cast(int)i, 1);
+        for (int i = 0; i < vertCount; i++) {
+            int c = cageOf(i);
+            if (c < 0) continue;
+            if (c < cast(int)selected.length && selected[c])
+                glDrawArrays(GL_POINTS, i, 1);
+        }
 
-        if (hovered >= 0 && hovered < vertCount) {
+        if (hovered >= 0) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
-            glDrawArrays(GL_POINTS, hovered, 1);
+            for (int i = 0; i < vertCount; i++) {
+                if (cageOf(i) == hovered)
+                    glDrawArrays(GL_POINTS, i, 1);
+            }
         }
 
         glEnable(GL_DEPTH_TEST);
