@@ -1575,105 +1575,6 @@ struct Mesh {
         }
     }
 
-    /// Like `buildLoops` but takes pre-built `loopEdge` and `faceLoop`
-    /// from the caller (catmullClarkTracked builds them deterministically
-    /// during face emit). Skips the edgeIndexMap AA build AND the
-    /// loopEdge AA-lookup pass — together ~100 ms at L3 on an 8 K-vert
-    /// cage subpatch preview, the single biggest cost on the Tab path.
-    ///
-    /// `edgeIndexMap` is left null on the resulting mesh; the subpatch
-    /// preview pipeline doesn't query it (bevel / select-loop /
-    /// symmetry all run on the cage, which builds edgeIndexMap via the
-    /// regular `buildLoops` path). Callers that DO need the AA should
-    /// use `buildLoops` instead.
-    void buildLoopsAfterEmit(uint[] preFaceLoop, uint[] preLoopEdge) {
-        enum size_t PARALLEL_BUILD_MIN = 4096;
-
-        size_t total = preLoopEdge.length;
-        loops.length    = total;
-        vertLoop.length = vertices.length;
-        vertLoop[]      = ~0u;
-        loopEdge        = preLoopEdge;
-        faceLoop        = preFaceLoop;
-
-        // Pass 1: fill vert, face, next, prev — disjoint per face.
-        void fillOneFace(size_t fi) {
-            auto face = faces[fi];
-            uint li = faceLoop[fi];
-            uint N = cast(uint)face.length;
-            foreach (i; 0 .. N) {
-                loops[li + i].vert = face[i];
-                loops[li + i].face = cast(uint)fi;
-                loops[li + i].next = li + (i + 1) % N;
-                loops[li + i].prev = li + (i + N - 1) % N;
-                loops[li + i].twin = ~0u;
-            }
-        }
-        if (faces.length >= PARALLEL_BUILD_MIN) {
-            foreach (fi; parallel(iota(faces.length))) fillOneFace(fi);
-        } else {
-            foreach (fi; 0 .. faces.length) fillOneFace(fi);
-        }
-        // vertLoop seed — serial (multiple faces may write the same vert).
-        foreach (idx; 0 .. total) {
-            vertLoop[loops[idx].vert] = cast(uint)idx;
-        }
-
-        // Twin pairing via loops-per-edge (max 2). Same as buildLoops.
-        int[] edgeLoopA = new int[](edges.length);
-        int[] edgeLoopB = new int[](edges.length);
-        edgeLoopA[] = -1;
-        edgeLoopB[] = -1;
-        foreach (idx; 0 .. total) {
-            uint ei = loopEdge[idx];
-            if (ei == ~0u) continue;
-            if (edgeLoopA[ei] == -1) edgeLoopA[ei] = cast(int)idx;
-            else                     edgeLoopB[ei] = cast(int)idx;
-        }
-        void fillTwin(size_t idx) {
-            uint ei = loopEdge[idx];
-            if (ei == ~0u) return;
-            int a = edgeLoopA[ei];
-            int b = edgeLoopB[ei];
-            if (b == -1) return;
-            loops[idx].twin = (a == cast(int)idx) ? cast(uint)b : cast(uint)a;
-        }
-        if (total >= PARALLEL_BUILD_MIN) {
-            foreach (idx; parallel(iota(total))) fillTwin(idx);
-        } else {
-            foreach (idx; 0 .. total) fillTwin(idx);
-        }
-
-        // Anchor walk — boundary verts walk back to the open start.
-        // Skip entirely on closed-manifold meshes (no boundary edges)
-        // — see the matching block in `buildLoops` for the perf note.
-        bool hasBoundary = false;
-        foreach (ei; 0 .. edges.length) {
-            if (edgeLoopA[ei] != -1 && edgeLoopB[ei] == -1) {
-                hasBoundary = true;
-                break;
-            }
-        }
-        if (hasBoundary) {
-            void anchorOneVert(size_t vi) {
-                if (vertLoop[vi] == ~0u) return;
-                uint cur  = vertLoop[vi];
-                uint orig = cur;
-                foreach (_; 0 .. faces.length + 4) {
-                    if (loops[cur].twin == ~0u) break;
-                    uint back = loops[loops[cur].twin].next;
-                    if (back == orig) break;
-                    cur = back;
-                }
-                vertLoop[vi] = cur;
-            }
-            if (vertices.length >= PARALLEL_BUILD_MIN) {
-                foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
-            } else {
-                foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2562,703 +2463,23 @@ struct SubpatchTrace {
     }
 }
 
-struct SubdivStep {
-    Mesh          mesh;
-    SubpatchTrace trace;
-}
-
-/// Per-level cache of structures `catmullClarkTracked` builds for one
-/// C-C pass. Kept alongside the output mesh so SubpatchPreview can
-/// refresh positions without rebuilding topology on every drag frame.
-///
-/// All members refer to the INPUT mesh of this pass (level k); the
-/// output mesh + trace live in the parallel SubdivStep.
-struct SubdivCache {
-    // CSR adjacency of the input mesh.
-    uint[] vertFacesOff;
-    uint[] vertFacesIdx;
-    uint[] edgeFacesOff;
-    uint[] edgeFacesIdx;
-    uint[] vertEdgesOff;
-    uint[] vertEdgesIdx;
-    // Per-element flags of the input mesh.
-    bool[] edgeActive;
-    bool[] edgeSmoothInterior;
-    bool[] vertInterior;
-    // Input → output mapping: for each input edge, the output vertex
-    // index of its midpoint (uint.max if not active). For each input
-    // face, the output vertex index of its centroid (uint.max if not
-    // selected).
-    uint[] edgeMidIdx;
-    uint[] faceCentroidIdx;
-}
-
-/// One pass of selection-aware Catmull-Clark that also composes an origin
-/// trace back to the source mesh. Uses the same geometry math as
-/// `catmullClarkSelected` (selected faces smoothed internally, boundary
-/// vertices pinned, boundary edges use simple midpoints). Subpatch flags of
-/// the input propagate to the output: every child of a selected face is
-/// subpatch, every pass-through face keeps its original flag.
-SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace,
-                                SubdivCache* outCache = null) {
-    uint nV = cast(uint)m.vertices.length;
-    uint nF = cast(uint)m.faces.length;
-    uint nE = cast(uint)m.edges.length;
-
-
-    bool isSelected(size_t fi) {
-        return fi < inTrace.subpatch.length && inTrace.subpatch[fi];
-    }
-
-    // Edge index per (face, side) — reuse m.loopEdge if loops are
-    // already built (the cage mesh is always loop-built; intermediate
-    // step.mesh has buildLoops called at the bottom of this function).
-    // Drops the `edgeLookup` AA: ~1 M hash inserts at function entry
-    // plus ~4 M hash lookups across adjacency-build / radial-enum /
-    // face-emit, replaced with O(1) array indexing.
-    //
-    // The flat array stores edge indices side-by-side per face — same
-    // layout as m.loops: `faceEdgeIdx[m.faceLoop[fi] + i]` = edge of
-    // (face[i], face[(i+1) % len]). When m.loopEdge is populated we
-    // alias it directly; otherwise (defensive — shouldn't happen on
-    // any path that reaches this function in practice) we build a
-    // local copy via the AA-backed fallback.
-    const(uint)[] faceEdgeIdx;
-    const(uint)[] faceLoopStart;
-    uint[ulong]   edgeLookup;   // only populated by the fallback path
-    if (m.loopEdge.length > 0 && m.faceLoop.length == m.faces.length) {
-        faceEdgeIdx   = m.loopEdge;
-        faceLoopStart = m.faceLoop;
-    } else {
-        foreach (i, e; m.edges)
-            edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
-        uint total = 0;
-        foreach (face; m.faces) total += cast(uint)face.length;
-        auto localFaceLoop = new uint[](nF);
-        auto localFEI      = new uint[](total);
-        uint cursor = 0;
-        foreach (fi, face; m.faces) {
-            localFaceLoop[fi] = cursor;
-            uint len = cast(uint)face.length;
-            foreach (i; 0 .. len) {
-                ulong key = edgeKey(face[i], face[(i + 1) % len]);
-                localFEI[cursor + i] = edgeLookup[key];
-            }
-            cursor += len;
-        }
-        faceEdgeIdx   = localFEI;
-        faceLoopStart = localFaceLoop;
-    }
-    uint edgeOfSide(size_t fi, uint i) {
-        return faceEdgeIdx[faceLoopStart[fi] + i];
-    }
-
-    // CSR adjacency — flat arrays + per-key offsets instead of jagged
-    // `uint[][]`. Two passes: count, then cumulative-sum into offsets,
-    // then scatter. Replaces ~6 M individual jagged-slice `~=` appends
-    // (with their reallocations) at L3 with a fixed number of flat
-    // allocations.
-    uint[] vertFacesCnt = new uint[](nV);
-    uint[] edgeFacesCnt = new uint[](nE);
-    foreach (fi, face; m.faces) {
-        uint len = cast(uint)face.length;
-        foreach (vi; face) vertFacesCnt[vi]++;
-        foreach (i; 0 .. len) {
-            edgeFacesCnt[edgeOfSide(fi, i)]++;
-        }
-    }
-    uint[] vertFacesOff = new uint[](nV + 1);
-    uint[] edgeFacesOff = new uint[](nE + 1);
-    foreach (i; 0 .. nV) vertFacesOff[i + 1] = vertFacesOff[i] + vertFacesCnt[i];
-    foreach (i; 0 .. nE) edgeFacesOff[i + 1] = edgeFacesOff[i] + edgeFacesCnt[i];
-    uint[] vertFacesIdx = new uint[](vertFacesOff[nV]);
-    uint[] edgeFacesIdx = new uint[](edgeFacesOff[nE]);
-    {
-        uint[] vfPos = new uint[](nV);
-        uint[] efPos = new uint[](nE);
-        foreach (fi, face; m.faces) {
-            uint len = cast(uint)face.length;
-            foreach (vi; face) {
-                vertFacesIdx[vertFacesOff[vi] + vfPos[vi]++] = cast(uint)fi;
-            }
-            foreach (i; 0 .. len) {
-                uint ei = edgeOfSide(fi, i);
-                edgeFacesIdx[edgeFacesOff[ei] + efPos[ei]++] = cast(uint)fi;
-            }
-        }
-    }
-    // vertEdges CSR — each edge contributes to exactly its two endpoints,
-    // so per-vertex count is exact and the fill is a single pass.
-    uint[] vertEdgesCnt = new uint[](nV);
-    foreach (e; m.edges) { vertEdgesCnt[e[0]]++; vertEdgesCnt[e[1]]++; }
-    uint[] vertEdgesOff = new uint[](nV + 1);
-    foreach (i; 0 .. nV) vertEdgesOff[i + 1] = vertEdgesOff[i] + vertEdgesCnt[i];
-    uint[] vertEdgesIdx = new uint[](vertEdgesOff[nV]);
-    {
-        uint[] vePos = new uint[](nV);
-        foreach (ei, e; m.edges) {
-            vertEdgesIdx[vertEdgesOff[e[0]] + vePos[e[0]]++] = cast(uint)ei;
-            vertEdgesIdx[vertEdgesOff[e[1]] + vePos[e[1]]++] = cast(uint)ei;
-        }
-    }
-
-
-    // Helpers — `inout` slice into the CSR index array for one row.
-    const(uint)[] vertFacesOf(uint vi) {
-        return vertFacesIdx[vertFacesOff[vi] .. vertFacesOff[vi + 1]];
-    }
-    const(uint)[] edgeFacesOf(uint ei) {
-        return edgeFacesIdx[edgeFacesOff[ei] .. edgeFacesOff[ei + 1]];
-    }
-    const(uint)[] vertEdgesOf(uint vi) {
-        return vertEdgesIdx[vertEdgesOff[vi] .. vertEdgesOff[vi + 1]];
-    }
-    uint edgeFaceCount(uint ei) {
-        return edgeFacesOff[ei + 1] - edgeFacesOff[ei];
-    }
-
-    bool[] edgeActive         = new bool[](nE);
-    bool[] edgeSmoothInterior = new bool[](nE);
-    foreach (ei; 0 .. nE) {
-        auto fList = edgeFacesOf(ei);
-        bool anySel = false, allSel = fList.length > 0;
-        foreach (fi; fList) {
-            if (isSelected(fi)) anySel = true;
-            else                allSel = false;
-        }
-        edgeActive[ei]         = anySel;
-        edgeSmoothInterior[ei] = allSel && fList.length == 2;
-    }
-
-    bool[] vertInterior = new bool[](nV);
-    foreach (vi; 0 .. nV) {
-        auto fList = vertFacesOf(cast(uint)vi);
-        if (fList.length == 0) continue;
-        bool allSel = true;
-        foreach (fi; fList)
-            if (!isSelected(fi)) { allSel = false; break; }
-        vertInterior[vi] = allSel;
-    }
-
-    Vec3[] facePoints = new Vec3[](nF);
-    foreach (fi; 0 .. nF)
-        if (isSelected(fi))
-            facePoints[fi] = m.faceCentroid(cast(uint)fi);
-
-    // Edge midpoint smoothing — independent per ei, same pattern as
-    // the per-vertex pass above. At L3 (~1 M edges) the parallel
-    // version saves a few hundred ms; the threshold guards small
-    // meshes where dispatch overhead would dominate.
-    Vec3[] edgePoints = new Vec3[](nE);
-
-    enum uint PARALLEL_EDGE_MIN = 4096;
-    void computeOneEdgePoint(uint ei) {
-        if (!edgeActive[ei]) return;
-        Vec3 a = m.vertices[m.edges[ei][0]];
-        Vec3 b = m.vertices[m.edges[ei][1]];
-        if (edgeSmoothInterior[ei]) {
-            auto efs = edgeFacesOf(ei);
-            Vec3 f0 = facePoints[efs[0]];
-            Vec3 f1 = facePoints[efs[1]];
-            edgePoints[ei] = (a + b + f0 + f1) * 0.25f;
-        } else {
-            edgePoints[ei] = (a + b) * 0.5f;
-        }
-    }
-    if (nE >= PARALLEL_EDGE_MIN) {
-        foreach (ei; parallel(iota(nE))) computeOneEdgePoint(ei);
-    } else {
-        foreach (ei; 0 .. nE) computeOneEdgePoint(ei);
-    }
-
-
-
-    Vec3[] newVerts = new Vec3[](nV);
-    // Per-vertex Catmull-Clark smoothing — independent across `vi`,
-    // reads only from immutable upstream (m.vertices, m.edges,
-    // facePoints, vertInterior, CSR adjacency), writes to a unique
-    // slot newVerts[vi]. Parallelises cleanly. At L3 (~512 K verts)
-    // each iteration walks ~4 adjacent edges + faces, doing ~30
-    // arithmetic ops — totals ~15 M ops on the main thread and
-    // benefits significantly from multi-core. PARALLEL_VERT_MIN cuts
-    // off small meshes where task-pool dispatch overhead exceeds
-    // the serial cost.
-    enum uint PARALLEL_VERT_MIN = 4096;
-    void computeOneVert(uint vi) {
-        if (!vertInterior[vi]) {
-            newVerts[vi] = m.vertices[vi];
-            return;
-        }
-        Vec3 v = m.vertices[vi];
-        auto veList = vertEdgesOf(vi);
-        bool meshBoundary = false;
-        foreach (ei; veList)
-            if (edgeFaceCount(ei) < 2) { meshBoundary = true; break; }
-
-        if (meshBoundary) {
-            Vec3 sum = v;
-            int  cnt = 1;
-            foreach (ei; veList) {
-                if (edgeFaceCount(ei) >= 2) continue;
-                Vec3 ea = m.vertices[m.edges[ei][0]];
-                Vec3 eb = m.vertices[m.edges[ei][1]];
-                sum += (ea + eb) * 0.5f;
-                cnt++;
-            }
-            newVerts[vi] = sum * (1.0f / cast(float)cnt);
-        } else {
-            auto vfList = vertFacesOf(vi);
-            uint  n  = cast(uint)vfList.length;
-            float fn = cast(float)n;
-            Vec3 F = Vec3(0, 0, 0);
-            foreach (fi; vfList) F += facePoints[fi];
-            F = F / fn;
-
-            Vec3 R = Vec3(0, 0, 0);
-            uint ne = cast(uint)veList.length;
-            foreach (ei; veList) {
-                Vec3 ea = m.vertices[m.edges[ei][0]];
-                Vec3 eb = m.vertices[m.edges[ei][1]];
-                R += (ea + eb) * 0.5f;
-            }
-            R = R / cast(float)ne;
-
-            newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
-                                (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
-                                (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
-        }
-    }
-    if (nV >= PARALLEL_VERT_MIN) {
-        foreach (vi; parallel(iota(nV))) computeOneVert(vi);
-    } else {
-        foreach (vi; 0 .. nV) computeOneVert(vi);
-    }
-
-
-    uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
-    uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
-
-    uint outVCount = nV;
-    foreach (ei; 0 .. nE) if (edgeActive[ei])   edgeMidIdx[ei]      = outVCount++;
-    foreach (fi; 0 .. nF) if (isSelected(fi))   faceCentroidIdx[fi] = outVCount++;
-
-    // Pre-count output faces AND total loops AND per-cage-face start
-    // offsets into both. Cage face fi contributes `len(fi)` output
-    // faces / `4*len` pool loops if selected; otherwise 1 output face
-    // / `(len + active_sides)` pool loops. Knowing where each cage
-    // face's slice of `result.faces` and `loopPool` starts lets the
-    // face-emit pass parallelise — each cage face writes to disjoint
-    // slots.
-    uint[] cageFaceOutFi    = new uint[](nF + 1);
-    uint[] cageFaceLoopOff  = new uint[](nF + 1);
-    foreach (fi, face; m.faces) {
-        uint len = cast(uint)face.length;
-        if (isSelected(fi)) {
-            cageFaceOutFi  [fi + 1] = cageFaceOutFi  [fi] + len;
-            cageFaceLoopOff[fi + 1] = cageFaceLoopOff[fi] + 4 * len;
-        } else {
-            cageFaceOutFi  [fi + 1] = cageFaceOutFi  [fi] + 1;
-            uint widenedLen = len;
-            foreach (i; 0 .. len) {
-                if (edgeActive[edgeOfSide(fi, i)]) widenedLen++;
-            }
-            cageFaceLoopOff[fi + 1] = cageFaceLoopOff[fi] + widenedLen;
-        }
-    }
-    uint outFCount = cageFaceOutFi  [nF];
-    uint outNL     = cageFaceLoopOff[nF];
-
-    // Output trace — composed with inTrace so it targets the ultimate source.
-    SubpatchTrace outTrace;
-    outTrace.vertOrigin = new uint[](outVCount);
-    foreach (vi; 0 .. nV) outTrace.vertOrigin[vi] = inTrace.vertOrigin[vi];
-    foreach (ei; 0 .. nE) if (edgeActive[ei])   outTrace.vertOrigin[edgeMidIdx[ei]]      = uint.max;
-    foreach (fi; 0 .. nF) if (isSelected(fi))   outTrace.vertOrigin[faceCentroidIdx[fi]] = uint.max;
-
-    Mesh result;
-    result.vertices.length = outVCount;
-    foreach (vi; 0 .. nV) result.vertices[vi] = newVerts[vi];
-    foreach (ei; 0 .. nE) if (edgeActive[ei])
-        result.vertices[edgeMidIdx[ei]] = edgePoints[ei];
-    foreach (fi; 0 .. nF) if (isSelected(fi))
-        result.vertices[faceCentroidIdx[fi]] = facePoints[fi];
-
-    // Deterministic edge enumeration — no AA dedup. The output mesh
-    // has exactly one edge per:
-    //   - cage edge ei that's INACTIVE: 1 entry (a, b) unchanged
-    //   - cage edge ei that's ACTIVE:   2 entries (a, mid) and (mid, b)
-    //   - selected face fi:             `len(fi)` radial entries
-    //                                   (centroid, mid_of_side_i)
-    // These three categories never collide: cage-edge entries are
-    // keyed by distinct mid vertices; radial entries are keyed by
-    // distinct centroids (one per selected face). So we can lay out
-    // result.edges in three contiguous regions and write each slot
-    // exactly once — no hash-table dedup, no `~=`-reallocs, and
-    // outTrace.edgeOrigin is filled inline (replaces a 1 M AA-lookup
-    // post-pass at L3).
-    uint activeCount = 0;
-    foreach (ei; 0 .. nE) if (edgeActive[ei]) activeCount++;
-    uint radialCount = 0;
-    foreach (fi, face; m.faces) if (isSelected(fi)) radialCount += cast(uint)face.length;
-    uint outECount = nE + activeCount + radialCount;
-
-    // Base offsets per cage edge / per selected face.
-    uint[] cageEdgeOff = new uint[](nE + 1);
-    foreach (ei; 0 .. nE)
-        cageEdgeOff[ei + 1] = cageEdgeOff[ei] + (edgeActive[ei] ? 2 : 1);
-    uint radialBase = cageEdgeOff[nE];
-    uint[] radialOff = new uint[](nF + 1);
-    foreach (fi; 0 .. nF) {
-        uint contrib = isSelected(fi) ? cast(uint)m.faces[fi].length : 0;
-        radialOff[fi + 1] = radialOff[fi] + contrib;
-    }
-    assert(radialBase + radialOff[nF] == outECount);
-
-    // Fill edges + origins in one pass per region.
-    result.edges.length = outECount;
-    outTrace.edgeOrigin = new uint[](outECount);
-    foreach (ei; 0 .. nE) {
-        uint a = m.edges[ei][0];
-        uint b = m.edges[ei][1];
-        uint origin = inTrace.edgeOrigin[ei];
-        uint off = cageEdgeOff[ei];
-        if (edgeActive[ei]) {
-            uint mid = edgeMidIdx[ei];
-            result.edges[off    ] = [a,   mid];
-            result.edges[off + 1] = [mid, b  ];
-            outTrace.edgeOrigin[off    ] = origin;
-            outTrace.edgeOrigin[off + 1] = origin;
-        } else {
-            result.edges[off] = [a, b];
-            outTrace.edgeOrigin[off] = origin;
-        }
-    }
-    foreach (fi, face; m.faces) {
-        if (!isSelected(fi)) continue;
-        uint cIdx = faceCentroidIdx[fi];
-        uint base = radialBase + radialOff[fi];
-        uint len = cast(uint)face.length;
-        foreach (i; 0 .. len) {
-            uint ei = edgeOfSide(fi, i);
-            uint mid = edgeMidIdx[ei];
-            result.edges[base + i] = [cIdx, mid];
-            outTrace.edgeOrigin[base + i] = uint.max;
-        }
-    }
-
-
-    // Pre-allocate output face arrays + parallel origin/subpatch trace
-    // arrays. Direct index-assignment — no addFaceFast, no per-face
-    // edge AA dedup (the edges are already populated above).
-
-    result.faces.length = outFCount;
-    uint[] faceOriginAcc = new uint[](outFCount);
-    bool[] subpatchAcc   = new bool[](outFCount);
-    // Flat loop pool — one contiguous uint[] holding every output
-    // face's vertex indices end-to-end. Each result.faces[k] is a
-    // slice into this pool. Replaces ~500 K per-face heap-literal
-    // allocs (each `[vi0, mFwd, cIdx, mBack]` was a fresh GC array)
-    // and the per-non-selected-face `widened.reserve` + `~=` growth.
-    uint[] loopPool = new uint[](outNL);
-    // loopEdge follows the same layout as loopPool: loopEdge[k] is
-    // the output edge index that connects loopPool[k] to its next
-    // sibling in the same face. Filling it inline removes the AA
-    // build + AA lookup pass inside buildLoops (~100 ms at L3 on the
-    // user's 6 K-vert cage). The deterministic edge layout (see the
-    // edges enumeration above) gives us each output edge's slot
-    // without any hash lookup.
-    uint[] outLoopEdge = new uint[](outNL);
-    // Per-output-face start index into the flat loop pool (=
-    // result.faceLoop). Computed inline so buildLoopsAfterEmit can
-    // skip the per-face cumulative walk.
-    uint[] outFaceLoop = new uint[](outFCount);
-    // Face emit — disjoint writes per cage face into known slots of
-    // result.faces / loopPool / faceOriginAcc / subpatchAcc (offsets
-    // pre-computed above). Independent across `fi`, no allocations
-    // inside → parallelises cleanly.
-    void emitOneCageFace(uint fi) {
-        uint outFi      = cageFaceOutFi  [fi];
-        uint loopCursor = cageFaceLoopOff[fi];
-        const(uint)[] face = m.faces[fi];
-        uint len = cast(uint)face.length;
-        if (isSelected(fi)) {
-            uint cIdx = faceCentroidIdx[fi];
-            uint radialFaceBase = radialBase + radialOff[fi];
-            foreach (i; 0 .. len) {
-                uint vi0   = face[i];
-                uint eFwd  = edgeOfSide(fi, i);
-                uint eBack = edgeOfSide(fi, (i + len - 1) % len);
-                uint mFwd  = edgeMidIdx[eFwd];
-                uint mBack = edgeMidIdx[eBack];
-                loopPool[loopCursor    ] = vi0;
-                loopPool[loopCursor + 1] = mFwd;
-                loopPool[loopCursor + 2] = cIdx;
-                loopPool[loopCursor + 3] = mBack;
-                // Output edge index for each of the 4 quad loops.
-                //   L0 (vi0  → mFwd) : half of cage edge eFwd. Two
-                //     halves at cageEdgeOff[eFwd] / +1; pick the
-                //     half that starts at vi0.
-                //   L1 (mFwd → cIdx) : radial of side i.
-                //   L2 (cIdx → mBack): radial of side (i-1+len)%len.
-                //   L3 (mBack → vi0) : other half of cage edge eBack.
-                uint fwdSlot0 = cageEdgeOff[eFwd]
-                              + (vi0 == m.edges[eFwd][0] ? 0 : 1);
-                uint backSlot = cageEdgeOff[eBack]
-                              + (vi0 == m.edges[eBack][1] ? 1 : 0);
-                outLoopEdge[loopCursor    ] = fwdSlot0;
-                outLoopEdge[loopCursor + 1] = radialFaceBase + i;
-                outLoopEdge[loopCursor + 2] = radialFaceBase + (i + len - 1) % len;
-                outLoopEdge[loopCursor + 3] = backSlot;
-                result.faces[outFi] = loopPool[loopCursor .. loopCursor + 4];
-                outFaceLoop[outFi]  = loopCursor;
-                loopCursor += 4;
-                faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
-                subpatchAcc  [outFi] = true;
-                outFi++;
-            }
-        } else {
-            uint faceStart = loopCursor;
-            foreach (i; 0 .. len) {
-                uint v0   = face[i];
-                uint v1   = face[(i + 1) % len];
-                uint ei   = edgeOfSide(fi, i);
-                bool act  = edgeMidIdx[ei] != uint.max;
-                // Loop at v0 — edge to next loop:
-                //   active   ei : edge = (v0, mid_i)        → half slot
-                //   inactive ei : edge = (v0, v1)           → only slot
-                loopPool[loopCursor] = v0;
-                if (act) {
-                    outLoopEdge[loopCursor++] = cageEdgeOff[ei]
-                        + (v0 == m.edges[ei][0] ? 0 : 1);
-                    // Loop at mid_i — edge to next loop = (mid, v1) =
-                    // other half of cage edge ei.
-                    loopPool[loopCursor] = edgeMidIdx[ei];
-                    outLoopEdge[loopCursor++] = cageEdgeOff[ei]
-                        + (v1 == m.edges[ei][1] ? 1 : 0);
-                } else {
-                    outLoopEdge[loopCursor++] = cageEdgeOff[ei];
-                }
-            }
-            result.faces[outFi] = loopPool[faceStart .. loopCursor];
-            outFaceLoop[outFi]  = faceStart;
-            faceOriginAcc[outFi] = inTrace.faceOrigin[fi];
-            subpatchAcc  [outFi] = false;
-        }
-    }
-    enum uint PARALLEL_FACE_MIN = 4096;
-    if (nF >= PARALLEL_FACE_MIN) {
-        foreach (fi; parallel(iota(nF))) emitOneCageFace(fi);
-    } else {
-        foreach (fi; 0 .. nF) emitOneCageFace(fi);
-    }
-    // mutationVersion isn't tracked by individual face writes; bump
-    // once now to mirror what addFaceFast did per-call.
-    ++result.mutationVersion;
-    ++result.topologyVersion;
-
-
-    result.buildLoopsAfterEmit(outFaceLoop, outLoopEdge);
-
-
-    outTrace.faceOrigin = faceOriginAcc;
-    outTrace.subpatch   = subpatchAcc;
-
-    // Populate the optional out-cache so the caller (SubpatchPreview)
-    // can replay position-only updates on subsequent drag frames
-    // without rebuilding topology. All locals here are heap-allocated
-    // slices — move them into the cache, no copy needed.
-    if (outCache !is null) {
-        outCache.vertFacesOff       = vertFacesOff;
-        outCache.vertFacesIdx       = vertFacesIdx;
-        outCache.edgeFacesOff       = edgeFacesOff;
-        outCache.edgeFacesIdx       = edgeFacesIdx;
-        outCache.vertEdgesOff       = vertEdgesOff;
-        outCache.vertEdgesIdx       = vertEdgesIdx;
-        outCache.edgeActive         = edgeActive;
-        outCache.edgeSmoothInterior = edgeSmoothInterior;
-        outCache.vertInterior       = vertInterior;
-        outCache.edgeMidIdx         = edgeMidIdx;
-        outCache.faceCentroidIdx    = faceCentroidIdx;
-    }
-
-    return SubdivStep(result, outTrace);
-}
-
-/// Position-only update of a Catmull-Clark output mesh. Recomputes
-/// `out_.vertices` from `prev`'s positions using cached topology (the
-/// adjacency, flags, and slot mappings populated by a previous full
-/// `catmullClarkTracked(... outCache=&cache)` call). Same math as the
-/// full C-C pass, just without rebuilding faces / edges / loops.
-///
-/// Used by SubpatchPreview on subsequent drag frames where only
-/// positions changed (mutationVersion bumped, topologyVersion didn't):
-/// drops the ~190 ms full L3 rebuild to ~15 ms on the user's sphere
-/// drag profile.
-void refreshSubdivPositions(ref const Mesh prev, ref const SubdivCache cache,
-                            ref Mesh out_) {
-    uint nV = cast(uint)prev.vertices.length;
-    uint nE = cast(uint)prev.edges.length;
-    uint nF = cast(uint)prev.faces.length;
-
-    const(uint)[] vertFacesOf(uint vi) {
-        return cache.vertFacesIdx[cache.vertFacesOff[vi] .. cache.vertFacesOff[vi + 1]];
-    }
-    const(uint)[] edgeFacesOf(uint ei) {
-        return cache.edgeFacesIdx[cache.edgeFacesOff[ei] .. cache.edgeFacesOff[ei + 1]];
-    }
-    const(uint)[] vertEdgesOf(uint vi) {
-        return cache.vertEdgesIdx[cache.vertEdgesOff[vi] .. cache.vertEdgesOff[vi + 1]];
-    }
-    uint edgeFaceCount(uint ei) {
-        return cache.edgeFacesOff[ei + 1] - cache.edgeFacesOff[ei];
-    }
-
-    // Hot inner loops below avoid `Vec3` operator overloads — they
-    // showed up in profiling at ~25% self-time across `+`, `-`, `*`,
-    // `/`, `+=` calls because each operator returns a fresh Vec3 (one
-    // `emplaceInitializer` per op). Plain float accumulators inline
-    // cleanly and let the compiler keep everything in registers.
-
-    // facePoints — centroid of each selected face.
-    Vec3[] facePoints = new Vec3[](nF);
-    foreach (fi; 0 .. nF) {
-        if (cache.faceCentroidIdx[fi] == uint.max) continue;
-        const uint[] face = prev.faces[fi];
-        float sx = 0, sy = 0, sz = 0;
-        foreach (vi; face) {
-            Vec3 p = prev.vertices[vi];
-            sx += p.x; sy += p.y; sz += p.z;
-        }
-        float inv = 1.0f / cast(float)face.length;
-        facePoints[fi] = Vec3(sx * inv, sy * inv, sz * inv);
-    }
-
-    // edgePoints — C-C edge formula or simple midpoint.
-    Vec3[] edgePoints = new Vec3[](nE);
-    enum uint PARALLEL_EDGE_MIN = 4096;
-    void computeOneEdgePoint(uint ei) {
-        if (!cache.edgeActive[ei]) return;
-        Vec3 a = prev.vertices[prev.edges[ei][0]];
-        Vec3 b = prev.vertices[prev.edges[ei][1]];
-        if (cache.edgeSmoothInterior[ei]) {
-            auto efs = edgeFacesOf(ei);
-            Vec3 f0 = facePoints[efs[0]];
-            Vec3 f1 = facePoints[efs[1]];
-            edgePoints[ei] = Vec3((a.x + b.x + f0.x + f1.x) * 0.25f,
-                                  (a.y + b.y + f0.y + f1.y) * 0.25f,
-                                  (a.z + b.z + f0.z + f1.z) * 0.25f);
-        } else {
-            edgePoints[ei] = Vec3((a.x + b.x) * 0.5f,
-                                  (a.y + b.y) * 0.5f,
-                                  (a.z + b.z) * 0.5f);
-        }
-    }
-    if (nE >= PARALLEL_EDGE_MIN) {
-        foreach (ei; parallel(iota(nE))) computeOneEdgePoint(ei);
-    } else {
-        foreach (ei; 0 .. nE) computeOneEdgePoint(ei);
-    }
-
-    // newVerts — C-C vertex formula for interior verts, identity for
-    // boundary / non-selected verts.
-    Vec3[] newVerts = new Vec3[](nV);
-    enum uint PARALLEL_VERT_MIN = 4096;
-    void computeOneVert(uint vi) {
-        if (!cache.vertInterior[vi]) {
-            newVerts[vi] = prev.vertices[vi];
-            return;
-        }
-        Vec3 v = prev.vertices[vi];
-        auto veList = vertEdgesOf(vi);
-        bool meshBoundary = false;
-        foreach (ei; veList)
-            if (edgeFaceCount(ei) < 2) { meshBoundary = true; break; }
-        if (meshBoundary) {
-            float sx = v.x, sy = v.y, sz = v.z;
-            int   cnt = 1;
-            foreach (ei; veList) {
-                if (edgeFaceCount(ei) >= 2) continue;
-                Vec3 ea = prev.vertices[prev.edges[ei][0]];
-                Vec3 eb = prev.vertices[prev.edges[ei][1]];
-                sx += (ea.x + eb.x) * 0.5f;
-                sy += (ea.y + eb.y) * 0.5f;
-                sz += (ea.z + eb.z) * 0.5f;
-                cnt++;
-            }
-            float inv = 1.0f / cast(float)cnt;
-            newVerts[vi] = Vec3(sx * inv, sy * inv, sz * inv);
-        } else {
-            auto vfList = vertFacesOf(vi);
-            float fn = cast(float)vfList.length;
-            float Fx = 0, Fy = 0, Fz = 0;
-            foreach (fi; vfList) {
-                Vec3 fp = facePoints[fi];
-                Fx += fp.x; Fy += fp.y; Fz += fp.z;
-            }
-            Fx /= fn; Fy /= fn; Fz /= fn;
-            float Rx = 0, Ry = 0, Rz = 0;
-            uint ne = cast(uint)veList.length;
-            foreach (ei; veList) {
-                Vec3 ea = prev.vertices[prev.edges[ei][0]];
-                Vec3 eb = prev.vertices[prev.edges[ei][1]];
-                Rx += (ea.x + eb.x) * 0.5f;
-                Ry += (ea.y + eb.y) * 0.5f;
-                Rz += (ea.z + eb.z) * 0.5f;
-            }
-            float invE = 1.0f / cast(float)ne;
-            Rx *= invE; Ry *= invE; Rz *= invE;
-            float w = fn - 3.0f;
-            float invF = 1.0f / fn;
-            newVerts[vi] = Vec3((Fx + 2.0f * Rx + w * v.x) * invF,
-                                (Fy + 2.0f * Ry + w * v.y) * invF,
-                                (Fz + 2.0f * Rz + w * v.z) * invF);
-        }
-    }
-    if (nV >= PARALLEL_VERT_MIN) {
-        foreach (vi; parallel(iota(nV))) computeOneVert(vi);
-    } else {
-        foreach (vi; 0 .. nV) computeOneVert(vi);
-    }
-
-    // Scatter into the output mesh — cage verts at [0, nV), edge
-    // mids at edgeMidIdx[ei], face centroids at faceCentroidIdx[fi].
-    foreach (vi; 0 .. nV) out_.vertices[vi] = newVerts[vi];
-    foreach (ei; 0 .. nE)
-        if (cache.edgeMidIdx[ei] != uint.max)
-            out_.vertices[cache.edgeMidIdx[ei]] = edgePoints[ei];
-    foreach (fi; 0 .. nF)
-        if (cache.faceCentroidIdx[fi] != uint.max)
-            out_.vertices[cache.faceCentroidIdx[fi]] = facePoints[fi];
-    ++out_.mutationVersion;
-}
-
-/// Cached subdivision preview of a source (cage) mesh. When `active` is true,
-/// `mesh`/`trace` hold the subdivided display geometry; otherwise the cage
-/// should be rendered directly and this struct is inert. The cache is
-/// rebuilt lazily when `source.mutationVersion` or `depth` changes.
+/// Cached subdivision preview of a source (cage) mesh. When `active`
+/// is true, `mesh`/`trace` hold the OpenSubdiv-emitted limit geometry;
+/// otherwise the cage should be rendered directly and this struct is
+/// inert. The cache rebuilds lazily when `source.mutationVersion` or
+/// `depth` changes; drag-frame position updates go through the cached
+/// `osdAccel` stencil table without touching topology.
 struct SubpatchPreview {
     Mesh          mesh;
     SubpatchTrace trace;
     bool          active;
     ulong         sourceVersion         = ulong.max;
-    /// Last source.topologyVersion we built against. When the source's
-    /// topology version is unchanged but mutationVersion bumped (the
-    /// common case during a move/rotate/scale drag — pure position
-    /// updates), we skip the full rebuild and just refresh positions
-    /// through `refreshPositions` using the cached per-level adjacency.
+    /// Last source.topologyVersion we built against. While
+    /// `source.topologyVersion` is unchanged but mutationVersion
+    /// bumped (move/rotate/scale drag), we skip the full rebuild and
+    /// re-evaluate stencil positions via `osdAccel.refresh`.
     ulong         sourceTopologyVersion = ulong.max;
     int           depth                 = -1;
-
-    /// Per-level cache of intermediate Catmull-Clark passes:
-    /// `levels[k].step` is the output of pass k (level k+1's mesh +
-    /// trace); `levels[k].cache` holds the input adjacency / flags
-    /// `refreshSubdivPositions` needs to recompute that level's
-    /// positions in place when only positions changed.
-    static struct Level {
-        SubdivStep  step;
-        SubdivCache cache;
-    }
-    Level[] levels;
 
     /// Reverse-lookup: for each CAGE vertex index, the preview-mesh
     /// vertex that carries its smoothed position (`uint.max` if no
@@ -3269,32 +2490,25 @@ struct SubpatchPreview {
     /// hover-pick inner loop on subpatch meshes).
     uint[] cageVertPreview;
 
-    /// OpenSubdiv-accelerated fast path for `refreshPositions`. Built
-    /// after each full vibe3d-side rebuild when every cage face is
-    /// subpatch-marked (uniform CC, the common case). When valid, the
-    /// per-drag-frame refresh runs one stencil-table SpMV instead of
-    /// vibe3d's recursive `refreshSubdivPositions` — ~50× faster on a
-    /// 1.5 K-vert cage (see subpatch_osd.benchOsdJson). Selective
-    /// subpatch and any boundary/sharpness divergence from OSD's CC
-    /// trips the fallback to the recursive path automatically.
+    /// OpenSubdiv back-end. Owns the cached topology + stencil table
+    /// and drives both full rebuilds (buildPreview) and per-drag-frame
+    /// position refreshes (refresh).
     import subpatch_osd : OsdAccel;
     OsdAccel      osdAccel;
 
     void rebuildIfStale(ref const Mesh source, int d) {
         if (sourceVersion == source.mutationVersion && depth == d)
             return;
-        // Position-only fast path: topology unchanged since the last
-        // full build, same depth, still active, and our cached level
-        // adjacency lines up with the current source. Refresh all
-        // levels' positions through `refreshSubdivPositions` — saves
-        // the full ~190 ms L3 rebuild on every drag frame.
+        // Position-only fast path: cage topology + depth unchanged →
+        // ask OSD's stencil table for new limit positions and write
+        // straight into mesh.vertices.
         if (active
             && depth == d
             && sourceTopologyVersion == source.topologyVersion
-            && levels.length == d
-            && levels[0].cache.vertFacesOff.length == source.vertices.length + 1)
+            && osdAccel.valid)
         {
-            refreshPositions(source);
+            osdAccel.refresh(source, mesh);
+            ++mesh.mutationVersion;
             sourceVersion = source.mutationVersion;
             return;
         }
@@ -3306,11 +2520,6 @@ struct SubpatchPreview {
         sourceVersion         = source.mutationVersion;
         sourceTopologyVersion = source.topologyVersion;
         cageVertPreview.length = 0;
-        levels.length          = 0;
-        // Topology-changed rebuild invalidates any OSD acceleration we
-        // had — counts / vert positions are about to differ. Drop it
-        // here, rebuild at the bottom of this function once the new
-        // preview mesh + trace are populated.
         osdAccel.clear();
         if (d <= 0 || !source.hasAnySubpatch()) {
             mesh   = Mesh.init;
@@ -3319,83 +2528,34 @@ struct SubpatchPreview {
             return;
         }
 
-        // ---- OSD-driven path (uniform AND selective) ----------------
-        // OsdAccel.buildPreview extracts the subpatch-marked subset (the
-        // whole cage when `allSubpatch`, just a slice otherwise), feeds
-        // it to OpenSubdiv, and produces the limit Mesh + trace. Non-
-        // subpatch faces of the cage are absent from the preview in
-        // the selective case — explicit trade-off documented at
-        // OsdAccel.buildPreview.
-        if (osdAccel.buildPreview(source, d, mesh, trace))
-        {
-            active = true;
-            cageVertPreview = new uint[](source.vertices.length);
-            cageVertPreview[] = uint.max;
-            foreach (pi, origin; trace.vertOrigin) {
-                if (origin == uint.max) continue;
-                if (origin >= cageVertPreview.length) continue;
-                if (cageVertPreview[origin] == uint.max)
-                    cageVertPreview[origin] = cast(uint)pi;
-            }
+        // OsdAccel.buildPreview extracts the subpatch-marked subset
+        // (the whole cage when `allSubpatch`, just a slice otherwise),
+        // feeds it to OpenSubdiv, and emits the limit Mesh + trace.
+        // Non-subpatch faces of the cage do not appear in the preview
+        // in the selective case — see OsdAccel.buildPreview for the
+        // trade-off rationale.
+        if (!osdAccel.buildPreview(source, d, mesh, trace)) {
+            // OSD topology creation failed on a degenerate input —
+            // leave the preview inert rather than rendering stale
+            // geometry. Callers fall through to rendering the cage.
+            mesh   = Mesh.init;
+            trace  = SubpatchTrace.init;
+            active = false;
             return;
         }
 
-        // ---- Legacy recursive fallback (OSD topology creation failed
-        // — degenerate cage; should not happen for valid inputs) ----
-        levels.length = d;
-        auto t0 = SubpatchTrace.identity(source, source.isSubpatch);
-        levels[0].step = catmullClarkTracked(source, t0, &levels[0].cache);
-        foreach (k; 1 .. d) {
-            levels[k].step = catmullClarkTracked(
-                levels[k - 1].step.mesh,
-                levels[k - 1].step.trace,
-                &levels[k].cache);
-        }
-        mesh   = levels[$ - 1].step.mesh;
-        trace  = levels[$ - 1].step.trace;
         active = true;
-        // Build the reverse cage→preview map in one O(preview) pass.
         cageVertPreview = new uint[](source.vertices.length);
         cageVertPreview[] = uint.max;
         foreach (pi, origin; trace.vertOrigin) {
             if (origin == uint.max) continue;
             if (origin >= cageVertPreview.length) continue;
-            // First preview vert that maps back wins; multiple preview
-            // verts may carry the same cage origin (e.g. corner verts
-            // shared between sub-faces) but their smoothed positions
-            // are identical, so the first one is canonical.
+            // First preview vert that maps back wins; for the
+            // smoothed-original verts there's only one such vert per
+            // cage vert anyway.
             if (cageVertPreview[origin] == uint.max)
                 cageVertPreview[origin] = cast(uint)pi;
         }
-    }
-
-    /// Topology unchanged → just push the new positions through the
-    /// cached level adjacency. Each level reads its predecessor's
-    /// (now updated) vertices and writes its own.
-    ///
-    /// When `osdAccel.valid`, runs a single OpenSubdiv stencil SpMV
-    /// instead of the recursive descent — ~50× faster on a 1.5 K-vert
-    /// cage. The accel was built and matched against this same preview
-    /// mesh's vert ordering during the last `rebuild`, so the result
-    /// lands directly in `mesh.vertices[]` without touching the cached
-    /// per-level adjacency.
-    private void refreshPositions(ref const Mesh source) {
-        if (osdAccel.valid) {
-            osdAccel.refresh(source, mesh);
-            ++mesh.mutationVersion;
-            return;
-        }
-        const(Mesh)* prev = &source;
-        foreach (k; 0 .. levels.length) {
-            refreshSubdivPositions(*prev, levels[k].cache, levels[k].step.mesh);
-            prev = &levels[k].step.mesh;
-        }
-        // `mesh` is a value-copy of the last level's mesh; refresh it
-        // so external readers (gpu.upload, picking) see the new
-        // positions. Other fields (faces / edges / loops / trace)
-        // are unchanged by definition.
-        mesh.vertices = levels[$ - 1].step.mesh.vertices;
-        ++mesh.mutationVersion;
     }
 }
 
@@ -3595,13 +2755,13 @@ struct GpuMesh {
     ///
     /// Used by the subpatch preview path: when topologyVersion is
     /// unchanged (mesh moved but didn't change topology), the
-    /// SubpatchPreview's level meshes are refreshed in place via
-    /// `refreshSubdivPositions`, and the GPU buffers can be refreshed
-    /// the same way instead of rebuilding faceData / edgeData /
-    /// vertData arrays from scratch. On the user's 6 K-vert cage
-    /// sphere drag (~393 K preview verts) this drops the `upload`
-    /// hot path from ~16 % of CPU + ~12 % memmove + ~10 % GC
-    /// expandArrayUsed to a single mapped-buffer write per VBO.
+    /// SubpatchPreview re-evaluates OpenSubdiv's stencil table into
+    /// preview.vertices, and these GPU buffers can be refreshed the
+    /// same way instead of rebuilding faceData / edgeData / vertData
+    /// arrays from scratch. On the user's 6 K-vert cage sphere drag
+    /// (~393 K preview verts) this drops the `upload` hot path from
+    /// ~16 % of CPU + ~12 % memmove + ~10 % GC expandArrayUsed to a
+    /// single mapped-buffer write per VBO.
     void refreshPositions(ref const Mesh mesh,
                           const uint[] edgeOrigin = null,
                           const uint[] vertOrigin = null) {
