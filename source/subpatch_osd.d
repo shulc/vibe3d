@@ -375,42 +375,174 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
 // topology change → SubpatchPreview drops the OsdAccel and re-runs
 // `buildPreview` on the new mask.
 // ---------------------------------------------------------------------------
-struct OsdAccel {
-    import bindbc.opengl : GLuint;
 
+// Fan-out shader — Phase 3b. Pulls OSD's per-limit-vert position
+// output and emits the (xyz, xyz)-interleaved face-corner stream
+// vibe3d's gpu.faceVbo expects, with flat normals computed on GPU.
+// One transform-feedback dispatch (GL_POINTS, one shader invocation
+// per face-corner) replaces the CPU readback that Phase 3a kept.
+//
+//   gl_VertexID                  → face-corner index (0..faceVertCount)
+//   u_cornerToLimit[corner]      → limit-vert index for that corner
+//   u_cornerToFaceId[corner]     → face id this corner belongs to
+//   u_faceFirstVerts[3*fid+k]    → limit-vert indices of the face's
+//                                  triangle-0 verts (drives flat normal)
+//   u_limitPositions[limit]      → xyz from OSD GPU eval
+//
+// Output captured via GL_INTERLEAVED_ATTRIBS — sequential (vPos, vNorm)
+// matches gpu.faceVbo's stride-6 layout exactly.
+private immutable string FAN_OUT_VERT_SRC = q{
+    #version 330 core
+    uniform  isamplerBuffer u_cornerToLimit;
+    uniform usamplerBuffer  u_cornerToFaceId;
+    uniform  isamplerBuffer u_faceFirstVerts;
+    uniform  samplerBuffer  u_limitPositions;
+    out vec3 vPos;
+    out vec3 vNorm;
+    void main() {
+        int corner   = gl_VertexID;
+        int limitIdx = texelFetch(u_cornerToLimit, corner).r;
+        vPos         = texelFetch(u_limitPositions, limitIdx).rgb;
+
+        int fid = int(texelFetch(u_cornerToFaceId, corner).r);
+        int a   = texelFetch(u_faceFirstVerts, fid * 3 + 0).r;
+        int b   = texelFetch(u_faceFirstVerts, fid * 3 + 1).r;
+        int c   = texelFetch(u_faceFirstVerts, fid * 3 + 2).r;
+        vec3 p0 = texelFetch(u_limitPositions, a).rgb;
+        vec3 p1 = texelFetch(u_limitPositions, b).rgb;
+        vec3 p2 = texelFetch(u_limitPositions, c).rgb;
+        vec3 n  = cross(p1 - p0, p2 - p0);
+        float l = length(n);
+        vNorm   = l > 1e-6 ? n / l : vec3(0, 1, 0);
+    }
+};
+// Empty fragment — rasterisation is disabled via GL_RASTERIZER_DISCARD;
+// fragment shader exists only so the program links.
+private immutable string FAN_OUT_FRAG_SRC = q{
+    #version 330 core
+    in vec3 vPos;
+    in vec3 vNorm;
+    void main() {}
+};
+
+private import bindbc.opengl;
+
+/// Compile + link the fan-out program with transform-feedback varyings
+/// captured GL_INTERLEAVED_ATTRIBS into a single bound buffer (matches
+/// gpu.faceVbo's stride-6 layout). Returns 0 on failure.
+private GLuint compileFanOutProgram() {
+    import std.stdio  : stderr;
+    import std.string : toStringz;
+    import std.conv   : to;
+
+    GLuint compile(GLenum stage, string src) {
+        GLuint sh = glCreateShader(stage);
+        const(char)* p = src.toStringz;
+        GLint    len = cast(GLint)src.length;
+        glShaderSource(sh, 1, &p, &len);
+        glCompileShader(sh);
+        GLint ok;
+        glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char[1024] log;
+            glGetShaderInfoLog(sh, 1024, null, log.ptr);
+            try stderr.writeln("[osd fan-out] shader compile: ", log[].to!string);
+            catch (Exception) {}
+            glDeleteShader(sh);
+            return 0;
+        }
+        return sh;
+    }
+
+    GLuint vs = compile(GL_VERTEX_SHADER,   FAN_OUT_VERT_SRC);
+    if (!vs) return 0;
+    GLuint fs = compile(GL_FRAGMENT_SHADER, FAN_OUT_FRAG_SRC);
+    if (!fs) { glDeleteShader(vs); return 0; }
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+
+    // Capture (vPos, vNorm) interleaved — matches gpu.faceVbo's
+    // (xyz, xyz) stride-6 layout exactly. Must be set BEFORE linking.
+    const(char)*[2] varyings = [ "vPos".toStringz, "vNorm".toStringz ];
+    glTransformFeedbackVaryings(prog, 2, varyings.ptr,
+                                 GL_INTERLEAVED_ATTRIBS);
+    glLinkProgram(prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint ok;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char[1024] log;
+        glGetProgramInfoLog(prog, 1024, null, log.ptr);
+        try stderr.writeln("[osd fan-out] program link: ", log[].to!string);
+        catch (Exception) {}
+        glDeleteProgram(prog);
+        return 0;
+    }
+    return prog;
+}
+
+struct OsdAccel {
     private osdc_topology_t*     osd;
-    private osdc_gl_evaluator_t* glEval;    // null when no GL context
-    private GLuint               cageGlVbo;  // 0 = uninitialised
+    private osdc_gl_evaluator_t* glEval;        // null when no GL context
+
+    // Phase 3a — readback path. cageGlVbo / limitGlVbo are also reused
+    // by the Phase 3b fan-out path below (limitGlVbo is the source the
+    // fan-out shader reads through limitTex).
+    private GLuint               cageGlVbo;
     private GLuint               limitGlVbo;
-    private float[]              cageScratchXyz;     // CPU scratch
-    private float[]              limitScratchXyz;    // readback buffer
-    private int                  limitVertCount;
+    private float[]              cageScratchXyz;
+    private float[]              limitScratchXyz;    // Phase 3a readback
+
+    // Phase 3b — fan-out infrastructure. Built once at buildPreview;
+    // refreshIntoFaceVbo dispatches a single TF draw per drag frame.
+    private GLuint  cornerToLimitVbo;      // R32I  storage buffer
+    private GLuint  cornerToLimitTex;      // TBO   view
+    private GLuint  cornerToFaceIdVbo;     // R32UI storage
+    private GLuint  cornerToFaceIdTex;
+    private GLuint  faceFirstVertsVbo;     // R32I  storage (3 ints / face)
+    private GLuint  faceFirstVertsTex;
+    private GLuint  limitTex;              // RGB32F TBO over limitGlVbo
+    private GLuint  fanOutProgram;
+    private GLint   locCornerToLimit;
+    private GLint   locCornerToFaceId;
+    private GLint   locFaceFirstVerts;
+    private GLint   locLimitPositions;
+    private int     faceVertCount;         // glDrawArrays count for TF
+
+    private int     limitVertCount;
     bool valid;
 
-    /// Free the OSD handle, GL evaluator + VBOs, and CPU scratches.
-    /// Idempotent.
+    /// Free everything. Idempotent.
     void clear() {
-        import bindbc.opengl : glDeleteBuffers;
-        if (glEval !is null) {
-            osdc_gl_destroy(glEval);
-            glEval = null;
-        }
-        if (cageGlVbo != 0) {
-            glDeleteBuffers(1, &cageGlVbo);
-            cageGlVbo = 0;
-        }
-        if (limitGlVbo != 0) {
-            glDeleteBuffers(1, &limitGlVbo);
-            limitGlVbo = 0;
-        }
-        if (osd !is null) {
-            osdc_topology_destroy(osd);
-            osd = null;
-        }
+        if (glEval !is null) { osdc_gl_destroy(glEval); glEval = null; }
+        if (cageGlVbo != 0)              { glDeleteBuffers (1, &cageGlVbo); cageGlVbo = 0; }
+        if (limitGlVbo != 0)             { glDeleteBuffers (1, &limitGlVbo); limitGlVbo = 0; }
+        if (cornerToLimitVbo != 0)       { glDeleteBuffers (1, &cornerToLimitVbo); cornerToLimitVbo = 0; }
+        if (cornerToFaceIdVbo != 0)      { glDeleteBuffers (1, &cornerToFaceIdVbo); cornerToFaceIdVbo = 0; }
+        if (faceFirstVertsVbo != 0)      { glDeleteBuffers (1, &faceFirstVertsVbo); faceFirstVertsVbo = 0; }
+        if (cornerToLimitTex != 0)       { glDeleteTextures(1, &cornerToLimitTex); cornerToLimitTex = 0; }
+        if (cornerToFaceIdTex != 0)      { glDeleteTextures(1, &cornerToFaceIdTex); cornerToFaceIdTex = 0; }
+        if (faceFirstVertsTex != 0)      { glDeleteTextures(1, &faceFirstVertsTex); faceFirstVertsTex = 0; }
+        if (limitTex != 0)               { glDeleteTextures(1, &limitTex); limitTex = 0; }
+        if (fanOutProgram != 0)          { glDeleteProgram (fanOutProgram); fanOutProgram = 0; }
+        if (osd !is null) { osdc_topology_destroy(osd); osd = null; }
         cageScratchXyz.length  = 0;
         limitScratchXyz.length = 0;
         limitVertCount         = 0;
+        faceVertCount          = 0;
         valid                  = false;
+    }
+
+    /// Phase 3b only: true iff the fan-out path is set up and can be
+    /// invoked via refreshIntoFaceVbo.
+    @property bool canFanOut() const {
+        return fanOutProgram != 0 && limitGlVbo != 0
+            && cornerToLimitVbo != 0 && cornerToFaceIdVbo != 0
+            && faceFirstVertsVbo != 0 && limitTex != 0;
     }
 
     /// Free OSD resources at scope exit. The struct is owned by
@@ -647,7 +779,191 @@ struct OsdAccel {
         outMesh.selectedEdges.length    = limitEdges;
         outMesh.selectedFaces.length    = limitFaces;
 
+        // ---- Phase 3b: fan-out infrastructure -----------------------
+        // Built only when the GL eval is alive (Phase 3a's glEval).
+        // Three TBO storage buffers + one TBO view over limitGlVbo +
+        // the compiled fan-out program. Iteration order MUST match
+        // GpuMesh.upload's face-corner loop (face[0], face[i],
+        // face[i+1] for i in 1..N-1) — that's what fanOut writes into.
+        if (glEval !is null) {
+            int[]  cornerToLimit;
+            uint[] cornerToFaceId;
+            int[]  faceFirstVerts = new int[](3 * limitFaces);
+            foreach (fi; 0 .. limitFaces) {
+                const(uint)[] face = outMesh.faces[fi];
+                faceFirstVerts[3*fi + 0] =
+                    face.length >= 1 ? cast(int)face[0] : 0;
+                faceFirstVerts[3*fi + 1] =
+                    face.length >= 2 ? cast(int)face[1] : 0;
+                faceFirstVerts[3*fi + 2] =
+                    face.length >= 3 ? cast(int)face[2] : 0;
+                if (face.length < 3) continue;
+                for (uint i = 1; i + 1 < face.length; i++) {
+                    cornerToLimit  ~= cast(int)face[0];
+                    cornerToLimit  ~= cast(int)face[i];
+                    cornerToLimit  ~= cast(int)face[i + 1];
+                    cornerToFaceId ~= cast(uint)fi;
+                    cornerToFaceId ~= cast(uint)fi;
+                    cornerToFaceId ~= cast(uint)fi;
+                }
+            }
+            faceVertCount = cast(int)cornerToLimit.length;
+
+            if (faceVertCount > 0) {
+                // Allocate storage buffers + bind TBO views (one
+                // texture-buffer texture per uniform sampler in the
+                // fan-out shader).
+                void uploadTbo(R, F)(ref GLuint vbo, ref GLuint tex,
+                                      R[] data, F fmt)
+                {
+                    glGenBuffers(1, &vbo);
+                    glBindBuffer(GL_TEXTURE_BUFFER, vbo);
+                    glBufferData(GL_TEXTURE_BUFFER,
+                        cast(GLsizeiptr)(data.length * R.sizeof),
+                        data.ptr, GL_STATIC_DRAW);
+                    glGenTextures(1, &tex);
+                    glBindTexture(GL_TEXTURE_BUFFER, tex);
+                    glTexBuffer(GL_TEXTURE_BUFFER, fmt, vbo);
+                }
+
+                uploadTbo(cornerToLimitVbo,   cornerToLimitTex,
+                          cornerToLimit,   GL_R32I);
+                uploadTbo(cornerToFaceIdVbo,  cornerToFaceIdTex,
+                          cornerToFaceId,  GL_R32UI);
+                uploadTbo(faceFirstVertsVbo,  faceFirstVertsTex,
+                          faceFirstVerts,  GL_R32I);
+
+                // limitGlVbo already exists (Phase 3a allocation).
+                // Wrap it in a TBO view so the shader can texelFetch.
+                glGenTextures(1, &limitTex);
+                glBindTexture(GL_TEXTURE_BUFFER, limitTex);
+                glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, limitGlVbo);
+
+                glBindBuffer (GL_TEXTURE_BUFFER, 0);
+                glBindTexture(GL_TEXTURE_BUFFER, 0);
+
+                fanOutProgram = compileFanOutProgram();
+                if (fanOutProgram != 0) {
+                    locCornerToLimit   = glGetUniformLocation(
+                        fanOutProgram, "u_cornerToLimit");
+                    locCornerToFaceId  = glGetUniformLocation(
+                        fanOutProgram, "u_cornerToFaceId");
+                    locFaceFirstVerts  = glGetUniformLocation(
+                        fanOutProgram, "u_faceFirstVerts");
+                    locLimitPositions  = glGetUniformLocation(
+                        fanOutProgram, "u_limitPositions");
+                }
+            }
+        }
+
         valid = true;
+        return true;
+    }
+
+    /// Phase 3b — replace gpu.faceVbo's positions+normals via GPU eval
+    /// + transform-feedback fan-out. Single shader dispatch per drag
+    /// frame; no CPU readback. `preview.vertices` is NOT updated.
+    ///
+    /// Caller passes vibe3d's gpu.faceVbo. The fan-out writes exactly
+    /// `faceVertCount` interleaved (xyz pos + xyz normal) vertices
+    /// starting at offset 0 — same layout the regular gpu.upload
+    /// produces, so subsequent draws don't need anything else.
+    ///
+    /// `expectedFaceVertCount` MUST match the caller's gpu.faceVertCount
+    /// — i.e. the same preview-topology pass that built this OsdAccel
+    /// also produced the caller's face VBO. If they diverge we bail to
+    /// the false return so the caller falls back to CPU + gpu.upload.
+    ///
+    /// Returns true iff the fan-out actually ran. false → caller MUST
+    /// fall back (e.g. call refresh + the standard gpu.upload path).
+    bool refreshIntoFaceVbo(ref const Mesh cage,
+                             GLuint targetFaceVbo,
+                             int expectedFaceVertCount)
+    {
+        if (!canFanOut) return false;
+        if (targetFaceVbo == 0) return false;
+        if (expectedFaceVertCount != faceVertCount) return false;
+        if (cage.vertices.length * 3 != cageScratchXyz.length) return false;
+
+        // Pack + upload current cage positions.
+        foreach (vi, v; cage.vertices) {
+            cageScratchXyz[3*vi + 0] = v.x;
+            cageScratchXyz[3*vi + 1] = v.y;
+            cageScratchXyz[3*vi + 2] = v.z;
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0,
+            cast(GLsizeiptr)(cageScratchXyz.length * float.sizeof),
+            cageScratchXyz.ptr);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        if (!osdc_gl_evaluate(glEval, cageGlVbo, limitGlVbo))
+            return false;
+
+        // Save GL state we touch. The TEXTURE_BUFFER target itself is
+        // not queried — vibe3d's renderer doesn't bind it, so leakage
+        // is benign and the query symbol isn't exposed in bindbc-
+        // opengl's GL_33 surface anyway.
+        GLint prevProgram, prevVao, prevArrayBuf;
+        GLint prevActiveTex;
+        GLint prevTex0, prevTex1, prevTex2, prevTex3;
+        glGetIntegerv(GL_CURRENT_PROGRAM,             &prevProgram);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING,        &prevVao);
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING,        &prevArrayBuf);
+        glGetIntegerv(GL_ACTIVE_TEXTURE,              &prevActiveTex);
+
+        glUseProgram(fanOutProgram);
+
+        // Bind the four TBO views to texture units 0..3 and set the
+        // sampler uniforms.
+        glActiveTexture(GL_TEXTURE0);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex0);
+        glBindTexture(GL_TEXTURE_BUFFER, cornerToLimitTex);
+        glUniform1i(locCornerToLimit, 0);
+
+        glActiveTexture(GL_TEXTURE1);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex1);
+        glBindTexture(GL_TEXTURE_BUFFER, cornerToFaceIdTex);
+        glUniform1i(locCornerToFaceId, 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex2);
+        glBindTexture(GL_TEXTURE_BUFFER, faceFirstVertsTex);
+        glUniform1i(locFaceFirstVerts, 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex3);
+        glBindTexture(GL_TEXTURE_BUFFER, limitTex);
+        glUniform1i(locLimitPositions, 3);
+
+        // No vertex attributes are read — TF dispatch is driven by
+        // gl_VertexID. Bind an empty VAO so the driver is happy.
+        // Reuse caller's VAO state (we just restored it above).
+        // OSD bound something; ensure no vertex attribs are enabled
+        // for our dispatch by binding the caller's VAO again.
+        glBindVertexArray(cast(GLuint)prevVao);
+
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, targetFaceVbo);
+        glEnable(GL_RASTERIZER_DISCARD);
+        glBeginTransformFeedback(GL_POINTS);
+        glDrawArrays(GL_POINTS, 0, faceVertCount);
+        glEndTransformFeedback();
+        glDisable(GL_RASTERIZER_DISCARD);
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
+
+        // Restore GL state.
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex3);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex2);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex0);
+        glActiveTexture(cast(GLuint)prevActiveTex);
+        glBindBuffer(GL_ARRAY_BUFFER,   cast(GLuint)prevArrayBuf);
+        glUseProgram(cast(GLuint)prevProgram);
+        glBindVertexArray(cast(GLuint)prevVao);
         return true;
     }
 
