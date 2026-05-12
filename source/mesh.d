@@ -2,6 +2,8 @@ module mesh;
 
 import bindbc.opengl;
 import std.math : sqrt;
+import std.parallelism : parallel;
+import std.range : iota;
 import math;
 import shader;
 // ---------------------------------------------------------------------------
@@ -2507,13 +2509,18 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         if (isSelected(fi))
             facePoints[fi] = m.faceCentroid(cast(uint)fi);
 
+    // Edge midpoint smoothing — independent per ei, same pattern as
+    // the per-vertex pass above. At L3 (~1 M edges) the parallel
+    // version saves a few hundred ms; the threshold guards small
+    // meshes where dispatch overhead would dominate.
     Vec3[] edgePoints = new Vec3[](nE);
-    foreach (ei; 0 .. nE) {
-        if (!edgeActive[ei]) continue;
+    enum uint PARALLEL_EDGE_MIN = 4096;
+    void computeOneEdgePoint(uint ei) {
+        if (!edgeActive[ei]) return;
         Vec3 a = m.vertices[m.edges[ei][0]];
         Vec3 b = m.vertices[m.edges[ei][1]];
         if (edgeSmoothInterior[ei]) {
-            auto efs = edgeFacesOf(cast(uint)ei);
+            auto efs = edgeFacesOf(ei);
             Vec3 f0 = facePoints[efs[0]];
             Vec3 f1 = facePoints[efs[1]];
             edgePoints[ei] = (a + b + f0 + f1) * 0.25f;
@@ -2521,15 +2528,30 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             edgePoints[ei] = (a + b) * 0.5f;
         }
     }
+    if (nE >= PARALLEL_EDGE_MIN) {
+        foreach (ei; parallel(iota(nE))) computeOneEdgePoint(ei);
+    } else {
+        foreach (ei; 0 .. nE) computeOneEdgePoint(ei);
+    }
 
     Vec3[] newVerts = new Vec3[](nV);
-    foreach (vi; 0 .. nV) {
+    // Per-vertex Catmull-Clark smoothing — independent across `vi`,
+    // reads only from immutable upstream (m.vertices, m.edges,
+    // facePoints, vertInterior, CSR adjacency), writes to a unique
+    // slot newVerts[vi]. Parallelises cleanly. At L3 (~512 K verts)
+    // each iteration walks ~4 adjacent edges + faces, doing ~30
+    // arithmetic ops — totals ~15 M ops on the main thread and
+    // benefits significantly from multi-core. PARALLEL_VERT_MIN cuts
+    // off small meshes where task-pool dispatch overhead exceeds
+    // the serial cost.
+    enum uint PARALLEL_VERT_MIN = 4096;
+    void computeOneVert(uint vi) {
         if (!vertInterior[vi]) {
             newVerts[vi] = m.vertices[vi];
-            continue;
+            return;
         }
         Vec3 v = m.vertices[vi];
-        auto veList = vertEdgesOf(cast(uint)vi);
+        auto veList = vertEdgesOf(vi);
         bool meshBoundary = false;
         foreach (ei; veList)
             if (edgeFaceCount(ei) < 2) { meshBoundary = true; break; }
@@ -2546,7 +2568,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             }
             newVerts[vi] = sum * (1.0f / cast(float)cnt);
         } else {
-            auto vfList = vertFacesOf(cast(uint)vi);
+            auto vfList = vertFacesOf(vi);
             uint  n  = cast(uint)vfList.length;
             float fn = cast(float)n;
             Vec3 F = Vec3(0, 0, 0);
@@ -2566,6 +2588,11 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
                                 (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
                                 (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
         }
+    }
+    if (nV >= PARALLEL_VERT_MIN) {
+        foreach (vi; parallel(iota(nV))) computeOneVert(vi);
+    } else {
+        foreach (vi; 0 .. nV) computeOneVert(vi);
     }
 
     uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
