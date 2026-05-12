@@ -52,6 +52,9 @@ class SubpatchToggle : Command {
         if (!captured) return false;
         mesh.isSubpatch = origSubpatch.dup;
         ++mesh.mutationVersion;
+        // isSubpatch[] drives subpatch preview output topology — flag
+        // flip ⇒ topology invalidate.
+        ++mesh.topologyVersion;
         return true;
     }
 }

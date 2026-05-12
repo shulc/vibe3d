@@ -73,6 +73,10 @@ struct MeshSnapshot {
         mesh.isSubpatch                  = isSubpatch.dup;
         mesh.buildLoops();
         ++mesh.mutationVersion;
+        // Snapshot restore rebuilds the WHOLE mesh — topology may
+        // have changed across the undo/redo, so cached subpatch
+        // topology must invalidate.
+        ++mesh.topologyVersion;
     }
 }
 

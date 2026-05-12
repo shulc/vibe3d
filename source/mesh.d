@@ -51,6 +51,16 @@ struct Mesh {
     // invalidates the subpatch preview. Mutators that touch geometry should
     // increment this so cached previews can detect the change.
     ulong     mutationVersion;
+    /// Counter for TOPOLOGY-only changes — bumped when faces / edges /
+    /// vertices are added or removed, when isSubpatch changes (which
+    /// changes subpatch preview output topology), or when a snapshot
+    /// restore brings in new geometry. NOT bumped on pure vertex-
+    /// position writes (move drag, undo of move, etc.) — that's what
+    /// `mutationVersion` is for. Callers that cache topology-derived
+    /// data (e.g. SubpatchPreview's per-level adjacency) compare this
+    /// to know whether the cache is still valid, vs. just refreshing
+    /// positions.
+    ulong     topologyVersion;
 
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
@@ -66,7 +76,7 @@ struct Mesh {
         clearEdgeSelection();
         clearFaceSelection();
         isSubpatch[] = false;
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
     }
 
     // Bring each *SelectionOrderCounter up to the maximum value in its order array.
@@ -115,7 +125,7 @@ struct Mesh {
 
     uint addVertex(Vec3 v) {
         vertices ~= v;
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return cast(uint)(vertices.length - 1);
     }
 
@@ -199,7 +209,7 @@ struct Mesh {
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return welded;
     }
 
@@ -216,7 +226,7 @@ struct Mesh {
             vertices[i] = target;
             any = true;
         }
-        if (any) ++mutationVersion;
+        if (any) { ++mutationVersion; ++topologyVersion; }
     }
 
     size_t weldCoincidentVertices(double epsSq = 1e-12) {
@@ -269,7 +279,7 @@ struct Mesh {
         if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
         if (isSubpatch.length > faces.length) isSubpatch.length = faces.length;
 
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return welded;
     }
 
@@ -319,7 +329,7 @@ struct Mesh {
         selectedEdges.length = edges.length;
         selectedEdges[] = false;
         edgeSelectionOrder.length = edges.length;
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return removed;
     }
     /// Drop the faces marked true in `mask`. Edges are rebuilt from the
@@ -376,7 +386,7 @@ struct Mesh {
         // of `loops` walks stale data and either reports wrong adjacency
         // or indexes out of bounds.)
         buildLoops();
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return removed;
     }
 
@@ -435,7 +445,7 @@ struct Mesh {
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return dissolved;
     }
 
@@ -621,7 +631,7 @@ struct Mesh {
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
         return dissolved;
     }
 
@@ -634,13 +644,13 @@ struct Mesh {
         if (key in edgeIndexMap) return;
         edgeIndexMap[key] = cast(uint)edges.length;
         edges ~= [a, b];
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
     }
     void addFace(uint[] idx) {
         faces ~= idx.dup;
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
     }
     // Fast version using hash lookup for duplicate checking
     void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
@@ -654,7 +664,7 @@ struct Mesh {
                 edgeLookup[key] = cast(uint)(edges.length - 1);
             }
         }
-        ++mutationVersion;
+        ++mutationVersion; ++topologyVersion;
     }
     bool hasAnySelectedVertices() const { return hasAnySelected(selectedVertices); }
     bool hasAnySelectedEdges() const { return hasAnySelected(selectedEdges); }
@@ -665,14 +675,14 @@ struct Mesh {
         if (idx >= isSubpatch.length) return;
         if (isSubpatch[idx] != on) {
             isSubpatch[idx] = on;
-            ++mutationVersion;
+            ++mutationVersion; ++topologyVersion;
         }
     }
     void clearSubpatch() {
         bool any = false;
         foreach (b; isSubpatch) if (b) { any = true; break; }
         isSubpatch[] = false;
-        if (any) ++mutationVersion;
+        if (any) { ++mutationVersion; ++topologyVersion; }
     }
 
     void clearVertexSelection() {
@@ -2518,13 +2528,40 @@ struct SubdivStep {
     SubpatchTrace trace;
 }
 
+/// Per-level cache of structures `catmullClarkTracked` builds for one
+/// C-C pass. Kept alongside the output mesh so SubpatchPreview can
+/// refresh positions without rebuilding topology on every drag frame.
+///
+/// All members refer to the INPUT mesh of this pass (level k); the
+/// output mesh + trace live in the parallel SubdivStep.
+struct SubdivCache {
+    // CSR adjacency of the input mesh.
+    uint[] vertFacesOff;
+    uint[] vertFacesIdx;
+    uint[] edgeFacesOff;
+    uint[] edgeFacesIdx;
+    uint[] vertEdgesOff;
+    uint[] vertEdgesIdx;
+    // Per-element flags of the input mesh.
+    bool[] edgeActive;
+    bool[] edgeSmoothInterior;
+    bool[] vertInterior;
+    // Input → output mapping: for each input edge, the output vertex
+    // index of its midpoint (uint.max if not active). For each input
+    // face, the output vertex index of its centroid (uint.max if not
+    // selected).
+    uint[] edgeMidIdx;
+    uint[] faceCentroidIdx;
+}
+
 /// One pass of selection-aware Catmull-Clark that also composes an origin
 /// trace back to the source mesh. Uses the same geometry math as
 /// `catmullClarkSelected` (selected faces smoothed internally, boundary
 /// vertices pinned, boundary edges use simple midpoints). Subpatch flags of
 /// the input propagate to the output: every child of a selected face is
 /// subpatch, every pass-through face keeps its original flag.
-SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace) {
+SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace,
+                                SubdivCache* outCache = null) {
     uint nV = cast(uint)m.vertices.length;
     uint nF = cast(uint)m.faces.length;
     uint nE = cast(uint)m.edges.length;
@@ -2978,6 +3015,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     // mutationVersion isn't tracked by individual face writes; bump
     // once now to mirror what addFaceFast did per-call.
     ++result.mutationVersion;
+    ++result.topologyVersion;
 
 
     result.buildLoopsAfterEmit(outFaceLoop, outLoopEdge);
@@ -2986,8 +3024,141 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     outTrace.faceOrigin = faceOriginAcc;
     outTrace.subpatch   = subpatchAcc;
 
+    // Populate the optional out-cache so the caller (SubpatchPreview)
+    // can replay position-only updates on subsequent drag frames
+    // without rebuilding topology. All locals here are heap-allocated
+    // slices — move them into the cache, no copy needed.
+    if (outCache !is null) {
+        outCache.vertFacesOff       = vertFacesOff;
+        outCache.vertFacesIdx       = vertFacesIdx;
+        outCache.edgeFacesOff       = edgeFacesOff;
+        outCache.edgeFacesIdx       = edgeFacesIdx;
+        outCache.vertEdgesOff       = vertEdgesOff;
+        outCache.vertEdgesIdx       = vertEdgesIdx;
+        outCache.edgeActive         = edgeActive;
+        outCache.edgeSmoothInterior = edgeSmoothInterior;
+        outCache.vertInterior       = vertInterior;
+        outCache.edgeMidIdx         = edgeMidIdx;
+        outCache.faceCentroidIdx    = faceCentroidIdx;
+    }
 
     return SubdivStep(result, outTrace);
+}
+
+/// Position-only update of a Catmull-Clark output mesh. Recomputes
+/// `out_.vertices` from `prev`'s positions using cached topology (the
+/// adjacency, flags, and slot mappings populated by a previous full
+/// `catmullClarkTracked(... outCache=&cache)` call). Same math as the
+/// full C-C pass, just without rebuilding faces / edges / loops.
+///
+/// Used by SubpatchPreview on subsequent drag frames where only
+/// positions changed (mutationVersion bumped, topologyVersion didn't):
+/// drops the ~190 ms full L3 rebuild to ~15 ms on the user's sphere
+/// drag profile.
+void refreshSubdivPositions(ref const Mesh prev, ref const SubdivCache cache,
+                            ref Mesh out_) {
+    uint nV = cast(uint)prev.vertices.length;
+    uint nE = cast(uint)prev.edges.length;
+    uint nF = cast(uint)prev.faces.length;
+
+    const(uint)[] vertFacesOf(uint vi) {
+        return cache.vertFacesIdx[cache.vertFacesOff[vi] .. cache.vertFacesOff[vi + 1]];
+    }
+    const(uint)[] edgeFacesOf(uint ei) {
+        return cache.edgeFacesIdx[cache.edgeFacesOff[ei] .. cache.edgeFacesOff[ei + 1]];
+    }
+    const(uint)[] vertEdgesOf(uint vi) {
+        return cache.vertEdgesIdx[cache.vertEdgesOff[vi] .. cache.vertEdgesOff[vi + 1]];
+    }
+    uint edgeFaceCount(uint ei) {
+        return cache.edgeFacesOff[ei + 1] - cache.edgeFacesOff[ei];
+    }
+
+    // facePoints — centroid of each selected face.
+    Vec3[] facePoints = new Vec3[](nF);
+    foreach (fi; 0 .. nF) {
+        if (cache.faceCentroidIdx[fi] != uint.max)
+            facePoints[fi] = prev.faceCentroid(cast(uint)fi);
+    }
+
+    // edgePoints — C-C edge formula or simple midpoint.
+    Vec3[] edgePoints = new Vec3[](nE);
+    enum uint PARALLEL_EDGE_MIN = 4096;
+    void computeOneEdgePoint(uint ei) {
+        if (!cache.edgeActive[ei]) return;
+        Vec3 a = prev.vertices[prev.edges[ei][0]];
+        Vec3 b = prev.vertices[prev.edges[ei][1]];
+        if (cache.edgeSmoothInterior[ei]) {
+            auto efs = edgeFacesOf(ei);
+            edgePoints[ei] = (a + b + facePoints[efs[0]] + facePoints[efs[1]]) * 0.25f;
+        } else {
+            edgePoints[ei] = (a + b) * 0.5f;
+        }
+    }
+    if (nE >= PARALLEL_EDGE_MIN) {
+        foreach (ei; parallel(iota(nE))) computeOneEdgePoint(ei);
+    } else {
+        foreach (ei; 0 .. nE) computeOneEdgePoint(ei);
+    }
+
+    // newVerts — C-C vertex formula for interior verts, identity for
+    // boundary / non-selected verts.
+    Vec3[] newVerts = new Vec3[](nV);
+    enum uint PARALLEL_VERT_MIN = 4096;
+    void computeOneVert(uint vi) {
+        if (!cache.vertInterior[vi]) {
+            newVerts[vi] = prev.vertices[vi];
+            return;
+        }
+        Vec3 v = prev.vertices[vi];
+        auto veList = vertEdgesOf(vi);
+        bool meshBoundary = false;
+        foreach (ei; veList)
+            if (edgeFaceCount(ei) < 2) { meshBoundary = true; break; }
+        if (meshBoundary) {
+            Vec3 sum = v;
+            int  cnt = 1;
+            foreach (ei; veList) {
+                if (edgeFaceCount(ei) >= 2) continue;
+                sum += (prev.vertices[prev.edges[ei][0]]
+                      + prev.vertices[prev.edges[ei][1]]) * 0.5f;
+                cnt++;
+            }
+            newVerts[vi] = sum * (1.0f / cast(float)cnt);
+        } else {
+            auto vfList = vertFacesOf(vi);
+            float fn = cast(float)vfList.length;
+            Vec3 F = Vec3(0, 0, 0);
+            foreach (fi; vfList) F += facePoints[fi];
+            F = F / fn;
+            Vec3 R = Vec3(0, 0, 0);
+            uint ne = cast(uint)veList.length;
+            foreach (ei; veList) {
+                R += (prev.vertices[prev.edges[ei][0]]
+                    + prev.vertices[prev.edges[ei][1]]) * 0.5f;
+            }
+            R = R / cast(float)ne;
+            newVerts[vi] = Vec3((F.x + 2.0f * R.x + (fn - 3.0f) * v.x) / fn,
+                                (F.y + 2.0f * R.y + (fn - 3.0f) * v.y) / fn,
+                                (F.z + 2.0f * R.z + (fn - 3.0f) * v.z) / fn);
+        }
+    }
+    if (nV >= PARALLEL_VERT_MIN) {
+        foreach (vi; parallel(iota(nV))) computeOneVert(vi);
+    } else {
+        foreach (vi; 0 .. nV) computeOneVert(vi);
+    }
+
+    // Scatter into the output mesh — cage verts at [0, nV), edge
+    // mids at edgeMidIdx[ei], face centroids at faceCentroidIdx[fi].
+    foreach (vi; 0 .. nV) out_.vertices[vi] = newVerts[vi];
+    foreach (ei; 0 .. nE)
+        if (cache.edgeMidIdx[ei] != uint.max)
+            out_.vertices[cache.edgeMidIdx[ei]] = edgePoints[ei];
+    foreach (fi; 0 .. nF)
+        if (cache.faceCentroidIdx[fi] != uint.max)
+            out_.vertices[cache.faceCentroidIdx[fi]] = facePoints[fi];
+    ++out_.mutationVersion;
 }
 
 /// Cached subdivision preview of a source (cage) mesh. When `active` is true,
@@ -2998,8 +3169,25 @@ struct SubpatchPreview {
     Mesh          mesh;
     SubpatchTrace trace;
     bool          active;
-    ulong         sourceVersion = ulong.max;
-    int           depth         = -1;
+    ulong         sourceVersion         = ulong.max;
+    /// Last source.topologyVersion we built against. When the source's
+    /// topology version is unchanged but mutationVersion bumped (the
+    /// common case during a move/rotate/scale drag — pure position
+    /// updates), we skip the full rebuild and just refresh positions
+    /// through `refreshPositions` using the cached per-level adjacency.
+    ulong         sourceTopologyVersion = ulong.max;
+    int           depth                 = -1;
+
+    /// Per-level cache of intermediate Catmull-Clark passes:
+    /// `levels[k].step` is the output of pass k (level k+1's mesh +
+    /// trace); `levels[k].cache` holds the input adjacency / flags
+    /// `refreshSubdivPositions` needs to recompute that level's
+    /// positions in place when only positions changed.
+    static struct Level {
+        SubdivStep  step;
+        SubdivCache cache;
+    }
+    Level[] levels;
 
     /// Reverse-lookup: for each CAGE vertex index, the preview-mesh
     /// vertex that carries its smoothed position (`uint.max` if no
@@ -3013,25 +3201,47 @@ struct SubpatchPreview {
     void rebuildIfStale(ref const Mesh source, int d) {
         if (sourceVersion == source.mutationVersion && depth == d)
             return;
+        // Position-only fast path: topology unchanged since the last
+        // full build, same depth, still active, and our cached level
+        // adjacency lines up with the current source. Refresh all
+        // levels' positions through `refreshSubdivPositions` — saves
+        // the full ~190 ms L3 rebuild on every drag frame.
+        if (active
+            && depth == d
+            && sourceTopologyVersion == source.topologyVersion
+            && levels.length == d
+            && levels[0].cache.vertFacesOff.length == source.vertices.length + 1)
+        {
+            refreshPositions(source);
+            sourceVersion = source.mutationVersion;
+            return;
+        }
         rebuild(source, d);
     }
 
     void rebuild(ref const Mesh source, int d) {
-        depth         = d;
-        sourceVersion = source.mutationVersion;
+        depth                 = d;
+        sourceVersion         = source.mutationVersion;
+        sourceTopologyVersion = source.topologyVersion;
         cageVertPreview.length = 0;
+        levels.length          = 0;
         if (d <= 0 || !source.hasAnySubpatch()) {
             mesh   = Mesh.init;
             trace  = SubpatchTrace.init;
             active = false;
             return;
         }
-        auto t0   = SubpatchTrace.identity(source, source.isSubpatch);
-        auto step = catmullClarkTracked(source, t0);
-        foreach (_; 1 .. d)
-            step = catmullClarkTracked(step.mesh, step.trace);
-        mesh   = step.mesh;
-        trace  = step.trace;
+        levels.length = d;
+        auto t0 = SubpatchTrace.identity(source, source.isSubpatch);
+        levels[0].step = catmullClarkTracked(source, t0, &levels[0].cache);
+        foreach (k; 1 .. d) {
+            levels[k].step = catmullClarkTracked(
+                levels[k - 1].step.mesh,
+                levels[k - 1].step.trace,
+                &levels[k].cache);
+        }
+        mesh   = levels[$ - 1].step.mesh;
+        trace  = levels[$ - 1].step.trace;
         active = true;
         // Build the reverse cage→preview map in one O(preview) pass.
         cageVertPreview = new uint[](source.vertices.length);
@@ -3046,6 +3256,23 @@ struct SubpatchPreview {
             if (cageVertPreview[origin] == uint.max)
                 cageVertPreview[origin] = cast(uint)pi;
         }
+    }
+
+    /// Topology unchanged → just push the new positions through the
+    /// cached level adjacency. Each level reads its predecessor's
+    /// (now updated) vertices and writes its own.
+    private void refreshPositions(ref const Mesh source) {
+        const(Mesh)* prev = &source;
+        foreach (k; 0 .. levels.length) {
+            refreshSubdivPositions(*prev, levels[k].cache, levels[k].step.mesh);
+            prev = &levels[k].step.mesh;
+        }
+        // `mesh` is a value-copy of the last level's mesh; refresh it
+        // so external readers (gpu.upload, picking) see the new
+        // positions. Other fields (faces / edges / loops / trace)
+        // are unchanged by definition.
+        mesh.vertices = levels[$ - 1].step.mesh.vertices;
+        ++mesh.mutationVersion;
     }
 }
 
