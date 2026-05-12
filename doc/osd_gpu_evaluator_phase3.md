@@ -9,10 +9,16 @@
   on top of `Osd::GLXFBEvaluator` + `Osd::GLStencilTableTBO`. Runs
   the stencil eval as a GLSL transform-feedback shader; cage VBO →
   limit VBO, no CPU round-trip on the GPU side.
-* **Phase 3 — vibe3d integration. NOT YET WIRED.** This doc plans
-  it. The Phase-2 API is callable but no production code path
-  consumes it; the CPU evaluator (`osdc_evaluate`) still drives every
-  subpatch refresh.
+* Phase 2 wiring — vibe3d commit `eecee89`. Boot-time smoke test
+  validates GPU eval byte-for-byte vs CPU; `g_osdGpuEnabled` flag
+  flips true on success.
+* Phase 3a — vibe3d commit `c7c3d7c`. OsdAccel.refresh routes through
+  `osdc_gl_evaluate` then `glGetBufferSubData`-readbacks the limit
+  positions into `preview.vertices` so the existing gpu.upload /
+  picking / lasso paths see fresh data. Correct, production-wired,
+  no perf win (readback cost ≈ CPU eval cost).
+* **Phase 3b — eliminate the readback. NOT YET DONE.** Below: the
+  concrete refactor required, scope notes, and code sketches.
 
 ## What blocks the simple drop-in
 
@@ -94,7 +100,119 @@ One extra GL kernel.
 
 Simpler topology refactor, more shader code.
 
-## Suggested rollout
+## Phase 3b — concrete plan
+
+After spending real time on this, the right approach is a **transform-
+feedback fan-out shader** that pulls per-limit-vert positions from
+OSD's output VBO and emits the (xyz, xyz)-interleaved face-corner
+stream vibe3d's `gpu.faceVbo` expects. Compute the flat face normal
+on GPU from the corner's parent face's first three limit verts. One
+TF dispatch per drag frame; no CPU readback, no architecture-wide
+VBO refactor.
+
+### Shader
+
+```glsl
+#version 330 core
+uniform  isamplerBuffer u_cornerToLimit;      // per-corner: limit-vert idx
+uniform usamplerBuffer  u_cornerToFaceId;     // per-corner: face id
+uniform  isamplerBuffer u_faceFirstVerts;     // per-face × 3: limit-vert idx
+uniform  samplerBuffer  u_limitPositions;     // limitGlVbo, GL_RGB32F
+out vec3 vPos;
+out vec3 vNorm;
+void main() {
+    int corner = gl_VertexID;
+    int li = texelFetch(u_cornerToLimit, corner).r;
+    vPos = texelFetch(u_limitPositions, li).rgb;
+
+    int fid = int(texelFetch(u_cornerToFaceId, corner).r);
+    int a   = texelFetch(u_faceFirstVerts, fid * 3 + 0).r;
+    int b   = texelFetch(u_faceFirstVerts, fid * 3 + 1).r;
+    int c   = texelFetch(u_faceFirstVerts, fid * 3 + 2).r;
+    vec3 p0 = texelFetch(u_limitPositions, a).rgb;
+    vec3 p1 = texelFetch(u_limitPositions, b).rgb;
+    vec3 p2 = texelFetch(u_limitPositions, c).rgb;
+    vec3 n  = cross(p1 - p0, p2 - p0);
+    float l = length(n);
+    vNorm   = l > 1e-6 ? n / l : vec3(0, 1, 0);
+}
+```
+
+Output captured via `GL_INTERLEAVED_ATTRIBS` writes (vPos, vNorm)
+sequentially into the bound TF buffer — exact match for vibe3d's
+existing face-VBO stride-6 layout.
+
+### What OsdAccel needs to add
+
+```d
+struct OsdAccel {
+    // ... existing ...
+    private GLuint cornerToLimitVbo, cornerToLimitTex;
+    private GLuint cornerToFaceIdVbo, cornerToFaceIdTex;
+    private GLuint faceFirstVertsVbo, faceFirstVertsTex;
+    private GLuint limitTex;            // TBO view over limitGlVbo
+    private GLuint fanOutProgram;
+    private int    faceVertCount;
+}
+```
+
+* `cornerToLimit[corner]` — built at `buildPreview` by walking
+  `outMesh.faces` the same way `GpuMesh.upload` triangulates them.
+* `cornerToFaceId[corner]` — duplicates the existing `gpu.faceIdVbo`
+  data; redundant copy is acceptable.
+* `faceFirstVerts[3*fid]` — first three verts of each face from
+  `outMesh.faces[fid][0..3]`.
+* `limitTex` — single `glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F,
+  limitGlVbo)`.
+* `fanOutProgram` — vertex shader above + empty fragment + linked
+  with `glTransformFeedbackVaryings(prog, 2, ["vPos","vNorm"],
+  GL_INTERLEAVED_ATTRIBS)`.
+
+### refreshIntoFaceVbo signature
+
+```d
+void refreshIntoFaceVbo(ref const Mesh cage, GLuint targetFaceVbo) {
+    // 1. Pack cage positions, glBufferSubData into cageGlVbo.
+    // 2. osdc_gl_evaluate(cageGlVbo → limitGlVbo).
+    // 3. glUseProgram(fanOutProgram).
+    // 4. Bind the four TBOs to texture units 0..3 + set the uniform
+    //    sampler-buffer locations.
+    // 5. glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, targetFaceVbo).
+    // 6. glEnable(GL_RASTERIZER_DISCARD).
+    // 7. glBeginTransformFeedback(GL_POINTS).
+    //    glDrawArrays(GL_POINTS, 0, faceVertCount).
+    //    glEndTransformFeedback().
+    // 8. glDisable(GL_RASTERIZER_DISCARD).
+    // 9. Restore prev program, vao, buffer bindings.
+}
+```
+
+### Main-loop coordination — the actual hard part
+
+`SubpatchPreview.rebuildIfStale` currently bumps
+`preview.mesh.mutationVersion`, which makes the main loop trigger
+`gpu.upload(preview.mesh, ...)` — and that re-uploads positions from
+the (now stale) `preview.vertices`. Phase 3b needs:
+
+1. A way to tell the main loop "skip the position-write part of
+   `gpu.upload` because the fan-out already updated faceVbo."
+   Cleanest: split `gpu.upload` into `uploadTopology` (faces, edges,
+   ids — once per topology change) and `uploadPositions` (per-frame).
+   Phase 3b skips the latter when GPU fan-out ran.
+
+2. `SubpatchPreview.rebuildIfStale` needs to know whether we're on
+   the Phase-3b path so it doesn't bother CPU-side. Either expose
+   the choice through a delegate, or move the entire orchestration
+   into app.d's main loop.
+
+3. CPU consumers of `preview.vertices`: lasso visibility test
+   (skipped above 4 K-vert threshold anyway, so OK), picking
+   (gpu_select reads VBO not preview.vertices, so OK), bounding-box
+   updates (re-check call sites — likely also fine since they
+   typically operate on cage). Verify each in a sweep before
+   shipping.
+
+### Suggested rollout
 
 1. **Lift `gpu.faceVbo`'s layout split (Option A).** One commit,
    shader change + GpuMesh.upload split. Verify rendering still
