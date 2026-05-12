@@ -1414,20 +1414,36 @@ struct Mesh {
     /// Rebuild the half-edge loop structure from the current faces/vertices.
     /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
     void buildLoops() {
+        // Pre-compute total loop count + per-face start offset in one
+        // pass. Lets pass 1 below run in parallel — each face writes
+        // to a disjoint loops[faceLoop[fi] .. faceLoop[fi]+N] slice.
+        faceLoop.length = faces.length;
         size_t total = 0;
-        foreach (f; faces) total += f.length;
+        foreach (fi, f; faces) {
+            faceLoop[fi] = cast(uint)total;
+            total += f.length;
+        }
 
         loops.length    = total;
-        faceLoop.length = faces.length;
         vertLoop.length = vertices.length;
-        vertLoop[]      = ~0u;
         loopEdge.length = total;
-        loopEdge[]      = ~0u;
 
-        // First pass: fill vert, face, next, prev
-        uint li = 0;
-        foreach (fi, face; faces) {
-            faceLoop[fi] = li;
+        // Initialise sentinels in bulk (the SIMD-friendly default is
+        // ~0u, which is the boundary marker for `twin` and the
+        // missing-edge marker for loopEdge).
+        vertLoop[] = ~0u;
+        loopEdge[] = ~0u;
+
+        // Pass 1: fill vert, face, next, prev. Independent across
+        // faces — each writes to its own slice of `loops`. Skip
+        // vertLoop seeding inside the parallel body (it's a shared
+        // write to the same vert from multiple faces, which races on
+        // last-writer-wins; do it in a separate serial pass for
+        // determinism).
+        enum size_t PARALLEL_BUILD_MIN = 4096;
+        void fillOneFace(size_t fi) {
+            auto face = faces[fi];
+            uint li = faceLoop[fi];
             uint N = cast(uint)face.length;
             foreach (i; 0 .. N) {
                 loops[li + i].vert = face[i];
@@ -1435,31 +1451,41 @@ struct Mesh {
                 loops[li + i].next = li + (i + 1) % N;
                 loops[li + i].prev = li + (i + N - 1) % N;
                 loops[li + i].twin = ~0u;
-                vertLoop[face[i]]  = li + i;  // any loop will do
             }
-            li += N;
+        }
+        if (faces.length >= PARALLEL_BUILD_MIN) {
+            foreach (fi; parallel(iota(faces.length))) fillOneFace(fi);
+        } else {
+            foreach (fi; 0 .. faces.length) fillOneFace(fi);
+        }
+        // Serial vertLoop seed pass — every loop writes vertLoop[its vert].
+        foreach (idx; 0 .. total) {
+            vertLoop[loops[idx].vert] = cast(uint)idx;
         }
 
-        // Second pass: rebuild edgeIndexMap and populate loopEdge.
-        // edgeIndexMap is the mesh-wide (undirected) edgeKey → edge
-        // index AA — kept for external callers; building it costs ~nE
-        // inserts and the loopEdge fill ~total lookups.
+        // Pass 2: rebuild edgeIndexMap (serial — AA insert isn't
+        // thread-safe) and fill loopEdge in parallel (D AAs ARE safe
+        // for read-only concurrent lookup). edgeIndexMap is the
+        // mesh-wide (undirected) edgeKey → edge index AA, kept for
+        // external callers (bevel, split_edge, …).
         edgeIndexMap = null;
         foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
-        foreach (idx; 0 .. total) {
+        void fillLoopEdge(size_t idx) {
             uint u = loops[idx].vert;
             uint v = loops[loops[idx].next].vert;
-            if (auto p = edgeKey(u, v) in edgeIndexMap) loopEdge[idx] = *p;
+            if (auto p = edgeKey(u, v) in edgeIndexMap)
+                loopEdge[idx] = *p;
+        }
+        if (total >= PARALLEL_BUILD_MIN) {
+            foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
+        } else {
+            foreach (idx; 0 .. total) fillLoopEdge(idx);
         }
 
-        // Third pass: fill twin via the (max 2) loops-per-edge pairing
-        // we just computed in loopEdge. Replaces the previous directed-
-        // edge AA (`dirMap`) — ~total inserts + ~total lookups — with
-        // two flat int[] slots per edge. Manifold meshes have ≤ 2
-        // loops per edge by construction (addFaceFast / catmullClark
-        // both produce manifold output); a 3-loop edge would overflow
-        // here and silently drop a twin — same loss the old `dirMap`
-        // had (later writer overwrote the earlier (u,v) entry).
+        // Pass 3: twin pairing via (max 2) loops-per-edge. The slot
+        // assignment (first → A, second → B) needs serial order to
+        // avoid a race on the -1-sentinel comparison; the writeback
+        // pass (twin from A/B) is parallelisable.
         int[] edgeLoopA = new int[](edges.length);
         int[] edgeLoopB = new int[](edges.length);
         edgeLoopA[] = -1;
@@ -1470,29 +1496,38 @@ struct Mesh {
             if (edgeLoopA[ei] == -1) edgeLoopA[ei] = cast(int)idx;
             else                     edgeLoopB[ei] = cast(int)idx;
         }
-        foreach (idx; 0 .. total) {
+        void fillTwin(size_t idx) {
             uint ei = loopEdge[idx];
-            if (ei == ~0u) continue;
+            if (ei == ~0u) return;
             int a = edgeLoopA[ei];
             int b = edgeLoopB[ei];
-            if (b == -1) continue;                  // boundary edge
+            if (b == -1) return;
             loops[idx].twin = (a == cast(int)idx) ? cast(uint)b : cast(uint)a;
         }
+        if (total >= PARALLEL_BUILD_MIN) {
+            foreach (idx; parallel(iota(total))) fillTwin(idx);
+        } else {
+            foreach (idx; 0 .. total) fillTwin(idx);
+        }
 
-        // For boundary vertices, vertLoop was set to an arbitrary loop.
-        // Walk backward (via next(twin(cur))) until cur.twin == ~0u (open start)
-        // or we detect a closed ring (back == original start).
-        foreach (vi; 0 .. vertices.length) {
-            if (vertLoop[vi] == ~0u) continue;
+        // Anchor walk — independent per vertex; for boundary verts,
+        // walk back via next(twin(cur)) until the open start.
+        void anchorOneVert(size_t vi) {
+            if (vertLoop[vi] == ~0u) return;
             uint cur  = vertLoop[vi];
             uint orig = cur;
             foreach (_; 0 .. faces.length + 4) {
-                if (loops[cur].twin == ~0u) break; // cur is the open start of the fan
+                if (loops[cur].twin == ~0u) break;
                 uint back = loops[loops[cur].twin].next;
-                if (back == orig) break;           // closed ring — any start is fine
+                if (back == orig) break;
                 cur = back;
             }
             vertLoop[vi] = cur;
+        }
+        if (vertices.length >= PARALLEL_BUILD_MIN) {
+            foreach (vi; parallel(iota(vertices.length))) anchorOneVert(vi);
+        } else {
+            foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
         }
     }
 }
@@ -2467,6 +2502,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
             vertEdgesIdx[vertEdgesOff[e[1]] + vePos[e[1]]++] = cast(uint)ei;
         }
     }
+
     // Helpers — `inout` slice into the CSR index array for one row.
     const(uint)[] vertFacesOf(uint vi) {
         return vertFacesIdx[vertFacesOff[vi] .. vertFacesOff[vi + 1]];
@@ -2534,6 +2570,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         foreach (ei; 0 .. nE) computeOneEdgePoint(ei);
     }
 
+
     Vec3[] newVerts = new Vec3[](nV);
     // Per-vertex Catmull-Clark smoothing — independent across `vi`,
     // reads only from immutable upstream (m.vertices, m.edges,
@@ -2594,6 +2631,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     } else {
         foreach (vi; 0 .. nV) computeOneVert(vi);
     }
+
 
     uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
     uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
@@ -2706,6 +2744,7 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
         }
     }
 
+
     // Pre-allocate output face arrays + parallel origin/subpatch trace
     // arrays. Direct index-assignment — no addFaceFast, no per-face
     // edge AA dedup (the edges are already populated above).
@@ -2769,10 +2808,13 @@ SubdivStep catmullClarkTracked(ref const Mesh m, ref const SubpatchTrace inTrace
     // once now to mirror what addFaceFast did per-call.
     ++result.mutationVersion;
 
+
     result.buildLoops();
+
 
     outTrace.faceOrigin = faceOriginAcc;
     outTrace.subpatch   = subpatchAcc;
+
 
     return SubdivStep(result, outTrace);
 }
