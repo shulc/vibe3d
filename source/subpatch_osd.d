@@ -902,11 +902,21 @@ struct OsdAccel {
 
         outMesh.mutationVersion = 1;
         outMesh.topologyVersion = 1;
-        // Preview mesh is consumed by gpu.upload, drawEdges,
-        // gpu_select, lasso — none of them query edgeIndexMap on the
-        // preview, so we pass rebuildEdgeIndexMap=false to skip the
-        // 786K-edge AA rebuild (was 10%+ of CPU before P2).
-        outMesh.buildLoops(/*rebuildEdgeIndexMap=*/false);
+        // P4: skip buildLoops entirely on the preview mesh. All
+        // consumers (gpu.upload, drawEdges, gpu_select, lasso,
+        // pv.faceNormal, pv.visibleVertices) read only
+        // mesh.vertices / mesh.edges / mesh.faces — none touch
+        // loops / faceLoop / vertLoop / loopEdge / edgeIndexMap.
+        // At 393K preview faces buildLoops was ~13% of CPU even
+        // after the P2 CSR rewrite (fillOneFace + fillLoopEdge +
+        // fillTwin combined). Wipe stale fields from any previous
+        // rebuild so a stray accidental reader gets empty arrays
+        // instead of dangling data from an older preview.
+        outMesh.loops       .length = 0;
+        outMesh.faceLoop    .length = 0;
+        outMesh.vertLoop    .length = 0;
+        outMesh.loopEdge    .length = 0;
+        outMesh.edgeIndexMap = null;
 
         // ---- SubpatchTrace ------------------------------------------
         // OSD's `*_origins[i]` index INTO OSD's own cage enumeration,
