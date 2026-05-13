@@ -3393,7 +3393,17 @@ void main(string[] args) {
                 wp.currentBasis(gz_n, gz_a1, gz_a2);
             }
         }
-        DrawGizmo(layout.sideW + 32.0f, cameraView.height - layout.statusH - 32.0f,
+        // DrawGizmo uses window-space coords (ImGui foreground drawlist).
+        // Anchor at the bottom-left of the 3D viewport: x = sideW + 32
+        // (one-gizmo-radius in from the side-panel edge), y = vpY + vpH
+        // − 32 (one radius up from the viewport's bottom edge, which
+        // sits flush against the top of the status bar). The previous
+        // formula `cameraView.height − statusH − 32` was missing the
+        // vpY offset, leaving the gizmo `2·statusH` above the real
+        // corner where it could collide with a Tool Properties window
+        // parked low in the viewport.
+        DrawGizmo(cast(float)(layout.vpX + 32),
+                  cast(float)(layout.vpY + layout.vpH - 32),
                   cameraView.view, gz_a1, gz_n, gz_a2);
 
         // ---- Playback cursor overlay ----

@@ -17,7 +17,11 @@ void DrawGizmo(float x, float y, float[16] view,
 {
     enum float SIZE = 20.0f;
 
-    ImDrawList* gdl = ImGui.GetForegroundDrawList();
+    // Background drawlist so ImGui windows (Tool Properties parked low
+    // in the viewport, status bar tooltips, etc.) sit ON TOP of the
+    // gizmo. Foreground would render it over panels — wrong z-order
+    // for a corner orientation indicator.
+    ImDrawList* gdl = ImGui.GetBackgroundDrawList();
 
     // Project a world-space offset (wx,wy,wz) to screen, anchored at (x,y).
     ImVec2 proj(float wx, float wy, float wz) {
