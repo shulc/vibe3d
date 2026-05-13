@@ -6,6 +6,19 @@ Reduce `Tab` (subpatch_toggle) latency on a 24576-cage-polygon mesh from the
 current ~640 ms median down to **≤ 200 ms** (≈ 3× speed-up) so the user
 stops perceiving a stall when toggling subpatch on heavy meshes.
 
+## Status (commits 1628e83 → bf81feb)
+
+| Stage | Median Tab ms | Δ vs prev | Δ vs baseline | Notes |
+|---|---|---|---|---|
+| Baseline (45d7128) | 638 | —    | —      | starting point |
+| P0 (1628e83)       | 532 | −17% | −17 %  | scratch buffers in OsdAccel.buildPreview |
+| P1 (de8ccc1)       | 544 |   0% | −15 %  | OSD-side AA → sorted-array (timing flat — cleanup, the dominant AA was Mesh.edgeIndexMap) |
+| P2 (e952aec)       | 470 | −13% | −26 %  | CSR adjacency in buildLoops for preview path |
+| P3 (bf81feb)       | 336 | −29% | **−47 %** | pre-sized + index-write GpuMesh.upload buffers |
+
+Median 638 → 336 ms; max 1029 → 516 ms. Goal of ≤ 200 ms median not yet hit
+(would need P4 OSD-refiner cache or a structural change like P5).
+
 ## Baseline (captured with `tools/perf_subpatch/run.d`)
 
 Setup: cube → `mesh.subdivide × 6` → 24576 quads → `mesh.subpatch_toggle`.
