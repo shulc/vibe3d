@@ -2499,10 +2499,22 @@ struct GpuMesh {
         }
 
         // ── Faces — interleaved [pos(3)+normal(3)], flat shading. ──
-        scratchFaceData  .length = totalFaceCorners * FACE_STRIDE;
-        scratchFaceIdData.length = totalFaceCorners;
-        faceTriStart     .length = mesh.faces.length;
-        faceTriCount     .length = mesh.faces.length;
+        // P5: only call setLength when we need to grow on the float
+        // buffers (D runtime's `_d_arraysetlength` was 7.88 % of CPU
+        // after P3 — every call consults GC block metadata even when
+        // capacity is sufficient). The 30-tab harness alternates
+        // small (cage tear-down) and large (preview-on) uploads;
+        // pinning the high-water capacity avoids the per-call
+        // metadata round-trip. Writers index up to the exact required
+        // length via the `*VertCount` fields below; GL upload sizes
+        // are derived from those counts, not from `scratch*.length`.
+        immutable size_t needFaceFloats = totalFaceCorners * FACE_STRIDE;
+        if (scratchFaceData  .length < needFaceFloats)
+            scratchFaceData  .length = needFaceFloats;
+        if (scratchFaceIdData.length < totalFaceCorners)
+            scratchFaceIdData.length = totalFaceCorners;
+        faceTriStart.length = mesh.faces.length;
+        faceTriCount.length = mesh.faces.length;
         faceOriginGpu    .length = 0;
         if (faceOrigin.length > 0) {
             faceOriginGpu.length = faceOrigin.length;
@@ -2594,7 +2606,9 @@ struct GpuMesh {
         }
 
         // ── Edges ─────────────────────────────────────────────────
-        scratchEdgeData.length = totalEdgeKeep * 6;
+        immutable size_t needEdgeFloats = totalEdgeKeep * 6;
+        if (scratchEdgeData.length < needEdgeFloats)
+            scratchEdgeData.length = needEdgeFloats;
         edgeOriginGpu  .length = (edgeOrigin.length > 0)
                                   ? totalEdgeKeep : 0;
         {
@@ -2626,7 +2640,9 @@ struct GpuMesh {
         glEnableVertexAttribArray(0);
 
         // ── Vertex points ─────────────────────────────────────────
-        scratchVertData.length = totalVertKeep * 3;
+        immutable size_t needVertFloats = totalVertKeep * 3;
+        if (scratchVertData.length < needVertFloats)
+            scratchVertData.length = needVertFloats;
         vertOriginGpu  .length = totalVertKeep;
         {
             size_t vw = 0;
