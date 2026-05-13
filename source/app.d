@@ -2866,6 +2866,23 @@ void main(string[] args) {
             // decremented on deselect or selection-clear), so they
             // can't be used as a live "how many are selected right
             // now" readout. Walk the bool[] masks via countSelected.
+            //
+            // FUTURE perf note — countSelected is a linear walk
+            // (1 byte per `bool` entry, likely auto-vectorised). At
+            // typical mesh sizes the per-frame cost is:
+            //     cube      :  ~26 bytes  → < 1 µs  (0.006 % frame)
+            //     subdiv ×4 :  ~9 KB      → ~2 µs   (0.012 % frame)
+            //     24 K cage :  ~96 KB     → ~25 µs  (0.18 %  frame)
+            //     1 M poly  :  ~4 MB      → ~900 µs (5-6 %  frame)
+            // So fine up to ~100 K elements; only worth optimising
+            // when 1 M+ poly imports become a typical workflow. The
+            // O(1) path is straightforward — add `int selectedXCount`
+            // fields on `Mesh`, bump/decrement in `selectVertex /
+            // deselectVertex / clearVertexSelection` (and the
+            // matching edge / face variants), and read those here
+            // directly. Risk is drift if a new selection mutator
+            // forgets to maintain the counter; the linear walk is
+            // the more robust default until perf demands otherwise.
             ImGui.LabelText("V", "%d/%d",
                 countSelected(mesh.selectedVertices),
                 cast(int) mesh.vertices.length);
