@@ -2436,6 +2436,16 @@ struct GpuMesh {
     // version moved.
     ulong  uploadVersion;
 
+    // P3: scratch buffers re-used across upload() calls. Pre-sized to
+    // the exact final length via a counting pre-pass, then filled by
+    // index write — kills the per-face / per-corner `~=` cascades
+    // (was ~2.4 M float appends + 393 K uint appends on a 24 K cage
+    // / depth-2 preview, dominated by literal-array allocations).
+    private float[] scratchFaceData;
+    private uint[]  scratchFaceIdData;
+    private float[] scratchEdgeData;
+    private float[] scratchVertData;
+
     void init() {
         glGenVertexArrays(1, &faceVao); glGenBuffers(1, &faceVbo);
         glGenVertexArrays(1, &edgeVao); glGenBuffers(1, &edgeVbo);
@@ -2469,108 +2479,177 @@ struct GpuMesh {
             return;
         }
         ++uploadVersion;
-        // Faces — interleaved [pos(3) + normal(3)] per vertex, flat shading.
         enum FACE_STRIDE = 6;
-        float[] faceData;
-        // Parallel uint-per-vertex face-index array — see GpuMesh.faceIdVbo.
-        uint[]  faceIdData;
-        faceTriStart.length = 0;
-        faceTriCount.length = 0;
-        faceOriginGpu.length = 0;
-        if (faceOrigin.length > 0)
-            faceOriginGpu = faceOrigin.dup;
-        foreach (fi, face; mesh.faces) {
-            int start = cast(int)(faceData.length / FACE_STRIDE);
-            if (face.length >= 3) {
-                // Flat normal from the first triangle of the face.
+
+        // P3 counting pre-pass: derive exact final sizes for the four
+        // scratch buffers so the fill phase can index-write instead
+        // of `~=`.
+        size_t totalFaceCorners = 0;
+        foreach (face; mesh.faces)
+            if (face.length >= 3) totalFaceCorners += (face.length - 2) * 3;
+        size_t totalEdgeKeep = 0;
+        foreach (ei; 0 .. mesh.edges.length) {
+            if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) continue;
+            ++totalEdgeKeep;
+        }
+        size_t totalVertKeep = 0;
+        foreach (vi; 0 .. mesh.vertices.length) {
+            if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
+            ++totalVertKeep;
+        }
+
+        // ── Faces — interleaved [pos(3)+normal(3)], flat shading. ──
+        scratchFaceData  .length = totalFaceCorners * FACE_STRIDE;
+        scratchFaceIdData.length = totalFaceCorners;
+        faceTriStart     .length = mesh.faces.length;
+        faceTriCount     .length = mesh.faces.length;
+        faceOriginGpu    .length = 0;
+        if (faceOrigin.length > 0) {
+            faceOriginGpu.length = faceOrigin.length;
+            faceOriginGpu[] = faceOrigin[];
+        }
+        {
+            size_t fw = 0;
+            foreach (fi, face; mesh.faces) {
+                faceTriStart[fi] = cast(int)fw;
+                if (face.length < 3) {
+                    faceTriCount[fi] = 0;
+                    continue;
+                }
                 Vec3 v0 = mesh.vertices[face[0]];
                 Vec3 v1 = mesh.vertices[face[1]];
                 Vec3 v2 = mesh.vertices[face[2]];
-                Vec3 e1 = v1 - v0, e2 = v2 - v0;
-                Vec3 cr = cross(e1, e2);
-                float nlen = sqrt(cr.x*cr.x + cr.y*cr.y + cr.z*cr.z);
-                Vec3  n   = nlen > 1e-6f
-                            ? cr / nlen
-                            : Vec3(0, 1, 0);
-                for (uint i = 1; i + 1 < face.length; i++) {
-                    foreach (idx; [face[0], face[i], face[i+1]]) {
-                        Vec3 v = mesh.vertices[idx];
-                        faceData ~= [v.x, v.y, v.z, n.x, n.y, n.z];
-                        faceIdData ~= cast(uint)fi;
-                    }
+                float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+                float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
+                float cx = ay*bz - az*by;
+                float cy = az*bx - ax*bz;
+                float cz = ax*by - ay*bx;
+                float nlen = sqrt(cx*cx + cy*cy + cz*cz);
+                float nx, ny, nz;
+                if (nlen > 1e-6f) {
+                    float inv = 1.0f / nlen;
+                    nx = cx*inv; ny = cy*inv; nz = cz*inv;
+                } else {
+                    nx = 0; ny = 1; nz = 0;
                 }
+                immutable uint i0 = face[0];
+                for (uint i = 1; i + 1 < face.length; i++) {
+                    immutable uint ia = i0;
+                    immutable uint ib = face[i];
+                    immutable uint ic = face[i + 1];
+                    Vec3 va = mesh.vertices[ia];
+                    Vec3 vb = mesh.vertices[ib];
+                    Vec3 vc = mesh.vertices[ic];
+                    size_t k = fw * FACE_STRIDE;
+                    scratchFaceData[k +  0] = va.x;
+                    scratchFaceData[k +  1] = va.y;
+                    scratchFaceData[k +  2] = va.z;
+                    scratchFaceData[k +  3] = nx;
+                    scratchFaceData[k +  4] = ny;
+                    scratchFaceData[k +  5] = nz;
+                    scratchFaceData[k +  6] = vb.x;
+                    scratchFaceData[k +  7] = vb.y;
+                    scratchFaceData[k +  8] = vb.z;
+                    scratchFaceData[k +  9] = nx;
+                    scratchFaceData[k + 10] = ny;
+                    scratchFaceData[k + 11] = nz;
+                    scratchFaceData[k + 12] = vc.x;
+                    scratchFaceData[k + 13] = vc.y;
+                    scratchFaceData[k + 14] = vc.z;
+                    scratchFaceData[k + 15] = nx;
+                    scratchFaceData[k + 16] = ny;
+                    scratchFaceData[k + 17] = nz;
+                    scratchFaceIdData[fw + 0] = cast(uint)fi;
+                    scratchFaceIdData[fw + 1] = cast(uint)fi;
+                    scratchFaceIdData[fw + 2] = cast(uint)fi;
+                    fw += 3;
+                }
+                faceTriCount[fi] = cast(int)(fw - faceTriStart[fi]);
             }
-            int count = cast(int)(faceData.length / FACE_STRIDE) - start;
-            faceTriStart ~= start;
-            faceTriCount  ~= count;
+            faceVertCount = cast(int)fw;
         }
-        faceVertCount = cast(int)(faceData.length / FACE_STRIDE);
         glBindVertexArray(faceVao);
         glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-        glBufferData(GL_ARRAY_BUFFER, faceData.length * float.sizeof, faceData.ptr, GL_DYNAMIC_DRAW);
-        // attr 0: position
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, FACE_STRIDE * float.sizeof, cast(void*)0);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+            scratchFaceData.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              FACE_STRIDE * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
-        // attr 1: normal
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, FACE_STRIDE * float.sizeof,
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
+                              FACE_STRIDE * float.sizeof,
                               cast(void*)(3 * float.sizeof));
         glEnableVertexAttribArray(1);
 
-        // Parallel face-ID VBO, not bound to faceVao — gpu_select.d builds
-        // its own VAO combining faceVbo (position at attr 0) with this
-        // buffer (face index at attr 1). Always upload at least one
-        // sentinel uint so the buffer is non-zero-sized even for empty
-        // meshes; glDrawArrays with vertex count 0 won't touch it but
-        // glBufferData(0, null) is poorly defined on some drivers.
+        // Parallel face-ID VBO. Always upload at least one sentinel
+        // uint so the buffer is non-zero-sized even for empty meshes.
         glBindBuffer(GL_ARRAY_BUFFER, faceIdVbo);
-        if (faceIdData.length > 0) {
-            glBufferData(GL_ARRAY_BUFFER, faceIdData.length * uint.sizeof,
-                         faceIdData.ptr, GL_DYNAMIC_DRAW);
+        if (faceVertCount > 0) {
+            glBufferData(GL_ARRAY_BUFFER,
+                cast(GLsizeiptr)(faceVertCount * uint.sizeof),
+                scratchFaceIdData.ptr, GL_DYNAMIC_DRAW);
         } else {
             uint zero = 0;
             glBufferData(GL_ARRAY_BUFFER, uint.sizeof, &zero, GL_DYNAMIC_DRAW);
         }
 
-        // Edges — skip derived edges (edgeOrigin[ei] == uint.max). When a
-        // filter is provided, remember each surviving segment's cage origin
-        // so drawEdges can translate selection/hover into segment space.
-        float[] edgeData;
-        edgeOriginGpu.length = 0;
-        foreach (ei, edge; mesh.edges) {
-            if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) continue;
-            if (edgeOrigin.length > 0)
-                edgeOriginGpu ~= edgeOrigin[ei];
-            Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
-            edgeData ~= [a.x, a.y, a.z, b.x, b.y, b.z];
+        // ── Edges ─────────────────────────────────────────────────
+        scratchEdgeData.length = totalEdgeKeep * 6;
+        edgeOriginGpu  .length = (edgeOrigin.length > 0)
+                                  ? totalEdgeKeep : 0;
+        {
+            size_t ew = 0;
+            size_t oc = 0;
+            foreach (ei, edge; mesh.edges) {
+                if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) continue;
+                if (edgeOrigin.length > 0)
+                    edgeOriginGpu[oc++] = edgeOrigin[ei];
+                Vec3 a = mesh.vertices[edge[0]];
+                Vec3 b = mesh.vertices[edge[1]];
+                scratchEdgeData[ew + 0] = a.x;
+                scratchEdgeData[ew + 1] = a.y;
+                scratchEdgeData[ew + 2] = a.z;
+                scratchEdgeData[ew + 3] = b.x;
+                scratchEdgeData[ew + 4] = b.y;
+                scratchEdgeData[ew + 5] = b.z;
+                ew += 6;
+            }
+            edgeVertCount = cast(int)(ew / 3);
         }
-        edgeVertCount = cast(int)(edgeData.length / 3);
         glBindVertexArray(edgeVao);
         glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
-        glBufferData(GL_ARRAY_BUFFER, edgeData.length * float.sizeof, edgeData.ptr, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
+            scratchEdgeData.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              3 * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
 
-        // Vertex points — skip derived vertices (vertOrigin[vi] == uint.max).
-        // `vertOriginGpu` records, for each surviving VBO entry, the cage
-        // vertex index it came from. In cage mode (no filter) the map is
-        // identity; subpatch uploads populate it from `vertOrigin` so
-        // gpu_select.d can translate VBO indices back to cage indices.
-        float[] vertData;
-        int     kept = 0;
-        vertOriginGpu.length = 0;
-        foreach (vi, v; mesh.vertices) {
-            if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
-            vertData ~= [v.x, v.y, v.z];
-            vertOriginGpu ~= (vertOrigin.length > 0)
-                ? vertOrigin[vi]
-                : cast(uint)vi;
-            ++kept;
+        // ── Vertex points ─────────────────────────────────────────
+        scratchVertData.length = totalVertKeep * 3;
+        vertOriginGpu  .length = totalVertKeep;
+        {
+            size_t vw = 0;
+            size_t oc = 0;
+            foreach (vi, v; mesh.vertices) {
+                if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
+                scratchVertData[vw + 0] = v.x;
+                scratchVertData[vw + 1] = v.y;
+                scratchVertData[vw + 2] = v.z;
+                vertOriginGpu[oc++] = (vertOrigin.length > 0)
+                                       ? vertOrigin[vi]
+                                       : cast(uint)vi;
+                vw += 3;
+            }
+            vertCount = cast(int)oc;
         }
-        vertCount = kept;
         glBindVertexArray(vertVao);
         glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
-        glBufferData(GL_ARRAY_BUFFER, vertData.length * float.sizeof, vertData.ptr, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * float.sizeof, cast(void*)0);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
+            scratchVertData.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              3 * float.sizeof, cast(void*)0);
         glEnableVertexAttribArray(0);
 
         glBindVertexArray(0);
