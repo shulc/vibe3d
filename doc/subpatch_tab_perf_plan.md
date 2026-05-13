@@ -6,7 +6,7 @@ Reduce `Tab` (subpatch_toggle) latency on a 24576-cage-polygon mesh from the
 current ~640 ms median down to **≤ 200 ms** (≈ 3× speed-up) so the user
 stops perceiving a stall when toggling subpatch on heavy meshes.
 
-## Status (commits 1628e83 → bf81feb)
+## Status (commits 1628e83 → 8d3b2c4)
 
 | Stage | Median Tab ms | Δ vs prev | Δ vs baseline | Notes |
 |---|---|---|---|---|
@@ -14,10 +14,34 @@ stops perceiving a stall when toggling subpatch on heavy meshes.
 | P0 (1628e83)       | 532 | −17% | −17 %  | scratch buffers in OsdAccel.buildPreview |
 | P1 (de8ccc1)       | 544 |   0% | −15 %  | OSD-side AA → sorted-array (timing flat — cleanup, the dominant AA was Mesh.edgeIndexMap) |
 | P2 (e952aec)       | 470 | −13% | −26 %  | CSR adjacency in buildLoops for preview path |
-| P3 (bf81feb)       | 336 | −29% | **−47 %** | pre-sized + index-write GpuMesh.upload buffers |
+| P3 (bf81feb)       | 336 | −29% | −47 %  | pre-sized + index-write GpuMesh.upload buffers |
+| P4 (f2b79f2)       | 305 |  −9% | −52 %  | skip Mesh.buildLoops on the preview mesh — no consumer reads loops/edgeIndexMap on it |
+| P5 (8d3b2c4)       | 256 | −16% | **−60 %** | grow-only setLength on GpuMesh.upload's float scratch (was 7.88 % of CPU on shrink-then-regrow) |
 
-Median 638 → 336 ms; max 1029 → 516 ms. Goal of ≤ 200 ms median not yet hit
-(would need P4 OSD-refiner cache or a structural change like P5).
+Median 638 → **256 ms** ; max 1029 → 454 ms. Plan target of ≤ 200 ms median
+not fully closed but within striking range; the remaining 56 ms / ~22 %
+sits mostly in OSD-internal work (StencilBuilder + CpuEvalStencils +
+StencilTableFactory + QuadRefinement ≈ 28 % of post-P5 CPU) and intrinsic
+memmove (14.8 % — split between OSD's own stencil-table memcpy and the
+driver-side `glBufferData` upload). Closing that requires either:
+
+- OSD-refiner reuse across topology-only Tab toggles (would need
+  D-OpenSubdiv API surgery to expose split create-refiner /
+  create-stencil-table calls), or
+- moving the preview-build CPU helpers off the Tab critical path (build
+  asynchronously while showing a "subpatch loading…" hint on the cage).
+
+P4/P5 as shipped diverge from the candidates originally named in this
+doc — what landed is more surgical:
+
+- **Plan P4** was "cache OSD TopologyRefiner across topology-only
+  toggles". *Not done.* The shipped "P4" (skip buildLoops on the preview)
+  is a different cut that we found while auditing consumers.
+- **Plan P5** was "flatten Mesh.faces from uint[][] to uint[] + offsets".
+  *Not done.* The shipped "P5" (grow-only setLength) is a narrower
+  optimisation. The structural flat-faces refactor remains future work
+  but on the Tab path its benefit would now be modest — most of the
+  outer-slice-header churn has already been removed.
 
 ## Baseline (captured with `tools/perf_subpatch/run.d`)
 
