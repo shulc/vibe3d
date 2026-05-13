@@ -507,10 +507,26 @@ bool screenFalloffRMBUp() {
 // radial falloff inherits the gesture. app.d's RMB dispatch consults
 // `radialFalloffActive()` before falling through to lasso.
 // ---------------------------------------------------------------------------
-private bool rmbRadialDragActive_ = false;
-private bool rmbRadialUniform_    = false;
-private Vec3 rmbRadialCenter_     = Vec3(0, 0, 0);
-private Vec3 rmbRadialPlaneN_     = Vec3(0, 1, 0);
+// Two-stage RMB-create state machine, mirroring prim.sphere:
+//   Idle → FirstActive (RMB held, dragging in-plane disc radius)
+//        → FirstDone   (RMB released; flat disc committed,
+//                        awaiting second RMB to set height)
+//        → SecondActive (RMB held again, extruding the disc along
+//                        the construction-plane normal into a 3D
+//                        ellipsoid)
+//        → Idle
+//
+// Ctrl at the first RMB-down skips the two-stage flow — the drag
+// directly produces a uniform 3D sphere (FirstActive but with a
+// `uniform` flag set), and RMB-up returns to Idle.
+private enum RadialStage { Idle, FirstActive, FirstDone, SecondActive }
+private RadialStage radialStage_   = RadialStage.Idle;
+private bool        rmbRadialUniform_      = false;
+private Vec3        rmbRadialCenter_       = Vec3(0, 0, 0);
+private Vec3        rmbRadialPlaneN_       = Vec3(0, 1, 0);
+private Vec3        rmbRadialFlatSize_     = Vec3(0, 0, 0); // size frozen after first drag
+private Vec3        rmbRadialHpn_          = Vec3(1, 0, 0); // height-plane normal (in-plane camera dir)
+private Vec3        rmbRadialHeightStart_  = Vec3(0, 0, 0); // hit on height plane at second RMB-down
 
 bool radialFalloffActive() {
     import toolpipe.stages.falloff : FalloffStage;
@@ -524,7 +540,10 @@ bool radialFalloffActive() {
     return false;
 }
 
-bool radialFalloffRMBDragging() { return rmbRadialDragActive_; }
+bool radialFalloffRMBDragging() {
+    return radialStage_ == RadialStage.FirstActive
+        || radialStage_ == RadialStage.SecondActive;
+}
 
 private void pushRadialFalloff(Vec3 center, Vec3 size) {
     if (g_pipeCtx is null) return;
@@ -539,69 +558,184 @@ private void pushRadialFalloff(Vec3 center, Vec3 size) {
     }
 }
 
-/// Begin the RMB create gesture. Picks the most-facing cardinal axis
-/// of the active workplane as the plane normal (analogue of
-/// prim.sphere's choosePlane), projects the click onto that plane,
-/// and seeds the falloff at the hit with size 0. Returns false if
-/// the click ray is parallel to the chosen plane (rare degenerate
-/// camera angle).
+/// Compute the height-drag plane analogous to
+/// `MeshSphereTool.setupHeightPlane`: plane through `center`, normal =
+/// camera direction projected into the construction plane (= camera
+/// dir with its plane-normal component removed). User's screen-
+/// vertical mouse motion then projects cleanly onto the construction
+/// plane's normal axis.
+private Vec3 computeHpn(Vec3 center, Vec3 planeN, const ref Viewport vp) {
+    Vec3 toCamera = Vec3(vp.eye.x - center.x,
+                         vp.eye.y - center.y,
+                         vp.eye.z - center.z);
+    float dProj = dot(toCamera, planeN);
+    Vec3 inPlane = Vec3(toCamera.x - planeN.x * dProj,
+                        toCamera.y - planeN.y * dProj,
+                        toCamera.z - planeN.z * dProj);
+    float len = sqrt(inPlane.x*inPlane.x + inPlane.y*inPlane.y + inPlane.z*inPlane.z);
+    if (len > 1e-6f) return Vec3(inPlane.x/len, inPlane.y/len, inPlane.z/len);
+    // Camera looking straight along plane normal — degenerate; pick any
+    // vector perpendicular to planeN.
+    if (abs(planeN.x) < 0.9f) return Vec3(1, 0, 0);
+    return Vec3(0, 1, 0);
+}
+
+/// Begin or continue the RMB create gesture. Two-stage by default,
+/// matching prim.sphere:
+///   - From Idle: pick the most-facing axis of the active workplane
+///     (analogue of `MeshSphereTool.choosePlane`), project the click
+///     onto the plane through `frame.origin` perpendicular to that
+///     axis, seed the falloff at the hit with size 0. Ctrl skips the
+///     two-stage flow and goes straight to a uniform 3D sphere drag.
+///   - From FirstDone (flat disc already committed): re-project the
+///     click onto the height-drag plane; the next motion extrudes
+///     the disc along the construction-plane normal.
+/// Returns false if the click ray is parallel to the chosen plane
+/// (rare degenerate camera angle); state is left untouched so app.d
+/// can fall through to its usual RMB lasso.
 bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
+    if (radialStage_ == RadialStage.FirstDone) {
+        // Second-stage RMB. Ctrl here repurposes the existing center
+        // for a uniform-radius drag (cursor → all three axes); plain
+        // RMB enters height-extrude mode.
+        Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+        Vec3 hit;
+        if (ctrl) {
+            // Uniform: project onto construction plane through center,
+            // use distance as r for all three world axes.
+            if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+                return false;
+            rmbRadialUniform_     = true;
+            rmbRadialHeightStart_ = rmbRadialCenter_;     // unused in uniform path
+            radialStage_          = RadialStage.SecondActive;
+            return true;
+        }
+        // Height extrude: project onto the height plane.
+        Vec3 hpn = computeHpn(rmbRadialCenter_, rmbRadialPlaneN_, vp);
+        if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, hpn, hit))
+            hit = rmbRadialCenter_;
+        rmbRadialUniform_     = false;
+        rmbRadialHpn_         = hpn;
+        rmbRadialHeightStart_ = hit;
+        radialStage_          = RadialStage.SecondActive;
+        return true;
+    }
+
+    // Idle or stale state — start fresh. Pick the most-facing
+    // workplane axis as the plane normal.
     WorkplaneFrame frame = pickWorkplaneFrame(vp);
-    // camBack = third column of view → camera-back in world coords.
     Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     float aA = abs(dot(camBack, frame.axis1));
     float aN = abs(dot(camBack, frame.normal));
     float a2 = abs(dot(camBack, frame.axis2));
     Vec3 pn;
-    if      (aA >= aN && aA >= a2) pn = Vec3(1, 0, 0);
-    else if (aN >= aA && aN >= a2) pn = Vec3(0, 1, 0);
-    else                           pn = Vec3(0, 0, 1);
+    if      (aA >= aN && aA >= a2) pn = frame.axis1;
+    else if (aN >= aA && aN >= a2) pn = frame.normal;
+    else                           pn = frame.axis2;
 
     Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
     Vec3 hit;
     if (!rayPlaneIntersect(vp.eye, dir, frame.origin, pn, hit))
         return false;
-    rmbRadialDragActive_ = true;
-    rmbRadialUniform_    = ctrl;
-    rmbRadialCenter_     = hit;
-    rmbRadialPlaneN_     = pn;
+    rmbRadialUniform_  = ctrl;
+    rmbRadialCenter_   = hit;
+    rmbRadialPlaneN_   = pn;
+    rmbRadialFlatSize_ = Vec3(0, 0, 0);
+    radialStage_       = RadialStage.FirstActive;
     pushRadialFalloff(hit, Vec3(0, 0, 0));
     return true;
 }
 
-/// Update center + size from a drag. Center stays pinned at the click
-/// point; size scales with the in-plane distance from center to the
-/// current cursor projection. Flat mode zeroes the plane-normal axis
-/// so the ellipsoid stays a disc; uniform mode applies r to all three
-/// world axes.
+/// Update center + size from a drag. First-drag uses in-plane distance
+/// from center to project onto a flat (or uniform if Ctrl was held)
+/// ellipsoid. Second-drag projects onto the height plane and grows
+/// the plane-normal axis from the frozen flat-disc base.
 void radialFalloffRMBMotion(int x, int y, const ref Viewport vp) {
-    if (!rmbRadialDragActive_) return;
-    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
-    Vec3 hit;
-    if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+    if (radialStage_ == RadialStage.FirstActive) {
+        Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+        Vec3 hit;
+        if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+            return;
+        Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
+                      hit.y - rmbRadialCenter_.y,
+                      hit.z - rmbRadialCenter_.z);
+        float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        Vec3 size = rmbRadialUniform_
+            ? Vec3(r, r, r)
+            // Flat disc: r along the two plane axes, 0 along plane
+            // normal. Plane normal is cardinal in the common case so
+            // |pn.i| ∈ {0, 1} maps cleanly to "this axis is the normal".
+            : Vec3(r * (1.0f - abs(rmbRadialPlaneN_.x)),
+                   r * (1.0f - abs(rmbRadialPlaneN_.y)),
+                   r * (1.0f - abs(rmbRadialPlaneN_.z)));
+        pushRadialFalloff(rmbRadialCenter_, size);
         return;
-    Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
-                  hit.y - rmbRadialCenter_.y,
-                  hit.z - rmbRadialCenter_.z);
-    float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-    Vec3 size;
-    if (rmbRadialUniform_) {
-        size = Vec3(r, r, r);
-    } else {
-        // Flat disc: r along the two plane axes, 0 along plane normal.
-        // Plane normal is cardinal (±X/±Y/±Z) so absolute components
-        // map directly to "this axis is the normal" → zero it.
-        size = Vec3(r * (1.0f - abs(rmbRadialPlaneN_.x)),
-                    r * (1.0f - abs(rmbRadialPlaneN_.y)),
-                    r * (1.0f - abs(rmbRadialPlaneN_.z)));
     }
-    pushRadialFalloff(rmbRadialCenter_, size);
+    if (radialStage_ == RadialStage.SecondActive) {
+        Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+        Vec3 hit;
+        if (rmbRadialUniform_) {
+            // Re-derive all three radii from cursor distance to center
+            // (in the construction plane). Replaces the flat disc.
+            if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+                return;
+            Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
+                          hit.y - rmbRadialCenter_.y,
+                          hit.z - rmbRadialCenter_.z);
+            float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+            pushRadialFalloff(rmbRadialCenter_, Vec3(r, r, r));
+            return;
+        }
+        // Height extrude: project onto height plane, take signed
+        // drag-distance along plane normal as the extrude radius;
+        // add it to the frozen flat-disc size weighted by |pn[i]|
+        // so cardinal pn cleanly grows just the plane-normal axis.
+        if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialHpn_, hit))
+            return;
+        Vec3 dh = Vec3(hit.x - rmbRadialHeightStart_.x,
+                       hit.y - rmbRadialHeightStart_.y,
+                       hit.z - rmbRadialHeightStart_.z);
+        float h = abs(dot(dh, rmbRadialPlaneN_));
+        Vec3 size = Vec3(rmbRadialFlatSize_.x + h * abs(rmbRadialPlaneN_.x),
+                         rmbRadialFlatSize_.y + h * abs(rmbRadialPlaneN_.y),
+                         rmbRadialFlatSize_.z + h * abs(rmbRadialPlaneN_.z));
+        pushRadialFalloff(rmbRadialCenter_, size);
+        return;
+    }
 }
 
-/// End the gesture. Returns true iff a drag was active (so app.d can
-/// suppress lasso commit).
+/// End the current stage. FirstActive → FirstDone (snapshot the flat
+/// size so the second drag can extrude from it). SecondActive → Idle.
+/// Returns true iff a drag was active (so app.d can suppress lasso
+/// commit).
 bool radialFalloffRMBUp() {
-    if (!rmbRadialDragActive_) return false;
-    rmbRadialDragActive_ = false;
-    return true;
+    if (radialStage_ == RadialStage.FirstActive) {
+        if (rmbRadialUniform_) {
+            // Ctrl-first-drag finishes the sphere outright; no second
+            // stage to wait for.
+            radialStage_ = RadialStage.Idle;
+            return true;
+        }
+        // Freeze the flat-disc size as the baseline for height extrude.
+        // Read it back from the pipeline so we capture exactly what
+        // motion last pushed (no need to recompute from the last r).
+        if (g_pipeCtx is null) {
+            radialStage_ = RadialStage.Idle;
+            return true;
+        }
+        import toolpipe.stages.falloff : FalloffStage;
+        foreach (s; g_pipeCtx.pipeline.all()) {
+            if (s.id() != "falloff") continue;
+            auto fs = cast(FalloffStage)s;
+            if (fs !is null) rmbRadialFlatSize_ = fs.size;
+            break;
+        }
+        radialStage_ = RadialStage.FirstDone;
+        return true;
+    }
+    if (radialStage_ == RadialStage.SecondActive) {
+        radialStage_ = RadialStage.Idle;
+        return true;
+    }
+    return false;
 }
