@@ -25,6 +25,18 @@ import osd.c;
 /// context and segfault.
 __gshared bool g_osdGpuEnabled = false;
 
+/// Phase 3c — caller bundle of GPU VBO targets the GPU fan-out can
+/// write to. Each (vbo, count) pair gates the corresponding fan-out
+/// dispatch; passing 0 for any vbo opts out of that one. The caller
+/// (app.d main loop) constructs this from gpu.{face,edge,vert}Vbo +
+/// the matching counts before calling SubpatchPreview.rebuildIfStale.
+struct GpuFanOutTargets {
+    import bindbc.opengl : GLuint;
+    GLuint faceVbo;       int faceVertCount;
+    GLuint edgeVbo;       int edgeSegCount;
+    GLuint vertVbo;       int vertCount;
+}
+
 /// One-shot startup verification of the OSD GL evaluator. Builds a
 /// tiny cube cage, evaluates limit positions both on CPU and on GPU
 /// via transform feedback, returns the max per-component delta.

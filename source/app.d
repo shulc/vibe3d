@@ -3287,11 +3287,24 @@ void main(string[] args) {
         ImGui.Render();
 
         // Refresh subpatch preview if the cage or depth changed since last
-        // frame. Pass gpu.faceVbo so SubpatchPreview's fast path can try
-        // the OSD GPU fan-out — when it succeeds, the face VBO is
-        // already up to date and we'll skip its rewrite below.
-        subpatchPreview.rebuildIfStale(mesh, subpatchDepth,
-                                        gpu.faceVbo, gpu.faceVertCount);
+        // frame. Bundle vibe3d's face / edge / vert VBOs so the fast
+        // path can try OSD GPU fan-outs for each — when all three
+        // succeed (Phase 3c), preview.vertices stays untouched and
+        // the entire per-frame CPU position-upload pipeline is
+        // skipped. When only the face fan-out works we still write
+        // edges + verts CPU-side (Phase 3b fallback).
+        {
+            import subpatch_osd : GpuFanOutTargets;
+            GpuFanOutTargets targets = {
+                faceVbo:        gpu.faceVbo,
+                faceVertCount:  gpu.faceVertCount,
+                edgeVbo:        gpu.edgeVbo,
+                edgeSegCount:   gpu.edgeVertCount,
+                vertVbo:        gpu.vertVbo,
+                vertCount:      gpu.vertCount,
+            };
+            subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
+        }
 
         // Re-upload GPU buffers when transitioning between cage/preview view
         // or when the cage changed during an active preview. While the
@@ -3319,12 +3332,19 @@ void main(string[] args) {
                         && gpuUploadedPreviewTopVersion
                            == subpatchPreview.sourceTopologyVersion;
                     if (topoSame) {
-                        // Phase 3b: when the OSD GPU fan-out already
-                        // wrote the face VBO (no CPU round-trip), skip
-                        // the face slice here — refreshNonFacePositions
-                        // covers the edge + vert VBOs only. Otherwise
-                        // fall back to the full CPU refresh.
-                        if (subpatchPreview.lastRefreshFannedOut) {
+                        // Phase 3c: when face + edge + vert VBOs were
+                        // ALL written via GPU fan-out (the common
+                        // case once g_osdGpuEnabled flips true), skip
+                        // the CPU position upload entirely — every
+                        // VBO is already current on GPU.
+                        //
+                        // Phase 3b fallback: face on GPU only →
+                        // refreshNonFacePositions for edges + verts.
+                        //
+                        // Otherwise: full CPU refresh.
+                        if (subpatchPreview.lastRefreshSkipNonFace) {
+                            // No-op — all VBOs already fresh.
+                        } else if (subpatchPreview.lastRefreshFannedOut) {
                             gpu.refreshNonFacePositions(
                                 subpatchPreview.mesh,
                                 subpatchPreview.trace.edgeOrigin,

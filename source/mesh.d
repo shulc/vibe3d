@@ -2180,15 +2180,23 @@ struct SubpatchPreview {
     /// refreshNonFacePositions instead).
     bool lastRefreshFannedOut;
 
-    /// `targetFaceVbo` (and `targetFaceVertCount`) wire the GPU fan-
-    /// out path: when non-zero, the position-only fast path tries
-    /// `osdAccel.refreshIntoFaceVbo` against this VBO before falling
-    /// back to the CPU readback. The caller (app.d main loop) passes
-    /// gpu.faceVbo + gpu.faceVertCount.
+    /// Phase 3c — set when face AND edge AND vert VBOs were all
+    /// written via the GPU fan-out. Main loop skips
+    /// refreshNonFacePositions entirely when this is true; no CPU
+    /// position upload happens at all on the drag-frame fast path.
+    bool lastRefreshSkipNonFace;
+
+    import subpatch_osd : GpuFanOutTargets;
+
+    /// `targets` (when non-null) wires the GPU fan-out path: the
+    /// position-only fast path attempts face, edge, vert dispatches
+    /// in order, only doing the CPU readback fallback for the
+    /// pieces that didn't make it onto GPU. Caller (app.d main loop)
+    /// supplies gpu.{face,edge,vert}Vbo + matching counts.
     void rebuildIfStale(ref const Mesh source, int d,
-                         GLuint targetFaceVbo = 0,
-                         int targetFaceVertCount = 0) {
-        lastRefreshFannedOut = false;
+                         const(GpuFanOutTargets)* targets = null) {
+        lastRefreshFannedOut    = false;
+        lastRefreshSkipNonFace  = false;
         if (sourceVersion == source.mutationVersion && depth == d)
             return;
         // Position-only fast path: cage topology + depth unchanged →
@@ -2198,22 +2206,43 @@ struct SubpatchPreview {
             && sourceTopologyVersion == source.topologyVersion
             && osdAccel.valid)
         {
-            // Try GPU fan-out: writes positions+normals straight into
-            // the caller's face VBO, no CPU readback for that data.
-            // Falls back to the CPU/readback path when the layout
-            // doesn't line up (different topology already uploaded)
-            // or when the GL eval wasn't built (no GL context).
-            if (targetFaceVbo != 0 && osdAccel.canFanOut
+            bool didFace  = false;
+            bool didEdges = false;
+            bool didVerts = false;
+            if (targets !is null && osdAccel.canFanOut
+                && targets.faceVbo != 0
                 && osdAccel.refreshIntoFaceVbo(source,
-                        targetFaceVbo, targetFaceVertCount))
+                        targets.faceVbo, targets.faceVertCount))
             {
+                didFace = true;
+                // GPU eval already ran inside refreshIntoFaceVbo.
+                // limitGlVbo is hot — try the edge / vert dispatches
+                // off the same data.
+                if (targets.edgeVbo != 0 && osdAccel.canFanOutEdges
+                    && osdAccel.refreshEdgeVbo(targets.edgeVbo,
+                                                targets.edgeSegCount))
+                    didEdges = true;
+                if (targets.vertVbo != 0 && osdAccel.canFanOutVerts
+                    && osdAccel.refreshVertVbo(targets.vertVbo,
+                                                targets.vertCount))
+                    didVerts = true;
+            }
+
+            if (didFace) {
                 lastRefreshFannedOut = true;
-                // limitGlVbo already has fresh positions from the
-                // fan-out's GPU eval. Just copy them out to keep
-                // preview.vertices in sync — refresh() would re-run
-                // osdc_gl_evaluate redundantly. Net win this step: one
-                // GPU eval per drag frame instead of two.
-                osdAccel.readLimitIntoPreview(mesh);
+                if (didEdges && didVerts) {
+                    // Phase 3c — all three VBOs written on GPU.
+                    // preview.vertices stays stale (no CPU readback)
+                    // since no consumer needs it on the drag-frame
+                    // path. Lasso mouse-up reads it via a one-shot
+                    // sync (handled at the lasso site).
+                    lastRefreshSkipNonFace = true;
+                } else {
+                    // Face on GPU, but edge or vert needed the CPU
+                    // path → readback so refreshNonFacePositions
+                    // sees fresh data.
+                    osdAccel.readLimitIntoPreview(mesh);
+                }
             } else {
                 // Fan-out unavailable / layout mismatch — full CPU
                 // (or GPU-with-readback) eval path.
