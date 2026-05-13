@@ -2,12 +2,27 @@
 
 ## Status
 
-Symptom mitigated in commit `4d4b6fa` by skipping the occlusion test
-above a 4 K-vert/face threshold (`VIS_OCCLUSION_LIMIT` in
-`source/app.d` inside `handleMouseButtonUp`). Lasso on heavy meshes
-returns in milliseconds at the cost of also selecting some verts that
-are occluded by closer geometry. This document captures the proper
-fix.
+**LANDED.** The interim `VIS_OCCLUSION_LIMIT = 4_000` threshold
+(commit `4d4b6fa`) is removed; lasso visibility now flows through
+the GPU pick FBO instead of `Mesh.visibleVertices` for ALL mesh sizes.
+
+  • `source/gpu_select.d` — new `elementVisibility(SelectMode, mesh,
+    gpu, vp)` returns a per-VBO-entry `bool[]` derived from the
+    per-mode ID FBO that hover-pick already maintains. One
+    `glReadPixels` over the viewport plus an O(viewport-pixels) scan.
+  • `source/app.d`'s lasso path consumes that instead of
+    `meshVisCache.get` / `pvVisCache.get`. The existing strict
+    "all face verts inside polygon" / "both edge endpoints inside"
+    CPU semantic stays intact — only the visibility data source
+    moved off CPU.
+
+`Mesh.visibleVertices` and `source/visibility_cache.d` stay around
+for the inline unittests that exercise them directly, but the live
+lasso path no longer hits the O(V × F) loop.
+
+Original document preserved below for context.
+
+---
 
 ## Symptom
 

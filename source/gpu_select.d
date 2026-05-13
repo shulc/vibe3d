@@ -283,6 +283,73 @@ public:
         foreach (ref s; slots) s.valid = false;
     }
 
+    /// Per-VBO-entry visibility derived from the cached ID FBO for
+    /// `mode`. `out[k] == true` iff the k-th VBO entry (vertex /
+    /// edge segment / face) has at least one non-zero pixel in the
+    /// FBO — i.e. it survives the depth pre-pass and is rasterised
+    /// somewhere in the viewport. Used by the lasso path in
+    /// `app.d` to gate per-element CPU work on visibility WITHOUT
+    /// triggering the O(V × F\_front) CPU occlusion test that
+    /// `Mesh.visibleVertices` does. Costs one full-viewport
+    /// `glReadPixels` plus an O(viewport-pixels) scan — typically a
+    /// few ms regardless of mesh size.
+    ///
+    /// Returns `null` on empty viewport.
+    bool[] elementVisibility(SelectMode mode,
+                              ref const Mesh mesh, ref const GpuMesh gpu,
+                              ref const Viewport vp)
+    {
+        if (vp.width <= 0 || vp.height <= 0) return null;
+        ensureSize(vp.width, vp.height);
+
+        Slot* slot = &slots[mode];
+        if (!slot.valid
+            || slot.uploadVer != gpu.uploadVersion
+            || slot.w != fboW || slot.h != fboH
+            || !matricesEqual(slot.view, vp.view)
+            || !matricesEqual(slot.proj, vp.proj))
+        {
+            renderMode(mode, gpu, vp);
+            slot.valid     = true;
+            slot.uploadVer = gpu.uploadVersion;
+            slot.view      = vp.view;
+            slot.proj      = vp.proj;
+            slot.w         = fboW;
+            slot.h         = fboH;
+        }
+
+        size_t maxId;
+        final switch (mode) {
+            case SelectMode.Vertex:
+                maxId = gpu.vertCount;
+                break;
+            case SelectMode.Edge:
+                maxId = gpu.edgeVertCount / 2;
+                break;
+            case SelectMode.Face:
+                // faceIdVbo writes the preview-face index (a 0-based
+                // uint per face-corner; same value across all corners
+                // of a face). Max value = preview-face-count =
+                // gpu.faceTriStart.length.
+                maxId = gpu.faceTriStart.length;
+                break;
+        }
+        bool[] visible = new bool[](maxId);
+
+        uint[] buf = new uint[](fboW * fboH);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glReadPixels(0, 0, fboW, fboH, GL_RED_INTEGER, GL_UNSIGNED_INT, buf.ptr);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        foreach (px; buf) {
+            if (px == 0) continue;
+            immutable uint id = px - 1;
+            if (id < maxId) visible[id] = true;
+        }
+        return visible;
+    }
+
 private:
     void renderMode(SelectMode mode, ref const GpuMesh gpu, ref const Viewport vp)
     {

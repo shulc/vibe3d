@@ -430,15 +430,14 @@ void main(string[] args) {
     EdgeCache edgeCache;
     edgeCache.resize(mesh.edges.length);
 
-    // VisibilityCache for `mesh.visibleVertices(eye, vp)` — recomputed
-    // only when (mutationVersion, eye, view-matrix) changes. Without
-    // it, every SDL_MOUSEMOTION re-runs the O(V × F_front) nested
-    // loop (perf measured 98.46% CPU on 8 K-vert meshes). One cache
-    // per source: `meshVisCache` for the editable mesh, `pvVisCache`
-    // for the subpatch-preview mesh.
-    import visibility_cache : VisibilityCache;
-    VisibilityCache meshVisCache;
-    VisibilityCache pvVisCache;
+    // VisibilityCache (`mesh.visibleVertices`) is no longer used — the
+    // lasso path that consumed it switched to `gpuSelect.elementVisibility`
+    // (see `doc/lasso_gpu_pick_buffer_fix.md`). The CPU
+    // `Mesh.visibleVertices` implementation in `source/mesh.d` and the
+    // `VisibilityCache` wrapper in `source/visibility_cache.d` stay
+    // around — they're still useful for headless / non-GL test paths
+    // and are tested directly by their inline unittests — but the live
+    // lasso path no longer hits them.
 
     GpuMesh gpu;
     gpu.init();
@@ -2039,68 +2038,49 @@ void main(string[] args) {
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
-                // Mesh.visibleVertices is O(V × F) — fine on small cages but
-                // explodes on heavy imports (an 8K-vert cage with a depth-2
-                // subpatch preview reaches ~133K preview verts × ~132K
-                // preview faces ≈ 17 G ops, multi-minute hang on lasso
-                // mouse-up). Skip the occlusion test above the threshold
-                // and treat every vert as visible — lasso may pick a few
-                // verts the user can't actually see, but it returns
-                // immediately. The proper fix is a GPU-pick-buffer-based
-                // lasso pass; this guard is the cheap interim.
-                enum size_t VIS_OCCLUSION_LIMIT = 4_000;
-                bool[] makeAllVisible(size_t n) {
-                    auto a = new bool[](n); a[] = true; return a;
+                // GPU-pick-buffer-driven visibility for the lasso.
+                // doc/lasso_gpu_pick_buffer_fix.md — replaces the old
+                // CPU `Mesh.visibleVertices` occlusion test that was
+                // O(V × F\_front) (multi-minute hang on heavy imports;
+                // mitigated by a 4 K-vert threshold that disabled
+                // occlusion entirely). The per-mode ID FBO that
+                // `gpuSelect.pick(...)` already maintains for hover
+                // selection bakes occlusion via its depth pre-pass;
+                // reading it back gives per-VBO-entry visibility in
+                // ~ms regardless of mesh size. We keep the strict
+                // "all face verts inside polygon" / "both edge ends
+                // inside" CPU lasso semantic (preserves the existing
+                // test_lasso_select.d behaviour) — only the visibility
+                // source changes.
+                import gpu_select : SelectMode;
+                SelectMode vbMode;
+                final switch (editMode) {
+                    case EditMode.Vertices: vbMode = SelectMode.Vertex; break;
+                    case EditMode.Edges:    vbMode = SelectMode.Edge;   break;
+                    case EditMode.Polygons: vbMode = SelectMode.Face;   break;
                 }
-                bool[] visible =
-                    (mesh.vertices.length > VIS_OCCLUSION_LIMIT
-                        || mesh.faces.length > VIS_OCCLUSION_LIMIT)
-                    ? makeAllVisible(mesh.vertices.length)
-                    : meshVisCache.get(mesh, cameraView.eye, vp2);
+                bool[] gpuVisible = gpuSelect.elementVisibility(
+                    vbMode, mesh, gpu, vp2);
 
-                // In subpatch mode iterate preview geometry and translate
-                // hits back to cage indices via the trace. A cage element is
-                // considered lasso-hit only when every one of its preview
-                // children is fully inside (strict semantics matching the
-                // cage behavior).
                 bool preview = subpatchPreview.active;
-                // Phase 3c — when the last drag-frame fan-out wrote all
-                // three GPU VBOs, `preview.mesh.vertices` was NOT
-                // refreshed CPU-side. Lasso needs fresh positions for
-                // its projection math; one-shot readback brings them
-                // up to date. Cheap relative to the lasso PIP loop and
-                // only fires on mouse-up, not per drag-frame.
+                // Phase 3c — preview.mesh.vertices may be stale after
+                // a fan-out-only drag; lasso needs fresh positions.
                 if (preview && subpatchPreview.lastRefreshSkipNonFace) {
                     subpatchPreview.osdAccel.readLimitIntoPreview(
                         subpatchPreview.mesh);
                     subpatchPreview.lastRefreshSkipNonFace = false;
                 }
                 const pv = preview ? &subpatchPreview.mesh : null;
-                bool[] pvVisible = preview
-                    ? ((pv.vertices.length > VIS_OCCLUSION_LIMIT
-                            || pv.faces.length > VIS_OCCLUSION_LIMIT)
-                        ? makeAllVisible(pv.vertices.length)
-                        : pvVisCache.get(*pv, cameraView.eye, vp2))
-                    : null;
 
                 if (editMode == EditMode.Polygons) {
                     if (!shift && !ctrl)
                         mesh.clearFaceSelection();
                     if (preview) {
-                        // Per cage face: every preview child that is BOTH
-                        // front-facing AND not occluded must have all its
-                        // verts inside the lasso for the cage face to be
-                        // selected. Occlusion gating via `pvVisible[vi]` —
-                        // without it, front-facing-but-hidden preview
-                        // polygons (e.g. the rim of the top cage face on a
-                        // subpatch-sphere viewed from the front) would
-                        // count for selection and the cage face on the far
-                        // side would be picked up by a lasso aimed at the
-                        // near side. Above VIS_OCCLUSION_LIMIT verts the
-                        // visibility table degrades to all-true (see
-                        // `pvVisible` init), so the back-face check is the
-                        // only filter on heavy meshes — proper fix needs
-                        // a GPU-pick-buffer lasso.
+                        // Per cage face: every preview child that is
+                        // BOTH front-facing AND has at least one
+                        // visible pixel (per GPU FBO) must have all
+                        // its verts inside the lasso for the cage
+                        // face to be selected.
                         bool[] cageAllInside = new bool[](mesh.faces.length);
                         bool[] cageVisited   = new bool[](mesh.faces.length);
                         cageAllInside[] = true;
@@ -2111,14 +2091,12 @@ void main(string[] args) {
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
                             Vec3 fn = pv.faceNormal(cast(uint)fi);
                             if (dot(fn, pv.vertices[face[0]] - vp2.eye) >= 0) continue;
-                            // Occlusion: skip preview faces whose verts are
-                            // not all visible. Such a face has hidden parts
-                            // and shouldn't make the cage face selectable
-                            // through a lasso the user can see "around" it.
-                            bool allVisible = true;
-                            foreach (vi; face)
-                                if (!pvVisible[vi]) { allVisible = false; break; }
-                            if (!allVisible) continue;
+                            // GPU visibility per PREVIEW face index.
+                            // faceIdVbo writes preview-face indices,
+                            // so `gpuVisible[fi]` is the right key.
+                            if (gpuVisible !is null
+                                && fi < gpuVisible.length
+                                && !gpuVisible[fi]) continue;
                             cageVisited[cage] = true;
                             foreach (vi; face) {
                                 float sx, sy, ndcZ;
@@ -2135,18 +2113,17 @@ void main(string[] args) {
                                                 cast(int)fi, /*deselect=*/ctrl);
                         }
                     } else {
+                        // Cage mode — VBO entry IS cage face. faceIdVbo
+                        // writes cage face indices; `gpuVisible[fi]`
+                        // is direct.
                         foreach (fi; 0 .. mesh.faces.length) {
                             uint[] face = mesh.faces[fi];
                             if (face.length < 3) continue;
                             Vec3 fn = mesh.faceNormal(cast(uint)fi);
                             if (dot(fn, mesh.vertices[face[0]] - vp2.eye) >= 0) continue;
-                            // Same occlusion gate as the subpatch path —
-                            // skip the face if any vert is hidden by
-                            // another face.
-                            bool allVisible = true;
-                            foreach (vi; face)
-                                if (!visible[vi]) { allVisible = false; break; }
-                            if (!allVisible) continue;
+                            if (gpuVisible !is null
+                                && fi < gpuVisible.length
+                                && !gpuVisible[fi]) continue;
                             bool allInside = true;
                             foreach (vi; face) {
                                 float sx, sy, ndcZ;
@@ -2165,11 +2142,20 @@ void main(string[] args) {
                 } else if (editMode == EditMode.Vertices) {
                     if (!shift && !ctrl)
                         mesh.clearVertexSelection();
+                    // gpuVisible is indexed by VBO entry — in cage
+                    // mode k == vertex idx; in subpatch mode k is
+                    // the kept-preview-vert position. Walk pv (or
+                    // mesh) vertices, count k as we go, gate on
+                    // gpuVisible[k].
                     if (preview) {
+                        size_t k = 0;
                         foreach (pi; 0 .. pv.vertices.length) {
                             uint cage = subpatchPreview.trace.vertOrigin[pi];
                             if (cage == uint.max) continue;
-                            if (!pvVisible[pi]) continue;
+                            scope(exit) ++k;
+                            if (gpuVisible !is null
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
                             float sx, sy, ndcZ;
                             if (!projectToWindow(pv.vertices[pi], vp2, sx, sy, ndcZ)) continue;
                             if (pointInPolygon2D(sx, sy, pxs, pys)) {
@@ -2179,7 +2165,9 @@ void main(string[] args) {
                         }
                     } else {
                         foreach (vi; 0 .. mesh.vertices.length) {
-                            if (!visible[vi]) continue;
+                            if (gpuVisible !is null
+                                && vi < gpuVisible.length
+                                && !gpuVisible[vi]) continue;
                             float sx, sy, ndcZ;
                             if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
                             if (pointInPolygon2D(sx, sy, pxs, pys)) {
@@ -2192,16 +2180,23 @@ void main(string[] args) {
                     if (!shift && !ctrl)
                         mesh.clearEdgeSelection();
                     if (preview) {
-                        // Cage edge selected only if every visible preview
-                        // segment tracing back to it is fully inside lasso.
+                        // Per cage edge: every preview segment that
+                        // is visible (GPU FBO) must have both
+                        // endpoints inside lasso. VBO-segment-index
+                        // matches `pei` after kept-edge filtering;
+                        // walk pv.edges, count k as we go.
                         bool[] cageAllInside = new bool[](mesh.edges.length);
                         bool[] cageVisited   = new bool[](mesh.edges.length);
                         cageAllInside[] = true;
+                        size_t k = 0;
                         foreach (pei; 0 .. pv.edges.length) {
                             uint cage = subpatchPreview.trace.edgeOrigin[pei];
                             if (cage == uint.max || cage >= mesh.edges.length) continue;
+                            scope(exit) ++k;
+                            if (gpuVisible !is null
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
                             uint a = pv.edges[pei][0], b = pv.edges[pei][1];
-                            if (!pvVisible[a] || !pvVisible[b]) continue;
                             cageVisited[cage] = true;
                             float sxa, sya, ndcZa, sxb, syb, ndcZb;
                             if (!projectToWindow(pv.vertices[a], vp2, sxa, sya, ndcZa) ||
@@ -2218,8 +2213,10 @@ void main(string[] args) {
                         }
                     } else {
                         foreach (ei; 0 .. mesh.edges.length) {
+                            if (gpuVisible !is null
+                                && ei < gpuVisible.length
+                                && !gpuVisible[ei]) continue;
                             uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
-                            if (!visible[a] || !visible[b]) continue;
                             float sxa, sya, ndcZa, sxb, syb, ndcZb;
                             if (!projectToWindow(mesh.vertices[a], vp2, sxa, sya, ndcZa)) continue;
                             if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
