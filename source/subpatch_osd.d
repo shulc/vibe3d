@@ -623,6 +623,13 @@ struct OsdAccel {
     private int[]  scratchEdgeSegToLimit;
     private int[]  scratchVertToLimit;
 
+    // P1: sorted (key, value) array replacing the uint[ulong]
+    // vibe3dEdgeByVerts AA. With ~50K cage edges on a 24K-poly cage
+    // the AA was 13% of CPU after P0 (top sample); a sorted-array +
+    // binary search is ~3-5× faster per lookup and allocation-bounded.
+    private struct EdgeKv { ulong key; uint value; }
+    private EdgeKv[] scratchVibe3dEdgeKv;
+
     bool valid;
 
     /// Free everything. Idempotent.
@@ -924,17 +931,24 @@ struct OsdAccel {
         scratchOsdCageEdgeVerts.length = 2 * osdCageEdges;
         if (osdCageEdges > 0)
             osdc_topology_input_edges(osd, scratchOsdCageEdgeVerts.ptr);
-        // P1 territory but already-low-risk to scope tightly: the AA
-        // lives only inside this block, so it's allocation-bounded by
-        // cage.edges.length. Replacing it with a sorted (key, value)
-        // array is a separate commit.
-        uint[ulong] vibe3dEdgeByVerts;
+        // P1: sorted (key, value) array instead of uint[ulong] AA.
+        // build: O(n log n) sort over cage.edges (≈50K entries on a
+        //        24K-poly cage). Single contiguous allocation in the
+        //        scratch buffer, no per-entry GC hit.
+        // lookup: 16-comparison binary search vs the AA's hash +
+        //         pointer-chase + open-addressing probe.
+        scratchVibe3dEdgeKv.length = cage.edges.length;
         foreach (ei, e; cage.edges) {
             uint a = e[0], b = e[1];
             ulong key = (cast(ulong)(a < b ? a : b) << 32)
                       |  cast(ulong)(a < b ? b : a);
-            vibe3dEdgeByVerts[key] = cast(uint)ei;
+            scratchVibe3dEdgeKv[ei] = EdgeKv(key, cast(uint)ei);
         }
+        {
+            import std.algorithm.sorting : sort;
+            sort!"a.key < b.key"(scratchVibe3dEdgeKv);
+        }
+
         scratchOsdToVibe3dCageEdge.length = osdCageEdges;
         scratchOsdToVibe3dCageEdge[0 .. osdCageEdges] = uint.max;
         foreach (oi; 0 .. osdCageEdges) {
@@ -943,8 +957,17 @@ struct OsdAccel {
             if (a < 0 || b < 0) continue;
             ulong key = (cast(ulong)(a < b ? a : b) << 32)
                       |  cast(ulong)(a < b ? b : a);
-            if (auto p = key in vibe3dEdgeByVerts)
-                scratchOsdToVibe3dCageEdge[oi] = *p;
+            // Manual lower-bound bsearch — std.range.assumeSorted
+            // would do this but adds template overhead per call.
+            size_t lo = 0, hi = scratchVibe3dEdgeKv.length;
+            while (lo < hi) {
+                size_t mid = (lo + hi) >> 1;
+                if (scratchVibe3dEdgeKv[mid].key < key) lo = mid + 1;
+                else                                    hi = mid;
+            }
+            if (lo < scratchVibe3dEdgeKv.length
+                && scratchVibe3dEdgeKv[lo].key == key)
+                scratchOsdToVibe3dCageEdge[oi] = scratchVibe3dEdgeKv[lo].value;
         }
         foreach (i; 0 .. limitEdges) {
             immutable int o = scratchEdgeOrigins[i];
