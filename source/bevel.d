@@ -2813,8 +2813,23 @@ private void snapshotFace(Mesh* mesh, uint faceIdx,
 
 private void replaceVertInFace(Mesh* mesh, uint faceIdx, uint oldV, uint newV)
 {
-    foreach (ref vi; mesh.faces[faceIdx])
-        if (vi == oldV) { vi = newV; return; }
+    // Build-then-replace pattern (Stage B of
+    // doc/mesh_faces_flat_refactor_plan.md): the older `foreach (ref
+    // vi; mesh.faces[faceIdx]) if (vi == oldV) vi = newV;` form
+    // mutated the slice in place. Stage C / D's CSR-backed FaceList
+    // returns read-only views from `[fi]`, so an in-place write
+    // would corrupt shared storage. Allocate a fresh `uint[]` and
+    // route through opIndexAssign — same semantic, no shared-state
+    // mutation.
+    auto face = mesh.faces[faceIdx];
+    foreach (i, vi; face) {
+        if (vi == oldV) {
+            uint[] copy = face.dup;
+            copy[i] = newV;
+            mesh.faces[faceIdx] = copy;
+            return;
+        }
+    }
 }
 
 // rebuildEdgesFromFaces moved to source/mesh.d as a public Mesh method

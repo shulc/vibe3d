@@ -144,19 +144,56 @@ read-only return type.
 
 ### Stage C — flip `FaceList` storage to CSR
 
+**Lesson learned from the first attempted Stage C (reverted before
+Stage D)**: the assumption that "every writer goes through a FaceList
+operator (~=, opIndexAssign, length setter, opAssign)" doesn't hold
+inside `mesh.d` itself. Internal Mesh methods mutate `_store[fi]`
+contents directly via `foreach (ref face; faces) foreach (ref vid;
+face) vid = remap[vid];` (compactUnreferenced at mesh.d:417) and
+similar patterns. The Stage B audit caught the externally-visible
+`face[fi][k] = x` writes but missed `foreach (ref vid; …) vid = …`
+inside both `bevel.replaceVertInFace` and Mesh internals.
+
+The bevel one is a clean fix (route through opIndexAssign — see
+"Stage B follow-up" commit). The Mesh-internal ones don't have a
+clean equivalent: rewriting `compactUnreferenced` to build a fresh
+`uint[][]` and assign through opAssign is fine, but there are
+several similar mutators and the audit budget grows.
+
+**Revised Stage C — actually-safe shadow**:
+
+1. Add `_flat`, `_offset` fields and a `markDirty()` method. Every
+   FaceList operator (`opIndexAssign`, `opOpAssign!"~"`, length
+   setter, `opAssign`) calls `markDirty`.
+2. **All `mesh.d` internal mutators** that touch `_store[fi]`
+   contents in place ALSO call `markDirty` after their last write.
+   Audit list (mesh.d line numbers):
+   - 417 (`compactUnreferenced`'s `vid = remap[vid]` rewrite)
+   - any other `foreach (ref vid; face)` patterns
+   - any `_store[fi] = …` literal (less common; would route through
+     the operator if we always go via `mesh.faces[fi]`)
+3. `_flat` / `_offset` are lazily reconciled on first read after a
+   `markDirty`. A `private void ensureCsrFresh() const` helper checks
+   the dirty flag and rebuilds.
+4. `opIndex(fi)` calls `ensureCsrFresh()` and returns the CSR slice.
+
+Lazy rebuild keeps writes O(1) (just mark dirty) and rebuild
+amortizes against reads. The +10% perf budget the plan called for
+Stage C remains realistic on this design.
+
 - Add new fields inside `FaceList`:
 
   ```d
   uint[] _flat;
-  uint[] _offset;   // length = _store.length + 1, kept in sync
+  uint[] _offset;   // length = _store.length + 1
+  bool   _csrDirty = true;
   ```
 
-- Initially keep `_store` (the `uint[][]`) AS A SHADOW that mirrors
-  `_flat + _offset`. Every writer updates both.
-- `opIndex(fi)` switches to returning `_flat[_offset[fi] .. _offset[fi+1]]`.
-- Run the test suite. The shadow is wasted memory but guarantees we
-  haven't regressed any caller that reads through `_store` via the old
-  operator-overload path.
+- `opIndex(fi)` switches to returning `_flat[_offset[fi] .. _offset[fi+1]]`
+  after `ensureCsrFresh()`.
+- Run the test suite. Two-level checking: HTTP suite + a new
+  inline `assertCsrInSync()` debug method called from each test's
+  resetCube wrapper.
 
 ### Stage D — drop the shadow `_store`
 
@@ -361,7 +398,8 @@ subdivide → select-all → bevel sequence.
 |---|---|---|---|---|---|---|
 | pre-A baseline | 8d3b2c4 | 19 | 21 | 44 | 358 | 83 |
 | A (FaceList wrapper) | 26f31ea | 19 | 21 | 47 | 367 | 84 |
-| B (migrate in-place) | *this commit* | 17 | 23 | 36 | 321 | 85 |
+| B (migrate in-place) | 2d7fdd5 | 17 | 23 | 36 | 321 | 85 |
+| B' (audit miss fix: bevel.replaceVertInFace) | *this commit* | 17 | 21 | 37 | 353 | 83 |
 | C (CSR shadow) | — | — | — | — | — | — |
 | D (drop shadow) | — | — | — | — | — | — |
 | E (bulk-install in buildPreview) | — | — | — | — | — | — |
