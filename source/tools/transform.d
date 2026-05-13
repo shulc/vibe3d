@@ -8,7 +8,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import falloff : evaluateFalloff;
-import falloff_handles : FalloffLinearGizmo;
+import falloff_handles : FalloffGizmo;
 import symmetry : applySymmetryMirror;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
@@ -74,7 +74,7 @@ protected:
     // so non-falloff sessions don't allocate GL buffers. Owned by the
     // base class because all three TransformTool subclasses (Move /
     // Rotate / Scale) need the same dispatch wiring.
-    FalloffLinearGizmo falloffGizmo;
+    FalloffGizmo falloffGizmo;
 
     // Whole-mesh GPU bypass (Rotate + Scale use these; Move uses gpuOffset instead)
     bool   wholeMeshDrag;
@@ -464,7 +464,7 @@ protected:
     /// tools that may never see a falloff in their lifetime.
     protected void ensureFalloffGizmo() {
         if (falloffGizmo is null)
-            falloffGizmo = new FalloffLinearGizmo();
+            falloffGizmo = new FalloffGizmo();
     }
 
     /// True iff the ACEN stage currently holds a sticky click-outside

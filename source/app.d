@@ -2000,10 +2000,20 @@ void main(string[] args) {
 
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
-            import falloff_handles : screenFalloffActive, screenFalloffRMBDown;
+            import falloff_handles : screenFalloffActive, screenFalloffRMBDown,
+                                     radialFalloffActive, radialFalloffRMBDown;
             if (screenFalloffActive()) {
                 screenFalloffRMBDown(btn.x, btn.y);
                 return;
+            }
+            if (radialFalloffActive()) {
+                SDL_Keymod mods = SDL_GetModState();
+                bool ctrl = (mods & KMOD_CTRL) != 0;
+                Viewport vp2 = cameraView.viewport();
+                if (radialFalloffRMBDown(btn.x, btn.y, ctrl, vp2))
+                    return;
+                // Plane projection failed (camera aligned to plane);
+                // fall through to lasso so the click isn't lost.
             }
             rmbDragging = true;
             rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
@@ -2060,8 +2070,9 @@ void main(string[] args) {
 
     void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
-            import falloff_handles : screenFalloffRMBUp;
+            import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp;
             if (screenFalloffRMBUp()) return;
+            if (radialFalloffRMBUp())  return;
             if (rmbPath.length >= 3) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
@@ -2305,9 +2316,15 @@ void main(string[] args) {
         // the face under the old cursor instead of nothing.
         setOverrideMouse(mot.x, mot.y);
         {
-            import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion;
+            import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion,
+                                     radialFalloffRMBDragging, radialFalloffRMBMotion;
             if (screenFalloffRMBDragging()) {
                 screenFalloffRMBMotion(mot.x);
+                return;
+            }
+            if (radialFalloffRMBDragging()) {
+                Viewport vp2 = cameraView.viewport();
+                radialFalloffRMBMotion(mot.x, mot.y, vp2);
                 return;
             }
         }

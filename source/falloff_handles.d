@@ -3,12 +3,14 @@ module falloff_handles;
 import bindbc.sdl;
 
 import handler : Arrow, BoxHandler, Handler, gizmoSize;
-import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D;
+import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot,
+                screenRay, rayPlaneIntersect;
 import shader : Shader;
 import drag   : screenAxisDelta, planeDragDelta;
 import toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : Stage;
+import tools.create_common : pickWorkplaneFrame, WorkplaneFrame;
 
 import std.format : format;
 import std.math   : sqrt, abs;
@@ -159,54 +161,127 @@ class FalloffEndpointHandle {
 }
 
 
-class FalloffLinearGizmo {
+// Outward axes for Radial size handles, matching the order used by
+// `prim.sphere`'s radH[6]: 0:+X 1:-X 2:+Y 3:-Y 4:+Z 5:-Z. Each handle
+// drives one component of the ellipsoid's `size` Vec3 in
+// FalloffStage; pairs (0,1) ↔ X, (2,3) ↔ Y, (4,5) ↔ Z.
+private static immutable Vec3[6] RAD_AXES = [
+    Vec3( 1, 0, 0), Vec3(-1, 0, 0),
+    Vec3( 0, 1, 0), Vec3( 0,-1, 0),
+    Vec3( 0, 0, 1), Vec3( 0, 0,-1),
+];
+
+class FalloffGizmo {
+    // Linear endpoints.
     FalloffEndpointHandle startHandle;
     FalloffEndpointHandle endHandle;
 
+    // Radial: center mini-move + 6 ellipsoid-surface box handles
+    // (±X / ±Y / ±Z). Mirrors prim.sphere's radius-edit pattern so
+    // the falloff sphere feels the same to drag as a sphere primitive
+    // gizmo.
+    FalloffEndpointHandle centerHandle;
+    BoxHandler[6]         sizeH;
+
 private:
-    int active = -1;   // -1 idle, 0 = start, 1 = end
+    // Per-mode drag state — at most one of these is ≥ 0 at any time
+    // (a click consumed by Linear can't reach Radial dispatch).
+    int activeLinear = -1;   // -1 idle, 0 = start, 1 = end
+    int activeRadial = -1;   // -1 idle, 0 = center, 1..6 = size handle (idx-1)
+    int sizeLastMX, sizeLastMY;
+    Vec3 sizeAtDragStart;    // captured at down; incrementally mutated on motion
 
 public:
     this() {
-        startHandle = new FalloffEndpointHandle();
-        endHandle   = new FalloffEndpointHandle();
+        startHandle  = new FalloffEndpointHandle();
+        endHandle    = new FalloffEndpointHandle();
+        centerHandle = new FalloffEndpointHandle();
+        foreach (i; 0 .. 6) {
+            Vec3 col = (i < 2) ? Vec3(0.9f, 0.2f, 0.2f)
+                     : (i < 4) ? Vec3(0.2f, 0.9f, 0.2f)
+                               : Vec3(0.2f, 0.2f, 0.9f);
+            sizeH[i] = new BoxHandler(Vec3(0, 0, 0), col);
+        }
     }
 
     void destroy() {
         startHandle.destroy();
         endHandle.destroy();
+        centerHandle.destroy();
+        foreach (h; sizeH) h.destroy();
     }
 
     void draw(const ref Shader shader, const ref Viewport vp,
               const ref FalloffPacket cfg)
     {
-        if (!cfg.enabled || cfg.type != FalloffType.Linear) return;
-        startHandle.update(cfg.start, vp);
-        endHandle.update  (cfg.end,   vp);
-        startHandle.draw(shader, vp);
-        endHandle.draw  (shader, vp);
+        if (!cfg.enabled) return;
+        if (cfg.type == FalloffType.Linear) {
+            startHandle.update(cfg.start, vp);
+            endHandle.update  (cfg.end,   vp);
+            startHandle.draw(shader, vp);
+            endHandle.draw  (shader, vp);
+        } else if (cfg.type == FalloffType.Radial) {
+            centerHandle.update(cfg.center, vp);
+            float[3] sz = [cfg.size.x, cfg.size.y, cfg.size.z];
+            foreach (i; 0 .. 6) {
+                int axis = i / 2;
+                Vec3 worldPos = Vec3(
+                    cfg.center.x + RAD_AXES[i].x * sz[axis],
+                    cfg.center.y + RAD_AXES[i].y * sz[axis],
+                    cfg.center.z + RAD_AXES[i].z * sz[axis]);
+                sizeH[i].pos  = worldPos;
+                sizeH[i].size = gizmoSize(worldPos, vp, 0.04f);
+                sizeH[i].setForceHovered(activeRadial == cast(int)i + 1);
+                sizeH[i].draw(shader, vp);
+            }
+            centerHandle.draw(shader, vp);
+        }
     }
 
     bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
                            const ref Viewport vp,
                            const ref FalloffPacket cfg)
     {
-        if (!cfg.enabled || cfg.type != FalloffType.Linear) return false;
+        if (!cfg.enabled) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
-        // Test start endpoint first; fall through to end. Endpoints
-        // shouldn't visually overlap unless start ≈ end (degenerate
-        // falloff segment) so a deterministic order is fine.
-        int hit = startHandle.hitTest(e.x, e.y, vp);
-        if (hit >= 0) {
-            active = 0; startHandle.dragAxis = hit;
-            startHandle.lastMX = e.x; startHandle.lastMY = e.y;
-            return true;
+
+        if (cfg.type == FalloffType.Linear) {
+            // Endpoints shouldn't visually overlap unless start ≈ end
+            // (degenerate falloff segment) so a deterministic
+            // start-then-end order is fine.
+            int hit = startHandle.hitTest(e.x, e.y, vp);
+            if (hit >= 0) {
+                activeLinear = 0; startHandle.dragAxis = hit;
+                startHandle.lastMX = e.x; startHandle.lastMY = e.y;
+                return true;
+            }
+            hit = endHandle.hitTest(e.x, e.y, vp);
+            if (hit >= 0) {
+                activeLinear = 1; endHandle.dragAxis = hit;
+                endHandle.lastMX = e.x; endHandle.lastMY = e.y;
+                return true;
+            }
+            return false;
         }
-        hit = endHandle.hitTest(e.x, e.y, vp);
-        if (hit >= 0) {
-            active = 1; endHandle.dragAxis = hit;
-            endHandle.lastMX = e.x; endHandle.lastMY = e.y;
-            return true;
+        if (cfg.type == FalloffType.Radial) {
+            // Test center handle first (denser cluster of arrows + box
+            // at the ellipsoid centroid); fall through to the 6 size
+            // boxes on the surface.
+            int hit = centerHandle.hitTest(e.x, e.y, vp);
+            if (hit >= 0) {
+                activeRadial = 0; centerHandle.dragAxis = hit;
+                centerHandle.lastMX = e.x; centerHandle.lastMY = e.y;
+                return true;
+            }
+            foreach (i; 0 .. 6) {
+                if (sizeH[i].hitTest(e.x, e.y, vp)) {
+                    activeRadial = cast(int)i + 1;
+                    sizeLastMX = e.x; sizeLastMY = e.y;
+                    sizeAtDragStart = cfg.size;
+                    return true;
+                }
+            }
+            return false;
         }
         return false;
     }
@@ -214,29 +289,77 @@ public:
     bool onMouseMotion(ref const SDL_MouseMotionEvent e,
                        const ref Viewport vp)
     {
-        if (active < 0) return false;
-        FalloffEndpointHandle h = (active == 0) ? startHandle : endHandle;
-        bool skip;
-        Vec3 delta = h.dragDelta(e.x, e.y, vp, skip);
-        h.lastMX = e.x; h.lastMY = e.y;
-        if (skip) return true;
-        Vec3 newPos = Vec3(h.pos.x + delta.x,
-                           h.pos.y + delta.y,
-                           h.pos.z + delta.z);
-        // Eagerly update the local handle pos so a second motion event
-        // in the same frame computes its incremental delta against the
-        // post-event-1 position. Without this, h.pos stays stuck on
-        // its pre-drag value (it's only refreshed from cfg in draw())
-        // and every subsequent setAttr in the same frame overwrites
-        // the previous one with the SAME world position — gizmo
-        // doesn't follow the mouse past the first step.
-        h.pos = newPos;
+        if (activeLinear < 0 && activeRadial < 0) return false;
         if (g_pipeCtx is null) return true;
+
+        if (activeLinear >= 0) {
+            FalloffEndpointHandle h = (activeLinear == 0) ? startHandle : endHandle;
+            bool skip;
+            Vec3 delta = h.dragDelta(e.x, e.y, vp, skip);
+            h.lastMX = e.x; h.lastMY = e.y;
+            if (skip) return true;
+            Vec3 newPos = Vec3(h.pos.x + delta.x,
+                               h.pos.y + delta.y,
+                               h.pos.z + delta.z);
+            // Eagerly update local pos so a second motion event in the
+            // same frame computes its incremental delta against the
+            // post-event-1 position. Without this, h.pos stays stuck on
+            // its pre-drag value (refreshed from cfg only in draw())
+            // and every subsequent setAttr in the same frame overwrites
+            // the previous one — gizmo doesn't follow the mouse past
+            // the first step.
+            h.pos = newPos;
+            string attr = (activeLinear == 0) ? "start" : "end";
+            foreach (s; g_pipeCtx.pipeline.all()) {
+                if (s.id() != "falloff") continue;
+                (cast(Stage)s).setAttr(attr,
+                    format("%g,%g,%g", newPos.x, newPos.y, newPos.z));
+                break;
+            }
+            return true;
+        }
+
+        // Radial.
+        if (activeRadial == 0) {
+            // Center drag — same dispatch as Linear endpoints, into
+            // FalloffStage's `center` attribute.
+            bool skip;
+            Vec3 delta = centerHandle.dragDelta(e.x, e.y, vp, skip);
+            centerHandle.lastMX = e.x; centerHandle.lastMY = e.y;
+            if (skip) return true;
+            Vec3 newCenter = Vec3(centerHandle.pos.x + delta.x,
+                                  centerHandle.pos.y + delta.y,
+                                  centerHandle.pos.z + delta.z);
+            centerHandle.pos = newCenter;
+            foreach (s; g_pipeCtx.pipeline.all()) {
+                if (s.id() != "falloff") continue;
+                (cast(Stage)s).setAttr("center",
+                    format("%g,%g,%g", newCenter.x, newCenter.y, newCenter.z));
+                break;
+            }
+            return true;
+        }
+        // Size handle 1..6 → index 0..5 in RAD_AXES.
+        int idx     = activeRadial - 1;
+        int axis    = idx / 2;
+        Vec3 outward = RAD_AXES[idx];
+        bool skip;
+        Vec3 delta = screenAxisDelta(e.x, e.y, sizeLastMX, sizeLastMY,
+                                     sizeH[idx].pos, outward, vp, skip);
+        sizeLastMX = e.x; sizeLastMY = e.y;
+        if (skip) return true;
+        // Project drag onto outward axis to a scalar radius change. The
+        // ±X and ±Y / ±Z opposite-side pairs both pull the same scalar
+        // `size[axis]` outward, mirroring prim.sphere's behaviour.
+        float d = dot(delta, outward);
+        float[3] sz = [sizeAtDragStart.x, sizeAtDragStart.y, sizeAtDragStart.z];
+        sz[axis] += d;
+        if (sz[axis] < 0.0f) sz[axis] = 0.0f;
+        sizeAtDragStart = Vec3(sz[0], sz[1], sz[2]);
         foreach (s; g_pipeCtx.pipeline.all()) {
             if (s.id() != "falloff") continue;
-            string attr = (active == 0) ? "start" : "end";
-            (cast(Stage)s).setAttr(attr,
-                format("%g,%g,%g", newPos.x, newPos.y, newPos.z));
+            (cast(Stage)s).setAttr("size",
+                format("%g,%g,%g", sz[0], sz[1], sz[2]));
             break;
         }
         return true;
@@ -244,14 +367,16 @@ public:
 
     bool onMouseButtonUp(ref const SDL_MouseButtonEvent e)
     {
-        if (active < 0) return false;
-        if (active == 0) startHandle.dragAxis = -1;
-        else             endHandle.dragAxis   = -1;
-        active = -1;
+        if (activeLinear < 0 && activeRadial < 0) return false;
+        if (activeLinear == 0) startHandle.dragAxis = -1;
+        if (activeLinear == 1) endHandle.dragAxis   = -1;
+        if (activeRadial == 0) centerHandle.dragAxis = -1;
+        activeLinear = -1;
+        activeRadial = -1;
         return true;
     }
 
-    bool isDragging() const { return active >= 0; }
+    bool isDragging() const { return activeLinear >= 0 || activeRadial >= 0; }
 }
 
 // ---------------------------------------------------------------------------
@@ -362,5 +487,121 @@ void screenFalloffRMBMotion(int x) {
 bool screenFalloffRMBUp() {
     if (!rmbScreenDragActive_) return false;
     rmbScreenDragActive_ = false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Radial-falloff RMB create gesture.
+//
+// Mirrors prim.sphere's click+drag UX, applied to the falloff stage
+// rather than mesh creation:
+//
+// - plain RMB drag → flat ellipsoid on the most-facing workplane axis
+//   pair. plane-normal axis is held at size=0 so radialWeight collapses
+//   to a 2D disc on that plane (see `radialWeight` in falloff.d, which
+//   skips axes with size ≤ 1e-9).
+// - Ctrl+RMB drag → uniform 3D sphere (size.x = size.y = size.z = r,
+//   r = distance from click to cursor along the same drag plane).
+//
+// Like screen-falloff RMB, lives at module scope so any tool with
+// radial falloff inherits the gesture. app.d's RMB dispatch consults
+// `radialFalloffActive()` before falling through to lasso.
+// ---------------------------------------------------------------------------
+private bool rmbRadialDragActive_ = false;
+private bool rmbRadialUniform_    = false;
+private Vec3 rmbRadialCenter_     = Vec3(0, 0, 0);
+private Vec3 rmbRadialPlaneN_     = Vec3(0, 1, 0);
+
+bool radialFalloffActive() {
+    import toolpipe.stages.falloff : FalloffStage;
+    if (g_pipeCtx is null) return false;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto fs = cast(FalloffStage)s;
+        if (fs is null) return false;
+        return fs.type == FalloffType.Radial;
+    }
+    return false;
+}
+
+bool radialFalloffRMBDragging() { return rmbRadialDragActive_; }
+
+private void pushRadialFalloff(Vec3 center, Vec3 size) {
+    if (g_pipeCtx is null) return;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto st = cast(Stage)s;
+        st.setAttr("center",
+            format("%g,%g,%g", center.x, center.y, center.z));
+        st.setAttr("size",
+            format("%g,%g,%g", size.x,   size.y,   size.z));
+        break;
+    }
+}
+
+/// Begin the RMB create gesture. Picks the most-facing cardinal axis
+/// of the active workplane as the plane normal (analogue of
+/// prim.sphere's choosePlane), projects the click onto that plane,
+/// and seeds the falloff at the hit with size 0. Returns false if
+/// the click ray is parallel to the chosen plane (rare degenerate
+/// camera angle).
+bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
+    WorkplaneFrame frame = pickWorkplaneFrame(vp);
+    // camBack = third column of view → camera-back in world coords.
+    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    float aA = abs(dot(camBack, frame.axis1));
+    float aN = abs(dot(camBack, frame.normal));
+    float a2 = abs(dot(camBack, frame.axis2));
+    Vec3 pn;
+    if      (aA >= aN && aA >= a2) pn = Vec3(1, 0, 0);
+    else if (aN >= aA && aN >= a2) pn = Vec3(0, 1, 0);
+    else                           pn = Vec3(0, 0, 1);
+
+    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 hit;
+    if (!rayPlaneIntersect(vp.eye, dir, frame.origin, pn, hit))
+        return false;
+    rmbRadialDragActive_ = true;
+    rmbRadialUniform_    = ctrl;
+    rmbRadialCenter_     = hit;
+    rmbRadialPlaneN_     = pn;
+    pushRadialFalloff(hit, Vec3(0, 0, 0));
+    return true;
+}
+
+/// Update center + size from a drag. Center stays pinned at the click
+/// point; size scales with the in-plane distance from center to the
+/// current cursor projection. Flat mode zeroes the plane-normal axis
+/// so the ellipsoid stays a disc; uniform mode applies r to all three
+/// world axes.
+void radialFalloffRMBMotion(int x, int y, const ref Viewport vp) {
+    if (!rmbRadialDragActive_) return;
+    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 hit;
+    if (!rayPlaneIntersect(vp.eye, dir, rmbRadialCenter_, rmbRadialPlaneN_, hit))
+        return;
+    Vec3 d = Vec3(hit.x - rmbRadialCenter_.x,
+                  hit.y - rmbRadialCenter_.y,
+                  hit.z - rmbRadialCenter_.z);
+    float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    Vec3 size;
+    if (rmbRadialUniform_) {
+        size = Vec3(r, r, r);
+    } else {
+        // Flat disc: r along the two plane axes, 0 along plane normal.
+        // Plane normal is cardinal (±X/±Y/±Z) so absolute components
+        // map directly to "this axis is the normal" → zero it.
+        size = Vec3(r * (1.0f - abs(rmbRadialPlaneN_.x)),
+                    r * (1.0f - abs(rmbRadialPlaneN_.y)),
+                    r * (1.0f - abs(rmbRadialPlaneN_.z)));
+    }
+    pushRadialFalloff(rmbRadialCenter_, size);
+}
+
+/// End the gesture. Returns true iff a drag was active (so app.d can
+/// suppress lasso commit).
+bool radialFalloffRMBUp() {
+    if (!rmbRadialDragActive_) return false;
+    rmbRadialDragActive_ = false;
     return true;
 }
