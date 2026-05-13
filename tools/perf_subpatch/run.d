@@ -33,23 +33,35 @@ import std.path       : buildPath, dirName;
 import std.process    : Config, Pid, ProcessException, kill, spawnProcess,
                          wait, tryWait, execute, executeShell;
 import std.stdio      : writeln, writefln, stderr;
+import std.string     : indexOf;
 import core.thread    : Thread;
 import core.time      : dur;
 import core.sys.posix.signal : SIGINT;
 
 int main(string[] args) {
-    int  port        = 8080;
-    int  captureSecs = 10;
-    int  targetPolys = 24576;
-    bool noBuild     = false;
-    int  perfFreq    = 999;
+    int    port        = 8080;
+    int    captureSecs = 10;
+    int    targetPolys = 24576;
+    bool   noBuild     = false;
+    int    perfFreq    = 999;
+    int    tabs        = 1;
+    string via         = "api";    // "api" or "sdl"
 
     getopt(args,
         "port",     &port,
         "capture",  &captureSecs,
         "polys",    &targetPolys,
         "no-build", &noBuild,
-        "freq",     &perfFreq);
+        "freq",     &perfFreq,
+        "tabs",     &tabs,
+        "via",      &via);
+
+    if (via != "api" && via != "sdl") {
+        stderr.writeln("[perf] --via must be 'api' or 'sdl' (got: "
+                       ~ via ~ ")");
+        return 1;
+    }
+    if (tabs < 1) { stderr.writeln("[perf] --tabs must be >= 1"); return 1; }
 
     string repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     if (!exists(buildPath(repoRoot, "dub.json"))) {
@@ -177,12 +189,52 @@ int main(string[] args) {
     // hair so the Tab call doesn't precede sample capture.
     Thread.sleep(dur!"msecs"(500));
 
-    // Phase C — Tab + idle = the actual profile target.
-    writeln("[perf] mesh.subpatch_toggle (Tab)");
-    auto tabT0 = nowMs();
-    callApi("/api/command", `{"id":"mesh.subpatch_toggle"}`);
-    auto tabMs = nowMs() - tabT0;
-    writefln("[perf] subpatch_toggle returned in %d ms", tabMs);
+    // Phase C — Tab × N + idle = the actual profile target.
+    //
+    // Why multi-Tab? A single toggle triggers ONE rebuildIfStale frame
+    // (heavy: OSD topology build + GPU stencil tables + gpu.upload).
+    // Subsequent frames just render. With perf at -F999 over an 8 s
+    // window that single frame is well below top-30 visibility — most
+    // of the capture is steady-state per-frame work. Toggle N times
+    // (with a short pause between) to amplify the rebuild signal.
+    //
+    // `--via sdl` injects a real SDL_KEYDOWN through /api/play-events,
+    // exercising the SDLK_TAB handler in app.d. That handler is
+    // byte-for-byte equivalent to mesh.subpatch_toggle (both call
+    // setSubpatch in a loop), but skips the command pipeline +
+    // history.record + origSubpatch.dup, so the API path adds a
+    // 24576-bool dup per toggle. Measure both to confirm or refute
+    // that the difference is negligible at this poly count.
+    long[] tabTimings;
+    tabTimings.reserve(tabs);
+    foreach (i; 0 .. tabs) {
+        auto t0 = nowMs();
+        if (via == "api") {
+            callApi("/api/command", `{"id":"mesh.subpatch_toggle"}`);
+        } else {
+            // SDL_KEYDOWN { sym=9 (SDLK_TAB), scan=43 (SDL_SCANCODE_TAB) }
+            // Single-event log → play-events runs through SDL handler.
+            string log =
+                `{"t":0.0,"type":"SDL_KEYDOWN","sym":9,"scan":43,`
+                ~ `"mod":0,"repeat":0}`;
+            callApi("/api/play-events", log);
+            // Spin on /api/play-events/status until "complete".
+            int iters = 0;
+            while (iters++ < 500) {
+                string s;
+                try s = cast(string) get(baseUrl ~ "/api/play-events/status");
+                catch (CurlException) { break; }
+                if (s.length > 0 && s != "running" && s.indexOf("running") < 0)
+                    break;
+                Thread.sleep(dur!"msecs"(2));
+            }
+        }
+        auto dtMs = nowMs() - t0;
+        tabTimings ~= dtMs;
+        writefln("[perf] tab %d/%d via=%s : %d ms", i + 1, tabs, via, dtMs);
+        // Let one frame render between toggles so rebuildIfStale runs.
+        Thread.sleep(dur!"msecs"(50));
+    }
 
     writefln("[perf] idle %d s for per-frame capture…", captureSecs);
     Thread.sleep(dur!"seconds"(captureSecs));
@@ -217,13 +269,23 @@ int main(string[] args) {
             stderr.writeln("[perf] folded stacks dump failed:\n", r.output);
     }
 
+    // Tab timing stats — sort + sum to derive median / avg.
+    import std.algorithm : sort, sum, minElement, maxElement;
+    auto sorted = tabTimings.dup;
+    sorted.sort();
+    long med = sorted.length > 0 ? sorted[sorted.length / 2] : 0;
+    long avg = sorted.length > 0 ? sorted.sum / sorted.length : 0;
     writefln("[perf] DONE.\n"
-             ~ "  Tab cost (one-shot): %d ms\n"
+             ~ "  Tab via            : %s\n"
+             ~ "  Tab count          : %d\n"
+             ~ "  Tab ms min/avg/med/max : %d / %d / %d / %d\n"
              ~ "  raw capture        : %s\n"
              ~ "  text summary       : %s\n"
              ~ "  folded stacks      : %s\n"
              ~ "Top non-idle hits (perf report --no-children, first 30 lines):",
-             tabMs, perfData, perfTxt, foldTxt);
+             via, tabs,
+             sorted.minElement, avg, med, sorted.maxElement,
+             perfData, perfTxt, foldTxt);
     auto top = executeShell(format(
         "grep -E '^\\s*[0-9]+\\.' %s | head -30",
         shQuote(perfTxt)));
