@@ -855,18 +855,57 @@ struct OsdAccel {
         outMesh.buildLoops();
 
         // ---- SubpatchTrace ------------------------------------------
-        // OSD's `*_origins[i]` are now cage indices directly (full cage
-        // is the input). Map -1 → uint.max for the introduced-by-
-        // subdivision case.
+        // OSD's `*_origins[i]` index INTO OSD's own cage enumeration,
+        // not the caller's. For verts + faces the enumerations match
+        // (we hand OSD vertex indices and face indices directly), but
+        // OSD derives its edge list from the face-vertex topology and
+        // assigns its own edge indices — those don't line up with
+        // vibe3d's `cage.edges` (which is `addFace`-ordered). To make
+        // edgeOrigin usable by the rest of vibe3d (drawEdges,
+        // edgeOriginGpu lookup, the polygon-edge highlight cache) we
+        // translate it via OSD's own input-edge vertex-pair table
+        // plus a (min,max) vertex-pair → vibe3d-cage-edge map.
         outTrace.vertOrigin = new uint[](limitVerts);
         outTrace.edgeOrigin = new uint[](limitEdges);
         outTrace.faceOrigin = new uint[](limitFaces);
         foreach (i, o; vertOriginsRaw)
             outTrace.vertOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
-        foreach (i, o; edgeOriginsRaw)
-            outTrace.edgeOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
         foreach (i, o; faceOriginsRaw)
             outTrace.faceOrigin[i] = cast(uint)o;
+
+        // Build OSD cage edge index → vibe3d cage edge index map.
+        // Same key scheme as Mesh.edgeKey (min,max) → uint.
+        immutable int osdCageEdges = osdc_topology_input_edge_count(osd);
+        int[] osdCageEdgeVerts;
+        if (osdCageEdges > 0) {
+            osdCageEdgeVerts = new int[](2 * osdCageEdges);
+            osdc_topology_input_edges(osd, osdCageEdgeVerts.ptr);
+        }
+        uint[ulong] vibe3dEdgeByVerts;
+        foreach (ei, e; cage.edges) {
+            uint a = e[0], b = e[1];
+            ulong key = (cast(ulong)(a < b ? a : b) << 32)
+                      |  cast(ulong)(a < b ? b : a);
+            vibe3dEdgeByVerts[key] = cast(uint)ei;
+        }
+        uint[] osdToVibe3dCageEdge = new uint[](osdCageEdges);
+        osdToVibe3dCageEdge[] = uint.max;
+        foreach (oi; 0 .. osdCageEdges) {
+            int a = osdCageEdgeVerts[2*oi + 0];
+            int b = osdCageEdgeVerts[2*oi + 1];
+            if (a < 0 || b < 0) continue;
+            ulong key = (cast(ulong)(a < b ? a : b) << 32)
+                      |  cast(ulong)(a < b ? b : a);
+            if (auto p = key in vibe3dEdgeByVerts)
+                osdToVibe3dCageEdge[oi] = *p;
+        }
+        foreach (i, o; edgeOriginsRaw) {
+            if (o < 0 || o >= osdCageEdges) {
+                outTrace.edgeOrigin[i] = uint.max;
+            } else {
+                outTrace.edgeOrigin[i] = osdToVibe3dCageEdge[o];
+            }
+        }
         // Per-preview-face subpatch flag inherits from its cage parent.
         outTrace.subpatch = new bool[](limitFaces);
         outMesh.isSubpatch.length = limitFaces;
@@ -1334,6 +1373,76 @@ unittest {
             preview.vertices[i].z != before[i].z) ++moved;
     }
     assert(moved > 0, "refresh did not move any preview vert");
+}
+
+// ---------------------------------------------------------------------------
+// trace.edgeOrigin must index INTO THE CALLER'S cage edge table, not
+// OSD's internal edge enumeration. The two can differ — OSD derives
+// its edge list from the face-vertex topology and assigns its own
+// indices, while vibe3d's cage.edges is `addFace`-ordered.
+//
+// drawEdges' polygon-edge highlight looks up
+//   selectedEdges[edgeOriginGpu[segIdx]]
+// where `selectedEdges` is indexed by vibe3d cage edge. If the
+// origin chain hands OSD's index through, the wrong cage edges get
+// highlighted. Verified topologically at depth 1, where each cage
+// edge subdivides into exactly two preview edges that BOTH have
+// the same edgeOrigin and BOTH share an endpoint with vertOrigin
+// matching one of the cage edge's two cage vertices.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh cage = makeCube();
+    cage.isSubpatch.length = cage.faces.length;
+    foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
+
+    OsdAccel       accel;
+    Mesh           preview;
+    SubpatchTrace  trace;
+    bool ok = accel.buildPreview(cage, 1, preview, trace);
+    assert(ok && accel.valid, "OsdAccel.buildPreview failed");
+
+    // Each cage edge X = (u, v) should produce exactly two preview
+    // edges with edgeOrigin == X. Topology after one CC pass: the
+    // edge splits at its midpoint M, giving (u, M) and (M, v).
+    //   • Both halves have edgeOrigin = X.
+    //   • One half's endpoint set contains u (in vertOrigin); the
+    //     other half's contains v. M itself has vertOrigin = uint.max
+    //     (newly introduced edge-point).
+    int[uint] cagePreviewEdgeCount;
+    bool[uint] sawCageVertU;   // saw an endpoint with vertOrigin == u
+    bool[uint] sawCageVertV;   // saw an endpoint with vertOrigin == v
+
+    foreach (pei, pe; preview.edges) {
+        uint origin = pei < trace.edgeOrigin.length
+                       ? trace.edgeOrigin[pei] : uint.max;
+        if (origin == uint.max) continue;
+        assert(origin < cage.edges.length,
+               "trace.edgeOrigin out of range for the cage edge table");
+        cagePreviewEdgeCount[origin] =
+            cagePreviewEdgeCount.get(origin, 0) + 1;
+
+        uint cu = cage.edges[origin][0];
+        uint cv = cage.edges[origin][1];
+        foreach (vpi; [pe[0], pe[1]]) {
+            uint vo = vpi < trace.vertOrigin.length
+                       ? trace.vertOrigin[vpi] : uint.max;
+            if (vo == cu) sawCageVertU[origin] = true;
+            if (vo == cv) sawCageVertV[origin] = true;
+        }
+    }
+
+    assert(cagePreviewEdgeCount.length == cage.edges.length,
+        "expected every cage edge to appear in some preview edge's "
+        ~ "edgeOrigin");
+    foreach (cei; 0 .. cage.edges.length) {
+        uint k = cast(uint)cei;
+        assert(cagePreviewEdgeCount[k] == 2,
+            "cage edge with vibe3d index in [0..12) should have "
+            ~ "exactly 2 preview halves at depth 1");
+        assert(sawCageVertU.get(k, false) && sawCageVertV.get(k, false),
+            "the two preview halves of a cage edge must between "
+            ~ "them touch both of the cage edge's endpoints");
+    }
 }
 
 // ---------------------------------------------------------------------------
