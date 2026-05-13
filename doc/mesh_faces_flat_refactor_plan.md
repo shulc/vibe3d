@@ -348,15 +348,33 @@ The same command becomes the per-stage acceptance check.
 
 ### Status table (filled in as stages land)
 
-| Stage | Commit | addFace ms/10K | subdivide-L4 ms | subdivide-L5 ms | Tab median ms | bevel-1536 ms |
+Headline metrics: **median ms** for each pmf scenario (full
+min/avg/med/max in `tools/perf_mesh_faces/out/` after each run).
+Subdivide is per-level. Tab is the 8-toggle alternation's
+**even-indexed** measurements (those land on the previous toggle's
+heavy rebuild because the main-loop tickCommand → rebuildIfStale →
+render sequence pushes heavy work onto the next iteration's HTTP
+wait — see comment in run.d). Bevel-384 is the cube → 3 ×
+subdivide → select-all → bevel sequence.
+
+| Stage | Commit | subdiv-L4 | subdiv-L5 | subdiv-L6 | tab | bevel-384 |
 |---|---|---|---|---|---|---|
-| pre-A baseline | 8d3b2c4 | TBD | TBD | TBD | 256 | TBD |
-| A | — | — | — | — | — | — |
-| B | — | — | — | — | — | — |
-| C | — | — | — | — | — | — |
-| D | — | — | — | — | — | — |
-| E | — | — | — | — | — | — |
-| F | — | — | — | — | — | — |
+| pre-A baseline | 8d3b2c4 | 19 | 21 | 44 | 358 | 83 |
+| A (FaceList wrapper) | — | — | — | — | — | — |
+| B (migrate in-place) | — | — | — | — | — | — |
+| C (CSR shadow) | — | — | — | — | — | — |
+| D (drop shadow) | — | — | — | — | — | — |
+| E (bulk-install in buildPreview) | — | — | — | — | — | — |
+| F (final measure) | — | — | — | — | — | — |
+
+**Note on `tab` divergence from `perf_subpatch`**: pmf's tab median
+of 358 ms vs `perf_subpatch`'s 256 ms (`8d3b2c4`) is sample-size
+and parity-selection driven, not a real regression: perf_subpatch
+takes the *overall* median across both heavy-build and
+cheap-teardown toggles, pmf takes only the build-side
+measurements. The two harnesses agree directionally; treat
+`perf_subpatch` as the canonical Tab regression guard and pmf as
+the Mesh.faces-focused diff metric.
 
 ## Out of scope
 
