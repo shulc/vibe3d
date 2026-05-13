@@ -588,6 +588,14 @@ struct OsdAccel {
     private int     keptVertCount;         // dispatch count for refreshVertVbo
 
     private int     limitVertCount;
+    // Dedicated empty VAO for fan-out TF dispatches. We cannot reuse
+    // the caller's VAO: that VAO typically has vertex attribs enabled
+    // pointing AT gpu.faceVbo (for the normal rasterising draw), and
+    // glDrawArrays during transform feedback raises GL_INVALID_OPERATION
+    // when any enabled vertex-attrib buffer is also the TF write target
+    // ("feedback loop"). A fresh VAO with no enabled attribs sidesteps
+    // the loop check.
+    private GLuint  tfVao;
     bool valid;
 
     /// Free everything. Idempotent.
@@ -602,6 +610,7 @@ struct OsdAccel {
         if (cornerToFaceIdTex != 0)      { glDeleteTextures(1, &cornerToFaceIdTex); cornerToFaceIdTex = 0; }
         if (faceFirstVertsTex != 0)      { glDeleteTextures(1, &faceFirstVertsTex); faceFirstVertsTex = 0; }
         if (limitTex != 0)               { glDeleteTextures(1, &limitTex); limitTex = 0; }
+        if (tfVao != 0)                  { glDeleteVertexArrays(1, &tfVao); tfVao = 0; }
         if (fanOutProgram != 0)          { glDeleteProgram (fanOutProgram); fanOutProgram = 0; }
         if (posFanOutProgram != 0)       { glDeleteProgram (posFanOutProgram); posFanOutProgram = 0; }
         if (edgeSegToLimitVbo != 0)      { glDeleteBuffers (1, &edgeSegToLimitVbo); edgeSegToLimitVbo = 0; }
@@ -942,6 +951,11 @@ struct OsdAccel {
                 glBindBuffer (GL_TEXTURE_BUFFER, 0);
                 glBindTexture(GL_TEXTURE_BUFFER, 0);
 
+                // Empty VAO for the fan-out TF dispatch — see tfVao
+                // field comment for why the caller's VAO can't be
+                // reused.
+                glGenVertexArrays(1, &tfVao);
+
                 fanOutProgram = compileFanOutProgram();
                 if (fanOutProgram != 0) {
                     locCornerToLimit   = glGetUniformLocation(
@@ -1087,11 +1101,15 @@ struct OsdAccel {
         glUniform1i(locLimitPositions, 3);
 
         // No vertex attributes are read — TF dispatch is driven by
-        // gl_VertexID. Bind an empty VAO so the driver is happy.
-        // Reuse caller's VAO state (we just restored it above).
-        // OSD bound something; ensure no vertex attribs are enabled
-        // for our dispatch by binding the caller's VAO again.
-        glBindVertexArray(cast(GLuint)prevVao);
+        // gl_VertexID. Bind a dedicated empty VAO: the caller's VAO
+        // usually has attribs enabled pointing at gpu.faceVbo (for
+        // the normal raster draw of the surface), but gpu.faceVbo is
+        // also our TF write target on this dispatch — and GL raises
+        // GL_INVALID_OPERATION on glDrawArrays under transform
+        // feedback when any enabled attribute references the TF
+        // output buffer (feedback loop). tfVao has no enabled
+        // attribs, so the loop check passes.
+        glBindVertexArray(tfVao);
 
         glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, targetFaceVbo);
         glEnable(GL_RASTERIZER_DISCARD);
@@ -1148,7 +1166,10 @@ struct OsdAccel {
         glBindTexture(GL_TEXTURE_BUFFER, limitTex);
         glUniform1i(locPosLimitPositions, 1);
 
-        glBindVertexArray(cast(GLuint)prevVao);
+        // Empty VAO — same feedback-loop concern as refreshIntoFaceVbo;
+        // gpu.edgeVao / gpu.vertVao both have attribs pointing at the
+        // VBOs we'd be writing.
+        glBindVertexArray(tfVao);
         glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, targetVbo);
         glEnable(GL_RASTERIZER_DISCARD);
         glBeginTransformFeedback(GL_POINTS);

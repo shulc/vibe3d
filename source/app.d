@@ -1049,6 +1049,39 @@ void main(string[] args) {
         });
         httpServer.setCameraDataProvider(() => cameraView.toJson());
 
+        // GET /api/gpu/face-vbo — read back gpu.faceVbo on the main
+        // (GL) thread and return the position triples as JSON. Used by
+        // test_subpatch_move to verify the subpatch surface actually
+        // updates after a /api/transform; the /api/model snapshot
+        // alone can't catch a broken fan-out shader since it only
+        // reflects the cage.
+        httpServer.setGpuSurfaceProvider(() {
+            import std.array : appender;
+            import std.format : format;
+            import bindbc.opengl;
+            // Faces use stride-6 (pos+normal). Read the live VBO.
+            int vertCount = gpu.faceVertCount;
+            if (vertCount <= 0)
+                return `{"faceVertCount":0,"positions":[]}`;
+            float[] data = new float[](vertCount * 6);
+            glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
+            glGetBufferSubData(GL_ARRAY_BUFFER, 0,
+                cast(GLsizeiptr)(data.length * float.sizeof),
+                data.ptr);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            auto buf = appender!string();
+            buf.put(`{"faceVertCount":`);
+            buf.put(format("%d", vertCount));
+            buf.put(`,"positions":[`);
+            foreach (i; 0 .. vertCount) {
+                if (i > 0) buf.put(",");
+                buf.put(format("[%.6f,%.6f,%.6f]",
+                    data[i * 6 + 0], data[i * 6 + 1], data[i * 6 + 2]));
+            }
+            buf.put("]}");
+            return buf.data;
+        });
+
         // POST /api/camera — set live View. Accepts azimuth, elevation,
         // distance (radians/world-units) and optional focus[x,y,z] +
         // width/height. Used by the modo_diff cross-engine drag test
@@ -3091,6 +3124,7 @@ void main(string[] args) {
             httpServer.tickSelection();
             httpServer.tickTransform();
             httpServer.tickCameraSet();
+            httpServer.tickGpuSurface();
             httpServer.tickRefire();
             httpServer.tickUndo();
         }

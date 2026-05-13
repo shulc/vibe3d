@@ -74,6 +74,19 @@ class HttpServer {
     private bool   resetPendingEmpty;    // true → empty scene, ignore primitiveType
     private bool testMode = false;
 
+    // ----- GET /api/gpu/face-vbo synchronous bridge ------------------------
+    // Reads back the live face VBO contents on the GL/main thread. Used by
+    // test_subpatch_move to verify that the subpatch surface actually
+    // updated after a /api/transform — necessary because the cage-side
+    // mesh.vertices snapshot exposed via /api/model can stay in sync even
+    // when the GPU fan-out path is silently writing garbage to gpu.faceVbo.
+    private alias GpuSurfaceProvider = string delegate();
+    private GpuSurfaceProvider gpuSurfaceProvider;
+    private shared long gpuSurfSubmittedEpoch;
+    private shared long gpuSurfCompletedEpoch;
+    private string      gpuSurfResult;
+    private string      gpuSurfError;
+
     // ----- /api/command synchronous bridge ---------------------------------
     // The HTTP thread fills pendingCmdId/Params, bumps submittedEpoch, and
     // spins on completedEpoch. The main thread runs the command via
@@ -231,6 +244,13 @@ class HttpServer {
     /// to the requested values.
     public void setCameraSetHandler(CameraSetHandler handler) {
         this.cameraSetHandler = handler;
+    }
+
+    /// Set the /api/gpu/face-vbo provider. Runs on the main thread (GL
+    /// context required) and returns a JSON string describing the current
+    /// face-VBO state.
+    public void setGpuSurfaceProvider(GpuSurfaceProvider provider) {
+        this.gpuSurfaceProvider = provider;
     }
 
     /**
@@ -626,6 +646,33 @@ class HttpServer {
                 }
             }
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/gpu/face-vbo" && request.method == "GET") {
+            if (gpuSurfaceProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"gpu-surface provider not set"}`;
+                response.headers["Content-Type"] = "application/json";
+            } else {
+                gpuSurfError = "";
+                long my = atomicOp!"+="(gpuSurfSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(gpuSurfCompletedEpoch) < my) {
+                    if (++iters > maxIters) {
+                        gpuSurfError = "timeout waiting for main thread";
+                        break;
+                    }
+                    Thread.sleep(2.msecs);
+                }
+                if (gpuSurfError.length == 0) {
+                    response.statusCode = 200;
+                    response.body = gpuSurfResult;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"`
+                                    ~ gpuSurfError.replace("\"", "\\\"") ~ `"}`;
+                }
+                response.headers["Content-Type"] = "application/json";
+            }
         } else if (request.path == "/api/camera") {
             if (cameraDataProvider !is null) {
                 try {
@@ -1191,6 +1238,26 @@ class HttpServer {
             }
         }
         atomicStore(xfCompletedEpoch, sub);
+    }
+
+    /// Tick GPU-surface — same pattern as tickCameraSet, for GET
+    /// /api/gpu/face-vbo. Provider runs on the GL/main thread so it can
+    /// glGetBufferSubData the live face VBO.
+    public void tickGpuSurface() {
+        long sub = atomicLoad(gpuSurfSubmittedEpoch);
+        long cmp = atomicLoad(gpuSurfCompletedEpoch);
+        if (sub <= cmp) return;
+        if (gpuSurfaceProvider is null) {
+            gpuSurfError = "gpu-surface provider not set";
+        } else {
+            try {
+                gpuSurfResult = gpuSurfaceProvider();
+                gpuSurfError  = "";
+            } catch (Exception e) {
+                gpuSurfError = e.msg;
+            }
+        }
+        atomicStore(gpuSurfCompletedEpoch, sub);
     }
 
     /// Tick camera-set — same pattern as tickTransform, for POST /api/camera.
