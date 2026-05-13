@@ -615,6 +615,11 @@ void main(string[] args) {
         g_pipeCtx.pipeline.add(new FalloffStage(&mesh, &editMode));
     }
 
+    // Main-loop flag — declared up here so command factories
+    // (file.quit in particular) can capture it before the actual
+    // loop runs below.
+    bool running = true;
+
     Registry reg;
     reg.toolFactories["move"]   = () {
         auto t = new MoveTool(&mesh, &gpu, &editMode);
@@ -820,6 +825,22 @@ void main(string[] args) {
         new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["file.save"] = () => cast(Command)
         new FileSave(&mesh, cameraView, editMode);
+    // "File → New" = empty scene. Wraps SceneReset with the
+    // already-supported `setEmpty(true)` mode; undo restores
+    // whatever was open before.
+    reg.commandFactories["file.new"] = () {
+        auto c = new SceneReset(&mesh, cameraView, editMode,
+                                 &gpu, &vertexCache, &edgeCache, &faceCache,
+                                 &editMode, &cameraView,
+                                 () => setActiveTool(null));
+        c.setEmpty(true);
+        return cast(Command) c;
+    };
+    {
+        import commands.file.quit : FileQuit;
+        reg.commandFactories["file.quit"] = () => cast(Command)
+            new FileQuit(&mesh, cameraView, editMode, () { running = false; });
+    }
     reg.commandFactories["mesh.subdivide"] = () => cast(Command)
         new Subdivide(&mesh, cameraView, editMode,
                       &gpu, &vertexCache, &edgeCache, &faceCache,
@@ -1807,8 +1828,8 @@ void main(string[] args) {
     }
 
     int lastMouseX, lastMouseY;
-
-    bool running = true;
+    // `running` is declared higher up so the file.quit factory
+    // closure (registered earlier) can capture it.
     SDL_Event event;
 
     // -------------------------------------------------------------------------
@@ -1905,7 +1926,11 @@ void main(string[] args) {
                 recLog.close();
                 stderr.writeln("[REC] stopped");
                 break;
-            case SDLK_ESCAPE: running = false; break;
+            // Esc no longer quits — Ctrl+Q (file.quit) is the canonical
+            // exit shortcut now. Leaving Esc unbound here means the key
+            // falls through to the global / tool handlers (e.g. cancel
+            // an in-progress lasso, deselect, …) instead of killing the
+            // session by accident.
             case SDLK_SPACE:
                 if (activeTool) setActiveTool(null);
                 else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);

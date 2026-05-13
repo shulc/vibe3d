@@ -3,8 +3,10 @@ panels:
     items:
       - title: File
         buttons:
-          - { label: Load, action: { kind: command, id: file.load } }
+          - { label: New,  action: { kind: command, id: file.new  } }
+          - { label: Open, action: { kind: command, id: file.load } }
           - { label: Save, action: { kind: command, id: file.save } }
+          - { label: Quit, action: { kind: command, id: file.quit } }
       - title: History
         buttons:
           - { label: Redo,    action: { kind: command, id: history.redo } }

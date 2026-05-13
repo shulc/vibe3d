@@ -23,6 +23,10 @@ commands:
   mesh.delete:           Delete
   mesh.remove:           Backspace
   snap.toggle:           X
+  file.new:              "Ctrl+N"
+  file.load:             "Ctrl+O"
+  file.save:             "Ctrl+S"
+  file.quit:             "Ctrl+Q"
 
 editmodes:
   vertices: "1"
