@@ -3441,8 +3441,6 @@ void main(string[] args) {
             dl.AddLine(rmbPath[0], rmbPath[$ - 1], IM_COL32(0, 255, 255, 220), 1.0f);
         }
 
-        ImGui.Render();
-
         // Refresh subpatch preview if the cage or depth changed since last
         // frame. Bundle vibe3d's face / edge / vert VBOs so the fast
         // path can try OSD GPU fan-outs for each — when all three
@@ -3756,6 +3754,12 @@ void main(string[] args) {
         }
 
         // ---- ImGui draw ----
+        // Render() must happen AFTER activeTool.draw() so any commands the
+        // tool adds to the foreground draw list (snap overlay, falloff
+        // overlay, etc.) are picked up by AddDrawListToDrawData — that
+        // helper early-returns on an empty CmdBuffer, so adding commands
+        // post-Render leaves them out of the ImDrawData snapshot.
+        ImGui.Render();
         // Restore full viewport for ImGui rendering.
         glViewport(0, 0, fbW, fbH);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
