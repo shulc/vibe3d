@@ -2031,6 +2031,17 @@ void main(string[] args) {
                 // children is fully inside (strict semantics matching the
                 // cage behavior).
                 bool preview = subpatchPreview.active;
+                // Phase 3c — when the last drag-frame fan-out wrote all
+                // three GPU VBOs, `preview.mesh.vertices` was NOT
+                // refreshed CPU-side. Lasso needs fresh positions for
+                // its projection math; one-shot readback brings them
+                // up to date. Cheap relative to the lasso PIP loop and
+                // only fires on mouse-up, not per drag-frame.
+                if (preview && subpatchPreview.lastRefreshSkipNonFace) {
+                    subpatchPreview.osdAccel.readLimitIntoPreview(
+                        subpatchPreview.mesh);
+                    subpatchPreview.lastRefreshSkipNonFace = false;
+                }
                 const pv = preview ? &subpatchPreview.mesh : null;
                 bool[] pvVisible = preview
                     ? ((pv.vertices.length > VIS_OCCLUSION_LIMIT

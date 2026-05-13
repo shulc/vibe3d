@@ -49,22 +49,43 @@
   bandwidth-bound, ~0.1 ms per MB, sync-stalling. For the user's 8 K
   cage / 133 K preview-vert workload it's ~1.5 MB → roughly 1 ms.
 
-### Phase 3c (future)
+### Phase 3c — done across three commits (`e296790`, `abf4529`, this)
 
-To drop the readback altogether: GPU fan-out shaders for edges + verts.
-Sketch:
+* Step 1 — `POS_FAN_OUT_*` single-vec3 TF program. New TBOs
+  `edgeSegToLimit` (2 ints per kept edge) and `vertToLimit`
+  (1 int per kept preview vert), populated at buildPreview by
+  walking the same kept-element sequence GpuMesh.upload uses.
+  New OsdAccel methods `refreshEdgeVbo` and `refreshVertVbo`.
+  Generic `runPosFanOut` helper shared by both.
 
-* edgeVbo: per-kept-edge × 2 positions. Shader pulls (a, b) limit
-  verts → emits 6 floats. Same TBO setup pattern as the face fan-out.
-* vertVbo: per-kept-vert position. Where `vertOrigin` filter doesn't
-  remove anything, a `glCopyBufferSubData` from `limitGlVbo` works
-  directly. Otherwise a tiny fan-out shader.
+* Step 2 — `SubpatchPreview.rebuildIfStale` accepts a
+  `GpuFanOutTargets*` bundle (face / edge / vert VBO + counts).
+  Fast path tries all three dispatches; `lastRefreshSkipNonFace`
+  signals the main loop that EVERY VBO is fresh on GPU.
+  Main loop branches:
+    skipNonFace        → no CPU upload at all
+    fannedOut only     → refreshNonFacePositions for edge + vert
+    neither            → refreshPositions (full CPU fallback)
+  The readback `osdAccel.readLimitIntoPreview` fires only when
+  edges or verts needed the CPU path — drag frames take the
+  zero-readback path.
 
-Lasso path: the 4 K-vert threshold already short-circuits visibility
-to "all visible" on large previews (commit `4d4b6fa`), so it
-doesn't need `preview.vertices` at the sizes where it'd matter for
-perf. Below the threshold, an opt-in readback once per lasso mouse-
-up suffices — drag-frame readback isn't needed.
+* Step 3 — lasso mouse-up sync. Reads `preview.mesh.vertices`
+  through `pvVisCache.get(*pv, ...)`; if the last drag-frame
+  fan-out left CPU-side stale (`lastRefreshSkipNonFace == true`),
+  do one `readLimitIntoPreview` before the lasso reads. The flag
+  is cleared so a no-op drag (no further rebuildIfStale before
+  the next lasso) doesn't re-read.
+
+### What Phase 3c achieves
+
+* Drag frame: cage positions go to GPU, OSD stencil eval runs on
+  GPU, three transform-feedback dispatches fill face / edge / vert
+  VBOs. Zero CPU position upload, zero readback.
+* Surface, edges, and vert points all visibly track the drag in
+  realtime.
+* Lasso mouse-up still gets fresh CPU vertices via a single sync
+  readback, so picking semantics are unchanged from Phase 3a.
 
 ## What blocks the simple drop-in
 
