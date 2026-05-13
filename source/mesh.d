@@ -34,6 +34,18 @@ struct Mesh {
     uint[]     vertLoop;     // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
     uint[]     loopEdge;     // loopEdge[li] = index in edges[] of the undirected edge for loop li
     uint[ulong] edgeIndexMap; // edgeKey(a,b) → index in edges[]; populated by buildLoops + addEdge
+    // P2: CSR-style vertex→edge adjacency scratch for buildLoops's
+    // loopEdge fill on the subpatch preview mesh (caller passes
+    // `rebuildEdgeIndexMap=false`). For each vertex `u`,
+    // edgesAdj[edgesAdjStart[u] .. edgesAdjStart[u+1]] is the list of
+    // edge indices incident to u — typically 4-6 entries on quad
+    // meshes, which fit in one cache line. Sequential scan over that
+    // list beats a binary-search into a 9 MB sorted array for the
+    // 786K preview-edge case (random access vs sequential touches the
+    // hot cache line once per lookup).
+    private size_t[] buildLoopsEdgesAdjStart;
+    private uint[]   buildLoopsEdgesAdj;
+    private size_t[] buildLoopsEdgesAdjCursor; // scratch during fill
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
@@ -1435,7 +1447,17 @@ struct Mesh {
 
     /// Rebuild the half-edge loop structure from the current faces/vertices.
     /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
-    void buildLoops() {
+    ///
+    /// `rebuildEdgeIndexMap`: when true (default), repopulates the
+    /// undirected edgeKey → edge index `edgeIndexMap` AA — required
+    /// for callers that read `edgeIndexMap` directly or call
+    /// `edgeIndex` / `edgeIndexByKey`. When false, leaves the AA
+    /// empty and uses a one-shot sorted-array binary search for the
+    /// internal `loopEdge[]` fill. Used by the subpatch preview
+    /// build (subpatch_osd.OsdAccel.buildPreview) where nothing
+    /// outside Mesh ever queries `edgeIndexMap` on the preview mesh
+    /// — at 786K preview edges the AA build costs ~10% of CPU.
+    void buildLoops(bool rebuildEdgeIndexMap = true) {
 
         // Pre-compute total loop count + per-face start offset in one
         // pass. Lets pass 1 below run in parallel — each face writes
@@ -1488,23 +1510,92 @@ struct Mesh {
         }
 
 
-        // Pass 2: rebuild edgeIndexMap (serial — AA insert isn't
-        // thread-safe) and fill loopEdge in parallel (D AAs ARE safe
-        // for read-only concurrent lookup). edgeIndexMap is the
-        // mesh-wide (undirected) edgeKey → edge index AA, kept for
-        // external callers (bevel, split_edge, …).
-        edgeIndexMap = null;
-        foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
-        void fillLoopEdge(size_t idx) {
-            uint u = loops[idx].vert;
-            uint v = loops[loops[idx].next].vert;
-            if (auto p = edgeKey(u, v) in edgeIndexMap)
-                loopEdge[idx] = *p;
-        }
-        if (total >= PARALLEL_BUILD_MIN) {
-            foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
+        // Pass 2: fill loopEdge[] for every half-edge by looking up
+        // its undirected edge index.
+        //
+        // P2 (doc/subpatch_tab_perf_plan.md): the AA `edgeIndexMap`
+        // was the dominant hot symbol at 786K preview edges (build +
+        // parallel reads ≈ 14% of CPU). Two paths:
+        //
+        //   rebuildEdgeIndexMap=true (default, cage mesh ops):
+        //       Same as before — rebuild AA, then parallel `in`
+        //       reads. External callers (bevel, subpatch_osd's cage
+        //       reads, edgeIndex/edgeIndexByKey) need the AA, so we
+        //       still pay this on the cage. Cage edge count is
+        //       small (≈12 for a cube, ≤ few K for typical meshes).
+        //
+        //   rebuildEdgeIndexMap=false (subpatch preview path):
+        //       Build a one-shot sorted (key, idx) view, use
+        //       parallel binary-search lookups, leave edgeIndexMap
+        //       empty. At 786K edges binary search (≈20 cmps) is
+        //       comparable to AA hash + open-addressing probes, but
+        //       allocation-bounded — no per-entry GC hits.
+        if (rebuildEdgeIndexMap) {
+            edgeIndexMap = null;
+            foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
+            void fillLoopEdge(size_t idx) {
+                uint u = loops[idx].vert;
+                uint v = loops[loops[idx].next].vert;
+                if (auto p = edgeKey(u, v) in edgeIndexMap)
+                    loopEdge[idx] = *p;
+            }
+            if (total >= PARALLEL_BUILD_MIN) {
+                foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
+            } else {
+                foreach (idx; 0 .. total) fillLoopEdge(idx);
+            }
         } else {
-            foreach (idx; 0 .. total) fillLoopEdge(idx);
+            // CSR-style vertex→edge adjacency. Two passes over edges,
+            // both linear. Per-lookup cost: walk the (small, hot)
+            // incidence list of one endpoint. On a quad mesh that's
+            // ~4 candidate edges per vertex.
+            buildLoopsEdgesAdjStart .length = vertices.length + 1;
+            buildLoopsEdgesAdjStart[] = 0;
+            foreach (e; edges) {
+                ++buildLoopsEdgesAdjStart[e[0] + 1];
+                ++buildLoopsEdgesAdjStart[e[1] + 1];
+            }
+            foreach (i; 1 .. buildLoopsEdgesAdjStart.length)
+                buildLoopsEdgesAdjStart[i] += buildLoopsEdgesAdjStart[i - 1];
+            buildLoopsEdgesAdj.length    = buildLoopsEdgesAdjStart[$ - 1];
+            buildLoopsEdgesAdjCursor.length = vertices.length;
+            buildLoopsEdgesAdjCursor[] = 0;
+            foreach (ei, e; edges) {
+                buildLoopsEdgesAdj[buildLoopsEdgesAdjStart[e[0]]
+                    + buildLoopsEdgesAdjCursor[e[0]]++] = cast(uint)ei;
+                buildLoopsEdgesAdj[buildLoopsEdgesAdjStart[e[1]]
+                    + buildLoopsEdgesAdjCursor[e[1]]++] = cast(uint)ei;
+            }
+
+            // edgeIndexMap is intentionally left empty — see contract
+            // comment in the function-level docstring.
+            edgeIndexMap = null;
+
+            // Const views shared into the parallel workers.
+            auto adjStart = buildLoopsEdgesAdjStart;
+            auto adj      = buildLoopsEdgesAdj;
+            auto edgesV   = edges;
+            void fillLoopEdge(size_t idx) {
+                uint u = loops[idx].vert;
+                uint v = loops[loops[idx].next].vert;
+                size_t lo = adjStart[u];
+                size_t hi = adjStart[u + 1];
+                for (size_t i = lo; i < hi; i++) {
+                    uint ei = adj[i];
+                    auto e = edgesV[ei];
+                    if ((e[0] == u && e[1] == v) ||
+                        (e[0] == v && e[1] == u))
+                    {
+                        loopEdge[idx] = ei;
+                        return;
+                    }
+                }
+            }
+            if (total >= PARALLEL_BUILD_MIN) {
+                foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
+            } else {
+                foreach (idx; 0 .. total) fillLoopEdge(idx);
+            }
         }
 
 

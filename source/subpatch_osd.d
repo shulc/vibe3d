@@ -902,7 +902,11 @@ struct OsdAccel {
 
         outMesh.mutationVersion = 1;
         outMesh.topologyVersion = 1;
-        outMesh.buildLoops();
+        // Preview mesh is consumed by gpu.upload, drawEdges,
+        // gpu_select, lasso — none of them query edgeIndexMap on the
+        // preview, so we pass rebuildEdgeIndexMap=false to skip the
+        // 786K-edge AA rebuild (was 10%+ of CPU before P2).
+        outMesh.buildLoops(/*rebuildEdgeIndexMap=*/false);
 
         // ---- SubpatchTrace ------------------------------------------
         // OSD's `*_origins[i]` index INTO OSD's own cage enumeration,
