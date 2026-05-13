@@ -408,21 +408,28 @@ private immutable string FAN_OUT_VERT_SRC = q{
     uniform  isamplerBuffer u_cornerToLimit;
     uniform usamplerBuffer  u_cornerToFaceId;
     uniform  isamplerBuffer u_faceFirstVerts;
-    uniform  samplerBuffer  u_limitPositions;
+    uniform  samplerBuffer  u_limitPositions; // R32F: 3 floats per vert
     out vec3 vPos;
     out vec3 vNorm;
+    vec3 fetchPos(int vi) {
+        int   o = vi * 3;
+        float x = texelFetch(u_limitPositions, o    ).r;
+        float y = texelFetch(u_limitPositions, o + 1).r;
+        float z = texelFetch(u_limitPositions, o + 2).r;
+        return vec3(x, y, z);
+    }
     void main() {
         int corner   = gl_VertexID;
         int limitIdx = texelFetch(u_cornerToLimit, corner).r;
-        vPos         = texelFetch(u_limitPositions, limitIdx).rgb;
+        vPos         = fetchPos(limitIdx);
 
         int fid = int(texelFetch(u_cornerToFaceId, corner).r);
         int a   = texelFetch(u_faceFirstVerts, fid * 3 + 0).r;
         int b   = texelFetch(u_faceFirstVerts, fid * 3 + 1).r;
         int c   = texelFetch(u_faceFirstVerts, fid * 3 + 2).r;
-        vec3 p0 = texelFetch(u_limitPositions, a).rgb;
-        vec3 p1 = texelFetch(u_limitPositions, b).rgb;
-        vec3 p2 = texelFetch(u_limitPositions, c).rgb;
+        vec3 p0 = fetchPos(a);
+        vec3 p1 = fetchPos(b);
+        vec3 p2 = fetchPos(c);
         vec3 n  = cross(p1 - p0, p2 - p0);
         float l = length(n);
         vNorm   = l > 1e-6 ? n / l : vec3(0, 1, 0);
@@ -445,11 +452,15 @@ private immutable string FAN_OUT_FRAG_SRC = q{
 private immutable string POS_FAN_OUT_VERT_SRC = q{
     #version 330 core
     uniform isamplerBuffer u_indexLookup;
-    uniform  samplerBuffer u_limitPositions;
+    uniform  samplerBuffer u_limitPositions; // R32F: 3 floats per vert
     out vec3 vPos;
     void main() {
-        int idx = texelFetch(u_indexLookup, gl_VertexID).r;
-        vPos    = texelFetch(u_limitPositions, idx).rgb;
+        int   idx = texelFetch(u_indexLookup, gl_VertexID).r;
+        int   o   = idx * 3;
+        float x   = texelFetch(u_limitPositions, o    ).r;
+        float y   = texelFetch(u_limitPositions, o + 1).r;
+        float z   = texelFetch(u_limitPositions, o + 2).r;
+        vPos      = vec3(x, y, z);
     }
 };
 private immutable string POS_FAN_OUT_FRAG_SRC = q{
@@ -557,7 +568,7 @@ struct OsdAccel {
     private GLuint  cornerToFaceIdTex;
     private GLuint  faceFirstVertsVbo;     // R32I  storage (3 ints / face)
     private GLuint  faceFirstVertsTex;
-    private GLuint  limitTex;              // RGB32F TBO over limitGlVbo
+    private GLuint  limitTex;              // R32F TBO over limitGlVbo (3 floats/vert)
     private GLuint  fanOutProgram;
     private GLint   locCornerToLimit;
     private GLint   locCornerToFaceId;
@@ -920,7 +931,13 @@ struct OsdAccel {
                 // Wrap it in a TBO view so the shader can texelFetch.
                 glGenTextures(1, &limitTex);
                 glBindTexture(GL_TEXTURE_BUFFER, limitTex);
-                glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, limitGlVbo);
+                // R32F (not RGB32F) so the limit position buffer
+                // works on any GL 3.3 driver — RGB32F texture-buffer
+                // format requires ARB_texture_buffer_object_rgb32 and
+                // wasn't reliably present on older Mesa stacks.
+                // Shader does three texelFetch calls per position
+                // (index*3 + 0/1/2) instead of one rgb fetch.
+                glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, limitGlVbo);
 
                 glBindBuffer (GL_TEXTURE_BUFFER, 0);
                 glBindTexture(GL_TEXTURE_BUFFER, 0);
