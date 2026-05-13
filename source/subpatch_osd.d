@@ -425,53 +425,74 @@ private immutable string FAN_OUT_FRAG_SRC = q{
     void main() {}
 };
 
+// Single-output fan-out — Phase 3c. Used to fill edge / vert VBOs
+// from OSD's per-limit-vert output. Same shape as the face fan-out
+// but emits one vec3 per dispatch (per edge endpoint or per kept
+// vert) instead of an interleaved pair. `u_indexLookup[gl_VertexID]`
+// indirects through the caller-supplied TBO into `u_limitPositions`.
+private immutable string POS_FAN_OUT_VERT_SRC = q{
+    #version 330 core
+    uniform isamplerBuffer u_indexLookup;
+    uniform  samplerBuffer u_limitPositions;
+    out vec3 vPos;
+    void main() {
+        int idx = texelFetch(u_indexLookup, gl_VertexID).r;
+        vPos    = texelFetch(u_limitPositions, idx).rgb;
+    }
+};
+private immutable string POS_FAN_OUT_FRAG_SRC = q{
+    #version 330 core
+    in vec3 vPos;
+    void main() {}
+};
+
 private import bindbc.opengl;
 
-/// Compile + link the fan-out program with transform-feedback varyings
-/// captured GL_INTERLEAVED_ATTRIBS into a single bound buffer (matches
-/// gpu.faceVbo's stride-6 layout). Returns 0 on failure.
-private GLuint compileFanOutProgram() {
+/// Generic GLSL compile helper — returns 0 on failure, logging the
+/// compile error to stderr.
+private GLuint compileShaderStage(GLenum stage, string src) {
     import std.stdio  : stderr;
     import std.string : toStringz;
     import std.conv   : to;
-
-    GLuint compile(GLenum stage, string src) {
-        GLuint sh = glCreateShader(stage);
-        const(char)* p = src.toStringz;
-        GLint    len = cast(GLint)src.length;
-        glShaderSource(sh, 1, &p, &len);
-        glCompileShader(sh);
-        GLint ok;
-        glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
-        if (!ok) {
-            char[1024] log;
-            glGetShaderInfoLog(sh, 1024, null, log.ptr);
-            try stderr.writeln("[osd fan-out] shader compile: ", log[].to!string);
-            catch (Exception) {}
-            glDeleteShader(sh);
-            return 0;
-        }
-        return sh;
+    GLuint sh = glCreateShader(stage);
+    const(char)* p = src.toStringz;
+    GLint        len = cast(GLint)src.length;
+    glShaderSource(sh, 1, &p, &len);
+    glCompileShader(sh);
+    GLint ok;
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char[1024] log;
+        glGetShaderInfoLog(sh, 1024, null, log.ptr);
+        try stderr.writeln("[osd fan-out] shader compile: ", log[].to!string);
+        catch (Exception) {}
+        glDeleteShader(sh);
+        return 0;
     }
+    return sh;
+}
 
-    GLuint vs = compile(GL_VERTEX_SHADER,   FAN_OUT_VERT_SRC);
+/// Link a vertex + fragment shader as a transform-feedback program
+/// with the named varyings captured by the given buffer mode.
+/// Returns 0 on failure.
+private GLuint linkTfProgram(string vertSrc, string fragSrc,
+                              const(char*)[] varyings,
+                              GLenum bufferMode)
+{
+    import std.stdio : stderr;
+    import std.conv  : to;
+    GLuint vs = compileShaderStage(GL_VERTEX_SHADER,   vertSrc);
     if (!vs) return 0;
-    GLuint fs = compile(GL_FRAGMENT_SHADER, FAN_OUT_FRAG_SRC);
+    GLuint fs = compileShaderStage(GL_FRAGMENT_SHADER, fragSrc);
     if (!fs) { glDeleteShader(vs); return 0; }
-
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vs);
     glAttachShader(prog, fs);
-
-    // Capture (vPos, vNorm) interleaved — matches gpu.faceVbo's
-    // (xyz, xyz) stride-6 layout exactly. Must be set BEFORE linking.
-    const(char)*[2] varyings = [ "vPos".toStringz, "vNorm".toStringz ];
-    glTransformFeedbackVaryings(prog, 2, varyings.ptr,
-                                 GL_INTERLEAVED_ATTRIBS);
+    glTransformFeedbackVaryings(prog, cast(GLsizei)varyings.length,
+                                 varyings.ptr, bufferMode);
     glLinkProgram(prog);
     glDeleteShader(vs);
     glDeleteShader(fs);
-
     GLint ok;
     glGetProgramiv(prog, GL_LINK_STATUS, &ok);
     if (!ok) {
@@ -483,6 +504,25 @@ private GLuint compileFanOutProgram() {
         return 0;
     }
     return prog;
+}
+
+/// Face-corner fan-out program — emits (vPos, vNorm) interleaved
+/// matching gpu.faceVbo's stride-6 layout.
+private GLuint compileFanOutProgram() {
+    import std.string : toStringz;
+    const(char)*[2] varyings = [ "vPos".toStringz, "vNorm".toStringz ];
+    return linkTfProgram(FAN_OUT_VERT_SRC, FAN_OUT_FRAG_SRC,
+                          varyings[], GL_INTERLEAVED_ATTRIBS);
+}
+
+/// Single-vec3 fan-out program — used for edge endpoint and kept-vert
+/// position writes (Phase 3c). One output (vPos) captured per
+/// dispatch.
+private GLuint compilePosFanOutProgram() {
+    import std.string : toStringz;
+    const(char)*[1] varyings = [ "vPos".toStringz ];
+    return linkTfProgram(POS_FAN_OUT_VERT_SRC, POS_FAN_OUT_FRAG_SRC,
+                          varyings[], GL_INTERLEAVED_ATTRIBS);
 }
 
 struct OsdAccel {
@@ -513,6 +553,17 @@ struct OsdAccel {
     private GLint   locLimitPositions;
     private int     faceVertCount;         // glDrawArrays count for TF
 
+    // Phase 3c — edge VBO + vert VBO fan-out (single-vec3 capture).
+    private GLuint  posFanOutProgram;
+    private GLint   locPosIndexLookup;
+    private GLint   locPosLimitPositions;
+    private GLuint  edgeSegToLimitVbo;     // R32I storage
+    private GLuint  edgeSegToLimitTex;     // TBO view
+    private int     edgeSegCount;          // dispatch count for refreshEdgeVbo
+    private GLuint  vertToLimitVbo;        // R32I storage
+    private GLuint  vertToLimitTex;        // TBO view
+    private int     keptVertCount;         // dispatch count for refreshVertVbo
+
     private int     limitVertCount;
     bool valid;
 
@@ -529,11 +580,18 @@ struct OsdAccel {
         if (faceFirstVertsTex != 0)      { glDeleteTextures(1, &faceFirstVertsTex); faceFirstVertsTex = 0; }
         if (limitTex != 0)               { glDeleteTextures(1, &limitTex); limitTex = 0; }
         if (fanOutProgram != 0)          { glDeleteProgram (fanOutProgram); fanOutProgram = 0; }
+        if (posFanOutProgram != 0)       { glDeleteProgram (posFanOutProgram); posFanOutProgram = 0; }
+        if (edgeSegToLimitVbo != 0)      { glDeleteBuffers (1, &edgeSegToLimitVbo); edgeSegToLimitVbo = 0; }
+        if (edgeSegToLimitTex != 0)      { glDeleteTextures(1, &edgeSegToLimitTex); edgeSegToLimitTex = 0; }
+        if (vertToLimitVbo != 0)         { glDeleteBuffers (1, &vertToLimitVbo); vertToLimitVbo = 0; }
+        if (vertToLimitTex != 0)         { glDeleteTextures(1, &vertToLimitTex); vertToLimitTex = 0; }
         if (osd !is null) { osdc_topology_destroy(osd); osd = null; }
         cageScratchXyz.length  = 0;
         limitScratchXyz.length = 0;
         limitVertCount         = 0;
         faceVertCount          = 0;
+        edgeSegCount           = 0;
+        keptVertCount          = 0;
         valid                  = false;
     }
 
@@ -543,6 +601,19 @@ struct OsdAccel {
         return fanOutProgram != 0 && limitGlVbo != 0
             && cornerToLimitVbo != 0 && cornerToFaceIdVbo != 0
             && faceFirstVertsVbo != 0 && limitTex != 0;
+    }
+
+    /// Phase 3c: GPU fan-out for the edge / vert VBOs is available.
+    /// Each independently gated — selective subpatch may produce an
+    /// empty kept-edge or kept-vert set, in which case the dispatch
+    /// count is 0 and the property reports false.
+    @property bool canFanOutEdges() const {
+        return posFanOutProgram != 0 && limitTex != 0
+            && edgeSegToLimitTex != 0 && edgeSegCount > 0;
+    }
+    @property bool canFanOutVerts() const {
+        return posFanOutProgram != 0 && limitTex != 0
+            && vertToLimitTex != 0 && keptVertCount > 0;
     }
 
     /// Free OSD resources at scope exit. The struct is owned by
@@ -854,6 +925,56 @@ struct OsdAccel {
                         fanOutProgram, "u_limitPositions");
                 }
             }
+
+            // ---- Phase 3c — edge + vert VBO fan-out lookups ----------
+            // Two more TBOs and a one-output shader. Iteration order
+            // MUST match GpuMesh.upload's edge / vert walks (kept-
+            // entry sequence, filtered by trace.{edge,vert}Origin).
+            {
+                int[] edgeSegToLimit;     // 2 ints per kept edge
+                int[] vertToLimit;        // 1 int per kept preview vert
+                foreach (ei, e; outMesh.edges) {
+                    immutable uint eo = ei < outTrace.edgeOrigin.length
+                                        ? outTrace.edgeOrigin[ei] : uint.max;
+                    if (eo == uint.max) continue;
+                    edgeSegToLimit ~= cast(int)e[0];
+                    edgeSegToLimit ~= cast(int)e[1];
+                }
+                foreach (pi; 0 .. limitVerts) {
+                    immutable uint vo = pi < outTrace.vertOrigin.length
+                                        ? outTrace.vertOrigin[pi] : uint.max;
+                    if (vo == uint.max) continue;
+                    vertToLimit ~= cast(int)pi;
+                }
+                edgeSegCount  = cast(int)edgeSegToLimit.length;
+                keptVertCount = cast(int)vertToLimit.length;
+
+                void uploadIntTbo(ref GLuint vbo, ref GLuint tex,
+                                   int[] data)
+                {
+                    if (data.length == 0) return;
+                    glGenBuffers(1, &vbo);
+                    glBindBuffer(GL_TEXTURE_BUFFER, vbo);
+                    glBufferData(GL_TEXTURE_BUFFER,
+                        cast(GLsizeiptr)(data.length * int.sizeof),
+                        data.ptr, GL_STATIC_DRAW);
+                    glGenTextures(1, &tex);
+                    glBindTexture(GL_TEXTURE_BUFFER, tex);
+                    glTexBuffer(GL_TEXTURE_BUFFER, GL_R32I, vbo);
+                }
+                uploadIntTbo(edgeSegToLimitVbo, edgeSegToLimitTex, edgeSegToLimit);
+                uploadIntTbo(vertToLimitVbo,    vertToLimitTex,    vertToLimit);
+                glBindBuffer (GL_TEXTURE_BUFFER, 0);
+                glBindTexture(GL_TEXTURE_BUFFER, 0);
+
+                posFanOutProgram = compilePosFanOutProgram();
+                if (posFanOutProgram != 0) {
+                    locPosIndexLookup    = glGetUniformLocation(
+                        posFanOutProgram, "u_indexLookup");
+                    locPosLimitPositions = glGetUniformLocation(
+                        posFanOutProgram, "u_limitPositions");
+                }
+            }
         }
 
         valid = true;
@@ -965,6 +1086,78 @@ struct OsdAccel {
         glUseProgram(cast(GLuint)prevProgram);
         glBindVertexArray(cast(GLuint)prevVao);
         return true;
+    }
+
+    /// Phase 3c — shared single-vec3 TF dispatch. Used by
+    /// refreshEdgeVbo and refreshVertVbo. Reads `indexLookupTex`'s
+    /// per-output entry → fetches from limitTex → writes one vec3
+    /// into `targetVbo` at offset 0. Assumes refreshIntoFaceVbo
+    /// already ran in this frame (limitGlVbo populated).
+    private bool runPosFanOut(GLuint indexLookupTex,
+                               GLuint targetVbo,
+                               int dispatchCount)
+    {
+        if (posFanOutProgram == 0 || limitTex == 0
+            || indexLookupTex == 0 || targetVbo == 0
+            || dispatchCount <= 0)
+            return false;
+
+        GLint prevProgram, prevVao, prevArrayBuf;
+        GLint prevActiveTex, prevTex0, prevTex1;
+        glGetIntegerv(GL_CURRENT_PROGRAM,       &prevProgram);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING,  &prevVao);
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING,  &prevArrayBuf);
+        glGetIntegerv(GL_ACTIVE_TEXTURE,        &prevActiveTex);
+
+        glUseProgram(posFanOutProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex0);
+        glBindTexture(GL_TEXTURE_BUFFER, indexLookupTex);
+        glUniform1i(locPosIndexLookup, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glGetIntegerv(GL_TEXTURE_BINDING_BUFFER, &prevTex1);
+        glBindTexture(GL_TEXTURE_BUFFER, limitTex);
+        glUniform1i(locPosLimitPositions, 1);
+
+        glBindVertexArray(cast(GLuint)prevVao);
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, targetVbo);
+        glEnable(GL_RASTERIZER_DISCARD);
+        glBeginTransformFeedback(GL_POINTS);
+        glDrawArrays(GL_POINTS, 0, dispatchCount);
+        glEndTransformFeedback();
+        glDisable(GL_RASTERIZER_DISCARD);
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_BUFFER, cast(GLuint)prevTex0);
+        glActiveTexture(cast(GLuint)prevActiveTex);
+        glBindBuffer(GL_ARRAY_BUFFER, cast(GLuint)prevArrayBuf);
+        glUseProgram(cast(GLuint)prevProgram);
+        glBindVertexArray(cast(GLuint)prevVao);
+        return true;
+    }
+
+    /// Phase 3c — fill caller's edge VBO directly from limitGlVbo.
+    /// Requires refreshIntoFaceVbo (or any path that ran the GPU
+    /// stencil eval) to have populated limitGlVbo this frame.
+    /// `expectedSegmentCount` must match the kept-edge segment count
+    /// (= 2 × num-kept-edges) recorded at buildPreview.
+    bool refreshEdgeVbo(GLuint targetEdgeVbo, int expectedSegmentCount) {
+        if (!canFanOutEdges) return false;
+        if (expectedSegmentCount != edgeSegCount) return false;
+        return runPosFanOut(edgeSegToLimitTex,
+                             targetEdgeVbo, edgeSegCount);
+    }
+
+    /// Phase 3c — fill caller's vert VBO directly from limitGlVbo.
+    /// `expectedVertCount` must match kept-vert count from buildPreview.
+    bool refreshVertVbo(GLuint targetVertVbo, int expectedVertCount) {
+        if (!canFanOutVerts) return false;
+        if (expectedVertCount != keptVertCount) return false;
+        return runPosFanOut(vertToLimitTex,
+                             targetVertVbo, keptVertCount);
     }
 
     /// Hot per-frame call: re-eval OSD's stencils against the current
