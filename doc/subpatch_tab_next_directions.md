@@ -199,6 +199,66 @@ is already minimised by A. Doesn't compete with A; layers on top.
 choices. Not a perf direction, more a quality direction; pick
 when subpatch quality on heavy cages becomes a felt issue.
 
+## Status (as of c14e34b)
+
+**A — LRU(2) topology cache: LANDED (`c14e34b`).** Implementation
+turned out simpler than the plan called for — OSD's
+`Far::TopologyRefiner` is immutable post-construction, so the
+"split create-refiner from create-stencil" route wasn't viable.
+Instead, the entire `osdc_topology_t*` is cached keyed by a hash
+over the full (face-vert topology, level, creases, corners)
+tuple. Two cached slots = both alternating Tab states stay warm.
+
+Headline result: **Tab median 256 → 77 ms (−70 % vs P5,
+−88 % vs the original 638 ms)**. Max stays ≈ 440 ms on the first
+cache miss; from toggle 3 onward both states are cached and
+toggles cost ≈ 70 ms each.
+
+**B — async preview build: DEFERRED.** After A landed, a reality-
+check on the residual 77 ms hot path reshuffled the cost-benefit:
+
+  • ~44 % of the 77 ms is `GpuMesh.upload + memmove` — GL upload
+    on the main thread, **cannot** move to a worker (driver
+    serialises GL across contexts).
+  • ~20 % is `buildPreview` D-side glue, half of which sets up
+    GL fan-out TBOs (also main-thread-only).
+  • ~10 % is `CpuEvalStencils` + OSD CPU work — the only
+    genuinely async-able slice.
+  • Async-able share ≈ 10-15 ms of the 77 ms cache-hit cost.
+    Moving that off-thread saves 5-10 ms on the main thread —
+    imperceptible.
+
+Where async would still help: **cache-miss Tabs** (≈ 440 ms,
+first toggle and after sharpness changes). ~100-200 ms of the
+miss cost is `osdc_topology_create_sharp` — async-able. Main
+thread on miss could drop to ~150-250 ms instead of 440. Better
+UX on the *occasional* cold Tab, no improvement on the common
+case.
+
+Implementation cost: 5-6 commits, ~600 lines of new code
+introducing concurrency to the build pipeline (phase split,
+worker thread, polling + swap state machine, cancellation,
+async-path tests). Architecture complexity grows materially.
+
+**Decision: deferred to future work.** The bulk of the felt pain
+(repeated Tab toggles on a 24K cage) is solved by Direction A.
+Direction B's remaining win (one-off cold-Tab) is modest relative
+to the concurrency-complexity cost.
+
+When to revisit B:
+1. If a user-facing scenario routinely hits cold Tabs (e.g. an
+   onboarding flow where the user lands on a heavy mesh and the
+   first Tab feels jarring).
+2. If we add operations OTHER than Tab that take 100+ ms
+   synchronously (e.g. heavy bevels on multi-million-poly cages).
+   The infrastructure built for B would generalise.
+3. If GL drivers gain better async support (persistent mapped
+   buffers, explicit fences) such that the GL portion can also
+   be async-ed.
+
+**C — depth cap: stays deferred.** Not a perf direction; pick
+only when subpatch quality on heavy cages becomes a felt issue.
+
 ## Verification methodology
 
 Each direction has its own metric:
