@@ -2087,8 +2087,20 @@ void main(string[] args) {
                     if (!shift && !ctrl)
                         mesh.clearFaceSelection();
                     if (preview) {
-                        // Per cage face: every preview child must have all
-                        // visible verts inside the lasso.
+                        // Per cage face: every preview child that is BOTH
+                        // front-facing AND not occluded must have all its
+                        // verts inside the lasso for the cage face to be
+                        // selected. Occlusion gating via `pvVisible[vi]` —
+                        // without it, front-facing-but-hidden preview
+                        // polygons (e.g. the rim of the top cage face on a
+                        // subpatch-sphere viewed from the front) would
+                        // count for selection and the cage face on the far
+                        // side would be picked up by a lasso aimed at the
+                        // near side. Above VIS_OCCLUSION_LIMIT verts the
+                        // visibility table degrades to all-true (see
+                        // `pvVisible` init), so the back-face check is the
+                        // only filter on heavy meshes — proper fix needs
+                        // a GPU-pick-buffer lasso.
                         bool[] cageAllInside = new bool[](mesh.faces.length);
                         bool[] cageVisited   = new bool[](mesh.faces.length);
                         cageAllInside[] = true;
@@ -2099,6 +2111,14 @@ void main(string[] args) {
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
                             Vec3 fn = pv.faceNormal(cast(uint)fi);
                             if (dot(fn, pv.vertices[face[0]] - vp2.eye) >= 0) continue;
+                            // Occlusion: skip preview faces whose verts are
+                            // not all visible. Such a face has hidden parts
+                            // and shouldn't make the cage face selectable
+                            // through a lasso the user can see "around" it.
+                            bool allVisible = true;
+                            foreach (vi; face)
+                                if (!pvVisible[vi]) { allVisible = false; break; }
+                            if (!allVisible) continue;
                             cageVisited[cage] = true;
                             foreach (vi; face) {
                                 float sx, sy, ndcZ;
@@ -2120,6 +2140,13 @@ void main(string[] args) {
                             if (face.length < 3) continue;
                             Vec3 fn = mesh.faceNormal(cast(uint)fi);
                             if (dot(fn, mesh.vertices[face[0]] - vp2.eye) >= 0) continue;
+                            // Same occlusion gate as the subpatch path —
+                            // skip the face if any vert is hidden by
+                            // another face.
+                            bool allVisible = true;
+                            foreach (vi; face)
+                                if (!visible[vi]) { allVisible = false; break; }
+                            if (!allVisible) continue;
                             bool allInside = true;
                             foreach (vi; face) {
                                 float sx, sy, ndcZ;
