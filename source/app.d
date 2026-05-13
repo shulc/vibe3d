@@ -2860,16 +2860,21 @@ void main(string[] args) {
             }
 
             ImGui.Separator();
-            ImGui.Text("Camera");
-            ImGui.LabelText("Dist",  "%.2f", cameraView.distance);
-            ImGui.LabelText("Az",    "%.1f°", cast(double)(cameraView.azimuth   * 180.0 / PI));
-            ImGui.LabelText("El",    "%.1f°", cast(double)(cameraView.elevation * 180.0 / PI));
-
-            ImGui.Separator();
             ImGui.Text("Info");
-            ImGui.LabelText("Verts", "%d/%d", mesh.vertexSelectionOrderCounter, cast(int)mesh.vertices.length);
-            ImGui.LabelText("Edges", "%d/%d", mesh.edgeSelectionOrderCounter, cast(int)mesh.edges.length);
-            ImGui.LabelText("Faces", "%d/%d", mesh.faceSelectionOrderCounter, cast(int)mesh.faces.length);
+            // selectedN / totalN. The *SelectionOrderCounter fields
+            // are MONOTONIC (incremented on each pick, never
+            // decremented on deselect or selection-clear), so they
+            // can't be used as a live "how many are selected right
+            // now" readout. Walk the bool[] masks via countSelected.
+            ImGui.LabelText("V", "%d/%d",
+                countSelected(mesh.selectedVertices),
+                cast(int) mesh.vertices.length);
+            ImGui.LabelText("E", "%d/%d",
+                countSelected(mesh.selectedEdges),
+                cast(int) mesh.edges.length);
+            ImGui.LabelText("F", "%d/%d",
+                countSelected(mesh.selectedFaces),
+                cast(int) mesh.faces.length);
         }
         ImGui.End();
         popPanelChromeStyle();
