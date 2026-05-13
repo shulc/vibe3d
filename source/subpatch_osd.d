@@ -596,6 +596,33 @@ struct OsdAccel {
     // ("feedback loop"). A fresh VAO with no enabled attribs sidesteps
     // the loop check.
     private GLuint  tfVao;
+
+    // ---- Scratch buffers re-used across rebuilds. ------------------
+    // P0 of doc/subpatch_tab_perf_plan.md — every fresh `new T[]` in
+    // buildPreview hit the global GC spinlock at 24K cage polys (top
+    // sample at 10.5%). These slices keep their capacity across
+    // clear() so a second rebuild at the same N does no allocation.
+    // outMesh.faces[fi] is slice-aliased into scratchFaceIndices so the
+    // per-face uint[] allocations disappear too.
+    //
+    // NOTE — outMesh.faces[fi] dangles if `scratchFaceIndices.length`
+    // is set to 0 between buildPreview and the consumer's read. Don't
+    // clear it in clear(); buildPreview is the only writer, and it
+    // re-populates every fi before returning.
+    private int[]  scratchFaceCounts;
+    private int[]  scratchFaceIndicesI;     // OSD writes int; outMesh.faces views as uint
+    private int[]  scratchEdgeVerts;
+    private int[]  scratchFaceOrigins;
+    private int[]  scratchVertOrigins;
+    private int[]  scratchEdgeOrigins;
+    private int[]  scratchOsdCageEdgeVerts;
+    private uint[] scratchOsdToVibe3dCageEdge;
+    private int[]  scratchCornerToLimit;
+    private uint[] scratchCornerToFaceId;
+    private int[]  scratchFaceFirstVerts;
+    private int[]  scratchEdgeSegToLimit;
+    private int[]  scratchVertToLimit;
+
     bool valid;
 
     /// Free everything. Idempotent.
@@ -813,20 +840,30 @@ struct OsdAccel {
         }
 
         // ---- Read OSD limit topology + origin arrays -----------------
-        int[] faceCounts     = new int[](limitFaces);
-        int[] faceIndices    = new int[](limitIndices);
-        int[] edgeVertsRaw   = new int[](2 * limitEdges);
-        osdc_topology_limit_topology(osd, faceCounts.ptr, faceIndices.ptr);
-        osdc_topology_limit_edges   (osd, edgeVertsRaw.ptr);
+        // P0: scratch buffers live on OsdAccel; `.length = N` reuses
+        // the underlying GC block when N ≤ historical max — eliminates
+        // the per-rebuild `new int[]` allocations that dominated the
+        // GC spinlock at 24K cage polys.
+        scratchFaceCounts   .length = limitFaces;
+        scratchFaceIndicesI .length = limitIndices;
+        scratchEdgeVerts    .length = 2 * limitEdges;
+        osdc_topology_limit_topology(osd,
+            scratchFaceCounts   .ptr,
+            scratchFaceIndicesI .ptr);
+        osdc_topology_limit_edges   (osd, scratchEdgeVerts.ptr);
 
-        int[] faceOriginsRaw = new int[](limitFaces);
-        int[] vertOriginsRaw = new int[](limitVerts);
-        int[] edgeOriginsRaw = new int[](limitEdges);
-        osdc_topology_face_origins(osd, faceOriginsRaw.ptr);
-        osdc_topology_vert_origins(osd, vertOriginsRaw.ptr);
-        osdc_topology_edge_origins(osd, edgeOriginsRaw.ptr);
+        scratchFaceOrigins  .length = limitFaces;
+        scratchVertOrigins  .length = limitVerts;
+        scratchEdgeOrigins  .length = limitEdges;
+        osdc_topology_face_origins(osd, scratchFaceOrigins.ptr);
+        osdc_topology_vert_origins(osd, scratchVertOrigins.ptr);
+        osdc_topology_edge_origins(osd, scratchEdgeOrigins.ptr);
 
         // ---- Build preview Mesh.vertices via direct stencil eval -----
+        // Preview Mesh.vertices is allocated fresh because it's
+        // consumed by consumers outside OsdAccel (CPU readback into
+        // preview.vertices via readLimitIntoPreview); aliasing into a
+        // scratch buffer would surprise them.
         outMesh.vertices = new Vec3[](limitVerts);
         osdc_evaluate(osd, cageScratchXyz.ptr,
                       cast(float*)outMesh.vertices.ptr);
@@ -835,19 +872,25 @@ struct OsdAccel {
         outMesh.edges.length = limitEdges;
         foreach (i; 0 .. limitEdges) {
             outMesh.edges[i] = [
-                cast(uint)edgeVertsRaw[2*i + 0],
-                cast(uint)edgeVertsRaw[2*i + 1],
+                cast(uint)scratchEdgeVerts[2*i + 0],
+                cast(uint)scratchEdgeVerts[2*i + 1],
             ];
         }
 
         // ---- Build preview Mesh.faces --------------------------------
+        // P0: outMesh.faces[fi] slice-aliases into scratchFaceIndicesI.
+        // Same bit layout (int vs uint, OSD always emits non-negative
+        // vertex indices), zero per-face allocation. Readers of
+        // outMesh.faces[fi] must not mutate via `[k] = ...` (would
+        // overwrite scratch) — `~= x` is safe (it reallocates behind
+        // the slice).
         outMesh.faces.length = limitFaces;
+        auto scratchFacesAsUint = cast(uint[]) scratchFaceIndicesI;
         int cursor = 0;
         foreach (fi; 0 .. limitFaces) {
-            int cnt = faceCounts[fi];
-            outMesh.faces[fi].length = cnt;
-            foreach (k; 0 .. cnt)
-                outMesh.faces[fi][k] = cast(uint)faceIndices[cursor++];
+            int cnt = scratchFaceCounts[fi];
+            outMesh.faces[fi] = scratchFacesAsUint[cursor .. cursor + cnt];
+            cursor += cnt;
         }
 
         outMesh.mutationVersion = 1;
@@ -865,22 +908,26 @@ struct OsdAccel {
         // edgeOriginGpu lookup, the polygon-edge highlight cache) we
         // translate it via OSD's own input-edge vertex-pair table
         // plus a (min,max) vertex-pair → vibe3d-cage-edge map.
-        outTrace.vertOrigin = new uint[](limitVerts);
-        outTrace.edgeOrigin = new uint[](limitEdges);
-        outTrace.faceOrigin = new uint[](limitFaces);
-        foreach (i, o; vertOriginsRaw)
+        outTrace.vertOrigin.length = limitVerts;
+        outTrace.edgeOrigin.length = limitEdges;
+        outTrace.faceOrigin.length = limitFaces;
+        foreach (i; 0 .. limitVerts) {
+            immutable int o = scratchVertOrigins[i];
             outTrace.vertOrigin[i] = (o < 0) ? uint.max : cast(uint)o;
-        foreach (i, o; faceOriginsRaw)
-            outTrace.faceOrigin[i] = cast(uint)o;
+        }
+        foreach (i; 0 .. limitFaces)
+            outTrace.faceOrigin[i] = cast(uint)scratchFaceOrigins[i];
 
         // Build OSD cage edge index → vibe3d cage edge index map.
         // Same key scheme as Mesh.edgeKey (min,max) → uint.
         immutable int osdCageEdges = osdc_topology_input_edge_count(osd);
-        int[] osdCageEdgeVerts;
-        if (osdCageEdges > 0) {
-            osdCageEdgeVerts = new int[](2 * osdCageEdges);
-            osdc_topology_input_edges(osd, osdCageEdgeVerts.ptr);
-        }
+        scratchOsdCageEdgeVerts.length = 2 * osdCageEdges;
+        if (osdCageEdges > 0)
+            osdc_topology_input_edges(osd, scratchOsdCageEdgeVerts.ptr);
+        // P1 territory but already-low-risk to scope tightly: the AA
+        // lives only inside this block, so it's allocation-bounded by
+        // cage.edges.length. Replacing it with a sorted (key, value)
+        // array is a separate commit.
         uint[ulong] vibe3dEdgeByVerts;
         foreach (ei, e; cage.edges) {
             uint a = e[0], b = e[1];
@@ -888,33 +935,35 @@ struct OsdAccel {
                       |  cast(ulong)(a < b ? b : a);
             vibe3dEdgeByVerts[key] = cast(uint)ei;
         }
-        uint[] osdToVibe3dCageEdge = new uint[](osdCageEdges);
-        osdToVibe3dCageEdge[] = uint.max;
+        scratchOsdToVibe3dCageEdge.length = osdCageEdges;
+        scratchOsdToVibe3dCageEdge[0 .. osdCageEdges] = uint.max;
         foreach (oi; 0 .. osdCageEdges) {
-            int a = osdCageEdgeVerts[2*oi + 0];
-            int b = osdCageEdgeVerts[2*oi + 1];
+            int a = scratchOsdCageEdgeVerts[2*oi + 0];
+            int b = scratchOsdCageEdgeVerts[2*oi + 1];
             if (a < 0 || b < 0) continue;
             ulong key = (cast(ulong)(a < b ? a : b) << 32)
                       |  cast(ulong)(a < b ? b : a);
             if (auto p = key in vibe3dEdgeByVerts)
-                osdToVibe3dCageEdge[oi] = *p;
+                scratchOsdToVibe3dCageEdge[oi] = *p;
         }
-        foreach (i, o; edgeOriginsRaw) {
+        foreach (i; 0 .. limitEdges) {
+            immutable int o = scratchEdgeOrigins[i];
             if (o < 0 || o >= osdCageEdges) {
                 outTrace.edgeOrigin[i] = uint.max;
             } else {
-                outTrace.edgeOrigin[i] = osdToVibe3dCageEdge[o];
+                outTrace.edgeOrigin[i] = scratchOsdToVibe3dCageEdge[o];
             }
         }
         // Per-preview-face subpatch flag inherits from its cage parent.
-        outTrace.subpatch = new bool[](limitFaces);
-        outMesh.isSubpatch.length = limitFaces;
-        foreach (i, o; faceOriginsRaw) {
+        outTrace.subpatch         .length = limitFaces;
+        outMesh.isSubpatch        .length = limitFaces;
+        foreach (i; 0 .. limitFaces) {
+            immutable int o = scratchFaceOrigins[i];
             bool parentMarked =
                 (o >= 0) && (o < cast(int)cage.isSubpatch.length)
                 && cage.isSubpatch[o];
-            outTrace.subpatch[i] = parentMarked;
-            outMesh.isSubpatch[i] = parentMarked;
+            outTrace.subpatch [i] = parentMarked;
+            outMesh .isSubpatch[i] = parentMarked;
         }
 
         outMesh.selectedVertices.length = limitVerts;
@@ -928,28 +977,41 @@ struct OsdAccel {
         // GpuMesh.upload's face-corner loop (face[0], face[i],
         // face[i+1] for i in 1..N-1) — that's what fanOut writes into.
         if (glEval !is null) {
-            int[]  cornerToLimit;
-            uint[] cornerToFaceId;
-            int[]  faceFirstVerts = new int[](3 * limitFaces);
+            // P0: pre-compute total face-corner count so the corner
+            // arrays are setLength()'d once instead of `~=`'d 3·N times
+            // per face (393K faces × 3 corners × 2 arrays ≈ 2.4M
+            // appends each rebuild).
+            size_t cornerCount = 0;
+            foreach (fi; 0 .. limitFaces) {
+                immutable size_t fl = outMesh.faces[fi].length;
+                if (fl >= 3) cornerCount += (fl - 2) * 3;
+            }
+
+            scratchCornerToLimit  .length =     cornerCount;
+            scratchCornerToFaceId .length =     cornerCount;
+            scratchFaceFirstVerts .length = 3 * limitFaces;
+
+            size_t cw = 0;
             foreach (fi; 0 .. limitFaces) {
                 const(uint)[] face = outMesh.faces[fi];
-                faceFirstVerts[3*fi + 0] =
+                scratchFaceFirstVerts[3*fi + 0] =
                     face.length >= 1 ? cast(int)face[0] : 0;
-                faceFirstVerts[3*fi + 1] =
+                scratchFaceFirstVerts[3*fi + 1] =
                     face.length >= 2 ? cast(int)face[1] : 0;
-                faceFirstVerts[3*fi + 2] =
+                scratchFaceFirstVerts[3*fi + 2] =
                     face.length >= 3 ? cast(int)face[2] : 0;
                 if (face.length < 3) continue;
                 for (uint i = 1; i + 1 < face.length; i++) {
-                    cornerToLimit  ~= cast(int)face[0];
-                    cornerToLimit  ~= cast(int)face[i];
-                    cornerToLimit  ~= cast(int)face[i + 1];
-                    cornerToFaceId ~= cast(uint)fi;
-                    cornerToFaceId ~= cast(uint)fi;
-                    cornerToFaceId ~= cast(uint)fi;
+                    scratchCornerToLimit [cw + 0] = cast(int)face[0];
+                    scratchCornerToLimit [cw + 1] = cast(int)face[i];
+                    scratchCornerToLimit [cw + 2] = cast(int)face[i + 1];
+                    scratchCornerToFaceId[cw + 0] = cast(uint)fi;
+                    scratchCornerToFaceId[cw + 1] = cast(uint)fi;
+                    scratchCornerToFaceId[cw + 2] = cast(uint)fi;
+                    cw += 3;
                 }
             }
-            faceVertCount = cast(int)cornerToLimit.length;
+            faceVertCount = cast(int)cw;
 
             if (faceVertCount > 0) {
                 // Allocate storage buffers + bind TBO views (one
@@ -969,11 +1031,14 @@ struct OsdAccel {
                 }
 
                 uploadTbo(cornerToLimitVbo,   cornerToLimitTex,
-                          cornerToLimit,   GL_R32I);
+                          scratchCornerToLimit[0 .. faceVertCount],
+                                                           GL_R32I);
                 uploadTbo(cornerToFaceIdVbo,  cornerToFaceIdTex,
-                          cornerToFaceId,  GL_R32UI);
+                          scratchCornerToFaceId[0 .. faceVertCount],
+                                                           GL_R32UI);
                 uploadTbo(faceFirstVertsVbo,  faceFirstVertsTex,
-                          faceFirstVerts,  GL_R32I);
+                          scratchFaceFirstVerts[0 .. 3 * limitFaces],
+                                                           GL_R32I);
 
                 // limitGlVbo already exists (Phase 3a allocation).
                 // Wrap it in a TBO view so the shader can texelFetch.
@@ -1013,23 +1078,42 @@ struct OsdAccel {
             // MUST match GpuMesh.upload's edge / vert walks (kept-
             // entry sequence, filtered by trace.{edge,vert}Origin).
             {
-                int[] edgeSegToLimit;     // 2 ints per kept edge
-                int[] vertToLimit;        // 1 int per kept preview vert
+                // P0: pre-count kept edges + kept verts so the lookup
+                // arrays are setLength()'d once instead of `~=`'d
+                // through 800K+ edges / 400K+ verts per rebuild.
+                size_t keptEdges = 0;
+                foreach (ei; 0 .. outMesh.edges.length) {
+                    immutable uint eo = ei < outTrace.edgeOrigin.length
+                                        ? outTrace.edgeOrigin[ei] : uint.max;
+                    if (eo != uint.max) ++keptEdges;
+                }
+                size_t keptVerts = 0;
+                foreach (pi; 0 .. limitVerts) {
+                    immutable uint vo = pi < outTrace.vertOrigin.length
+                                        ? outTrace.vertOrigin[pi] : uint.max;
+                    if (vo != uint.max) ++keptVerts;
+                }
+                scratchEdgeSegToLimit.length = 2 * keptEdges;
+                scratchVertToLimit   .length =     keptVerts;
+
+                size_t ew = 0;
                 foreach (ei, e; outMesh.edges) {
                     immutable uint eo = ei < outTrace.edgeOrigin.length
                                         ? outTrace.edgeOrigin[ei] : uint.max;
                     if (eo == uint.max) continue;
-                    edgeSegToLimit ~= cast(int)e[0];
-                    edgeSegToLimit ~= cast(int)e[1];
+                    scratchEdgeSegToLimit[ew + 0] = cast(int)e[0];
+                    scratchEdgeSegToLimit[ew + 1] = cast(int)e[1];
+                    ew += 2;
                 }
+                size_t vw = 0;
                 foreach (pi; 0 .. limitVerts) {
                     immutable uint vo = pi < outTrace.vertOrigin.length
                                         ? outTrace.vertOrigin[pi] : uint.max;
                     if (vo == uint.max) continue;
-                    vertToLimit ~= cast(int)pi;
+                    scratchVertToLimit[vw++] = cast(int)pi;
                 }
-                edgeSegCount  = cast(int)edgeSegToLimit.length;
-                keptVertCount = cast(int)vertToLimit.length;
+                edgeSegCount  = cast(int)ew;
+                keptVertCount = cast(int)vw;
 
                 void uploadIntTbo(ref GLuint vbo, ref GLuint tex,
                                    int[] data)
@@ -1044,8 +1128,10 @@ struct OsdAccel {
                     glBindTexture(GL_TEXTURE_BUFFER, tex);
                     glTexBuffer(GL_TEXTURE_BUFFER, GL_R32I, vbo);
                 }
-                uploadIntTbo(edgeSegToLimitVbo, edgeSegToLimitTex, edgeSegToLimit);
-                uploadIntTbo(vertToLimitVbo,    vertToLimitTex,    vertToLimit);
+                uploadIntTbo(edgeSegToLimitVbo, edgeSegToLimitTex,
+                              scratchEdgeSegToLimit[0 .. edgeSegCount]);
+                uploadIntTbo(vertToLimitVbo,    vertToLimitTex,
+                              scratchVertToLimit[0 .. keptVertCount]);
                 glBindBuffer (GL_TEXTURE_BUFFER, 0);
                 glBindTexture(GL_TEXTURE_BUFFER, 0);
 
