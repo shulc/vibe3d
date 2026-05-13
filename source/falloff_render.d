@@ -37,6 +37,16 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
     // colour clash is acceptable. Selection orange is unaffected.
     enum uint outlineCol = IM_COL32(100, 220, 230, 230);
 
+    // ImGui's foreground draw list spans the whole OS window — without
+    // a clip rect the overlay can spill over the tab bar / status bar
+    // / side panels surrounding the 3D viewport. Bound everything to
+    // the viewport rect so on-screen falloff geometry can't escape it.
+    dl.PushClipRect(ImVec2(cast(float)vp.x, cast(float)vp.y),
+                    ImVec2(cast(float)(vp.x + vp.width),
+                           cast(float)(vp.y + vp.height)),
+                    /*intersect_with_current_clip_rect=*/true);
+    scope(exit) dl.PopClipRect();
+
     final switch (cfg.type) {
         case FalloffType.None: return;
         case FalloffType.Linear: drawLinear(dl, cfg, vp, outlineCol); break;
