@@ -360,7 +360,7 @@ subdivide → select-all → bevel sequence.
 | Stage | Commit | subdiv-L4 | subdiv-L5 | subdiv-L6 | tab | bevel-384 |
 |---|---|---|---|---|---|---|
 | pre-A baseline | 8d3b2c4 | 19 | 21 | 44 | 358 | 83 |
-| A (FaceList wrapper) | — | — | — | — | — | — |
+| A (FaceList wrapper) | *this commit* | 19 | 21 | 47 | 367 | 84 |
 | B (migrate in-place) | — | — | — | — | — | — |
 | C (CSR shadow) | — | — | — | — | — | — |
 | D (drop shadow) | — | — | — | — | — | — |

@@ -42,7 +42,9 @@ struct MeshSnapshot {
         MeshSnapshot s;
         s.vertices             = mesh.vertices.dup;
         s.edges                = mesh.edges.dup;
-        s.faces                = mesh.faces.map!(f => f.dup).array;
+        // .range needed because the templated `map!` instantiation
+        // through `alias this` can't carry const(FaceList) cleanly.
+        s.faces                = mesh.faces.range.map!(f => f.dup).array;
         s.selectedVertices     = mesh.selectedVertices.dup;
         s.selectedEdges        = mesh.selectedEdges.dup;
         s.selectedFaces        = mesh.selectedFaces.dup;

@@ -15,6 +15,31 @@ private bool hasAnySelected(const bool[] sel) {
     return false;
 }
 
+/// Face vertex-index list, wrapping the underlying `uint[][]`
+/// storage. Stage A of doc/mesh_faces_flat_refactor_plan.md —
+/// `alias this` forwards every operation to the inner array, so this
+/// commit changes types in declarations only; every read/write/append/
+/// foreach call site keeps working unchanged. Later stages (C, D)
+/// will replace `_store` with CSR-style flat storage + an explicit
+/// API surface.
+///
+/// **Mutation contract** for stages C+: slices returned by `[fi]`
+/// will become read-only views into shared storage and will be
+/// invalidated by any FaceList mutator. Today the wrapper is
+/// transparent — callers still get a mutable `uint[]`. The audit pass
+/// for Stage B is documented in the plan doc.
+struct FaceList {
+    uint[][] _store;
+    alias _store this;
+
+    /// Underlying `uint[][]` view. Stage A's `alias this` covers the
+    /// common operator forms (length, [], ~=, foreach), but doesn't
+    /// always carry const-ness through templates like
+    /// `std.algorithm.map`. Use `.range` for those call sites — Stage
+    /// C / D will hold the CSR-backed equivalent stable here.
+    inout(uint[][]) range() inout return { return _store; }
+}
+
 /// Half-edge dart: represents the directed edge vert → next(vert) inside one face.
 struct Loop {
     uint vert;   // start vertex of this dart
@@ -27,7 +52,13 @@ struct Loop {
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
-    uint[][]  faces;
+    // Faces are stored through a FaceList wrapper to enable a staged
+    // migration toward flat (CSR-style) storage. See
+    // doc/mesh_faces_flat_refactor_plan.md for the multi-commit
+    // refactor; this commit (Stage A) introduces only the wrapper
+    // type with `alias this` to the underlying `uint[][]`, so every
+    // existing read/write/foreach call site keeps working unchanged.
+    FaceList faces;
 
     Loop[]     loops;        // all half-edge loops
     uint[]     faceLoop;     // faceLoop[fi] = index of first loop of face fi

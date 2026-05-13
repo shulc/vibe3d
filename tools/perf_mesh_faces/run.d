@@ -110,7 +110,13 @@ int main(string[] args) {
     killStaleVibe3d();
 
     // Phase 0 — launch vibe3d.
+    // `setpriv --pdeathsig SIGKILL --` makes the kernel send SIGKILL
+    // to vibe3d the instant the harness's main thread exits, no
+    // matter how (SIGKILL from sandbox, abort, segfault — the D
+    // scope(exit) cleanup won't run in those cases, but PDEATHSIG
+    // is enforced kernel-side).
     string[] vibe3dArgs = [
+        "setpriv", "--pdeathsig", "SIGKILL", "--",
         vibe3d, "--test", "--http-port", port.to!string,
     ];
     writefln("[pmf] spawn: %s", vibe3dArgs.join(" "));
