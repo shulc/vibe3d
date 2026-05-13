@@ -639,13 +639,44 @@ struct OsdAccel {
     private struct EdgeKv { ulong key; uint value; }
     private EdgeKv[] scratchVibe3dEdgeKv;
 
+    // Direction A (doc/subpatch_tab_next_directions.md): LRU(2) cache
+    // of the heavy OSD-side state, keyed by a hash over the
+    // (face-vert topology, level, creases, corners) tuple. OSD's
+    // `Far::TopologyRefiner` is immutable post-construction —
+    // sharpness markers are baked in at refinement time — so the
+    // cache key MUST include the sharpness vector. Back-and-forth Tab
+    // toggling on a 24K cage flips between two distinct sharpness
+    // vectors; LRU(2) gives a 100 % hit rate after one full cycle and
+    // skips the StencilBuilder / QuadRefinement / topology-create
+    // work that dominates ~28 % of Tab CPU after the P0-P5 wins.
+    private struct CachedTopology {
+        ulong                 keyHash;          // 0 = slot empty
+        osdc_topology_t*      osd;
+        osdc_gl_evaluator_t*  glEval;
+        GLuint                cageGlVbo;
+        GLuint                limitGlVbo;
+        int                   numCageVerts;
+        int                   limitVerts;
+        size_t                lastUseEpoch;     // monotonic; LRU = smaller
+    }
+    private CachedTopology[2] topologyCache;
+    private size_t            cacheEpoch;       // incremented on every hit/miss
+
     bool valid;
 
-    /// Free everything. Idempotent.
+    /// Reset per-rebuild state. The OSD-side handles (osd, glEval,
+    /// cageGlVbo, limitGlVbo) are OWNED BY `topologyCache` and live
+    /// across clear()s. This call just zeroes our local references
+    /// to whichever cache slot was last active and frees the
+    /// per-build fan-out infrastructure that we always rebuild from
+    /// scratch (TBOs, programs, the empty TF VAO).
     void clear() {
-        if (glEval !is null) { osdc_gl_destroy(glEval); glEval = null; }
-        if (cageGlVbo != 0)              { glDeleteBuffers (1, &cageGlVbo); cageGlVbo = 0; }
-        if (limitGlVbo != 0)             { glDeleteBuffers (1, &limitGlVbo); limitGlVbo = 0; }
+        // OSD-side handles: cache owns; just null the local refs.
+        osd       = null;
+        glEval    = null;
+        cageGlVbo = 0;
+        limitGlVbo = 0;
+
         if (cornerToLimitVbo != 0)       { glDeleteBuffers (1, &cornerToLimitVbo); cornerToLimitVbo = 0; }
         if (cornerToFaceIdVbo != 0)      { glDeleteBuffers (1, &cornerToFaceIdVbo); cornerToFaceIdVbo = 0; }
         if (faceFirstVertsVbo != 0)      { glDeleteBuffers (1, &faceFirstVertsVbo); faceFirstVertsVbo = 0; }
@@ -660,7 +691,8 @@ struct OsdAccel {
         if (edgeSegToLimitTex != 0)      { glDeleteTextures(1, &edgeSegToLimitTex); edgeSegToLimitTex = 0; }
         if (vertToLimitVbo != 0)         { glDeleteBuffers (1, &vertToLimitVbo); vertToLimitVbo = 0; }
         if (vertToLimitTex != 0)         { glDeleteTextures(1, &vertToLimitTex); vertToLimitTex = 0; }
-        if (osd !is null) { osdc_topology_destroy(osd); osd = null; }
+        // Note: `osd` is NOT destroyed here — see field-level
+        // comment. The cache owns it; clear() just zeroed our ref.
         cageScratchXyz.length  = 0;
         limitScratchXyz.length = 0;
         limitVertCount         = 0;
@@ -668,6 +700,68 @@ struct OsdAccel {
         edgeSegCount           = 0;
         keptVertCount          = 0;
         valid                  = false;
+    }
+
+    /// Free every cached OSD handle and GL resource. Call at app
+    /// teardown to avoid leaking the LRU(2) cache contents. Not
+    /// called from anywhere yet — `OsdAccel` is process-lived in the
+    /// current architecture (held by `SubpatchPreview` which lives
+    /// for the app's lifetime). Useful for unittest hygiene.
+    void destroyCache() {
+        foreach (ref e; topologyCache) {
+            if (e.glEval    !is null) osdc_gl_destroy(e.glEval);
+            if (e.cageGlVbo != 0)     glDeleteBuffers(1, &e.cageGlVbo);
+            if (e.limitGlVbo != 0)    glDeleteBuffers(1, &e.limitGlVbo);
+            if (e.osd       !is null) osdc_topology_destroy(e.osd);
+            e = CachedTopology.init;
+        }
+    }
+
+    /// Look up a cached OSD topology by hash. On hit, populates osd /
+    /// glEval / cageGlVbo / limitGlVbo / limitVertCount on the
+    /// OsdAccel and returns true. On miss, returns false; caller
+    /// must build a fresh topology and call `installInCache` with
+    /// the same key.
+    private bool tryReuseCachedTopology(ulong keyHash) {
+        ++cacheEpoch;
+        foreach (ref e; topologyCache) {
+            if (e.keyHash != 0 && e.keyHash == keyHash) {
+                this.osd            = e.osd;
+                this.glEval         = e.glEval;
+                this.cageGlVbo      = e.cageGlVbo;
+                this.limitGlVbo     = e.limitGlVbo;
+                this.limitVertCount = e.limitVerts;
+                e.lastUseEpoch      = cacheEpoch;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Install a freshly-built OSD topology (and its derived GL
+    /// state) into the cache. Evicts the LRU slot if both are full.
+    private void installInCache(ulong keyHash, int numCageVerts) {
+        // Pick the slot to write into: prefer an empty slot, else
+        // the entry with the smaller lastUseEpoch (= LRU).
+        size_t slot = 0;
+        if (topologyCache[0].keyHash == 0) {
+            slot = 0;
+        } else if (topologyCache[1].keyHash == 0) {
+            slot = 1;
+        } else {
+            slot = (topologyCache[0].lastUseEpoch
+                    <= topologyCache[1].lastUseEpoch) ? 0 : 1;
+            // Evict the chosen slot's resources.
+            auto e = &topologyCache[slot];
+            if (e.glEval    !is null) osdc_gl_destroy(e.glEval);
+            if (e.cageGlVbo != 0)     glDeleteBuffers(1, &e.cageGlVbo);
+            if (e.limitGlVbo != 0)    glDeleteBuffers(1, &e.limitGlVbo);
+            if (e.osd       !is null) osdc_topology_destroy(e.osd);
+            *e = CachedTopology.init;
+        }
+        topologyCache[slot] = CachedTopology(
+            keyHash, osd, glEval, cageGlVbo, limitGlVbo,
+            numCageVerts, limitVertCount, cacheEpoch);
     }
 
     /// Phase 3b only: true iff the fan-out path is set up and can be
@@ -814,44 +908,77 @@ struct OsdAccel {
             } catch (Exception) {}
         }
 
-        // ---- Build OSD topology + stencil table ----------------------
-        osd = osdc_topology_create_sharp(
-            nv, nf,
-            faceVertCounts.ptr, faceVertIndices.ptr,
-            effectiveLevel,
-            cast(int)(creasePairs.length / 2),
-            creasePairs.length   ? creasePairs.ptr   : null,
-            creaseWeights.length ? creaseWeights.ptr : null,
-            cast(int)cornerVerts.length,
-            cornerVerts.length    ? cornerVerts.ptr    : null,
-            cornerWeights.length  ? cornerWeights.ptr  : null);
-        if (osd is null) { clear(); return false; }
+        // ---- Compute topology-cache key -------------------------------
+        // Hashes the full (face-vert topology, level, creases,
+        // corners) tuple. A Tab toggle that flips the cage's
+        // isSubpatch flags produces a DIFFERENT key (different
+        // creases / corners) — so back-and-forth toggling oscillates
+        // between two distinct keys. LRU(2) holds both after one
+        // full cycle and never re-builds the OSD topology again.
+        ulong topoKey;
+        {
+            import core.internal.hash : hashOf;
+            topoKey = hashOf(nv);
+            topoKey = hashOf(nf, topoKey);
+            topoKey = hashOf(effectiveLevel, topoKey);
+            topoKey = hashOf(faceVertCounts,  topoKey);
+            topoKey = hashOf(faceVertIndices, topoKey);
+            topoKey = hashOf(creasePairs,   topoKey);
+            topoKey = hashOf(creaseWeights, topoKey);
+            topoKey = hashOf(cornerVerts,   topoKey);
+            topoKey = hashOf(cornerWeights, topoKey);
+            // Guard against the sentinel "empty slot" hash colliding
+            // with a real key. 1-in-2^64 chance, but mapping zero to
+            // a fixed non-zero value costs nothing.
+            if (topoKey == 0) topoKey = 1;
+        }
 
-        immutable int limitVerts   = osdc_topology_limit_vert_count(osd);
+        bool cacheHit = tryReuseCachedTopology(topoKey);
+
+        if (!cacheHit) {
+            // ---- Cache miss: build a fresh OSD topology -----------
+            osd = osdc_topology_create_sharp(
+                nv, nf,
+                faceVertCounts.ptr, faceVertIndices.ptr,
+                effectiveLevel,
+                cast(int)(creasePairs.length / 2),
+                creasePairs.length   ? creasePairs.ptr   : null,
+                creaseWeights.length ? creaseWeights.ptr : null,
+                cast(int)cornerVerts.length,
+                cornerVerts.length    ? cornerVerts.ptr    : null,
+                cornerWeights.length  ? cornerWeights.ptr  : null);
+            if (osd is null) { clear(); return false; }
+
+            limitVertCount = osdc_topology_limit_vert_count(osd);
+
+            // GL evaluator + buffers, sized to this topology.
+            glEval = g_osdGpuEnabled ? osdc_gl_create(osd) : null;
+            if (glEval !is null) {
+                import bindbc.opengl;
+                glGenBuffers(1, &cageGlVbo);
+                glGenBuffers(1, &limitGlVbo);
+                glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
+                glBufferData(GL_ARRAY_BUFFER,
+                    cast(GLsizeiptr)(3 * nv * float.sizeof),
+                    null, GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
+                glBufferData(GL_ARRAY_BUFFER,
+                    cast(GLsizeiptr)(3 * limitVertCount * float.sizeof),
+                    null, GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+            }
+
+            installInCache(topoKey, nv);
+        }
+        // Either way (hit or miss), `osd / glEval / cageGlVbo /
+        // limitGlVbo / limitVertCount` are populated.
+
+        immutable int limitVerts   = limitVertCount;
         immutable int limitFaces   = osdc_topology_limit_face_count(osd);
         immutable int limitIndices = osdc_topology_limit_index_count(osd);
         immutable int limitEdges   = osdc_topology_limit_edge_count(osd);
-        limitVertCount = limitVerts;
 
-        // ---- Try to spin up the GL evaluator -------------------------
-        // Gated on `g_osdGpuEnabled` — app.d sets it after GL init +
-        // smoke-test succeeds. Without an active GL context (e.g.
-        // `dub test` runs) osdc_gl_create would segfault, so we
-        // simply skip and the refresh path stays on CPU eval.
-        glEval = g_osdGpuEnabled ? osdc_gl_create(osd) : null;
         if (glEval !is null) {
-            import bindbc.opengl;
-            glGenBuffers(1, &cageGlVbo);
-            glGenBuffers(1, &limitGlVbo);
-            glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
-            glBufferData(GL_ARRAY_BUFFER,
-                cast(GLsizeiptr)(3 * nv * float.sizeof),
-                null, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
-            glBufferData(GL_ARRAY_BUFFER,
-                cast(GLsizeiptr)(3 * limitVerts * float.sizeof),
-                null, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
             limitScratchXyz.length = 3 * limitVerts;
         }
 

@@ -399,7 +399,8 @@ subdivide → select-all → bevel sequence.
 | pre-A baseline | 8d3b2c4 | 19 | 21 | 44 | 358 | 83 |
 | A (FaceList wrapper) | 26f31ea | 19 | 21 | 47 | 367 | 84 |
 | B (migrate in-place) | 2d7fdd5 | 17 | 23 | 36 | 321 | 85 |
-| B' (audit miss fix: bevel.replaceVertInFace) | *this commit* | 17 | 21 | 37 | 353 | 83 |
+| B' (audit miss fix: bevel.replaceVertInFace) | b11399b | 17 | 21 | 37 | 353 | 83 |
+| **Direction A — OSD topology LRU cache** (subpatch_tab_next_directions) | *parallel commit* | 19 | 21 | 40 | **129** | 87 |
 | C (CSR shadow) | — | — | — | — | — | — |
 | D (drop shadow) | — | — | — | — | — | — |
 | E (bulk-install in buildPreview) | — | — | — | — | — | — |

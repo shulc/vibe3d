@@ -16,7 +16,8 @@ stops perceiving a stall when toggling subpatch on heavy meshes.
 | P2 (e952aec)       | 470 | −13% | −26 %  | CSR adjacency in buildLoops for preview path |
 | P3 (bf81feb)       | 336 | −29% | −47 %  | pre-sized + index-write GpuMesh.upload buffers |
 | P4 (f2b79f2)       | 305 |  −9% | −52 %  | skip Mesh.buildLoops on the preview mesh — no consumer reads loops/edgeIndexMap on it |
-| P5 (8d3b2c4)       | 256 | −16% | **−60 %** | grow-only setLength on GpuMesh.upload's float scratch (was 7.88 % of CPU on shrink-then-regrow) |
+| P5 (8d3b2c4)       | 256 | −16% | −60 %  | grow-only setLength on GpuMesh.upload's float scratch (was 7.88 % of CPU on shrink-then-regrow) |
+| **Direction A** (*this commit*) | **77** | **−70 %** | **−88 %** | LRU(2) OSD topology cache keyed by sharpness hash — back-and-forth Tab toggles hit the cache and skip the StencilBuilder / refiner work entirely. See `doc/subpatch_tab_next_directions.md`. |
 
 Median 638 → **256 ms** ; max 1029 → 454 ms. Plan target of ≤ 200 ms median
 not fully closed but within striking range; the remaining 56 ms / ~22 %
