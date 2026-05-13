@@ -253,3 +253,114 @@ public:
 
     bool isDragging() const { return active >= 0; }
 }
+
+// ---------------------------------------------------------------------------
+// Screen-falloff RMB-radius gesture.
+//
+// When the active toolpipe has a FalloffStage of type Screen (e.g. the
+// xfrm.softDrag preset), RMB is repurposed: click sets the falloff
+// center to the cursor, drag along +X grows the radius. The disc
+// already renders through drawFalloffOverlay() from the FalloffPacket
+// the stage publishes — we only mutate the stage attributes here.
+//
+// Lives at module scope (not tied to any tool) because the gesture
+// belongs to the falloff system itself: any tool that activates Screen
+// falloff inherits it without overriding RMB handling. app.d's RMB
+// dispatch consults `screenFalloffActive()` first and routes to these
+// helpers instead of starting a selection lasso.
+// ---------------------------------------------------------------------------
+private bool  rmbScreenDragActive_ = false;
+private int   rmbScreenDragX0_     = 0;
+private int   rmbScreenDragY0_     = 0;
+// Bracketed by tools that consume screen falloff at LMB-down /
+// LMB-up of their own drags (MoveTool when dragAxis transitions in
+// and out of >=0). Drives `screenFalloffOverlayVisible()` so the
+// disc renders for the duration of an active soft-drag pull as
+// well as for the RMB-radius gesture.
+private bool  lmbScreenDragActive_ = false;
+
+bool screenFalloffActive() {
+    import toolpipe.stages.falloff : FalloffStage;
+    if (g_pipeCtx is null) return false;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto fs = cast(FalloffStage)s;
+        if (fs is null) return false;
+        return fs.type == FalloffType.Screen;
+    }
+    return false;
+}
+
+bool screenFalloffRMBDragging() { return rmbScreenDragActive_; }
+
+/// Tools call these at the start / end of an LMB drag they want the
+/// Screen-falloff overlay to track. End is unconditional / idempotent
+/// — safe to call from the generic drag-end path even when no drag
+/// was started under screen falloff.
+void screenFalloffLMBBegin() { lmbScreenDragActive_ = true;  }
+void screenFalloffLMBEnd()   { lmbScreenDragActive_ = false; }
+
+/// True when the Screen-falloff disc overlay should be visible:
+/// either the RMB radius gesture is in flight, or a tool is mid-LMB
+/// drag with screen falloff active. Outside both, the disc stays
+/// hidden so it doesn't clutter the viewport during idle tool use.
+bool screenFalloffOverlayVisible() {
+    return rmbScreenDragActive_ || lmbScreenDragActive_;
+}
+
+private void pushScreenFalloff(float cx, float cy, float size) {
+    if (g_pipeCtx is null) return;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto st = cast(Stage)s;
+        st.setAttr("screenCx",   format("%g", cx));
+        st.setAttr("screenCy",   format("%g", cy));
+        st.setAttr("screenSize", format("%g", size));
+        break;
+    }
+}
+
+/// Push only the center (cx, cy) of the screen falloff disc, leaving
+/// the current radius untouched. Transform tools call this on LMB-down
+/// so the falloff re-centers at every fresh grab. Safe to call when
+/// the pipeline has no falloff stage (returns silently).
+void screenFalloffSetCenter(int x, int y) {
+    if (g_pipeCtx is null) return;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto st = cast(Stage)s;
+        st.setAttr("screenCx", format("%g", cast(float)x));
+        st.setAttr("screenCy", format("%g", cast(float)y));
+        break;
+    }
+}
+
+/// Begin RMB-radius gesture: center the falloff disc at (x, y) with
+/// a minimal seed radius. Returns true so callers can early-out.
+bool screenFalloffRMBDown(int x, int y) {
+    rmbScreenDragActive_ = true;
+    rmbScreenDragX0_     = x;
+    rmbScreenDragY0_     = y;
+    pushScreenFalloff(cast(float)x, cast(float)y, 1.0f);
+    return true;
+}
+
+/// Update radius from the X-axis drag offset relative to the click
+/// point. The center stays pinned at the click location; only the
+/// radius tracks the cursor. Negative offsets clamp to 1 px so the
+/// disc never inverts.
+void screenFalloffRMBMotion(int x) {
+    if (!rmbScreenDragActive_) return;
+    float r = cast(float)(x - rmbScreenDragX0_);
+    if (r < 1.0f) r = 1.0f;
+    pushScreenFalloff(cast(float)rmbScreenDragX0_,
+                      cast(float)rmbScreenDragY0_, r);
+}
+
+/// End the gesture. Returns true iff a drag was active (so app.d can
+/// suppress lasso commit).
+bool screenFalloffRMBUp() {
+    if (!rmbScreenDragActive_) return false;
+    rmbScreenDragActive_ = false;
+    return true;
+}

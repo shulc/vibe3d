@@ -52,8 +52,9 @@ void assertPreset(string toolId, string wantType, string wantTransparent) {
               ~ ", got " ~ a["transparent"]);
 }
 
-unittest { // softDrag = Move + Screen + transparent
-    assertPreset("xfrm.softDrag", "screen", "true");
+unittest { // softDrag = Move + Screen, camera-facing-only (matches
+           // MODO's `resrc/presets.cfg` xfrm.softDrag = `trans integer 0`)
+    assertPreset("xfrm.softDrag", "screen", "false");
 }
 
 unittest { // softMove = Move + Radial

@@ -202,6 +202,10 @@ public:
         }
         wholeMeshDrag = false;
         dragAxis = -1;
+        {
+            import falloff_handles : screenFalloffLMBEnd;
+            screenFalloffLMBEnd();
+        }
         // 7.3d: drag is over — drop the snap highlight so it doesn't
         // linger after the gizmo settles.
         lastSnap = SnapResult.init;
@@ -230,6 +234,19 @@ public:
         // / selection change / new tool session start. The user gets
         // ONE undo entry per tool session, matching MODO's
         // tool-pipe-style "live tool" semantics.
+        //
+        // BrushReset opt-out: presets that set ToolFlag.BrushReset
+        // (e.g. xfrm.softDrag — mirrors LXfTMOD_BRUSHRESET in MODO's
+        // `lxvmodel.h`) treat each LMB drag as one atomic stroke.
+        // Release bakes the drag to history and the next LMB-down
+        // starts a fresh edit baseline at the new grab point; without
+        // this the falloff weights would re-apply onto stale baseline
+        // verts (original positions from the first drag), making
+        // subsequent pulls visibly rubber-band toward the original
+        // mesh.
+        import tool : ToolFlag;
+        if (hasFlag(ToolFlag.BrushReset) && editIsOpen())
+            commitEdit("Move");
         return true;
     }
 
@@ -263,6 +280,18 @@ public:
         bool ctrl = (mods & KMOD_CTRL) != 0;
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
 
+        // Soft Drag: re-center the screen-falloff disc at the click
+        // point on every fresh grab. Must happen BEFORE
+        // captureFalloffForDrag() below so the snapshot picks up the
+        // new center. No-op when the active pipeline doesn't have a
+        // Screen-type falloff stage.
+        {
+            import falloff_handles : screenFalloffActive,
+                                     screenFalloffSetCenter;
+            if (screenFalloffActive())
+                screenFalloffSetCenter(e.x, e.y);
+        }
+
         // Falloff endpoint handles take priority over the move arrows
         // when the click lands on one — otherwise an X-arrow drag and a
         // falloff start handle near each other would conflict.
@@ -289,6 +318,16 @@ public:
             // at the start of a NEW edit session.
             if (!editIsOpen())
                 dragDelta = Vec3(0, 0, 0);
+            // Tell the falloff overlay an LMB-drag has begun so the
+            // screen disc renders for the duration of the pull. No-op
+            // when screen falloff isn't active (overlay short-circuits
+            // on type anyway).
+            {
+                import falloff_handles : screenFalloffActive,
+                                         screenFalloffLMBBegin;
+                if (screenFalloffActive())
+                    screenFalloffLMBBegin();
+            }
             buildVertexCacheIfNeeded();
             // Phase 7.5: capture the falloff packet before deciding on
             // wholeMeshDrag — when falloff is active, per-vertex weights

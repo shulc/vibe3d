@@ -17,10 +17,20 @@ presets:
   # ----- Deform sub-tab (D.1 of doc/deform_plan.md) ---------------
   - id: xfrm.softDrag
     base: move
+    # MODO's softDrag is a brush-style tool: each LMB drag is one
+    # atomic action that commits to history; the next click starts a
+    # fresh weighted pull from the new grab point instead of piling
+    # onto the previous baseline. Maps to LXfTMOD_BRUSHRESET in
+    # `lxvmodel.h`.
+    flags: [brushReset]
     pipe:
       falloff:
         type: screen
-        transparent: "true"
+        # MODO's `resrc/presets.cfg` ships xfrm.softDrag (and the bare
+        # falloff.screen preset) with `trans integer 0` — camera-
+        # facing only. Verts behind the camera don't participate in
+        # the drag; flip to "true" only for through-the-mesh deform.
+        transparent: "false"
 
   - id: xfrm.softMove
     base: move

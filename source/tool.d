@@ -9,10 +9,47 @@ import params : Param, ParamHints, ParamProvider;
 import editmode : EditMode;
 
 // ---------------------------------------------------------------------------
+// Tool flags. Mirrors MODO's tool-level bits in `lxtool.h`
+// (`LXf_TOOL_*`) and `lxvmodel.h` (`LXfTMOD_*`). Presets opt in by
+// listing the names under a `flags:` block in
+// `config/tool_presets.yaml`; the preset loader ORs them into the
+// freshly-constructed Tool's `presetFlags`. Tools query
+// `hasFlag(ToolFlag.X)` to fork on behaviour without duplicating
+// preset state in their own classes.
+//
+// Naming follows MODO directly so the mapping stays obvious:
+//
+// - `Immediate`  : `LXf_TOOL_IMMEDIATE` — deactivate on mouse-up
+//                  (one-shot tool, no further edits in the same
+//                  session). Not yet consumed by any tool here.
+// - `BrushReset` : `LXfTMOD_BRUSHRESET` — reset the edit baseline
+//                  between strokes. Used by `xfrm.softDrag` so each
+//                  LMB drag commits to history and the next click
+//                  starts a fresh weighted pull from the new grab
+//                  point (instead of accumulating onto the original
+//                  baseline and rubber-banding back).
+// ---------------------------------------------------------------------------
+enum ToolFlag : uint {
+    None       = 0,
+    Immediate  = 1u << 0,
+    BrushReset = 1u << 1,
+}
+
+// ---------------------------------------------------------------------------
 // Tool — base class for all editing tools
 // ---------------------------------------------------------------------------
 
 class Tool : ParamProvider {
+    // Preset-applied behaviour bits — see `ToolFlag`. The preset
+    // loader writes this on the freshly-constructed tool before
+    // activation. Tools query via `hasFlag` rather than reading the
+    // mask directly so the bit names stay enforced by the type.
+    uint presetFlags = 0;
+
+    final bool hasFlag(ToolFlag f) const {
+        return (presetFlags & cast(uint)f) != 0;
+    }
+
     // Human-readable name shown in the UI.
     string name() const { return "Tool"; }
 

@@ -36,14 +36,24 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
     // candidates; falloff visualises an active stage attribute) so the
     // colour clash is acceptable. Selection orange is unaffected.
     enum uint outlineCol = IM_COL32(100, 220, 230, 230);
-    enum uint fillCol    = IM_COL32(100, 220, 230,  60);
 
     final switch (cfg.type) {
         case FalloffType.None: return;
-        case FalloffType.Linear: drawLinear(dl, cfg, vp, outlineCol);     break;
-        case FalloffType.Radial: drawRadial(dl, cfg, vp, outlineCol);     break;
-        case FalloffType.Screen: drawScreen(dl, cfg, outlineCol, fillCol); break;
-        case FalloffType.Lasso:  drawLasso (dl, cfg, outlineCol);         break;
+        case FalloffType.Linear: drawLinear(dl, cfg, vp, outlineCol); break;
+        case FalloffType.Radial: drawRadial(dl, cfg, vp, outlineCol); break;
+        case FalloffType.Screen:
+            // The Screen disc shows only while the user is actively
+            // interacting — RMB radius-adjust gesture, or an LMB
+            // pull driven by a tool that opted in via
+            // `screenFalloffLMBBegin`. Outside both, the current
+            // center/radius is implicit tool state, not something
+            // the user is configuring, so the overlay would just be
+            // visual noise on every frame of an idle soft-drag tool.
+            import falloff_handles : screenFalloffOverlayVisible;
+            if (!screenFalloffOverlayVisible()) return;
+            drawScreen(dl, cfg, outlineCol);
+            break;
+        case FalloffType.Lasso: drawLasso(dl, cfg, outlineCol); break;
     }
 }
 
@@ -144,13 +154,11 @@ private void drawRadial(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
 }
 
 private void drawScreen(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
-                        uint outline, uint fill)
+                        uint outline)
 {
     auto pos = ImVec2(cfg.screenCx, cfg.screenCy);
     float r = cfg.screenSize > 1.0f ? cfg.screenSize : 1.0f;
-    dl.AddCircleFilled(pos, r, fill, 32);
-    dl.AddCircle      (pos, r, outline, 32, 2.0f);
-    dl.AddCircleFilled(pos, 4.0f, outline, 12);
+    dl.AddCircle(pos, r, outline, 32, 2.0f);
 }
 
 private void drawLasso(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,

@@ -3,7 +3,7 @@ module tool_presets;
 import std.format : format;
 
 import registry         : Registry;
-import tool             : Tool;
+import tool             : Tool, ToolFlag;
 import toolpipe.pipeline : g_pipeCtx;
 
 // ---------------------------------------------------------------------------
@@ -25,6 +25,21 @@ struct ToolPreset {
     string                    id;            // e.g. "xfrm.softDrag"
     string                    base;          // base tool id, e.g. "move"
     string[string][string]    pipeAttrs;     // stageId → (key → value)
+    uint                      flags;         // OR of ToolFlag bits
+}
+
+// Map YAML flag name → ToolFlag bit. Names match the enum members
+// case-insensitively so `flags: [brushReset]` and `flags: [BrushReset]`
+// both parse. Mirrors MODO's `LXf_TOOL_*` / `LXfTMOD_*` semantics; see
+// the ToolFlag enum doc in `source/tool.d`.
+private uint parseToolFlag(string name) {
+    import std.uni : toLower;
+    import std.string : strip;
+    switch (toLower(strip(name))) {
+        case "immediate":  return ToolFlag.Immediate;
+        case "brushreset": return ToolFlag.BrushReset;
+        default: throw new Exception("tool_presets: unknown flag '" ~ name ~ "'");
+    }
 }
 
 ToolPreset[] loadToolPresets(string path) {
@@ -59,6 +74,21 @@ ToolPreset[] loadToolPresets(string path) {
                 p.pipeAttrs[stageId] = attrs;
             }
         }
+        if (node.containsKey("flags")) {
+            // Accept either a sequence (`flags: [brushReset]`) or a
+            // scalar (`flags: brushReset`). Mapping form is rejected —
+            // YAML mappings don't fit a bitmask.
+            Node fnode = node["flags"];
+            if (fnode.nodeID == NodeID.sequence) {
+                foreach (Node nm; fnode)
+                    p.flags |= parseToolFlag(nm.as!string);
+            } else if (fnode.nodeID == NodeID.scalar) {
+                p.flags |= parseToolFlag(fnode.as!string);
+            } else {
+                throw new Exception(format(
+                    "tool_presets: preset '%s' has non-sequence/scalar `flags`", p.id));
+            }
+        }
         presets ~= p;
     }
     return presets;
@@ -90,7 +120,9 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                     throw new Exception(format(
                         "tool_presets: base '%s' for preset '%s' vanished",
                         presetCopy.base, presetCopy.id));
-                return (*baseFactory)();
+                auto t = (*baseFactory)();
+                t.presetFlags = presetCopy.flags;
+                return t;
             };
         }
         void delegate() makePreActivate(ToolPreset presetCopy) {

@@ -2000,6 +2000,11 @@ void main(string[] args) {
 
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
+            import falloff_handles : screenFalloffActive, screenFalloffRMBDown;
+            if (screenFalloffActive()) {
+                screenFalloffRMBDown(btn.x, btn.y);
+                return;
+            }
             rmbDragging = true;
             rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
             // RMB lasso mutates selection on mouseUp; snapshot now.
@@ -2055,6 +2060,8 @@ void main(string[] args) {
 
     void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
+            import falloff_handles : screenFalloffRMBUp;
+            if (screenFalloffRMBUp()) return;
             if (rmbPath.length >= 3) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
@@ -2297,6 +2304,13 @@ void main(string[] args) {
         // position — so a later "clear-then-pick" click would re-select
         // the face under the old cursor instead of nothing.
         setOverrideMouse(mot.x, mot.y);
+        {
+            import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion;
+            if (screenFalloffRMBDragging()) {
+                screenFalloffRMBMotion(mot.x);
+                return;
+            }
+        }
         if (rmbDragging)
             rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
         if (activeTool && activeTool.onMouseMotion(mot)) return;
