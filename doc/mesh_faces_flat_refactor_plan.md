@@ -263,6 +263,101 @@ After each stage:
   `rdmd tools/perf_subpatch/run.d --no-build --tabs 30 --freq 4999 --capture 1`
   → median Tab ms drops by ≥ 30 from the post-P5 baseline (256 ms).
 
+## Dedicated perf harness — `tools/perf_mesh_faces/`
+
+The existing `tools/perf_subpatch/run.d` measures the Tab path
+end-to-end and is the headline regression guard. But it conflates the
+`Mesh.faces` cost with OSD work, GpuMesh.upload, buildLoops, and main
+loop overhead — making it hard to *isolate* whether a refactor stage
+moved the `Mesh.faces`-specific needle or got lost in the noise.
+
+Build a focused harness that exercises the `Mesh.faces` storage in
+four micro-scenarios, each timed individually and run under
+`perf record -p <pid>` after a warmup. Lives in
+`tools/perf_mesh_faces/run.d` and mirrors the perf_subpatch harness
+structure (rdmd shebang, attaches perf after setup, dumps
+out/perf.{data,txt,folded.txt}). HTTP-driven via vibe3d --test so
+nothing has to be linked into the binary.
+
+### Scenarios
+
+Each runs in isolation with --reset between iterations; numbers
+reported as min/avg/median/max over N repetitions.
+
+1. **addFace throughput** — build a mesh of M faces via repeated
+   `mesh.add_face` commands, time total wall-clock. Probes the
+   `faces ~= newFace` append path (post-refactor: a single
+   `_flat ~= verts` + `_offset ~= cum` per call).
+   - Tunable: `--addface-count N` (default 50 000).
+   - Headline metric: ms per 10 000 faces.
+
+2. **Subdivide round-trip** — reset → 6 × `mesh.subdivide` → measure
+   each subdivide's wall-clock. Exercises `catmullClarkOsd`
+   building the result mesh (3 × `result.faces.length = limitF` +
+   the in-place per-element writes that Stage B replaces).
+   - Headline metric: wall-clock per subdivide level.
+
+3. **Subpatch Tab** — same setup as perf_subpatch, but **only** the
+   Tab toggle. Doesn't re-implement the full perf_subpatch harness;
+   instead delegates to it as the canonical measurement for the
+   Tab regression and just records the median for cross-reference.
+
+4. **Bevel apply** — reset → cube → `mesh.subdivide × 4` (→ 1536
+   polys) → polygon-select all → `mesh.bevel inset:0.05 shift:0`
+   → measure command wall-clock. Exercises `mesh.faces[fi]` reads
+   plus `faces[fi] = newSlice` writes in `bevel.d` / `poly_bevel.d`.
+   - Headline metric: ms per bevel apply at 1536-poly cage.
+
+### Output
+
+Stdout summary (machine-parseable):
+
+```
+[perf_mesh_faces] addFace        : N=50000  min=… avg=… median=… max=… ms/10K=…
+[perf_mesh_faces] subdivide-L4   : min=… avg=… median=… max=…
+[perf_mesh_faces] subdivide-L5   : …
+[perf_mesh_faces] subpatch_tab   : median=… (via perf_subpatch)
+[perf_mesh_faces] bevel-1536     : min=… avg=… median=… max=…
+```
+
+Plus `tools/perf_mesh_faces/out/perf.txt` and `folded.txt` from the
+perf attach for symbol-level inspection.
+
+### Calibration — baseline numbers before Stage A
+
+Capture the pre-refactor numbers on `8d3b2c4` (current HEAD) so
+each subsequent stage has something to diff against:
+
+```
+rdmd tools/perf_mesh_faces/run.d --no-build --addface-count 50000
+```
+
+Record the four headline metrics in this doc's status table (below).
+The same command becomes the per-stage acceptance check.
+
+### Acceptance criteria per stage
+
+| Stage | Expected effect on perf_mesh_faces |
+|---|---|
+| A (FaceList wrapper) | All four scenarios flat ± 5 % vs baseline (sanity-check that the wrapper itself adds no overhead). |
+| B (migrate in-place mutators) | `subdivide-L4` / `subdivide-L5` flat ± 5 %; correctness only. |
+| C (CSR shadow) | Tab + subdivide may *rise* slightly (shadow doubles writes). Cap at +10 %. |
+| D (drop shadow) | Net win: addFace ≥ 15 % faster than baseline; subdivide ≥ 10 %; Tab and bevel ± 5 %. |
+| E (bulk-install in buildPreview) | Tab median ≥ 30 ms faster than baseline (256 → ≤ 226 ms). |
+| F (measure) | All metrics documented in the status table; commit `tools/perf_mesh_faces/run.d` and a summary row of headline numbers in this doc. |
+
+### Status table (filled in as stages land)
+
+| Stage | Commit | addFace ms/10K | subdivide-L4 ms | subdivide-L5 ms | Tab median ms | bevel-1536 ms |
+|---|---|---|---|---|---|---|
+| pre-A baseline | 8d3b2c4 | TBD | TBD | TBD | 256 | TBD |
+| A | — | — | — | — | — | — |
+| B | — | — | — | — | — | — |
+| C | — | — | — | — | — | — |
+| D | — | — | — | — | — | — |
+| E | — | — | — | — | — | — |
+| F | — | — | — | — | — | — |
+
 ## Out of scope
 
 - **Mesh.edges flat storage.** `Mesh.edges` is `uint[2][]` — already
