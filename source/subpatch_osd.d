@@ -221,12 +221,18 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
     if (!anyUnmarked) {
         // Full refinement — OSD's output IS the result mesh.
         result.vertices = osdVerts;
+        // Stage B of doc/mesh_faces_flat_refactor_plan.md: build a
+        // fresh `uint[]` per face and assign it via faces[k] = …
+        // instead of mutating an already-installed slice's contents
+        // in-place. This is the "replace whole face" pattern that the
+        // CSR storage in Stage C / D supports natively.
         result.faces.length = limitF;
         int cursor = 0;
         foreach (k; 0 .. limitF) {
-            result.faces[k].length = limitFC[k];
+            uint[] verts = new uint[](limitFC[k]);
             foreach (j; 0 .. limitFC[k])
-                result.faces[k][j] = cast(uint)limitFI[cursor++];
+                verts[j] = cast(uint)limitFI[cursor++];
+            result.faces[k] = verts;
         }
         // Edges direct from OSD.
         immutable int limitE = osdc_topology_limit_edge_count(osd);
@@ -295,13 +301,16 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
         // 3. Marked faces: OSD output, indices already in result-vert
         //    space (OSD limit-vert idx == result-vert idx for the
         //    leading limitV slots).
+        // Same "replace whole face" pattern as the !anyUnmarked
+        // branch above (Stage B of the Mesh.faces flat-refactor).
         result.faces.length = limitF;
         result.isSubpatch.length = limitF;
         int cursor = 0;
         foreach (k; 0 .. limitF) {
-            result.faces[k].length = limitFC[k];
+            uint[] verts = new uint[](limitFC[k]);
             foreach (j; 0 .. limitFC[k])
-                result.faces[k][j] = cast(uint)limitFI[cursor++];
+                verts[j] = cast(uint)limitFI[cursor++];
+            result.faces[k] = verts;
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
             if (cageFi < cast(int)cage.isSubpatch.length)
