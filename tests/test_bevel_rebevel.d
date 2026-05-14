@@ -20,6 +20,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import std.math : fabs;
 
 void main() {}
 
@@ -58,20 +59,40 @@ private JSONValue getModel() {
     return parseJSON(get("http://localhost:8080/api/model"));
 }
 
-// 16 CC²(cube) edges spanning the eight cube-corner regions: indices were
-// selected interactively in the session that surfaced this bug. They live
-// in the ring of cap edges introduced by the first CC pass.
-private static immutable int[] RING_EDGES = [
-     7, 11, 16, 20,  44,  49,  66,  70,
-   148, 151,154,157, 170, 174, 184, 187
-];
+// The 16 CC²(cube) "ring" edges — the silhouette ring on the X=0
+// plane of the doubly-subdivided cube. Geometrically: every edge
+// whose BOTH endpoints have x ≈ 0. That's a coherent closed ring
+// of 16 edges around the equator of the +X / −X cube hemispheres.
+//
+// Discovered via /api/model rather than hardcoded indices, because
+// vibe3d's subdivide implementation has been swapped at least once
+// (in-tree CC → OpenSubdiv) and may be swapped again. Each rewrite
+// preserves the geometry but renumbers the edges, so any captured
+// index list goes stale. The geometric criterion is invariant.
+private int[] discoverRingEdges(JSONValue m) {
+    auto verts = m["vertices"].array;
+    int[] ring;
+    foreach (ei, e; m["edges"].array) {
+        auto a = e[0].integer;
+        auto b = e[1].integer;
+        double xa = verts[a].array[0].floating;
+        double xb = verts[b].array[0].floating;
+        if (fabs(xa) < 1e-4 && fabs(xb) < 1e-4)
+            ring ~= cast(int)ei;
+    }
+    return ring;
+}
 
-// Set up CC²(cube) with the same 16-edge selection that triggered the bug.
+// Set up CC²(cube) with the X=0 silhouette ring selected.
 private void setupRing() {
     resetCube();
     subdivide();
     subdivide();
-    selectEdges(RING_EDGES.dup);
+    auto ring = discoverRingEdges(getModel());
+    assert(ring.length == 16,
+        "CC²(cube) should produce a 16-edge x=0 ring; got " ~
+        ring.length.to!string ~ " — subdivide topology changed?");
+    selectEdges(ring);
 }
 
 // ---- Invariant checks ----------------------------------------------------
