@@ -83,6 +83,32 @@ public:
     override string   id()       const                          { return "symmetry"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordSymm; }
 
+    /// Restore every mutable field to the default-constructed value.
+    /// Triggered by SceneReset (= `/api/reset`) so a "start fresh"
+    /// scene wipes the symmetry plane along with the mesh — otherwise
+    /// `enabled=true` and any non-X axisIndex leak into the next user
+    /// session.
+    override void reset() {
+        enabled       = false;
+        axisIndex     = 0;
+        offset        = 0.0f;
+        useWorkplane  = false;
+        topology      = false;
+        epsilonWorld  = 1e-4f;
+        baseSide      = +1;
+        // Drop the pairing cache too so the next evaluate rebuilds from
+        // the post-reset mesh / plane rather than reusing stale pairs.
+        cachedMutationVersion_ = ulong.max;
+        cachedPlanePoint_      = Vec3(0, 0, 0);
+        cachedPlaneNormal_     = Vec3(0, 0, 0);
+        cachedEpsilon_         = float.nan;
+        cachedPairOf_.length   = 0;
+        cachedOnPlane_.length  = 0;
+        cachedVertSign_.length = 0;
+        cachedReady_           = false;
+        publishState();
+    }
+
     override void evaluate(ref ToolState state) {
         state.symmetry.enabled      = enabled;
         state.symmetry.topology     = topology;

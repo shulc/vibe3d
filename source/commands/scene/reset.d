@@ -66,16 +66,18 @@ class SceneReset : Command {
         viewPtr.reset();
         mesh.resetSelection();
         *editModePtr = EditMode.Vertices;
-        // Reset the workplane along with the scene — it's session state
-        // (a tilted / aligned workplane left over from a previous edit
-        // changes how subsequent prim.* and BoxTool / SphereTool / ...
-        // behave) and a "reset" UX promise should clear it.
-        import toolpipe.pipeline       : g_pipeCtx;
-        import toolpipe.stages.workplane : WorkplaneStage;
-        import toolpipe.stage          : TaskCode;
+        // Reset EVERY toolpipe stage to its declaration-time defaults.
+        // Stage state — Snap on, Symmetry plane, Falloff type, ACEN /
+        // AXIS modes, Workplane tilt — is session-level UI state, and
+        // a "Reset" UX promise should wipe it alongside the mesh.
+        // Without this, every test that flips a stage attr corrupts
+        // subsequent tests in the same vibe3d process; stages with no
+        // mutable state inherit the no-op Stage.reset() and are
+        // unaffected.
+        import toolpipe.pipeline : g_pipeCtx;
         if (g_pipeCtx !is null) {
-            if (auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work))
-                wp.reset();
+            foreach (s; g_pipeCtx.pipeline.allMut())
+                s.reset();
         }
         if (onResetTool !is null) onResetTool();
         refreshCaches();

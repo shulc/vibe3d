@@ -122,6 +122,13 @@ public:
         return stages_;
     }
 
+    /// Mutable view of the registered stages — used by SceneReset to
+    /// call `reset()` on every stage in one pass without going through
+    /// per-TaskCode lookups.
+    Stage[] allMut() {
+        return stages_;
+    }
+
     /// Walk enabled stages low → high and return the populated ToolState.
     /// Caller seeds `state.subject` (the pipeline's input) plus the active
     /// viewport (needed by stages that depend on the camera frame, e.g.

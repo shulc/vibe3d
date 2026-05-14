@@ -38,10 +38,27 @@ long undoCount() {
     return j["undo"].array.length;
 }
 
+string topUndoCommand() {
+    auto undo = getJson("/api/history")["undo"].array;
+    return undo.length == 0 ? "" : undo[$ - 1]["command"].str;
+}
+
+// Drain the undo stack so subsequent count-delta assertions aren't
+// affected by command_history's 50-entry cap (which pins length=50 once
+// reached, making `before == after` even for genuine new entries when
+// a long suite has filled the buffer).
+void drainHistory() {
+    foreach (_; 0 .. 100) {
+        if (undoCount() == 0) return;
+        postJson("/api/undo", "");
+    }
+}
+
 unittest { // a 20-step move-tool drag produces ONE undo entry
     // Setup mirrors test_tool_move_drag.d so the pin is on the same
     // code path: select v6, activate Move, drag X-arrow.
     postJson("/api/reset", "");
+    drainHistory();   // start from a known-empty undo stack
     auto sel = postJson("/api/select",
         `{"mode":"vertices","indices":[6]}`);
     assert(sel["status"].str == "ok", "select failed");
@@ -106,6 +123,9 @@ unittest { // 2 separate move-tool drags in one tool session = 1 entry
     // intermediate falloff / slider tweaks coalesce into a single
     // history entry at tool.deactivate (or selection change) time.
     postJson("/api/reset", "");
+    drainHistory();   // command_history caps the undo stack at 50; drain
+                      // so this test's count-delta assertion holds even
+                      // when an earlier test has filled the buffer
     postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
     postJson("/api/script", "tool.set move");
     long stackBefore = undoCount();

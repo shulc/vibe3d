@@ -106,6 +106,29 @@ class FalloffStage : Stage {
     override string   id()       const                          { return "falloff"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWght; }
 
+    /// Restore every mutable field to its declaration-time default.
+    /// Invoked by SceneReset (= `/api/reset`) so a "start fresh" wipes
+    /// the falloff config along with the mesh.
+    override void reset() {
+        type         = FalloffType.None;
+        shape        = FalloffShape.Smooth;
+        start        = Vec3(0, 0, 0);
+        end          = Vec3(0, 1, 0);
+        center       = Vec3(0, 0, 0);
+        size         = Vec3(1, 1, 1);
+        screenCx     = 0;
+        screenCy     = 0;
+        screenSize   = 64;
+        transparent  = false;
+        lassoStyle   = LassoStyle.Freehand;
+        lassoPolyX.length = 0;
+        lassoPolyY.length = 0;
+        softBorderPx = 16;
+        in_          = 0.5f;
+        out_         = 0.5f;
+        publishState();
+    }
+
     override void evaluate(ref ToolState state) {
         // WORK stage has run before us (ord 0x30 < ord 0x90), so
         // state.workplane is populated. Cache its normal so autoSize()

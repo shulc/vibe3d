@@ -86,6 +86,17 @@ public:
     override string   id()       const                          { return "axis"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordAxis; }
 
+    /// Restore declaration-time defaults — invoked from SceneReset
+    /// (= `/api/reset`).
+    override void reset() {
+        mode        = Mode.None;
+        manualRight = Vec3(1, 0, 0);
+        manualUp    = Vec3(0, 1, 0);
+        manualFwd   = Vec3(0, 0, 1);
+        axIndex     = -1;
+        publishState();
+    }
+
     override void evaluate(ref ToolState state) {
         lastView_      = state.view;
         lastWpAxis1_   = state.workplane.axis1;

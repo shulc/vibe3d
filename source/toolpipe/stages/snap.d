@@ -47,6 +47,21 @@ class SnapStage : Stage {
     override string   id()       const                          { return "snap"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordSnap; }
 
+    /// Match every default field initialiser at declaration time —
+    /// invoked via Stage.reset() by SceneReset / `/api/reset`.
+    override void reset() {
+        enabled       = false;
+        enabledTypes  = SnapType.Vertex
+                      | SnapType.EdgeCenter
+                      | SnapType.PolyCenter
+                      | SnapType.Grid;
+        innerRangePx  = 24.0f;
+        outerRangePx  = 40.0f;
+        fixedGrid     = false;
+        fixedGridSize = 1.0f;
+        publishState();
+    }
+
     override void evaluate(ref ToolState state) {
         state.snap.enabled       = enabled;
         state.snap.enabledTypes  = enabledTypes;

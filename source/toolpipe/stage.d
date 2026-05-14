@@ -94,6 +94,15 @@ abstract class Stage : ParamProvider {
     // upstream packet values from `state` and write their own packet.
     void evaluate(ref ToolState state) {}
 
+    /// Restore every mutable field to the value a freshly-constructed
+    /// stage would have. Called by SceneReset.apply (= the `/api/reset`
+    /// command path) so a reset wipes pipeline state along with the
+    /// mesh — otherwise toolpipe attrs (snap on, symmetry plane, falloff
+    /// type, ACEN mode …) leak between tests and across user-driven
+    /// "start fresh" actions. Default: no-op for stateless stages;
+    /// stateful stages override.
+    void reset() {}
+
     // Whether this stage is currently enabled in the pipe. Disabled
     // stages are skipped during evaluation but stay in the pipe (matches
     // MODO's E column in tool_pipe.html).

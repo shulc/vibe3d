@@ -90,8 +90,9 @@ class WorkplaneStage : Stage {
     }
 
     /// Reset to default behaviour — auto-snap, world origin, no rotation.
-    /// Backs the `workplane.reset` command.
-    void reset() {
+    /// Backs the `workplane.reset` command and the generic
+    /// SceneReset/`/api/reset` pipeline-cleanup loop (via Stage.reset()).
+    override void reset() {
         isAuto   = true;
         center   = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);

@@ -110,6 +110,19 @@ public:
     override string   id()       const                          { return "actionCenter"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordAcen; }
 
+    /// Restore declaration-time defaults. Triggered by SceneReset
+    /// (= `/api/reset`) so an explicit reset wipes the ACEN mode +
+    /// any sticky userPlaced / manualCenter pin alongside the mesh.
+    override void reset() {
+        mode             = Mode.None;
+        userPlacedCenter = Vec3(0, 0, 0);
+        userPlaced       = false;
+        manualCenter     = Vec3(0, 0, 0);
+        selectSubMode    = SelectSubMode.Center;
+        clusterCount_    = 0;
+        publishState();
+    }
+
     override void evaluate(ref ToolState state) {
         // Cache live view + upstream workplane so listAttrs (called
         // outside evaluation) and Screen mode can re-derive the same
