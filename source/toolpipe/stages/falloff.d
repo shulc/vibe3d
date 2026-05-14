@@ -10,8 +10,9 @@ import std.math : sqrt;
 import mesh : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
-import toolpipe.pipeline : ToolState;
+import toolpipe.pipeline : ToolState, g_pipeCtx;
 import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, LassoStyle;
+import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry;
 
@@ -538,6 +539,24 @@ private:
         return format("%g,%g,%g", v.x, v.y, v.z);
     }
 
+    // Cache-bypass workplane-normal lookup for autoSize. Same value
+    // `state.workplane.normal` would have on the next pipeline.evaluate,
+    // but doesn't require an evaluate to have run since the last
+    // `workplane.*` mutation. Falls back to the cached `lastWpNormal_`
+    // when no pipeline / workplane stage is wired (unit tests that
+    // construct FalloffStage in isolation).
+    Vec3 currentWorkplaneNormal() {
+        if (g_pipeCtx is null) return lastWpNormal_;
+        foreach (s; g_pipeCtx.pipeline.all()) {
+            if (auto wp = cast(const(WorkplaneStage))s) {
+                Vec3 n, a1, a2;
+                wp.currentBasis(n, a1, a2);
+                return n;
+            }
+        }
+        return lastWpNormal_;
+    }
+
     // Pre-fit Linear / Radial / Screen / Lasso to the current selection
     // bbox, so the user gets an immediately useful starting point on
     // type switch (matches MODO behaviour). Each type uses what it
@@ -566,7 +585,19 @@ private:
                 // normal. Falls back to a unit-Y line at the bbox
                 // centre when the projected extent is zero (flat
                 // selection in the construction plane).
-                Vec3  n   = lastWpNormal_;
+                //
+                // Query WorkplaneStage directly rather than reading the
+                // `lastWpNormal_` cache populated by evaluate(). The
+                // cache is only refreshed when pipeline.evaluate runs,
+                // and nothing forces an evaluate between a
+                // `tool.pipe.attr workplane mode worldY` and a
+                // `tool.pipe.attr falloff type linear` issued in the
+                // same frame — autoSize would otherwise pick up the
+                // PREVIOUS workplane orientation and lay the Linear
+                // line along the wrong axis. WorkplaneStage.currentBasis
+                // computes from rotation alone, no pipe round-trip
+                // required.
+                Vec3 n = currentWorkplaneNormal();
                 float ext = abs(bbHalf.x * n.x) + abs(bbHalf.y * n.y)
                           + abs(bbHalf.z * n.z);
                 if (ext < 1e-6f) ext = 0.5f;
