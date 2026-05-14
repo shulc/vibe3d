@@ -174,7 +174,27 @@ string[] compileTests(string[] paths, string outDir, ushort port) {
             src = buildPath(outDir, name ~ ".d");
             std.file.write(src, txt);
         }
-        auto cmd = format("dmd -unittest %s -w -of=%s 2>&1", src, of);
+        // Pull every tests/*_helpers.d into the compilation so a test
+        // can `import drag_helpers;` (or any future helpers module)
+        // without each test duplicating shared code. Helpers also have
+        // their literal "localhost:8080" rewritten to the per-worker
+        // port — without this, parallel workers' tests all hit port 8080
+        // through the helpers, corrupting each other's vibe3d state.
+        string helpers;
+        foreach (e; dirEntries("tests", "*_helpers.d", SpanMode.shallow)) {
+            string hSrc = e.name;
+            if (port != 8080) {
+                string hTxt = readText(e.name)
+                    .replace("localhost:8080", "localhost:" ~ port.to!string);
+                hSrc = buildPath(outDir, baseName(e.name));
+                std.file.write(hSrc, hTxt);
+            }
+            helpers ~= " " ~ hSrc;
+        }
+        // -I=<outDir> first so the rewritten helpers in the scratch dir
+        // win over the unmodified originals in tests/.
+        auto cmd = format("dmd -unittest -I=%s -I=tests%s %s -w -of=%s 2>&1",
+                          outDir, helpers, src, of);
         auto r = executeShell(cmd);
         if (r.status != 0) {
             writeln("  ", red("FAIL  "), name);

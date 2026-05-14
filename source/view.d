@@ -72,11 +72,11 @@ class View {
             `{"azimuth":%f,"elevation":%f,"distance":%f,` ~
             `"focus":{"x":%f,"y":%f,"z":%f},` ~
             `"eye":{"x":%f,"y":%f,"z":%f},` ~
-            `"width":%d,"height":%d}`,
+            `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
             azimuth, elevation, distance,
             focus.x, focus.y, focus.z,
             eye.x, eye.y, eye.z,
-            width, height);
+            width, height, x, y);
     }
 
     void frameToVertices(Vec3[] verts)
