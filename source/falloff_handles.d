@@ -397,6 +397,7 @@ public:
 private bool  rmbScreenDragActive_ = false;
 private int   rmbScreenDragX0_     = 0;
 private int   rmbScreenDragY0_     = 0;
+private float rmbScreenDragR0_     = 0;
 // Bracketed by tools that consume screen falloff at LMB-down /
 // LMB-up of their own drags (MoveTool when dragAxis transitions in
 // and out of >=0). Drives `screenFalloffOverlayVisible()` so the
@@ -460,26 +461,40 @@ void screenFalloffSetCenter(int x, int y) {
     }
 }
 
-/// Begin RMB-radius gesture: center the falloff disc at (x, y) with
-/// a minimal seed radius. Returns true so callers can early-out.
+/// Begin RMB-radius gesture: re-center the falloff disc at (x, y) and
+/// capture the current radius as the baseline for the drag delta.
+/// Returns true so callers can early-out.
 bool screenFalloffRMBDown(int x, int y) {
     rmbScreenDragActive_ = true;
     rmbScreenDragX0_     = x;
     rmbScreenDragY0_     = y;
-    pushScreenFalloff(cast(float)x, cast(float)y, 1.0f);
+    rmbScreenDragR0_     = readScreenFalloffSize();
+    pushScreenFalloff(cast(float)x, cast(float)y, rmbScreenDragR0_);
     return true;
 }
 
-/// Update radius from the X-axis drag offset relative to the click
-/// point. The center stays pinned at the click location; only the
-/// radius tracks the cursor. Negative offsets clamp to 1 px so the
-/// disc never inverts.
+/// Update radius from the X-axis drag offset, applied as a signed
+/// delta on top of the radius captured at RMB-down. The center stays
+/// pinned at the click location. Clamps to ≥1 px so the disc never
+/// inverts.
 void screenFalloffRMBMotion(int x) {
     if (!rmbScreenDragActive_) return;
-    float r = cast(float)(x - rmbScreenDragX0_);
+    float r = rmbScreenDragR0_ + cast(float)(x - rmbScreenDragX0_);
     if (r < 1.0f) r = 1.0f;
     pushScreenFalloff(cast(float)rmbScreenDragX0_,
                       cast(float)rmbScreenDragY0_, r);
+}
+
+private float readScreenFalloffSize() {
+    import toolpipe.stages.falloff : FalloffStage;
+    if (g_pipeCtx is null) return 1.0f;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto fs = cast(FalloffStage)s;
+        if (fs is null) return 1.0f;
+        return fs.screenSize > 1.0f ? fs.screenSize : 1.0f;
+    }
+    return 1.0f;
 }
 
 /// End the gesture. Returns true iff a drag was active (so app.d can

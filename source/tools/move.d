@@ -190,6 +190,15 @@ public:
         // commit-GPU path doesn't apply.
         if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
             return true;
+        // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
+        // turned it on unconditionally when Screen falloff is active so
+        // the disc renders for the whole click+hold, including the
+        // click-outside-gizmo case where no drag ever starts. Must run
+        // before the dragAxis-guard early return below.
+        if (e.button == SDL_BUTTON_LEFT) {
+            import falloff_handles : screenFalloffLMBEnd;
+            screenFalloffLMBEnd();
+        }
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
         ctrlConstrain = false;
@@ -202,10 +211,6 @@ public:
         }
         wholeMeshDrag = false;
         dragAxis = -1;
-        {
-            import falloff_handles : screenFalloffLMBEnd;
-            screenFalloffLMBEnd();
-        }
         // 7.3d: drag is over — drop the snap highlight so it doesn't
         // linger after the gizmo settles.
         lastSnap = SnapResult.init;
@@ -281,15 +286,22 @@ public:
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
 
         // Soft Drag: re-center the screen-falloff disc at the click
-        // point on every fresh grab. Must happen BEFORE
-        // captureFalloffForDrag() below so the snapshot picks up the
-        // new center. No-op when the active pipeline doesn't have a
-        // Screen-type falloff stage.
+        // point on every fresh grab AND flip the overlay-visibility
+        // flag on so the disc renders for the duration of the LMB
+        // hold — even when the click lands outside a gizmo arrow
+        // (no drag will start in that case, but the user still gets
+        // visual confirmation of where the falloff is anchored).
+        // Must happen BEFORE captureFalloffForDrag() below so the
+        // snapshot picks up the new center. No-ops when no Screen-
+        // type falloff stage is active.
         {
             import falloff_handles : screenFalloffActive,
-                                     screenFalloffSetCenter;
-            if (screenFalloffActive())
+                                     screenFalloffSetCenter,
+                                     screenFalloffLMBBegin;
+            if (screenFalloffActive()) {
                 screenFalloffSetCenter(e.x, e.y);
+                screenFalloffLMBBegin();
+            }
         }
 
         // Falloff endpoint handles take priority over the move arrows
@@ -318,16 +330,6 @@ public:
             // at the start of a NEW edit session.
             if (!editIsOpen())
                 dragDelta = Vec3(0, 0, 0);
-            // Tell the falloff overlay an LMB-drag has begun so the
-            // screen disc renders for the duration of the pull. No-op
-            // when screen falloff isn't active (overlay short-circuits
-            // on type anyway).
-            {
-                import falloff_handles : screenFalloffActive,
-                                         screenFalloffLMBBegin;
-                if (screenFalloffActive())
-                    screenFalloffLMBBegin();
-            }
             buildVertexCacheIfNeeded();
             // Phase 7.5: capture the falloff packet before deciding on
             // wholeMeshDrag — when falloff is active, per-vertex weights

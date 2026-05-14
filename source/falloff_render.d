@@ -23,12 +23,14 @@ import d_imgui.imgui_h;
 // false so non-falloff sessions pay nothing.
 // ---------------------------------------------------------------------------
 
-/// Render the type-specific falloff overlay using ImGui's foreground
-/// draw list (renders on top of all 3D geometry, no depth test).
+/// Render the type-specific falloff overlay using ImGui's background
+/// draw list — sits above the 3D scene but below ImGui windows, so
+/// the Tool Properties panel (and other panels) occlude the overlay
+/// instead of being painted over by it.
 void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
     if (!cfg.enabled) return;
 
-    auto dl = ImGui.GetForegroundDrawList();
+    auto dl = ImGui.GetBackgroundDrawList();
 
     // Cyan to match MODO 9's linear-falloff overlay (cyan boxes at the
     // endpoints, faint connecting line). Snap uses a similar cyan but
@@ -37,7 +39,7 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
     // colour clash is acceptable. Selection orange is unaffected.
     enum uint outlineCol = IM_COL32(100, 220, 230, 230);
 
-    // ImGui's foreground draw list spans the whole OS window — without
+    // ImGui's background draw list spans the whole OS window — without
     // a clip rect the overlay can spill over the tab bar / status bar
     // / side panels surrounding the 3D viewport. Bound everything to
     // the viewport rect so on-screen falloff geometry can't escape it.
@@ -51,7 +53,7 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
         case FalloffType.None: return;
         case FalloffType.Linear: drawLinear(dl, cfg, vp, outlineCol); break;
         case FalloffType.Radial: drawRadial(dl, cfg, vp, outlineCol); break;
-        case FalloffType.Screen:
+        case FalloffType.Screen: {
             // The Screen disc shows only while the user is actively
             // interacting — RMB radius-adjust gesture, or an LMB
             // pull driven by a tool that opted in via
@@ -59,10 +61,23 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
             // center/radius is implicit tool state, not something
             // the user is configuring, so the overlay would just be
             // visual noise on every frame of an idle soft-drag tool.
+            //
+            // Drawn on the FOREGROUND draw list (unlike the other
+            // falloff overlays which live on background) — the disc
+            // is transient gesture feedback that must remain visible
+            // for the duration of the LMB pull / RMB radius drag
+            // regardless of what panel the cursor happens to cross.
             import falloff_handles : screenFalloffOverlayVisible;
             if (!screenFalloffOverlayVisible()) return;
-            drawScreen(dl, cfg, outlineCol);
+            auto fgDl = ImGui.GetForegroundDrawList();
+            fgDl.PushClipRect(ImVec2(cast(float)vp.x, cast(float)vp.y),
+                              ImVec2(cast(float)(vp.x + vp.width),
+                                     cast(float)(vp.y + vp.height)),
+                              /*intersect_with_current_clip_rect=*/true);
+            drawScreen(fgDl, cfg, outlineCol);
+            fgDl.PopClipRect();
             break;
+        }
         case FalloffType.Lasso: drawLasso(dl, cfg, outlineCol); break;
     }
 }

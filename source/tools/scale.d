@@ -208,6 +208,23 @@ public:
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
+        // Soft Drag: re-center the screen-falloff disc at the click on
+        // every fresh grab AND flip the overlay-visibility flag on so
+        // the disc renders for the duration of the LMB hold — even
+        // when the click lands outside a gizmo handle (no drag will
+        // start, but the user still gets visual confirmation of where
+        // the falloff is anchored). Must happen BEFORE
+        // captureFalloffForDrag() below. No-ops when no Screen-type
+        // falloff stage is active.
+        {
+            import falloff_handles : screenFalloffActive,
+                                     screenFalloffSetCenter,
+                                     screenFalloffLMBBegin;
+            if (screenFalloffActive()) {
+                screenFalloffSetCenter(e.x, e.y);
+                screenFalloffLMBBegin();
+            }
+        }
         FalloffPacket curFp = currentFalloff();
         if (falloffGizmo !is null
          && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp))
@@ -261,6 +278,14 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
         if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
             return true;
+        // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
+        // turned it on unconditionally when Screen falloff is active so
+        // the disc shows for the whole click+hold, including the click-
+        // outside-gizmo case where no drag ever starts.
+        if (e.button == SDL_BUTTON_LEFT) {
+            import falloff_handles : screenFalloffLMBEnd;
+            screenFalloffLMBEnd();
+        }
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
         if (wholeMeshDrag) {
