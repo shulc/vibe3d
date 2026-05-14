@@ -1081,8 +1081,28 @@ void main(string[] args) {
             import bindbc.opengl;
             // Faces use stride-6 (pos+normal). Read the live VBO.
             int vertCount = gpu.faceVertCount;
+            // Also expose the model matrix the renderer applies to the
+            // VBO (transform tools' gpuMatrix) so tests can detect a
+            // gpuMatrix-vs-mesh mismatch mid-drag — the actual on-screen
+            // pose is `gpuMatrix · gpu.faceVbo`.
+            float[16] meshModel = identityMatrix;
+            {
+                TransformTool tt = cast(TransformTool)activeTool;
+                if (tt !is null) meshModel = tt.gpuMatrix;
+            }
+            string modelStr;
+            {
+                auto mb = appender!string();
+                mb.put("[");
+                foreach (i; 0 .. 16) {
+                    if (i > 0) mb.put(",");
+                    mb.put(format("%.6f", meshModel[i]));
+                }
+                mb.put("]");
+                modelStr = mb.data;
+            }
             if (vertCount <= 0)
-                return `{"faceVertCount":0,"positions":[]}`;
+                return `{"faceVertCount":0,"positions":[],"model":` ~ modelStr ~ `}`;
             float[] data = new float[](vertCount * 6);
             glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
             glGetBufferSubData(GL_ARRAY_BUFFER, 0,
@@ -1098,7 +1118,9 @@ void main(string[] args) {
                 buf.put(format("[%.6f,%.6f,%.6f]",
                     data[i * 6 + 0], data[i * 6 + 1], data[i * 6 + 2]));
             }
-            buf.put("]}");
+            buf.put(`],"model":`);
+            buf.put(modelStr);
+            buf.put("}");
             return buf.data;
         });
 

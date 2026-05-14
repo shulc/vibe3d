@@ -29,7 +29,21 @@ class MoveTool : TransformTool {
     MoveHandler handler;
 
 private:
-    Vec3     dragDelta;       // accumulated world-space offset since drag start
+    Vec3     dragDelta;       // accumulated world-space offset across the
+                              //  whole tool session (Phase 7.5h); not reset
+                              //  on mouseUp so a sequence of drags within
+                              //  one session shares cumulative state for
+                              //  applyAbsoluteFromBaseline + the property panel.
+    Vec3     dragDeltaAtDragStart;  // snapshot of `dragDelta` at the moment
+                                    //  the current drag began. The
+                                    //  whole-mesh fast path's `gpuMatrix`
+                                    //  needs deltas RELATIVE to this anchor
+                                    //  — `gpu.faceVbo` was uploaded at the
+                                    //  PREVIOUS mouseUp with `dragDelta`
+                                    //  worth of motion already baked in, so
+                                    //  re-applying the full `dragDelta`
+                                    //  through gpuMatrix would double-count
+                                    //  the prior drag(s).
     Vec3     propInput;       // value shown in Tool Properties (basis-local components,
                               //  i.e. dot(dragDelta, axisX/Y/Z) — see drawProperties)
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
@@ -53,6 +67,7 @@ public:
     override void activate() {
         super.activate();
         dragDelta = Vec3(0, 0, 0);
+        dragDeltaAtDragStart = Vec3(0, 0, 0);
         propInput = Vec3(0, 0, 0);
     }
 
@@ -88,6 +103,7 @@ public:
             vertexCacheDirty    = true;
             centerManual        = false;
             dragDelta = Vec3(0, 0, 0);
+            dragDeltaAtDragStart = Vec3(0, 0, 0);
             propInput = Vec3(0, 0, 0);
         }
 
@@ -330,6 +346,7 @@ public:
             // at the start of a NEW edit session.
             if (!editIsOpen())
                 dragDelta = Vec3(0, 0, 0);
+            dragDeltaAtDragStart = dragDelta;  // anchor for gpuMatrix
             buildVertexCacheIfNeeded();
             // Phase 7.5: capture the falloff packet before deciding on
             // wholeMeshDrag — when falloff is active, per-vertex weights
@@ -384,6 +401,7 @@ public:
         dragAxis = 3;   // most-facing plane through gizmo center
         lastMX = e.x; lastMY = e.y;
         dragDelta = Vec3(0, 0, 0);
+        dragDeltaAtDragStart = dragDelta;  // anchor for gpuMatrix
         buildVertexCacheIfNeeded();
         bool falloffActiveOutside = captureFalloffForDrag();
         bool symmActiveOutside    = captureSymmetryForDrag();
@@ -594,9 +612,17 @@ public:
         handler.setPosition(handler.center + worldDelta);
 
         if (wholeMeshDrag) {
-            // Whole-mesh move: update gpuMatrix so app.d sets u_model each frame.
-            // Zero GPU uploads during drag — only one on mouseUp.
-            gpuMatrix = translationMatrix(dragDelta);
+            // Whole-mesh move: update gpuMatrix so app.d sets u_model each
+            // frame. Zero GPU uploads during drag — one on mouseUp.
+            //
+            // Translate by the DRAG-LOCAL delta (`dragDelta -
+            // dragDeltaAtDragStart`), not the tool-session cumulative.
+            // The previous drag's mouseUp uploaded the CPU mesh with
+            // that drag's delta baked in; re-applying the full
+            // `dragDelta` here would double-count it and render the
+            // mesh visibly displaced from the gizmo for the duration
+            // of every drag after the first.
+            gpuMatrix = translationMatrix(dragDelta - dragDeltaAtDragStart);
         } else {
             // Partial selection: defer GPU upload to draw() — once per frame.
             needsGpuUpdate = true;
