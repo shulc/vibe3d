@@ -123,7 +123,7 @@ panels:
               action: { kind: tool, id: xfrm.flare } }
       - title: Align
         buttons:
-          - { label: "Radial Align", disable: true,
+          - { label: "Radial Align",
               action: { kind: command, id: mesh.radial_align } }
           - { label: "Linear Align",
               action: { kind: command, id: mesh.linear_align } }

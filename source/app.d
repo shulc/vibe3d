@@ -78,6 +78,7 @@ import commands.mesh.quantize;
 import commands.mesh.jitter;
 import commands.mesh.smooth;
 import commands.mesh.linear_align;
+import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.history.undo : HistoryUndo;
@@ -901,6 +902,9 @@ void main(string[] args) {
                        &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.linear_align"] = () => cast(Command)
         new MeshLinearAlign(&mesh, cameraView, editMode, &gpu,
+                            &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.radial_align"] = () => cast(Command)
+        new MeshRadialAlign(&mesh, cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)
         new MeshVertexEdit(&mesh, cameraView, editMode, &gpu,
