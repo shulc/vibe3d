@@ -32,6 +32,7 @@ import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSele
 
 import tools.transform;
 import tools.move;
+import tools.push;
 import tools.scale;
 import tools.rotate;
 import tools.box;
@@ -638,6 +639,11 @@ void main(string[] args) {
     };
     reg.toolFactories["scale"]  = () {
         auto t = new ScaleTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
+    reg.toolFactories["xfrm.push"] = () {
+        auto t = new PushTool(&mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };

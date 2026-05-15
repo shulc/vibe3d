@@ -111,7 +111,7 @@ panels:
         buttons:
           - { label: "Soft Scale",
               action: { kind: tool, id: xfrm.softScale } }
-          - { label: "Push", disable: true,
+          - { label: "Push",
               action: { kind: tool, id: xfrm.push } }
           - { label: "Sculpt", disable: true,
               action: { kind: tool, id: xfrm.sculpt } }
