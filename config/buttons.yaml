@@ -89,7 +89,7 @@ panels:
               action: { kind: tool, id: xfrm.softMove } }
           - { label: "Shear",
               action: { kind: tool, id: xfrm.shear } }
-          - { label: "Smooth", disable: true,
+          - { label: "Smooth",
               action: { kind: command, id: mesh.smooth } }
           - { label: "Jitter",
               action: { kind: command, id: mesh.jitter } }
