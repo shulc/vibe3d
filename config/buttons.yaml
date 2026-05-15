@@ -125,7 +125,7 @@ panels:
         buttons:
           - { label: "Radial Align", disable: true,
               action: { kind: command, id: mesh.radial_align } }
-          - { label: "Linear Align", disable: true,
+          - { label: "Linear Align",
               action: { kind: command, id: mesh.linear_align } }
   - title: Mesh Edit
     items:
