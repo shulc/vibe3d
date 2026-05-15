@@ -75,6 +75,7 @@ import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
 import commands.mesh.quantize;
+import commands.mesh.jitter;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.history.undo : HistoryUndo;
@@ -890,6 +891,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.quantize"] = () => cast(Command)
         new MeshQuantize(&mesh, cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.jitter"] = () => cast(Command)
+        new MeshJitter(&mesh, cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.vertex_edit"] = () => cast(Command)
         new MeshVertexEdit(&mesh, cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);

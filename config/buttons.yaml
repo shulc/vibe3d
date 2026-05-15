@@ -91,7 +91,7 @@ panels:
               action: { kind: tool, id: xfrm.shear } }
           - { label: "Smooth", disable: true,
               action: { kind: command, id: mesh.smooth } }
-          - { label: "Jitter", disable: true,
+          - { label: "Jitter",
               action: { kind: command, id: mesh.jitter } }
           - { label: "Quantize",
               action: { kind: command, id: mesh.quantize } }
