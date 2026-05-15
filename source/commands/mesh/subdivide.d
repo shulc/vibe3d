@@ -30,36 +30,28 @@ class Subdivide : Command {
     override string name() const { return "mesh.subdivide"; }
 
     override EditMode[] supportedModes() const {
-        return [EditMode.Polygons];
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
     }
 
     override bool apply() {
-        // Subdivide is a polygon-mode operation — its selection-aware
-        // behaviour (`catmullClarkSelected` vs full `catmullClark`)
-        // reads `mesh.selectedFaces`, which the user can only curate
-        // visually while in Polygons mode. Refuse in Vertices / Edges
-        // modes so a stale face selection from a previous polygon
-        // session doesn't silently scope the subdivision.
-        if (editMode != EditMode.Polygons)
-            throw new Exception(
-                "mesh.subdivide requires Polygons edit mode "
-                ~ "(switch via `select.typeFrom polygon` or press 3)");
-
-        // Full mesh snapshot — Catmull-Clark replaces the entire mesh
-        // (verts, edges, faces, selection, etc.). One OSD pass handles
-        // both full and selected-faces variants; an empty mask
-        // refines the whole cage, a non-empty mask refines only the
-        // marked faces and widens adjacent un-marked faces around the
-        // OSD edge-points (T-junction handling).
+        // Selection-aware subdivision (refine only marked faces) only
+        // makes sense when the user could see and curate the face
+        // selection — i.e. in Polygons mode. In Vertices / Edges mode
+        // we ignore any stale `mesh.selectedFaces` from a prior
+        // polygon session and refine the whole cage. Full mesh
+        // snapshot — Catmull-Clark replaces the entire mesh (verts,
+        // edges, faces, selection, etc.).
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
-        bool[] mask = mesh.hasAnySelectedFaces()
+        bool polygonMode = editMode == EditMode.Polygons;
+        bool[] mask = (polygonMode && mesh.hasAnySelectedFaces())
                       ? mesh.selectedFaces : null;
         // Snapshot pre-subdivide selection so children of selected
         // cage faces stay selected after the topology swap. `mask` is
         // a slice into mesh.selectedFaces and dies with the swap, so
         // dup before calling.
-        auto prevSelectedFaces = mesh.selectedFaces.dup;
+        auto prevSelectedFaces = polygonMode
+            ? mesh.selectedFaces.dup : null;
         uint[] faceOrigin;
         *mesh = catmullClarkOsd(*mesh, mask, &faceOrigin);
         mesh.resetSelection();

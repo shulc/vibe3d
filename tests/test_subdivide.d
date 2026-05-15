@@ -138,40 +138,47 @@ unittest { // subdivide only one selected face → topology grows by less than f
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Edit-mode guard — subdivide / subdivide_faceted / subpatch_toggle all
-// operate on faces; refuse to run in Vertices / Edges modes so a stale face
-// selection from a previous polygon session doesn't silently scope the op.
+// Edit-mode behaviour
+//
+// subdivide / subdivide_faceted are polygon-aware in Polygons mode (refine
+// just the selected faces) but in Vertices / Edges mode they ignore any
+// stale face selection and refine the whole cage. subpatch_toggle stays
+// polygon-only — it has no whole-mesh fallback that would make sense.
 // ---------------------------------------------------------------------------
 
-unittest { // subdivide refused in vertices mode
+unittest { // subdivide in vertices mode refines the whole cage, ignoring
+           // any stale face selection from a prior polygon session.
     resetCube();
-    // resetCube leaves us in polygon mode — switch to vertex for the
-    // guard test.
+    setSelection("polygons", [0]);  // stale selection that should be ignored
     auto r = post("http://localhost:8080/api/command", "select.typeFrom vertex");
     assert(parseJSON(cast(string)r)["status"].str == "ok");
     auto resp = post("http://localhost:8080/api/command", "mesh.subdivide");
-    auto j = parseJSON(cast(string)resp);
-    assert(j["status"].str != "ok",
-        "mesh.subdivide should fail in vertex mode, got " ~ resp);
-    // Mesh unchanged — still cube.
+    assert(parseJSON(cast(string)resp)["status"].str == "ok",
+        "mesh.subdivide should succeed in vertex mode, got " ~ resp);
     auto m = model();
-    assert(m["vertexCount"].integer == 8,
-        "mesh shouldn't change when subdivide is refused");
+    // Whole-cage CC on a cube → 26 / 48 / 24 (same as the polygon-mode
+    // no-selection case).
+    assert(m["vertexCount"].integer == 26,
+        "expected full-cage refinement (26 verts), got "
+        ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 24);
 }
 
-unittest { // subdivide_faceted refused in edges mode
+unittest { // subdivide_faceted in edges mode refines the whole cage too.
     resetCube();
+    setSelection("polygons", [0]);
     post("http://localhost:8080/api/command", "select.typeFrom edge");
     auto resp = post("http://localhost:8080/api/command",
                      "mesh.subdivide_faceted");
-    auto j = parseJSON(cast(string)resp);
-    assert(j["status"].str != "ok",
-        "mesh.subdivide_faceted should fail in edges mode, got " ~ resp);
+    assert(parseJSON(cast(string)resp)["status"].str == "ok",
+        "mesh.subdivide_faceted should succeed in edges mode, got " ~ resp);
     auto m = model();
-    assert(m["vertexCount"].integer == 8);
+    assert(m["vertexCount"].integer == 26);
+    assert(m["faceCount"].integer == 24);
 }
 
-unittest { // subpatch_toggle refused in vertices mode
+unittest { // subpatch_toggle still refused in vertices mode — no whole-mesh
+           // fallback that would make sense (it's a per-face flag flip).
     resetCube();
     post("http://localhost:8080/api/command", "select.typeFrom vertex");
     auto resp = post("http://localhost:8080/api/command",

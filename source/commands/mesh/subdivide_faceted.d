@@ -29,18 +29,15 @@ class SubdivideFaceted : Command {
     override string name() const { return "mesh.subdivide_faceted"; }
 
     override EditMode[] supportedModes() const {
-        return [EditMode.Polygons];
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
     }
 
     override bool apply() {
-        // Same polygon-mode guard as `mesh.subdivide`: selection-aware
-        // subdivision reads `mesh.selectedFaces`, which is only
-        // curatable in Polygons mode.
-        if (editMode != EditMode.Polygons)
-            throw new Exception(
-                "mesh.subdivide_faceted requires Polygons edit mode "
-                ~ "(switch via `select.typeFrom polygon` or press 3)");
-
+        // Selection-aware subdivision (split only marked faces) only
+        // makes sense in Polygons mode where the user can see / curate
+        // the face selection. Vertices / Edges mode ignores any stale
+        // `mesh.selectedFaces` from a prior polygon session and falls
+        // through to the all-true mask (split every face).
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
         // Snapshot pre-subdivide selection + per-face vert counts so
@@ -49,8 +46,10 @@ class SubdivideFaceted : Command {
         // selected face produces `len_fi` quads, each unselected face
         // produces 1 widened face. `mask` aliases mesh.selectedFaces
         // and dies with the swap, so dup before the call.
-        bool hadSelection = mesh.hasAnySelectedFaces();
-        auto prevSelectedFaces = mesh.selectedFaces.dup;
+        bool polygonMode  = editMode == EditMode.Polygons;
+        bool hadSelection = polygonMode && mesh.hasAnySelectedFaces();
+        auto prevSelectedFaces = polygonMode
+            ? mesh.selectedFaces.dup : null;
         auto prevFaceVertCounts = new size_t[](mesh.faces.length);
         foreach (fi; 0 .. mesh.faces.length)
             prevFaceVertCounts[fi] = mesh.faces[fi].length;
