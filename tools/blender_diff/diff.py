@@ -96,9 +96,19 @@ def main():
     with open(args.reference) as f: A = json.load(f)
     with open(args.candidate) as f: B = json.load(f)
     tol = args.tolerance
+    require_topology = True
     if args.case:
         with open(args.case) as f:
-            tol = json.load(f).get("tolerance", tol)
+            case = json.load(f)
+        tol = case.get("tolerance", tol)
+        # `topology_check: false` skips the same-vertexCount /
+        # same-faceCount / same-fv-distribution gate. Used by deform
+        # cases where vibe3d's prim.cube duplicates corner verts at
+        # the caps (28 entries vs MODO's 20, but every position is
+        # shared) — that's a primitive-tessellation difference, not a
+        # deform-math one. Position-set match in BOTH directions is
+        # still required to PASS.
+        require_topology = case.get("topology_check", True)
 
     print(f"  {A.get('source','reference'):8s}: {A['vertexCount']:3d} verts, "
           f"{A['faceCount']:3d} faces, fv-dist {fvdist(A['faces'])}")
@@ -135,6 +145,11 @@ def main():
                  and A['faceCount'] == B['faceCount']
                  and fvdist(A['faces']) == fvdist(B['faces']))
 
+    # `require_topology=false` (deform cases) tolerates vert/face count
+    # mismatch when both directional position-set matches are clean.
+    # check_winding still skipped — it walks index-aligned face vertex
+    # lists and is meaningless once the index spaces diverge.
+    topo_ok = same_topo or not require_topology
     flipped = check_winding(A, B, matches_ab) if same_topo else []
     if flipped:
         print(f"\n  Winding: {len(flipped)} face(s) with reversed vertex order")
@@ -179,7 +194,7 @@ def main():
                     print(f"    DIFF  {k}: A={va} B={vb}  Δ={d:.5f}")
                     queries_ok = False
 
-    ok = (fail_ab == 0 and fail_ba == 0 and same_topo
+    ok = (fail_ab == 0 and fail_ba == 0 and topo_ok
           and not flipped and queries_ok)
     print(f"\n  RESULT: {'OK' if ok else 'FAIL'}")
     return 0 if ok else 1

@@ -298,6 +298,22 @@ int main(string[] args) {
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--keep") keep = true;
         else if (args[i] == "--no-build") doBuild = false;
+        else if (args[i] == "--cases-dir") {
+            // Override the default `tools/modo_diff/cases` dir. Used by
+            // the deform diff plan to point at `deform_cases/` without
+            // mixing deform JSON with the bevel / prim cases. Path
+            // is resolved relative to the current cwd; absolute paths
+            // pass through unchanged.
+            if (i + 1 >= args.length) {
+                stderr.writeln("--cases-dir requires a path argument");
+                return 2;
+            }
+            casesDir = args[++i].absolutePath;
+            if (!casesDir.exists) {
+                stderr.writeln("--cases-dir does not exist: ", casesDir);
+                return 2;
+            }
+        }
         else if (args[i] == "-j" || args[i] == "--jobs") {
             if (i + 1 >= args.length) {
                 stderr.writeln(args[i], " requires an integer argument");

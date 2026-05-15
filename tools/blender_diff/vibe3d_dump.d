@@ -536,6 +536,76 @@ void runXfrmRotate(JSONValue op) {
         throw new Exception("xfrm_rotate failed: " ~ resp.toString());
 }
 
+// Apply a soft-deform preset (xfrm.shear / xfrm.twist / xfrm.taper / ...)
+// via tool.set + tool.pipe.attr (falloff handles) + tool.attr (transform
+// magnitudes) + tool.doApply. Mirrors modo_dump.py:run_deform — the case
+// JSON's `transform` keys map directly onto the matching tool's params
+// (TX/TY/TZ on Move-based presets, RX/RY/RZ on Rotate, SX/SY/SZ on Scale).
+//
+// Selection: this runs in the current edit mode without changing it. The
+// case's setup typically calls scene.reset (Vertices mode); deform tools
+// fall back to whole-mesh in non-Polygons modes per source/tools/move.d
+// MoveTool.applyHeadless's buildVertexCache contract. Cases that need a
+// specific selection should add a select_face / select.typeFrom op
+// before the deform op.
+void runDeform(JSONValue op) {
+    string preset = op["preset"].str;
+
+    // Activate the preset — wires falloff stage + base transform tool.
+    auto r = postJson("/api/command", "tool.set " ~ preset ~ " on");
+    if (r["status"].str != "ok")
+        throw new Exception("tool.set " ~ preset ~ " failed: " ~ r.toString);
+
+    // Pin the falloff handles (overrides the auto-fit triggered by the
+    // type set during preset activation). Vec3 values must be quoted —
+    // the argstring parser only accepts barewords [a-zA-Z0-9_./-], the
+    // comma in the literal forces the value through the quoted-string
+    // branch.
+    if ("falloff" in op) {
+        auto fall = op["falloff"];
+        string ftype = fall["type"].str;
+        string vec3lit(JSONValue v) {
+            auto a = v.array;
+            return format(`"%g,%g,%g"`,
+                          readNum(a[0]), readNum(a[1]), readNum(a[2]));
+        }
+        if (ftype == "linear") {
+            postJson("/api/command",
+                "tool.pipe.attr falloff start " ~ vec3lit(fall["start"]));
+            postJson("/api/command",
+                "tool.pipe.attr falloff end " ~ vec3lit(fall["end"]));
+        } else if (ftype == "radial") {
+            postJson("/api/command",
+                "tool.pipe.attr falloff center " ~ vec3lit(fall["center"]));
+            postJson("/api/command",
+                "tool.pipe.attr falloff size " ~ vec3lit(fall["size"]));
+        } else {
+            throw new Exception("deform falloff type '" ~ ftype ~ "'");
+        }
+        if ("shape" in fall)
+            postJson("/api/command",
+                "tool.pipe.attr falloff shape " ~ fall["shape"].str);
+    }
+
+    // Numeric transform attrs — applied to the active tool (= the
+    // preset's base tool, which exposes TX/TY/TZ on Move, RX/RY/RZ on
+    // Rotate, SX/SY/SZ on Scale via params() override).
+    if ("transform" in op) {
+        foreach (string k, ref v; op["transform"].objectNoRef) {
+            auto resp = postJson("/api/command",
+                format("tool.attr %s %s %g", preset, k, readNum(v)));
+            if (resp["status"].str != "ok")
+                throw new Exception("tool.attr " ~ preset ~ " " ~ k
+                    ~ " failed: " ~ resp.toString);
+        }
+    }
+
+    // One-shot apply — wraps applyHeadless in a snapshot pair for undo.
+    auto applyResp = postJson("/api/command", "tool.doApply");
+    if (applyResp["status"].str != "ok")
+        throw new Exception("tool.doApply failed: " ~ applyResp.toString);
+}
+
 void runOp(JSONValue op) {
     switch (op["op"].str) {
         case "bevel":            runBevel(op);      break;
@@ -557,6 +627,7 @@ void runOp(JSONValue op) {
         case "actr_set":         runActrSet(op);         break;
         case "xfrm_translate":   runXfrmTranslate(op);   break;
         case "xfrm_rotate":      runXfrmRotate(op);      break;
+        case "deform":           runDeform(op);          break;
         default: throw new Exception("unknown op: " ~ op["op"].str);
     }
 }

@@ -1,0 +1,29 @@
+{
+  "_comment": "Soft twist: linear-falloff Rotate with RY=30°. Top row spins 30°, bottom row stays. modo_method=analytical because MODO 9 headless `xfrm.rotate angle` doApply produces nonsense (per-vert Y values shift off original rows; documented in tools/modo_diff/probe_twist.py and modo_dump.py:run_xfrm_rotate). The MODO side computes the analytical formula in Python; vibe3d runs through its actual MoveTool/RotateTool tool path. They should bit-match.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 4, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.twist",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":  "linear",
+        "shape": "linear",
+        "start": [0,  0.5, 0],
+        "end":   [0, -0.5, 0]
+      },
+      "transform": { "RY": 30.0 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

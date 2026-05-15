@@ -1,0 +1,29 @@
+{
+  "_comment": "Soft taper: linear-falloff Scale with SX=2.0. Top row scales 2× along X about origin (ACEN.Auto on a centered cube ⇒ origin); bottom row stays at original ±0.5. Cross-engine bit-perfect verified by tools/modo_diff/probe_taper.py + probe_taper_vibe3d.py — MODO's headless xfrm.transform SX channel works fine (same path shear's TX uses).",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 4, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.taper",
+      "modo_xfrm_tool": "xfrm.transform",
+      "falloff": {
+        "type":  "linear",
+        "shape": "linear",
+        "start": [0,  0.5, 0],
+        "end":   [0, -0.5, 0]
+      },
+      "transform": { "SX": 2.0 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

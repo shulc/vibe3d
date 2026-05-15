@@ -1,0 +1,29 @@
+{
+  "_comment": "Soft shear: linear-falloff Move with TX=0.5. Top row (y=+0.5, weight 1) shifts +0.5 along X; bottom row (y=-0.5, weight 0) stays. Cross-engine bit-perfect verified by tools/modo_diff/probe_shear.py + probe_shear_vibe3d.py.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 4, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.shear",
+      "modo_xfrm_tool": "xfrm.transform",
+      "falloff": {
+        "type":  "linear",
+        "shape": "linear",
+        "start": [0,  0.5, 0],
+        "end":   [0, -0.5, 0]
+      },
+      "transform": { "TX": 0.5 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

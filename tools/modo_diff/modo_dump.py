@@ -459,8 +459,207 @@ def run_op(op):
         run_xfrm_translate(op)
     elif kind == "xfrm_rotate":
         run_xfrm_rotate(op)
+    elif kind == "deform":
+        run_deform(op)
     else:
         raise NotImplementedError("modo_dump: unsupported op '%s'" % kind)
+
+
+# ---------------------------------------------------------------------------
+# Deform op — drives a soft-deform preset (xfrm.shear / xfrm.twist /
+# xfrm.taper / softMove / etc.) headlessly. Mirrors the standalone
+# tools/modo_diff/probe_*.py scripts but lifted into the orchestrator.
+#
+# Op schema:
+#   { "op": "deform",
+#     "preset": "xfrm.shear",
+#     "modo_method": "tool" | "analytical"   // default "tool"
+#     "falloff": { "type": "linear" | "radial",
+#                  "shape": "linear" | "smooth" | ...,
+#                  "start": [x,y,z], "end": [x,y,z]    // linear
+#                  "center": [x,y,z], "size": [x,y,z]  // radial
+#                },
+#     "transform": { "TX": 0.5, ... }   // attr name → value, applied to
+#                                       //  xfrm.transform (or xfrm.rotate
+#                                       //  for twist's modo_method=tool)
+#   }
+#
+# `modo_method`:
+#   - "tool"       : `tool.set <preset> on; tool.attr ...; tool.doApply`.
+#                    Works for shear (TX/TY/TZ) and taper (SX/SY/SZ) per
+#                    probe_shear.py / probe_taper.py.
+#   - "analytical" : compute the deformed verts in pure Python (per-vert
+#                    falloff weight × transform formula). Used for twist,
+#                    where MODO 9's headless `xfrm.rotate angle` doApply
+#                    produces nonsense (per-vert Y values shift off the
+#                    original rows; documented in probe_twist.py and
+#                    run_xfrm_rotate above).
+# ---------------------------------------------------------------------------
+
+SHAPE_INT = {
+    "linear":  0,
+    "easeIn":  1,
+    "easeOut": 2,
+    "smooth":  3,
+    "custom":  4,
+}
+
+
+def _set_falloff_handles_modo(ftype, fall):
+    """Pin the falloff stage's handle attrs explicitly. Setting start /
+    end (linear) or center / size (radial) AFTER the preset's tool.set
+    triggered auto-fit overrides the cached values — there's no
+    separate auto/manual flag in MODO 9."""
+    if ftype == "linear":
+        s, e = fall["start"], fall["end"]
+        for ax, v in zip(("X", "Y", "Z"), s):
+            lx.eval('tool.attr "falloff.linear" start%s %g' % (ax, v))
+        for ax, v in zip(("X", "Y", "Z"), e):
+            lx.eval('tool.attr "falloff.linear" end%s %g' % (ax, v))
+        lx.eval('tool.attr "falloff.linear" shape %d'
+                % SHAPE_INT.get(fall.get("shape", "linear"), 0))
+    elif ftype == "radial":
+        c, sz = fall["center"], fall["size"]
+        for ax, v in zip(("X", "Y", "Z"), c):
+            lx.eval('tool.attr "falloff.radial" cen%s %g' % (ax, v))
+        for ax, v in zip(("X", "Y", "Z"), sz):
+            lx.eval('tool.attr "falloff.radial" siz%s %g' % (ax, v))
+        lx.eval('tool.attr "falloff.radial" shape %d'
+                % SHAPE_INT.get(fall.get("shape", "linear"), 0))
+    else:
+        raise NotImplementedError("deform falloff type '%s'" % ftype)
+
+
+def _falloff_weight(fall, vert):
+    """Per-vertex falloff weight ∈ [0, 1]. Linear and radial shapes
+    only — the analytical path is itself only used for twist today,
+    which always uses linear. Shape post-processing (smooth / easeIn /
+    ...) is not applied here; extend when the first analytical case
+    needs it."""
+    ftype = fall["type"]
+    shape = fall.get("shape", "linear")
+    if shape != "linear":
+        raise NotImplementedError(
+            "analytical deform: only shape=linear supported (got %s). "
+            "Add the curve-shape post-processing to _falloff_weight if "
+            "a non-linear analytical case ever comes up." % shape)
+    if ftype == "linear":
+        s, e = fall["start"], fall["end"]
+        # Project (vert - e) onto (s - e) and clamp t ∈ [0, 1].
+        dx, dy, dz = s[0]-e[0], s[1]-e[1], s[2]-e[2]
+        denom = dx*dx + dy*dy + dz*dz
+        if denom < 1e-18:
+            return 0.0
+        vx, vy, vz = vert[0]-e[0], vert[1]-e[1], vert[2]-e[2]
+        t = (vx*dx + vy*dy + vz*dz) / denom
+        if t < 0: return 0.0
+        if t > 1: return 1.0
+        return t
+    raise NotImplementedError(
+        "analytical deform: falloff type '%s'" % ftype)
+
+
+def _apply_deform_analytical_python(op):
+    """Compute the deformed verts in Python and write them into MODO's
+    mesh.geometry directly. Used when MODO's headless tool.doApply path
+    is broken for the preset (twist today). Pivot is taken to be the
+    origin (matches actr.auto / actr.origin on a centered cube; non-
+    centered cases will need a `pivot` field)."""
+    import math as _math
+    mesh = get_active_mesh()
+    fall = op["falloff"]
+    xform = op.get("transform", {})
+
+    rx = float(xform.get("RX", 0.0))
+    ry = float(xform.get("RY", 0.0))
+    rz = float(xform.get("RZ", 0.0))
+    tx = float(xform.get("TX", 0.0))
+    ty = float(xform.get("TY", 0.0))
+    tz = float(xform.get("TZ", 0.0))
+    sx = float(xform.get("SX", 1.0))
+    sy = float(xform.get("SY", 1.0))
+    sz = float(xform.get("SZ", 1.0))
+
+    pivot = op.get("pivot", [0.0, 0.0, 0.0])
+
+    for v in mesh.geometry.vertices:
+        p = list(v.position)
+        w = _falloff_weight(fall, p)
+        # Translate (weight × delta).
+        x = p[0] + tx * w
+        y = p[1] + ty * w
+        z = p[2] + tz * w
+        # Rotate (angle × weight, around basis axes through pivot).
+        # Order: X then Y then Z (matches RotateTool.applyHeadless).
+        for axis_deg, axis in ((rx, "x"), (ry, "y"), (rz, "z")):
+            if axis_deg == 0:
+                continue
+            theta = _math.radians(axis_deg * w)
+            c, s = _math.cos(theta), _math.sin(theta)
+            dx, dy, dz = x - pivot[0], y - pivot[1], z - pivot[2]
+            if axis == "x":
+                ny =  c*dy - s*dz
+                nz =  s*dy + c*dz
+                y, z = pivot[1] + ny, pivot[2] + nz
+            elif axis == "y":
+                nx =  c*dx + s*dz
+                nz = -s*dx + c*dz
+                x, z = pivot[0] + nx, pivot[2] + nz
+            else:
+                nx =  c*dx - s*dy
+                ny =  s*dx + c*dy
+                x, y = pivot[0] + nx, pivot[1] + ny
+        # Scale (per-axis factor blended toward 1 by weight, around pivot).
+        wsx = 1.0 + (sx - 1.0) * w
+        wsy = 1.0 + (sy - 1.0) * w
+        wsz = 1.0 + (sz - 1.0) * w
+        x = pivot[0] + (x - pivot[0]) * wsx
+        y = pivot[1] + (y - pivot[1]) * wsy
+        z = pivot[2] + (z - pivot[2]) * wsz
+        v.position = [x, y, z]
+
+
+def run_deform(op):
+    """Apply a soft-deform preset to MODO. Dispatches on `modo_method`."""
+    method = op.get("modo_method", "tool")
+    preset = op["preset"]
+    if method == "analytical":
+        log("deform [analytical]:", preset)
+        _apply_deform_analytical_python(op)
+        return
+    if method != "tool":
+        raise NotImplementedError("deform modo_method '%s'" % method)
+    log("deform [tool]:", preset)
+
+    # Switch to polygon mode + drop any prior selection. Without this,
+    # MODO 9 headless `tool.doApply` for a soft-deform preset silently
+    # no-ops (verified with shear/taper — the verts come out untouched).
+    # Verified by tools/modo_diff/probe_shear.py: this exact pair was
+    # the difference between a working probe and one that returned an
+    # unmodified cube. Cases that need a specific selection should add
+    # a select_face / preops block AFTER this (the emptied selection
+    # gets repopulated).
+    lx.eval("select.typeFrom polygon")
+    lx.eval("select.drop polygon")
+
+    # Activate the preset — wires falloff.<type> into the WGHT slot and
+    # xfrm.transform / xfrm.rotate into the ACTR slot per resrc/presets.cfg.
+    lx.eval('tool.set "%s" on 0' % preset)
+
+    fall = op.get("falloff")
+    if fall is not None:
+        _set_falloff_handles_modo(fall["type"], fall)
+
+    # Pick the right transform-tool id for this preset. xfrm.shear /
+    # xfrm.taper / xfrm.softMove etc. wire xfrm.transform; xfrm.twist /
+    # xfrm.swirl / xfrm.bulge / xfrm.softRotate wire xfrm.rotate; ...
+    # The case JSON can override via op["modo_xfrm_tool"].
+    XFRM_TOOL = op.get("modo_xfrm_tool", "xfrm.transform")
+    for k, v in (op.get("transform") or {}).items():
+        lx.eval('tool.attr "%s" %s %g' % (XFRM_TOOL, k, float(v)))
+
+    lx.eval("tool.doApply")
+    lx.eval('tool.set "%s" off 0' % preset)
 
 
 def run_actr_set(op):
