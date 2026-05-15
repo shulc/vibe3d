@@ -55,8 +55,19 @@ class Subdivide : Command {
         if (onTopologyChange !is null) onTopologyChange();
         bool[] mask = mesh.hasAnySelectedFaces()
                       ? mesh.selectedFaces : null;
-        *mesh = catmullClarkOsd(*mesh, mask);
+        // Snapshot pre-subdivide selection so children of selected
+        // cage faces stay selected after the topology swap. `mask` is
+        // a slice into mesh.selectedFaces and dies with the swap, so
+        // dup before calling.
+        auto prevSelectedFaces = mesh.selectedFaces.dup;
+        uint[] faceOrigin;
+        *mesh = catmullClarkOsd(*mesh, mask, &faceOrigin);
         mesh.resetSelection();
+        foreach (k, parentFi; faceOrigin) {
+            if (parentFi < prevSelectedFaces.length
+                && prevSelectedFaces[parentFi])
+                mesh.selectFace(cast(int)k);
+        }
         refreshCaches();
         return true;
     }

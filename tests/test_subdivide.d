@@ -214,3 +214,114 @@ unittest { // faceted subdivide on cube — same topology as CC, but verts stay 
             ~ x.to!string ~ ", " ~ y.to!string ~ ", " ~ z.to!string ~ ")");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Selection preservation across subdivision
+//
+// Both subdivide commands snapshot the pre-op face selection and re-apply it
+// to the children of each selected cage face. Editing-flow rationale: a user
+// who refines a focused subset to keep working on it shouldn't lose that
+// focus to a hard-coded resetSelection — the new sub-faces ARE the new
+// working set.
+//
+// Coverage: the selected children of cage face[0] (back face, z = -0.5) all
+// inherit z = -0.5 (corner-pinned for OSD, midpoints/centroid for faceted),
+// so a centroid check identifies them without depending on the engine-
+// specific output ordering.
+// ---------------------------------------------------------------------------
+
+JSONValue selection() {
+    return parseJSON(get("http://localhost:8080/api/selection"));
+}
+
+// Centroid of face fi from /api/model JSON (avg of its vertex positions).
+double[3] faceCentroid(JSONValue m, size_t fi) {
+    auto verts = m["vertices"].array;
+    auto face  = m["faces"].array[fi].array;
+    double cx = 0, cy = 0, cz = 0;
+    foreach (vi; face) {
+        auto v = verts[cast(size_t)vi.integer].array;
+        cx += v[0].floating;
+        cy += v[1].floating;
+        cz += v[2].floating;
+    }
+    double n = cast(double)face.length;
+    return [cx / n, cy / n, cz / n];
+}
+
+unittest { // mesh.subdivide preserves selection on the back face
+    resetCube();
+    setSelection("polygons", [0]);  // back face, z = -0.5
+    runCmd("mesh.subdivide");
+    auto sel = selection()["selectedFaces"].array;
+    assert(sel.length == 4,
+        "subdivide should select all 4 children of the back face, got "
+        ~ sel.length.to!string);
+    auto m = model();
+    foreach (s; sel) {
+        auto c = faceCentroid(m, cast(size_t)s.integer);
+        assert(approxEqual(c[2], -0.5),
+            "selected child face should sit on z = -0.5 (back face), got z="
+            ~ c[2].to!string);
+    }
+}
+
+unittest { // mesh.subdivide_faceted preserves selection on the back face
+    resetCube();
+    setSelection("polygons", [0]);
+    runCmd("mesh.subdivide_faceted");
+    auto sel = selection()["selectedFaces"].array;
+    assert(sel.length == 4,
+        "subdivide_faceted should select all 4 children of the back face, got "
+        ~ sel.length.to!string);
+    auto m = model();
+    foreach (s; sel) {
+        auto c = faceCentroid(m, cast(size_t)s.integer);
+        assert(approxEqual(c[2], -0.5),
+            "selected child face should sit on z = -0.5 (back face), got z="
+            ~ c[2].to!string);
+    }
+}
+
+unittest { // selecting two opposite faces — both selections survive
+    resetCube();
+    setSelection("polygons", [0, 1]);  // back (z=-0.5) + front (z=+0.5)
+    runCmd("mesh.subdivide_faceted");
+    auto sel = selection()["selectedFaces"].array;
+    assert(sel.length == 8,
+        "expected 4+4 children selected, got " ~ sel.length.to!string);
+    auto m = model();
+    int back = 0, front = 0;
+    foreach (s; sel) {
+        auto c = faceCentroid(m, cast(size_t)s.integer);
+        if      (approxEqual(c[2], -0.5)) ++back;
+        else if (approxEqual(c[2],  0.5)) ++front;
+    }
+    assert(back == 4 && front == 4,
+        "expected 4 back + 4 front, got " ~ back.to!string ~ "/" ~ front.to!string);
+}
+
+unittest { // no selection → no auto-select after subdivide
+    // Refining the WHOLE cage (no user selection) should leave the result
+    // unselected — auto-selecting all 24 child faces would surprise the user
+    // and invalidate the next "select something then act on it" gesture.
+    resetCube();
+    runCmd("mesh.subdivide");
+    auto sel = selection()["selectedFaces"].array;
+    assert(sel.length == 0,
+        "subdivide with no selection should leave the result unselected, got "
+        ~ sel.length.to!string ~ " selected");
+}
+
+unittest { // no selection → no auto-select after subdivide_faceted
+    // Same auto-select guard as the CC variant. subdivide_faceted falls back
+    // to an internal all-true mask when nothing is selected, but that's an
+    // implementation detail — the user-visible "previous selection" is
+    // empty, so the post-op selection must stay empty.
+    resetCube();
+    runCmd("mesh.subdivide_faceted");
+    auto sel = selection()["selectedFaces"].array;
+    assert(sel.length == 0,
+        "subdivide_faceted with no selection should leave the result unselected, got "
+        ~ sel.length.to!string ~ " selected");
+}

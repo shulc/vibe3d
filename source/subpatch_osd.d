@@ -134,9 +134,15 @@ float runGlEvaluatorSmokeTest() {
 /// the adjacent un-marked face's vert list so the result is still
 /// manifold (no T-junction across the refinement boundary).
 ///
+/// `faceOriginOut`, when non-null, receives one entry per output face:
+/// the cage face index that produced it. Lets callers (e.g. the
+/// `mesh.subdivide` command) carry per-face state — selection in
+/// particular — across the refinement.
+///
 /// Returns `Mesh.init` when OSD can't build a topology (degenerate
 /// input or empty subset).
-Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
+Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
+                     uint[]* faceOriginOut = null) {
     immutable int nv = cast(int)cage.vertices.length;
     immutable int nf = cast(int)cage.faces.length;
     if (nv == 0 || nf == 0) return Mesh.init;
@@ -234,6 +240,12 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
                 verts[j] = cast(uint)limitFI[cursor++];
             result.faces[k] = verts;
         }
+        if (faceOriginOut !is null) {
+            (*faceOriginOut).length = limitF;
+            foreach (k; 0 .. limitF)
+                (*faceOriginOut)[k] =
+                    cast(uint)markedFaceIndices[faceOriginsRaw[k]];
+        }
         // Edges direct from OSD.
         immutable int limitE = osdc_topology_limit_edge_count(osd);
         int[] limitEV = new int[](2 * limitE);
@@ -320,6 +332,12 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
         // 4. Un-marked faces: walk each cage edge, insert the OSD
         //    edge-point if the adjacent marked face subdivided this
         //    edge (T-junction widening — keeps the mesh manifold).
+        if (faceOriginOut !is null) {
+            (*faceOriginOut).length = limitF;
+            foreach (k; 0 .. limitF)
+                (*faceOriginOut)[k] =
+                    cast(uint)markedFaceIndices[faceOriginsRaw[k]];
+        }
         foreach (fi; 0 .. nf) {
             immutable bool marked =
                 (fi < faceMask.length) && faceMask[fi];
@@ -338,6 +356,8 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null) {
             result.faces ~= widened;
             result.isSubpatch ~= (fi < cage.isSubpatch.length)
                 ? cage.isSubpatch[fi] : false;
+            if (faceOriginOut !is null)
+                (*faceOriginOut) ~= cast(uint)fi;
         }
 
         // 5. Rebuild edges via dedup'd face-edge walk (vibe3d's
