@@ -50,11 +50,16 @@ presets:
       falloff:
         type: radial
 
+  # MODO ships xfrm.twist / xfrm.shear / xfrm.taper with `shape integer 0`
+  # (Linear) in resrc/presets.cfg — the falloff stage's default Smooth
+  # shape would override this if not pinned here, leaving deform tools
+  # with the wrong attenuation curve compared to MODO.
   - id: xfrm.twist
     base: rotate
     pipe:
       falloff:
         type: linear
+        shape: linear
 
   - id: xfrm.swirl
     base: rotate
@@ -67,12 +72,14 @@ presets:
     pipe:
       falloff:
         type: linear
+        shape: linear
 
   - id: xfrm.taper
     base: scale
     pipe:
       falloff:
         type: linear
+        shape: linear
 
   - id: xfrm.bulge
     base: scale

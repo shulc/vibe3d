@@ -85,6 +85,34 @@ unittest { // taper = Scale + Linear
     assertPreset("xfrm.taper", "linear", "false");
 }
 
+// MODO ships shear / twist / taper with `shape integer 0` (Linear) in
+// resrc/presets.cfg. The FalloffStage default is Smooth, so without the
+// explicit `shape: linear` in tool_presets.yaml these deform tools would
+// silently use the wrong attenuation curve.
+unittest { // shear pins shape=linear (matches MODO presets.cfg)
+    clearFalloff();
+    postJson("/api/command", "tool.set xfrm.shear on");
+    auto a = falloffAttrs();
+    assert(a["shape"] == "linear",
+        "xfrm.shear expected falloff.shape=linear, got " ~ a["shape"]);
+}
+
+unittest { // twist pins shape=linear (matches MODO presets.cfg)
+    clearFalloff();
+    postJson("/api/command", "tool.set xfrm.twist on");
+    auto a = falloffAttrs();
+    assert(a["shape"] == "linear",
+        "xfrm.twist expected falloff.shape=linear, got " ~ a["shape"]);
+}
+
+unittest { // taper pins shape=linear (matches MODO presets.cfg)
+    clearFalloff();
+    postJson("/api/command", "tool.set xfrm.taper on");
+    auto a = falloffAttrs();
+    assert(a["shape"] == "linear",
+        "xfrm.taper expected falloff.shape=linear, got " ~ a["shape"]);
+}
+
 unittest { // bulge = Scale + Radial
     assertPreset("xfrm.bulge", "radial", "false");
 }
