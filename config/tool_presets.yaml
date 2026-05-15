@@ -88,9 +88,18 @@ presets:
         type: radial
 
   # ----- Transform sub-tab ----------------------------------------
-  # `move.element` mirrors MODO's `tool.set ElementMove` — the Move
+  # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` — the Move
   # tool with ACEN + AXIS pinned to Element so the gizmo lands on
-  # the selected component's centroid.
+  # the selected component's centroid. Also published as `move.element`
+  # for backwards compatibility with code that referenced the older name.
+  - id: xfrm.elementMove
+    base: move
+    pipe:
+      actionCenter:
+        mode: element
+      axis:
+        mode: element
+
   - id: move.element
     base: move
     pipe:

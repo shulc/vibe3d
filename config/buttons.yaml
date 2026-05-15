@@ -79,7 +79,7 @@ panels:
     items:
       - title: Move
         buttons:
-          - { label: "Element Move", disable: true,
+          - { label: "Element Move",
               action: { kind: tool, id: xfrm.elementMove } }
           - { label: "Flex", disable: true,
               action: { kind: tool, id: xfrm.flex } }

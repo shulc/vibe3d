@@ -135,3 +135,23 @@ unittest { // softMove activates falloff (enabled=true after preset)
     auto sizeParts = a["size"]; // "x,y,z"
     assert(sizeParts.length > 0);
 }
+
+// xfrm.elementMove pins ACEN + AXIS to Element so the gizmo lands on
+// the selected element's centroid (mirrors MODO `tool.set ElementMove`).
+// Verified via the toolpipe stage attrs after activation.
+unittest {
+    clearFalloff();
+    auto r = postJson("/api/command", "tool.set xfrm.elementMove on");
+    assert(r["status"].str == "ok",
+        "tool.set xfrm.elementMove failed: " ~ r.toString);
+    auto j = getJson("/api/toolpipe");
+    string acenMode, axisMode;
+    foreach (st; j["stages"].array) {
+        if (st["task"].str == "ACEN") acenMode = st["attrs"]["mode"].str;
+        if (st["task"].str == "AXIS") axisMode = st["attrs"]["mode"].str;
+    }
+    assert(acenMode == "element",
+        "expected ACEN.mode=element, got " ~ acenMode);
+    assert(axisMode == "element",
+        "expected AXIS.mode=element, got " ~ axisMode);
+}
