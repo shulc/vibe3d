@@ -1,0 +1,29 @@
+{
+  "_comment": "Soft Rotate with radial falloff: rotate every vert by 30° around world Y, weighted by spherical falloff centred at origin (size 1.0). Verts at the centre rotate 30°; verts on the unit sphere stay put. modo_method=analytical: vibe3d's xfrm.softRotate has no MODO equivalent (xfrm.pole is the closest, but it routes through xfrm.rotate which has the documented headless `angle` quirk and would diverge anyway). Analytical reference covers the soft-rotate math both engines agree on.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 2, "segmentsY": 2, "segmentsZ": 2,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.softRotate",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":   "radial",
+        "shape":  "linear",
+        "center": [0, 0, 0],
+        "size":   [1, 1, 1]
+      },
+      "transform": { "RY": 30.0 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

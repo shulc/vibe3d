@@ -1,0 +1,29 @@
+{
+  "_comment": "Soft Scale with radial falloff: scale every vert 2× along X about origin, weighted by spherical falloff centred at origin (size 1.0). Verts at centre go to 2× X; verts on the unit sphere stay put. modo_method=analytical: vibe3d's xfrm.softScale has no MODO ToolPreset equivalent (MODO ships taper/twist/etc. but no radial-Scale soft preset). Analytical reference checks vibe3d's ScaleTool.applyHeadless against the canonical formula.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 2, "segmentsY": 2, "segmentsZ": 2,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.softScale",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":   "radial",
+        "shape":  "linear",
+        "center": [0, 0, 0],
+        "size":   [1, 1, 1]
+      },
+      "transform": { "SX": 2.0 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

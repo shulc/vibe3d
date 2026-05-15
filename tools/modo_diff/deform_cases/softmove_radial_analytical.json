@@ -1,0 +1,29 @@
+{
+  "_comment": "Soft Move with radial falloff: pull every vert toward +X by 0.5, weighted by spherical falloff centred at origin with size 1.0. Verts at the centre move full +0.5; verts on the unit sphere move 0; in between, weight = 1 − ‖(p − c)/s‖. modo_method=analytical because vibe3d's xfrm.softMove preset has no MODO equivalent (MODO ships xfrm.magnet which is also Move + Radial but with axis=2 by default, constraining the falloff to a Z-axis disc — different shape). Analytical reference is the canonical soft-deform formula both engines should agree on.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 2, "segmentsY": 2, "segmentsZ": 2,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.softMove",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":   "radial",
+        "shape":  "linear",
+        "center": [0, 0, 0],
+        "size":   [1, 1, 1]
+      },
+      "transform": { "TX": 0.5 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

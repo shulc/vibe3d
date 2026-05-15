@@ -531,11 +531,12 @@ def _set_falloff_handles_modo(ftype, fall):
 
 
 def _falloff_weight(fall, vert):
-    """Per-vertex falloff weight ∈ [0, 1]. Linear and radial shapes
-    only — the analytical path is itself only used for twist today,
-    which always uses linear. Shape post-processing (smooth / easeIn /
-    ...) is not applied here; extend when the first analytical case
-    needs it."""
+    """Per-vertex falloff weight ∈ [0, 1]. Mirrors source/falloff.d's
+    linearWeight / radialWeight for shape=linear (1−t between bounds).
+    Non-linear shapes (smooth / easeIn / ...) aren't applied yet —
+    extend with the cubic Bezier from source/falloff.d's applyShape
+    when an analytical case needs them."""
+    import math as _math
     ftype = fall["type"]
     shape = fall.get("shape", "linear")
     if shape != "linear":
@@ -555,6 +556,24 @@ def _falloff_weight(fall, vert):
         if t < 0: return 0.0
         if t > 1: return 1.0
         return t
+    if ftype == "radial":
+        # Mirror radialWeight in source/falloff.d: t = ‖(pos − center) /
+        # size‖. Per-axis size component ≤ 0 collapses that axis out of
+        # the sum (degenerate ellipsoid is "full influence everywhere").
+        center, size = fall["center"], fall["size"]
+        d = [vert[i] - center[i] for i in range(3)]
+        sum_, any_ = 0.0, False
+        for i in range(3):
+            if size[i] > 1e-9:
+                u = d[i] / size[i]
+                sum_ += u * u
+                any_ = True
+        if not any_:
+            return 1.0
+        t = _math.sqrt(sum_)
+        if t <= 0.0: return 1.0
+        if t >= 1.0: return 0.0
+        return 1.0 - t
     raise NotImplementedError(
         "analytical deform: falloff type '%s'" % ftype)
 
