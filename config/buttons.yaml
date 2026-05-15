@@ -119,7 +119,7 @@ panels:
               action: { kind: tool, id: xfrm.taper } }
           - { label: "Bulge",
               action: { kind: tool, id: xfrm.bulge } }
-          - { label: "Flare", disable: true,
+          - { label: "Flare",
               action: { kind: tool, id: xfrm.flare } }
       - title: Align
         buttons:

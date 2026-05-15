@@ -87,6 +87,17 @@ presets:
       falloff:
         type: radial
 
+  # `xfrm.flare` mirrors MODO's `Flare` ToolPreset (resrc/presets.cfg) —
+  # surprisingly, just push-along-normals + linear falloff (NOT the
+  # outward-scale-perpendicular-to-axis behaviour the name might
+  # suggest). Same wiring lets us match MODO bit-for-bit.
+  - id: xfrm.flare
+    base: xfrm.push
+    pipe:
+      falloff:
+        type:  linear
+        shape: linear
+
   # ----- Transform sub-tab ----------------------------------------
   # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` — the Move
   # tool with ACEN + AXIS pinned to Element so the gizmo lands on

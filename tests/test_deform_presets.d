@@ -155,3 +155,29 @@ unittest {
     assert(axisMode == "element",
         "expected AXIS.mode=element, got " ~ axisMode);
 }
+
+// xfrm.flare mirrors MODO's `Flare` ToolPreset — surprisingly that's
+// xfrm.push + linear falloff (NOT outward-scale, despite the name).
+// Verify the preset plumbing wires both.
+unittest {
+    clearFalloff();
+    auto r = postJson("/api/command", "tool.set xfrm.flare on");
+    assert(r["status"].str == "ok",
+        "tool.set xfrm.flare failed: " ~ r.toString);
+    // Falloff stage should be type=linear shape=linear after preset.
+    auto a = falloffAttrs();
+    assert(a["type"]  == "linear",
+        "xfrm.flare expected falloff.type=linear, got " ~ a["type"]);
+    assert(a["shape"] == "linear",
+        "xfrm.flare expected falloff.shape=linear, got " ~ a["shape"]);
+    // Smoke-test apply: dist=0.05 with the preset's linear falloff
+    // should push the cube outward (verts shift along their normals
+    // weighted by the linear falloff that was auto-fitted to the bbox).
+    auto da = postJson("/api/command", "tool.attr xfrm.flare dist 0.05");
+    assert(da["status"].str == "ok");
+    auto ap = postJson("/api/command", "tool.doApply");
+    assert(ap["status"].str == "ok");
+    // Just check the mesh wasn't NaN'd (dump succeeds).
+    auto m = getJson("/api/model");
+    assert(m["vertexCount"].integer == 8, "cube should still have 8 verts");
+}
