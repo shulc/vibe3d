@@ -20,6 +20,7 @@ import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
 import falloff_render : drawFalloffOverlay;
 import toolpipe.packets : FalloffPacket;
+import params : Param;
 
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,12 @@ private:
     Vec3   preEditScaleAccum;
     Vec3   preEditPropScale;
 
+    // MODO-style numeric scale attrs (`xfrm.transform SX/SY/SZ`).
+    // Driven via `tool.attr <toolId> SX <factor>` — used by the headless
+    // apply path to scale verts about the ACEN center, weighted by the
+    // active falloff stage. Default 1.0 (identity scale).
+    Vec3   headlessScale = Vec3(1, 1, 1);
+
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
@@ -60,6 +67,58 @@ public:
         propScale  = Vec3(1, 1, 1);
         activationVertices = mesh.vertices.dup;
         activationCenter   = handler.center;
+        headlessScale = Vec3(1, 1, 1);
+    }
+
+    // MODO `xfrm.transform` SX/SY/SZ surfaced for `tool.attr <id> SX 1.5`
+    // / `tool.doApply` headless flows. Each is a per-axis scale factor
+    // about the ACEN center, applied along the AXIS-stage basis.
+    override Param[] params() {
+        return [
+            Param.float_("SX", "Scale X", &headlessScale.x, 1.0f),
+            Param.float_("SY", "Scale Y", &headlessScale.y, 1.0f),
+            Param.float_("SZ", "Scale Z", &headlessScale.z, 1.0f),
+        ];
+    }
+
+    // Headless apply path. Drives applyScaleFromActivationCpuOnly with
+    // scaleAccum = headlessScale and the activation snapshot pinned to
+    // the current verts — same per-vertex falloff weighting + symmetry
+    // mirror as interactive drag. Caller (ToolDoApplyCommand) wraps us
+    // in a MeshSnapshot pair for undo.
+    override bool applyHeadless() {
+        captureFalloffForDrag();
+        captureSymmetryForDrag();
+        vertexCacheDirty = true;
+        buildVertexCacheIfNeeded();
+        if (vertexProcessCount == 0) return false;
+        // Skip identity scale entirely — applyScaleFromActivationCpuOnly
+        // would touch every vert pointlessly and a no-op apply is a
+        // useful escape hatch for callers driving us scriptedly.
+        if (headlessScale == Vec3(1, 1, 1)) return true;
+
+        // Pull pivot from ACEN (interactive update() does this every
+        // frame; headless never runs update()).
+        cachedCenter     = queryActionCenter();
+        activationCenter = cachedCenter;
+        handler.setPosition(cachedCenter);
+
+        // Orient the handler basis from AXIS — applyScaleFromActivation
+        // reads handler.axisX/Y/Z to scale along the right basis vectors
+        // (auto workplane = world; local AXIS uses workplane axes).
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ);
+        handler.setOrientation(bX, bY, bZ);
+
+        // Pin the activation snapshot to the current mesh — the inner
+        // loop reads activationVertices[vi] as the pre-scale baseline,
+        // so without this the very first headless apply per session
+        // would scale relative to whatever was in mesh.vertices at
+        // activate() time (typically a stale older mesh).
+        activationVertices = mesh.vertices.dup;
+        scaleAccum = headlessScale;
+        applyScaleFromActivationCpuOnly();
+        return true;
     }
 
     // Phase 7.5h: tool-session boundary — bake pending edit into one

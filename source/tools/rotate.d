@@ -20,6 +20,7 @@ import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
 import falloff_render : drawFalloffOverlay;
 import toolpipe.packets : FalloffPacket;
+import params : Param;
 
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
@@ -48,6 +49,14 @@ private:
     Vec3     preEditAngleAccum;
     Vec3     preEditPropDeg;
 
+    // MODO-style numeric rotate attrs (`xfrm.transform RX/RY/RZ`).
+    // Driven via `tool.attr <toolId> RX <degrees>` — used by the
+    // headless apply path to rotate verts around the AXIS-stage basis,
+    // weighted by the active falloff stage. Three independent rotations
+    // applied in X→Y→Z order; for the soft-twist preset only one is
+    // typically set, so the order is moot in the common case.
+    Vec3     headlessRotate;
+
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
@@ -63,6 +72,50 @@ public:
         angleAccum = Vec3(0, 0, 0);
         propDeg = Vec3(0, 0, 0);
         origVertices = mesh.vertices.dup;
+        headlessRotate = Vec3(0, 0, 0);
+    }
+
+    // MODO `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`
+    // / `tool.doApply` headless flows. Each is degrees of rotation
+    // around the matching AXIS-stage basis vector (right / up / fwd).
+    override Param[] params() {
+        return [
+            Param.float_("RX", "Rotate X", &headlessRotate.x, 0.0f),
+            Param.float_("RY", "Rotate Y", &headlessRotate.y, 0.0f),
+            Param.float_("RZ", "Rotate Z", &headlessRotate.z, 0.0f),
+        ];
+    }
+
+    // Headless apply path. Reuses applyRotationVec — same per-vertex
+    // weighting + symmetry mirror that interactive drag uses. Each
+    // non-zero R{X,Y,Z} fires one rotation around its basis axis,
+    // pivoting at the ACEN center. dragAxis stays -1 here, so
+    // applyRotationVec uses the global axisVec (no per-cluster axis
+    // lookup) — Local / Element ACEN modes that need per-cluster
+    // pivots already work because pivotFor() consults
+    // queryClusterPivots() regardless of dragAxis.
+    override bool applyHeadless() {
+        captureFalloffForDrag();
+        captureSymmetryForDrag();
+        vertexCacheDirty = true;
+        buildVertexCacheIfNeeded();
+        if (vertexProcessCount == 0) return false;
+
+        // Pull the pivot from ACEN. Interactive update() does this
+        // every frame; headless never runs update(), so we do it here.
+        cachedCenter = queryActionCenter();
+        handler.setPosition(cachedCenter);
+
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ);
+
+        if (headlessRotate.x != 0)
+            applyRotationVec(bX, headlessRotate.x * cast(float)(PI / 180.0));
+        if (headlessRotate.y != 0)
+            applyRotationVec(bY, headlessRotate.y * cast(float)(PI / 180.0));
+        if (headlessRotate.z != 0)
+            applyRotationVec(bZ, headlessRotate.z * cast(float)(PI / 180.0));
+        return true;
     }
 
     // Phase 7.5h: tool-session boundary — commit any pending edit
