@@ -20,6 +20,7 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import toolpipe.packets : SnapPacket, FalloffPacket, FalloffType;
 import falloff : evaluateFalloff;
 import falloff_render : drawFalloffOverlay;
+import params : Param;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -46,6 +47,13 @@ private:
                                     //  the prior drag(s).
     Vec3     propInput;       // value shown in Tool Properties (basis-local components,
                               //  i.e. dot(dragDelta, axisX/Y/Z) — see drawProperties)
+
+    // MODO-style numeric translate attrs (TX/TY/TZ on `xfrm.transform`).
+    // Driven via `tool.attr <toolId> TX <value>` — used by the headless
+    // apply path (`tool.doApply` ⇒ `applyHeadless()`) to move verts by an
+    // explicit world-space delta, weighted by the active falloff stage.
+    // Reset on activate() so a fresh `tool.set` doesn't reuse stale values.
+    Vec3     headlessTranslate;
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
     // (lastSnap moved to TransformTool — same semantics, also drives
@@ -69,6 +77,40 @@ public:
         dragDelta = Vec3(0, 0, 0);
         dragDeltaAtDragStart = Vec3(0, 0, 0);
         propInput = Vec3(0, 0, 0);
+        headlessTranslate = Vec3(0, 0, 0);
+    }
+
+    // MODO `xfrm.transform` numeric attrs surfaced for `tool.attr <id> TX`
+    // / `tool.doApply` headless flows. Visible in the args dialog too —
+    // future cleanup could hide them from the inline panel since the
+    // gizmo + Tool Properties already cover interactive translate input.
+    override Param[] params() {
+        return [
+            Param.float_("TX", "Translate X", &headlessTranslate.x, 0.0f),
+            Param.float_("TY", "Translate Y", &headlessTranslate.y, 0.0f),
+            Param.float_("TZ", "Translate Z", &headlessTranslate.z, 0.0f),
+        ];
+    }
+
+    // Headless apply path — used by `tool.doApply` and the Deform cross-
+    // engine diff. Reuses the drag-time falloff/symmetry capture +
+    // `applyDeltaImmediate` inner loop so per-vertex weighting matches
+    // interactive drag exactly. Caller (ToolDoApplyCommand) wraps us in
+    // a MeshSnapshot pair for undo and refreshes GPU caches.
+    //
+    // `cachedVp` may be Viewport.init in headless mode — fine for
+    // Linear / Radial falloff (their evaluateFalloff ignores vp); Screen
+    // and Lasso falloff need a real viewport and will fall back to
+    // weight=1 here. Document if a Screen-based deform preset ever
+    // surfaces.
+    override bool applyHeadless() {
+        captureFalloffForDrag();
+        captureSymmetryForDrag();
+        vertexCacheDirty = true;
+        buildVertexCacheIfNeeded();
+        if (vertexProcessCount == 0) return false;
+        applyDeltaImmediate(headlessTranslate);
+        return true;
     }
 
     // Phase 7.5h: tool-session boundary — commit any pending edit
