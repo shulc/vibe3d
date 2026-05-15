@@ -98,6 +98,19 @@ presets:
         type:  linear
         shape: linear
 
+  # `xfrm.vortex` mirrors MODO's `xfrm.vortex` ToolPreset: cylinder
+  # falloff (radial-perpendicular-to-axis) + Rotate. Cylinder axis
+  # defaults to +Y, matching MODO's `axisY=1.0` baseline. The user
+  # rotates by setting RY (or RX/RZ to switch axes); per-vert weight
+  # comes from the cylinder falloff so verts on the axis spin full,
+  # verts at the cylinder's radial boundary stay put.
+  - id: xfrm.vortex
+    base: rotate
+    pipe:
+      falloff:
+        type:  cylinder
+        shape: linear
+
   # ----- Transform sub-tab ----------------------------------------
   # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` — the Move
   # tool with ACEN + AXIS pinned to Element so the gizmo lands on

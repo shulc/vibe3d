@@ -574,6 +574,31 @@ def _falloff_weight(fall, vert):
         if t <= 0.0: return 1.0
         if t >= 1.0: return 0.0
         return 1.0 - t
+    if ftype == "cylinder":
+        # Mirror cylinderWeight in source/falloff.d: perpendicular
+        # distance from the cylinder axis through `center`, normalised
+        # by max(size.x, size.y, size.z). Axis defaults to (0, 1, 0)
+        # if absent.
+        center = fall["center"]
+        size   = fall["size"]
+        axis   = fall.get("axis", [0.0, 1.0, 0.0])
+        al2 = axis[0]*axis[0] + axis[1]*axis[1] + axis[2]*axis[2]
+        if al2 < 1e-12:
+            # Fall back to radial when the axis is degenerate.
+            return _falloff_weight({"type": "radial", "shape": "linear",
+                                    "center": center, "size": size}, vert)
+        ai = 1.0 / _math.sqrt(al2)
+        ax = [axis[0]*ai, axis[1]*ai, axis[2]*ai]
+        d  = [vert[i] - center[i] for i in range(3)]
+        along = d[0]*ax[0] + d[1]*ax[1] + d[2]*ax[2]
+        perp  = [d[i] - ax[i]*along for i in range(3)]
+        plen  = _math.sqrt(perp[0]*perp[0] + perp[1]*perp[1] + perp[2]*perp[2])
+        r = max(size[0], size[1], size[2])
+        if r <= 1e-9: return 1.0
+        t = plen / r
+        if t <= 0.0: return 1.0
+        if t >= 1.0: return 0.0
+        return 1.0 - t
     raise NotImplementedError(
         "analytical deform: falloff type '%s'" % ftype)
 

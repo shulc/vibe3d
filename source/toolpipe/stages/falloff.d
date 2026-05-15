@@ -61,6 +61,7 @@ class FalloffStage : Stage {
     Vec3 end    = Vec3(0, 1, 0);
     Vec3 center = Vec3(0, 0, 0);
     Vec3 size   = Vec3(1, 1, 1);
+    Vec3 normal = Vec3(0, 1, 0);    // cylinder axis (default +Y, matches MODO xfrm.vortex)
 
     float screenCx     = 0;
     float screenCy     = 0;
@@ -144,6 +145,7 @@ class FalloffStage : Stage {
         state.falloff.end          = end;
         state.falloff.center       = center;
         state.falloff.size         = size;
+        state.falloff.normal       = normal;
         state.falloff.screenCx     = screenCx;
         state.falloff.screenCy     = screenCy;
         state.falloff.screenSize   = screenSize;
@@ -279,6 +281,11 @@ class FalloffStage : Stage {
                                      cast(int)LassoStyle.Freehand);
                 ps ~= Param.float_("softBorder", "Soft Border", &softBorderPx, 16.0f);
                 break;
+            case FalloffType.Cylinder:
+                ps ~= Param.vec3_("center", "Center", &center, Vec3(0, 0, 0));
+                ps ~= Param.vec3_("size",   "Size",   &size,   Vec3(1, 1, 1));
+                ps ~= Param.vec3_("axis",   "Axis",   &normal, Vec3(0, 1, 0));
+                break;
         }
         return ps;
     }
@@ -301,11 +308,12 @@ class FalloffStage : Stage {
         // status-bar Falloff pulldown owns type selection; the Tool
         // Properties section reflects whichever type is active.
         final switch (type) {
-            case FalloffType.None:   return "Falloff";
-            case FalloffType.Linear: return "Linear Falloff";
-            case FalloffType.Radial: return "Radial Falloff";
-            case FalloffType.Screen: return "Screen Falloff";
-            case FalloffType.Lasso:  return "Lasso Falloff";
+            case FalloffType.None:     return "Falloff";
+            case FalloffType.Linear:   return "Linear Falloff";
+            case FalloffType.Radial:   return "Radial Falloff";
+            case FalloffType.Screen:   return "Screen Falloff";
+            case FalloffType.Lasso:    return "Lasso Falloff";
+            case FalloffType.Cylinder: return "Cylinder Falloff";
         }
     }
 
@@ -395,11 +403,12 @@ private:
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "type":
-                if      (value == "none")   { type = FalloffType.None;   return true; }
-                else if (value == "linear") { type = FalloffType.Linear; return true; }
-                else if (value == "radial") { type = FalloffType.Radial; return true; }
-                else if (value == "screen") { type = FalloffType.Screen; return true; }
-                else if (value == "lasso")  { type = FalloffType.Lasso;  return true; }
+                if      (value == "none")     { type = FalloffType.None;     return true; }
+                else if (value == "linear")   { type = FalloffType.Linear;   return true; }
+                else if (value == "radial")   { type = FalloffType.Radial;   return true; }
+                else if (value == "screen")   { type = FalloffType.Screen;   return true; }
+                else if (value == "lasso")    { type = FalloffType.Lasso;    return true; }
+                else if (value == "cylinder") { type = FalloffType.Cylinder; return true; }
                 return false;
             case "shape":
                 if      (value == "linear")  { shape = FalloffShape.Linear;  return true; }
@@ -412,6 +421,7 @@ private:
             case "end":    return parseVec3(value, end);
             case "center": return parseVec3(value, center);
             case "size":   return parseVec3(value, size);
+            case "axis":   return parseVec3(value, normal);
             case "screenCx":   screenCx     = parseFloat(value); return true;
             case "screenCy":   screenCy     = parseFloat(value); return true;
             case "screenSize": screenSize   = parseFloat(value); return true;
@@ -468,11 +478,12 @@ private:
 
     string typeLabel() const {
         final switch (type) {
-            case FalloffType.None:   return "none";
-            case FalloffType.Linear: return "linear";
-            case FalloffType.Radial: return "radial";
-            case FalloffType.Screen: return "screen";
-            case FalloffType.Lasso:  return "lasso";
+            case FalloffType.None:     return "none";
+            case FalloffType.Linear:   return "linear";
+            case FalloffType.Radial:   return "radial";
+            case FalloffType.Screen:   return "screen";
+            case FalloffType.Lasso:    return "lasso";
+            case FalloffType.Cylinder: return "cylinder";
         }
     }
 
@@ -652,6 +663,18 @@ private:
             case FalloffType.Lasso:
                 // Lasso polygon needs the user's input gesture (7.5e);
                 // nothing meaningful to auto-size.
+                break;
+            case FalloffType.Cylinder:
+                // Mirrors the Radial branch: anchor the cylinder at the
+                // bbox centre, isotropic radial extent. The cylinder
+                // axis (`normal`) defaults to +Y per the FalloffPacket
+                // default — explicit user override via
+                // `tool.pipe.attr falloff axis "<x,y,z>"` if needed.
+                center = bbCenter;
+                size   = Vec3(
+                    bbHalf.x > 0 ? bbHalf.x : 1.0f,
+                    bbHalf.y > 0 ? bbHalf.y : 1.0f,
+                    bbHalf.z > 0 ? bbHalf.z : 1.0f);
                 break;
         }
     }

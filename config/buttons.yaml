@@ -103,7 +103,7 @@ panels:
               action: { kind: tool, id: xfrm.twist } }
           - { label: "Bend", disable: true,
               action: { kind: tool, id: xfrm.bend } }
-          - { label: "Vortex", disable: true,
+          - { label: "Vortex",
               action: { kind: tool, id: xfrm.vortex } }
           - { label: "Swirl",
               action: { kind: tool, id: xfrm.swirl } }

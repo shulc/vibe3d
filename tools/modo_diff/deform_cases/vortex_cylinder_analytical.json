@@ -1,0 +1,30 @@
+{
+  "_comment": "Vortex preset: rotate around +Y by 30° with cylinder-falloff weighting (radial-perpendicular-to-axis). Mirrors MODO `xfrm.vortex` (falloff.cylinder + xfrm.rotate). MODO comparison via analytical reference because xfrm.rotate's headless `angle` doApply is unreliable (per modo_dump.py:run_xfrm_rotate). Vibe3d's RotateTool path is what's verified — the cylinder falloff math is asserted to match across both engines' implementations of the formula.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 4, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.vortex",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":   "cylinder",
+        "shape":  "linear",
+        "center": [0, 0, 0],
+        "size":   [1, 1, 1],
+        "axis":   [0, 1, 0]
+      },
+      "transform": { "RY": 30.0 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

@@ -101,11 +101,12 @@ struct WorkplanePacket {
 /// falloff.<type> on` selection except we stash the choice on the
 /// stage instead of using one tool per type.
 enum FalloffType : uint {
-    None    = 0,   // 7.5a — packet present but `enabled = false`
-    Linear  = 1,   // 7.5b
-    Radial  = 2,   // 7.5c
-    Screen  = 3,   // 7.5d
-    Lasso   = 4,   // 7.5e
+    None     = 0,   // 7.5a — packet present but `enabled = false`
+    Linear   = 1,   // 7.5b
+    Radial   = 2,   // 7.5c
+    Screen   = 3,   // 7.5d
+    Lasso    = 4,   // 7.5e
+    Cylinder = 5,   // Stage 12 — radial-perpendicular-to-axis (xfrm.vortex)
 }
 
 /// Per-shape attenuation curve. `t ∈ [0, 1]` is the normalised
@@ -157,6 +158,12 @@ struct FalloffPacket {
     // surface.
     Vec3         center      = Vec3(0, 0, 0);
     Vec3         size        = Vec3(1, 1, 1);
+
+    // Cylinder: same `center` + `size` as Radial, but the falloff
+    // depends only on the perpendicular distance from `axis` (an
+    // infinite cylinder around the line `center` + t*axis). Default
+    // axis = +Y matches MODO's xfrm.vortex preset (axisY=1.0).
+    Vec3         normal      = Vec3(0, 1, 0);
 
     // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
     // projected as an infinite cylinder along the camera-back axis.

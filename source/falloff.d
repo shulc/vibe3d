@@ -50,6 +50,8 @@ float evaluateFalloff(const ref FalloffPacket cfg,
             return screenWeight(cfg, pos, vp);
         case FalloffType.Lasso:
             return lassoWeight(cfg, pos, vp);
+        case FalloffType.Cylinder:
+            return cylinderWeight(cfg, pos);
     }
 }
 
@@ -96,6 +98,39 @@ private float radialWeight(const ref FalloffPacket cfg, Vec3 pos) {
     }
     if (!any) return 1.0f;       // degenerate ellipsoid — full influence everywhere
     float t = sqrt(sum);
+    if (t <= 0.0f) return 1.0f;
+    if (t >= 1.0f) return 0.0f;
+    return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+}
+
+/// Cylinder falloff: same as Radial but with one axis collapsed —
+/// the weight depends only on the perpendicular distance from the
+/// `center` point along the cylinder axis. Used by xfrm.vortex (a
+/// twist that rotates uniformly along its axis but attenuates with
+/// radial distance from it). Falls back to Radial behaviour for a
+/// degenerate axis (zero-length); cylinder size is taken from the
+/// bigger of the two perpendicular `size` components (most setups
+/// have an isotropic radial cross-section).
+private float cylinderWeight(const ref FalloffPacket cfg, Vec3 pos) {
+    Vec3 axis = cfg.normal;
+    float al2 = dot(axis, axis);
+    if (al2 < 1e-12f) return radialWeight(cfg, pos);  // degenerate → fall back
+    Vec3 invAxis = axis * (1.0f / sqrt(al2));
+    Vec3 d = pos - cfg.center;
+    float along = dot(d, invAxis);
+    Vec3 perp = d - invAxis * along;
+    // Cylinder radius from `size`: the two non-aligned axes' size
+    // components average to the radius in the simple isotropic case.
+    // For now use the max of size.x/y/z (the cross-section is a disc
+    // around the axis; a more sophisticated implementation could
+    // pick the two non-axis components by axis index).
+    float sx = cfg.size.x, sy = cfg.size.y, sz = cfg.size.z;
+    float r  = sx;
+    if (sy > r) r = sy;
+    if (sz > r) r = sz;
+    if (r <= 1e-9f) return 1.0f;
+    float plen = sqrt(dot(perp, perp));
+    float t = plen / r;
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
     return applyShape(t, cfg.shape, cfg.in_, cfg.out_);

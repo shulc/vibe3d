@@ -79,6 +79,15 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
             break;
         }
         case FalloffType.Lasso: drawLasso(dl, cfg, outlineCol); break;
+        case FalloffType.Cylinder:
+            // Reuse the radial overlay for now — the visual cue (an
+            // ellipse on the workplane) is close enough to the
+            // cylindrical cross-section for a first pass. A proper
+            // rendering would draw the cylinder's axis line plus two
+            // capping circles; deferred until a Vortex user surfaces a
+            // need.
+            drawRadial(dl, cfg, vp, outlineCol);
+            break;
     }
 }
 

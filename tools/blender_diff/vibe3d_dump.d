@@ -579,6 +579,17 @@ void runDeform(JSONValue op) {
                 "tool.pipe.attr falloff center " ~ vec3lit(fall["center"]));
             postJson("/api/command",
                 "tool.pipe.attr falloff size " ~ vec3lit(fall["size"]));
+        } else if (ftype == "cylinder") {
+            // Cylinder falloff also takes the radial center+size, plus
+            // an `axis` Vec3 (the cylinder direction). Default in
+            // FalloffPacket is +Y if not specified.
+            postJson("/api/command",
+                "tool.pipe.attr falloff center " ~ vec3lit(fall["center"]));
+            postJson("/api/command",
+                "tool.pipe.attr falloff size " ~ vec3lit(fall["size"]));
+            if ("axis" in fall)
+                postJson("/api/command",
+                    "tool.pipe.attr falloff axis " ~ vec3lit(fall["axis"]));
         } else {
             throw new Exception("deform falloff type '" ~ ftype ~ "'");
         }
