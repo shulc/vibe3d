@@ -101,7 +101,7 @@ panels:
               action: { kind: tool, id: xfrm.softRotate } }
           - { label: "Twist",
               action: { kind: tool, id: xfrm.twist } }
-          - { label: "Bend", disable: true,
+          - { label: "Bend",
               action: { kind: tool, id: xfrm.bend } }
           - { label: "Vortex",
               action: { kind: tool, id: xfrm.vortex } }
