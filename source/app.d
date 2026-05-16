@@ -2457,10 +2457,12 @@ void main(string[] args) {
         // active tool, defer to `wantsHoverForType` so tools like
         // ElementMoveTool can opt in to multi-type hover regardless
         // of editMode (Stage 14.9).
+        bool toolHover = false;
         if (activeTool is null) {
             if (editMode != EditMode.Vertices) return;
         } else {
             if (!activeTool.wantsHoverForType(EditMode.Vertices)) return;
+            toolHover = true;
         }
 
         int mx, my;
@@ -2471,8 +2473,16 @@ void main(string[] args) {
         // the face surface so verts inside / behind opaque geometry
         // drop out. Subpatch mode maps VBO indices back to cage indices
         // via gpu.vertOriginGpu inside GpuSelectBuffer.pick.
-        enum int PICK_RADIUS_PX = 4;
-        int hit = gpuSelect.pick(SelectMode.Vertex, mx, my, PICK_RADIUS_PX,
+        //
+        // Tool-driven multi-type hover uses a TIGHTER radius (2 px vs
+        // 4) so vert pick only wins when the cursor is essentially on
+        // the vert — otherwise the priority resolution
+        // (vert > edge > face in the render path) makes the cursor
+        // over a face / edge interior steal the highlight onto a
+        // nearby vert just because it was within 4 px. The selection-
+        // drag path keeps the looser 4 px tolerance.
+        int pickR = toolHover ? 2 : 4;
+        int hit = gpuSelect.pick(SelectMode.Vertex, mx, my, pickR,
                                   mesh, gpu, vp);
         if (hit < 0) return;
 
@@ -2488,10 +2498,12 @@ void main(string[] args) {
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
         hoveredEdge = -1;
         if (io.WantCaptureMouse || doingCameraDrag) return;
+        bool toolHover = false;
         if (activeTool is null) {
             if (editMode != EditMode.Edges) return;
         } else {
             if (!activeTool.wantsHoverForType(EditMode.Edges)) return;
+            toolHover = true;
         }
 
         int mx, my;
@@ -2501,8 +2513,13 @@ void main(string[] args) {
         // returned ID is exactly the cage edge whose pixel sits closest
         // to the cursor among those NOT occluded by any face. The
         // picker handles its own cache + subpatch VBO→cage translation.
-        enum int PICK_RADIUS_PX = 6;
-        int hit = gpuSelect.pick(SelectMode.Edge, mx, my, PICK_RADIUS_PX,
+        //
+        // Tool-driven multi-type hover uses a tighter radius (3 vs 6)
+        // — same rationale as the vertex pick: in Auto-mode the
+        // priority resolution would otherwise steal face highlights
+        // onto a near-but-not-on-cursor edge.
+        int pickR = toolHover ? 3 : 6;
+        int hit = gpuSelect.pick(SelectMode.Edge, mx, my, pickR,
                                   mesh, gpu, vp);
 
         if (hit < 0) return;
