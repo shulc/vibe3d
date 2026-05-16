@@ -5,9 +5,7 @@ import bindbc.sdl;
 import tools.move;
 import mesh;
 import editmode;
-import math : Vec3, Vec4, projectToWindowFull, pivotRotationMatrix,
-              pivotScaleMatrix, mulMV, closestOnSegment2DSquared,
-              pointInPolygon2D;
+import math : Vec3, Vec4, pivotRotationMatrix, pivotScaleMatrix, mulMV;
 import shader;
 import params : Param;
 
@@ -17,6 +15,7 @@ import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets  : FalloffType, ElementMode;
+import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
 /// ElementMoveTool — Move with a click-to-pick pre-step. On LMB-down
 /// that doesn't hit the gizmo, the tool hit-tests the cursor against
@@ -262,7 +261,7 @@ public:
             SDL_Keymod mods = SDL_GetModState();
             ctrlMod = (mods & KMOD_CTRL) != 0;
             bool plain = (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
-            if (plain) picked = tryPickElement(e.x, e.y);
+            if (plain) picked = tryPickElement();
         }
 
         // Let MoveTool handle gizmo-arrow hits + falloff endpoint
@@ -289,35 +288,28 @@ public:
     }
 
 private:
-    // Hit-test mesh elements against (mx, my) and update the active
-    // FalloffStage.pickedCenter to the picked element's centroid.
-    // Pick priority in Automatic mode: vertex → edge → face (matches
-    // MODO's "element under cursor" semantic — verts are most
-    // specific, faces fill in the rest). Manual mode restricts to
-    // the current editMode.
+    // Resolve the click to whichever element is currently HOVERED.
+    // app.d's pickVertices / pickEdges / pickFaces use a GPU ID-buffer
+    // with proper per-pixel depth, then publish the resolved (priority-
+    // applied) hover state to `hover_state.g_hovered*`. We just read
+    // those — anything else (CPU centroid projection, point-in-polygon)
+    // can disagree with the GPU pass on overlapping faces and pick a
+    // hidden polygon while the user sees the front one highlighted.
     //
-    // Picking pixel radius: 16 px around the cursor — matches the
-    // existing select tolerance in app.d's pick code.
+    // Pick-type restriction per Stage 14.8 ElementMode:
+    //   Auto / AutoCent  → use whatever the hover resolver chose
+    //   Vertex           → only the hovered vert
+    //   Edge / EdgeCent  → only the hovered edge
+    //   Polygon/PolyCent → only the hovered face
+    //
     // Returns true if an element was picked (and pickedCenter updated).
     // ElementMoveTool.onMouseButtonDown uses the return value to gate
     // the auto-drag fallback when the click landed off the gizmo.
-    bool tryPickElement(int mx, int my) {
+    bool tryPickElement() {
         FalloffStage stage = activeFalloffStage();
         if (stage is null) return false;
         if (stage.type != FalloffType.Element) return false;
 
-        // Pick-type restriction per Stage 14.8 ElementMode:
-        //   Auto / AutoCent  → vert > edge > face priority, matching
-        //                       the hover-resolution rule in app.d
-        //                       (`if (hoveredVertex >= 0) … else if
-        //                       (hoveredEdge >= 0) …`). The element
-        //                       that highlights under the cursor is
-        //                       the one that picks — anything else
-        //                       desyncs visual feedback from the
-        //                       drag target.
-        //   Vertex           → verts only
-        //   Edge / EdgeCent  → edges only
-        //   Polygon/PolyCent → polygons only
         ElementMode em = stage.elementMode;
         bool autoMode = (em == ElementMode.Auto) || (em == ElementMode.AutoCent);
         bool wantV = autoMode || (em == ElementMode.Vertex);
@@ -326,77 +318,27 @@ private:
         bool wantF = autoMode || (em == ElementMode.Polygon)
                               || (em == ElementMode.PolyCent);
 
-        if (wantV && pickVert(stage, mx, my)) return true;
-        if (wantE && pickEdge(stage, mx, my)) return true;
-        if (wantF && pickFace(stage, mx, my)) return true;
+        if (wantV && g_hoveredVertex >= 0
+            && g_hoveredVertex < cast(int)mesh.vertices.length)
+            return takeVert(stage, g_hoveredVertex);
+        if (wantE && g_hoveredEdge >= 0
+            && g_hoveredEdge < cast(int)mesh.edges.length)
+            return takeEdge(stage, g_hoveredEdge);
+        if (wantF && g_hoveredFace >= 0
+            && g_hoveredFace < cast(int)mesh.faces.length)
+            return takeFace(stage, g_hoveredFace);
         return false;
     }
 
-    // Closest vert within 16 px of the cursor; depth-tiebreaks coincident
-    // projections (front-most wins) so vert pick matches the GPU-driven
-    // hover highlight on subdivided / dense meshes where front and back
-    // face-centre verts can land on the same pixel.
-    bool pickVert(FalloffStage stage, int mx, int my) {
-        enum float PICK_R2 = 16.0f * 16.0f;
-        int   bestVi = -1;
-        float bestD2 = PICK_R2;
-        float bestZ  = float.infinity;
-        foreach (vi; 0 .. mesh.vertices.length) {
-            float sx, sy, ndcZ;
-            if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
-                                     sx, sy, ndcZ))
-                continue;
-            float dx = sx - mx, dy = sy - my;
-            float d2 = dx*dx + dy*dy;
-            if (d2 >= PICK_R2) continue;
-            // Closer in 2D wins; same-pixel ties go to the smaller
-            // ndcZ (nearer to camera).
-            if (d2 < bestD2 - 1e-3f
-             || (d2 < bestD2 + 1e-3f && ndcZ < bestZ)) {
-                bestD2 = d2;
-                bestZ  = ndcZ;
-                bestVi = cast(int)vi;
-            }
-        }
-        if (bestVi < 0) return false;
-        stage.pickedCenter = mesh.vertices[bestVi];
-        stage.pickedVerts  = [cast(uint)bestVi];
-        updateConnectMask(stage, bestVi);
+    bool takeVert(FalloffStage stage, int vi) {
+        stage.pickedCenter = mesh.vertices[vi];
+        stage.pickedVerts  = [cast(uint)vi];
+        updateConnectMask(stage, vi);
         return true;
     }
 
-    // Closest edge segment within 16 px of the cursor. Uses segment
-    // distance (not midpoint) so long edges register hits near either
-    // endpoint. pickedCenter lands on the midpoint — matches MODO's
-    // Auto-Center semantic. Depth-tiebreaks coincident screen projections
-    // (front-most edge wins) so pick matches the GPU-driven hover.
-    bool pickEdge(FalloffStage stage, int mx, int my) {
-        enum float PICK_R2 = 16.0f * 16.0f;
-        int   bestEi = -1;
-        float bestD2 = PICK_R2;
-        float bestZ  = float.infinity;
-        foreach (ei, edge; mesh.edges) {
-            float ax, ay, az, bx, by, bz;
-            if (!projectToWindowFull(mesh.vertices[edge[0]], cachedVp,
-                                     ax, ay, az))
-                continue;
-            if (!projectToWindowFull(mesh.vertices[edge[1]], cachedVp,
-                                     bx, by, bz))
-                continue;
-            float t;
-            float d2 = closestOnSegment2DSquared(
-                cast(float)mx, cast(float)my, ax, ay, bx, by, t);
-            if (d2 >= PICK_R2) continue;
-            float zMid = 0.5f * (az + bz);
-            if (d2 < bestD2 - 1e-3f
-             || (d2 < bestD2 + 1e-3f && zMid < bestZ)) {
-                bestD2 = d2;
-                bestZ  = zMid;
-                bestEi = cast(int)ei;
-            }
-        }
-        if (bestEi < 0) return false;
-        auto e = mesh.edges[bestEi];
+    bool takeEdge(FalloffStage stage, int ei) {
+        auto e = mesh.edges[ei];
         stage.pickedCenter = (mesh.vertices[e[0]]
                             + mesh.vertices[e[1]]) * 0.5f;
         stage.pickedVerts  = [cast(uint)e[0], cast(uint)e[1]];
@@ -404,45 +346,13 @@ private:
         return true;
     }
 
-    // Frontmost face whose projected polygon contains the cursor.
-    // pickedCenter lands on the centroid; pickedVerts holds the vert
-    // ring so the whole face moves with weight 1.
-    bool pickFace(FalloffStage stage, int mx, int my) {
-        int   bestFi = -1;
-        float bestZ  = float.infinity;
-        float[] xs;
-        float[] ys;
-        foreach (fi; 0 .. mesh.faces.length) {
-            const(uint)[] face = mesh.faces[fi];
-            xs.length = face.length;
-            ys.length = face.length;
-            bool projectedAll = true;
-            float zSum = 0;
-            int   zCount = 0;
-            foreach (i, vi; face) {
-                float sx, sy, ndcZ;
-                if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
-                                         sx, sy, ndcZ))
-                {
-                    projectedAll = false;
-                    break;
-                }
-                xs[i] = sx; ys[i] = sy;
-                zSum += ndcZ; ++zCount;
-            }
-            if (!projectedAll || zCount == 0) continue;
-            if (!pointInPolygon2D(cast(float)mx, cast(float)my, xs, ys))
-                continue;
-            float zAvg = zSum / cast(float)zCount;
-            if (zAvg < bestZ) { bestZ = zAvg; bestFi = cast(int)fi; }
-        }
-        if (bestFi < 0) return false;
-        stage.pickedCenter = mesh.faceCentroid(cast(uint)bestFi);
-        stage.pickedVerts.length = mesh.faces[bestFi].length;
-        foreach (i, vi; mesh.faces[bestFi])
+    bool takeFace(FalloffStage stage, int fi) {
+        stage.pickedCenter = mesh.faceCentroid(cast(uint)fi);
+        stage.pickedVerts.length = mesh.faces[fi].length;
+        foreach (i, vi; mesh.faces[fi])
             stage.pickedVerts[i] = vi;
-        if (mesh.faces[bestFi].length > 0)
-            updateConnectMask(stage, cast(int)mesh.faces[bestFi][0]);
+        if (mesh.faces[fi].length > 0)
+            updateConnectMask(stage, cast(int)mesh.faces[fi][0]);
         return true;
     }
 

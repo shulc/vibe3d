@@ -3828,6 +3828,16 @@ void main(string[] args) {
                 hoveredFace = -1;
             }
         }
+        // Publish the resolved hover state for cross-module consumers
+        // (ElementMoveTool.tryPickElement reads these so click-pick
+        // lands on the same element the user sees highlighted — the
+        // GPU ID-buffer path here is the source of truth; a parallel
+        // CPU-centroid pick in the tool was picking back-facing /
+        // hidden polygons that happened to project to the cursor).
+        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+        g_hoveredVertex = hoveredVertex;
+        g_hoveredEdge   = hoveredEdge;
+        g_hoveredFace   = hoveredFace;
         // Per-type highlight gates: render the highlight when EITHER
         // the editMode covers that type natively OR an active tool
         // opted into hover for it (Stage 14.9).

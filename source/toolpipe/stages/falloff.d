@@ -221,6 +221,7 @@ class FalloffStage : Stage {
             ["size",         vec3Str(size)],
             ["axis",         vec3Str(normal)],
             ["pickedCenter", vec3Str(pickedCenter)],
+            ["pickedVerts",  pickedVertsStr()],
             ["dist",         format("%g", dist)],
             ["connect",      connectLabel()],
             ["mode",         elementModeLabel()],
@@ -234,6 +235,14 @@ class FalloffStage : Stage {
             ["in",           format("%g", in_)],
             ["out",          format("%g", out_)],
         ];
+    }
+
+    string pickedVertsStr() const {
+        if (pickedVerts.length == 0) return "";
+        string s = format("%d", pickedVerts[0]);
+        foreach (i; 1 .. pickedVerts.length)
+            s ~= format(",%d", pickedVerts[i]);
+        return s;
     }
 
     string lassoPolyStr() const {
@@ -504,6 +513,16 @@ private:
                 // keep favouring whatever was last clicked.
                 pickedVerts.length = 0;
                 return parseVec3(value, pickedCenter);
+            case "pickedVerts":
+                // Comma-separated vertex index list. Empty string clears.
+                // Used by tests to drive the picked-element drag path
+                // without going through the GPU-hover click pipeline
+                // (play-events can't reliably interleave a render frame
+                // between MOUSEMOTION and MOUSEBUTTONDOWN, so hover
+                // state isn't current at click time). Must be set
+                // AFTER pickedCenter — the pickedCenter setter above
+                // wipes pickedVerts.
+                return parsePickedVerts(value);
             case "dist":         dist = parseFloat(value); return true;
             case "connect":
                 if      (value == "off")      { connect = ElementConnect.Off;      return true; }
@@ -546,6 +565,19 @@ private:
                 return true;
             default: return false;
         }
+    }
+
+    bool parsePickedVerts(string value) {
+        if (value.length == 0) { pickedVerts.length = 0; return true; }
+        uint[] vs;
+        foreach (chunk; value.split(",")) {
+            auto t = chunk.strip;
+            if (t.length == 0) continue;
+            try { vs ~= t.to!uint; }
+            catch (Exception) { return false; }
+        }
+        pickedVerts = vs;
+        return true;
     }
 
     // Parse a "x1,y1;x2,y2;..." polygon. Empty string clears the
