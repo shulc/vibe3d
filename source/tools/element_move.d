@@ -6,7 +6,8 @@ import tools.move;
 import mesh;
 import editmode;
 import math : Vec3, Vec4, projectToWindowFull, pivotRotationMatrix,
-              pivotScaleMatrix, mulMV;
+              pivotScaleMatrix, mulMV, closestOnSegment2DSquared,
+              pointInPolygon2D;
 import shader;
 import params : Param;
 
@@ -279,18 +280,28 @@ private:
                 return;
             }
         }
-        // Edge priority: pick the edge whose midpoint is closest.
+        // Edge priority: pick the edge whose projected SEGMENT is
+        // closest to the cursor. Using the segment (not the midpoint)
+        // matters for long edges — clicking near an endpoint can be
+        // well outside 16 px of the midpoint and still be on the
+        // edge visually. MODO's Auto-Center mode lands the picked
+        // centre on the edge midpoint regardless of where on the
+        // edge the user clicked; we mirror that by setting
+        // `pickedCenter` to the midpoint after the pick decision.
         if (wantE) {
             int   bestEi = -1;
             float bestD2 = PICK_R2;
             foreach (ei, edge; mesh.edges) {
-                Vec3 mid = (mesh.vertices[edge[0]] + mesh.vertices[edge[1]])
-                           * 0.5f;
-                float sx, sy, ndcZ;
-                if (!projectToWindowFull(mid, cachedVp, sx, sy, ndcZ))
+                float ax, ay, az, bx, by, bz;
+                if (!projectToWindowFull(mesh.vertices[edge[0]], cachedVp,
+                                         ax, ay, az))
                     continue;
-                float dx = sx - mx, dy = sy - my;
-                float d2 = dx*dx + dy*dy;
+                if (!projectToWindowFull(mesh.vertices[edge[1]], cachedVp,
+                                         bx, by, bz))
+                    continue;
+                float t;
+                float d2 = closestOnSegment2DSquared(
+                    cast(float)mx, cast(float)my, ax, ay, bx, by, t);
                 if (d2 < bestD2) { bestD2 = d2; bestEi = cast(int)ei; }
             }
             if (bestEi >= 0) {
@@ -301,18 +312,43 @@ private:
                 return;
             }
         }
-        // Face priority: pick the face whose centroid is closest.
+        // Face priority: cursor inside the projected face polygon
+        // counts as a hit regardless of how far it is from the
+        // centroid. Same MODO Auto-Center semantic as edges:
+        // `pickedCenter` lands on the face centroid even when the
+        // user clicked an off-centre point on the face. For
+        // overlapping faces (e.g. cube back face under front),
+        // pick the one whose centroid has the closest screen depth
+        // (smallest ndcZ — nearest to camera) as a frontmost
+        // tiebreaker.
         if (wantF) {
             int   bestFi = -1;
-            float bestD2 = PICK_R2;
+            float bestZ  = float.infinity;
+            float[] xs;
+            float[] ys;
             foreach (fi; 0 .. mesh.faces.length) {
-                Vec3 c = mesh.faceCentroid(cast(uint)fi);
-                float sx, sy, ndcZ;
-                if (!projectToWindowFull(c, cachedVp, sx, sy, ndcZ))
+                const(uint)[] face = mesh.faces[fi];
+                xs.length = face.length;
+                ys.length = face.length;
+                bool projectedAll = true;
+                float zSum = 0;
+                int   zCount = 0;
+                foreach (i, vi; face) {
+                    float sx, sy, ndcZ;
+                    if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
+                                             sx, sy, ndcZ))
+                    {
+                        projectedAll = false;
+                        break;
+                    }
+                    xs[i] = sx; ys[i] = sy;
+                    zSum += ndcZ; ++zCount;
+                }
+                if (!projectedAll || zCount == 0) continue;
+                if (!pointInPolygon2D(cast(float)mx, cast(float)my, xs, ys))
                     continue;
-                float dx = sx - mx, dy = sy - my;
-                float d2 = dx*dx + dy*dy;
-                if (d2 < bestD2) { bestD2 = d2; bestFi = cast(int)fi; }
+                float zAvg = zSum / cast(float)zCount;
+                if (zAvg < bestZ) { bestZ = zAvg; bestFi = cast(int)fi; }
             }
             if (bestFi >= 0) {
                 stage.pickedCenter = mesh.faceCentroid(cast(uint)bestFi);
