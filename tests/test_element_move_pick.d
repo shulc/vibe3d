@@ -258,19 +258,18 @@ unittest { // Picked element must move even when an UNRELATED prior
     }
 }
 
-unittest { // Auto-mode picks the polygon under the cursor, not a
-           // vert that happens to project to the same pixel. Pre-fix,
-           // the always-vert-first scan stole face clicks on dense
-           // meshes — post-subdivide a face-centre vert sits exactly
-           // under the click point, so the 16 px vert radius captured
-           // it and only 1 of 4 sub-quad verts moved. The user's
-           // intuition is "I clicked on the polygon, the gizmo should
-           // pivot on the polygon's centroid"; face wins whenever the
-           // click lands inside a polygon, vert / edge only fall
-           // through for silhouette clicks. editMode left at the
-           // post-reset default (Vertices) on purpose — the face-
-           // first rule must hold regardless of which element type
-           // the user is selecting.
+unittest { // Auto-mode pick must match hover: whichever element type
+           // highlights under the cursor is what drags. The hover
+           // resolver in app.d uses vert > edge > face priority, so
+           // tryPickElement uses the same.
+           //
+           // Subdivide a cube and click OFFSET from the face centre —
+           // far enough that no vert lands within the 16 px hover
+           // radius. The sub-quad polygon under the cursor is the only
+           // thing highlighted, so all 4 of its verts must drag as a
+           // unit. (Clicking the face centre exactly would hover the
+           // face-centre vert instead, and only that single vert
+           // should move — a separate hover-consistent path.)
     import std.net.curl     : get, post;
     import std.json         : parseJSON, JSONValue;
     postJson("/api/reset", "");
@@ -284,8 +283,12 @@ unittest { // Auto-mode picks the polygon under the cursor, not a
     int vpY = cast(int)cam["vpY"].integer;
     int vpW = cast(int)cam["width"].integer;
     int vpH = cast(int)cam["height"].integer;
-    int cx = vpX + vpW / 2;
-    int cy = vpY + vpH / 2;
+    // Click 40 px off-centre in both axes — clear of the 16 px hover
+    // radius around the face-centre vert at (0,0,0.5) and around the
+    // edge midpoints (which project to ±70 px from centre on a
+    // default cube at distance 3).
+    int cx = vpX + vpW / 2 + 40;
+    int cy = vpY + vpH / 2 + 40;
     import std.format : format;
     string log = format!`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}
 {"t":100,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}
@@ -319,9 +322,65 @@ unittest { // Auto-mode picks the polygon under the cursor, not a
         }
         if (dirty) ++moved;
     }
-    // A sub-quad has 4 verts → expect exactly 4 moved when the face
-    // pick wins. Vertex pick (the bug) moves only 1.
+    // Sub-quad has 4 verts → all 4 move when the face is the hovered
+    // (and therefore picked) element. Vert pick (the original bug)
+    // would move only 1.
     assert(moved == 4,
         "polygon pick after subdivide should move all 4 face verts; "
         ~ "got " ~ moved.to!string);
+}
+
+unittest { // Hover-pick consistency for the opposite case: when the
+           // cursor lands directly on a vert (within the 16 px hover
+           // radius), the vert highlights and only that vert drags.
+           // On a subdivided cube clicking the face centre hits the
+           // new face-centre vert at (0,0,0.5); the previous pre-revert
+           // "face-first" behaviour would have moved all 4 sub-quad
+           // verts instead, desynchronising drag from hover.
+    import std.net.curl     : get, post;
+    import std.json         : parseJSON, JSONValue;
+    postJson("/api/reset", "");
+    JSONValue camResp = postJson("/api/camera",
+        `{"azimuth":0,"elevation":0,"distance":3}`);
+    assert(camResp["status"].str == "ok");
+    cmd("mesh.subdivide_faceted");
+    cmd("tool.set xfrm.elementMove on");
+    auto cam = parseJSON(cast(string) get(baseUrl ~ "/api/camera"));
+    int vpX = cast(int)cam["vpX"].integer;
+    int vpY = cast(int)cam["vpY"].integer;
+    int vpW = cast(int)cam["width"].integer;
+    int vpH = cast(int)cam["height"].integer;
+    int cx = vpX + vpW / 2;     // dead-centre — projects onto the
+    int cy = vpY + vpH / 2;     // +Z face-centre vert at (0,0,0.5)
+    import std.format : format;
+    string log = format!`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}
+{"t":100,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":200,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}
+{"t":300,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":25,"yrel":0,"state":1,"mod":0}
+{"t":400,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}
+`(vpX, vpY, vpW, vpH,
+  cx, cy, cx, cy, cx+25, cy, cx+25, cy);
+    postJson("/api/play-events", log);
+    foreach (_; 0 .. 50) {
+        auto st = getJson("/api/play-events/status");
+        if (st["finished"].boolean) break;
+        import core.thread : Thread;
+        import core.time   : msecs;
+        Thread.sleep(50.msecs);
+    }
+    auto verts = getJson("/api/model")["vertices"].array;
+    int moved = 0;
+    foreach (v; verts) {
+        auto a = v.array;
+        bool dirty = false;
+        foreach (c; 0 .. 3) {
+            double x = a[c].floating;
+            if (fabs(x + 0.5) > 0.01 && fabs(x) > 0.01 && fabs(x - 0.5) > 0.01)
+                dirty = true;
+        }
+        if (dirty) ++moved;
+    }
+    assert(moved == 1,
+        "vert hover under the cursor should drag only that vert; got "
+        ~ moved.to!string ~ " moved");
 }

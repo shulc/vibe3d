@@ -307,19 +307,14 @@ private:
         if (stage.type != FalloffType.Element) return false;
 
         // Pick-type restriction per Stage 14.8 ElementMode:
-        //   Auto / AutoCent  → click inside any polygon → face wins
-        //                       (pickedCenter = polygon centroid).
-        //                       Click outside every polygon falls
-        //                       through to vert / edge with the
-        //                       standard 16 px radius. Without the
-        //                       face-first rule the older vert-first
-        //                       priority stole face clicks on dense
-        //                       meshes — post-subdivide a face-centre
-        //                       vert sits exactly under the cursor
-        //                       when clicking face centre, so vert
-        //                       wins, gizmo lands on that one vert,
-        //                       and only 1 of N face verts moves
-        //                       instead of the whole polygon.
+        //   Auto / AutoCent  → vert > edge > face priority, matching
+        //                       the hover-resolution rule in app.d
+        //                       (`if (hoveredVertex >= 0) … else if
+        //                       (hoveredEdge >= 0) …`). The element
+        //                       that highlights under the cursor is
+        //                       the one that picks — anything else
+        //                       desyncs visual feedback from the
+        //                       drag target.
         //   Vertex           → verts only
         //   Edge / EdgeCent  → edges only
         //   Polygon/PolyCent → polygons only
@@ -331,36 +326,21 @@ private:
         bool wantF = autoMode || (em == ElementMode.Polygon)
                               || (em == ElementMode.PolyCent);
 
-        // Priority sequence — runs the first hit and stops.
-        bool delegate(int, int)[] tryFns;
-        if (autoMode) {
-            // Face first: clicking inside a polygon should pivot on
-            // that polygon's centroid (matches the user's mental
-            // model of "I clicked on this polygon"). Vert / edge
-            // only as fallback for silhouette clicks where no face
-            // covers the cursor.
-            if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
-            if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
-            if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
-        } else {
-            // Explicit mode — no priority decision, run only the
-            // single allowed test.
-            if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
-            if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
-            if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
-        }
-
-        foreach (fn; tryFns)
-            if (fn(mx, my)) return true;
+        if (wantV && pickVert(stage, mx, my)) return true;
+        if (wantE && pickEdge(stage, mx, my)) return true;
+        if (wantF && pickFace(stage, mx, my)) return true;
         return false;
     }
 
-    // Closest vert within 16 px of the cursor; updates pickedCenter /
-    // pickedVerts / connectMask and returns true on hit.
+    // Closest vert within 16 px of the cursor; depth-tiebreaks coincident
+    // projections (front-most wins) so vert pick matches the GPU-driven
+    // hover highlight on subdivided / dense meshes where front and back
+    // face-centre verts can land on the same pixel.
     bool pickVert(FalloffStage stage, int mx, int my) {
         enum float PICK_R2 = 16.0f * 16.0f;
         int   bestVi = -1;
         float bestD2 = PICK_R2;
+        float bestZ  = float.infinity;
         foreach (vi; 0 .. mesh.vertices.length) {
             float sx, sy, ndcZ;
             if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
@@ -368,7 +348,15 @@ private:
                 continue;
             float dx = sx - mx, dy = sy - my;
             float d2 = dx*dx + dy*dy;
-            if (d2 < bestD2) { bestD2 = d2; bestVi = cast(int)vi; }
+            if (d2 >= PICK_R2) continue;
+            // Closer in 2D wins; same-pixel ties go to the smaller
+            // ndcZ (nearer to camera).
+            if (d2 < bestD2 - 1e-3f
+             || (d2 < bestD2 + 1e-3f && ndcZ < bestZ)) {
+                bestD2 = d2;
+                bestZ  = ndcZ;
+                bestVi = cast(int)vi;
+            }
         }
         if (bestVi < 0) return false;
         stage.pickedCenter = mesh.vertices[bestVi];
@@ -380,11 +368,13 @@ private:
     // Closest edge segment within 16 px of the cursor. Uses segment
     // distance (not midpoint) so long edges register hits near either
     // endpoint. pickedCenter lands on the midpoint — matches MODO's
-    // Auto-Center semantic.
+    // Auto-Center semantic. Depth-tiebreaks coincident screen projections
+    // (front-most edge wins) so pick matches the GPU-driven hover.
     bool pickEdge(FalloffStage stage, int mx, int my) {
         enum float PICK_R2 = 16.0f * 16.0f;
         int   bestEi = -1;
         float bestD2 = PICK_R2;
+        float bestZ  = float.infinity;
         foreach (ei, edge; mesh.edges) {
             float ax, ay, az, bx, by, bz;
             if (!projectToWindowFull(mesh.vertices[edge[0]], cachedVp,
@@ -396,7 +386,14 @@ private:
             float t;
             float d2 = closestOnSegment2DSquared(
                 cast(float)mx, cast(float)my, ax, ay, bx, by, t);
-            if (d2 < bestD2) { bestD2 = d2; bestEi = cast(int)ei; }
+            if (d2 >= PICK_R2) continue;
+            float zMid = 0.5f * (az + bz);
+            if (d2 < bestD2 - 1e-3f
+             || (d2 < bestD2 + 1e-3f && zMid < bestZ)) {
+                bestD2 = d2;
+                bestZ  = zMid;
+                bestEi = cast(int)ei;
+            }
         }
         if (bestEi < 0) return false;
         auto e = mesh.edges[bestEi];
