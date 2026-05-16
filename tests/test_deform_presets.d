@@ -136,23 +136,22 @@ unittest { // softMove activates falloff (enabled=true after preset)
     assert(sizeParts.length > 0);
 }
 
-// xfrm.elementMove pins ACEN + AXIS to Element AND activates
-// falloff.element (sphere around picked component). Stage 14.2.
+// xfrm.elementMove pins ACEN to Element and activates falloff.element
+// (sphere around the picked component). MODO's preset leaves AXIS
+// alone — we mirror that, so the transform gizmo stays on the
+// default workplane axes rather than per-element ones.
 unittest {
     clearFalloff();
     auto r = postJson("/api/command", "tool.set xfrm.elementMove on");
     assert(r["status"].str == "ok",
         "tool.set xfrm.elementMove failed: " ~ r.toString);
     auto j = getJson("/api/toolpipe");
-    string acenMode, axisMode;
+    string acenMode;
     foreach (st; j["stages"].array) {
         if (st["task"].str == "ACEN") acenMode = st["attrs"]["mode"].str;
-        if (st["task"].str == "AXIS") axisMode = st["attrs"]["mode"].str;
     }
     assert(acenMode == "element",
         "expected ACEN.mode=element, got " ~ acenMode);
-    assert(axisMode == "element",
-        "expected AXIS.mode=element, got " ~ axisMode);
     auto a = falloffAttrs();
     assert(a["type"]  == "element",
         "xfrm.elementMove expected falloff.type=element, got " ~ a["type"]);

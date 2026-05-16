@@ -112,19 +112,19 @@ presets:
         shape: linear
 
   # ----- Transform sub-tab ----------------------------------------
-  # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` — the Move
-  # tool with ACEN + AXIS pinned to Element and `falloff.element`
-  # active (a sphere around the picked component's centroid; user
-  # sets `pickedCenter` + `dist` via ElementMoveTool in Stage 14.3 or
-  # manually via `tool.pipe.attr falloff pickedCenter / dist`).
+  # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` —
+  # MODO's preset only sets the ACEN slot (center.element), the WGHT
+  # slot (falloff.element with mode=automatic) and the ACTR slot
+  # (xfrm.transform). It does NOT touch the AXIS slot, so AXIS stays
+  # at its default (axis.auto = workplane / world axes). We match
+  # that — pinning AXIS=element would point the transform gizmo at
+  # per-cluster axes (which the element-move flow doesn't want).
   # Also published as `move.element` (backwards-compat alias without
   # the falloff stage activation).
   - id: xfrm.elementMove
     base: element_move
     pipe:
       actionCenter:
-        mode: element
-      axis:
         mode: element
       falloff:
         type:  element
