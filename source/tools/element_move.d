@@ -5,9 +5,12 @@ import bindbc.sdl;
 import tools.move;
 import mesh;
 import editmode;
-import math : Vec3, projectToWindowFull;
+import math : Vec3, Vec4, projectToWindowFull, pivotRotationMatrix,
+              pivotScaleMatrix, mulMV;
 import shader;
 import params : Param;
+
+import std.math : PI;
 
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
@@ -30,6 +33,15 @@ public:
     enum Mode : ubyte { Automatic = 0, Manual = 1 }
     Mode mode = Mode.Automatic;
 
+    // Stage 14.5 — combined T/R/S attrs mirroring MODO's
+    // `xfrm.transform`. MoveTool already exposes TX/TY/TZ; we add
+    // RX/RY/RZ + SX/SY/SZ here so a single `tool.doApply` can chain
+    // translate → rotate → scale (matching MODO ElementMove's
+    // preset attr surface). All defaults are no-op (0 for trans/rot,
+    // 1 for scale).
+    private Vec3 headlessRotate = Vec3(0, 0, 0);
+    private Vec3 headlessScale  = Vec3(1, 1, 1);
+
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
     }
@@ -39,6 +51,8 @@ public:
     override void activate() {
         super.activate();
         mode = Mode.Automatic;
+        headlessRotate = Vec3(0, 0, 0);
+        headlessScale  = Vec3(1, 1, 1);
     }
 
     // `mode` is an int enum; expose via Param.int_ for simplicity (the
@@ -47,7 +61,114 @@ public:
     override Param[] params() {
         auto base = super.params();
         base ~= Param.int_("mode", "Mode", cast(int*)&mode, 0).min(0).max(1);
+        // Numeric rotate / scale attrs. TX/TY/TZ come from
+        // MoveTool's params() (base above).
+        base ~= Param.float_("RX", "Rotate X", &headlessRotate.x, 0.0f);
+        base ~= Param.float_("RY", "Rotate Y", &headlessRotate.y, 0.0f);
+        base ~= Param.float_("RZ", "Rotate Z", &headlessRotate.z, 0.0f);
+        base ~= Param.float_("SX", "Scale X",  &headlessScale.x,  1.0f);
+        base ~= Param.float_("SY", "Scale Y",  &headlessScale.y,  1.0f);
+        base ~= Param.float_("SZ", "Scale Z",  &headlessScale.z,  1.0f);
         return base;
+    }
+
+    // Headless apply chain: translate (MoveTool) → rotate → scale.
+    // Order matches MODO's xfrm.transform documented order (T → R → S).
+    // Rotate/Scale use pivotRotationMatrix / pivotScaleMatrix around
+    // the ACEN-supplied pivot captured BEFORE the translate step —
+    // ACEN.Element re-averages face centroids on every query, so
+    // re-evaluating after super.applyHeadless's TX would drift the
+    // pivot off the picked-element centroid into wherever the
+    // translated geometry now averages. MODO's ElementMove caches
+    // the pivot once at apply start; we mirror that.
+    override bool applyHeadless() {
+        // Pivot snapshot — must happen before super.applyHeadless
+        // mutates mesh.vertices (see comment above).
+        Vec3 pivot = queryActionCenter();
+
+        // Snapshot per-vert weights at the BASELINE positions —
+        // MODO's xfrm.transform applies a single weight per vert
+        // through the whole T → R → S chain (computed against the
+        // pre-mutation positions). Without this snapshot the scale
+        // step would re-evaluate falloff against the post-translate
+        // mesh, where verts have moved into / out of the falloff
+        // sphere; both engines need to agree on the formula for
+        // cross-engine diff to PASS.
+        captureFalloffForDrag();
+        captureSymmetryForDrag();
+        vertexCacheDirty = true;
+        buildVertexCacheIfNeeded();
+        if (vertexProcessCount == 0) return false;
+        float[] cachedWeights = new float[](mesh.vertices.length);
+        foreach (i; 0 .. mesh.vertices.length) cachedWeights[i] = 0.0f;
+        foreach (vi; vertexIndicesToProcess)
+            cachedWeights[vi] = falloffWeightAt(mesh.vertices[vi],
+                                                cast(int)vi);
+
+        // Step 1: translate via MoveTool's implementation. Reuses
+        // the same captureFalloffForDrag (already done above —
+        // super's call is idempotent) + vertex cache. The
+        // falloff-weighted translate inside applyDeltaImmediate
+        // also evaluates falloffWeight live, but at this point the
+        // mesh hasn't been mutated yet so live weight == cached
+        // weight.
+        if (!super.applyHeadless()) return false;
+
+        bool hasRot = (headlessRotate.x != 0.0f
+                    || headlessRotate.y != 0.0f
+                    || headlessRotate.z != 0.0f);
+        bool hasScl = (headlessScale.x != 1.0f
+                    || headlessScale.y != 1.0f
+                    || headlessScale.z != 1.0f);
+        if (!hasRot && !hasScl) return true;
+
+        cachedCenter = pivot;
+
+        // Rotate per non-zero axis. AXIS-stage right/up/fwd give us
+        // the local basis (Element mode points them at the picked
+        // element's local frame).
+        if (hasRot) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ);
+            applyAxisRotate(pivot, bX, headlessRotate.x, cachedWeights);
+            applyAxisRotate(pivot, bY, headlessRotate.y, cachedWeights);
+            applyAxisRotate(pivot, bZ, headlessRotate.z, cachedWeights);
+        }
+
+        // Scale per-axis around pivot. Like the rotate, the per-vert
+        // weight blends the scale toward identity (1) so verts
+        // outside the falloff stay put. Uses the SAME cachedWeights
+        // as translate / rotate (see snapshot comment above).
+        if (hasScl) {
+            foreach (vi; vertexIndicesToProcess) {
+                float w = cachedWeights[vi];
+                if (w == 0.0f) continue;
+                float sx = 1.0f + (headlessScale.x - 1.0f) * w;
+                float sy = 1.0f + (headlessScale.y - 1.0f) * w;
+                float sz = 1.0f + (headlessScale.z - 1.0f) * w;
+                auto m = pivotScaleMatrix(pivot, sx, sy, sz);
+                auto v0 = Vec4(mesh.vertices[vi].x, mesh.vertices[vi].y,
+                               mesh.vertices[vi].z, 1.0f);
+                auto v1 = mulMV(m, v0);
+                mesh.vertices[vi] = Vec3(v1.x, v1.y, v1.z);
+            }
+        }
+        return true;
+    }
+
+    private void applyAxisRotate(Vec3 pivot, Vec3 axis, float deg,
+                                  float[] cachedWeights) {
+        if (deg == 0.0f) return;
+        foreach (vi; vertexIndicesToProcess) {
+            float w = cachedWeights[vi];
+            if (w == 0.0f) continue;
+            float phi = deg * w * cast(float)(PI / 180.0);
+            auto m = pivotRotationMatrix(pivot, axis, phi);
+            auto v0 = Vec4(mesh.vertices[vi].x, mesh.vertices[vi].y,
+                           mesh.vertices[vi].z, 1.0f);
+            auto v1 = mulMV(m, v0);
+            mesh.vertices[vi] = Vec3(v1.x, v1.y, v1.z);
+        }
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {

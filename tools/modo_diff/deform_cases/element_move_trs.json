@@ -1,0 +1,30 @@
+{
+  "_comment": "ElementMoveTool combined T → R → S chain (Stage 14.5). Picked centre on the +X+Y+Z corner, radius 0.5; falloff weight = 1 at the corner and 0 elsewhere. TX=0.3 + SX=2.0 in one apply. Pivot captured ONCE before the translate (ACEN.Element recomputes on every query, so without snapshotting the pivot would drift mid-apply). Per-vert weights ALSO snapshotted at the baseline positions — matches MODO's xfrm.transform single-weight semantic. Corner with baseline-weight 1: TX gives (0.5+0.3, 0.5, 0.5); then SX=2 around pivot (0,0,0) with the SAME weight 1 gives x = 0 + 0.8 · 2.0 = 1.6.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.elementMove",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":         "element",
+        "shape":        "linear",
+        "pickedCenter": [0.5, 0.5, 0.5],
+        "pickedRadius": 0.5
+      },
+      "transform": { "TX": 0.3, "SX": 2.0 },
+      "pivot":     [0, 0, 0]
+    }
+  ],
+  "tolerance":      0.001,
+  "topology_check": false
+}
