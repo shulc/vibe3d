@@ -569,6 +569,14 @@ void runDeform(JSONValue op) {
             return format(`"%g,%g,%g"`,
                           readNum(a[0]), readNum(a[1]), readNum(a[2]));
         }
+        // Explicitly set the falloff type. Some presets (xfrm.shear /
+        // xfrm.twist / xfrm.taper / xfrm.vortex / xfrm.elementMove)
+        // wire it via tool_presets.yaml, but presets like bare `move`
+        // don't pre-configure the WGHT stage — without this the
+        // subsequent `start`/`end`/`pickedCenter` writes land on a
+        // type=none stage and the apply silently ignores the falloff.
+        postJson("/api/command",
+            "tool.pipe.attr falloff type " ~ ftype);
         if (ftype == "linear") {
             postJson("/api/command",
                 "tool.pipe.attr falloff start " ~ vec3lit(fall["start"]));
@@ -590,6 +598,17 @@ void runDeform(JSONValue op) {
             if ("axis" in fall)
                 postJson("/api/command",
                     "tool.pipe.attr falloff axis " ~ vec3lit(fall["axis"]));
+        } else if (ftype == "element") {
+            // Element falloff: spherical area around the picked
+            // element's centroid. `pickedCenter` is normally set by
+            // ElementMoveTool's click-to-pick; for the orchestrator
+            // path the case JSON specifies it manually.
+            postJson("/api/command",
+                "tool.pipe.attr falloff pickedCenter "
+                ~ vec3lit(fall["pickedCenter"]));
+            postJson("/api/command",
+                format("tool.pipe.attr falloff dist %g",
+                       readNum(fall["pickedRadius"])));
         } else {
             throw new Exception("deform falloff type '" ~ ftype ~ "'");
         }

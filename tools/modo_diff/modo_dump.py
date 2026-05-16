@@ -574,6 +574,20 @@ def _falloff_weight(fall, vert):
         if t <= 0.0: return 1.0
         if t >= 1.0: return 0.0
         return 1.0 - t
+    if ftype == "element":
+        # Mirror elementWeight in source/falloff.d: spherical
+        # attenuation around pickedCenter with radius pickedRadius
+        # (= MODO's `dist` attr).
+        pc = fall["pickedCenter"]
+        pr = float(fall["pickedRadius"])
+        if pr <= 1e-9:
+            return 1.0
+        d = [vert[i] - pc[i] for i in range(3)]
+        r = _math.sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
+        t = r / pr
+        if t <= 0.0: return 1.0
+        if t >= 1.0: return 0.0
+        return 1.0 - t
     if ftype == "cylinder":
         # Mirror cylinderWeight in source/falloff.d: perpendicular
         # distance from the cylinder axis through `center`, normalised

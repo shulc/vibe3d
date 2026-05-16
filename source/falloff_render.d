@@ -88,6 +88,25 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
             // need.
             drawRadial(dl, cfg, vp, outlineCol);
             break;
+        case FalloffType.Element:
+            // Render as a radial overlay temporarily borrowing the
+            // packet's center+size: ElementMoveTool picks the centre
+            // via mouse click, the radial overlay draws an ellipse at
+            // that point. Build a scratch packet field-by-field —
+            // FalloffPacket contains array slices (lassoPolyX/Y) so D
+            // forbids `viewPkt = cfg` from a const ref.
+            FalloffPacket viewPkt;
+            viewPkt.enabled = cfg.enabled;
+            viewPkt.type    = FalloffType.Radial;
+            viewPkt.shape   = cfg.shape;
+            viewPkt.center  = cfg.pickedCenter;
+            viewPkt.size    = Vec3(cfg.pickedRadius,
+                                   cfg.pickedRadius,
+                                   cfg.pickedRadius);
+            viewPkt.in_     = cfg.in_;
+            viewPkt.out_    = cfg.out_;
+            drawRadial(dl, viewPkt, vp, outlineCol);
+            break;
     }
 }
 

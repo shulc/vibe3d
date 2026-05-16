@@ -107,6 +107,7 @@ enum FalloffType : uint {
     Screen   = 3,   // 7.5d
     Lasso    = 4,   // 7.5e
     Cylinder = 5,   // Stage 12 — radial-perpendicular-to-axis (xfrm.vortex)
+    Element  = 6,   // Stage 14.1 — sphere around picked element centroid (ElementMove)
 }
 
 /// Per-shape attenuation curve. `t ∈ [0, 1]` is the normalised
@@ -164,6 +165,15 @@ struct FalloffPacket {
     // infinite cylinder around the line `center` + t*axis). Default
     // axis = +Y matches MODO's xfrm.vortex preset (axisY=1.0).
     Vec3         normal      = Vec3(0, 1, 0);
+
+    // Element: spherical falloff around `pickedCenter`, radius
+    // `pickedRadius`. Mirrors MODO's `falloff.element` (the centre
+    // is the centroid of the clicked component; radius = MODO's
+    // `dist`/Range attr). Default centre at origin, radius 1.0 —
+    // gets relocated by ElementMoveTool's click-to-pick or by the
+    // user via `tool.pipe.attr falloff pickedCenter "x,y,z"`.
+    Vec3         pickedCenter  = Vec3(0, 0, 0);
+    float        pickedRadius  = 1.0f;
 
     // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
     // projected as an infinite cylinder along the camera-back axis.

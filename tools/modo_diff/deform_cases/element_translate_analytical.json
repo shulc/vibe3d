@@ -1,0 +1,29 @@
+{
+  "_comment": "FalloffType.Element + Move TX: pick the (+0.5,+0.5,+0.5) corner as the sphere centre with radius 0.5. The corner moves full +0.3 along X; the three nearest verts (sharing one axis with the corner) are at distance 1.0 from it — outside the 0.5 sphere → weight 0 → don't move. modo_method=analytical because no MODO preset wraps this exact configuration (`falloff.element` ships only inside ElementMove which also wants click-to-pick + xfrm.transform). Verifies the element-falloff math + Move's headless TX path agree with the spherical-falloff analytical reference.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "move",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":         "element",
+        "shape":        "linear",
+        "pickedCenter": [0.5, 0.5, 0.5],
+        "pickedRadius": 0.5
+      },
+      "transform": { "TX": 0.3 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}

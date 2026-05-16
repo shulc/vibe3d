@@ -62,6 +62,12 @@ class FalloffStage : Stage {
     Vec3 center = Vec3(0, 0, 0);
     Vec3 size   = Vec3(1, 1, 1);
     Vec3 normal = Vec3(0, 1, 0);    // cylinder axis (default +Y, matches MODO xfrm.vortex)
+    // Element falloff (Stage 14.1): sphere centred on the picked
+    // element's centroid with radius `dist`. ElementMoveTool writes
+    // `pickedCenter` on LMB-down; user can override either field via
+    // `tool.pipe.attr falloff {pickedCenter|dist} <value>`.
+    Vec3  pickedCenter = Vec3(0, 0, 0);
+    float dist         = 1.0f;
 
     float screenCx     = 0;
     float screenCy     = 0;
@@ -146,6 +152,8 @@ class FalloffStage : Stage {
         state.falloff.center       = center;
         state.falloff.size         = size;
         state.falloff.normal       = normal;
+        state.falloff.pickedCenter = pickedCenter;
+        state.falloff.pickedRadius = dist;
         state.falloff.screenCx     = screenCx;
         state.falloff.screenCy     = screenCy;
         state.falloff.screenSize   = screenSize;
@@ -179,21 +187,24 @@ class FalloffStage : Stage {
 
     override string[2][] listAttrs() const {
         return [
-            ["type",        typeLabel()],
-            ["shape",       shapeLabel()],
-            ["start",       vec3Str(start)],
-            ["end",         vec3Str(end)],
-            ["center",      vec3Str(center)],
-            ["size",        vec3Str(size)],
-            ["screenCx",    format("%g", screenCx)],
-            ["screenCy",    format("%g", screenCy)],
-            ["screenSize",  format("%g", screenSize)],
-            ["transparent", transparent ? "true" : "false"],
-            ["lassoStyle",  lassoStyleLabel()],
-            ["lassoPoly",   lassoPolyStr()],
-            ["softBorder",  format("%g", softBorderPx)],
-            ["in",          format("%g", in_)],
-            ["out",         format("%g", out_)],
+            ["type",         typeLabel()],
+            ["shape",        shapeLabel()],
+            ["start",        vec3Str(start)],
+            ["end",          vec3Str(end)],
+            ["center",       vec3Str(center)],
+            ["size",         vec3Str(size)],
+            ["axis",         vec3Str(normal)],
+            ["pickedCenter", vec3Str(pickedCenter)],
+            ["dist",         format("%g", dist)],
+            ["screenCx",     format("%g", screenCx)],
+            ["screenCy",     format("%g", screenCy)],
+            ["screenSize",   format("%g", screenSize)],
+            ["transparent",  transparent ? "true" : "false"],
+            ["lassoStyle",   lassoStyleLabel()],
+            ["lassoPoly",    lassoPolyStr()],
+            ["softBorder",   format("%g", softBorderPx)],
+            ["in",           format("%g", in_)],
+            ["out",          format("%g", out_)],
         ];
     }
 
@@ -286,6 +297,11 @@ class FalloffStage : Stage {
                 ps ~= Param.vec3_("size",   "Size",   &size,   Vec3(1, 1, 1));
                 ps ~= Param.vec3_("axis",   "Axis",   &normal, Vec3(0, 1, 0));
                 break;
+            case FalloffType.Element:
+                ps ~= Param.vec3_("pickedCenter", "Picked Center",
+                                  &pickedCenter, Vec3(0, 0, 0));
+                ps ~= Param.float_("dist", "Range", &dist, 1.0f).min(1e-6f);
+                break;
         }
         return ps;
     }
@@ -314,6 +330,7 @@ class FalloffStage : Stage {
             case FalloffType.Screen:   return "Screen Falloff";
             case FalloffType.Lasso:    return "Lasso Falloff";
             case FalloffType.Cylinder: return "Cylinder Falloff";
+            case FalloffType.Element:  return "Element Falloff";
         }
     }
 
@@ -409,6 +426,7 @@ private:
                 else if (value == "screen")   { type = FalloffType.Screen;   return true; }
                 else if (value == "lasso")    { type = FalloffType.Lasso;    return true; }
                 else if (value == "cylinder") { type = FalloffType.Cylinder; return true; }
+                else if (value == "element")  { type = FalloffType.Element;  return true; }
                 return false;
             case "shape":
                 if      (value == "linear")  { shape = FalloffShape.Linear;  return true; }
@@ -417,11 +435,13 @@ private:
                 else if (value == "smooth")  { shape = FalloffShape.Smooth;  return true; }
                 else if (value == "custom")  { shape = FalloffShape.Custom;  return true; }
                 return false;
-            case "start":  return parseVec3(value, start);
-            case "end":    return parseVec3(value, end);
-            case "center": return parseVec3(value, center);
-            case "size":   return parseVec3(value, size);
-            case "axis":   return parseVec3(value, normal);
+            case "start":        return parseVec3(value, start);
+            case "end":          return parseVec3(value, end);
+            case "center":       return parseVec3(value, center);
+            case "size":         return parseVec3(value, size);
+            case "axis":         return parseVec3(value, normal);
+            case "pickedCenter": return parseVec3(value, pickedCenter);
+            case "dist":         dist = parseFloat(value); return true;
             case "screenCx":   screenCx     = parseFloat(value); return true;
             case "screenCy":   screenCy     = parseFloat(value); return true;
             case "screenSize": screenSize   = parseFloat(value); return true;
@@ -484,6 +504,7 @@ private:
             case FalloffType.Screen:   return "screen";
             case FalloffType.Lasso:    return "lasso";
             case FalloffType.Cylinder: return "cylinder";
+            case FalloffType.Element:  return "element";
         }
     }
 
@@ -675,6 +696,18 @@ private:
                     bbHalf.x > 0 ? bbHalf.x : 1.0f,
                     bbHalf.y > 0 ? bbHalf.y : 1.0f,
                     bbHalf.z > 0 ? bbHalf.z : 1.0f);
+                break;
+            case FalloffType.Element:
+                // Sphere anchored at the bbox centre with radius =
+                // largest half-extent. ElementMoveTool (Stage 14.3)
+                // overwrites `pickedCenter` on click; until then, this
+                // gives a reasonable manual default that covers the
+                // whole selection.
+                pickedCenter = bbCenter;
+                float maxHalf = bbHalf.x;
+                if (bbHalf.y > maxHalf) maxHalf = bbHalf.y;
+                if (bbHalf.z > maxHalf) maxHalf = bbHalf.z;
+                if (maxHalf > 0) dist = maxHalf;
                 break;
         }
     }

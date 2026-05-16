@@ -52,6 +52,8 @@ float evaluateFalloff(const ref FalloffPacket cfg,
             return lassoWeight(cfg, pos, vp);
         case FalloffType.Cylinder:
             return cylinderWeight(cfg, pos);
+        case FalloffType.Element:
+            return elementWeight(cfg, pos);
     }
 }
 
@@ -131,6 +133,23 @@ private float cylinderWeight(const ref FalloffPacket cfg, Vec3 pos) {
     if (r <= 1e-9f) return 1.0f;
     float plen = sqrt(dot(perp, perp));
     float t = plen / r;
+    if (t <= 0.0f) return 1.0f;
+    if (t >= 1.0f) return 0.0f;
+    return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+}
+
+/// Element falloff: spherical attenuation around `pickedCenter`,
+/// radius `pickedRadius`. weight = 1 at the centre, 0 at the sphere
+/// boundary, shape-mapped in between. Mirrors MODO's `falloff.element`
+/// (the centre is normally the centroid of the user-clicked
+/// component; `pickedRadius` matches MODO's `dist`/Range attr).
+/// Stage 14.4 will add a connectivity gate (only verts in the same
+/// connected component as the picked element count).
+private float elementWeight(const ref FalloffPacket cfg, Vec3 pos) {
+    if (cfg.pickedRadius <= 1e-9f) return 1.0f;  // degenerate radius → full
+    Vec3 d = pos - cfg.pickedCenter;
+    float r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    float t = r / cfg.pickedRadius;
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
     return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
