@@ -48,6 +48,17 @@ public:
 
     override string name() const { return "Element Move"; }
 
+    // Opt-in to the per-frame hover-pick (gpuSelect-driven) so the
+    // current editMode's element under the cursor gets highlighted
+    // by drawVertices/Edges/FacesHighlighted before the user clicks.
+    // The highlight previews exactly which element this tool will
+    // pick on the next LMB-down. In Automatic mode this is still
+    // limited to the current editMode's element type (a full vert →
+    // edge → face Auto-hover would need broadening the picker
+    // dispatch; the user can press 1/2/3 to choose the highlight
+    // type today).
+    override bool wantsHoverPicking() const { return true; }
+
     override void activate() {
         super.activate();
         mode = Mode.Automatic;

@@ -2453,7 +2453,12 @@ void main(string[] args) {
     void pickVertices(ref Viewport vp, bool doingCameraDrag) {
         hoveredVertex = -1;
         if (io.WantCaptureMouse || doingCameraDrag ||
-            editMode != EditMode.Vertices || activeTool !is null)
+            editMode != EditMode.Vertices)
+            return;
+        // Most active tools own the cursor; ElementMoveTool opts in
+        // to hover picking via `wantsHoverPicking()` so its click-to-
+        // pick gesture gets a live preview of the next pick.
+        if (activeTool !is null && !activeTool.wantsHoverPicking())
             return;
 
         int mx, my;
@@ -2481,7 +2486,9 @@ void main(string[] args) {
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
         hoveredEdge = -1;
         if (io.WantCaptureMouse || doingCameraDrag ||
-            editMode != EditMode.Edges || activeTool !is null)
+            editMode != EditMode.Edges)
+            return;
+        if (activeTool !is null && !activeTool.wantsHoverPicking())
             return;
 
         int mx, my;
@@ -2508,7 +2515,9 @@ void main(string[] args) {
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
         hoveredFace = -1;
         if (io.WantCaptureMouse || doingCameraDrag ||
-            editMode != EditMode.Polygons || activeTool !is null)
+            editMode != EditMode.Polygons)
+            return;
+        if (activeTool !is null && !activeTool.wantsHoverPicking())
             return;
 
         int mx, my;
