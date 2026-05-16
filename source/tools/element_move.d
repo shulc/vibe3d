@@ -99,6 +99,43 @@ public:
         headlessScale  = Vec3(1, 1, 1);
     }
 
+    // Element falloff applies to the WHOLE mesh: the picked element
+    // gets weight 1 (via FalloffStage.pickedVerts) and surrounding
+    // verts attenuate through the sphere. The base TransformTool
+    // builds the cache from the active selection only — fine for
+    // generic Move/Rotate/Scale, but here it would exclude the
+    // clicked element whenever the user has a prior selection that
+    // doesn't overlap the pick (e.g. face[0] selected, click face[2]
+    // — picked verts never enter the iteration, so the picked face
+    // doesn't move). Overriding the cache to cover every vert keeps
+    // selection-derived ACEN / AXIS paths intact (they don't use
+    // this list) while letting `elementWeight` do the per-vert
+    // gating it was designed for.
+    //
+    // No-op when Element falloff isn't the active type — preserves
+    // the existing semantics for `move.element` (no falloff stage)
+    // and any other ElementMoveTool reuse without an Element WGHT
+    // stage.
+    override void buildVertexCacheIfNeeded() {
+        if (!vertexCacheDirty) {
+            super.buildVertexCacheIfNeeded();
+            return;
+        }
+        FalloffStage fs = activeFalloffStage();
+        if (fs is null || fs.type != FalloffType.Element) {
+            super.buildVertexCacheIfNeeded();
+            return;
+        }
+        int n = cast(int)mesh.vertices.length;
+        vertexIndicesToProcess.length = n;
+        foreach (i; 0 .. n) vertexIndicesToProcess[i] = i;
+        vertexProcessCount = n;
+        vertexCacheDirty   = false;
+        if (toProcess.length != cast(size_t)n)
+            toProcess.length = n;
+        toProcess[] = true;
+    }
+
     // Numeric rotate / scale attrs. TX/TY/TZ come from MoveTool's
     // params() (base above). Element-pick mode lives on the
     // FalloffStage now (`tool.pipe.attr falloff mode <auto|...>`)

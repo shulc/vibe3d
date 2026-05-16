@@ -183,3 +183,77 @@ unittest { // Picking an element via click+drag must move the WHOLE
             ~ " delta " ~ di.to!string ~ " vs v4 delta " ~ dx.to!string);
     }
 }
+
+unittest { // Picked element must move even when an UNRELATED prior
+           // selection exists. Selection is captured by the base
+           // TransformTool to populate `vertexIndicesToProcess` — if
+           // ElementMoveTool defers to that, the click-picked verts
+           // (which aren't selected) are excluded from the drag loop
+           // and the picked element stays put despite the gizmo
+           // following it. The ElementMoveTool override should bypass
+           // selection and iterate every vert; `elementWeight` then
+           // gates per-vert via pickedVerts + sphere.
+    import std.net.curl     : get, post;
+    import std.json         : parseJSON, JSONValue;
+    postJson("/api/reset", "");
+    // Preselect face[0] = -Z face (verts 0..3). The click below picks
+    // +Z face (verts 4..7), which has zero overlap with the selection.
+    postJson("/api/select",
+        `{"mode":"polygons","indices":[0]}`);
+    cmd("tool.set xfrm.elementMove on");
+    JSONValue camResp = postJson("/api/camera",
+        `{"azimuth":0,"elevation":0,"distance":3}`);
+    assert(camResp["status"].str == "ok");
+    auto cam = parseJSON(cast(string) get(baseUrl ~ "/api/camera"));
+    int vpX = cast(int)cam["vpX"].integer;
+    int vpY = cast(int)cam["vpY"].integer;
+    int vpW = cast(int)cam["width"].integer;
+    int vpH = cast(int)cam["height"].integer;
+    int cx = vpX + vpW / 2;
+    int cy = vpY + vpH / 2;
+    import std.format : format;
+    string log = format!`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}
+{"t":100,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":200,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}
+{"t":250,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":5,"yrel":0,"state":1,"mod":0}
+{"t":300,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":20,"yrel":0,"state":1,"mod":0}
+{"t":400,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}
+`(vpX, vpY, vpW, vpH,
+  cx, cy, cx, cy, cx+5, cy, cx+25, cy, cx+25, cy);
+    auto r = postJson("/api/play-events", log);
+    assert(r["status"].str == "success",
+        "play-events failed: " ~ r.toString);
+    foreach (_; 0 .. 50) {
+        auto st = getJson("/api/play-events/status");
+        if (st["finished"].boolean) break;
+        import core.thread : Thread;
+        import core.time   : msecs;
+        Thread.sleep(50.msecs);
+    }
+    auto verts = getJson("/api/model")["vertices"].array;
+    double[3][] vs;
+    foreach (v; verts) {
+        auto a = v.array;
+        vs ~= [a[0].floating, a[1].floating, a[2].floating];
+    }
+    // -Z face (selected, but NOT picked) stays put — the picked
+    // element wins, not the selection.
+    foreach (i; 0 .. 4)
+        assert(approxEq(vs[i][2], -0.5, 1e-4)
+            && approxEq(fabs(vs[i][0]), 0.5, 1e-4)
+            && approxEq(fabs(vs[i][1]), 0.5, 1e-4),
+            "selected -Z face must stay put; v" ~ i.to!string
+            ~ " moved to " ~ vs[i][0].to!string ~ ","
+            ~ vs[i][1].to!string ~ "," ~ vs[i][2].to!string);
+    // Picked +Z face moves as a rigid unit.
+    double dx = vs[4][0] - (-0.5);
+    assert(dx > 0.05,
+        "picked +Z face must drag with the cursor despite -Z being "
+        ~ "the selected element; got v4 delta " ~ dx.to!string);
+    foreach (i; 5 .. 8) {
+        double di = vs[i][0] - [0.5, 0.5, -0.5][i-5];
+        assert(approxEq(di, dx, 1e-4),
+            "picked +Z face verts must move together; v" ~ i.to!string
+            ~ " delta " ~ di.to!string);
+    }
+}
