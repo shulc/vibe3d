@@ -2065,7 +2065,8 @@ void main(string[] args) {
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
             import falloff_handles : screenFalloffActive, screenFalloffRMBDown,
-                                     radialFalloffActive, radialFalloffRMBDown;
+                                     radialFalloffActive, radialFalloffRMBDown,
+                                     elementFalloffActive, elementFalloffRMBDown;
             if (screenFalloffActive()) {
                 screenFalloffRMBDown(btn.x, btn.y);
                 return;
@@ -2078,6 +2079,13 @@ void main(string[] args) {
                     return;
                 // Plane projection failed (camera aligned to plane);
                 // fall through to lasso so the click isn't lost.
+            }
+            if (elementFalloffActive()) {
+                Viewport vp2 = cameraView.viewport();
+                if (elementFalloffRMBDown(btn.x, btn.y, vp2))
+                    return;
+                // Ray-parallel-to-camera-back is the only failure
+                // mode (degenerate camera state); fall through.
             }
             rmbDragging = true;
             rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
@@ -2134,9 +2142,11 @@ void main(string[] args) {
 
     void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
         if (btn.button == SDL_BUTTON_RIGHT) {
-            import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp;
-            if (screenFalloffRMBUp()) return;
+            import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp,
+                                     elementFalloffRMBUp;
+            if (screenFalloffRMBUp())  return;
             if (radialFalloffRMBUp())  return;
+            if (elementFalloffRMBUp()) return;
             if (rmbPath.length >= 3) {
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
@@ -2381,7 +2391,8 @@ void main(string[] args) {
         setOverrideMouse(mot.x, mot.y);
         {
             import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion,
-                                     radialFalloffRMBDragging, radialFalloffRMBMotion;
+                                     radialFalloffRMBDragging, radialFalloffRMBMotion,
+                                     elementFalloffRMBDragging, elementFalloffRMBMotion;
             if (screenFalloffRMBDragging()) {
                 screenFalloffRMBMotion(mot.x);
                 return;
@@ -2389,6 +2400,11 @@ void main(string[] args) {
             if (radialFalloffRMBDragging()) {
                 Viewport vp2 = cameraView.viewport();
                 radialFalloffRMBMotion(mot.x, mot.y, vp2);
+                return;
+            }
+            if (elementFalloffRMBDragging()) {
+                Viewport vp2 = cameraView.viewport();
+                elementFalloffRMBMotion(mot.x, mot.y, vp2);
                 return;
             }
         }

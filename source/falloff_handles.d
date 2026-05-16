@@ -754,3 +754,129 @@ bool radialFalloffRMBUp() {
     }
     return false;
 }
+
+// ---------------------------------------------------------------------------
+// Element-falloff RMB radius gesture (Stage 14.6).
+//
+// Mirrors screen-falloff's RMB API: RMB-down anchors the gesture at
+// the current pickedCenter (and captures the current `dist`); RMB-
+// motion remaps cursor distance from the anchor (projected onto a
+// camera-facing plane through pickedCenter) to a new `dist`; RMB-up
+// ends. The pickedCenter itself isn't relocated by the gesture —
+// LMB click-to-pick (ElementMoveTool) owns that. RMB only edits
+// the sphere radius around the currently-picked element.
+//
+// Lives at module scope (like screen / radial) so any tool with
+// falloff.element active inherits the gesture. app.d's RMB dispatch
+// consults `elementFalloffActive()` after the screen / radial
+// checks but before the lasso fallback.
+// ---------------------------------------------------------------------------
+private bool  rmbElementDragActive_ = false;
+private int   rmbElementDragX0_     = 0;
+private int   rmbElementDragY0_     = 0;
+private float rmbElementDragR0_     = 0.0f;
+private Vec3  rmbElementDragAnchor_ = Vec3(0, 0, 0);  // world hit at RMB-down
+private Vec3  rmbElementPlaneN_     = Vec3(0, 0, 1);  // camera-back at RMB-down
+
+bool elementFalloffActive() {
+    import toolpipe.stages.falloff : FalloffStage;
+    if (g_pipeCtx is null) return false;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto fs = cast(FalloffStage)s;
+        if (fs is null) return false;
+        return fs.type == FalloffType.Element;
+    }
+    return false;
+}
+
+bool elementFalloffRMBDragging() { return rmbElementDragActive_; }
+
+private void pushElementDist(float dist) {
+    if (g_pipeCtx is null) return;
+    foreach (s; g_pipeCtx.pipeline.all()) {
+        if (s.id() != "falloff") continue;
+        auto st = cast(Stage)s;
+        st.setAttr("dist", format("%g", dist));
+        break;
+    }
+}
+
+private FalloffStageState readElementState() {
+    import toolpipe.stages.falloff : FalloffStage;
+    FalloffStageState s;
+    if (g_pipeCtx is null) return s;
+    foreach (st; g_pipeCtx.pipeline.all()) {
+        if (st.id() != "falloff") continue;
+        auto fs = cast(FalloffStage)st;
+        if (fs is null) return s;
+        s.pickedCenter = fs.pickedCenter;
+        s.dist         = fs.dist;
+        break;
+    }
+    return s;
+}
+
+private struct FalloffStageState {
+    Vec3  pickedCenter = Vec3(0, 0, 0);
+    float dist         = 1.0f;
+}
+
+/// Begin RMB-radius gesture. Project the click ray onto a camera-
+/// back plane through the current pickedCenter; cache the hit as
+/// the anchor and snapshot the current dist as the baseline. Returns
+/// true so caller can early-out; false on degenerate camera (ray ∥
+/// plane normal — extremely rare).
+bool elementFalloffRMBDown(int x, int y, const ref Viewport vp) {
+    auto state = readElementState();
+    // Construction plane: through pickedCenter, normal = camera-back.
+    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 hit;
+    if (!rayPlaneIntersect(vp.eye, dir, state.pickedCenter, camBack, hit))
+        return false;
+    rmbElementDragActive_ = true;
+    rmbElementDragX0_     = x;
+    rmbElementDragY0_     = y;
+    rmbElementDragR0_     = state.dist;
+    rmbElementDragAnchor_ = hit;
+    rmbElementPlaneN_     = camBack;
+    return true;
+}
+
+/// Update dist from the cursor's world-space distance to the click
+/// anchor on the camera-back plane through pickedCenter. New dist =
+/// baseline + signed_world_distance. Clamped to ≥ 1e-4 so the sphere
+/// never inverts (and the elementWeight degenerate-radius branch
+/// stays out of NaN territory).
+void elementFalloffRMBMotion(int x, int y, const ref Viewport vp) {
+    if (!rmbElementDragActive_) return;
+    auto state = readElementState();
+    Vec3 dir = screenRay(cast(float)x, cast(float)y, vp);
+    Vec3 hit;
+    if (!rayPlaneIntersect(vp.eye, dir, state.pickedCenter,
+                           rmbElementPlaneN_, hit))
+        return;
+    // Signed: +X drag from anchor → grow; −X → shrink (same direction
+    // mapping screen-falloff uses, just on a world-space plane).
+    Vec3 d = Vec3(hit.x - rmbElementDragAnchor_.x,
+                  hit.y - rmbElementDragAnchor_.y,
+                  hit.z - rmbElementDragAnchor_.z);
+    float wd  = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    // Direction: rightward screen drag → grow. Compute the screen-X
+    // sign of the anchor→hit vector by projecting `d` onto the
+    // camera's right vector (view matrix row 0).
+    Vec3 camRight = Vec3(vp.view[0], vp.view[4], vp.view[8]);
+    float signR   = dot(d, camRight);
+    float signed  = (signR >= 0) ? wd : -wd;
+    float r = rmbElementDragR0_ + signed;
+    if (r < 1e-4f) r = 1e-4f;
+    pushElementDist(r);
+}
+
+/// End gesture. Returns true iff a drag was active.
+bool elementFalloffRMBUp() {
+    if (!rmbElementDragActive_) return false;
+    rmbElementDragActive_ = false;
+    return true;
+}
