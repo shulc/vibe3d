@@ -113,9 +113,12 @@ presets:
 
   # ----- Transform sub-tab ----------------------------------------
   # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` — the Move
-  # tool with ACEN + AXIS pinned to Element so the gizmo lands on
-  # the selected component's centroid. Also published as `move.element`
-  # for backwards compatibility with code that referenced the older name.
+  # tool with ACEN + AXIS pinned to Element and `falloff.element`
+  # active (a sphere around the picked component's centroid; user
+  # sets `pickedCenter` + `dist` via ElementMoveTool in Stage 14.3 or
+  # manually via `tool.pipe.attr falloff pickedCenter / dist`).
+  # Also published as `move.element` (backwards-compat alias without
+  # the falloff stage activation).
   - id: xfrm.elementMove
     base: move
     pipe:
@@ -123,6 +126,9 @@ presets:
         mode: element
       axis:
         mode: element
+      falloff:
+        type:  element
+        shape: linear
 
   - id: move.element
     base: move

@@ -136,9 +136,8 @@ unittest { // softMove activates falloff (enabled=true after preset)
     assert(sizeParts.length > 0);
 }
 
-// xfrm.elementMove pins ACEN + AXIS to Element so the gizmo lands on
-// the selected element's centroid (mirrors MODO `tool.set ElementMove`).
-// Verified via the toolpipe stage attrs after activation.
+// xfrm.elementMove pins ACEN + AXIS to Element AND activates
+// falloff.element (sphere around picked component). Stage 14.2.
 unittest {
     clearFalloff();
     auto r = postJson("/api/command", "tool.set xfrm.elementMove on");
@@ -154,6 +153,11 @@ unittest {
         "expected ACEN.mode=element, got " ~ acenMode);
     assert(axisMode == "element",
         "expected AXIS.mode=element, got " ~ axisMode);
+    auto a = falloffAttrs();
+    assert(a["type"]  == "element",
+        "xfrm.elementMove expected falloff.type=element, got " ~ a["type"]);
+    assert(a["shape"] == "linear",
+        "xfrm.elementMove expected falloff.shape=linear, got " ~ a["shape"]);
 }
 
 // xfrm.flare mirrors MODO's `Flare` ToolPreset — surprisingly that's

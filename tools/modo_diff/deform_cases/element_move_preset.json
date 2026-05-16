@@ -1,0 +1,29 @@
+{
+  "_comment": "xfrm.elementMove preset path: same translate-with-element-falloff scenario as element_translate_analytical, but driven through the preset (which auto-wires falloff.type=element + ACEN/AXIS=Element). Pick centre at the (+0.5,+0.5,+0.5) corner with radius 0.5 — only that vert moves +0.3 along X. modo_method=analytical because MODO's `ElementMove` preset requires interactive click-to-pick + xfrm.transform doApply that's untested headlessly.",
+  "setup": {
+    "kind": "primitive",
+    "tool": "prim.cube",
+    "params": {
+      "cenX": 0, "cenY": 0, "cenZ": 0,
+      "sizeX": 1, "sizeY": 1, "sizeZ": 1,
+      "segmentsX": 1, "segmentsY": 1, "segmentsZ": 1,
+      "radius": 0
+    }
+  },
+  "ops": [
+    {
+      "op": "deform",
+      "preset": "xfrm.elementMove",
+      "modo_method": "analytical",
+      "falloff": {
+        "type":         "element",
+        "shape":        "linear",
+        "pickedCenter": [0.5, 0.5, 0.5],
+        "pickedRadius": 0.5
+      },
+      "transform": { "TX": 0.3 }
+    }
+  ],
+  "tolerance":      0.0001,
+  "topology_check": false
+}
