@@ -165,16 +165,31 @@ protected:
         scope(exit) cancelEdit();
         if (history is null || vertexEditFactory is null) return null;
 
+        // mesh.vertices.length can shrink between the open edit and
+        // commit (e.g. SceneReset replacing a subdivided mesh with a
+        // fresh cube while a tool drag is still open) — that flow
+        // deactivates the active tool while disposing the mesh, which
+        // triggers this very commit. Drop any stale indices that no
+        // longer reference a live vert; the edit either records the
+        // surviving subset or returns null when nothing's left.
         Vec3[] after_;
         after_.length = editIdx.length;
         bool changed = false;
+        size_t valid = 0;
         foreach (i, vid; editIdx) {
-            after_[i] = mesh.vertices[vid];
-            if (after_[i].x != editBefore[i].x
-             || after_[i].y != editBefore[i].y
-             || after_[i].z != editBefore[i].z)
+            if (vid >= mesh.vertices.length) continue;
+            editIdx[valid]    = vid;
+            editBefore[valid] = editBefore[i];
+            after_[valid]     = mesh.vertices[vid];
+            if (after_[valid].x != editBefore[valid].x
+             || after_[valid].y != editBefore[valid].y
+             || after_[valid].z != editBefore[valid].z)
                 changed = true;
+            ++valid;
         }
+        editIdx.length    = valid;
+        editBefore.length = valid;
+        after_.length     = valid;
         if (!changed) return null;
 
         auto cmd = vertexEditFactory();

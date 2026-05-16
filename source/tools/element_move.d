@@ -306,125 +306,153 @@ private:
         if (stage is null) return false;
         if (stage.type != FalloffType.Element) return false;
 
-        enum float PICK_R_PX = 16.0f;
-        enum float PICK_R2   = PICK_R_PX * PICK_R_PX;
-
         // Pick-type restriction per Stage 14.8 ElementMode:
-        //   Auto / AutoCent  → all three (priority vert → edge → face)
+        //   Auto / AutoCent  → all three; priority follows the active
+        //                       editMode (1=Vertices, 2=Edges,
+        //                       3=Polygons) so the click-pick agrees
+        //                       with whatever the user is editing.
+        //                       Without this the always-vert-first
+        //                       priority steals face clicks on dense
+        //                       meshes (post-subdivide a face-centre
+        //                       vert sits exactly under the cursor
+        //                       when clicking face center → vert wins
+        //                       → only 1 of 4 face verts moves).
         //   Vertex           → verts only
         //   Edge / EdgeCent  → edges only
         //   Polygon/PolyCent → polygons only
         ElementMode em = stage.elementMode;
-        bool wantV = (em == ElementMode.Auto)     || (em == ElementMode.AutoCent)
-                  || (em == ElementMode.Vertex);
-        bool wantE = (em == ElementMode.Auto)     || (em == ElementMode.AutoCent)
-                  || (em == ElementMode.Edge)     || (em == ElementMode.EdgeCent);
-        bool wantF = (em == ElementMode.Auto)     || (em == ElementMode.AutoCent)
-                  || (em == ElementMode.Polygon)  || (em == ElementMode.PolyCent);
+        bool autoMode = (em == ElementMode.Auto) || (em == ElementMode.AutoCent);
+        bool wantV = autoMode || (em == ElementMode.Vertex);
+        bool wantE = autoMode || (em == ElementMode.Edge)
+                              || (em == ElementMode.EdgeCent);
+        bool wantF = autoMode || (em == ElementMode.Polygon)
+                              || (em == ElementMode.PolyCent);
 
-        // Vertex priority.
-        if (wantV) {
-            int   bestVi = -1;
-            float bestD2 = PICK_R2;
-            foreach (vi; 0 .. mesh.vertices.length) {
+        // Priority sequence — runs the first hit and stops.
+        bool delegate(int, int)[] tryFns;
+        if (autoMode) {
+            final switch (*editMode) {
+                case EditMode.Polygons:
+                    if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
+                    if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
+                    if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
+                    break;
+                case EditMode.Edges:
+                    if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
+                    if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
+                    if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
+                    break;
+                case EditMode.Vertices:
+                    if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
+                    if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
+                    if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
+                    break;
+            }
+        } else {
+            // Explicit mode — no priority decision, run only the
+            // single allowed test.
+            if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
+            if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
+            if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
+        }
+
+        foreach (fn; tryFns)
+            if (fn(mx, my)) return true;
+        return false;
+    }
+
+    // Closest vert within 16 px of the cursor; updates pickedCenter /
+    // pickedVerts / connectMask and returns true on hit.
+    bool pickVert(FalloffStage stage, int mx, int my) {
+        enum float PICK_R2 = 16.0f * 16.0f;
+        int   bestVi = -1;
+        float bestD2 = PICK_R2;
+        foreach (vi; 0 .. mesh.vertices.length) {
+            float sx, sy, ndcZ;
+            if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
+                                     sx, sy, ndcZ))
+                continue;
+            float dx = sx - mx, dy = sy - my;
+            float d2 = dx*dx + dy*dy;
+            if (d2 < bestD2) { bestD2 = d2; bestVi = cast(int)vi; }
+        }
+        if (bestVi < 0) return false;
+        stage.pickedCenter = mesh.vertices[bestVi];
+        stage.pickedVerts  = [cast(uint)bestVi];
+        updateConnectMask(stage, bestVi);
+        return true;
+    }
+
+    // Closest edge segment within 16 px of the cursor. Uses segment
+    // distance (not midpoint) so long edges register hits near either
+    // endpoint. pickedCenter lands on the midpoint — matches MODO's
+    // Auto-Center semantic.
+    bool pickEdge(FalloffStage stage, int mx, int my) {
+        enum float PICK_R2 = 16.0f * 16.0f;
+        int   bestEi = -1;
+        float bestD2 = PICK_R2;
+        foreach (ei, edge; mesh.edges) {
+            float ax, ay, az, bx, by, bz;
+            if (!projectToWindowFull(mesh.vertices[edge[0]], cachedVp,
+                                     ax, ay, az))
+                continue;
+            if (!projectToWindowFull(mesh.vertices[edge[1]], cachedVp,
+                                     bx, by, bz))
+                continue;
+            float t;
+            float d2 = closestOnSegment2DSquared(
+                cast(float)mx, cast(float)my, ax, ay, bx, by, t);
+            if (d2 < bestD2) { bestD2 = d2; bestEi = cast(int)ei; }
+        }
+        if (bestEi < 0) return false;
+        auto e = mesh.edges[bestEi];
+        stage.pickedCenter = (mesh.vertices[e[0]]
+                            + mesh.vertices[e[1]]) * 0.5f;
+        stage.pickedVerts  = [cast(uint)e[0], cast(uint)e[1]];
+        updateConnectMask(stage, cast(int)e[0]);
+        return true;
+    }
+
+    // Frontmost face whose projected polygon contains the cursor.
+    // pickedCenter lands on the centroid; pickedVerts holds the vert
+    // ring so the whole face moves with weight 1.
+    bool pickFace(FalloffStage stage, int mx, int my) {
+        int   bestFi = -1;
+        float bestZ  = float.infinity;
+        float[] xs;
+        float[] ys;
+        foreach (fi; 0 .. mesh.faces.length) {
+            const(uint)[] face = mesh.faces[fi];
+            xs.length = face.length;
+            ys.length = face.length;
+            bool projectedAll = true;
+            float zSum = 0;
+            int   zCount = 0;
+            foreach (i, vi; face) {
                 float sx, sy, ndcZ;
                 if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
                                          sx, sy, ndcZ))
-                    continue;
-                float dx = sx - mx, dy = sy - my;
-                float d2 = dx*dx + dy*dy;
-                if (d2 < bestD2) { bestD2 = d2; bestVi = cast(int)vi; }
-            }
-            if (bestVi >= 0) {
-                stage.pickedCenter = mesh.vertices[bestVi];
-                stage.pickedVerts  = [cast(uint)bestVi];
-                updateConnectMask(stage, bestVi);
-                return true;
-            }
-        }
-        // Edge priority: pick the edge whose projected SEGMENT is
-        // closest to the cursor. Using the segment (not the midpoint)
-        // matters for long edges — clicking near an endpoint can be
-        // well outside 16 px of the midpoint and still be on the
-        // edge visually. MODO's Auto-Center mode lands the picked
-        // centre on the edge midpoint regardless of where on the
-        // edge the user clicked; we mirror that by setting
-        // `pickedCenter` to the midpoint after the pick decision.
-        if (wantE) {
-            int   bestEi = -1;
-            float bestD2 = PICK_R2;
-            foreach (ei, edge; mesh.edges) {
-                float ax, ay, az, bx, by, bz;
-                if (!projectToWindowFull(mesh.vertices[edge[0]], cachedVp,
-                                         ax, ay, az))
-                    continue;
-                if (!projectToWindowFull(mesh.vertices[edge[1]], cachedVp,
-                                         bx, by, bz))
-                    continue;
-                float t;
-                float d2 = closestOnSegment2DSquared(
-                    cast(float)mx, cast(float)my, ax, ay, bx, by, t);
-                if (d2 < bestD2) { bestD2 = d2; bestEi = cast(int)ei; }
-            }
-            if (bestEi >= 0) {
-                auto e = mesh.edges[bestEi];
-                stage.pickedCenter = (mesh.vertices[e[0]]
-                                    + mesh.vertices[e[1]]) * 0.5f;
-                stage.pickedVerts  = [cast(uint)e[0], cast(uint)e[1]];
-                updateConnectMask(stage, cast(int)e[0]);
-                return true;
-            }
-        }
-        // Face priority: cursor inside the projected face polygon
-        // counts as a hit regardless of how far it is from the
-        // centroid. Same MODO Auto-Center semantic as edges:
-        // `pickedCenter` lands on the face centroid even when the
-        // user clicked an off-centre point on the face. For
-        // overlapping faces (e.g. cube back face under front),
-        // pick the one whose centroid has the closest screen depth
-        // (smallest ndcZ — nearest to camera) as a frontmost
-        // tiebreaker.
-        if (wantF) {
-            int   bestFi = -1;
-            float bestZ  = float.infinity;
-            float[] xs;
-            float[] ys;
-            foreach (fi; 0 .. mesh.faces.length) {
-                const(uint)[] face = mesh.faces[fi];
-                xs.length = face.length;
-                ys.length = face.length;
-                bool projectedAll = true;
-                float zSum = 0;
-                int   zCount = 0;
-                foreach (i, vi; face) {
-                    float sx, sy, ndcZ;
-                    if (!projectToWindowFull(mesh.vertices[vi], cachedVp,
-                                             sx, sy, ndcZ))
-                    {
-                        projectedAll = false;
-                        break;
-                    }
-                    xs[i] = sx; ys[i] = sy;
-                    zSum += ndcZ; ++zCount;
+                {
+                    projectedAll = false;
+                    break;
                 }
-                if (!projectedAll || zCount == 0) continue;
-                if (!pointInPolygon2D(cast(float)mx, cast(float)my, xs, ys))
-                    continue;
-                float zAvg = zSum / cast(float)zCount;
-                if (zAvg < bestZ) { bestZ = zAvg; bestFi = cast(int)fi; }
+                xs[i] = sx; ys[i] = sy;
+                zSum += ndcZ; ++zCount;
             }
-            if (bestFi >= 0) {
-                stage.pickedCenter = mesh.faceCentroid(cast(uint)bestFi);
-                stage.pickedVerts.length = mesh.faces[bestFi].length;
-                foreach (i, vi; mesh.faces[bestFi])
-                    stage.pickedVerts[i] = vi;
-                // Seed the BFS from any vert of the picked face.
-                if (mesh.faces[bestFi].length > 0)
-                    updateConnectMask(stage, cast(int)mesh.faces[bestFi][0]);
-                return true;
-            }
+            if (!projectedAll || zCount == 0) continue;
+            if (!pointInPolygon2D(cast(float)mx, cast(float)my, xs, ys))
+                continue;
+            float zAvg = zSum / cast(float)zCount;
+            if (zAvg < bestZ) { bestZ = zAvg; bestFi = cast(int)fi; }
         }
-        return false;
+        if (bestFi < 0) return false;
+        stage.pickedCenter = mesh.faceCentroid(cast(uint)bestFi);
+        stage.pickedVerts.length = mesh.faces[bestFi].length;
+        foreach (i, vi; mesh.faces[bestFi])
+            stage.pickedVerts[i] = vi;
+        if (mesh.faces[bestFi].length > 0)
+            updateConnectMask(stage, cast(int)mesh.faces[bestFi][0]);
+        return true;
     }
 
     // Compute the connected component containing `seedVi` and write

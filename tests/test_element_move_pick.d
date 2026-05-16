@@ -257,3 +257,67 @@ unittest { // Picked element must move even when an UNRELATED prior
             ~ " delta " ~ di.to!string);
     }
 }
+
+unittest { // Auto-mode priority must follow editMode. Without that
+           // the always-vert-first scan steals face clicks on dense
+           // meshes: post-subdivide a face-centre vert sits exactly
+           // under the click point, so vert wins and only 1 of 4
+           // face verts moves. In Polygons edit-mode the user
+           // expects the face under the cursor to drag as a unit.
+    import std.net.curl     : get, post;
+    import std.json         : parseJSON, JSONValue;
+    postJson("/api/reset", "");
+    JSONValue camResp = postJson("/api/camera",
+        `{"azimuth":0,"elevation":0,"distance":3}`);
+    assert(camResp["status"].str == "ok");
+    cmd("mesh.subdivide_faceted");      // 26 verts, 24 sub-quads
+    cmd("select.typeFrom polygon");     // editMode = Polygons
+    cmd("tool.set xfrm.elementMove on");
+    // Falloff stays at default mode=auto — proves the editMode
+    // dispatch picks polygon priority without explicit `mode polygon`.
+    auto cam = parseJSON(cast(string) get(baseUrl ~ "/api/camera"));
+    int vpX = cast(int)cam["vpX"].integer;
+    int vpY = cast(int)cam["vpY"].integer;
+    int vpW = cast(int)cam["width"].integer;
+    int vpH = cast(int)cam["height"].integer;
+    int cx = vpX + vpW / 2;
+    int cy = vpY + vpH / 2;
+    import std.format : format;
+    string log = format!`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}
+{"t":100,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":200,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}
+{"t":250,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":5,"yrel":0,"state":1,"mod":0}
+{"t":300,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":20,"yrel":0,"state":1,"mod":0}
+{"t":400,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}
+`(vpX, vpY, vpW, vpH,
+  cx, cy, cx, cy, cx+5, cy, cx+25, cy, cx+25, cy);
+    auto r = postJson("/api/play-events", log);
+    assert(r["status"].str == "success",
+        "play-events failed: " ~ r.toString);
+    foreach (_; 0 .. 50) {
+        auto st = getJson("/api/play-events/status");
+        if (st["finished"].boolean) break;
+        import core.thread : Thread;
+        import core.time   : msecs;
+        Thread.sleep(50.msecs);
+    }
+    auto verts = getJson("/api/model")["vertices"].array;
+    int moved = 0;
+    foreach (v; verts) {
+        auto a = v.array;
+        // Subdivided cube verts sit at coords in {-0.5, 0, +0.5}. Any
+        // vert displaced from that grid was moved by the drag.
+        bool dirty = false;
+        foreach (c; 0 .. 3) {
+            double x = a[c].floating;
+            if (fabs(x + 0.5) > 0.01 && fabs(x) > 0.01 && fabs(x - 0.5) > 0.01)
+                dirty = true;
+        }
+        if (dirty) ++moved;
+    }
+    // A sub-quad has 4 verts → expect exactly 4 moved when the face
+    // pick wins. Vertex pick (the bug) moves only 1.
+    assert(moved == 4,
+        "polygon pick after subdivide should move all 4 face verts; "
+        ~ "got " ~ moved.to!string);
+}
