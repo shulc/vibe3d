@@ -143,7 +143,18 @@ private:
     GLuint vertSelVao, edgeSelVao, faceSelVao;
 
     // Per-mode cache slot. Mode-keyed so flipping 1/2/3 doesn't
-    // invalidate; mesh/camera changes invalidate all three.
+    // invalidate; mesh/camera changes invalidate all three. Note
+    // that the FBO itself is SHARED across modes — a slot's
+    // `valid` only means "the FBO had THIS mode's IDs in it at
+    // some point with these matrices / upload version", not "it
+    // still has them now". Whenever renderMode runs for mode X
+    // we invalidate the OTHER slots: the FBO no longer matches
+    // them. Without this, a multi-mode hover frame (pickVertices →
+    // pickEdges → pickFaces in Stage 14.9 Auto-mode flow) would
+    // leave the FBO holding Face IDs, and the next frame's
+    // pickVertices would skip renderMode (its slot still flagged
+    // valid) and read back Face IDs as vert IDs — surfacing as
+    // "hover over edge highlights vertex on opposite side".
     struct Slot {
         bool      valid;
         ulong     uploadVer;
@@ -211,6 +222,12 @@ public:
             || !matricesEqual(slot.proj, vp.proj))
         {
             renderMode(mode, gpu, vp);
+            // FBO now holds this mode's IDs only — every other
+            // slot's cached state no longer matches the FBO
+            // contents. See the Slot struct comment above.
+            foreach (mi, ref s; slots) {
+                if (cast(SelectMode)mi != mode) s.valid = false;
+            }
             slot.valid  = true;
             slot.uploadVer = gpu.uploadVersion;
             slot.view   = vp.view;
@@ -310,6 +327,11 @@ public:
             || !matricesEqual(slot.proj, vp.proj))
         {
             renderMode(mode, gpu, vp);
+            // Same shared-FBO invalidation as in pick() — see the
+            // Slot struct comment for why.
+            foreach (mi, ref s; slots) {
+                if (cast(SelectMode)mi != mode) s.valid = false;
+            }
             slot.valid     = true;
             slot.uploadVer = gpu.uploadVersion;
             slot.view      = vp.view;
