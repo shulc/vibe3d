@@ -274,6 +274,24 @@ class FalloffStage : Stage {
             IntEnumEntry(cast(int)LassoStyle.Ellipse,   "ellipse",  "Ellipse"),
         ];
 
+        IntEnumEntry[] elementModeEntries = [
+            IntEnumEntry(cast(int)ElementMode.Auto,     "auto",     "Auto"),
+            IntEnumEntry(cast(int)ElementMode.AutoCent, "autoCent", "Auto Center"),
+            IntEnumEntry(cast(int)ElementMode.Vertex,   "vertex",   "Vertex"),
+            IntEnumEntry(cast(int)ElementMode.Edge,     "edge",     "Edge"),
+            IntEnumEntry(cast(int)ElementMode.EdgeCent, "edgeCent", "Edge Center"),
+            IntEnumEntry(cast(int)ElementMode.Polygon,  "polygon",  "Polygon"),
+            IntEnumEntry(cast(int)ElementMode.PolyCent, "polyCent", "Polygon Center"),
+        ];
+
+        IntEnumEntry[] elementConnectEntries = [
+            IntEnumEntry(cast(int)ElementConnect.Off,      "off",      "Off"),
+            IntEnumEntry(cast(int)ElementConnect.Vertex,   "vertex",   "Vertex"),
+            IntEnumEntry(cast(int)ElementConnect.Edge,     "edge",     "Edge"),
+            IntEnumEntry(cast(int)ElementConnect.Polygon,  "polygon",  "Polygon"),
+            IntEnumEntry(cast(int)ElementConnect.Material, "material", "Material"),
+        ];
+
         Param[] ps;
         // Shape preset is rendered via drawProperties() as a status-bar-
         // style popup-button (matches MODO's visual language); kept out
@@ -316,19 +334,19 @@ class FalloffStage : Stage {
                 ps ~= Param.vec3_("axis",   "Axis",   &normal, Vec3(0, 1, 0));
                 break;
             case FalloffType.Element:
+                // Element Mode dropdown first — primary control, drives
+                // pick-type restriction (7-mode: auto / autoCent /
+                // vertex / edge / edgeCent / polygon / polyCent).
+                // Mirrors MODO's `falloff.element` `mode` UI dropdown.
+                ps ~= Param.intEnum_("mode", "Element Mode",
+                                     cast(int*)&elementMode, elementModeEntries,
+                                     cast(int)ElementMode.Auto);
                 ps ~= Param.vec3_("pickedCenter", "Picked Center",
                                   &pickedCenter, Vec3(0, 0, 0));
                 ps ~= Param.float_("dist", "Range", &dist, 1.0f).min(1e-6f);
-                // `connect` and `mode` exposed as int enums — the
-                // dedicated dropdown widgets belong in the popup
-                // (along with shape, mix, etc.); kept as bare ints
-                // to avoid blocking the headless attr path.
-                ps ~= Param.int_("connect", "Connect",
-                                 cast(int*)&connect, 0)
-                            .min(0).max(4);
-                ps ~= Param.int_("mode", "Element Mode",
-                                 cast(int*)&elementMode, 0)
-                            .min(0).max(6);
+                ps ~= Param.intEnum_("connect", "Connect",
+                                     cast(int*)&connect, elementConnectEntries,
+                                     cast(int)ElementConnect.Off);
                 break;
         }
         return ps;
