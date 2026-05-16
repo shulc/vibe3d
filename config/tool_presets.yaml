@@ -129,6 +129,11 @@ presets:
       falloff:
         type:  element
         shape: linear
+        # Mirror MODO's `mode integer 0` in resrc/presets.cfg —
+        # explicit `auto` so re-activating the preset resets the
+        # 7-mode pick selector to its default (without this, mode
+        # is whatever the previous activation left behind).
+        mode:  auto
 
   - id: move.element
     base: move

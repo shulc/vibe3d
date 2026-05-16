@@ -12,7 +12,7 @@ import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : ToolState, g_pipeCtx;
 import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape,
-                            LassoStyle, ElementConnect;
+                            LassoStyle, ElementConnect, ElementMode;
 import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry;
@@ -76,6 +76,11 @@ class FalloffStage : Stage {
     // mesh.edges from the picked vert).
     ElementConnect connect = ElementConnect.Off;
     bool[]         connectMask;
+    // Stage 14.8: pick mode for ElementMoveTool. `auto`/`autoCent`
+    // try all element types; vertex/edge/polygon restrict; bare vs
+    // Cent variants control the pivot policy. See ElementMode enum
+    // doc in toolpipe/packets.d for the full semantic.
+    ElementMode    elementMode = ElementMode.Auto;
 
     float screenCx     = 0;
     float screenCy     = 0;
@@ -164,6 +169,7 @@ class FalloffStage : Stage {
         state.falloff.pickedRadius = dist;
         state.falloff.connect      = connect;
         state.falloff.connectMask  = connectMask;
+        state.falloff.elementMode  = elementMode;
         state.falloff.screenCx     = screenCx;
         state.falloff.screenCy     = screenCy;
         state.falloff.screenSize   = screenSize;
@@ -207,6 +213,7 @@ class FalloffStage : Stage {
             ["pickedCenter", vec3Str(pickedCenter)],
             ["dist",         format("%g", dist)],
             ["connect",      connectLabel()],
+            ["mode",         elementModeLabel()],
             ["screenCx",     format("%g", screenCx)],
             ["screenCy",     format("%g", screenCy)],
             ["screenSize",   format("%g", screenSize)],
@@ -312,13 +319,16 @@ class FalloffStage : Stage {
                 ps ~= Param.vec3_("pickedCenter", "Picked Center",
                                   &pickedCenter, Vec3(0, 0, 0));
                 ps ~= Param.float_("dist", "Range", &dist, 1.0f).min(1e-6f);
-                // `connect` exposed as an int enum for now — the
-                // dedicated dropdown widget belongs in the popup
-                // (along with shape, mix, etc.); kept as bare int
+                // `connect` and `mode` exposed as int enums — the
+                // dedicated dropdown widgets belong in the popup
+                // (along with shape, mix, etc.); kept as bare ints
                 // to avoid blocking the headless attr path.
                 ps ~= Param.int_("connect", "Connect",
                                  cast(int*)&connect, 0)
                             .min(0).max(4);
+                ps ~= Param.int_("mode", "Element Mode",
+                                 cast(int*)&elementMode, 0)
+                            .min(0).max(6);
                 break;
         }
         return ps;
@@ -467,6 +477,17 @@ private:
                 else if (value == "polygon")  { connect = ElementConnect.Polygon;  return true; }
                 else if (value == "material") { connect = ElementConnect.Material; return true; }
                 return false;
+            case "mode":
+                // MODO's 7-mode `element-mode` enum: auto / autoCent
+                // / vertex / edge / edgeCent / polygon / polyCent.
+                if      (value == "auto")     { elementMode = ElementMode.Auto;     return true; }
+                else if (value == "autoCent") { elementMode = ElementMode.AutoCent; return true; }
+                else if (value == "vertex")   { elementMode = ElementMode.Vertex;   return true; }
+                else if (value == "edge")     { elementMode = ElementMode.Edge;     return true; }
+                else if (value == "edgeCent") { elementMode = ElementMode.EdgeCent; return true; }
+                else if (value == "polygon")  { elementMode = ElementMode.Polygon;  return true; }
+                else if (value == "polyCent") { elementMode = ElementMode.PolyCent; return true; }
+                return false;
             case "screenCx":   screenCx     = parseFloat(value); return true;
             case "screenCy":   screenCy     = parseFloat(value); return true;
             case "screenSize": screenSize   = parseFloat(value); return true;
@@ -540,6 +561,18 @@ private:
             case ElementConnect.Edge:     return "edge";
             case ElementConnect.Polygon:  return "polygon";
             case ElementConnect.Material: return "material";
+        }
+    }
+
+    string elementModeLabel() const {
+        final switch (elementMode) {
+            case ElementMode.Auto:     return "auto";
+            case ElementMode.AutoCent: return "autoCent";
+            case ElementMode.Vertex:   return "vertex";
+            case ElementMode.Edge:     return "edge";
+            case ElementMode.EdgeCent: return "edgeCent";
+            case ElementMode.Polygon:  return "polygon";
+            case ElementMode.PolyCent: return "polyCent";
         }
     }
 

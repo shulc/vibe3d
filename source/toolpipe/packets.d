@@ -126,6 +126,33 @@ enum ElementConnect : ubyte {
     Material = 4,
 }
 
+/// Element-falloff pick mode (Stage 14.8). Mirrors MODO's interface
+/// for `falloff.element` (the `element-mode` enum surfaced in the UI
+/// dropdown). Controls TWO axes at once:
+///
+///   * Type restriction: `auto*` accept vert / edge / face (priority
+///     vert → edge → face); `vertex`/`edge`/`polygon` restrict to
+///     that single component type regardless of the global edit-mode.
+///   * Pivot policy: bare (`auto`, `edge`, `polygon`) put the
+///     `pickedCenter` at the cursor's projection onto the picked
+///     element; `*Cent` variants put it at the element's geometric
+///     centre (vertex pos, edge midpoint, face centroid).
+///
+/// vibe3d's MVP collapses bare / Cent variants for edge / polygon
+/// onto the same centroid (ray-onto-edge / ray-onto-face projection
+/// is non-trivial without the cached cursor ray; defer until a user
+/// surfaces the need). `auto` and `autoCent` are likewise identical
+/// in vibe3d today.
+enum ElementMode : ubyte {
+    Auto     = 0,
+    AutoCent = 1,
+    Vertex   = 2,
+    Edge     = 3,
+    EdgeCent = 4,
+    Polygon  = 5,
+    PolyCent = 6,
+}
+
 /// Per-shape attenuation curve. `t ∈ [0, 1]` is the normalised
 /// distance from full-influence to no-influence; the curve maps it
 /// to a weight ∈ [0, 1].
@@ -200,6 +227,11 @@ struct FalloffPacket {
     // single-mesh case; Material partitioning would need per-face
     // material ids which aren't tracked).
     ElementConnect connect    = ElementConnect.Off;
+    // Element pick mode (Stage 14.8). ElementMoveTool reads this to
+    // restrict which element types LMB-pick will hit and where the
+    // pickedCenter lands on the picked element. Default Auto =
+    // vert→edge→face priority, centred on the natural pick point.
+    ElementMode    elementMode = ElementMode.Auto;
     // BFS-precomputed component mask for the picked element: index
     // into the same vert array, `true` for verts in the component.
     // ElementMoveTool fills it on pick; consumers reading the packet

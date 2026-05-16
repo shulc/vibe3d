@@ -15,7 +15,7 @@ import std.math : PI;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.packets  : FalloffType;
+import toolpipe.packets  : FalloffType, ElementMode;
 
 /// ElementMoveTool — Move with a click-to-pick pre-step. On LMB-down
 /// that doesn't hit the gizmo, the tool hit-tests the cursor against
@@ -30,9 +30,6 @@ import toolpipe.packets  : FalloffType;
 /// `tool.attr xfrm.elementMove mode manual`.
 class ElementMoveTool : MoveTool {
 public:
-    enum Mode : ubyte { Automatic = 0, Manual = 1 }
-    Mode mode = Mode.Automatic;
-
     // Stage 14.5 — combined T/R/S attrs mirroring MODO's
     // `xfrm.transform`. MoveTool already exposes TX/TY/TZ; we add
     // RX/RY/RZ + SX/SY/SZ here so a single `tool.doApply` can chain
@@ -61,19 +58,16 @@ public:
 
     override void activate() {
         super.activate();
-        mode = Mode.Automatic;
         headlessRotate = Vec3(0, 0, 0);
         headlessScale  = Vec3(1, 1, 1);
     }
 
-    // `mode` is an int enum; expose via Param.int_ for simplicity (the
-    // values are Automatic=0, Manual=1). User sets via
-    // `tool.attr xfrm.elementMove mode 1` for Manual.
+    // Numeric rotate / scale attrs. TX/TY/TZ come from MoveTool's
+    // params() (base above). Element-pick mode lives on the
+    // FalloffStage now (`tool.pipe.attr falloff mode <auto|...>`)
+    // matching MODO 9, not on the tool itself.
     override Param[] params() {
         auto base = super.params();
-        base ~= Param.int_("mode", "Mode", cast(int*)&mode, 0).min(0).max(1);
-        // Numeric rotate / scale attrs. TX/TY/TZ come from
-        // MoveTool's params() (base above).
         base ~= Param.float_("RX", "Rotate X", &headlessRotate.x, 0.0f);
         base ~= Param.float_("RY", "Rotate Y", &headlessRotate.y, 0.0f);
         base ~= Param.float_("RZ", "Rotate Z", &headlessRotate.z, 0.0f);
@@ -217,9 +211,18 @@ private:
         enum float PICK_R_PX = 16.0f;
         enum float PICK_R2   = PICK_R_PX * PICK_R_PX;
 
-        bool wantV = (mode == Mode.Automatic) || (*editMode == EditMode.Vertices);
-        bool wantE = (mode == Mode.Automatic) || (*editMode == EditMode.Edges);
-        bool wantF = (mode == Mode.Automatic) || (*editMode == EditMode.Polygons);
+        // Pick-type restriction per Stage 14.8 ElementMode:
+        //   Auto / AutoCent  → all three (priority vert → edge → face)
+        //   Vertex           → verts only
+        //   Edge / EdgeCent  → edges only
+        //   Polygon/PolyCent → polygons only
+        ElementMode em = stage.elementMode;
+        bool wantV = (em == ElementMode.Auto)     || (em == ElementMode.AutoCent)
+                  || (em == ElementMode.Vertex);
+        bool wantE = (em == ElementMode.Auto)     || (em == ElementMode.AutoCent)
+                  || (em == ElementMode.Edge)     || (em == ElementMode.EdgeCent);
+        bool wantF = (em == ElementMode.Auto)     || (em == ElementMode.AutoCent)
+                  || (em == ElementMode.Polygon)  || (em == ElementMode.PolyCent);
 
         // Vertex priority.
         if (wantV) {
