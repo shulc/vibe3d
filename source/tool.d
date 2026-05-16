@@ -107,16 +107,15 @@ class Tool : ParamProvider {
     // integration points" for the rationale.
     bool consumesFalloff() const { return false; }
 
-    // Whether the tool wants the per-frame hover-pick to keep running
-    // while it's active. Most tools (Move / Rotate / Scale / Bevel /
-    // primitive create tools) own LMB completely — their gizmos hit-
-    // test and don't want a competing per-vert/edge/face hover
-    // highlight on top. ElementMoveTool overrides to `true` so the
-    // user sees which element will be picked on the next click; the
-    // existing gpuSelect.pick path already populates hoveredVertex /
-    // hoveredEdge / hoveredFace and the renderer's
-    // drawVertices/Edges/FacesHighlighted picks them up.
-    bool wantsHoverPicking() const { return false; }
+    // Per-element-type hover opt-in. Tools override to declare which
+    // element types they want pickVertices / pickEdges / pickFaces to
+    // run (and the renderer to highlight) while they're active.
+    // Defaults to `false` — most tools (Move / Rotate / Scale / Bevel /
+    // primitive-create) own LMB completely and skip hover entirely.
+    // ElementMoveTool returns `true` for the types matching the
+    // active FalloffStage's `elementMode` (Auto → all three, vertex →
+    // only Vertices, etc.).
+    bool wantsHoverForType(EditMode type) const { return false; }
 
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}

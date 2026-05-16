@@ -2452,14 +2452,16 @@ void main(string[] args) {
 
     void pickVertices(ref Viewport vp, bool doingCameraDrag) {
         hoveredVertex = -1;
-        if (io.WantCaptureMouse || doingCameraDrag ||
-            editMode != EditMode.Vertices)
-            return;
-        // Most active tools own the cursor; ElementMoveTool opts in
-        // to hover picking via `wantsHoverPicking()` so its click-to-
-        // pick gesture gets a live preview of the next pick.
-        if (activeTool !is null && !activeTool.wantsHoverPicking())
-            return;
+        if (io.WantCaptureMouse || doingCameraDrag) return;
+        // No active tool → only the current editMode picks. With an
+        // active tool, defer to `wantsHoverForType` so tools like
+        // ElementMoveTool can opt in to multi-type hover regardless
+        // of editMode (Stage 14.9).
+        if (activeTool is null) {
+            if (editMode != EditMode.Vertices) return;
+        } else {
+            if (!activeTool.wantsHoverForType(EditMode.Vertices)) return;
+        }
 
         int mx, my;
         queryMouse(mx, my);
@@ -2485,11 +2487,12 @@ void main(string[] args) {
 
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
         hoveredEdge = -1;
-        if (io.WantCaptureMouse || doingCameraDrag ||
-            editMode != EditMode.Edges)
-            return;
-        if (activeTool !is null && !activeTool.wantsHoverPicking())
-            return;
+        if (io.WantCaptureMouse || doingCameraDrag) return;
+        if (activeTool is null) {
+            if (editMode != EditMode.Edges) return;
+        } else {
+            if (!activeTool.wantsHoverForType(EditMode.Edges)) return;
+        }
 
         int mx, my;
         queryMouse(mx, my);
@@ -2514,11 +2517,12 @@ void main(string[] args) {
 
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
         hoveredFace = -1;
-        if (io.WantCaptureMouse || doingCameraDrag ||
-            editMode != EditMode.Polygons)
-            return;
-        if (activeTool !is null && !activeTool.wantsHoverPicking())
-            return;
+        if (io.WantCaptureMouse || doingCameraDrag) return;
+        if (activeTool is null) {
+            if (editMode != EditMode.Polygons) return;
+        } else {
+            if (!activeTool.wantsHoverForType(EditMode.Polygons)) return;
+        }
 
         int mx, my;
         queryMouse(mx, my);
@@ -3743,13 +3747,24 @@ void main(string[] args) {
         // glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
 
-        // Draw faces with Blinn-Phong lighting
+        // Draw faces with Blinn-Phong lighting.
+        // Highlight branch is taken either by Polygons editMode
+        // (face selection + face hover) OR by an active tool that
+        // opted into face hover (ElementMoveTool in Auto / Polygon
+        // modes) — Stage 14.9. Outside Polygons mode the selected
+        // mask is empty so only `hoveredFace` lights up.
         {
             litShader.useProgram(meshModel, cameraView);
-            if (editMode == EditMode.Polygons)
-                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
-            else
+            bool faceHoverActive = (editMode == EditMode.Polygons)
+                                || (activeTool !is null
+                                    && activeTool.wantsHoverForType(EditMode.Polygons));
+            if (faceHoverActive) {
+                bool[] sel = (editMode == EditMode.Polygons)
+                           ? mesh.selectedFaces : (bool[]).init;
+                gpu.drawFacesHighlighted(litShader, hoveredFace, sel);
+            } else {
                 gpu.drawFaces(litShader);
+            }
         }
 
         // Checkerboard overlay for selected faces (Polygons mode).
@@ -3797,7 +3812,39 @@ void main(string[] args) {
 
         pickFaces(vp, doingCameraDrag);
 
+        // Tool-driven multi-type hover priority resolution: when an
+        // active tool (e.g. ElementMoveTool with Auto/AutoCent mode)
+        // picks across vert/edge/face simultaneously, only ONE of
+        // them should highlight per cursor position — vert first,
+        // then edge, then face. Without this the cursor over a
+        // corner would light up both the vertex dot AND the face
+        // checker, which mis-represents what click-to-pick will hit.
+        if (activeTool !is null) {
+            if (hoveredVertex >= 0) {
+                hoveredEdge = -1;
+                hoveredFace = -1;
+            } else if (hoveredEdge >= 0) {
+                hoveredFace = -1;
+            }
+        }
+        // Per-type highlight gates: render the highlight when EITHER
+        // the editMode covers that type natively OR an active tool
+        // opted into hover for it (Stage 14.9).
+        bool showVertHover = (editMode == EditMode.Vertices)
+                          || (activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Vertices));
+        bool showEdgeHover = (editMode == EditMode.Edges)
+                          || (activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Edges));
+        bool showFaceHover = (editMode == EditMode.Polygons)
+                          || (activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Polygons));
+
         // ---- Draw edges (with highlights in Edges / Polygons mode) ----
+        // Stage 14.9: edge-hover branch also fires when an active
+        // tool opted in (showEdgeHover from the gates above) — edges
+        // render with `hoveredEdge` highlight and an empty
+        // selectedEdges mask so only the hover lights up.
         if (editMode == EditMode.Edges) {
             gpu.drawEdges(shader.locColor, hoveredEdge, mesh.selectedEdges);
         } else if (editMode == EditMode.Polygons) {
@@ -3828,13 +3875,20 @@ void main(string[] args) {
                 }
             }
             gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
+        } else if (showEdgeHover) {
+            // Tool wants edge hover but editMode isn't Edges/Polygons.
+            // Empty selectedEdges mask → only `hoveredEdge` lights up.
+            gpu.drawEdges(shader.locColor, hoveredEdge, []);
         } else {
             gpu.drawEdges(shader.locColor, -1, []);
         }
 
-        // ---- Vertex dots (EditMode.Vertices only) ----
-        if (editMode == EditMode.Vertices)
-            gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
+        // ---- Vertex dots (EditMode.Vertices, or tool-driven hover) ----
+        if (showVertHover) {
+            bool[] sel = (editMode == EditMode.Vertices)
+                       ? mesh.selectedVertices : (bool[]).init;
+            gpu.drawVertices(shader.locColor, hoveredVertex, sel);
+        }
 
         // ---- Active tool ----
         if (activeTool) {

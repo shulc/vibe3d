@@ -45,16 +45,31 @@ public:
 
     override string name() const { return "Element Move"; }
 
-    // Opt-in to the per-frame hover-pick (gpuSelect-driven) so the
-    // current editMode's element under the cursor gets highlighted
-    // by drawVertices/Edges/FacesHighlighted before the user clicks.
-    // The highlight previews exactly which element this tool will
-    // pick on the next LMB-down. In Automatic mode this is still
-    // limited to the current editMode's element type (a full vert →
-    // edge → face Auto-hover would need broadening the picker
-    // dispatch; the user can press 1/2/3 to choose the highlight
-    // type today).
-    override bool wantsHoverPicking() const { return true; }
+    // Per-element-type hover opt-in (Stage 14.9). Drives which of
+    // pickVertices / pickEdges / pickFaces app.d runs while this tool
+    // is active, and which highlight the renderer draws. Reads the
+    // active FalloffStage's `elementMode` so the hover preview
+    // matches what `tryPickElement` will actually click-pick:
+    //   Auto / AutoCent → all three types (priority vert → edge →
+    //                      face resolved post-pick in the render path)
+    //   Vertex          → verts only
+    //   Edge / EdgeCent → edges only
+    //   Polygon/PolyCent→ polygons only
+    override bool wantsHoverForType(EditMode type) const {
+        if (g_pipeCtx is null) return false;
+        auto fs = cast(FalloffStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+        if (fs is null) return false;
+        final switch (fs.elementMode) {
+            case ElementMode.Auto:
+            case ElementMode.AutoCent: return true;  // all three
+            case ElementMode.Vertex:   return type == EditMode.Vertices;
+            case ElementMode.Edge:
+            case ElementMode.EdgeCent: return type == EditMode.Edges;
+            case ElementMode.Polygon:
+            case ElementMode.PolyCent: return type == EditMode.Polygons;
+        }
+    }
 
     override void activate() {
         super.activate();
