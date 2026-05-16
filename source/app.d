@@ -34,6 +34,7 @@ import tools.transform;
 import tools.move;
 import tools.push;
 import tools.bend;
+import tools.element_move;
 import tools.scale;
 import tools.rotate;
 import tools.box;
@@ -650,6 +651,15 @@ void main(string[] args) {
     };
     reg.toolFactories["xfrm.bend"] = () {
         auto t = new BendTool(&mesh, &gpu, &editMode);
+        t.setUndoBindings(history, vxEditFactory);
+        return cast(Tool)t;
+    };
+    // Bare ElementMoveTool factory. Registered under `element_move`
+    // (not `xfrm.elementMove`) because the preset of the same id
+    // wraps this factory — using a distinct base id avoids the
+    // self-reference loop registerToolPresets would otherwise build.
+    reg.toolFactories["element_move"] = () {
+        auto t = new ElementMoveTool(&mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };

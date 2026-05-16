@@ -120,7 +120,7 @@ presets:
   # Also published as `move.element` (backwards-compat alias without
   # the falloff stage activation).
   - id: xfrm.elementMove
-    base: move
+    base: element_move
     pipe:
       actionCenter:
         mode: element
