@@ -110,6 +110,22 @@ enum FalloffType : uint {
     Element  = 6,   // Stage 14.1 — sphere around picked element centroid (ElementMove)
 }
 
+/// Element-falloff connectivity gate (Stage 14.4). Mirrors MODO's
+/// `falloff.element` `connect` attr. `Off` disables the gate; any
+/// other value restricts the sphere to verts in the same connected
+/// component as the picked element. Vertex/Edge/Polygon distinguish
+/// the connectivity definition but reduce to the same BFS over
+/// mesh.edges for the single-mesh case vibe3d targets today; we
+/// keep them separate for forwards-compat with future per-face
+/// material partitioning.
+enum ElementConnect : ubyte {
+    Off      = 0,
+    Vertex   = 1,
+    Edge     = 2,
+    Polygon  = 3,
+    Material = 4,
+}
+
 /// Per-shape attenuation curve. `t ∈ [0, 1]` is the normalised
 /// distance from full-influence to no-influence; the curve maps it
 /// to a weight ∈ [0, 1].
@@ -174,6 +190,22 @@ struct FalloffPacket {
     // user via `tool.pipe.attr falloff pickedCenter "x,y,z"`.
     Vec3         pickedCenter  = Vec3(0, 0, 0);
     float        pickedRadius  = 1.0f;
+    // Element connectivity gate (Stage 14.4). When != Off, the
+    // sphere weight is multiplied by 0 for verts that aren't in the
+    // same connected component as the picked element (compared via
+    // mesh.edges BFS). Mirrors MODO's `falloff.element` `connect`
+    // attr: Off / Vertex / Edge / Polygon / Material. We only
+    // distinguish Off vs anything-else for now (BFS over mesh.edges
+    // covers Vertex / Edge / Polygon equivalently for the
+    // single-mesh case; Material partitioning would need per-face
+    // material ids which aren't tracked).
+    ElementConnect connect    = ElementConnect.Off;
+    // BFS-precomputed component mask for the picked element: index
+    // into the same vert array, `true` for verts in the component.
+    // ElementMoveTool fills it on pick; consumers reading the packet
+    // see an empty mask when no pick has happened yet (in that case
+    // `elementWeight` falls through to the unrestricted sphere).
+    const(bool)[] connectMask;
 
     // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
     // projected as an infinite cylinder along the camera-back axis.

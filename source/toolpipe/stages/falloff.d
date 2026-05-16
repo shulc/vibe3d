@@ -11,7 +11,8 @@ import mesh : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : ToolState, g_pipeCtx;
-import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, LassoStyle;
+import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape,
+                            LassoStyle, ElementConnect;
 import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry;
@@ -68,6 +69,13 @@ class FalloffStage : Stage {
     // `tool.pipe.attr falloff {pickedCenter|dist} <value>`.
     Vec3  pickedCenter = Vec3(0, 0, 0);
     float dist         = 1.0f;
+    // Stage 14.4: connectivity gate. When != Off, the per-vert
+    // weight is multiplied by `connectMask[vi] ? 1 : 0` so verts
+    // outside the picked component drop out regardless of distance.
+    // Mask is populated by ElementMoveTool on pick (BFS over
+    // mesh.edges from the picked vert).
+    ElementConnect connect = ElementConnect.Off;
+    bool[]         connectMask;
 
     float screenCx     = 0;
     float screenCy     = 0;
@@ -154,6 +162,8 @@ class FalloffStage : Stage {
         state.falloff.normal       = normal;
         state.falloff.pickedCenter = pickedCenter;
         state.falloff.pickedRadius = dist;
+        state.falloff.connect      = connect;
+        state.falloff.connectMask  = connectMask;
         state.falloff.screenCx     = screenCx;
         state.falloff.screenCy     = screenCy;
         state.falloff.screenSize   = screenSize;
@@ -196,6 +206,7 @@ class FalloffStage : Stage {
             ["axis",         vec3Str(normal)],
             ["pickedCenter", vec3Str(pickedCenter)],
             ["dist",         format("%g", dist)],
+            ["connect",      connectLabel()],
             ["screenCx",     format("%g", screenCx)],
             ["screenCy",     format("%g", screenCy)],
             ["screenSize",   format("%g", screenSize)],
@@ -301,6 +312,13 @@ class FalloffStage : Stage {
                 ps ~= Param.vec3_("pickedCenter", "Picked Center",
                                   &pickedCenter, Vec3(0, 0, 0));
                 ps ~= Param.float_("dist", "Range", &dist, 1.0f).min(1e-6f);
+                // `connect` exposed as an int enum for now — the
+                // dedicated dropdown widget belongs in the popup
+                // (along with shape, mix, etc.); kept as bare int
+                // to avoid blocking the headless attr path.
+                ps ~= Param.int_("connect", "Connect",
+                                 cast(int*)&connect, 0)
+                            .min(0).max(4);
                 break;
         }
         return ps;
@@ -442,6 +460,13 @@ private:
             case "axis":         return parseVec3(value, normal);
             case "pickedCenter": return parseVec3(value, pickedCenter);
             case "dist":         dist = parseFloat(value); return true;
+            case "connect":
+                if      (value == "off")      { connect = ElementConnect.Off;      return true; }
+                else if (value == "vertex")   { connect = ElementConnect.Vertex;   return true; }
+                else if (value == "edge")     { connect = ElementConnect.Edge;     return true; }
+                else if (value == "polygon")  { connect = ElementConnect.Polygon;  return true; }
+                else if (value == "material") { connect = ElementConnect.Material; return true; }
+                return false;
             case "screenCx":   screenCx     = parseFloat(value); return true;
             case "screenCy":   screenCy     = parseFloat(value); return true;
             case "screenSize": screenSize   = parseFloat(value); return true;
@@ -505,6 +530,16 @@ private:
             case FalloffType.Lasso:    return "lasso";
             case FalloffType.Cylinder: return "cylinder";
             case FalloffType.Element:  return "element";
+        }
+    }
+
+    string connectLabel() const {
+        final switch (connect) {
+            case ElementConnect.Off:      return "off";
+            case ElementConnect.Vertex:   return "vertex";
+            case ElementConnect.Edge:     return "edge";
+            case ElementConnect.Polygon:  return "polygon";
+            case ElementConnect.Material: return "material";
         }
     }
 

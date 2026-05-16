@@ -577,7 +577,9 @@ def _falloff_weight(fall, vert):
     if ftype == "element":
         # Mirror elementWeight in source/falloff.d: spherical
         # attenuation around pickedCenter with radius pickedRadius
-        # (= MODO's `dist` attr).
+        # (= MODO's `dist` attr). Connectivity gate (Stage 14.4)
+        # handled by the caller — _apply_deform_analytical_python
+        # skips verts not in the mask before invoking _falloff_weight.
         pc = fall["pickedCenter"]
         pr = float(fall["pickedRadius"])
         if pr <= 1e-9:

@@ -104,6 +104,7 @@ private:
             }
             if (bestVi >= 0) {
                 stage.pickedCenter = mesh.vertices[bestVi];
+                updateConnectMask(stage, bestVi);
                 return;
             }
         }
@@ -125,6 +126,7 @@ private:
                 auto e = mesh.edges[bestEi];
                 stage.pickedCenter = (mesh.vertices[e[0]]
                                     + mesh.vertices[e[1]]) * 0.5f;
+                updateConnectMask(stage, cast(int)e[0]);
                 return;
             }
         }
@@ -143,8 +145,49 @@ private:
             }
             if (bestFi >= 0) {
                 stage.pickedCenter = mesh.faceCentroid(cast(uint)bestFi);
+                // Seed the BFS from any vert of the picked face.
+                if (mesh.faces[bestFi].length > 0)
+                    updateConnectMask(stage, cast(int)mesh.faces[bestFi][0]);
             }
         }
+    }
+
+    // Compute the connected component containing `seedVi` and write
+    // it into the FalloffStage's `connectMask`. BFS over mesh.edges.
+    // Only runs when `connect != Off` — if the gate is disabled we
+    // leave the mask alone (consumers see length 0 and skip the gate).
+    void updateConnectMask(FalloffStage stage, int seedVi) {
+        import toolpipe.packets : ElementConnect;
+        if (stage.connect == ElementConnect.Off) {
+            stage.connectMask = null;
+            return;
+        }
+        size_t n = mesh.vertices.length;
+        if (seedVi < 0 || seedVi >= cast(int)n) {
+            stage.connectMask = null;
+            return;
+        }
+        // Adjacency: edge endpoints both flag each other. Rebuilt per
+        // pick — small mesh sizes today don't justify caching. For
+        // large meshes the natural follow-up is invalidating on
+        // mutationVersion and reusing across picks.
+        size_t[][] adj = new size_t[][](n);
+        foreach (e; mesh.edges) {
+            adj[e[0]] ~= e[1];
+            adj[e[1]] ~= e[0];
+        }
+        bool[] visited = new bool[](n);
+        size_t[] queue;
+        queue ~= cast(size_t)seedVi;
+        visited[seedVi] = true;
+        while (queue.length > 0) {
+            size_t v = queue[$ - 1];
+            queue.length -= 1;
+            foreach (nb; adj[v]) {
+                if (!visited[nb]) { visited[nb] = true; queue ~= nb; }
+            }
+        }
+        stage.connectMask = visited;
     }
 
     // Returns the active FalloffStage (null if no pipeline registered

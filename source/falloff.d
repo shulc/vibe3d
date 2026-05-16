@@ -5,7 +5,7 @@ import std.math      : sqrt;
 
 import math : Vec3, Viewport, projectToWindowFull, dot,
               pointInPolygon2D, closestOnSegment2DSquared;
-import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape;
+import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
 
 // ---------------------------------------------------------------------------
 // Falloff math — Phase 7.5 of doc/phase7_plan.md / doc/falloff_plan.md.
@@ -53,7 +53,7 @@ float evaluateFalloff(const ref FalloffPacket cfg,
         case FalloffType.Cylinder:
             return cylinderWeight(cfg, pos);
         case FalloffType.Element:
-            return elementWeight(cfg, pos);
+            return elementWeight(cfg, pos, vertIdx);
     }
 }
 
@@ -143,9 +143,18 @@ private float cylinderWeight(const ref FalloffPacket cfg, Vec3 pos) {
 /// boundary, shape-mapped in between. Mirrors MODO's `falloff.element`
 /// (the centre is normally the centroid of the user-clicked
 /// component; `pickedRadius` matches MODO's `dist`/Range attr).
-/// Stage 14.4 will add a connectivity gate (only verts in the same
-/// connected component as the picked element count).
-private float elementWeight(const ref FalloffPacket cfg, Vec3 pos) {
+///
+/// Stage 14.4: when `cfg.connect != Off` AND `cfg.connectMask` is
+/// populated, verts not in the same connected component as the
+/// picked element get weight = 0 regardless of distance. With no
+/// mask (mask empty) the gate is a no-op — the unrestricted sphere
+/// applies, matching the pre-14.4 behaviour.
+private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
+    if (cfg.connect != ElementConnect.Off
+        && cfg.connectMask.length > 0
+        && (vi < 0 || vi >= cast(int)cfg.connectMask.length
+            || !cfg.connectMask[vi]))
+        return 0.0f;
     if (cfg.pickedRadius <= 1e-9f) return 1.0f;  // degenerate radius → full
     Vec3 d = pos - cfg.pickedCenter;
     float r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
