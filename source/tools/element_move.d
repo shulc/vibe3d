@@ -307,16 +307,19 @@ private:
         if (stage.type != FalloffType.Element) return false;
 
         // Pick-type restriction per Stage 14.8 ElementMode:
-        //   Auto / AutoCent  → all three; priority follows the active
-        //                       editMode (1=Vertices, 2=Edges,
-        //                       3=Polygons) so the click-pick agrees
-        //                       with whatever the user is editing.
-        //                       Without this the always-vert-first
-        //                       priority steals face clicks on dense
-        //                       meshes (post-subdivide a face-centre
+        //   Auto / AutoCent  → click inside any polygon → face wins
+        //                       (pickedCenter = polygon centroid).
+        //                       Click outside every polygon falls
+        //                       through to vert / edge with the
+        //                       standard 16 px radius. Without the
+        //                       face-first rule the older vert-first
+        //                       priority stole face clicks on dense
+        //                       meshes — post-subdivide a face-centre
         //                       vert sits exactly under the cursor
-        //                       when clicking face center → vert wins
-        //                       → only 1 of 4 face verts moves).
+        //                       when clicking face centre, so vert
+        //                       wins, gizmo lands on that one vert,
+        //                       and only 1 of N face verts moves
+        //                       instead of the whole polygon.
         //   Vertex           → verts only
         //   Edge / EdgeCent  → edges only
         //   Polygon/PolyCent → polygons only
@@ -331,23 +334,14 @@ private:
         // Priority sequence — runs the first hit and stops.
         bool delegate(int, int)[] tryFns;
         if (autoMode) {
-            final switch (*editMode) {
-                case EditMode.Polygons:
-                    if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
-                    if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
-                    if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
-                    break;
-                case EditMode.Edges:
-                    if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
-                    if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
-                    if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
-                    break;
-                case EditMode.Vertices:
-                    if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
-                    if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
-                    if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
-                    break;
-            }
+            // Face first: clicking inside a polygon should pivot on
+            // that polygon's centroid (matches the user's mental
+            // model of "I clicked on this polygon"). Vert / edge
+            // only as fallback for silhouette clicks where no face
+            // covers the cursor.
+            if (wantF) tryFns ~= (a, b) => pickFace(stage, a, b);
+            if (wantV) tryFns ~= (a, b) => pickVert(stage, a, b);
+            if (wantE) tryFns ~= (a, b) => pickEdge(stage, a, b);
         } else {
             // Explicit mode — no priority decision, run only the
             // single allowed test.

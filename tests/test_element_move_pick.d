@@ -258,12 +258,19 @@ unittest { // Picked element must move even when an UNRELATED prior
     }
 }
 
-unittest { // Auto-mode priority must follow editMode. Without that
-           // the always-vert-first scan steals face clicks on dense
-           // meshes: post-subdivide a face-centre vert sits exactly
-           // under the click point, so vert wins and only 1 of 4
-           // face verts moves. In Polygons edit-mode the user
-           // expects the face under the cursor to drag as a unit.
+unittest { // Auto-mode picks the polygon under the cursor, not a
+           // vert that happens to project to the same pixel. Pre-fix,
+           // the always-vert-first scan stole face clicks on dense
+           // meshes — post-subdivide a face-centre vert sits exactly
+           // under the click point, so the 16 px vert radius captured
+           // it and only 1 of 4 sub-quad verts moved. The user's
+           // intuition is "I clicked on the polygon, the gizmo should
+           // pivot on the polygon's centroid"; face wins whenever the
+           // click lands inside a polygon, vert / edge only fall
+           // through for silhouette clicks. editMode left at the
+           // post-reset default (Vertices) on purpose — the face-
+           // first rule must hold regardless of which element type
+           // the user is selecting.
     import std.net.curl     : get, post;
     import std.json         : parseJSON, JSONValue;
     postJson("/api/reset", "");
@@ -271,10 +278,7 @@ unittest { // Auto-mode priority must follow editMode. Without that
         `{"azimuth":0,"elevation":0,"distance":3}`);
     assert(camResp["status"].str == "ok");
     cmd("mesh.subdivide_faceted");      // 26 verts, 24 sub-quads
-    cmd("select.typeFrom polygon");     // editMode = Polygons
     cmd("tool.set xfrm.elementMove on");
-    // Falloff stays at default mode=auto — proves the editMode
-    // dispatch picks polygon priority without explicit `mode polygon`.
     auto cam = parseJSON(cast(string) get(baseUrl ~ "/api/camera"));
     int vpX = cast(int)cam["vpX"].integer;
     int vpY = cast(int)cam["vpY"].integer;
