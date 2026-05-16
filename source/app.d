@@ -3748,20 +3748,21 @@ void main(string[] args) {
         glDisable(GL_BLEND);
 
         // Draw faces with Blinn-Phong lighting.
-        // Highlight branch is taken either by Polygons editMode
-        // (face selection + face hover) OR by an active tool that
-        // opted into face hover (ElementMoveTool in Auto / Polygon
-        // modes) — Stage 14.9. Outside Polygons mode the selected
-        // mask is empty so only `hoveredFace` lights up.
+        // Highlight branch in Polygons mode draws face selection +
+        // face hover. Tool-driven branch (ElementMove in Auto /
+        // Polygon modes — Stage 14.9) only kicks in when a face is
+        // actually hovered, otherwise we fall through to plain
+        // drawFaces — no point routing through drawFacesHighlighted
+        // with an empty selection mask and no hover.
         {
             litShader.useProgram(meshModel, cameraView);
-            bool faceHoverActive = (editMode == EditMode.Polygons)
-                                || (activeTool !is null
-                                    && activeTool.wantsHoverForType(EditMode.Polygons));
-            if (faceHoverActive) {
-                bool[] sel = (editMode == EditMode.Polygons)
-                           ? mesh.selectedFaces : (bool[]).init;
-                gpu.drawFacesHighlighted(litShader, hoveredFace, sel);
+            bool toolFaceHover = activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Polygons)
+                              && hoveredFace >= 0;
+            if (editMode == EditMode.Polygons) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
+            } else if (toolFaceHover) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
             } else {
                 gpu.drawFaces(litShader);
             }
@@ -3875,19 +3876,29 @@ void main(string[] args) {
                 }
             }
             gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache);
-        } else if (showEdgeHover) {
+        } else if (showEdgeHover && hoveredEdge >= 0) {
             // Tool wants edge hover but editMode isn't Edges/Polygons.
             // Empty selectedEdges mask → only `hoveredEdge` lights up.
+            // Skip drawing entirely when NO edge is currently hovered:
+            // ElementMove + Auto otherwise sprays every cage edge in
+            // baseline colour over the viewport even when the cursor
+            // is on a face (`gpu.drawEdges` renders all edges and
+            // colours them per the highlight / selection masks).
             gpu.drawEdges(shader.locColor, hoveredEdge, []);
         } else {
             gpu.drawEdges(shader.locColor, -1, []);
         }
 
-        // ---- Vertex dots (EditMode.Vertices, or tool-driven hover) ----
-        if (showVertHover) {
-            bool[] sel = (editMode == EditMode.Vertices)
-                       ? mesh.selectedVertices : (bool[]).init;
-            gpu.drawVertices(shader.locColor, hoveredVertex, sel);
+        // ---- Vertex dots ----
+        // Native Vertices mode always shows the dots (selection state
+        // matters even when no hover lands). Tool-driven hover only
+        // draws when a vert is actually hovered — without this guard
+        // ElementMove + Auto would scatter unrelated dots over the
+        // whole mesh.
+        if (editMode == EditMode.Vertices) {
+            gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
+        } else if (showVertHover && hoveredVertex >= 0) {
+            gpu.drawVertices(shader.locColor, hoveredVertex, (bool[]).init);
         }
 
         // ---- Active tool ----
