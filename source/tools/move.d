@@ -427,6 +427,24 @@ public:
         Vec3 hit;
         if (!computeClickRelocateHit(e.x, e.y, hit))
             return false;
+        beginScreenPlaneDragAt(e.x, e.y, hit, ctrl, /*notifyAcen=*/true);
+        return true;
+    }
+
+    // Start a screen-plane drag with the gizmo positioned at `hit`.
+    // Extracted from the click-outside-gizmo path so subclasses can
+    // initiate the same drag from a different anchor — ElementMoveTool
+    // calls this after a click-to-pick succeeds so a click+drag on an
+    // element moves it immediately (matching MODO ElementMove's
+    // "drag to move the element in 3D space" semantic), bypassing
+    // ACEN's normal click-relocate restriction.
+    //
+    // `notifyAcen` controls the ACEN userPlaced push: true for the
+    // Auto/None/Screen relocate flow (so the user-placed point
+    // sticks across queries), false for tool-driven re-anchors
+    // where ACEN's pivot logic already owns the position.
+    protected void beginScreenPlaneDragAt(int mx, int my, Vec3 hit,
+                                          bool ctrl, bool notifyAcen) {
         // Phase 7.5h: relocate is conceptually a "new tool session at
         // a different pivot". Commit any pending edit first so the
         // previous drags' transform is baked in, then start fresh
@@ -435,13 +453,10 @@ public:
             commitEdit("Move");
         handler.setPosition(hit);
         centerManual = true;
-        // Notify ACEN so the user-placed point sticks across future
-        // queries (other tools, history replay etc.). Only meaningful
-        // in Auto mode — None / Screen don't currently consume
-        // userPlaced, but the call is harmless there.
-        notifyAcenUserPlaced(hit);
+        if (notifyAcen)
+            notifyAcenUserPlaced(hit);
         dragAxis = 3;   // most-facing plane through gizmo center
-        lastMX = e.x; lastMY = e.y;
+        lastMX = mx; lastMY = my;
         dragDelta = Vec3(0, 0, 0);
         dragDeltaAtDragStart = dragDelta;  // anchor for gpuMatrix
         buildVertexCacheIfNeeded();
@@ -451,10 +466,9 @@ public:
             && (vertexProcessCount == cast(int)mesh.vertices.length);
         if (ctrl) {
             ctrlConstrain = true;
-            constrainStartMX = e.x; constrainStartMY = e.y;
+            constrainStartMX = mx; constrainStartMY = my;
         }
         beginEdit();   // Phase C.2: snapshot pre-drag positions for undo.
-        return true;
     }
 
     // Phase 7.3a/c: route the would-be gizmo position through

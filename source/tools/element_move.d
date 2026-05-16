@@ -216,18 +216,39 @@ public:
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
         // Element-pick happens BEFORE MoveTool's standard mouse-down
         // handling so the picked-centre lands on the FalloffStage
-        // before any drag starts.
-        //
-        // Skip element pick when:
-        //   - Not LMB (right-click owns lasso / camera modes elsewhere).
-        //   - Any modifier held (Alt = camera, Ctrl/Shift = selection
-        //     modifiers handled by app.d, not us).
+        // before any drag starts. Skip when not LMB (right-click owns
+        // lasso / camera modes) or when modifier held (Alt = camera,
+        // Ctrl/Shift = selection modifiers handled by app.d).
+        bool picked = false;
+        bool ctrlMod = false;
         if (e.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mods = SDL_GetModState();
+            ctrlMod = (mods & KMOD_CTRL) != 0;
             bool plain = (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
-            if (plain) tryPickElement(e.x, e.y);
+            if (plain) picked = tryPickElement(e.x, e.y);
         }
-        return super.onMouseButtonDown(e);
+
+        // Let MoveTool handle gizmo-arrow hits + falloff endpoint
+        // handles first — those have priority over click-to-drag.
+        if (super.onMouseButtonDown(e)) return true;
+
+        // Click landed off the gizmo. MODO ElementMove docs (help/
+        // ...element_move.html): "you can drag to move the element
+        // in 3D space ... after you release the mouse button, use
+        // the handles to move the element along an axis". Mirror
+        // that: when we picked an element, start a screen-plane
+        // drag from its centroid right away. ACEN's normal click-
+        // relocate gate (acenAllowsClickRelocate refuses Element
+        // mode) doesn't apply — Element mode IS the gate.
+        if (picked) {
+            auto fs = activeFalloffStage();
+            if (fs !is null && fs.type == FalloffType.Element) {
+                beginScreenPlaneDragAt(e.x, e.y, fs.pickedCenter,
+                                       ctrlMod, /*notifyAcen=*/false);
+                return true;
+            }
+        }
+        return false;
     }
 
 private:
@@ -240,10 +261,13 @@ private:
     //
     // Picking pixel radius: 16 px around the cursor — matches the
     // existing select tolerance in app.d's pick code.
-    void tryPickElement(int mx, int my) {
+    // Returns true if an element was picked (and pickedCenter updated).
+    // ElementMoveTool.onMouseButtonDown uses the return value to gate
+    // the auto-drag fallback when the click landed off the gizmo.
+    bool tryPickElement(int mx, int my) {
         FalloffStage stage = activeFalloffStage();
-        if (stage is null) return;
-        if (stage.type != FalloffType.Element) return;
+        if (stage is null) return false;
+        if (stage.type != FalloffType.Element) return false;
 
         enum float PICK_R_PX = 16.0f;
         enum float PICK_R2   = PICK_R_PX * PICK_R_PX;
@@ -277,7 +301,7 @@ private:
             if (bestVi >= 0) {
                 stage.pickedCenter = mesh.vertices[bestVi];
                 updateConnectMask(stage, bestVi);
-                return;
+                return true;
             }
         }
         // Edge priority: pick the edge whose projected SEGMENT is
@@ -309,7 +333,7 @@ private:
                 stage.pickedCenter = (mesh.vertices[e[0]]
                                     + mesh.vertices[e[1]]) * 0.5f;
                 updateConnectMask(stage, cast(int)e[0]);
-                return;
+                return true;
             }
         }
         // Face priority: cursor inside the projected face polygon
@@ -355,8 +379,10 @@ private:
                 // Seed the BFS from any vert of the picked face.
                 if (mesh.faces[bestFi].length > 0)
                     updateConnectMask(stage, cast(int)mesh.faces[bestFi][0]);
+                return true;
             }
         }
+        return false;
     }
 
     // Compute the connected component containing `seedVi` and write
