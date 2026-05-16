@@ -76,6 +76,14 @@ class FalloffStage : Stage {
     // mesh.edges from the picked vert).
     ElementConnect connect = ElementConnect.Off;
     bool[]         connectMask;
+    // Vert ring of the last-picked element (single vert, edge endpoints,
+    // or face vert ring). ElementMoveTool fills this in `tryPickElement`
+    // alongside `pickedCenter`. Used by `elementWeight` to give the
+    // picked element full influence regardless of the sphere radius —
+    // without this, picking a face on the default cube produces no
+    // motion because the face corners are √2·0.5 ≈ 0.707 from the
+    // centroid, outside the autoSized dist = 0.5 sphere.
+    uint[]         pickedVerts;
     // Stage 14.8: pick mode for ElementMoveTool. `auto`/`autoCent`
     // try all element types; vertex/edge/polygon restrict; bare vs
     // Cent variants control the pivot policy. See ElementMode enum
@@ -147,6 +155,7 @@ class FalloffStage : Stage {
         softBorderPx = 16;
         in_          = 0.5f;
         out_         = 0.5f;
+        pickedVerts.length = 0;
         publishState();
     }
 
@@ -169,6 +178,7 @@ class FalloffStage : Stage {
         state.falloff.pickedRadius = dist;
         state.falloff.connect      = connect;
         state.falloff.connectMask  = connectMask;
+        state.falloff.pickedVerts  = pickedVerts;
         state.falloff.elementMode  = elementMode;
         state.falloff.screenCx     = screenCx;
         state.falloff.screenCy     = screenCy;
@@ -486,7 +496,14 @@ private:
             case "center":       return parseVec3(value, center);
             case "size":         return parseVec3(value, size);
             case "axis":         return parseVec3(value, normal);
-            case "pickedCenter": return parseVec3(value, pickedCenter);
+            case "pickedCenter":
+                // Explicit user override of pickedCenter wipes the
+                // picked-element vert ring — the override no longer
+                // refers to a specific clicked element, so the
+                // weight=1 short-circuit in elementWeight must not
+                // keep favouring whatever was last clicked.
+                pickedVerts.length = 0;
+                return parseVec3(value, pickedCenter);
             case "dist":         dist = parseFloat(value); return true;
             case "connect":
                 if      (value == "off")      { connect = ElementConnect.Off;      return true; }

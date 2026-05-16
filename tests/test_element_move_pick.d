@@ -90,3 +90,96 @@ unittest { // After preset activation, pickedCenter starts at the
                 "default pickedCenter at origin shouldn't move corners");
     }
 }
+
+unittest { // Picking an element via click+drag must move the WHOLE
+           // picked element regardless of how the falloff radius
+           // compares to the element's extent. On the default cube
+           // (autoSize → dist=0.5), a face's 4 corners sit at √2·0.5
+           // ≈ 0.707 from the face centroid — well outside the
+           // sphere — so without the picked-element override the
+           // drag would produce zero motion (the bug this guards
+           // against). The fix gives picked verts full weight; the
+           // four +Z face verts (v4..v7) must move by the full drag
+           // delta while the -Z face (v0..v3) stays put.
+    import std.net.curl     : get, post;
+    import std.json         : parseJSON, JSONValue;
+    postJson("/api/reset", "");
+    cmd("tool.set xfrm.elementMove on");
+    cmd("tool.pipe.attr falloff pickedCenter \"0,0,0.5\"");
+    cmd("tool.pipe.attr falloff dist 0.5");
+    // Simulate a face pick by registering the +Z face's vert ring on
+    // the FalloffStage. The HTTP attr surface doesn't expose
+    // pickedVerts directly; doApply still runs through the same
+    // elementWeight code path, so we drive the override via the same
+    // TX numeric input used elsewhere in this file.
+    //
+    // For this scenario the +Z face is verts 4,5,6,7 on the default
+    // cube. With pickedCenter at (0,0,0.5) and dist=0.5, NONE of those
+    // corners sits inside the sphere — the only way they move is if
+    // the picked-element override kicks in. We seed it by setting the
+    // element-falloff `connect` to a non-Off value (which the
+    // ElementMoveTool would do on a real click) and rely on the click-
+    // pick path that lives in ElementMoveTool.onMouseButtonDown.
+    //
+    // Click path via the event log: project the +Z face centroid into
+    // window pixels and synthesise an LMB-down + drag + LMB-up. The
+    // pick logic in tryPickElement fills `pickedVerts`; the drag then
+    // moves the picked face.
+    JSONValue camResp = postJson("/api/camera",
+        `{"azimuth":0,"elevation":0,"distance":3}`);
+    assert(camResp["status"].str == "ok");
+    auto cam = parseJSON(cast(string) get(baseUrl ~ "/api/camera"));
+    int vpX = cast(int)cam["vpX"].integer;
+    int vpY = cast(int)cam["vpY"].integer;
+    int vpW = cast(int)cam["width"].integer;
+    int vpH = cast(int)cam["height"].integer;
+    // Viewport centre — +Z face centroid projects there with the
+    // axis-aligned camera set above.
+    int cx = vpX + vpW / 2;
+    int cy = vpY + vpH / 2;
+    import std.format : format;
+    string log = format!`{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}
+{"t":100,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":200,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}
+{"t":250,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":5,"yrel":0,"state":1,"mod":0}
+{"t":300,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":20,"yrel":0,"state":1,"mod":0}
+{"t":400,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":0,"mod":0}
+`(vpX, vpY, vpW, vpH,
+  cx, cy, cx, cy, cx+5, cy, cx+25, cy, cx+25, cy);
+    auto r = postJson("/api/play-events", log);
+    assert(r["status"].str == "success",
+        "play-events failed: " ~ r.toString);
+    // Poll until playback completes.
+    foreach (_; 0 .. 50) {
+        auto st = getJson("/api/play-events/status");
+        if (st["finished"].boolean) break;
+        import core.thread : Thread;
+        import core.time   : msecs;
+        Thread.sleep(50.msecs);
+    }
+    auto verts = getJson("/api/model")["vertices"].array;
+    double[3][] vs;
+    foreach (v; verts) {
+        auto a = v.array;
+        vs ~= [a[0].floating, a[1].floating, a[2].floating];
+    }
+    // -Z face untouched.
+    foreach (i; 0 .. 4)
+        assert(approxEq(vs[i][2], -0.5, 1e-4)
+            && approxEq(fabs(vs[i][0]), 0.5, 1e-4)
+            && approxEq(fabs(vs[i][1]), 0.5, 1e-4),
+            "v" ~ i.to!string ~ " on -Z face must stay put; got "
+            ~ vs[i][0].to!string ~ "," ~ vs[i][1].to!string ~ ","
+            ~ vs[i][2].to!string);
+    // +Z face verts all moved by the SAME X delta — the whole face
+    // dragged as a rigid unit (all four have picked-element weight 1).
+    double dx = vs[4][0] - (-0.5);
+    assert(dx > 0.05,
+        "v4 (+Z face) must move along +X; got delta " ~ dx.to!string);
+    foreach (i; 5 .. 8) {
+        double di = vs[i][0] - [0.5, 0.5, -0.5][i-5];
+        assert(approxEq(di, dx, 1e-4),
+            "all +Z face verts must move together; v" ~ i.to!string
+            ~ " delta " ~ di.to!string ~ " vs v4 delta " ~ dx.to!string);
+    }
+}

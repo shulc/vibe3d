@@ -238,6 +238,18 @@ struct FalloffPacket {
     // see an empty mask when no pick has happened yet (in that case
     // `elementWeight` falls through to the unrestricted sphere).
     const(bool)[] connectMask;
+    // Vertex indices that make up the picked element itself (the
+    // single vert clicked, the edge's two endpoints, or the face's
+    // vert ring). `elementWeight` short-circuits to 1.0 for these so
+    // the picked element ALWAYS moves with the cursor regardless of
+    // the `pickedRadius` sphere — matches MODO ElementMove's "drag
+    // the clicked element" intent, which would otherwise fail on
+    // typical setups (e.g. default cube: face corners are √2·0.5 ≈
+    // 0.707 from the face centroid, outside the autoSized dist=0.5
+    // sphere, so without this override clicking a face produces no
+    // motion). Empty when no pick has happened yet — falls through
+    // to the pure-sphere weight.
+    const(uint)[]  pickedVerts;
 
     // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
     // projected as an infinite cylinder along the camera-back axis.

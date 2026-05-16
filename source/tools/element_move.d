@@ -300,6 +300,7 @@ private:
             }
             if (bestVi >= 0) {
                 stage.pickedCenter = mesh.vertices[bestVi];
+                stage.pickedVerts  = [cast(uint)bestVi];
                 updateConnectMask(stage, bestVi);
                 return true;
             }
@@ -332,6 +333,7 @@ private:
                 auto e = mesh.edges[bestEi];
                 stage.pickedCenter = (mesh.vertices[e[0]]
                                     + mesh.vertices[e[1]]) * 0.5f;
+                stage.pickedVerts  = [cast(uint)e[0], cast(uint)e[1]];
                 updateConnectMask(stage, cast(int)e[0]);
                 return true;
             }
@@ -376,6 +378,9 @@ private:
             }
             if (bestFi >= 0) {
                 stage.pickedCenter = mesh.faceCentroid(cast(uint)bestFi);
+                stage.pickedVerts.length = mesh.faces[bestFi].length;
+                foreach (i, vi; mesh.faces[bestFi])
+                    stage.pickedVerts[i] = vi;
                 // Seed the BFS from any vert of the picked face.
                 if (mesh.faces[bestFi].length > 0)
                     updateConnectMask(stage, cast(int)mesh.faces[bestFi][0]);

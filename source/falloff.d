@@ -150,6 +150,18 @@ private float cylinderWeight(const ref FalloffPacket cfg, Vec3 pos) {
 /// mask (mask empty) the gate is a no-op — the unrestricted sphere
 /// applies, matching the pre-14.4 behaviour.
 private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
+    // The picked element's own verts (single vert, edge endpoints, or
+    // face vert ring) always get full influence — drag the clicked
+    // element with the cursor regardless of the sphere radius. Mirrors
+    // MODO ElementMove's "drag the clicked element" UX; without this,
+    // a face click on the default cube produces no motion because the
+    // corners are √2·0.5 ≈ 0.707 from the centroid, outside the
+    // autoSized dist = 0.5 sphere. Checked BEFORE the connectMask
+    // gate: picked verts are by definition in the same component.
+    if (cfg.pickedVerts.length > 0 && vi >= 0) {
+        foreach (pv; cfg.pickedVerts)
+            if (cast(uint)vi == pv) return 1.0f;
+    }
     if (cfg.connect != ElementConnect.Off
         && cfg.connectMask.length > 0
         && (vi < 0 || vi >= cast(int)cfg.connectMask.length
