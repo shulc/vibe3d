@@ -37,9 +37,17 @@ bool approxEq(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
 }
 
-unittest { // SX=2.0 only, falloff.element centred at +X+Y+Z corner →
-           // only that corner scales 2× along X about ACEN (origin
-           // for ACEN.Auto on centered cube ⇒ centroid).
+// ElementMoveTool now pivots its transforms around the picked
+// element's centroid (Stage 14.10 — MODO ACEN.Element parity).
+// That means SX / RY around a picked vert leave the vert in place
+// (scale / rotate of a point about itself); only verts AWAY from
+// the picked centre move.
+
+unittest { // SX=2 with picked centre AT the +X+Y+Z corner. Pivot is
+           // the corner, weight is 1 at the corner, 0 outside the
+           // 0.5 sphere. Scaling a point about itself is a no-op, so
+           // EVERY vert stays — picked corner pivots on itself,
+           // others have weight 0.
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.elementMove on");
@@ -48,31 +56,17 @@ unittest { // SX=2.0 only, falloff.element centred at +X+Y+Z corner →
     cmd("tool.attr xfrm.elementMove SX 2.0");
     cmd("tool.doApply");
     auto verts = dumpVerts();
-    // The +X+Y+Z corner should be at (1.0, 0.5, 0.5) after SX=2 about
-    // origin (with falloff weight 1 at that corner).
-    bool seenScaled = false;
     foreach (v; verts) {
-        if (approxEq(v[1], 0.5) && approxEq(v[2], 0.5)
-            && approxEq(v[0], 1.0)) seenScaled = true;
-    }
-    assert(seenScaled,
-        "+X+Y+Z corner should scale 2× along X to (1.0, 0.5, 0.5)");
-    // All other corners are outside the 0.5 sphere from (0.5,0.5,0.5);
-    // they stay put.
-    foreach (v; verts) {
-        bool isScaled = approxEq(v[0], 1.0)
-                     && approxEq(v[1], 0.5)
-                     && approxEq(v[2], 0.5);
-        if (isScaled) continue;
         foreach (c; 0 .. 3)
             assert(approxEq(fabs(v[c]), 0.5, 1e-4),
-                "non-picked corner should stay on ±0.5 box");
+                "scale-around-self should leave all cube corners "
+                ~ "on the ±0.5 box; got " ~ v[c].to!string);
     }
 }
 
-unittest { // RY=90 only, picked centre at corner (+0.5,+0.5,+0.5)
-           // dist=0.5 → only that corner rotates 90° around Y axis
-           // through ACEN.Auto (origin on centered cube).
+unittest { // RY=90 with picked centre at the +X+Y+Z corner. Pivot is
+           // the corner → rotating a point about itself is a no-op.
+           // All verts stay on the box.
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.elementMove on");
@@ -81,25 +75,20 @@ unittest { // RY=90 only, picked centre at corner (+0.5,+0.5,+0.5)
     cmd("tool.attr xfrm.elementMove RY 90");
     cmd("tool.doApply");
     auto verts = dumpVerts();
-    // (0.5, 0.5, 0.5) rotated 90° around Y axis through origin =
-    // (0.5·cos90 + 0.5·sin90, 0.5, -0.5·sin90 + 0.5·cos90)
-    //   = (+0.5, 0.5, -0.5).
-    bool seenRotated = false;
     foreach (v; verts) {
-        if (approxEq(v[0], 0.5) && approxEq(v[1], 0.5)
-            && approxEq(v[2], -0.5)) seenRotated = true;
+        foreach (c; 0 .. 3)
+            assert(approxEq(fabs(v[c]), 0.5, 1e-4),
+                "rotate-around-self should leave all cube corners "
+                ~ "on the ±0.5 box; got " ~ v[c].to!string);
     }
-    assert(seenRotated,
-        "+X+Y+Z corner should rotate to (+0.5, 0.5, -0.5) under RY=90");
 }
 
-unittest { // T+S combined: TX=0.3 (corner to +0.8), then SX=2 around
-           // origin. ElementMoveTool snapshots per-vert weights at
-           // the BASELINE positions (matches MODO's xfrm.transform
-           // single-weight semantic), so the scale step uses the
-           // SAME weight=1 as translate. Final x = 0 + 0.8 · 2.0 =
-           // 1.6, not 0.8 · 1.4 = 1.12 (which would be the "re-
-           // evaluate weight at post-translate position" semantic).
+unittest { // T+S combined: TX=0.3 translates the picked corner to
+           // (+0.8, +0.5, +0.5) (weight=1). Then SX=2 with pivot =
+           // picked center (+0.5, +0.5, +0.5) and CACHED baseline
+           // weight = 1: new_x = pivot.x + (curr_x − pivot.x) · sx
+           // = 0.5 + (0.8 − 0.5) · 2 = 1.1. Other corners have
+           // weight 0 and stay.
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.elementMove on");
@@ -112,9 +101,9 @@ unittest { // T+S combined: TX=0.3 (corner to +0.8), then SX=2 around
     bool seenFinal = false;
     foreach (v; verts) {
         if (approxEq(v[1], 0.5, 1e-3) && approxEq(v[2], 0.5, 1e-3)
-            && approxEq(v[0], 1.6, 1e-3)) seenFinal = true;
+            && approxEq(v[0], 1.1, 1e-3)) seenFinal = true;
     }
     assert(seenFinal,
-        "T+S chain: expected final (1.6, 0.5, 0.5); verts: "
+        "T+S chain (pivot=picked): expected (1.1, 0.5, 0.5); verts: "
         ~ verts.to!string);
 }

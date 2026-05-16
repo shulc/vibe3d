@@ -71,6 +71,27 @@ public:
         }
     }
 
+    // The move gizmo should sit on whichever element the user just
+    // click-picked — tryPickElement parks that element's centroid on
+    // the FalloffStage's pickedCenter. MODO's ElementMove behaves
+    // the same way (gizmo follows the click). Override the pivot
+    // query so MoveTool.update() snaps handler.center there instead
+    // of averaging over the (often empty) ACEN.Element selection-
+    // centroid.
+    //
+    // Falls back to the base implementation when no Element falloff
+    // is active — for example with the legacy `move.element` preset
+    // that has ACEN.Element but no falloff.element.
+    override Vec3 queryActionCenter() {
+        if (g_pipeCtx !is null) {
+            auto fs = cast(FalloffStage)
+                      g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+            if (fs !is null && fs.type == FalloffType.Element)
+                return fs.pickedCenter;
+        }
+        return super.queryActionCenter();
+    }
+
     override void activate() {
         super.activate();
         headlessRotate = Vec3(0, 0, 0);
