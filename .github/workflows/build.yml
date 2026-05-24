@@ -1,0 +1,258 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v0.0.1'
+      with_render:
+        description: 'Also build the with-render variant (slow: pulls Blender LFS, builds Cycles, bundles RPR/Cycles libs)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            binary: vibe3d
+          # macOS x86_64 (macos-13) currently has multi-hour queue waits on the
+          # free tier — re-enable later (likely via a self-hosted runner).
+          # - os: macos-13
+          #   name: macos
+          #   binary: vibe3d
+          - os: windows-latest
+            name: windows
+            binary: vibe3d.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup DMD (Linux / Windows)
+        if: runner.os != 'macOS'
+        uses: dlang-community/setup-dlang@v1
+        with:
+          compiler: dmd-latest
+
+      - name: Setup DMD (macOS via Homebrew)
+        if: runner.os == 'macOS'
+        run: |
+          brew install dmd
+          dmd --version
+          dub --version
+
+      # ---- SDL2 ----
+
+      - name: Install SDL2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libgtk-3-dev ninja-build
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2
+
+      - name: Install SDL2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdlVer = "2.30.3"
+          $url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip"
+          Invoke-WebRequest $url -OutFile SDL2-devel.zip
+          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
+          $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
+          echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
+          Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
+          echo "$($sdlDir.FullName)\lib\x64" >> $env:GITHUB_PATH
+
+      # ---- nfde: Windows needs MSVC (not MinGW) to produce nfd.lib ----
+
+      - name: Remove MinGW / Strawberry Perl / LLVM from PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $filtered = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'mingw|Strawberry|LLVM' }) -join ';'
+          echo "PATH=$filtered" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Define NDEBUG for nfde C/C++ build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "CFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
+          echo "CXXFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
+
+      - name: Activate MSVC dev environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # ---- nfde submodule (all platforms; first-pass dub build clones the
+      #      nativefiledialog-extended repo, then we init its own submodules
+      #      before the real Build step runs cmake) ----
+
+      - name: First-pass build (Linux/macOS — fetches nfde, expected to fail)
+        if: runner.os != 'Windows'
+        run: dub build --compiler=dmd --build=release || true
+
+      - name: Initialize nativefiledialog-extended submodules (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
+          if [ -d "$NFD_DIR" ]; then
+            cd "$NFD_DIR"
+            git submodule update --init --recursive
+          fi
+
+      - name: First-pass build (Windows — fetches nfde, expected to fail)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: dub build --compiler=dmd --build=release || true
+
+      - name: Initialize nativefiledialog-extended submodules (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          NFD_DIR="$LOCALAPPDATA/dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
+          if [ -d "$NFD_DIR" ]; then
+            cd "$NFD_DIR"
+            git submodule update --init --recursive
+          fi
+
+      # ---- Build ----
+
+      - name: Build
+        run: dub build --compiler=dmd --build=release
+
+      # ---- Zip ----
+
+      - name: Zip artifact (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: zip -r vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }} config
+
+      - name: Zip artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, config -DestinationPath vibe3d-${{ matrix.name }}.zip
+
+      # ---- Upload zip as artifact for the release job ----
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: zip-${{ matrix.name }}
+          path: vibe3d-${{ matrix.name }}.zip
+
+  # Heavy with-render variant. Builds D-Cycles (Blender LFS submodule
+  # ~5 GB + CMake compile of Cycles) + bundles the Cycles + RPR runtime
+  # libs into a self-contained zip. Gated by `inputs.with_render` to
+  # keep modeling-only releases fast.
+  build-render:
+    if: ${{ inputs.with_render }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            bundle: tools/release/bundle_linux.sh
+            shell: bash
+          - os: windows-latest
+            name: windows
+            bundle: tools/release/bundle_windows.ps1
+            shell: pwsh
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dlang-community/setup-dlang@v1
+        with:
+          compiler: dmd-latest
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y
+              libsdl2-dev libgtk-3-dev ninja-build cmake
+              git-lfs xz-utils
+
+      - name: Install SDL2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdlVer = "2.30.3"
+          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip" -OutFile SDL2-devel.zip
+          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
+          $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
+          echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
+          Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
+          echo "$($sdlDir.FullName)\lib\x64" >> $env:GITHUB_PATH
+
+      - name: Activate MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: First-pass build (fetches nfde, expected to fail)
+        shell: bash
+        run: dub build --compiler=dmd --build=release || true
+
+      - name: Initialize nativefiledialog-extended submodules
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              NFD_DIR="$LOCALAPPDATA/dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
+          else
+              NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
+          fi
+          if [[ -d "$NFD_DIR" ]]; then
+              cd "$NFD_DIR" && git submodule update --init --recursive
+          fi
+
+      - name: Bundle vibe3d-${{ matrix.name }}-render.zip
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.bundle }}
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: zip-${{ matrix.name }}-render
+          path: vibe3d-${{ matrix.name }}-render.zip
+
+  release:
+    # `needs: build` always; `build-render` is conditional so the
+    # release job uses `if: always()` to tolerate it being skipped.
+    needs: [build, build-render]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all zips
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zip-*
+          merge-multiple: true
+
+      - name: List artifacts (debug)
+        run: ls -lh *.zip || true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ASSETS=( vibe3d-linux.zip vibe3d-windows.zip )
+          # Append with-render assets only if their build job actually ran.
+          [[ -f vibe3d-linux-render.zip   ]] && ASSETS+=( vibe3d-linux-render.zip )
+          [[ -f vibe3d-windows-render.zip ]] && ASSETS+=( vibe3d-windows-render.zip )
+          gh release create "${{ inputs.tag }}" \
+            --title "vibe3d ${{ inputs.tag }}" \
+            --generate-notes \
+            "${ASSETS[@]}"

@@ -1,0 +1,79 @@
+{
+	"authors": [
+		"Alexander Shaagarov"
+	],
+	"libs-windows": [
+		"Imm32",
+		"User32"
+	],
+	"mainSourceFile": "source/app.d",
+	"versions": [
+		"SDL_2020",
+		"GL_33",
+		"IMGUI_OPENGL3",
+		"IMGUI_SDL2"
+	],
+	"license": "MIT",
+	"name": "vibe3d",
+	"sourcePaths": [
+		"source"
+	],
+	"libs-linux": [
+		"pthread",
+		"gdk-3",
+		"gobject-2.0",
+		"wayland-client"
+	],
+	"libs-osx": [
+		"pthread"
+	],
+	"description": "simple 3d modeller inspired MODO and LigthWave",
+	"targetType": "executable",
+	"dependencies": {
+		"bindbc-opengl": "~>1.1.1",
+		"bindbc-common": "~>1.0.5",
+		"d_imgui": {
+			"version": "b67c6bf0b3f9474d3a783051ced6ff9acdd620bf",
+			"repository": "git+https://github.com/shulc/imgui.git"
+		},
+		"bindbc-sdl": "~>1.5.2",
+		"nfde": "~>0.1.3",
+		"bindbc-loader": "~>1.1.5",
+		"dyaml": {
+			"version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
+			"repository": "git+https://github.com/shulc/D-YAML.git"
+		},
+		"d-opensubdiv": {
+			"version": "~main",
+			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
+		}
+	},
+	"buildTypes": {
+		"profile-fp": {
+			"_comment": "Profiling build: -gs forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`.",
+			"buildOptions": ["debugMode", "debugInfo", "optimize"],
+			"dflags": ["-gs"]
+		}
+	},
+	"configurations": [
+		{
+			"name": "modeling",
+			"_comment": "Default. Modeling-only build — no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`)."
+		},
+		{
+			"name": "with-render",
+			"versions": ["WithRender"],
+			"dependencies": {
+				"bindbc-rpr": {
+					"version": "~master",
+					"repository": "git+https://github.com/shulc/D-RadeonProRender.git"
+				},
+				"d-cycles": {
+					"version": "~master",
+					"repository": "git+https://github.com/shulc/D-Cycles.git"
+				}
+			},
+			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender). The default `modeling` config never references these so `dub build` works on machines that have neither repo. Reproducibility comes from `dub.selections.json` (committed) which captures the resolved git SHA — CI builds against it, anyone else fetches the same. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. dub then resolves the local working tree at branch ~master instead of re-cloning, so a small shim fix doesn't trigger a multi-GB Blender LFS pull or a full Cycles rebuild. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md."
+		}
+	]
+}

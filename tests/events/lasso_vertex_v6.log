@@ -1,0 +1,6 @@
+{"t":0.000,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}
+{"t":100.0,"type":"SDL_MOUSEMOTION","x":505,"y":215,"xrel":0,"yrel":0,"state":0,"mod":0}
+{"t":150.0,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":505,"y":215,"clicks":1,"mod":0}
+{"t":200.0,"type":"SDL_MOUSEMOTION","x":565,"y":215,"xrel":60,"yrel":0,"state":4,"mod":0}
+{"t":250.0,"type":"SDL_MOUSEMOTION","x":535,"y":275,"xrel":-30,"yrel":60,"state":4,"mod":0}
+{"t":300.0,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":535,"y":275,"clicks":1,"mod":0}

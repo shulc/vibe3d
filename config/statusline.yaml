@@ -1,0 +1,272 @@
+groups:
+  - title: editmode
+    buttons:
+      - label: Vertices
+        action: { kind: script, lines: ["select.typeFrom vertex"] }
+        alt:
+          label: "Convert V"
+          action: { kind: script, lines: ["select.convert vertex"] }
+      - label: Edges
+        action: { kind: script, lines: ["select.typeFrom edge"] }
+        alt:
+          label: "Convert E"
+          action: { kind: script, lines: ["select.convert edge"] }
+      - label: Polygons
+        action: { kind: script, lines: ["select.typeFrom polygon"] }
+        alt:
+          label: "Convert P"
+          action: { kind: script, lines: ["select.convert polygon"] }
+  - title: toolpipe
+    buttons:
+      # MODO-style Action Center pulldown. Mirrors
+      # resrc/701_frm_modomodes_actioncenters:sheet from the MODO 9
+      # install: top-level actr.<mode> presets, "(none)" first,
+      # divider, then granular Center → / Axis → submenus that map to
+      # vibe3d's per-stage `tool.pipe.attr` commands.
+      #
+      # `dynamicLabel: true` makes the button face show the active
+      # mode's label (matches MODO's PopupFace="optionOrLabel"), and
+      # `checked: notEquals: "none"` keeps it visually pressed for
+      # every mode except `(none)`.
+      - label: "Action Center"
+        action:
+          kind: popup
+          dynamicLabel: true
+          checked: { path: "actionCenter/mode", notEquals: "none" }
+          items:
+            - label: (none)
+              action: { kind: command, id: actr.none }
+              checked: { path: "actionCenter/mode", equals: "none" }
+            - label: Automatic
+              action: { kind: command, id: actr.auto }
+              checked: { path: "actionCenter/mode", equals: "auto" }
+            - label: Selection
+              action: { kind: command, id: actr.select }
+              checked: { path: "actionCenter/mode", equals: "select" }
+            - label: Selection Border
+              action: { kind: command, id: actr.border }
+              checked: { path: "actionCenter/mode", equals: "border" }
+            - label: Selection Center Auto Axis
+              action: { kind: command, id: actr.selectauto }
+              checked: { path: "actionCenter/mode", equals: "selectauto" }
+            - label: Element
+              action: { kind: command, id: actr.element }
+              checked: { path: "actionCenter/mode", equals: "element" }
+            - label: Screen
+              action: { kind: command, id: actr.screen }
+              checked: { path: "actionCenter/mode", equals: "screen" }
+            - label: Origin
+              action: { kind: command, id: actr.origin }
+              checked: { path: "actionCenter/mode", equals: "origin" }
+            - label: Local
+              action: { kind: command, id: actr.local }
+              checked: { path: "actionCenter/mode", equals: "local" }
+            - { kind: divider }
+            - kind: submenu
+              label: Center
+              # Granular ACEN-only — leaves AXIS untouched. Mirrors
+              # MODO's frm_modomodes_centers:sheet. Maps to vibe3d's
+              # ActionCenterStage.applySetAttr("mode", ...).
+              items:
+                - label: Automatic
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode auto"] }
+                  checked: { path: "actionCenter/mode", equals: "auto" }
+                - label: Selection
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode select"] }
+                  checked: { path: "actionCenter/mode", equals: "select" }
+                - label: Selection Border
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode border"] }
+                  checked: { path: "actionCenter/mode", equals: "border" }
+                - label: Element
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode element"] }
+                  checked: { path: "actionCenter/mode", equals: "element" }
+                - label: Screen
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode screen"] }
+                  checked: { path: "actionCenter/mode", equals: "screen" }
+                - label: Origin
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode origin"] }
+                  checked: { path: "actionCenter/mode", equals: "origin" }
+                - label: Local
+                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode local"] }
+                  checked: { path: "actionCenter/mode", equals: "local" }
+            - kind: submenu
+              label: Axis
+              # Granular AXIS-only — leaves ACEN untouched. Mirrors
+              # MODO's frm_modomodes_axis:sheet. Maps to vibe3d's
+              # AxisStage.applySetAttr("mode", ...).
+              items:
+                - label: Automatic
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode auto"] }
+                  checked: { path: "axis/mode", equals: "auto" }
+                - label: World
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode world"] }
+                  checked: { path: "axis/mode", equals: "world" }
+                - label: Work Plane
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode workplane"] }
+                  checked: { path: "axis/mode", equals: "workplane" }
+                - label: Selection
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode select"] }
+                  checked: { path: "axis/mode", equals: "select" }
+                - label: Element
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode element"] }
+                  checked: { path: "axis/mode", equals: "element" }
+                - label: Screen
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode screen"] }
+                  checked: { path: "axis/mode", equals: "screen" }
+                - label: Local
+                  action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
+                  checked: { path: "axis/mode", equals: "local" }
+      # MODO-style Snapping pulldown. Master toggle on top (matches the
+      # @x keybind in inmapdefault.cfg → tool.snapState true), divider,
+      # then a checkbox per SnapType. Button face stays highlighted as
+      # long as snap is on. Mirrors resrc/_snap.cfg structure but
+      # scoped to vibe3d's seven supported types.
+      - label: "Snap"
+        action: { kind: command, id: snap.toggle }
+        checked: { path: "snap/enabled", equals: "true" }
+        alt:
+          label: "Options"
+          action:
+            kind: popup
+            items:
+              - label: "Snap (X)"
+                action: { kind: command, id: snap.toggle }
+                checked: { path: "snap/enabled", equals: "true" }
+              - { kind: divider }
+              - { kind: header, label: "Geometry" }
+              - label: Vertex
+                action: { kind: script, lines: ["snap.toggleType vertex"] }
+                checked: { path: "snap/types/vertex", equals: "true" }
+              - label: Edge
+                action: { kind: script, lines: ["snap.toggleType edge"] }
+                checked: { path: "snap/types/edge", equals: "true" }
+              - label: Edge Center
+                action: { kind: script, lines: ["snap.toggleType edgeCenter"] }
+                checked: { path: "snap/types/edgeCenter", equals: "true" }
+              - label: Polygon
+                action: { kind: script, lines: ["snap.toggleType polygon"] }
+                checked: { path: "snap/types/polygon", equals: "true" }
+              - label: Polygon Center
+                action: { kind: script, lines: ["snap.toggleType polyCenter"] }
+                checked: { path: "snap/types/polyCenter", equals: "true" }
+              - { kind: divider }
+              - { kind: header, label: "Plane" }
+              - label: Grid
+                action: { kind: script, lines: ["snap.toggleType grid"] }
+                checked: { path: "snap/types/grid", equals: "true" }
+              - label: Workplane
+                action: { kind: script, lines: ["snap.toggleType workplane"] }
+                checked: { path: "snap/types/workplane", equals: "true" }
+              - { kind: divider }
+              - label: "Fixed Grid"
+                action: { kind: script, lines: ["tool.pipe.attr snap fixedGridToggle 1"] }
+                checked: { path: "snap/fixedGrid", equals: "true" }
+      # Phase 7.5: Falloff (WGHT) pulldown. Type selection drives the
+      # FalloffStage; auto-size on switch fits the falloff to the
+      # current selection's bbox. Button face shows the active type
+      # (dynamicLabel: true → "Linear" / "Radial" / etc.); falls back
+      # to the static label when type=none. Pressed-state is "anything
+      # but none".
+      - label: "Falloff"
+        action:
+          kind: popup
+          dynamicLabel: true
+          checked: { path: "falloff/type", notEquals: "none" }
+          items:
+            - label: (none)
+              action: { kind: script, lines: ["tool.pipe.attr falloff type none"] }
+              checked: { path: "falloff/types/none", equals: "true" }
+            - label: Linear
+              action: { kind: script, lines: ["tool.pipe.attr falloff type linear"] }
+              checked: { path: "falloff/types/linear", equals: "true" }
+            - label: Radial
+              action: { kind: script, lines: ["tool.pipe.attr falloff type radial"] }
+              checked: { path: "falloff/types/radial", equals: "true" }
+            - label: Cylinder
+              action: { kind: script, lines: ["tool.pipe.attr falloff type cylinder"] }
+              checked: { path: "falloff/types/cylinder", equals: "true" }
+            - label: Screen
+              action: { kind: script, lines: ["tool.pipe.attr falloff type screen"] }
+              checked: { path: "falloff/types/screen", equals: "true" }
+            - label: Lasso
+              action: { kind: script, lines: ["tool.pipe.attr falloff type lasso"] }
+              checked: { path: "falloff/types/lasso", equals: "true" }
+            - label: Element
+              action: { kind: script, lines: ["tool.pipe.attr falloff type element"] }
+              checked: { path: "falloff/types/element", equals: "true" }
+            - label: Selection
+              action: { kind: script, lines: ["tool.pipe.attr falloff type selection"] }
+              checked: { path: "falloff/types/selection", equals: "true" }
+            # Shape preset moved to Tool Properties → Falloff section
+            # (Phase 7.9). Status-bar pulldown owns only the type, not
+            # the per-type config.
+      # Phase 7.6: Symmetry (SYMM) — MODO SymmetryPopover.cfg parity.
+      # Click   → master toggle (symmetry.toggle).
+      # Alt+click → Options popup (axis pick + workplane).
+      # Button face: static "Symmetry" when off; flips to
+      # "Symmetry: X" / "Symmetry: Y" / "Symmetry: Z" /
+      # "Symmetry: Workplane" when on (driven by the button-level
+      # `dynamicLabel` state path the SymmetryStage publishes).
+      # Pressed-state mirrors `symmetry/enabled`.
+      - label: "Symmetry"
+        action: { kind: command, id: symmetry.toggle }
+        checked: { path: "symmetry/enabled", equals: "true" }
+        dynamicLabel: { path: "symmetry/displayName" }
+        alt:
+          label: "Options"
+          action:
+            kind: popup
+            items:
+              - label: Off
+                action: { kind: script, lines: ["tool.pipe.attr symmetry enabled false"] }
+                checked: { path: "symmetry/axes/off", equals: "true" }
+              - label: X
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis x"
+                checked: { path: "symmetry/axes/x", equals: "true" }
+              - label: Y
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis y"
+                checked: { path: "symmetry/axes/y", equals: "true" }
+              - label: Z
+                action:
+                  kind: script
+                  lines:
+                    - "tool.pipe.attr symmetry enabled true"
+                    - "tool.pipe.attr symmetry axis z"
+                checked: { path: "symmetry/axes/z", equals: "true" }
+              - { kind: divider }
+              - label: Workplane
+                action: { kind: script, lines: ["tool.pipe.attr symmetry useWorkplane 1"] }
+                checked: { path: "symmetry/useWorkplane", equals: "true" }            
+      - label: "Work Plane"
+        action:
+          kind: popup
+          # Highlight the button whenever the workplane is non-auto — visual
+          # cue that subsequent prim.* / move / rotate / scale tools will
+          # interpret coordinates relative to this plane, not world-XZ.
+          checked: { path: "workplane/auto", equals: "false" }
+          items:
+            - label: Auto
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode auto"] }
+              checked: { path: "workplane/auto", equals: "true" }
+            - label: World Y
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldY"] }
+              checked: { path: "workplane/mode", equals: "worldY" }
+            - label: World X
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldX"] }
+              checked: { path: "workplane/mode", equals: "worldX" }
+            - label: World Z
+              action: { kind: script, lines: ["tool.pipe.attr workplane mode worldZ"] }
+              checked: { path: "workplane/mode", equals: "worldZ" }
+            - { kind: divider }
+            - label: Align To Selection
+              action: { kind: command, id: workplane.alignToSelection }
+            - label: Reset
+              action: { kind: command, id: workplane.reset }

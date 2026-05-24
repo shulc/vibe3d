@@ -1,0 +1,28 @@
+{
+  "name": "cube_green_side_sun",
+  "_comment": "Green diffuse cube lit from the side (almost-horizontal sun). Camera at a different angle than cube_red_sun, exercising the camera + light direction → backend transform chain.",
+  "resolution": [200, 200],
+  "samples": 48,
+  "tolerance": 0.15,
+  "_tolerance_comment": "Loose, same rationale as cube_red_sun — Cycles default world shader differs from RPR's no-env-light.",
+  "camera": {
+    "eye": [-2.5, 1.0, 3.0],
+    "target": [0.0, 0.2, 0.0],
+    "up": [0.0, 1.0, 0.0],
+    "fov_vertical_degrees": 50.0
+  },
+  "mesh": {
+    "kind": "cube",
+    "size": 1.2,
+    "color": [0.20, 0.75, 0.30]
+  },
+  "light": {
+    "kind": "sun",
+    "direction": [-1.0, -0.15, -0.3],
+    "color": [1.0, 0.95, 0.85],
+    "intensity": 4.0
+  },
+  "environment": {
+    "color": [0.0, 0.0, 0.0]
+  }
+}

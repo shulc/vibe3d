@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vibe3d": {
+      "command": "python3",
+      "args": ["/Users/ashagarov/Code/test_clode/mcp_server/server.py"]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "cube_6_surfaces",
+  "_comment": "Cube with 6 distinct surface colours, one per face. Verifies the MG4 multi-material Scene-IR split renders consistently in both backends.",
+  "resolution": [256, 256],
+  "samples": 64,
+  "tolerance": 0.15,
+  "_tolerance_comment": "Same headroom as the single-surface cases — Cycles' default world shader vs RPR's no-env-light still dominates.",
+  "camera": {
+    "eye": [3.0, 2.5, 3.5],
+    "target": [0.0, 0.0, 0.0],
+    "up": [0.0, 1.0, 0.0],
+    "fov_vertical_degrees": 45.0
+  },
+  "mesh": {
+    "kind": "cube",
+    "size": 1.0,
+    "color": [0.7, 0.7, 0.7],
+    "surface_colors": [
+      [0.85, 0.10, 0.10],
+      [0.10, 0.85, 0.10],
+      [0.10, 0.10, 0.85],
+      [0.85, 0.85, 0.10],
+      [0.85, 0.10, 0.85],
+      [0.10, 0.85, 0.85]
+    ]
+  },
+  "light": {
+    "kind": "sun",
+    "direction": [-0.4, -0.8, -0.5],
+    "color": [1.0, 1.0, 1.0],
+    "intensity": 3.0
+  },
+  "environment": {
+    "color": [0.0, 0.0, 0.0]
+  }
+}

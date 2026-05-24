@@ -1,0 +1,344 @@
+module commands.mesh.smooth;
+
+import command;
+import mesh;
+import view;
+import editmode;
+import viewcache;
+import math : Vec3, cross, Viewport;
+import params : Param;
+import std.math : cos;
+import toolpipe.packets : FalloffPacket, SubjectPacket;
+import falloff : evaluateFalloff, IFalloffAware;
+import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+
+/// Laplacian vertex smoothing. Each iteration: new_pos = old_pos +
+/// strength * (avg_of_edge_neighbors - old_pos). Selection-aware
+/// (same mask as MeshTransform); empty selection ⇒ whole mesh.
+///
+/// A Laplacian smooth with `strn` (strength) and `iter` (iterations)
+/// attrs, exposed as a one-shot command rather than a drag-tool.
+/// Reference: a fixed cube + strn/iter pair converges toward the
+/// centroid analytically (see tests/test_mesh_smooth.d), which is the
+/// practical check.
+class MeshSmooth : Command, Operator, IFalloffAware {
+    private GpuMesh*         gpu;
+    private VertexCache*     vc;
+    private EdgeCache*       ec;
+    private FaceBoundsCache* fc;
+    private float            strn_ = 0.5f;   // `strn` (strength) attr
+    private int              iter_ = 1;      // `iter` (iterations) attr
+    private bool             lockBound_ = false;  // `lockBound` —
+    // freezes verts on boundary edges (edges adjacent to only one face,
+    // i.e. `loop.twin == uint.max` in our half-edge structure).
+    private bool             lockCorner_ = false; // `lockCorner` —
+    // freezes valence-2 boundary verts only (the actual "corners" of
+    // an open mesh loop). Strict subset of lockBound; the two can be
+    // toggled independently. A corner vertex is shared by a single
+    // polygon and lies on the boundary.
+    private bool             lockSharp_     = false; // `lockSharp`
+    private float            sharpThreshold_ = 0.785398163f; // π/4 ≈ 45°
+    // freezes verts on interior edges whose dihedral angle exceeds
+    // sharpThreshold (radians): edges with a larger angle than the
+    // sharp-angle threshold are locked. Boundary edges aren't covered
+    // here — use lockBound / lockCorner for those.
+    // Optional falloff packet — set via `setFalloff` from either the
+    // wrapping tool (XfrmSmoothTool reads the toolpipe's FalloffStage)
+    // or the HTTP injector (tests pass a `falloff` JSON alongside the
+    // command params). When `falloff_.enabled` is true, `apply()` lerps
+    // each touched vert toward its smoothed position by the per-vert
+    // weight. weight=1 → full smooth; weight=0 → vert stays at original.
+    // Same transform×falloff blend used elsewhere.
+    private FalloffPacket    falloff_;
+    private bool             preserve_      = false; // `preserve`
+    // (Preserve Volume) — after the Laplacian iterations, project
+    // each moved vert's delta onto its pre-smooth tangent plane
+    // (perpendicular to its pre-smooth vertex normal). Cancels the
+    // normal-direction component so verts can slide along the
+    // surface but can't dive into / pop out of the original volume,
+    // constraining the smoothed points to the original surface.
+    private uint[] touchedIdx;
+    private Vec3[] touchedPrev;
+
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+        super(mesh, view, editMode);
+        this.gpu = gpu;
+        this.vc  = vc;
+        this.ec  = ec;
+        this.fc  = fc;
+    }
+
+    override string name()  const { return "mesh.smooth"; }
+    override string label() const { return "Smooth"; }
+
+    override Param[] params() {
+        return [
+            Param.float_("strn",           "Strength",        &strn_,           0.5f).min(0.0f).max(1.0f),
+            Param.int_  ("iter",           "Iterations",      &iter_,           1).min(0),
+            Param.bool_ ("lockBound",      "Lock Boundary",   &lockBound_,      false),
+            Param.bool_ ("lockCorner",     "Lock Corner",     &lockCorner_,     false),
+            Param.bool_ ("lockSharp",      "Lock Sharp Edges",&lockSharp_,      false),
+            Param.float_("sharpThreshold", "Sharp Angle",     &sharpThreshold_, 0.785398163f).min(0.0f),
+            Param.bool_ ("preserve",       "Preserve Volume", &preserve_,       false),
+        ];
+    }
+
+    // Setters for XfrmSmoothTool's drag-modulates-attrs path.
+    void setStrn(float v)             { strn_ = v; }
+    void setIter(int   v)             { iter_ = v; }
+    void setLockBound(bool v)         { lockBound_ = v; }
+    void setLockCorner(bool v)        { lockCorner_ = v; }
+    void setLockSharp(bool v)         { lockSharp_ = v; }
+    void setSharpThreshold(float v)   { sharpThreshold_ = v; }
+    void setPreserve(bool v)          { preserve_ = v; }
+    void setFalloff(FalloffPacket fp) { falloff_ = fp; }
+
+    // Operator interface. Common stubs from the mixin; evaluate(vts)
+    // pulls the optional FalloffPacket into the legacy `falloff_` field
+    // before invoking the kernel (which lives in the apply() override
+    // below for now — Phase 7 inlines it).
+    mixin OperatorActrCommon;
+    bool evaluate(ref VectorStack vts) {
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+        if (auto fp = vts.get!FalloffPacket())
+            this.falloff_ = *fp;
+        return this.applyKernel();
+    }
+
+    private bool applyKernel() {
+        if (iter_ <= 0 || strn_ <= 0.0f) return true;  // no-op apply
+
+        // Affected-vertex mask (selection-aware).
+        bool[] vmask = new bool[](mesh.vertices.length);
+        bool any = false;
+        if (editMode == EditMode.Vertices) {
+            foreach (i; 0 .. mesh.selectedVertices.length)
+                if (mesh.selectedVertices[i]) { vmask[i] = true; any = true; }
+        } else if (editMode == EditMode.Edges) {
+            foreach (i; 0 .. mesh.selectedEdges.length)
+                if (mesh.selectedEdges[i])
+                    foreach (vi; mesh.edges[i]) { vmask[vi] = true; any = true; }
+        } else {
+            foreach (i; 0 .. mesh.selectedFaces.length)
+                if (mesh.selectedFaces[i])
+                    foreach (vi; mesh.faces[i]) { vmask[vi] = true; any = true; }
+        }
+        if (!any)
+            foreach (i; 0 .. mesh.vertices.length) vmask[i] = true;
+
+        // Pre-smooth per-face normals. Built ONCE when any flag that
+        // needs them is on (lockSharp for the dihedral test;
+        // preserve for the per-vert normal that defines each vert's
+        // tangent plane). Newell-ish triangle cross on f[0..2] —
+        // exact for planar quads / triangles; non-planar n-gons get
+        // a non-averaged approximation that's still usable.
+        Vec3[] faceNormal;
+        if (lockSharp_ || preserve_) {
+            faceNormal.length = mesh.faces.length;
+            foreach (fi; 0 .. mesh.faces.length) {
+                auto f = mesh.faces[fi];
+                if (f.length < 3) { faceNormal[fi] = Vec3(0, 1, 0); continue; }
+                Vec3 a = mesh.vertices[f[0]];
+                Vec3 b = mesh.vertices[f[1]];
+                Vec3 c = mesh.vertices[f[2]];
+                Vec3 n = cross(b - a, c - a);
+                float len = n.length;
+                faceNormal[fi] = (len > 1e-9f) ? n * (1.0f / len) : Vec3(0, 1, 0);
+            }
+        }
+
+        // `lockSharp`: pin verts on interior edges whose
+        // dihedral angle exceeds sharpThreshold. Walk each interior
+        // half-edge ONCE (li < twin dedup) using the shared
+        // faceNormal cache. cos is monotone-decreasing on [0, π],
+        // so angle > threshold ⇔ dot(n1, n2) < cos(threshold) —
+        // saves a per-edge acos.
+        if (lockSharp_) {
+            float cosThreshold = cos(sharpThreshold_);
+            foreach (li, ref l; mesh.loops) {
+                if (l.twin == uint.max) continue;
+                if (cast(uint)li > l.twin) continue;
+                Vec3 n1 = faceNormal[l.face];
+                Vec3 n2 = faceNormal[mesh.loops[l.twin].face];
+                float dot = n1.x * n2.x + n1.y * n2.y + n1.z * n2.z;
+                if (dot < cosThreshold) {
+                    uint a = l.vert;
+                    uint b = mesh.loops[l.next].vert;
+                    if (a < vmask.length) vmask[a] = false;
+                    if (b < vmask.length) vmask[b] = false;
+                }
+            }
+        }
+
+        // `preserve` (Preserve Volume) — capture pre-smooth
+        // vertex normals as the average of incident face normals.
+        // The post-iter projection pass below uses these to slide
+        // each smoothed vert back onto its pre-smooth tangent plane.
+        Vec3[] vertNormal;
+        Vec3[] origPos;
+        if (preserve_) {
+            vertNormal.length = mesh.vertices.length;
+            foreach (i; 0 .. vertNormal.length) vertNormal[i] = Vec3(0, 0, 0);
+            foreach (fi, ref f; mesh.faces) {
+                auto nf = faceNormal[fi];
+                foreach (vid; f) {
+                    if (vid >= vertNormal.length) continue;
+                    vertNormal[vid] = vertNormal[vid] + nf;
+                }
+            }
+            foreach (i; 0 .. vertNormal.length) {
+                float len = vertNormal[i].length;
+                vertNormal[i] = (len > 1e-9f)
+                    ? vertNormal[i] * (1.0f / len)
+                    : Vec3(0, 1, 0);
+            }
+            origPos = mesh.vertices.dup;
+        }
+
+        // `lockBound` / `lockCorner`: pin selected boundary
+        // verts before the Laplacian iteration. Both flags walk the
+        // same boundary half-edges (`loop.twin == uint.max`) — bound
+        // pins ALL endpoint verts, corner additionally filters by
+        // valence == 2 (a true open-mesh corner — sits on exactly
+        // two boundary edges + one face). Pre-compute valence once
+        // when corner is on; cheap O(edges) walk.
+        if (lockBound_ || lockCorner_) {
+            int[] valence;
+            if (lockCorner_) {
+                valence.length = mesh.vertices.length;
+                foreach (e; mesh.edges) {
+                    if (e[0] < valence.length) ++valence[e[0]];
+                    if (e[1] < valence.length) ++valence[e[1]];
+                }
+            }
+            foreach (ref l; mesh.loops) {
+                if (l.twin != uint.max) continue;
+                uint a = l.vert;
+                uint b = mesh.loops[l.next].vert;
+                if (a < vmask.length
+                 && (lockBound_ || (lockCorner_ && valence[a] == 2)))
+                    vmask[a] = false;
+                if (b < vmask.length
+                 && (lockBound_ || (lockCorner_ && valence[b] == 2)))
+                    vmask[b] = false;
+            }
+        }
+
+        // Neighbour lists, built once from mesh.edges. Each adjacency
+        // is recorded both ways (a→b AND b→a) so the per-iter loop
+        // doesn't need to re-walk the edge array.
+        uint[][] neighbors = new uint[][](mesh.vertices.length);
+        foreach (e; mesh.edges) {
+            neighbors[e[0]] ~= e[1];
+            neighbors[e[1]] ~= e[0];
+        }
+
+        // Snapshot pre-apply positions of every vert we plan to touch.
+        // We touch ALL masked verts (even those without neighbors —
+        // their Laplacian contribution is zero, but we still snapshot
+        // them so revert can restore unconditionally).
+        touchedIdx.length  = 0;
+        touchedPrev.length = 0;
+        foreach (i; 0 .. mesh.vertices.length) {
+            if (!vmask[i]) continue;
+            touchedIdx  ~= cast(uint)i;
+            touchedPrev ~= mesh.vertices[i];
+        }
+
+        // Laplacian iteration. Each pass reads from a `prev` snapshot
+        // (so neighbour averaging sees the previous iteration's
+        // positions, not partially updated ones), then commits.
+        Vec3[] prev = mesh.vertices.dup;
+        Vec3[] cur  = mesh.vertices.dup;
+        foreach (_; 0 .. iter_) {
+            foreach (vi; 0 .. mesh.vertices.length) {
+                if (!vmask[vi]) continue;
+                auto nbrs = neighbors[vi];
+                if (nbrs.length == 0) continue;
+                Vec3 sum = Vec3(0, 0, 0);
+                foreach (nb; nbrs) sum = sum + prev[nb];
+                Vec3 avg = sum * (1.0f / cast(float)nbrs.length);
+                cur[vi].x = prev[vi].x + strn_ * (avg.x - prev[vi].x);
+                cur[vi].y = prev[vi].y + strn_ * (avg.y - prev[vi].y);
+                cur[vi].z = prev[vi].z + strn_ * (avg.z - prev[vi].z);
+            }
+            // Promote `cur` → `prev` for the next iteration via swap;
+            // copying would alloc each pass at large mesh sizes.
+            auto tmp = prev; prev = cur; cur = tmp;
+        }
+        // After the loop, `prev` holds the final state (last swap).
+        mesh.vertices = prev;
+
+        // Falloff blend: lerp each touched vert from its pre-smooth
+        // position toward the post-smooth position by per-vert weight.
+        // Same way the transform × falloff stage attenuates any
+        // deformation — weight 1.0 keeps the full smooth, weight
+        // 0.0 leaves the vert at its original. No-op when falloff is
+        // disabled. `Viewport` is unused for non-screen falloff types
+        // (linear / radial / cylinder / element) — pass an empty one
+        // so the same call site works headlessly. Falloff is applied
+        // BEFORE the preserve-volume pass so the tangent-plane
+        // projection sees the weighted result.
+        if (falloff_.enabled) {
+            Viewport vp;
+            foreach (i, vi; touchedIdx) {
+                if (vi >= mesh.vertices.length) continue;
+                Vec3 sm = mesh.vertices[vi];
+                Vec3 orig = touchedPrev[i];
+                // Evaluate at the ORIGINAL position — the falloff
+                // describes "which verts are affected based on input
+                // shape", not the moving target. The transform×falloff
+                // convention evaluates at the pre-smooth snapshot
+                // positions[].
+                float w = evaluateFalloff(falloff_, orig, cast(int)vi, vp);
+                mesh.vertices[vi].x = orig.x + (sm.x - orig.x) * w;
+                mesh.vertices[vi].y = orig.y + (sm.y - orig.y) * w;
+                mesh.vertices[vi].z = orig.z + (sm.z - orig.z) * w;
+            }
+        }
+
+        // `preserve` (Preserve Volume) projection pass — for
+        // every touched vert, remove the component of its motion
+        // that goes along its pre-smooth normal. The vert can slide
+        // tangentially (laterally on the surface) but can't pop in
+        // or out along the normal direction. Net effect on radially-
+        // symmetric meshes (e.g. cube smoothed toward centroid is
+        // pure normal-direction motion): preserve cancels everything
+        // → smooth no-op.
+        if (preserve_) {
+            foreach (vi; 0 .. mesh.vertices.length) {
+                if (!vmask[vi]) continue;
+                Vec3 n  = vertNormal[vi];
+                Vec3 o  = origPos[vi];
+                Vec3 s  = mesh.vertices[vi];
+                Vec3 d  = Vec3(s.x - o.x, s.y - o.y, s.z - o.z);
+                float dn = d.x * n.x + d.y * n.y + d.z * n.z;
+                // s' = s - (d · n) n  =  o + (d − (d · n) n)
+                mesh.vertices[vi].x = s.x - dn * n.x;
+                mesh.vertices[vi].y = s.y - dn * n.y;
+                mesh.vertices[vi].z = s.z - dn * n.z;
+            }
+        }
+
+        ++mesh.mutationVersion;
+        gpu.upload(*mesh);
+        vc.invalidate();
+        ec.invalidate();
+        fc.invalidate();
+        return true;
+    }
+
+    override bool revert() {
+        if (touchedIdx.length == 0) return false;
+        foreach (i, vi; touchedIdx)
+            if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
+        ++mesh.mutationVersion;
+        gpu.upload(*mesh);
+        vc.invalidate();
+        ec.invalidate();
+        fc.invalidate();
+        return true;
+    }
+}

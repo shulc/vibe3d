@@ -1,0 +1,34 @@
+.DS_Store
+.vscode/
+# .claude is a gitignored symlink to the private repo (vibe3d_private).
+/.claude
+dub.selections.json
+events.log
+imgui.ini
+vibe3d
+vibe3d-test-library
+*.dll
+*.o
+run.log
+vibe3d.pdb
+vibe3d.exe
+.dub/version.json
+install.cmd
+run_render.ps1
+# Local QA tooling (reference comparison against external engines) —
+# kept on disk for local parity checks, not published. No trailing slash so
+# the rule also matches a symlink at this path (symlinks to a private repo).
+/tools/local
+# Local dev guidance for Claude Code — kept on disk, not published.
+CLAUDE.md
+# Internal design / planning docs — kept on disk, not published.
+# No trailing slash so the rule also matches a symlink at this path.
+/doc
+# RPR runtime kernel cache + logs (created next to vibe3d.exe at runtime)
+cache/
+tahoenext.log
+# Release artifacts
+vibe3d-*.zip
+vibe3d-windows-render/
+vibe3d-linux-render/
+vibe3d-macos-render/

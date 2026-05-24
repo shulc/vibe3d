@@ -1,0 +1,227 @@
+# Tool presets — declarative "compound" tools built by wrapping a base
+# tool and configuring one or more toolpipe stages on activate. Mirrors
+# MODO's `<hash type="ToolPreset" key="...">` blocks in
+# `resrc/presets.cfg` (e.g. `xfrm.shear`, `xfrm.twist`, `xfrm.softDrag`):
+# each preset names a base tool + per-pipe-stage attributes.
+#
+# When activated via `tool.set <preset-id>`:
+#   1. The base tool's factory runs (Move / Rotate / Scale / ...).
+#   2. For each `pipe.<stageId>` block, `setAttr(key, value)` is called
+#      on the matching toolpipe stage. Values stringify the same way
+#      `tool.pipe.attr <stageId> <name> <value>` does — bool as
+#      "true"/"false", floats / vec3s as raw, etc.
+#
+# Adding a new preset = editing this file. No code change required
+# unless the preset needs behaviour the existing stages can't express.
+presets:
+  # ----- Deform sub-tab (D.1 of doc/deform_plan.md) ---------------
+  - id: xfrm.softDrag
+    base: move
+    # MODO's softDrag is a brush-style tool: each LMB drag is one
+    # atomic action that commits to history; the next click starts a
+    # fresh weighted pull from the new grab point instead of piling
+    # onto the previous baseline. Maps to LXfTMOD_BRUSHRESET in
+    # `lxvmodel.h`.
+    flags: [brushReset]
+    pipe:
+      falloff:
+        type: screen
+        # MODO's `resrc/presets.cfg` ships xfrm.softDrag (and the bare
+        # falloff.screen preset) with `trans integer 0` — camera-
+        # facing only. Verts behind the camera don't participate in
+        # the drag; flip to "true" only for through-the-mesh deform.
+        transparent: "false"
+
+  - id: xfrm.softMove
+    base: move
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.softRotate
+    base: rotate
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.softScale
+    base: scale
+    pipe:
+      falloff:
+        type: radial
+
+  # MODO ships xfrm.twist / xfrm.shear / xfrm.taper with `shape integer 0`
+  # (Linear) in resrc/presets.cfg — the falloff stage's default Smooth
+  # shape would override this if not pinned here, leaving deform tools
+  # with the wrong attenuation curve compared to MODO.
+  - id: xfrm.twist
+    base: rotate
+    pipe:
+      falloff:
+        type: linear
+        shape: linear
+
+  - id: xfrm.swirl
+    base: rotate
+    pipe:
+      falloff:
+        type: radial
+
+  - id: xfrm.shear
+    base: move
+    pipe:
+      falloff:
+        type: linear
+        shape: linear
+
+  - id: xfrm.taper
+    base: scale
+    pipe:
+      falloff:
+        type: linear
+        shape: linear
+
+  - id: xfrm.bulge
+    base: scale
+    pipe:
+      falloff:
+        type: radial
+
+  # `xfrm.flare` mirrors MODO's `Flare` ToolPreset (resrc/presets.cfg) —
+  # surprisingly, just push-along-normals + linear falloff (NOT the
+  # outward-scale-perpendicular-to-axis behaviour the name might
+  # suggest). Same wiring lets us match MODO bit-for-bit.
+  - id: xfrm.flare
+    base: xfrm.push
+    pipe:
+      falloff:
+        type:  linear
+        shape: linear
+
+  # `xfrm.vortex` mirrors MODO's `xfrm.vortex` ToolPreset: cylinder
+  # falloff (radial-perpendicular-to-axis) + Rotate. Cylinder axis
+  # defaults to +Y, matching MODO's `axisY=1.0` baseline. The user
+  # rotates by setting RY (or RX/RZ to switch axes); per-vert weight
+  # comes from the cylinder falloff so verts on the axis spin full,
+  # verts at the cylinder's radial boundary stay put.
+  - id: xfrm.vortex
+    base: rotate
+    pipe:
+      falloff:
+        type:  cylinder
+        shape: linear
+
+  # ----- Transform sub-tab ----------------------------------------
+  # `xfrm.elementMove` mirrors MODO's `tool.set ElementMove` —
+  # MODO's preset only sets the ACEN slot (center.element), the WGHT
+  # slot (falloff.element with mode=automatic) and the ACTR slot
+  # (xfrm.transform). It does NOT touch the AXIS slot, so AXIS stays
+  # at its default (axis.auto = workplane / world axes). We match
+  # that — pinning AXIS=element would point the transform gizmo at
+  # per-cluster axes (which the element-move flow doesn't want).
+  # Also published as `move.element` (backwards-compat alias without
+  # the falloff stage activation).
+  - id: xfrm.elementMove
+    base: xfrm.transform
+    # MODO presets.cfg ElementMove: T=1, R=0, S=0 (translate-only).
+    # User flips R/S via the property panel for the unified Transform.
+    attrs:
+      T: "true"
+      R: "false"
+      S: "false"
+    pipe:
+      actionCenter:
+        mode: element
+      falloff:
+        type:  element
+        shape: linear
+        # Mirror MODO's `mode integer 0` in resrc/presets.cfg —
+        # explicit `auto` so re-activating the preset resets the
+        # 7-mode pick selector to its default (without this, mode
+        # is whatever the previous activation left behind).
+        mode:  auto
+
+  # MODO-name alias for the same preset (resrc/presets.cfg line 590
+  # `ElementMove`). Useful for cross-engine diff cases that share a
+  # case JSON between MODO and vibe3d.
+  - id: ElementMove
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "false"
+      S: "false"
+    pipe:
+      actionCenter:
+        mode: element
+      falloff:
+        type:  element
+        shape: linear
+        mode:  auto
+
+  - id: move.element
+    base: move
+    pipe:
+      actionCenter:
+        mode: element
+      axis:
+        mode: element
+
+  # `xfrm.flex` mirrors MODO's `Flex` ToolPreset
+  # (resrc/presets.cfg:626): ACEN=border, AXIS=select,
+  # Falloff=selection (with shape=smooth), Transform with T/R/S
+  # all on. MODO's `falloff.selection` `steps` attr maps to
+  # vibe3d's `dist` field (re-used storage; labelled "Steps" in
+  # the params block). D.7 of doc/deform_d7_flex_plan.md.
+  - id: xfrm.flex
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "true"
+      S: "true"
+    pipe:
+      actionCenter:
+        mode: border
+      axis:
+        mode: select
+      falloff:
+        type:  selection
+        shape: smooth
+
+  # ----- xfrm.transform per-mode presets --------------------------
+  # Mirror MODO's TransformMove / TransformRotate / TransformScale
+  # in resrc/presets.cfg — one tool (xfrm.transform) with different
+  # T/R/S flag combos. MODO's `H` (haul) attr has no vibe3d analogue
+  # yet; omitted.
+  - id: TransformMove
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "false"
+      S: "false"
+
+  - id: TransformRotate
+    base: xfrm.transform
+    attrs:
+      T: "false"
+      R: "true"
+      S: "false"
+
+  - id: TransformScale
+    base: xfrm.transform
+    attrs:
+      T: "false"
+      R: "false"
+      S: "true"
+
+  # Bare Transform: all three handler banks visible (MODO's
+  # `Transform` preset with T=R=S=1). Documented limitation: each
+  # sub-tool maintains its own edit session, so single-drag undo
+  # records one entry per sub-tool. Most users want one of the per-
+  # mode presets above instead.
+  - id: Transform
+    base: xfrm.transform
+    attrs:
+      T: "true"
+      R: "true"
+      S: "true"
+

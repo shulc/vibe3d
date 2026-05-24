@@ -1,0 +1,414 @@
+// Tests for phase 7.2a: ActionCenterStage skeleton + Auto / Select /
+// SelectAuto / Origin modes.
+//
+// Verifies:
+// - The ACEN stage is registered by default at TaskCode.Acen.
+// - Default mode = auto; cenX/Y/Z reflect mesh-or-selection centroid.
+// - tool.pipe.attr actionCenter mode <X> switches modes.
+// - Origin mode publishes (0,0,0) regardless of selection.
+// - Select sub-mode (top/bottom/...) returns bbox extreme positions.
+// - Unknown mode / sub-mode strings are rejected.
+
+import std.net.curl;
+import std.json;
+import std.conv  : to;
+import std.math  : abs;
+
+void main() {}
+
+string baseUrl = "http://localhost:8080";
+
+JSONValue getJson(string path) {
+    return parseJSON(cast(string) get(baseUrl ~ path));
+}
+
+JSONValue postJson(string path, string body_) {
+    return parseJSON(cast(string) post(baseUrl ~ path, body_));
+}
+
+// Walk the /api/toolpipe stages array and return the ACEN stage's
+// attrs as a string→string map.
+string[string] getAcenAttrs() {
+    auto j = getJson("/api/toolpipe");
+    foreach (st; j["stages"].array) {
+        if (st["task"].str == "ACEN") {
+            string[string] out_;
+            foreach (k, v; st["attrs"].object) out_[k] = v.str;
+            return out_;
+        }
+    }
+    assert(false, "ACEN stage not found in /api/toolpipe payload");
+}
+
+float floatAttr(string[string] attrs, string key) {
+    return attrs[key].to!float;
+}
+
+// Reset to a known starting point: cube primitive + empty selection.
+void resetCube() {
+    postJson("/api/reset", `{"primitive":"cube"}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+}
+
+// -------------------------------------------------------------------------
+// 7.2a: ACEN stage is registered.
+// -------------------------------------------------------------------------
+
+unittest { // ACEN stage present
+    resetCube();
+    auto j = getJson("/api/toolpipe");
+    bool found = false;
+    foreach (st; j["stages"].array)
+        if (st["task"].str == "ACEN") { found = true; break; }
+    assert(found, "ACEN stage missing from /api/toolpipe");
+}
+
+// -------------------------------------------------------------------------
+// 7.2a: Default mode is auto. Empty selection ⇒ centroid is whole-mesh
+// centroid. The default cube spans [-0.5..+0.5] on each axis ⇒ centroid
+// at origin.
+// -------------------------------------------------------------------------
+
+unittest { // default = auto, centroid at origin for default cube
+    resetCube();
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "auto", "expected mode=auto, got " ~ a["mode"]);
+    assert(abs(floatAttr(a, "cenX")) < 1e-4, "cenX != 0: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY")) < 1e-4, "cenY != 0: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ")) < 1e-4, "cenZ != 0: " ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2a: With a face selected, Auto centroid follows the selected face's
+// centroid (mesh.selectionCentroidFaces returns the avg of selected
+// face's vertices). For face 0 of the unit cube — verts 0,3,2,1 at
+// y=-0.5 — centroid sits at (0,-0.5,0).
+// -------------------------------------------------------------------------
+
+unittest { // Auto follows selection centroid
+    resetCube();
+    // Select face 0 (back face of default cube — verts 0,3,2,1 all
+    // at z=-0.5; centroid sits at (0,0,-0.5)).
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenZ") - (-0.5f)) < 1e-3,
+        "Auto+selection cenZ expected -0.5, got " ~ a["cenZ"]);
+    assert(abs(floatAttr(a, "cenX")) < 1e-3, "cenX != 0: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY")) < 1e-3, "cenY != 0: " ~ a["cenY"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2a: Origin mode = (0,0,0) regardless of selection.
+// -------------------------------------------------------------------------
+
+unittest { // Origin mode
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode origin");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "origin", "mode != origin: " ~ a["mode"]);
+    assert(abs(floatAttr(a, "cenX")) < 1e-6 &&
+           abs(floatAttr(a, "cenY")) < 1e-6 &&
+           abs(floatAttr(a, "cenZ")) < 1e-6,
+        "Origin mode must publish (0,0,0); got "
+        ~ a["cenX"] ~ "," ~ a["cenY"] ~ "," ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2a: Select sub-mode top/bottom returns bbox.maxY / bbox.minY of the
+// selection (in world XYZ — phase7_2_plan.md §1).
+// -------------------------------------------------------------------------
+
+unittest { // selectSubMode top / bottom
+    resetCube();
+    // Select all 6 faces (whole cube — bbox = [-0.5..+0.5]^3).
+    postJson("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode select");
+
+    postJson("/api/command",
+        "tool.pipe.attr actionCenter selectSubMode top");
+    auto top = getAcenAttrs();
+    assert(abs(floatAttr(top, "cenY") - 0.5f) < 1e-4,
+        "Top sub-mode cenY expected 0.5, got " ~ top["cenY"]);
+
+    postJson("/api/command",
+        "tool.pipe.attr actionCenter selectSubMode bottom");
+    auto bot = getAcenAttrs();
+    assert(abs(floatAttr(bot, "cenY") - (-0.5f)) < 1e-4,
+        "Bottom sub-mode cenY expected -0.5, got " ~ bot["cenY"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2b: Manual mode pins center via cenX/Y/Z attrs. Setting cen* in any
+// other mode auto-promotes to Manual.
+// -------------------------------------------------------------------------
+
+unittest { // Manual mode via cenX/Y/Z auto-promote
+    resetCube();
+    // tool.pipe.attr sets one attr per call — argstring positional
+    // form is `<stage> <name> <value>`.
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 1.5");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenY -2.0");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenZ 0.25");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "manual",
+        "Setting cen* should promote to Manual; got mode=" ~ a["mode"]);
+    assert(abs(floatAttr(a, "cenX") - 1.5f) < 1e-6, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY") - (-2.0f)) < 1e-6, "cenY: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ") - 0.25f) < 1e-6, "cenZ: " ~ a["cenZ"]);
+}
+
+unittest { // Manual ignores selection changes
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr actionCenter mode manual");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 5");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenY 5");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenZ 5");
+    // Now select a face that would shift Auto's centroid — Manual must
+    // stay pinned.
+    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenX") - 5.0f) < 1e-6,
+        "Manual cenX must not follow selection; got " ~ a["cenX"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2b: Switching modes clears Auto's userPlaced sub-state. Re-selecting
+// "Auto" from a Manual mode resets userPlaced=false (popup re-click
+// semantics).
+// -------------------------------------------------------------------------
+
+unittest { // mode switch clears userPlaced
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+    postJson("/api/command", "tool.pipe.attr actionCenter cenX 5");   // → Manual
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "auto", "expected auto, got " ~ a["mode"]);
+    assert(a["userPlaced"] == "false",
+        "userPlaced must clear on mode switch; got " ~ a["userPlaced"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2b: Screen mode publishes a center on the workplane. With default
+// camera looking at origin and workplane = world XZ at origin, the
+// screen-center ray should hit at (0,0,0) (or close — camera might be
+// slightly off-axis).
+// -------------------------------------------------------------------------
+
+unittest { // Screen mode resolves to a finite center
+    resetCube();
+    // Reset camera to default so the test is deterministic.
+    postJson("/api/command", "viewport.fit");
+    postJson("/api/command", "tool.pipe.attr actionCenter mode screen");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "screen", "expected screen, got " ~ a["mode"]);
+    // Just verify the values are finite floats (no NaN). Screen-center
+    // depends on camera state which other tests may have mutated; the
+    // important contract is "doesn't crash + publishes a Vec3".
+    auto cx = floatAttr(a, "cenX");
+    auto cy = floatAttr(a, "cenY");
+    auto cz = floatAttr(a, "cenZ");
+    assert(cx == cx && cy == cy && cz == cz,    // NaN check
+        "Screen mode published NaN: " ~ a["cenX"] ~ "," ~ a["cenY"] ~ "," ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2d: Element mode with single face selected → ACEN at face centroid
+// (NOT bbox center of face's verts — for a unit cube face these
+// coincide, so verify against face 4 = top, centroid (0, 0.5, 0)).
+// -------------------------------------------------------------------------
+
+unittest { // Element mode — single face → face centroid
+    resetCube();
+    // Default cube face 4 = [3, 7, 6, 2] with all y = 0.5 (top face).
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "element", "expected element, got " ~ a["mode"]);
+    assert(abs(floatAttr(a, "cenY") - 0.5f) < 1e-3,
+        "Element cenY expected 0.5 (top-face centroid), got " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenX")) < 1e-3, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenZ")) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2d: Element mode with two opposite faces selected → average of
+// their centroids = origin (faces at y=0.5 and y=-0.5 → mean y=0).
+// -------------------------------------------------------------------------
+
+unittest { // Element mode — two faces → mean of centroids
+    resetCube();
+    // Face 4 = top (y=0.5), face 5 = bottom (y=-0.5). Mean y = 0.
+    postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenY")) < 1e-3,
+        "Element mean-of-top-bot cenY expected 0, got " ~ a["cenY"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2d: `move.element` tool — alias factory that activates MoveTool
+// with ACEN + AXIS pre-set to Element. Activating it should switch
+// both stage modes to "element".
+// -------------------------------------------------------------------------
+
+unittest { // move.element activates ACEN + AXIS Element
+    resetCube();
+    // First make sure modes are NOT element so the toggle is observable.
+    postJson("/api/command", "tool.pipe.attr actionCenter mode auto");
+    postJson("/api/command", "tool.pipe.attr axis mode auto");
+
+    // Activate move.element via the registry (mirrors what a side-panel
+    // button click would do).
+    postJson("/api/command", "tool.set move.element on");
+
+    auto ac = getAcenAttrs();
+    assert(ac["mode"] == "element",
+        "move.element should switch ACEN to element; got " ~ ac["mode"]);
+
+    // Walk axis stage too.
+    auto j = getJson("/api/toolpipe");
+    string axMode;
+    foreach (st; j["stages"].array) {
+        if (st["task"].str == "AXIS") {
+            axMode = st["attrs"]["mode"].str;
+            break;
+        }
+    }
+    assert(axMode == "element",
+        "move.element should switch AXIS to element; got " ~ axMode);
+}
+
+// -------------------------------------------------------------------------
+// 7.2e: Local mode with two disjoint face selections (top + bottom of
+// the cube — opposite faces, no shared edge) yields clusterCount=2.
+// state.actionCenter.center = first cluster's pivot. Adjacent face
+// pair yields clusterCount=1.
+// -------------------------------------------------------------------------
+
+unittest { // Local — two disjoint face clusters
+    resetCube();
+    // Faces 4 (top, y=0.5) + 5 (bottom, y=-0.5) share no edge → 2
+    // clusters.
+    postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "local", "expected local, got " ~ a["mode"]);
+    assert(a["clusterCount"].to!int == 2,
+        "expected clusterCount=2, got " ~ a["clusterCount"]);
+}
+
+unittest { // Local — adjacent faces = single cluster
+    resetCube();
+    // Faces 0 (back) + 5 (bottom) share edge [0,1] → 1 cluster.
+    postJson("/api/select", `{"mode":"polygons","indices":[0,5]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 1,
+        "adjacent faces expected 1 cluster, got " ~ a["clusterCount"]);
+}
+
+// -------------------------------------------------------------------------
+// Mode-coverage tests (the rest of the matrix). Each verifies the mode
+// label is set + the published center is finite (non-NaN) and matches
+// the documented contract for that mode.
+// -------------------------------------------------------------------------
+
+unittest { // SelectAuto — same center as Select; axis stage handles the
+           // "auto axis" part separately.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode selectauto");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
+    // Top face centroid: (0, 0.5, 0).
+    assert(abs(floatAttr(a, "cenY") - 0.5f) < 1e-3,
+        "SelectAuto cenY expected 0.5 (top centroid), got " ~ a["cenY"]);
+}
+
+unittest { // Border — mode label set, currently degrades to centroid
+           // (proper border-edges algorithm is a follow-up). Verify
+           // it doesn't crash and emits a finite Vec3.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode border");
+    auto a = getAcenAttrs();
+    assert(a["mode"] == "border", "got " ~ a["mode"]);
+    auto x = floatAttr(a, "cenX");
+    auto y = floatAttr(a, "cenY");
+    auto z = floatAttr(a, "cenZ");
+    assert(x == x && y == y && z == z, "Border published NaN");
+}
+
+unittest { // Element edges mode — edge midpoint as pivot.
+    resetCube();
+    // Edge 0 = [0,3] of cube — verts (-0.5,-0.5,-0.5) ↔ (-0.5, 0.5,-0.5).
+    // Midpoint: (-0.5, 0, -0.5).
+    postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenX") - (-0.5f)) < 1e-3, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY")) < 1e-3, "cenY: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ") - (-0.5f)) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+unittest { // Element vertices mode — vertex coord as pivot.
+    resetCube();
+    // Vert 6 = (0.5, 0.5, 0.5).
+    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode element");
+    auto a = getAcenAttrs();
+    assert(abs(floatAttr(a, "cenX") - 0.5f) < 1e-3, "cenX: " ~ a["cenX"]);
+    assert(abs(floatAttr(a, "cenY") - 0.5f) < 1e-3, "cenY: " ~ a["cenY"]);
+    assert(abs(floatAttr(a, "cenZ") - 0.5f) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+unittest { // Local edges mode — two disjoint edges (no shared vert)
+           // = 2 clusters; two adjacent edges (shared vert) = 1.
+    resetCube();
+    // Pick two edges with no shared vertex. Edge 0 = [0,3];
+    // Edge 4 = [4,5] (verts (-0.5,-0.5,0.5)↔(0.5,-0.5,0.5)). No shared
+    // vert between {0,3} and {4,5}.
+    postJson("/api/select", `{"mode":"edges","indices":[0,4]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 2,
+        "expected 2 clusters, got " ~ a["clusterCount"]);
+}
+
+unittest { // Local vertices mode — two non-adjacent verts → 2 clusters.
+    resetCube();
+    // Vert 0 and vert 6 are diagonal corners of the cube; no shared
+    // edge → 2 clusters.
+    postJson("/api/select", `{"mode":"vertices","indices":[0,6]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 2,
+        "expected 2 clusters, got " ~ a["clusterCount"]);
+}
+
+unittest { // Local — empty selection → 0 clusters, centroid fallback.
+    resetCube();
+    postJson("/api/select", `{"mode":"polygons","indices":[]}`);
+    postJson("/api/command", "tool.pipe.attr actionCenter mode local");
+    auto a = getAcenAttrs();
+    assert(a["clusterCount"].to!int == 0,
+        "expected 0 clusters on empty selection, got " ~ a["clusterCount"]);
+}
+
+// -------------------------------------------------------------------------
+// 7.2a: Unknown mode value is rejected (mode stays unchanged).
+// -------------------------------------------------------------------------
+
+unittest { // unknown mode rejected
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr actionCenter mode origin");
+    auto before = getAcenAttrs();
+    // Should fail / leave mode as origin.
+    postJson("/api/command", "tool.pipe.attr actionCenter mode flubber");
+    auto after = getAcenAttrs();
+    assert(before["mode"] == after["mode"],
+        "Unknown mode should leave state unchanged: was "
+        ~ before["mode"] ~ ", now " ~ after["mode"]);
+}

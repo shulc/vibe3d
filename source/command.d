@@ -1,0 +1,114 @@
+module command;
+
+import mesh;
+import view;
+import editmode;
+import params : Param, ParamHints;
+
+// ---------------------------------------------------------------------------
+// Command — base class for every user-visible action.
+//
+// Undo/redo model (see doc/undo_redo_plan.md):
+// - apply()    — runs the operation. Mutating commands MUST snapshot
+//                pre-state into instance fields here.
+// - revert()   — restore the pre-apply state (using the snapshot).
+//                Default: no-op (returns false). Mutating commands MUST
+//                override and return true on successful revert.
+// - isUndoable — false for read-only / non-mutating commands; the
+//                dispatcher then skips pushing to the undo stack.
+// - label()    — short human-readable text for the Edit menu / history
+//                viewer ("Bevel edges", "Move 3 verts"). Defaults to
+//                name().
+// ---------------------------------------------------------------------------
+
+class Command {
+    // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
+    string name() const { return "Command"; }
+
+    // Run the operation. Two paths post-Phase-6:
+    //
+    //   * Operator commands (mesh-mutating ones from Phases 2/5) put
+    //     their kernel in `evaluate(ref VectorStack vts)`. The default
+    //     apply() here builds a minimal vts from the command's mesh +
+    //     editMode + selection state and dispatches via the Operator
+    //     interface, preserving the bool-return contract for callers
+    //     (history.fire, app.d /api/command).
+    //
+    //   * Non-Operator commands (file load/save, history meta-commands,
+    //     selection ops) override apply() with their kernel as before.
+    //
+    // Mutating commands snapshot pre-state into instance fields so
+    // revert() can restore.
+    bool apply() {
+        import operator        : Operator, VectorStack;
+        import toolpipe.packets : SubjectPacket;
+        if (auto op = cast(Operator)this) {
+            VectorStack vts;
+            SubjectPacket subj;
+            subj.mesh     = mesh;
+            subj.editMode = editMode;
+            if (mesh !is null) {
+                subj.selectedVertices = mesh.selectedVertices.dup;
+                subj.selectedEdges    = mesh.selectedEdges.dup;
+                subj.selectedFaces    = mesh.selectedFaces.dup;
+            }
+            vts.put(&subj);
+            return op.evaluate(vts);
+        }
+        return true;
+    }
+
+    // Restore the pre-apply mesh/selection/state. Default: not undoable.
+    // Mutating commands override and return true on success.
+    bool revert() { return false; }
+
+    // Whether this command should land on the undo stack after a
+    // successful apply(). Read-only queries / fit-camera / file.save
+    // override to return false.
+    bool isUndoable() const { return true; }
+
+    // Short human-readable label. Defaults to name() — override for a
+    // friendlier menu / history-viewer string.
+    string label() const { return name(); }
+
+    // Schema: list of parameters. Default: none. Commands that surface
+    // an args dialog or accept JSON params via /api/command override this.
+    Param[] params() { return []; }
+
+    // Called immediately before opening an args dialog. Override to set
+    // defaults that depend on the current selection / scene state.
+    void dialogInit() {}
+
+    // Called by the renderer after a parameter value changes. Override
+    // to recompute dependent parameters (cross-field rules).
+    void onParamChanged(string name) {}
+
+    // Whether the named parameter widget should be enabled. Override for
+    // cross-field graying (arg-enable callback).
+    bool paramEnabled(string name) const { return true; }
+
+    // Per-parameter hint overrides at runtime (e.g. cap a range to mesh
+    // size).
+    void paramHints(string name, ref ParamHints hints) {}
+
+    // Edit modes in which this command makes sense. The status-bar /
+    // side-panel button auto-disables when the current `editMode` is
+    // not in this list — visual cue that the row is "available but
+    // not in this mode". `apply()` may also throw defensively (e.g.
+    // mesh.subdivide enforces Polygons inside apply too). Default:
+    // every mode — most commands are mode-agnostic.
+    EditMode[] supportedModes() const {
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+    }
+
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        this.mesh = mesh;
+        this.view = view;
+        this.editMode = editMode;
+    }
+
+protected:
+    Mesh* mesh;
+    View view;
+    EditMode editMode;
+};

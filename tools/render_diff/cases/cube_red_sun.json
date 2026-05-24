@@ -1,0 +1,29 @@
+{
+  "name": "cube_red_sun",
+  "_comment": "Red diffuse cube lit by a sun light from above-front-right. Cycles vs RPR should match within tolerance after gamma-encoded 8-bit quantization.",
+  "resolution": [256, 256],
+  "samples": 64,
+  "tolerance": 0.12,
+  "_tolerance_comment": "Loose for now (current Cycles vs RPR rms ≈ 0.086 on this case). Cycles' setEnvironment is a stub so its background is the default world shader, not the case's env color; intensity/exposure mapping between backends also isn't calibrated yet. Goal: catch regressions, not absolute parity. Tightens to ~0.05 once env shader + intensity calibration land (Phase 3+).",
+  "camera": {
+    "eye": [3.0, 2.5, 3.5],
+    "target": [0.0, 0.0, 0.0],
+    "up": [0.0, 1.0, 0.0],
+    "fov_vertical_degrees": 45.0
+  },
+  "mesh": {
+    "kind": "cube",
+    "size": 1.0,
+    "color": [0.85, 0.25, 0.20]
+  },
+  "light": {
+    "kind": "sun",
+    "direction": [-0.4, -0.8, -0.5],
+    "color": [1.0, 1.0, 1.0],
+    "intensity": 3.0
+  },
+  "environment": {
+    "_comment": "Black env so both backends skip env light. Cycles' setEnvironment is currently a stub (default grey background); using black masks that gap. Once cycles_backend wires a real env shader (future), we can compare with arbitrary env colors.",
+    "color": [0.0, 0.0, 0.0]
+  }
+}
