@@ -1,0 +1,23 @@
+{
+  "name": "translate_top_face_y",
+  "description": "Reference-parity: select the +Y top face of a unit cube, translate it +1.0 along Y. The 4 top verts move y 0.5 -> 1.5; the rest stay. before/after pairs are a frozen reference capture; the reference engine's vertex order differs from vibe3d's, hence the by-before-position correspondence.",
+  "source": "Frozen reference capture (provenance recorded in private capture notes, not here).",
+  "tolerance": 1e-3,
+  "input": [
+    { "endpoint": "reset" },
+    { "endpoint": "select", "body": { "mode": "polygons", "indices": [4] } }
+  ],
+  "op": [
+    { "endpoint": "transform", "body": { "kind": "translate", "delta": [0.0, 1.0, 0.0] } }
+  ],
+  "expected_pairs": [
+    { "before": [-0.5, -0.5, -0.5], "after": [-0.5, -0.5, -0.5] },
+    { "before": [ 0.5, -0.5, -0.5], "after": [ 0.5, -0.5, -0.5] },
+    { "before": [ 0.5, -0.5,  0.5], "after": [ 0.5, -0.5,  0.5] },
+    { "before": [-0.5, -0.5,  0.5], "after": [-0.5, -0.5,  0.5] },
+    { "before": [-0.5,  0.5, -0.5], "after": [-0.5,  1.5, -0.5] },
+    { "before": [ 0.5,  0.5, -0.5], "after": [ 0.5,  1.5, -0.5] },
+    { "before": [ 0.5,  0.5,  0.5], "after": [ 0.5,  1.5,  0.5] },
+    { "before": [-0.5,  0.5,  0.5], "after": [-0.5,  1.5,  0.5] }
+  ]
+}

@@ -192,8 +192,11 @@ string[] compileTests(string[] paths, string outDir, ushort port) {
             helpers ~= " " ~ hSrc;
         }
         // -I=<outDir> first so the rewritten helpers in the scratch dir
-        // win over the unmodified originals in tests/.
-        auto cmd = format("dmd -unittest -I=%s -I=tests%s %s -w -of=%s 2>&1",
+        // win over the unmodified originals in tests/. -J=tests lets a
+        // test embed a golden fixture via `import("fixtures/<name>.json")`
+        // (see tests/fixture_helpers.d) — the path is resolved against the
+        // repo's tests/ dir regardless of the per-worker scratch copy.
+        auto cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s %s -w -of=%s 2>&1",
                           outDir, helpers, src, of);
         auto r = executeShell(cmd);
         if (r.status != 0) {
