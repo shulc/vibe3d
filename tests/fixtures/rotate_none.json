@@ -1,0 +1,310 @@
+{
+  "name": "rotate_none",
+  "description": "Reference-parity: rigid rotations recovered from real-engine acen=none rotate drags (varied selection / drag start / angle / axis). Each case selects the cluster by coords and replays the recovered rigid rotation via rotate_about (explicit axis/angle/pivot through /api/transform); expected pairs are the engine's actual post-op vertices.",
+  "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/rotate_none).",
+  "tolerance": 0.001,
+  "cases": [
+    {
+      "name": "rotate_none_top1",
+      "angle_deg": 89.9508,
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.5
+              ],
+              [
+                0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "rotate_about": {
+            "axis": [
+              -0.14931932,
+              0.91033807,
+              -0.38599007
+            ],
+            "angle_deg": 89.95080632,
+            "pivot": [
+              0.00653599,
+              -0.1698472,
+              -0.40310447
+            ]
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.068609,
+            0.669226,
+            -0.320853
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            1.036533,
+            0.467466,
+            -0.171134
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.091745,
+            0.147422,
+            -1.173605
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            1.059669,
+            -0.054338,
+            -1.023886
+          ]
+        }
+      ]
+    },
+    {
+      "name": "rotate_none_top2",
+      "angle_deg": 90.246,
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.5
+              ],
+              [
+                0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "rotate_about": {
+            "axis": [
+              -0.15526137,
+              0.90904479,
+              -0.386693
+            ],
+            "angle_deg": 90.24602447,
+            "pivot": [
+              0.04956122,
+              0.30982247,
+              0.70843683
+            ]
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -1.086178,
+            0.996237,
+            0.90192
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.116845,
+            0.798466,
+            1.047799
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -1.066262,
+            0.467802,
+            0.05318
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.09693,
+            0.270031,
+            0.199059
+          ]
+        }
+      ]
+    }
+  ]
+}

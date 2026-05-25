@@ -36,7 +36,7 @@ module fixture_helpers;
 
 import std.json;
 import std.net.curl : get, post;
-import std.math : fabs;
+import std.math : fabs, PI;
 import std.format : format;
 
 private enum string BASE = "http://localhost:8080";
@@ -177,6 +177,8 @@ private int[] resolveCoords(string mode, JSONValue coordsArr, string ctx) {
 //   { "translate": [dx, dy, dz] }     // move tool  (empty sel => whole mesh)
 //   { "rotate":    [rx, ry, rz] }     // rotate tool, per-axis Euler degrees
 //   { "scale":     [sx, sy, sz] }     // scale tool, per-axis factors (1=identity)
+//   { "rotate_about": {"axis":[x,y,z], "angle_deg":θ, "pivot":[x,y,z]} }
+//                                     // explicit rigid rotation via /api/transform
 // translate/rotate/scale run the matching tool about the default action center.
 // An { "endpoint": ... } step is the low-level escape hatch (see postStep).
 private void runStep(JSONValue step, string name, string phase, size_t i) {
@@ -222,6 +224,24 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.attr scale SZ %g", d[2]), ctx);
         cmd("tool.doApply", ctx);
         cmd("tool.set scale off", ctx);
+    } else if ("rotate_about" in step) {
+        // Rotate the selection by an EXPLICIT angle about an EXPLICIT axis
+        // through an EXPLICIT pivot, via the /api/transform primitive. Used
+        // by reference-parity fixtures that freeze a rigid rotation recovered
+        // from a captured drag (axis/angle/pivot extracted by Kabsch), so the
+        // test pins vibe3d's rotation math independent of any gizmo/action-
+        // center pivot policy. angle is degrees.
+        auto r = step["rotate_about"];
+        auto ax = jvec3(r["axis"]);
+        auto pv = jvec3(r["pivot"]);
+        double rad = asDouble(r["angle_deg"]) * (PI / 180.0);
+        auto resp = cast(string) post(BASE ~ "/api/transform",
+            format(`{"kind":"rotate","axis":[%.10g,%.10g,%.10g],"angle":%.10g,`
+                   ~ `"pivot":[%.10g,%.10g,%.10g]}`,
+                   ax[0], ax[1], ax[2], rad, pv[0], pv[1], pv[2]));
+        auto j = parseJSON(resp);
+        if ("status" !in j || j["status"].str != "ok")
+            assert(false, format("%s: rotate_about failed: %s", ctx, resp));
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {
