@@ -184,6 +184,8 @@ private int[] resolveCoords(string mode, JSONValue coordsArr, string ctx) {
 //   { "scale":     [sx, sy, sz] }     // scale tool, per-axis factors (1=identity)
 //   { "rotate_about": {"axis":[x,y,z], "angle_deg":θ, "pivot":[x,y,z]} }
 //                                     // explicit rigid rotation via /api/transform
+//   { "scale_about":  {"factor":[sx,sy,sz], "pivot":[x,y,z]} }
+//                                     // explicit scale via /api/transform
 // translate/rotate/scale run the matching tool about the default action center.
 // An { "endpoint": ... } step is the low-level escape hatch (see postStep).
 private void runStep(JSONValue step, string name, string phase, size_t i) {
@@ -247,6 +249,22 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         auto j = parseJSON(resp);
         if ("status" !in j || j["status"].str != "ok")
             assert(false, format("%s: rotate_about failed: %s", ctx, resp));
+    } else if ("scale_about" in step) {
+        // Scale the selection by per-axis factors about an EXPLICIT pivot, via
+        // the /api/transform primitive. Used by scale-parity fixtures: the
+        // reference engine's headless xfrm.scale pivots at the world origin, so
+        // the fixtures pass pivot [0,0,0] — an engine-agnostic scale (no gizmo /
+        // action-center policy involved, no recovery needed).
+        auto s = step["scale_about"];
+        auto fac = jvec3(s["factor"]);
+        auto pv = jvec3(s["pivot"]);
+        auto resp = cast(string) post(BASE ~ "/api/transform",
+            format(`{"kind":"scale","factor":[%.10g,%.10g,%.10g],`
+                   ~ `"pivot":[%.10g,%.10g,%.10g]}`,
+                   fac[0], fac[1], fac[2], pv[0], pv[1], pv[2]));
+        auto j = parseJSON(resp);
+        if ("status" !in j || j["status"].str != "ok")
+            assert(false, format("%s: scale_about failed: %s", ctx, resp));
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {
