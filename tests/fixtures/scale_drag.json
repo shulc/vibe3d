@@ -1,0 +1,162 @@
+{
+  "name": "scale_drag",
+  "description": "Reference-parity: single-axis scale captured from real gizmo-handle drags with the action center on the selection (acen=select), so the pivot is the SELECTION-DERIVED centre (not the world origin as in scale_origin). The per-axis factors + pivot are recovered from the engine's before/after and replayed via scale_about; expected pairs are the engine's actual output.",
+  "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/scale_drag).",
+  "tolerance": 0.001,
+  "cases": [
+    {
+      "name": "scale_drag_top",
+      "factor": [
+        1.0,
+        1.0,
+        0.625
+      ],
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.5
+              ],
+              [
+                0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "scale_about": {
+            "factor": [
+              1.0,
+              1.0,
+              0.625
+            ],
+            "pivot": [
+              0.0,
+              0.5,
+              0.0
+            ]
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.3125
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.3125
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.3125
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.3125
+          ]
+        }
+      ]
+    }
+  ]
+}
