@@ -1,15 +1,977 @@
 {
   "name": "scale_drag",
-  "description": "Reference-parity: single-axis scale captured from real gizmo-handle drags with the action center on the selection (acen=select), so the pivot is the SELECTION-DERIVED centre (not the world origin as in scale_origin). The per-axis factors + pivot are recovered from the engine's before/after and replayed via scale_about; expected pairs are the engine's actual output.",
+  "description": "Reference-parity: single-axis scale captured from a REAL gizmo single-axis handle drag (the per-axis handle is found by hover confirmation, then dragged along its own screen direction) with NO action center (acen=none), so the pivot is the world axis. Complements scale_axis (same origin-pivot single-axis scale, but applied headless via the geometry API) by exercising the real drag path, across selection patterns (single face, adjacent, islands) on plain + segmented cubes. The per-axis factor + pivot are recovered from the engine's before/after and replayed via scale_about; expected pairs are the engine's actual output, matched by position.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/scale_drag).",
   "tolerance": 0.001,
   "cases": [
+    {
+      "name": "scale_drag_adj",
+      "factor": [
+        1.0,
+        1.0,
+        0.435
+      ],
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.5
+              ],
+              [
+                0.5,
+                -0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                -0.5,
+                0.5
+              ],
+              [
+                0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "scale_about": {
+            "factor": [
+              1.0,
+              1.0,
+              0.435
+            ],
+            "pivot": [
+              0.16666667,
+              0.16666667,
+              -0.0
+            ]
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.2175
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.2175
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.2175
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.2175
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.2175
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.2175
+          ]
+        }
+      ]
+    },
+    {
+      "name": "scale_drag_asym",
+      "factor": [
+        1.0,
+        1.0,
+        0.47
+      ],
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:2 segmentsY:2 segmentsZ:2 radius:0"
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.0
+              ],
+              [
+                -0.5,
+                0.5,
+                0.5
+              ],
+              [
+                0.0,
+                -0.5,
+                0.0
+              ],
+              [
+                0.0,
+                -0.5,
+                0.5
+              ],
+              [
+                0.0,
+                0.5,
+                -0.5
+              ],
+              [
+                0.0,
+                0.5,
+                0.0
+              ],
+              [
+                0.0,
+                0.5,
+                0.5
+              ],
+              [
+                0.5,
+                -0.5,
+                0.0
+              ],
+              [
+                0.5,
+                -0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "scale_about": {
+            "factor": [
+              1.0,
+              1.0,
+              0.47
+            ],
+            "pivot": [
+              -0.05,
+              0.1,
+              -0.0
+            ]
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.235
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.235
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.235
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.5,
+            -0.235
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.5,
+            0.235
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.235
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "name": "scale_drag_isl",
+      "factor": [
+        1.0,
+        1.0,
+        0.47
+      ],
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:2 segmentsY:2 segmentsZ:2 radius:0"
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.0
+              ],
+              [
+                0.0,
+                -0.5,
+                0.0
+              ],
+              [
+                0.0,
+                -0.5,
+                0.5
+              ],
+              [
+                0.0,
+                0.5,
+                -0.5
+              ],
+              [
+                0.0,
+                0.5,
+                0.0
+              ],
+              [
+                0.5,
+                -0.5,
+                0.0
+              ],
+              [
+                0.5,
+                -0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "scale_about": {
+            "factor": [
+              1.0,
+              1.0,
+              0.47
+            ],
+            "pivot": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.235
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.235
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.5,
+            -0.235
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.235
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
     {
       "name": "scale_drag_top",
       "factor": [
         1.0,
         1.0,
-        0.625
+        0.355
       ],
       "input": [
         {
@@ -49,7 +1011,7 @@
             "factor": [
               1.0,
               1.0,
-              0.625
+              0.35499999
             ],
             "pivot": [
               0.0,
@@ -93,7 +1055,7 @@
           "after": [
             -0.5,
             0.5,
-            -0.3125
+            -0.1775
           ]
         },
         {
@@ -105,7 +1067,7 @@
           "after": [
             -0.5,
             0.5,
-            0.3125
+            0.1775
           ]
         },
         {
@@ -141,7 +1103,7 @@
           "after": [
             0.5,
             0.5,
-            -0.3125
+            -0.1775
           ]
         },
         {
@@ -153,7 +1115,7 @@
           "after": [
             0.5,
             0.5,
-            0.3125
+            0.1775
           ]
         }
       ]
