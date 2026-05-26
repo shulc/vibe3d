@@ -1,9 +1,165 @@
 {
   "name": "falloff_drag",
-  "description": "Reference-parity: per-vertex WEIGHTED single-axis scale (linear falloff). The gradient was RECOVERED from the captured weighting and re-expressed as vibe3d-native start/end handles, so vibe3d's weighted scale reproduces the frozen reference verts independent of the reference engine's internal falloff-axis convention.",
+  "description": "Reference-parity: per-vertex WEIGHTED single-axis transform (linear falloff), move/scale/rotate. The gradient was RECOVERED from the captured weighting and re-expressed as vibe3d-native start/end handles, so vibe3d's weighted transform reproduces the frozen reference verts independent of the reference engine's internal falloff-axis convention.",
   "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/falloff_drag).",
   "tolerance": 0.001,
   "cases": [
+    {
+      "name": "falloff_move_top",
+      "input": [
+        {
+          "reset": true
+        },
+        {
+          "select": {
+            "mode": "vertices",
+            "coords": [
+              [
+                -0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                -0.5,
+                0.5,
+                0.5
+              ],
+              [
+                0.5,
+                0.5,
+                -0.5
+              ],
+              [
+                0.5,
+                0.5,
+                0.5
+              ]
+            ]
+          }
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "move",
+            "attr": "TX",
+            "value": 1.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                -0.0,
+                0.115385,
+                -0.576923
+              ],
+              "end": [
+                0.0,
+                -0.076923,
+                0.384615
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            1.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
     {
       "name": "falloff_scale_top",
       "input": [
