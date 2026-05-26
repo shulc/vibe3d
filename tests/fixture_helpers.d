@@ -265,6 +265,43 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         auto j = parseJSON(resp);
         if ("status" !in j || j["status"].str != "ok")
             assert(false, format("%s: scale_about failed: %s", ctx, resp));
+    } else if ("falloff_transform" in step) {
+        // Weighted (falloff) single-axis transform via the LIVE tool — mirrors
+        // the reference engine's numeric capture (tool.set + tool.pipe.attr
+        // falloff + tool.attr <ATTR> + tool.doApply, about the default action
+        // center). `value` is the recovered BASE amount (the fully-weighted,
+        // w=1 transform); vibe3d's attrs are unscaled, so it's the same amount
+        // the reference engine actually applied. `start`/`end` are vibe3d-native
+        // handle POINTS that the gen RECOVERED from the captured weighting (the
+        // reference engine's own falloff axis convention differs), so vibe3d's
+        // linearWeight reproduces the same per-vertex weights.
+        auto ft   = step["falloff_transform"];
+        string tl = ft["tool"].str;          // move|scale|rotate
+        string at = ft["attr"].str;          // TX|TY|TZ|SX|SY|SZ|RX|RY|RZ
+        double vv = asDouble(ft["value"]);
+        auto fo   = ft["falloff"];
+        cmd(format("tool.set %s on", tl), ctx);
+        cmd(format("tool.pipe.attr falloff type %s", fo["type"].str), ctx);
+        cmd(format("tool.pipe.attr falloff shape %s",
+                   ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
+        if (fo["type"].str == "radial") {
+            auto c = jvec3(fo["center"]);
+            auto s = jvec3(fo["size"]);
+            cmd(format(`tool.pipe.attr falloff center "%g,%g,%g"`,
+                       c[0], c[1], c[2]), ctx);
+            cmd(format(`tool.pipe.attr falloff size "%g,%g,%g"`,
+                       s[0], s[1], s[2]), ctx);
+        } else {
+            auto a = jvec3(fo["start"]);
+            auto b = jvec3(fo["end"]);
+            cmd(format(`tool.pipe.attr falloff start "%g,%g,%g"`,
+                       a[0], a[1], a[2]), ctx);
+            cmd(format(`tool.pipe.attr falloff end "%g,%g,%g"`,
+                       b[0], b[1], b[2]), ctx);
+        }
+        cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
+        cmd("tool.doApply", ctx);
+        cmd(format("tool.set %s off", tl), ctx);
     } else if ("endpoint" in step) {
         postStep(step, name, phase, i);
     } else {
