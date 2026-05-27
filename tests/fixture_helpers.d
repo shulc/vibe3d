@@ -284,6 +284,12 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.pipe.attr falloff type %s", fo["type"].str), ctx);
         cmd(format("tool.pipe.attr falloff shape %s",
                    ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
+        // Custom-shape Bezier tangents (default 0.5 in vibe3d, so they MUST be
+        // passed explicitly when the case specifies them or the curve is wrong).
+        if ("in" in fo)
+            cmd(format("tool.pipe.attr falloff in %g", asDouble(fo["in"])), ctx);
+        if ("out" in fo)
+            cmd(format("tool.pipe.attr falloff out %g", asDouble(fo["out"])), ctx);
         if (fo["type"].str == "radial") {
             auto c = jvec3(fo["center"]);
             auto s = jvec3(fo["size"]);
