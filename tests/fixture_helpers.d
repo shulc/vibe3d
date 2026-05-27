@@ -191,7 +191,12 @@ private int[] resolveCoords(string mode, JSONValue coordsArr, string ctx) {
 private void runStep(JSONValue step, string name, string phase, size_t i) {
     string ctx = format("%s: %s step %d", name, phase, i);
     if ("reset" in step) {
-        post(BASE ~ "/api/reset", "");
+        // {"reset":true} → default cube; {"reset":true,"empty":true} → empty
+        // scene (use before prim.cube so the built primitive is the ONLY
+        // geometry — otherwise prim.cube APPENDS onto the reset cube and the
+        // two coincide at shared corners, doubling those verts).
+        bool empty = ("empty" in step) && step["empty"].type == JSONType.true_;
+        post(BASE ~ "/api/reset" ~ (empty ? "?empty=true" : ""), "");
     } else if ("select" in step) {
         auto sel    = step["select"];
         string mode = sel["mode"].str;
@@ -305,6 +310,22 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
             cmd(format(`tool.pipe.attr falloff end "%g,%g,%g"`,
                        b[0], b[1], b[2]), ctx);
         }
+        cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
+        cmd("tool.doApply", ctx);
+        cmd(format("tool.set %s off", tl), ctx);
+    } else if ("acen_transform" in step) {
+        // Action-center transform: set an actr.<mode> preset (ACEN+AXIS), then
+        // run a single-axis numeric transform. With actr.local on a multi-
+        // cluster selection each cluster transforms about its own center along
+        // its own local frame. attr is one of T/R/S {X,Y,Z}; the axis letter
+        // selects the per-cluster frame index (X→right, Y→up, Z→fwd).
+        auto ft = step["acen_transform"];
+        string tl = ft["tool"].str;          // move|rotate|scale
+        string at = ft["attr"].str;          // TX..SZ
+        double vv = asDouble(ft["value"]);
+        string ac = ft["acen"].str;          // local|origin|auto|...
+        cmd(format("actr.%s", ac), ctx);
+        cmd(format("tool.set %s on", tl), ctx);
         cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
         cmd("tool.doApply", ctx);
         cmd(format("tool.set %s off", tl), ctx);
