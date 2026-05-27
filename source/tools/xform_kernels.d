@@ -122,6 +122,31 @@ private Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
     return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
 }
 
+// Falloff-WEIGHTED rotation as a NON-NORMALIZED quaternion LERP — matches the
+// reference engine's (MODO's) soft-rotation / twist:
+//   q_w = (1-w)·q_identity + w·quat(axis, angle)
+// applied to (v - pivot) via the q·p·q* sandwich WITHOUT renormalizing q, so the
+// point rotates by the lerp half-angle AND its radius scales by |q_w|² (≤ 1, a
+// pinch through the falloff transition that vanishes at w=0 and w=1). This is
+// NOT R(angle·w) — that "arc" form preserves the radius and is what we used
+// before; the reference engine pinches. `axis` is unit. (Verified vertex-exact
+// against MODO: rotate-X + linear-Z falloff on a segmented cube.)
+private Vec3 rotateVecLerp(Vec3 v, Vec3 pivot, Vec3 axis, float angle, float w) {
+    import std.math : cos, sin;
+    import math : dot, cross;
+    float half = angle * 0.5f;
+    float qw = 1.0f - w + w * cos(half);   // scalar part of the lerp'd quat
+    Vec3  qv = axis * (w * sin(half));      // vector part (axis is unit)
+    Vec3  p  = v - pivot;
+    // q · (0,p) · q*  for a (possibly non-unit) quaternion q = (qw, qv):
+    //   = (qw² - qv·qv)·p + 2(qv·p)·qv + 2qw·(qv × p)
+    // which equals |q|² · R(q/|q|)·p — the |q|² factor IS the radius scale.
+    Vec3 r = p * (qw * qw - dot(qv, qv))
+           + qv * (2.0f * dot(qv, p))
+           + cross(qv, p) * (2.0f * qw);
+    return pivot + r;
+}
+
 private Vec3 pivotFor(size_t vi,
                       TransformTool.ClusterPivots cp,
                       Vec3 fallback)
@@ -169,7 +194,8 @@ private void axesFor(size_t vi,
 /// for verts that belong to a cluster). `dragAxisIdx == -1` keeps
 /// `axisFallback` for every vertex (screen-ring drag).
 ///
-/// Falloff weight scales the angle (soft-twist): θ_eff = θ · w.
+/// Falloff weight blends via a NON-NORMALIZED quaternion lerp (rotateVecLerp):
+/// rotate by the lerp half-angle + radius scaled by |q|² (matches MODO, NOT θ·w arc).
 void applyRotateIncremental(
     Mesh* mesh,
     const(int)[] indices,
@@ -194,7 +220,7 @@ void applyRotateIncremental(
                               cast(int)vi, vp)
             : 1.0f;
         if (w == 0.0f) continue;
-        mesh.vertices[vi] = rotateVec(mesh.vertices[vi], pivot, ax, angleRad * w);
+        mesh.vertices[vi] = rotateVecLerp(mesh.vertices[vi], pivot, ax, angleRad, w);
     }
     if (dragSymmetry.enabled
         && dragSymmetry.pairOf.length == mesh.vertices.length)
@@ -240,9 +266,9 @@ void applyRotateFromOrig(
             ? evaluateFalloff(dragFalloff, origVerts[i], cast(int)i, vp)
             : 1.0f;
         if (w == 0.0f) { mesh.vertices[i] = v; continue; }
-        if (angleAccum.x != 0) v = rotateVec(v, pivot, axX, angleAccum.x * w);
-        if (angleAccum.y != 0) v = rotateVec(v, pivot, axY, angleAccum.y * w);
-        if (angleAccum.z != 0) v = rotateVec(v, pivot, axZ, angleAccum.z * w);
+        if (angleAccum.x != 0) v = rotateVecLerp(v, pivot, axX, angleAccum.x, w);
+        if (angleAccum.y != 0) v = rotateVecLerp(v, pivot, axY, angleAccum.y, w);
+        if (angleAccum.z != 0) v = rotateVecLerp(v, pivot, axZ, angleAccum.z, w);
         mesh.vertices[i] = v;
     }
     if (dragSymmetry.enabled

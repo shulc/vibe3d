@@ -136,7 +136,17 @@ unittest { // shear with TX=0 leaves the cube alone — nothing moves
 
 import std.math : cos, sin, PI;
 
-unittest { // twist: per-vertex Y-axis rotation by RY · weight(y)
+unittest { // twist: per-vertex Y-axis rotation via NON-NORMALIZED quat lerp (matches MODO)
+    // vibe3d rotates with weight w as:
+    //   q = lerp(q_identity, quat(axis, theta), w)  — NOT renormalized
+    //   r = q · p · q*                              — sandwich with non-unit q
+    // This is NOT the arc model (R(theta*w)·p which preserves radius).
+    // The non-unit sandwich gives:
+    //   xNew =  ox·(qw²-qvy²) + 2·qw·qvy·oz
+    //   yNew =  oy·(qw²+qvy²)               ← note radius pinch in Y
+    //   zNew =  oz·(qw²-qvy²) - 2·qw·qvy·ox
+    // where qw = 1-w + w·cos(theta/2),  qvy = w·sin(theta/2)  (Y-axis case).
+    // At w=0: qw=1,qvy=0 → identity. At w=1: unit quat → pure rotation.
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
@@ -171,24 +181,36 @@ unittest { // twist: per-vertex Y-axis rotation by RY · weight(y)
     foreach (i, v; after) {
         auto a = v.array;
         double ox = origs[i][0], oy = origs[i][1], oz = origs[i][2];
-        // Linear weight: 1 at start, 0 at end, clamped outside.
-        double t = (oy - END_Y) / (START_Y - END_Y);
-        if (t < 0) t = 0;
-        else if (t > 1) t = 1;
-        double theta = (RY_DEG * t) * (PI / 180.0);
-        double c = cos(theta), s = sin(theta);
-        double xExp = ox * c + oz * s;
-        double zExp = -ox * s + oz * c;
-        // Y stays put — Y-axis rotation preserves the y component.
-        assert(approxEq(a[1].floating, oy, 1e-4),
-            "vert " ~ i.to!string ~ " Y shifted: "
-            ~ oy.to!string ~ " → " ~ a[1].floating.to!string);
+        // Linear weight: 1 at start_Y, 0 at end_Y, clamped outside [0,1].
+        double w = (oy - END_Y) / (START_Y - END_Y);
+        if (w < 0) w = 0;
+        else if (w > 1) w = 1;
+        // Full rotation angle (Y axis, pivot at origin).
+        double theta = RY_DEG * (PI / 180.0);
+        double half  = theta * 0.5;
+        // Non-normalized quaternion lerp: q = (1-w)·q_id + w·quat(Y,theta).
+        // Y-axis case: qv = (0, qvy, 0).
+        double qw  = 1.0 - w + w * cos(half);
+        double qvy = w * sin(half);
+        // Sandwich expansion for axis=(0,1,0):
+        //   dot(qv,qv) = qvy²,  dot(qv,p) = qvy·oy,
+        //   cross(qv,p) = (qvy·oz, 0, -qvy·ox)
+        double qq = qw * qw - qvy * qvy;
+        double xExp = ox * qq            + 2.0 * qw * qvy * oz;
+        double yExp = oy * (qw*qw + qvy*qvy);  // = oy*(qq + 2·qvy²)
+        double zExp = oz * qq            - 2.0 * qw * qvy * ox;
+        assert(approxEq(a[1].floating, yExp, 1e-4),
+            "vert " ~ i.to!string ~ " Y mismatch: "
+            ~ "got " ~ a[1].floating.to!string
+            ~ ", expected " ~ yExp.to!string
+            ~ " (orig=(" ~ ox.to!string ~ "," ~ oy.to!string ~ ","
+            ~ oz.to!string ~ "), w=" ~ w.to!string ~ ")");
         assert(approxEq(a[0].floating, xExp, 1e-4),
             "vert " ~ i.to!string ~ " X mismatch: "
             ~ "got " ~ a[0].floating.to!string
             ~ ", expected " ~ xExp.to!string
             ~ " (orig=(" ~ ox.to!string ~ "," ~ oy.to!string ~ ","
-            ~ oz.to!string ~ "), weight=" ~ t.to!string ~ ")");
+            ~ oz.to!string ~ "), w=" ~ w.to!string ~ ")");
         assert(approxEq(a[2].floating, zExp, 1e-4),
             "vert " ~ i.to!string ~ " Z mismatch: "
             ~ "got " ~ a[2].floating.to!string

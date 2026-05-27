@@ -486,11 +486,26 @@ public:
         if (wholeMeshDrag) {
             // Whole mesh: no CPU vertex work, no GPU upload — just update the matrix.
             gpuMatrix = pivotRotationMatrix(center, dragAxisVec, effectiveAngle);
+        } else if (dragAxis >= 0 && dragAxis <= 2) {
+            // Partial selection, principal-axis ring (X/Y/Z):
+            // Route through the stable from-orig path to avoid falloff drift
+            // and per-frame |q|² compounding with the quat-lerp kernel.
+            // Set the full accumulated effectiveAngle on the dragged axis
+            // (zero the others) and rebuild from origVertices with weight
+            // evaluated at the ORIGINAL positions — no drift, no compounding.
+            Vec3 savedAccum = angleAccum;
+            angleAccum = Vec3(0, 0, 0);
+            if (dragAxis == 0) angleAccum.x = effectiveAngle;
+            else if (dragAxis == 1) angleAccum.y = effectiveAngle;
+            else angleAccum.z = effectiveAngle;
+            applyAbsoluteFromOrigCpuOnly(vts);
+            angleAccum = savedAccum;
         } else {
-            // Partial selection: apply incremental delta to CPU vertices, defer GPU upload.
-            // We recompute the delta from the previous effectiveAngle.
-            // For ctrl: delta is the change in snapped angle.
-            // For free: delta is the raw incremental angle.
+            // Partial selection, view-aligned ring (dragAxis == 3):
+            // applyRotateFromOrig's per-axis basis (axisX/Y/Z) cannot
+            // represent an arbitrary screen-normal axis, so we keep the
+            // incremental path here. Falloff drift on the view ring is an
+            // accepted limitation (same behaviour as before this change).
             if (ctrlHeld) {
                 import std.math : round, PI;
                 enum float step2 = PI / 12.0f;
