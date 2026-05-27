@@ -63,8 +63,17 @@ unittest { // vortex preset activation: type=cylinder, shape=linear
 }
 
 unittest { // RY=30 around Y axis, cylinder radius 1.0 — verts at
-           // perpendicular distance r get weight = 1 - r/1.0 (clamped)
-           // and rotate by 30·weight degrees around Y.
+           // perpendicular distance r get weight = 1 - r/1.0 (clamped).
+           // vibe3d rotates via NON-NORMALIZED quat lerp (matches MODO):
+           //   q = (1-w)·q_id + w·quat(Y, theta),  q NOT renormalized
+           //   r = q · p · q*                       sandwich with non-unit q
+           // Y-axis quat-lerp components:
+           //   qw  = 1-w + w·cos(theta/2)
+           //   qvy = w·sin(theta/2)
+           // Expanded (Y-axis case, pivot=origin):
+           //   xNew =  ox·(qw²-qvy²) + 2·qw·qvy·oz
+           //   yNew =  oy·(qw²+qvy²)    ← radius pinch in Y at mid-weight
+           //   zNew =  oz·(qw²-qvy²) - 2·qw·qvy·ox
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     // Use a cube with vertical segmentation so the verts have a
@@ -72,7 +81,7 @@ unittest { // RY=30 around Y axis, cylinder radius 1.0 — verts at
     // segmentsY=4, segmentsZ=1, the verts at y=±0.5/±0.25/0 all sit
     // at perpendicular distance sqrt((±0.5)² + (±0.5)²) = sqrt(0.5)
     // ≈ 0.707 from the Y axis. So weight = 1 - 0.707/1.0 ≈ 0.293
-    // (linear shape) and rotation = 30 · 0.293 ≈ 8.79°.
+    // (linear shape).
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
     auto before = dumpVerts();
@@ -98,14 +107,19 @@ unittest { // RY=30 around Y axis, cylinder radius 1.0 — verts at
         if (t > 1) t = 1;
         double w    = 1.0 - t;
         if (w < 0) w = 0;
-        double th   = (RY_DEG * w) * (PI / 180.0);
-        double c    = cos(th), s = sin(th);
-        double xExp = ox * c + oz * s;
-        double zExp = -ox * s + oz * c;
-        // Y rotation preserves Y component.
-        assert(approxEq(v[1], oy),
-            "vert " ~ i.to!string ~ " Y should stay at " ~ oy.to!string
-            ~ ", got " ~ v[1].to!string);
+        // Quat-lerp components (Y-axis, full angle theta, weight w).
+        double theta = RY_DEG * (PI / 180.0);
+        double half  = theta * 0.5;
+        double qw    = 1.0 - w + w * cos(half);
+        double qvy   = w * sin(half);
+        double qq    = qw * qw - qvy * qvy;
+        double xExp  = ox * qq                + 2.0 * qw * qvy * oz;
+        double yExp  = oy * (qw * qw + qvy * qvy);   // radius pinch at mid-w
+        double zExp  = oz * qq                - 2.0 * qw * qvy * ox;
+        assert(approxEq(v[1], yExp),
+            "vert " ~ i.to!string ~ " Y mismatch: got " ~ v[1].to!string
+            ~ ", expected " ~ yExp.to!string
+            ~ " (perp=" ~ perp.to!string ~ ", w=" ~ w.to!string ~ ")");
         assert(approxEq(v[0], xExp),
             "vert " ~ i.to!string ~ " X mismatch: got " ~ v[0].to!string
             ~ ", expected " ~ xExp.to!string ~ " (perp=" ~ perp.to!string
