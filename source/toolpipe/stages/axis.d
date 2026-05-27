@@ -446,26 +446,30 @@ private:
         if (haveNormal && (*editMode_ == EditMode.Polygons
                            || *editMode_ == EditMode.Vertices))
         {
+            // Per-cluster local frame matching the reference engine's
+            // polygon convention:
+            //   fwd  (index 2) = the SIGNED face normal (snapped to the
+            //                    nearest world axis),
+            //   right(index 0) = world +X projected onto the tangent plane
+            //                    (world +Z when the normal is ~X-aligned),
+            //   up   (index 1) = fwd × right   (right-handed: right×up=fwd).
+            // This puts the normal on the Z/fwd axis (not Y/up) and derives
+            // the tangent from a fixed world reference rather than the bbox
+            // extents, so opposite-facing clusters get opposite fwd/up and a
+            // shared drag axis transforms each cluster in its own frame.
             float ax = abs(normalAcc.x);
             float ay = abs(normalAcc.y);
             float az = abs(normalAcc.z);
-            int upIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
-            float sign = ((upIdx == 0 ? normalAcc.x
-                         : upIdx == 1 ? normalAcc.y
-                                       : normalAcc.z) >= 0) ? 1.0f : -1.0f;
-            up = worldAxes[upIdx] * sign;
-            int rightIdx = -1;
-            float bestExt = -1;
-            foreach (k; 0 .. 3) {
-                if (k == upIdx) continue;
-                if (extents[k] > bestExt + 1e-6f) {
-                    bestExt = extents[k];
-                    rightIdx = k;
-                }
-            }
-            if (rightIdx == -1) return false;
-            right = worldAxes[rightIdx];
-            fwd = cross(right, up);
+            int nIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            float sign = ((nIdx == 0 ? normalAcc.x
+                         : nIdx == 1 ? normalAcc.y
+                                      : normalAcc.z) >= 0) ? 1.0f : -1.0f;
+            fwd = worldAxes[nIdx] * sign;
+            // Tangent reference: world +X, or world +Z if the normal is
+            // X-aligned (so the projection isn't degenerate).
+            Vec3 refAxis = (nIdx == 0) ? worldAxes[2] : worldAxes[0];
+            right = normalize(refAxis - fwd * dot(refAxis, fwd));
+            up = cross(fwd, right);
             return true;
         }
         // Edge mode: pure bbox-extent sort.
