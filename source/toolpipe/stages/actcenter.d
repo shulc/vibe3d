@@ -148,6 +148,11 @@ class ActionCenterStage : Stage, Operator {
     // tools or UI can iterate. The single-pivot
     // `state.actionCenter.center` always = clusters[0].
     int  clusterCount_ = 0;
+    // userLocked: true when the mode was set explicitly by the user via
+    // `actr.<preset>` (ActrPresetCommand.apply), not by a tool preset.
+    // resetTransientPipeStages skips stages with userLocked=true so
+    // an explicit `actr.local` (or any other actr.*) survives tool.set.
+    bool userLocked = false;
 
 private:
     // Stage holds direct refs to the live mesh + edit mode; re-evaluating
@@ -178,6 +183,7 @@ public:
     /// Restore declaration-time defaults. Triggered by SceneReset
     /// (= `/api/reset`) so an explicit reset wipes the ACEN mode +
     /// any sticky userPlaced / manualCenter pin alongside the mesh.
+    /// Also clears userLocked — SceneReset is an unconditional full reset.
     override void reset() {
         mode             = Mode.None;
         userPlacedCenter = Vec3(0, 0, 0);
@@ -185,7 +191,26 @@ public:
         manualCenter     = Vec3(0, 0, 0);
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
+        userLocked       = false;
         publishState();
+    }
+
+    /// resetTransient: same as reset() but respects userLocked.
+    /// Called by resetTransientPipeStages (tool.set / tool switch) so
+    /// an explicit `actr.*` user setting survives switching tools.
+    void resetTransient() {
+        if (userLocked) return;
+        reset();
+    }
+
+    /// Set the action-center mode explicitly (called by ActrPresetCommand).
+    /// Sets userLocked=true so the mode survives the next tool activation.
+    void setUserMode(string modeStr) {
+        bool ok = applySetAttr("mode", modeStr);
+        if (ok) {
+            userLocked = true;
+            publishState();
+        }
     }
 
     override bool setAttr(string name, string value) {

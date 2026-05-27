@@ -300,6 +300,15 @@ public:
     //
     // Runs DIRECTLY through the kernels (not via the sub-tools) so
     // the chain stays monotonic with respect to a single snapshot.
+    //
+    // Per-cluster (ACEN.Local) behaviour:
+    //   T: when cp.active && ap.active, each vert's delta is projected
+    //      onto that cluster's axis frame — so TX/TY/TZ mean "along
+    //      cluster's right/up/fwd" instead of world XYZ.
+    //   R: dragAxisIdx 0/1/2 enables per-cluster axis lookup in the
+    //      kernel; pivotFor() already reads per-cluster centers.
+    //   S: applyScaleFromActivation already handles per-cluster via
+    //      axesFor() — no change needed.
     override bool applyHeadless() {
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
@@ -307,6 +316,8 @@ public:
         buildLocalVts(subj, vts);
 
         Vec3 pivot = queryActionCenter(vts);
+        auto cp    = queryClusterPivots(vts);
+        auto ap    = queryClusterAxes(vts);
 
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
@@ -332,32 +343,43 @@ public:
             bool hasT = (headlessTranslate.x != 0
                       || headlessTranslate.y != 0
                       || headlessTranslate.z != 0);
-            if (hasT)
-                applyTranslateIncremental(mesh, vertexIndicesToProcess,
-                                          headlessTranslate,
-                                          dragFalloff, cachedVp,
-                                          dragSymmetry, toProcess);
+            if (hasT) {
+                // Per-cluster translate: when ACEN.Local provides per-cluster
+                // axes, TX/TY/TZ are interpreted along each cluster's OWN
+                // right/up/fwd axis frame. Without per-cluster axes (single
+                // cluster or non-Local mode) fall back to the global basis.
+                if (cp.active && ap.active) {
+                    applyTranslatePerCluster(cp, ap, headlessTranslate);
+                } else {
+                    // Global basis: project headlessTranslate onto bX/bY/bZ.
+                    Vec3 delta = bX * headlessTranslate.x
+                               + bY * headlessTranslate.y
+                               + bZ * headlessTranslate.z;
+                    applyTranslateIncremental(mesh, vertexIndicesToProcess,
+                                              delta,
+                                              dragFalloff, cachedVp,
+                                              dragSymmetry, toProcess);
+                }
+            }
         }
 
         if (flagR) {
             import std.math : PI;
-            auto cp = queryClusterPivots(vts);
-            auto ap = queryClusterAxes(vts);
             if (headlessRotate.x != 0)
                 applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, bX, -1,
+                                       pivot, bX, 0,
                                        headlessRotate.x * cast(float)(PI / 180.0),
                                        dragFalloff, cachedVp,
                                        cp, ap, dragSymmetry, toProcess);
             if (headlessRotate.y != 0)
                 applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, bY, -1,
+                                       pivot, bY, 1,
                                        headlessRotate.y * cast(float)(PI / 180.0),
                                        dragFalloff, cachedVp,
                                        cp, ap, dragSymmetry, toProcess);
             if (headlessRotate.z != 0)
                 applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, bZ, -1,
+                                       pivot, bZ, 2,
                                        headlessRotate.z * cast(float)(PI / 180.0),
                                        dragFalloff, cachedVp,
                                        cp, ap, dragSymmetry, toProcess);
@@ -368,8 +390,6 @@ public:
                       || headlessScale.y != 1
                       || headlessScale.z != 1);
             if (hasS) {
-                auto cp = queryClusterPivots(vts);
-                auto ap = queryClusterAxes(vts);
                 Vec3[] activation = mesh.vertices.dup;
                 applyScaleFromActivation(mesh, vertexIndicesToProcess,
                                          activation, pivot,
@@ -500,6 +520,39 @@ private:
         return true;
     }
 
+
+    // Per-cluster translate: each vertex is displaced along its OWN
+    // cluster's axis frame (right/up/fwd from the ClusterAxes packet).
+    // `delta` is in cluster-local coordinates: x=right, y=up, z=fwd.
+    // Vertices not in any cluster (clusterOf[vi]==-1) are skipped.
+    // No falloff support — matches the behaviour of the rotate/scale
+    // kernels in Local mode (falloff + Local is an unusual combination).
+    void applyTranslatePerCluster(
+        TransformTool.ClusterPivots cp,
+        TransformTool.ClusterAxes   ap,
+        Vec3 localDelta)
+    {
+        import math : Vec3;
+        foreach (vi; vertexIndicesToProcess) {
+            if (vi < 0 || vi >= cast(int)cp.clusterOf.length) continue;
+            int cid = cp.clusterOf[vi];
+            if (cid < 0 || cid >= cast(int)ap.right.length) continue;
+            Vec3 cr = ap.right[cid];
+            Vec3 cu = ap.up   [cid];
+            Vec3 cf = ap.fwd  [cid];
+            Vec3 worldDelta = cr * localDelta.x
+                            + cu * localDelta.y
+                            + cf * localDelta.z;
+            mesh.vertices[vi].x += worldDelta.x;
+            mesh.vertices[vi].y += worldDelta.y;
+            mesh.vertices[vi].z += worldDelta.z;
+        }
+        if (dragSymmetry.enabled
+            && dragSymmetry.pairOf.length == mesh.vertices.length) {
+            import symmetry : applySymmetryMirror;
+            applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+        }
+    }
 
     // Connected-component BFS seeded at the picked vert, written into
     // FalloffStage.connectMask. Active only when connect != Off.
