@@ -136,17 +136,18 @@ unittest { // shear with TX=0 leaves the cube alone — nothing moves
 
 import std.math : cos, sin, PI;
 
-unittest { // twist: per-vertex Y-axis rotation via NON-NORMALIZED quat lerp (matches MODO)
-    // vibe3d rotates with weight w as:
-    //   q = lerp(q_identity, quat(axis, theta), w)  — NOT renormalized
-    //   r = q · p · q*                              — sandwich with non-unit q
-    // This is NOT the arc model (R(theta*w)·p which preserves radius).
-    // The non-unit sandwich gives:
-    //   xNew =  ox·(qw²-qvy²) + 2·qw·qvy·oz
-    //   yNew =  oy·(qw²+qvy²)               ← note radius pinch in Y
-    //   zNew =  oz·(qw²-qvy²) - 2·qw·qvy·ox
-    // where qw = 1-w + w·cos(theta/2),  qvy = w·sin(theta/2)  (Y-axis case).
-    // At w=0: qw=1,qvy=0 → identity. At w=1: unit quat → pure rotation.
+unittest { // twist: per-vertex Y-axis rotation via rotation-MATRIX lerp
+    // vibe3d rotates with weight w as a linear blend of the rotation matrix:
+    //   M(w) = (1-w)·I + w·R(axis, theta)        applied to p
+    // This is NOT the arc model (R(theta*w)·p, radius-preserving) NOR a
+    // quaternion lerp. M(w) blends two rotation matrices, so the component IN
+    // the rotation plane pinches (radius < 1 mid-weight) while the component
+    // ALONG the axis is preserved exactly. For a Y-axis rotation:
+    //   xNew =  a·ox + b·oz
+    //   yNew =  oy                          ← axis component preserved (no pinch)
+    //   zNew =  a·oz - b·ox
+    // where a = 1-w + w·cos(theta),  b = w·sin(theta).
+    // At w=0: a=1,b=0 → identity. At w=1: a=cos,b=sin → pure rotation R(theta).
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
@@ -187,18 +188,13 @@ unittest { // twist: per-vertex Y-axis rotation via NON-NORMALIZED quat lerp (ma
         else if (w > 1) w = 1;
         // Full rotation angle (Y axis, pivot at origin).
         double theta = RY_DEG * (PI / 180.0);
-        double half  = theta * 0.5;
-        // Non-normalized quaternion lerp: q = (1-w)·q_id + w·quat(Y,theta).
-        // Y-axis case: qv = (0, qvy, 0).
-        double qw  = 1.0 - w + w * cos(half);
-        double qvy = w * sin(half);
-        // Sandwich expansion for axis=(0,1,0):
-        //   dot(qv,qv) = qvy²,  dot(qv,p) = qvy·oy,
-        //   cross(qv,p) = (qvy·oz, 0, -qvy·ox)
-        double qq = qw * qw - qvy * qvy;
-        double xExp = ox * qq            + 2.0 * qw * qvy * oz;
-        double yExp = oy * (qw*qw + qvy*qvy);  // = oy*(qq + 2·qvy²)
-        double zExp = oz * qq            - 2.0 * qw * qvy * ox;
+        // Matrix lerp M(w) = (1-w)·I + w·R(Y,theta), R(Y,theta)·p =
+        //   (ox·cos + oz·sin, oy, oz·cos - ox·sin):
+        double ca = 1.0 - w + w * cos(theta);  // (1-w) + w·cos
+        double sb = w * sin(theta);            //         w·sin
+        double xExp = ca * ox + sb * oz;
+        double yExp = oy;                      // axis component preserved
+        double zExp = ca * oz - sb * ox;
         assert(approxEq(a[1].floating, yExp, 1e-4),
             "vert " ~ i.to!string ~ " Y mismatch: "
             ~ "got " ~ a[1].floating.to!string

@@ -489,7 +489,7 @@ public:
         } else if (dragAxis >= 0 && dragAxis <= 2) {
             // Partial selection, principal-axis ring (X/Y/Z):
             // Route through the stable from-orig path to avoid falloff drift
-            // and per-frame |q|² compounding with the quat-lerp kernel.
+            // and per-frame radius-pinch compounding with the matrix-lerp kernel.
             // Set the full accumulated effectiveAngle on the dragged axis
             // (zero the others) and rebuild from origVertices with weight
             // evaluated at the ORIGINAL positions — no drift, no compounding.

@@ -122,29 +122,22 @@ private Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
     return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
 }
 
-// Falloff-WEIGHTED rotation as a NON-NORMALIZED quaternion LERP — matches the
-// reference engine's (MODO's) soft-rotation / twist:
-//   q_w = (1-w)·q_identity + w·quat(axis, angle)
-// applied to (v - pivot) via the q·p·q* sandwich WITHOUT renormalizing q, so the
-// point rotates by the lerp half-angle AND its radius scales by |q_w|² (≤ 1, a
-// pinch through the falloff transition that vanishes at w=0 and w=1). This is
-// NOT R(angle·w) — that "arc" form preserves the radius and is what we used
-// before; the reference engine pinches. `axis` is unit. (Verified vertex-exact
-// against MODO: rotate-X + linear-Z falloff on a segmented cube.)
+// Falloff-WEIGHTED rotation as a linear interpolation of the rotation MATRIX —
+// matches the reference engine's soft-rotation / twist:
+//   M(w) = (1-w)·I + w·R(angle)
+// applied to (v - pivot). At w=0 this is the identity, at w=1 the full rotation
+// R(angle); in between M(w) is a blend of two rotation matrices and is no longer
+// orthogonal, so the point rotates by an intermediate angle AND its radius
+// shrinks (a pinch through the falloff transition that vanishes at w=0 and w=1).
+// This unifies with the other tools, which are the same M(w)=(1-w)I+w·T blend:
+// translation → linear displacement, scale → 1+w·(factor-1). It is NOT the
+// "arc" R(angle·w) (radius-preserving) NOR a non-normalized quaternion lerp
+// (which pinches too little). `axis` is unit. (Verified vertex-exact against the
+// reference: rotate-X + linear-Z falloff on a segmented cube, angle+radius RMS<2e-3.)
 private Vec3 rotateVecLerp(Vec3 v, Vec3 pivot, Vec3 axis, float angle, float w) {
-    import std.math : cos, sin;
-    import math : dot, cross;
-    float half = angle * 0.5f;
-    float qw = 1.0f - w + w * cos(half);   // scalar part of the lerp'd quat
-    Vec3  qv = axis * (w * sin(half));      // vector part (axis is unit)
-    Vec3  p  = v - pivot;
-    // q · (0,p) · q*  for a (possibly non-unit) quaternion q = (qw, qv):
-    //   = (qw² - qv·qv)·p + 2(qv·p)·qv + 2qw·(qv × p)
-    // which equals |q|² · R(q/|q|)·p — the |q|² factor IS the radius scale.
-    Vec3 r = p * (qw * qw - dot(qv, qv))
-           + qv * (2.0f * dot(qv, p))
-           + cross(qv, p) * (2.0f * qw);
-    return pivot + r;
+    Vec3 p  = v - pivot;
+    Vec3 rp = rotateVec(v, pivot, axis, angle) - pivot;   // R(angle)·(v-pivot)
+    return pivot + p * (1.0f - w) + rp * w;                // (1-w)·I + w·R
 }
 
 private Vec3 pivotFor(size_t vi,
@@ -194,8 +187,8 @@ private void axesFor(size_t vi,
 /// for verts that belong to a cluster). `dragAxisIdx == -1` keeps
 /// `axisFallback` for every vertex (screen-ring drag).
 ///
-/// Falloff weight blends via a NON-NORMALIZED quaternion lerp (rotateVecLerp):
-/// rotate by the lerp half-angle + radius scaled by |q|² (matches MODO, NOT θ·w arc).
+/// Falloff weight blends via a rotation-MATRIX lerp (rotateVecLerp):
+/// M(w)=(1-w)·I+w·R(angle) — intermediate angle + radius pinch (matches the reference, NOT θ·w arc).
 void applyRotateIncremental(
     Mesh* mesh,
     const(int)[] indices,
