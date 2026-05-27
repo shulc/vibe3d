@@ -126,6 +126,9 @@ class AxisStage : Stage, Operator {
     Vec3 manualUp    = Vec3(0, 1, 0);
     Vec3 manualFwd   = Vec3(0, 0, 1);
     int  axIndex     = -1;
+    // userLocked: true when mode was set by an explicit `actr.*` command
+    // (ActrPresetCommand). resetTransientPipeStages skips locked stages.
+    bool userLocked  = false;
 
 private:
     // Cached upstream view + workplane — Auto mode in absence of an
@@ -154,14 +157,33 @@ public:
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordAxis; }
 
     /// Restore declaration-time defaults — invoked from SceneReset
-    /// (= `/api/reset`).
+    /// (= `/api/reset`). Also clears userLocked — unconditional full reset.
     override void reset() {
         mode        = Mode.None;
         manualRight = Vec3(1, 0, 0);
         manualUp    = Vec3(0, 1, 0);
         manualFwd   = Vec3(0, 0, 1);
         axIndex     = -1;
+        userLocked  = false;
         publishState();
+    }
+
+    /// resetTransient: same as reset() but respects userLocked.
+    /// Called by resetTransientPipeStages (tool.set / tool switch) so
+    /// an explicit `actr.*` user setting survives switching tools.
+    void resetTransient() {
+        if (userLocked) return;
+        reset();
+    }
+
+    /// Set the axis mode explicitly (called by ActrPresetCommand).
+    /// Sets userLocked=true so the mode survives the next tool activation.
+    void setUserMode(string modeStr) {
+        bool ok = applySetAttr("mode", modeStr);
+        if (ok) {
+            userLocked = true;
+            publishState();
+        }
     }
 
     override bool setAttr(string name, string value) {

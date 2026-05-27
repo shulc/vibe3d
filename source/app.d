@@ -707,13 +707,28 @@ void main(string[] args) {
     // preset — so the new preset's pipe attrs land on freshly
     // reset stages.
     void resetTransientPipeStages() {
-        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.pipeline             : g_pipeCtx;
+        import toolpipe.stages.actcenter     : ActionCenterStage;
+        import toolpipe.stages.axis          : AxisStage;
         if (g_pipeCtx is null) return;
         foreach (s; g_pipeCtx.pipeline.allMut()) {
             switch (s.id()) {
                 case "actionCenter":
+                    // Skip reset when the user explicitly set a mode via
+                    // actr.* — userLocked survives tool switches.
+                    if (auto ac = cast(ActionCenterStage)s)
+                        ac.resetTransient();
+                    else
+                        s.reset();
+                    break;
                 case "axis":
+                    if (auto ax = cast(AxisStage)s)
+                        ax.resetTransient();
+                    else
+                        s.reset();
+                    break;
                 case "falloff":
+                    // Falloff is always tool-driven — always reset.
                     s.reset();
                     break;
                 default: break;

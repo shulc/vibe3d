@@ -53,13 +53,29 @@ class ActrPresetCommand : Command {
             throw new Exception(name() ~ ": no ACEN or AXIS stage registered");
 
         // Apply both — fail loudly if either rejects (catches typo-ed
-        // mode names in registration).
-        if (ac !is null && !ac.setAttr("mode", acenMode_))
-            throw new Exception(
-                name() ~ ": ACEN stage rejected mode '" ~ acenMode_ ~ "'");
-        if (ax !is null && !ax.setAttr("mode", axisMode_))
-            throw new Exception(
-                name() ~ ": AXIS stage rejected mode '" ~ axisMode_ ~ "'");
+        // mode names in registration). Use setUserMode (sets userLocked=true)
+        // so the explicit `actr.*` setting survives the next tool.set call
+        // (resetTransientPipeStages skips locked stages).
+        if (ac !is null) {
+            ac.setUserMode(acenMode_);
+            // Verify the mode was accepted by reading back.
+            import std.algorithm : canFind;
+            bool accepted = false;
+            foreach (kv; ac.listAttrs())
+                if (kv[0] == "mode" && kv[1] == acenMode_) { accepted = true; break; }
+            if (!accepted)
+                throw new Exception(
+                    name() ~ ": ACEN stage rejected mode '" ~ acenMode_ ~ "'");
+        }
+        if (ax !is null) {
+            ax.setUserMode(axisMode_);
+            bool accepted = false;
+            foreach (kv; ax.listAttrs())
+                if (kv[0] == "mode" && kv[1] == axisMode_) { accepted = true; break; }
+            if (!accepted)
+                throw new Exception(
+                    name() ~ ": AXIS stage rejected mode '" ~ axisMode_ ~ "'");
+        }
         return true;
     }
 
