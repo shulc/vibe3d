@@ -64,16 +64,14 @@ unittest { // vortex preset activation: type=cylinder, shape=linear
 
 unittest { // RY=30 around Y axis, cylinder radius 1.0 — verts at
            // perpendicular distance r get weight = 1 - r/1.0 (clamped).
-           // vibe3d rotates via NON-NORMALIZED quat lerp (matches MODO):
-           //   q = (1-w)·q_id + w·quat(Y, theta),  q NOT renormalized
-           //   r = q · p · q*                       sandwich with non-unit q
-           // Y-axis quat-lerp components:
-           //   qw  = 1-w + w·cos(theta/2)
-           //   qvy = w·sin(theta/2)
-           // Expanded (Y-axis case, pivot=origin):
-           //   xNew =  ox·(qw²-qvy²) + 2·qw·qvy·oz
-           //   yNew =  oy·(qw²+qvy²)    ← radius pinch in Y at mid-weight
-           //   zNew =  oz·(qw²-qvy²) - 2·qw·qvy·ox
+           // vibe3d rotates via a rotation-MATRIX lerp:
+           //   M(w) = (1-w)·I + w·R(Y, theta)        applied to p
+           // The component in the rotation plane (XZ) pinches mid-weight; the
+           // component along the axis (Y) is preserved. For a Y-axis rotation:
+           //   xNew =  a·ox + b·oz
+           //   yNew =  oy               ← axis component preserved (no pinch)
+           //   zNew =  a·oz - b·ox
+           // where a = 1-w + w·cos(theta),  b = w·sin(theta).
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     // Use a cube with vertical segmentation so the verts have a
@@ -107,15 +105,13 @@ unittest { // RY=30 around Y axis, cylinder radius 1.0 — verts at
         if (t > 1) t = 1;
         double w    = 1.0 - t;
         if (w < 0) w = 0;
-        // Quat-lerp components (Y-axis, full angle theta, weight w).
+        // Matrix-lerp M(w)=(1-w)I+w·R(Y,theta) (full angle theta, weight w).
         double theta = RY_DEG * (PI / 180.0);
-        double half  = theta * 0.5;
-        double qw    = 1.0 - w + w * cos(half);
-        double qvy   = w * sin(half);
-        double qq    = qw * qw - qvy * qvy;
-        double xExp  = ox * qq                + 2.0 * qw * qvy * oz;
-        double yExp  = oy * (qw * qw + qvy * qvy);   // radius pinch at mid-w
-        double zExp  = oz * qq                - 2.0 * qw * qvy * ox;
+        double a     = 1.0 - w + w * cos(theta);   // (1-w) + w·cos
+        double b     = w * sin(theta);             //         w·sin
+        double xExp  = a * ox + b * oz;
+        double yExp  = oy;                          // axis component preserved
+        double zExp  = a * oz - b * ox;
         assert(approxEq(v[1], yExp),
             "vert " ~ i.to!string ~ " Y mismatch: got " ~ v[1].to!string
             ~ ", expected " ~ yExp.to!string
