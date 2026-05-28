@@ -32,12 +32,48 @@ module tools.xfrm_transform;
 // chain monotonic with respect to a single captured pivot /
 // falloff snapshot, in the documented xfrm.transform order
 // (T → R → S).
+//
+// Single-source applyTRS contract (Phase 3 — transform-single-source plan):
+//
+// Drag, property-panel sliders, and headless `tool.doApply` all
+// flow through ONE entry point: `applyTRS(baseline)`. The sub-tools
+// no longer mutate geometry. `MoveTool.onMouseMotion`'s drag-axis
+// branch is now a *gesture-scalar producer*: it projects the screen
+// mouse delta onto the gizmo's shared axes and writes the basis-
+// LOCAL scalar into `moveSub.pendingTranslateDelta`. The wrapper
+// drains that on every motion event, accumulates into
+// `headlessTranslate`, and reapplies the chain from the drag-start
+// baseline. Under ACEN.Local + axis.local the same basis-local
+// scalar then flows to `applyTranslatePerCluster` — one scalar per
+// cluster, applied along each cluster's OWN signed fwd. This kills
+// the round-1 per-cluster magnitude divergence (signed-fwd projections
+// no longer go through the screen-projection step).
+//
+// Edit session: wrapper-owned. `beginEdit()` fires once at the
+// down-time `onMouseButtonDown` when moveSub consumes the click;
+// `commitEdit("Move")` fires from `deactivate()` and `update()`'s
+// selection/mutation-change guard — same "live-tool / one undo per
+// tool session" semantics MoveTool had pre-refactor, just relocated.
+//
+// Fast-path predicate (`moveDragFastPath`): per-frame `applyTRS` is
+// strictly slower than the zero-CPU `gpuMatrix = translation(delta)`
+// bypass MoveTool used for the unconstrained whole-mesh case. So
+// the wrapper evaluates ONCE at drag-start whether all of these
+// hold: not-falloff, not-symmetry, not-per-cluster, whole-mesh
+// selection. If yes, the per-frame motion runs the matrix bypass
+// (no CPU mesh mutation) until mouseUp. If no, every frame runs
+// `applyTRS(dragBaseline)`. The inputs are FROZEN for the drag
+// duration — `dragFalloff`/`dragSymmetry` captured at mouse-down,
+// selection frozen by `update()`'s `dragAxis>=0` early-return,
+// cluster info derived from the toolpipe which is stable during
+// drag. **Do NOT recompute the predicate mid-drag** — it cannot
+// flip.
 
 import bindbc.sdl;
 import operator : VectorStack;
 
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
-               closestPointOnSegmentToRay;
+               closestPointOnSegmentToRay, translationMatrix, dot;
 import editmode : EditMode;
 import mesh;
 import shader : Shader;
@@ -55,7 +91,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.packets  : FalloffType, ElementMode, ElementConnect;
+import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
 alias VertexEditFactory = MeshVertexEdit delegate();
@@ -104,19 +140,84 @@ public:
         if (flagT) moveSub.activate();
         if (flagR) rotateSub.activate();
         if (flagS) scaleSub.activate();
-        activeDrag = null;
+        moveSub.wrapperRef = this;
+        activeDrag                = null;
+        dragBaseline.length       = 0;
+        moveDragFastPath          = false;
+        accumulatedWorldDelta     = Vec3(0, 0, 0);
+        accumulatedAtDragStart    = Vec3(0, 0, 0);
+        lastSelectionHash         = uint.max;
+        lastMutationVersion       = ulong.max;
     }
 
     override void deactivate() {
+        // Wrapper-owned edit session: commit any pending edit BEFORE
+        // forwarding to the sub-tools (they only reset their own
+        // drag-axis / handler state now; the edit baseline lives on
+        // the wrapper inherited from TransformTool).
+        if (editIsOpen())
+            commitEdit("Move");
         if (flagT) moveSub.deactivate();
         if (flagR) rotateSub.deactivate();
         if (flagS) scaleSub.deactivate();
         super.deactivate();
-        activeDrag = null;
+        activeDrag           = null;
+        dragBaseline.length  = 0;
+        moveDragFastPath     = false;
     }
 
     override void update(ref VectorStack vts) {
         if (!active) return;
+
+        // Wrapper-owned selection/mutation-change guard. Closes any
+        // pending edit when the user picks a different selection or
+        // mesh topology changed under the open edit — same boundary
+        // MoveTool used pre-refactor (move.d's update() at ~line 147),
+        // relocated to the wrapper since the wrapper now owns the
+        // edit session.
+        //
+        // Skip during a live drag: dragAxis on a sub-tool stays >= 0
+        // and any selection/mutation we'd observe is the drag's own
+        // input, not a user action.
+        if (activeDrag is null) {
+            uint  curHash   = computeSelectionHash();
+            ulong curMutVer = mesh.mutationVersion;
+            if (curHash != lastSelectionHash
+             || curMutVer != lastMutationVersion) {
+                if (editIsOpen())
+                    commitEdit("Move");
+                lastSelectionHash   = curHash;
+                lastMutationVersion = curMutVer;
+            }
+        }
+
+        // Mid-tool falloff re-apply. While an edit session is open
+        // and a non-trivial translate has been applied, a falloff
+        // packet change (status-bar pulldown / property panel / HTTP)
+        // should re-evaluate verts against the new weight at the
+        // baseline position — same semantics MoveTool offered
+        // pre-refactor, hosted on the wrapper now.
+        //
+        // The baseline we want is the LAST drag's `dragBaseline`
+        // (full mesh), not the tool-session `editBaseline()` (which
+        // is partial — only the moving set's verts, in an order
+        // distinct from `mesh.vertices`). `dragBaseline` was
+        // captured at the most recent mouse-down and matches
+        // `mesh.vertices.length`.
+        if (editIsOpen() && activeDrag is null
+            && dragBaseline.length == mesh.vertices.length
+            && (headlessTranslate.x != 0
+             || headlessTranslate.y != 0
+             || headlessTranslate.z != 0)) {
+            FalloffPacket live = currentFalloff(vts);
+            if (!falloffPacketsEqual(live, dragFalloff)) {
+                dragFalloff = live;
+                vertexCacheDirty = true;
+                applyTRS(dragBaseline);
+                needsGpuUpdate = true;
+            }
+        }
+
         // Each sub-tool's update() pulls handler.center from ACEN
         // and refreshes its gizmo orientation from AXIS. They all
         // see the same pipeline state so the three gizmos co-locate.
@@ -214,6 +315,7 @@ public:
         // this click lands on its handler bank or falls through to
         // ACEN click-relocate.
         if (flagT && moveSub.onMouseButtonDown(e, vts)) {
+            beginMoveDragSession(vts);
             activeDrag = moveSub;  return true;
         }
         if (flagR && rotateSub.onMouseButtonDown(e, vts)) {
@@ -243,6 +345,7 @@ public:
             // with the ray-hit point.
             moveSub.beginScreenPlaneDragAt(e.x, e.y, pivot,
                                            ctrlMod, /*notifyAcen=*/false, vts);
+            beginMoveDragSession(vts);
             activeDrag = moveSub;
             syncGpuMatrix();
             return true;
@@ -250,10 +353,144 @@ public:
         return false;
     }
 
+    // Capture the per-drag state that `applyTRS` and the fast-path
+    // bypass read from. Runs exactly once per drag, immediately
+    // after `moveSub.onMouseButtonDown` (or `beginScreenPlaneDragAt`)
+    // has settled the sub-tool's drag-axis / `cachedVp` / hit-test
+    // and BEFORE the first motion event arrives.
+    //
+    // Snapshot contents:
+    //   - `dragFalloff` / `dragSymmetry`: captured ONCE here (not
+    //     inside `applyTRS`), so subsequent per-frame `applyTRS`
+    //     re-evaluates see a stable packet even if the user toggles
+    //     falloff mid-drag (the change picks up at the NEXT mouse-
+    //     down, matching MoveTool's pre-refactor behaviour).
+    //   - `dragBaseline`: full-mesh dup — `applyTRS` rebuilds from
+    //     this each frame.
+    //   - `moveDragFastPath`: predicate evaluated from the FROZEN
+    //     snapshot above + a cluster-pivot query (cluster info is
+    //     stable for the drag's duration). Drag fast-path is the
+    //     unconstrained whole-mesh case; everything else routes
+    //     through `applyTRS` per frame.
+    //   - `headlessTranslate`: zeroed so this drag's accumulated
+    //     basis-local delta starts from 0.
+    //   - `editBaseline()`: opened idempotently via
+    //     `beginEdit()` — captures pre-tool-session positions on
+    //     FIRST call within the tool session. Subsequent calls
+    //     (across drags / panel edits in the same session) are
+    //     no-ops; the same baseline drives the final
+    //     `commitEdit("Move")` at deactivate / selection change.
+    void beginMoveDragSession(ref VectorStack vts) {
+        buildVertexCacheIfNeeded();
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        beginEdit();   // idempotent — opens tool-session edit on first call
+
+        // `cachedVp` is already up to date from the most recent
+        // `draw()` call (every frame, before any event dispatch);
+        // `applyTRS` reuses it for falloff weight evaluation.
+
+        dragBaseline.length = mesh.vertices.length;
+        foreach (i; 0 .. mesh.vertices.length)
+            dragBaseline[i] = mesh.vertices[i];
+
+        headlessTranslate       = Vec3(0, 0, 0);
+        accumulatedWorldDelta   = Vec3(0, 0, 0);
+        accumulatedAtDragStart  = accumulatedWorldDelta;
+
+        auto cp = queryClusterPivots(vts);
+        // ANTI-RELOCATION: do NOT move this predicate out of
+        // `beginMoveDragSession` and do NOT re-evaluate it in
+        // `onMouseMotion`. The fast-path is a ONCE-PER-DRAG
+        // decision; its inputs MUST come from the snapshot
+        // taken at mouse-down:
+        //   - `dragFalloff` / `dragSymmetry`: just captured
+        //     above; both frozen for the drag.
+        //   - `cp.active`: cluster-pivot presence is a function
+        //     of ACEN mode + the moving set, both of which the
+        //     wrapper's `update()` freezes during a drag
+        //     (`dragAxis>=0` early-return in transform.d).
+        //   - `vertexProcessCount`: selection-derived; same
+        //     freeze.
+        // Recomputing mid-drag from a live `vts` would let the
+        // path silently flip (e.g. if falloff turned on
+        // between frames), violating the "drag == numeric"
+        // contract the parity test pins.
+        moveDragFastPath = !dragFalloff.enabled
+                        && !dragSymmetry.enabled
+                        && !cp.active
+                        && (vertexProcessCount
+                            == cast(int)mesh.vertices.length);
+    }
+
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         bool r;
-        if (activeDrag !is null)
+        if (activeDrag is moveSub) {
+            r = moveSub.onMouseMotion(e, vts);
+            if (r) {
+                // Defensive: the gesture-scalar drain belongs to
+                // moveSub's drag. If `activeDrag` somehow flipped
+                // mid-event the read below would consume stale
+                // accumulated delta from a previous drag.
+                assert(activeDrag is moveSub,
+                    "moveSub motion drain expected activeDrag == moveSub");
+                // Drain the basis-local scalar moveSub produced this
+                // motion event (drag-axis branch in
+                // `MoveTool.onMouseMotion`) into the wrapper's
+                // `headlessTranslate`. Idle / hover branches in
+                // moveSub leave `pendingTranslateDelta` at zero, so
+                // the drain is a no-op on those.
+                Vec3 pending = moveSub.pendingTranslateDelta;
+                moveSub.pendingTranslateDelta = Vec3(0, 0, 0);
+                headlessTranslate = headlessTranslate + pending;
+
+                // Visual: the gizmo center moves along the GLOBAL
+                // basis projection of `headlessTranslate` (same
+                // projection `applyTRS` does in the non-per-cluster
+                // branch). Per-cluster doesn't have a single
+                // visible "gizmo center" — the gizmo follows the
+                // ACEN centroid which `update()` re-evaluates from
+                // the moved verts on the next frame.
+                Vec3 worldStep = moveSub.handler.axisX * pending.x
+                               + moveSub.handler.axisY * pending.y
+                               + moveSub.handler.axisZ * pending.z;
+                accumulatedWorldDelta = accumulatedWorldDelta + worldStep;
+
+                // Single per-frame mesh mutation through
+                // applyTRS. headlessTranslate carries the running
+                // basis-local scalar; under ACEN.Local it flows
+                // into `applyTranslatePerCluster`, otherwise into
+                // the global-basis branch.
+                applyTRS(dragBaseline);
+
+                // GPU update policy: the fast-path uses the
+                // u_model matrix (one uniform per frame) instead
+                // of re-uploading the full vertex buffer. The
+                // non-fast-path schedules a partial / full upload
+                // at draw() time. Both paths' mesh.vertices stay
+                // in sync with the gizmo — fast-path is purely a
+                // GPU-bandwidth optimization for the unconstrained
+                // whole-mesh case (no falloff weights / no
+                // symmetry mirror / no per-cluster axes / whole-
+                // mesh selection).
+                //
+                // "- accumulatedAtDragStart" is anchored at zero
+                // by `beginMoveDragSession`; it's there so a
+                // future multi-drag-per-session design can pin
+                // the per-drag GPU translate against the prior
+                // mouseUp's upload.
+                if (moveDragFastPath) {
+                    gpuMatrix = translationMatrix(
+                        accumulatedWorldDelta - accumulatedAtDragStart);
+                } else {
+                    needsGpuUpdate = true;
+                }
+                moveSub.handler.setPosition(
+                    moveSub.handler.center + worldStep);
+            }
+        } else if (activeDrag !is null) {
             r = activeDrag.onMouseMotion(e, vts);
+        }
         else {
             // Idle: let each enabled sub-tool refresh its own hover /
             // snap preview. None will consume the event (dragAxis ==
@@ -268,12 +505,20 @@ public:
         // u_model uniform during whole-mesh drags; without this
         // forwarding the wrapper's gpuMatrix stays at identity and
         // the visible mesh lags behind the sub-tool's CPU vertices.
-        syncGpuMatrix();
+        //
+        // Note: when `activeDrag is moveSub`, the wrapper already
+        // wrote `gpuMatrix` in the fast-path branch above; the
+        // syncGpuMatrix call below would overwrite it with
+        // moveSub.gpuMatrix (identity now). Skip the sync in that
+        // case.
+        if (!(activeDrag is moveSub))
+            syncGpuMatrix();
         return r;
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         bool r;
+        bool wasMoveDrag = (activeDrag is moveSub);
         if (activeDrag !is null) {
             r = activeDrag.onMouseButtonUp(e, vts);
             activeDrag = null;
@@ -285,21 +530,61 @@ public:
             if (flagR) rotateSub.onMouseButtonUp(e, vts);
             if (flagS) scaleSub.onMouseButtonUp(e, vts);
         }
-        syncGpuMatrix();
+
+        // Phase 3 — wrapper owns the GPU upload + gpuMatrix reset
+        // that MoveTool's mouseUp used to handle. One upload per
+        // drag end; the next drag opens its own dragBaseline at the
+        // refreshed mesh state. Edit session STAYS open (7.5h
+        // semantics — commit fires at deactivate / selection
+        // change / BrushReset preset).
+        if (wasMoveDrag && e.button == SDL_BUTTON_LEFT) {
+            gpu.upload(*mesh);
+            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            needsGpuUpdate   = false;
+            moveDragFastPath = false;
+
+            // BrushReset opt-out (xfrm.softDrag etc.): each LMB drag
+            // is one atomic stroke. Bake the drag to history at
+            // release; next LMB-down starts a fresh baseline at the
+            // grab point. Without this the falloff weights would
+            // re-apply onto stale baseline verts on subsequent
+            // pulls.
+            import tool : ToolFlag;
+            if (hasFlag(ToolFlag.BrushReset) && editIsOpen())
+                commitEdit("Move");
+        }
+
+        if (!wasMoveDrag)
+            syncGpuMatrix();
         return r;
     }
 
-    // Headless T → R → S chain. Follows the documented `xfrm.transform`
-    // order and the implementation in doc/unified_transform_plan.md.
-    // The pivot is captured BEFORE
-    // the translate step so rotate / scale stay anchored to the
-    // pre-mutation action center (ACEN.Element re-averages on every
-    // query — re-evaluating mid-chain would drift it). Falloff +
-    // symmetry packets are captured ONCE so each kernel sees a
-    // consistent snapshot through the whole chain.
+    // Single geometry-apply entry point — the "evaluate" of this tool.
+    // Drag, property-panel sliders, and headless `tool.doApply` all run
+    // through here. Absolute-from-baseline: the caller supplies the
+    // pre-chain vertex array (e.g. drag-down snapshot for live drags,
+    // current `mesh.vertices.dup` for the one-shot numeric path) and
+    // `applyTRS` rebuilds `mesh.vertices` from it (T → R → S, using
+    // `headlessTranslate` / `headlessRotate` / `headlessScale` as
+    // attributes).
     //
-    // Runs DIRECTLY through the kernels (not via the sub-tools) so
-    // the chain stays monotonic with respect to a single snapshot.
+    // Prologue: UNCONDITIONAL whole-baseline restore. Required because
+    // `applyTranslatePerCluster` is `+=` incremental and the symmetry
+    // mirror touches `dragSymmetry.pairOf` indices OUTSIDE
+    // `vertexIndicesToProcess`. Without the restore those side effects
+    // would accumulate across re-evaluates (the per-frame call pattern
+    // during live drag). If the lengths can ever diverge in normal
+    // flow that is itself a bug — the assert catches it loudly rather
+    // than silently skipping the restore.
+    //
+    // Pivot, falloff, and symmetry are captured ONCE at drag start
+    // (in `beginMoveDragSession`) and stored on the wrapper instance
+    // (`dragFalloff`, `dragSymmetry` are inherited fields, written
+    // once and read by `applyTRS` here). The headless numeric path
+    // (`applyHeadless()`) captures them itself before calling
+    // `applyTRS`. Either way `applyTRS` only READS them — it does NOT
+    // re-capture per call. This keeps the live-drag fast-path predicate
+    // and the per-frame evaluate looking at the SAME snapshot.
     //
     // Per-cluster (ACEN.Local) behaviour:
     //   T: when cp.active && ap.active, each vert's delta is projected
@@ -309,7 +594,7 @@ public:
     //      kernel; pivotFor() already reads per-cluster centers.
     //   S: applyScaleFromActivation already handles per-cluster via
     //      axesFor() — no change needed.
-    override bool applyHeadless() {
+    bool applyTRS(Vec3[] baseline) {
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
@@ -319,22 +604,19 @@ public:
         auto cp    = queryClusterPivots(vts);
         auto ap    = queryClusterAxes(vts);
 
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        vertexCacheDirty = true;
         buildVertexCacheIfNeeded();
         if (vertexProcessCount == 0) return false;
 
-        // Per `xfrm.transform` semantics, per-vert falloff
-        // weights are snapshotted at the pre-chain BASELINE — every
-        // T/R/S stage in the chain uses the same weight even though
-        // the geometry mutates between stages. Capturing once here
-        // (before T) gives the scale stage a stable weight source
-        // independent of the post-T/R activation positions it scales
-        // through. Translate is the first stage so its
-        // `evaluateFalloff(dragFalloff, mesh.vertices[vi], ...)` is
-        // already at baseline — no extra plumbing needed there.
-        Vec3[] baselineVerts = mesh.vertices.dup;
+        // UNCONDITIONAL whole-baseline restore. Cheap (one vector copy)
+        // and covers every cross-cluster / symmetry-mirror side effect.
+        // The assert pins the only valid relationship — if it ever
+        // trips, a caller is feeding the wrong baseline.
+        assert(baseline.length == mesh.vertices.length,
+               "applyTRS: baseline/mesh length mismatch ("
+             ~ "baseline must be a snapshot of mesh.vertices at the "
+             ~ "edit-session start)");
+        foreach (i; 0 .. mesh.vertices.length)
+            mesh.vertices[i] = baseline[i];
 
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
@@ -391,18 +673,100 @@ public:
                       || headlessScale.z != 1);
             if (hasS) {
                 Vec3[] activation = mesh.vertices.dup;
+                // Scale's per-vert falloff weight is evaluated at the
+                // pre-chain BASELINE position so the weight stays
+                // stable across the T/R stages' mutations. We pass
+                // the same baseline we just restored from.
                 applyScaleFromActivation(mesh, vertexIndicesToProcess,
                                          activation, pivot,
                                          bX, bY, bZ,
                                          headlessScale,
                                          dragFalloff, cachedVp,
                                          cp, ap, dragSymmetry, toProcess,
-                                         baselineVerts);
+                                         baseline);
             }
         }
 
         return true;
     }
+
+    // Numeric headless apply (`tool.doApply` + cross-engine deform
+    // diff). Captures falloff + symmetry from the current toolpipe state
+    // (no live-drag snapshot to read from), then delegates to
+    // `applyTRS(mesh.vertices.dup)`. Restore-to-self in the prologue is
+    // a no-op so the resulting mesh matches the legacy numeric output
+    // byte-for-byte; the golden fixtures (`test_fixture_acen_local`,
+    // `test_fixture_translate*`, `test_fixture_rotate*`,
+    // `test_fixture_scale*`) stay green.
+    override bool applyHeadless() {
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;
+        VectorStack vts;
+        buildLocalVts(subj, vts);
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        vertexCacheDirty = true;
+        return applyTRS(mesh.vertices.dup);
+    }
+
+    // Phase 4 — property-panel translate slider entry point.
+    // MoveTool.drawProperties calls this once per active slider
+    // frame with the basis-local delta the user just typed/dragged.
+    //
+    // Idempotent setup: opens a tool-session edit if one isn't yet
+    // open, AND opens a "panel drag" baseline if no gizmo drag is
+    // currently active (= panel and gizmo drag both feed the same
+    // `headlessTranslate`, the same `applyTRS` evaluate, and the
+    // same `editBaseline()` for the final undo entry).
+    //
+    // No-op when no T flag — panel sliders for X/Y/Z only apply
+    // under the Move (T) preset; Rotate / Scale presets have their
+    // own panel paths in `rotateSub.drawProperties` /
+    // `scaleSub.drawProperties`.
+    public void applyMovePanelDelta(Vec3 basisLocalDelta) {
+        if (!flagT) return;
+        if (basisLocalDelta.x == 0 && basisLocalDelta.y == 0
+            && basisLocalDelta.z == 0) return;
+
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;
+        VectorStack vts;
+        buildLocalVts(subj, vts);
+
+        // First-active-frame setup. captureFalloffForDrag /
+        // captureSymmetryForDrag overwrite `dragFalloff` /
+        // `dragSymmetry` every call; that's fine — for slider
+        // edits we want the live falloff to take effect
+        // immediately.
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        buildVertexCacheIfNeeded();
+        beginEdit();   // idempotent
+
+        // Panel-drag baseline: when no gizmo drag is open the panel
+        // is the only active write path, so we capture a fresh
+        // dragBaseline at the first-active-frame. A subsequent panel
+        // edit re-uses this baseline (length-equal check below).
+        // Refreshing the baseline at every panel frame would zero
+        // out the prior cumulative — keep stale ones.
+        if (dragBaseline.length != mesh.vertices.length) {
+            dragBaseline.length = mesh.vertices.length;
+            foreach (i; 0 .. mesh.vertices.length)
+                dragBaseline[i] = mesh.vertices[i];
+            headlessTranslate = Vec3(0, 0, 0);
+        }
+
+        headlessTranslate = headlessTranslate + basisLocalDelta;
+        applyTRS(dragBaseline);
+        needsGpuUpdate = true;
+    }
+
+    // Phase 3 — public accessor for MoveTool's `update()` to gate
+    // its ACEN-pull on whether the wrapper has an open edit
+    // session. `editIsOpen()` is protected on `TransformTool`;
+    // exposing this read-only wrapper avoids leaking the rest of
+    // the edit-session API.
+    public bool publicEditIsOpen() const { return editIsOpen(); }
 
 private:
     // Element-falloff click-pick. Reads the GPU-resolved hover state
@@ -600,6 +964,42 @@ private:
     // sub-tool for hover-preview updates.
     TransformTool activeDrag;
 
+    // Phase 3 — wrapper-owned drag state.
+    //
+    // `dragBaseline`: full-mesh snapshot captured at every mouse-down
+    // when `moveSub` consumes the click. The per-frame `applyTRS`
+    // restores ALL of `mesh.vertices` from this snapshot before
+    // re-applying the chain — required because the per-cluster
+    // translate kernel `applyTranslatePerCluster` is `+=` incremental
+    // and symmetry mirroring touches indices outside
+    // `vertexIndicesToProcess`. Reset at each drag start; the
+    // tool-session edit baseline (`editBefore` in TransformTool) is
+    // separate and lives longer (commit at deactivate / selection
+    // change).
+    Vec3[] dragBaseline;
+
+    // `moveDragFastPath`: ONCE-PER-DRAG decision (evaluated at
+    // mouse-down in `beginMoveDragSession`) for whether the per-frame
+    // motion can use the zero-CPU `gpuMatrix` translation bypass
+    // instead of `applyTRS`. The inputs are FROZEN for the drag's
+    // duration — `dragFalloff`/`dragSymmetry` captured at mouse-down,
+    // `cp.active` reflects the at-down ClusterPivots snapshot, and
+    // the moving-set selection is frozen by `update()`'s
+    // `dragAxis>=0` early-return at `transform.d`'s update. Do NOT
+    // recompute mid-drag: the predicate cannot flip during a drag.
+    bool moveDragFastPath;
+
+    // `accumulatedWorldDelta`: total world-space translate for the
+    // current drag, used to drive `gpuMatrix = translation(...)`
+    // when the fast-path is active. Reset at drag start. Tracks the
+    // SAME basis projection that `headlessTranslate` accumulates,
+    // but expanded into a world vector for the matrix; we recompute
+    // it here so the fast-path doesn't need to look at the chain's
+    // per-cluster behaviour (the predicate guarantees single-cluster
+    // when fast-path is on).
+    Vec3 accumulatedWorldDelta;
+    Vec3 accumulatedAtDragStart;
+
     // Forward the active sub-tool's gpuMatrix onto our public
     // `gpuMatrix` field — app.d reads `activeTool.gpuMatrix` to
     // drive u_model during whole-mesh drag bypass paths. Without
@@ -607,6 +1007,14 @@ private:
     // RotateTool / ScaleTool internally translate / rotate / scale
     // their GPU matrix.
     void syncGpuMatrix() {
+        // Phase 3 — when the active drag belongs to moveSub, the
+        // wrapper OWNS gpuMatrix (set by `onMouseMotion`'s fast-
+        // path branch). moveSub itself doesn't touch its own
+        // gpuMatrix any more, so forwarding its identity here
+        // would clobber the wrapper's drag-translate matrix every
+        // frame (draw / update both call syncGpuMatrix).
+        if (activeDrag is moveSub) return;
+
         if (activeDrag !is null) {
             gpuMatrix = activeDrag.gpuMatrix;
             return;
