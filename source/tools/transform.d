@@ -318,6 +318,22 @@ protected:
                       ref VectorStack vts) {
         import toolpipe.packets            : AxisPacket;
         import tools.create_common         : pickMostFacingPlane;
+        // ACEN.Local + multi-cluster: the gizmo's CENTER is anchored
+        // to cluster 0 (actcenter.d documents
+        // `state.actionCenter.center always = clusters[0]`). Orient
+        // the gizmo with cluster 0's per-cluster basis too, so a
+        // visible arrow direction matches the direction THAT cluster
+        // actually moves under per-cluster transforms. The non-
+        // primary clusters still translate along their own local
+        // frames (which the kernel reads from ClusterAxes); only the
+        // gizmo's displayed orientation changes.
+        auto cap = queryClusterAxes(vts);
+        if (cap.active) {
+            ax = cap.right[0];
+            ay = cap.up   [0];
+            az = cap.fwd  [0];
+            return;
+        }
         if (auto axisPkt = vts.get!AxisPacket()) {
             // Mapping per phase7_2_plan §6: right=axisX, up=axisY
             // (=normal in workplane mode), fwd=axisZ.
