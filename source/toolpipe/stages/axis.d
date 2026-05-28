@@ -1,7 +1,7 @@
 module toolpipe.stages.axis;
 
 import std.format : format;
-import std.math   : abs;
+import std.math   : abs, sqrt;
 
 import math    : Vec3, Viewport, cross, dot, normalize;
 import mesh    : Mesh;
@@ -451,12 +451,24 @@ private:
             //   fwd  (index 2) = the SIGNED face normal (snapped to the
             //                    nearest world axis),
             //   right(index 0) = world +X projected onto the tangent plane
-            //                    (world +Z when the normal is ~X-aligned),
+            //                    when that projection is non-degenerate
+            //                    (i.e. for Y/Z-aligned fwd). For X-aligned
+            //                    fwd the +X projection vanishes; instead
+            //                    `right` is the major principal-component
+            //                    axis of the cluster's verts in the YZ
+            //                    tangent plane. Confirmed against the
+            //                    reference engine on 5 X-aligned cluster
+            //                    shapes (Z-dominant strip, Y-dominant strip,
+            //                    L-shape, centered square, off-center
+            //                    square) plus an asymmetric 2-cluster
+            //                    Y-aligned re-capture pinning the world +X
+            //                    projection for Y/Z-aligned.
             //   up   (index 1) = fwd × right   (right-handed: right×up=fwd).
             // This puts the normal on the Z/fwd axis (not Y/up) and derives
-            // the tangent from a fixed world reference rather than the bbox
-            // extents, so opposite-facing clusters get opposite fwd/up and a
-            // shared drag axis transforms each cluster in its own frame.
+            // the tangent from a fixed world reference (or PCA, for the
+            // X-aligned fallback) rather than the bbox extents, so
+            // opposite-facing clusters get opposite fwd/up and a shared
+            // drag axis transforms each cluster in its own frame.
             float ax = abs(normalAcc.x);
             float ay = abs(normalAcc.y);
             float az = abs(normalAcc.z);
@@ -465,10 +477,74 @@ private:
                          : nIdx == 1 ? normalAcc.y
                                       : normalAcc.z) >= 0) ? 1.0f : -1.0f;
             fwd = worldAxes[nIdx] * sign;
-            // Tangent reference: world +X, or world +Z if the normal is
-            // X-aligned (so the projection isn't degenerate).
-            Vec3 refAxis = (nIdx == 0) ? worldAxes[2] : worldAxes[0];
-            right = normalize(refAxis - fwd * dot(refAxis, fwd));
+            if (nIdx == 0) {
+                // X-aligned fwd: world +X projects to zero on the YZ
+                // tangent plane, so the historical "+Z fallback" rule
+                // diverged from the reference engine on correlated
+                // (e.g. L-shaped) clusters. Use the principal-component
+                // axis of cluster verts in YZ instead; fall back to the
+                // +Z axis when the distribution is isotropic (square
+                // patches, single-cell selections, etc.) so the
+                // pre-PCA behavior is preserved for those clusters.
+                float meanY = 0, meanZ = 0;
+                int n = 0;
+                foreach (vi2, c2; clusterOf) {
+                    if (c2 != cid) continue;
+                    meanY += mesh_.vertices[vi2].y;
+                    meanZ += mesh_.vertices[vi2].z;
+                    n++;
+                }
+                if (n > 0) { meanY /= n; meanZ /= n; }
+                float covYY = 0, covZZ = 0, covYZ = 0;
+                foreach (vi2, c2; clusterOf) {
+                    if (c2 != cid) continue;
+                    float dy = mesh_.vertices[vi2].y - meanY;
+                    float dz = mesh_.vertices[vi2].z - meanZ;
+                    covYY += dy * dy;
+                    covZZ += dz * dz;
+                    covYZ += dy * dz;
+                }
+                float diff = covYY - covZZ;
+                float discr = sqrt(diff * diff + 4.0f * covYZ * covYZ);
+                if (discr < 1e-6f) {
+                    // Isotropic: fall back to world +Z (matches the
+                    // reference engine's tie behavior for centered
+                    // squares and trivially-shaped clusters).
+                    right = worldAxes[2];
+                } else {
+                    // Major-eigenvalue eigenvector of the 2x2 YZ
+                    // covariance matrix [covYY, covYZ; covYZ, covZZ].
+                    // λmax − covYY = (discr + diff) / 2; that drives
+                    // the (eY, eZ) eigenvector direction.
+                    float eY, eZ;
+                    if (abs(covYZ) > 1e-6f) {
+                        eY = covYZ;
+                        eZ = (discr + diff) * 0.5f;
+                    } else if (covYY >= covZZ) {
+                        eY = 1; eZ = 0;
+                    } else {
+                        eY = 0; eZ = 1;
+                    }
+                    float invMag = 1.0f / sqrt(eY * eY + eZ * eZ);
+                    eY *= invMag;
+                    eZ *= invMag;
+                    // Canonicalize sign: first non-fwd-aligned world
+                    // component in order Y → Z must be positive.
+                    if (abs(eY) > 1e-6f) {
+                        if (eY < 0) { eY = -eY; eZ = -eZ; }
+                    } else if (eZ < 0) {
+                        eZ = -eZ;
+                    }
+                    right = Vec3(0, eY, eZ);
+                }
+            } else {
+                // Y- or Z-aligned fwd: world +X projects cleanly onto
+                // the tangent plane. Matches the reference engine
+                // (re-confirmed by the asymmetric_local Y-handle
+                // re-capture) and keeps existing fixtures byte-stable.
+                Vec3 refAxis = worldAxes[0];
+                right = normalize(refAxis - fwd * dot(refAxis, fwd));
+            }
             up = cross(fwd, right);
             return true;
         }
