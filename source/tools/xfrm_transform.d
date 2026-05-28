@@ -218,6 +218,19 @@ public:
             }
         }
 
+        // Drain the wrapper's own deferred-upload flag. `onMouseMotion`
+        // sets it on the non-fast-path translate branch after each
+        // `applyTRS(dragBaseline)`; without flushing here the partial-
+        // selection drag would only become visible at LMB-up (the
+        // wrapper's `gpu.upload(*mesh)` in `onMouseButtonUp`). The
+        // sub-tools' own `update()` methods drain their own
+        // `needsGpuUpdate` fields, which are distinct from the wrapper's
+        // — so this flush must live here, not piggy-back on `moveSub`.
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
         // Each sub-tool's update() pulls handler.center from ACEN
         // and refreshes its gizmo orientation from AXIS. They all
         // see the same pipeline state so the three gizmos co-locate.
