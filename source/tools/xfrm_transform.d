@@ -1200,6 +1200,17 @@ private:
         // frame (draw / update both call syncGpuMatrix).
         if (activeDrag is moveSub) return;
 
+        // Same for a PRINCIPAL-AXIS rotate drag (rotDragAxisIdx 0/1/2):
+        // the wrapper owns gpuMatrix (set to `pivotRotationMatrix` in the
+        // fast-path branch of onMouseMotion), and rotateSub no longer writes
+        // its own gpuMatrix for these axes. Forwarding rotateSub's identity
+        // here every update()/draw() frame would clobber the wrapper's
+        // rotation matrix between motion events — the whole-mesh cube would
+        // flicker back to its drag-start pose. View-ring (idx == -1) still
+        // drives rotateSub.gpuMatrix and needs the sync below.
+        if (activeDrag is rotateSub
+            && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) return;
+
         if (activeDrag !is null) {
             gpuMatrix = activeDrag.gpuMatrix;
             return;
