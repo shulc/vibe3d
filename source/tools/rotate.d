@@ -68,8 +68,12 @@ public:
     // and return without mutating geometry; the wrapper drains it into its
     // `headlessRotate` and runs `applyTRS`. `axis == -1` means "nothing
     // pending" (idle / hover / view-ring frames leave it untouched).
-    int   pendingRotateAxis  = -1;
+    int   pendingRotateAxis  = -1;      // 0/1/2 principal ring, 3 view-ring
     float pendingRotateAngle = 0;       // radians, absolute since drag start
+    // View axis (camera-forward) published alongside pendingRotateAxis == 3.
+    // The wrapper drains it into headlessRotateViewAxis and applies the
+    // arbitrary-axis rotation through applyTRS. Meaningless for axes 0/1/2.
+    Vec3  pendingRotateViewAxis = Vec3(0, 0, 0);
 
     // Back-pointer to the unified `XfrmTransformTool`, wired at the wrapper's
     // `activate()`. Typed as the base class to avoid a field-level circular
@@ -93,8 +97,9 @@ public:
         origVertices = mesh.vertices.dup;
         headlessRotate = Vec3(0, 0, 0);
         // Reset the gesture-producer scratch on (re)activation.
-        pendingRotateAxis   = -1;
-        pendingRotateAngle  = 0;
+        pendingRotateAxis    = -1;
+        pendingRotateAngle   = 0;
+        pendingRotateViewAxis = Vec3(0, 0, 0);
     }
 
     // `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`
@@ -431,13 +436,16 @@ public:
             angleAccum.z += effectiveAngle * dot(viewDragAxis, handler.axisZ);
         }
 
-        // MS-3/MS-4: geometry + GPU for the principal-axis ring (0/1/2) are
+        // Geometry + GPU for EVERY ring (principal 0/1/2 AND view-ring 3) are
         // owned by the wrapper now (XfrmTransformTool.onMouseButtonUp uploads
         // and resets gpuMatrix; applyTRS already wrote the final CPU verts).
-        // This handler only commits/uploads for the EXEMPT view-ring (dragAxis
-        // == 3) legacy path; the angleAccum fold above still runs for ALL axes
-        // so the panel display total stays correct (round-3 B-survivor-1).
-        if (dragAxis == 3) {
+        // The angleAccum fold above still runs for ALL axes so the panel
+        // display total stays correct (round-3 B-survivor-1).
+        //
+        // STANDALONE fallback only (no wrapper — unit-test construction): the
+        // view-ring's legacy onMouseMotion path mutated geometry directly, so
+        // here it must commit/upload the result itself.
+        if (dragAxis == 3 && wrapperRef is null) {
             if (wholeMeshDrag) {
                 // Apply the final rotation to CPU vertices from the drag-start snapshot.
                 commitWholeMeshRotation(effectiveAngle, vts);
@@ -523,12 +531,21 @@ public:
             // paths are owned by the wrapper now for these axes.)
             pendingRotateAxis  = dragAxis;
             pendingRotateAngle = effectiveAngle;
+        } else if (dragAxis == 3 && wrapperRef !is null) {
+            // view-aligned ring under the unified wrapper: GESTURE-SCALAR
+            // PRODUCER, same contract as the principal axes. Publish the
+            // ABSOLUTE accumulated angle AND the camera-forward axis; the
+            // wrapper drains them into headlessRotateViewAxis/Angle and runs
+            // applyTRS (the single geometry-apply entry point). NO geometry
+            // mutation here. Falloff is now correct (one weighted rotation
+            // about the view axis via the kernel's dragAxisIdx == -1 path).
+            pendingRotateAxis     = 3;
+            pendingRotateAngle    = effectiveAngle;
+            pendingRotateViewAxis = dragAxisVec;
         } else {
-            // view-aligned ring (dragAxis == 3) — legacy incremental path
-            // (decision A: no UI/headless equivalent for an arbitrary screen
-            // axis, so it stays interactive-only). Whole-mesh uses the matrix
-            // bypass; partial selection mutates verts. Falloff drift on the
-            // view ring is an accepted limitation (unchanged).
+            // view-aligned ring on a STANDALONE RotateTool (no wrapper — only
+            // unit-test construction): legacy incremental path. Whole-mesh uses
+            // the matrix bypass; partial selection mutates verts.
             if (wholeMeshDrag) {
                 gpuMatrix = pivotRotationMatrix(center, dragAxisVec, effectiveAngle);
             } else if (ctrlHeld) {
