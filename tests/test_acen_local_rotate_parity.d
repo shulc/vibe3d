@@ -19,11 +19,14 @@
 //      consistent magnitude across clusters means equal rotational
 //      throw).
 //
-// The live-drag arm (ring-drag through SDL events) requires a human-
-// captured rotate drag; not present yet. Numeric path proves the
-// kernels are coherent regardless of the drag entrypoint. If a future
-// rotate-drag refactor lands, mirror P1's structure and replay a
-// captured rotate-ring drag here.
+// This file stays NUMERIC-ONLY: it pins the per-cluster ACEN.Local kernel
+// invariants above. The "drag == numeric" live-drag arm lives in
+// tests/test_rotate_drag_parity.d (MS-1 of doc/rotate_single_source_plan.md),
+// which drives a real principal-axis ring drag via synthetic SDL events
+// (drag_helpers.buildDragLog) on the tractable ACEN.Auto setting — no
+// human/reference capture needed. Rotate has no per-cluster drag bug (unlike
+// translate), so ACEN.Auto suffices for the drag==numeric contract and these
+// ACEN.Local invariants cover the per-cluster path.
 
 import std.net.curl;
 import std.json;
