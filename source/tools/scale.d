@@ -39,8 +39,6 @@ private:
     Vec3[]   activationVertices;              // mesh snapshot at tool activation (for props apply)
     Vec3     activationCenter;               // gizmo center at activation
 
-    Vec3   dragStartScaleAccum;  // scaleAccum at the start of the current drag
-
     // Phase C.3: Tool Properties state at the start of the current edit
     // session, restored by hooks on undo of the matching MeshVertexEdit.
     Vec3   preEditScaleAccum;
@@ -53,6 +51,23 @@ private:
     Vec3   headlessScale = Vec3(1, 1, 1);
 
 public:
+    // ── scale single-source plumbing (mirrors RotateTool / MoveTool) ──
+    // Gesture-scalar producer output. The principal-axis / uniform-disc /
+    // plane-circle drag branches publish the ABSOLUTE within-drag per-axis
+    // scale factor here (`dragScaleAccum`, reset to 1 at drag start) and
+    // return WITHOUT mutating geometry; the unified wrapper drains it into
+    // its `headlessScale` and runs `applyTRS`. `pendingScaleValid == false`
+    // means "nothing pending" (idle / hover frames leave it untouched).
+    bool pendingScaleValid = false;
+    Vec3 pendingScale = Vec3(1, 1, 1);   // per-axis factor, absolute since drag start
+
+    // Back-pointer to the unified `XfrmTransformTool`, wired at the
+    // wrapper's `activate()`. Typed as the base class to avoid a
+    // field-level circular import (mirrors `MoveTool` / `RotateTool`);
+    // cast to `XfrmTransformTool` locally where needed. Null for a
+    // standalone (unit-test) instance, which keeps the legacy kernel path.
+    TransformTool wrapperRef;
+
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         handler = new ScaleHandler(Vec3(0, 0, 0));
@@ -69,6 +84,9 @@ public:
         activationVertices = mesh.vertices.dup;
         activationCenter   = handler.center;
         headlessScale = Vec3(1, 1, 1);
+        // Reset the gesture-producer scratch on (re)activation.
+        pendingScaleValid = false;
+        pendingScale      = Vec3(1, 1, 1);
     }
 
     // `xfrm.transform` SX/SY/SZ surfaced for `tool.attr <id> SX 1.5`
@@ -299,16 +317,15 @@ public:
             dragScaleAccum = Vec3(1, 1, 1);
 
             buildVertexCacheIfNeeded();
+            // Capture falloff/symmetry so the standalone (no-wrapper)
+            // fast-path predicate below is meaningful; the unified path
+            // re-captures these in XfrmTransformTool.beginScaleDragSession.
+            // Phase 7.6d: symmetry mirror breaks the single-uniform scale
+            // gpuMatrix fast path the same way falloff does.
             bool falloffActive = captureFalloffForDrag(vts);
             bool symmActive    = captureSymmetryForDrag(vts);
-            // Phase 7.6d: symmetry mirror breaks the single-uniform
-            // scale gpuMatrix fast path the same way falloff does.
             wholeMeshDrag = !falloffActive && !symmActive
                 && (vertexProcessCount == cast(int)mesh.vertices.length);
-            if (wholeMeshDrag) {
-                dragStartVertices  = mesh.vertices.dup;
-                dragStartScaleAccum = scaleAccum;
-            }
             snapshotEditState();   // capture pre-drag Tool-Properties state.
             beginEdit();           // Phase C.3: snapshot pre-drag positions for undo.
             return true;
@@ -352,16 +369,12 @@ public:
         }
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
-        if (wholeMeshDrag) {
-            // Apply final scale from drag-start snapshot and upload once.
-            commitWholeMeshScale(vts);
-            gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            wholeMeshDrag = false;
-        } else if (needsGpuUpdate) {
-            uploadToGpu();
-            needsGpuUpdate = false;
-        }
+        // Single-source: the unified wrapper owns the drag geometry +
+        // final GPU upload (it rebuilt mesh.vertices through applyTRS
+        // every frame and uploads / resets gpuMatrix in
+        // XfrmTransformTool.onMouseButtonUp). This sub-tool only resets
+        // its own drag bookkeeping here; no geometry, no upload.
+        wholeMeshDrag = false;
 
         dragAxis = -1;
         propScale = scaleAccum;
@@ -405,14 +418,7 @@ public:
             if (minAccum * scaleFactor < 0.0f) scaleFactor = 0.0f;
             scaleAccum.x *= scaleFactor; scaleAccum.y *= scaleFactor; scaleAccum.z *= scaleFactor;
             dragScaleAccum.x *= scaleFactor; dragScaleAccum.y *= scaleFactor; dragScaleAccum.z *= scaleFactor;
-            if (wholeMeshDrag) {
-                float lx = scaleAccum.x / dragStartScaleAccum.x;
-                gpuMatrix = pivotScaleMatrixBasis(center,
-                    handler.axisX, handler.axisY, handler.axisZ,
-                    lx, lx, lx);
-            } else {
-                applyScaleAxesFactor(true, true, true, scaleFactor, vts);
-            }
+            publishScaleGesture();
             lastMX = e.x; lastMY = e.y;
             return true;
         }
@@ -431,16 +437,7 @@ public:
             if (scaleX) { scaleAccum.x *= scaleFactor; dragScaleAccum.x *= scaleFactor; }
             if (scaleY) { scaleAccum.y *= scaleFactor; dragScaleAccum.y *= scaleFactor; }
             if (scaleZ) { scaleAccum.z *= scaleFactor; dragScaleAccum.z *= scaleFactor; }
-            if (wholeMeshDrag) {
-                float lx = scaleX ? scaleAccum.x / dragStartScaleAccum.x : 1.0f;
-                float ly = scaleY ? scaleAccum.y / dragStartScaleAccum.y : 1.0f;
-                float lz = scaleZ ? scaleAccum.z / dragStartScaleAccum.z : 1.0f;
-                gpuMatrix = pivotScaleMatrixBasis(center,
-                    handler.axisX, handler.axisY, handler.axisZ,
-                    lx, ly, lz);
-            } else {
-                applyScaleAxesFactor(scaleX, scaleY, scaleZ, scaleFactor, vts);
-            }
+            publishScaleGesture();
             lastMX = e.x; lastMY = e.y;
             return true;
         }
@@ -465,19 +462,24 @@ public:
         if (axX) { if (scaleAccum.x * scaleFactor < 0.0f) scaleFactor = 0.0f; scaleAccum.x *= scaleFactor; dragScaleAccum.x *= scaleFactor; }
         if (axY) { if (scaleAccum.y * scaleFactor < 0.0f) scaleFactor = 0.0f; scaleAccum.y *= scaleFactor; dragScaleAccum.y *= scaleFactor; }
         if (axZ) { if (scaleAccum.z * scaleFactor < 0.0f) scaleFactor = 0.0f; scaleAccum.z *= scaleFactor; dragScaleAccum.z *= scaleFactor; }
-        if (wholeMeshDrag) {
-            float lx = axX ? scaleAccum.x / dragStartScaleAccum.x : 1.0f;
-            float ly = axY ? scaleAccum.y / dragStartScaleAccum.y : 1.0f;
-            float lz = axZ ? scaleAccum.z / dragStartScaleAccum.z : 1.0f;
-            gpuMatrix = pivotScaleMatrixBasis(center,
-                handler.axisX, handler.axisY, handler.axisZ,
-                lx, ly, lz);
-        } else {
-            applyScaleAxesFactor(axX, axY, axZ, scaleFactor, vts);
-        }
+        publishScaleGesture();
 
         lastMX = e.x; lastMY = e.y;
         return true;
+    }
+
+    // Gesture-scalar producer (scale single-source). Publishes the
+    // ABSOLUTE within-drag per-axis scale factor (`dragScaleAccum`,
+    // reset to 1 at drag start) for the unified wrapper to drain into
+    // its `headlessScale` and feed `applyTRS`. Every gizmo drag mode
+    // (single-axis arrow 0/1/2, uniform centre disc 3, plane circle
+    // 4/5/6) maps onto the same Vec3 of per-axis factors, so — unlike
+    // rotate's view-ring — there is no interactive-only exemption: ALL
+    // scale drags route through here. NO geometry mutation; the single
+    // geometry-apply entry point is `XfrmTransformTool.applyTRS`.
+    private void publishScaleGesture() {
+        pendingScale      = dragScaleAccum;
+        pendingScaleValid = true;
     }
 
     override bool drawImGui() {
@@ -572,91 +574,33 @@ private:
         return sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
     }
 
-    // Pick the pivot for vertex `vi`: per-cluster pivot if ACEN.Local
-    // has multiple disjoint clusters, else the gizmo's single center.
-    // Phase 3 of the action-center parity plan.
-    Vec3 pivotFor(size_t vi, ClusterPivots cp, Vec3 fallback) {
-        if (!cp.active) return fallback;
-        if (vi >= cp.clusterOf.length) return fallback;
-        int cid = cp.clusterOf[vi];
-        if (cid < 0 || cid >= cp.centers.length) return fallback;
-        return cp.centers[cid];
-    }
-
-    // Phase 4 of the action-center parity plan: per-cluster axes from
-    // AxisStage.local. Picks (ax, ay, az) for vertex `vi`'s cluster
-    // when the AXIS stage published per-cluster basis; otherwise
-    // leaves the caller's fallback axes untouched. cp is shared with
-    // pivotFor — same clusterOf indexing.
-    void axesFor(size_t vi, ClusterAxes ap, ClusterPivots cp,
-                 ref Vec3 ax, ref Vec3 ay, ref Vec3 az)
-    {
-        if (!ap.active) return;
-        if (vi >= cp.clusterOf.length) return;
-        int cid = cp.clusterOf[vi];
-        if (cid < 0 || cid >= cast(int)ap.right.length) return;
-        ax = ap.right[cid];
-        ay = ap.up[cid];
-        az = ap.fwd[cid];
-    }
-
-    // Apply an incremental scale factor to cached vertex indices (partial
-    // selection path). Scaling happens along the gizmo's basis — workplane
-    // axes when non-auto, world XYZ when auto.
-    //
-    // Phase 7.5: each vertex's per-axis scale is blended toward 1.0 by
-    // the falloff weight. Effective factor = 1 + (factor - 1) * weight,
-    // so weight=1 keeps the full `factor`, weight=0 leaves the vert
-    // untouched, weight=0.5 halves the deviation from 1.0.
-    void applyScaleAxesFactor(bool sx, bool sy, bool sz, float factor,
-                              ref VectorStack vts) {
-        auto cp = queryClusterPivots(vts);
-        auto ap = queryClusterAxes(vts);
-        foreach (vi; vertexIndicesToProcess) {
-            Vec3 pivot = pivotFor(vi, cp, handler.center);
-            Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
-            axesFor(vi, ap, cp, ax, ay, az);
-            float w = falloffWeight(vi);
-            float fEff = 1.0f + (factor - 1.0f) * w;
-            float fx = sx ? fEff : 1.0f;
-            float fy = sy ? fEff : 1.0f;
-            float fz = sz ? fEff : 1.0f;
-            mesh.vertices[vi] = scaleAlongBasis(mesh.vertices[vi], pivot,
-                                                ax, ay, az, fx, fy, fz);
-        }
-        // Phase 7.6d: mirror selected-vertex positions to their plane
-        // counterparts. For axis-aligned symmetry planes scaling is
-        // already mirror-equivariant (scale factors are signless), so
-        // the position-mirror pass produces the correct symmetric
-        // result without per-cluster axis flipping.
-        applySymmetryToDrag();
-        needsGpuUpdate = true;
-    }
-
-    // Apply scale from drag-start snapshot to mesh.vertices at mouseUp (whole-mesh).
-    void commitWholeMeshScale(ref VectorStack vts) {
-        if (dragStartVertices.length != mesh.vertices.length) return;
-        auto cp = queryClusterPivots(vts);
-        auto ap = queryClusterAxes(vts);
-        float lx = scaleAccum.x / dragStartScaleAccum.x;
-        float ly = scaleAccum.y / dragStartScaleAccum.y;
-        float lz = scaleAccum.z / dragStartScaleAccum.z;
-        foreach (i; 0 .. mesh.vertices.length) {
-            Vec3 pivot = pivotFor(i, cp, handler.center);
-            Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
-            axesFor(i, ap, cp, ax, ay, az);
-            mesh.vertices[i] = scaleAlongBasis(dragStartVertices[i], pivot,
-                                               ax, ay, az, lx, ly, lz);
-        }
-    }
-
     // Apply scale from activationVertices to CPU vertices only (no GPU).
     // Uses current scaleAccum for all three basis axes.
     // Phase 7.5: per-axis factor blended toward 1.0 by falloff weight,
     // evaluated at the activation-time vert position so the weight
     // doesn't drift as the slider scales the vert through the falloff
     // field.
+    //
+    // Single-source: the property-panel slider path and the kept-open-edit
+    // falloff-reapply both reach geometry through here. It now DELEGATES to
+    // the wrapper's `applyScaleAbsolute` → `applyTRS` so the "ui" (panel)
+    // path shares the SAME single geometry-apply entry point as the
+    // "handle" (drag) and "headless" (numeric) paths. The edit session +
+    // undo display hooks stay on this sub-tool (no session migration → no
+    // cross-instance commit), mirroring RotateTool.applyAbsoluteFromOrigCpuOnly.
+    //
+    // Standalone fallback (a bare ScaleTool with no wrapper — only unit-test
+    // construction): the original `applyScaleFromActivation` kernel call,
+    // numerically identical for the absolute scaleAccum apply.
     void applyScaleFromActivationCpuOnly(ref VectorStack vts) {
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            auto wrap = cast(XfrmTransformTool) wrapperRef;
+            if (wrap !is null) {
+                wrap.applyScaleAbsolute(activationVertices, scaleAccum);
+                return;
+            }
+        }
         import tools.xform_kernels : applyScaleFromActivation;
         applyScaleFromActivation(mesh, vertexIndicesToProcess,
                                  activationVertices,
