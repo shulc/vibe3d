@@ -114,6 +114,19 @@ public:
     Vec3 headlessRotate    = Vec3(0, 0, 0);
     Vec3 headlessScale     = Vec3(1, 1, 1);
 
+    // View-ring rotate slot — the arbitrary-axis counterpart of
+    // `headlessRotate`. `headlessRotate.{x,y,z}` are rotations about the
+    // basis axes bX/bY/bZ; the view-ring rotates about the camera-forward
+    // axis, which is NOT one of those three, so it cannot be expressed as
+    // three Euler angles without breaking falloff (three independently
+    // weighted basis rotations ≠ one weighted rotation about an arbitrary
+    // axis at fractional falloff weight). `applyTRS` applies this through the
+    // SAME `applyRotateIncremental` kernel with dragAxisIdx == -1 (arbitrary
+    // axis, per-vertex falloff-correct). Nonzero ONLY during a live view-ring
+    // drag; every other path (panel Euler, numeric RX/RY/RZ) keeps it zero.
+    Vec3  headlessRotateViewAxis  = Vec3(0, 0, 0);
+    float headlessRotateViewAngle = 0;   // degrees about headlessRotateViewAxis
+
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         moveSub   = new MoveTool  (mesh, gpu, editMode);
@@ -138,6 +151,8 @@ public:
         headlessTranslate = Vec3(0, 0, 0);
         headlessRotate    = Vec3(0, 0, 0);
         headlessScale     = Vec3(1, 1, 1);
+        headlessRotateViewAxis  = Vec3(0, 0, 0);
+        headlessRotateViewAngle = 0;
         if (flagT) moveSub.activate();
         if (flagR) rotateSub.activate();
         if (flagS) scaleSub.activate();
@@ -339,11 +354,12 @@ public:
             activeDrag = moveSub;  return true;
         }
         if (flagR && rotateSub.onMouseButtonDown(e, vts)) {
-            // MS-4: principal-axis ring (0/1/2) → wrapper owns geometry via
-            // applyTRS (capture the drag state). View-ring (3) → legacy
-            // incremental path inside rotateSub (decision A). A relocate /
-            // no-axis click (dragAxis == -1) starts no drag session.
-            if (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2) {
+            // Principal-axis ring (0/1/2) AND view-ring (3) → wrapper owns
+            // geometry via applyTRS (capture the drag state). Principal axes
+            // drain into headlessRotate (Euler); the view-ring drains into the
+            // headlessRotateViewAxis/Angle slot. A relocate / no-axis click
+            // (dragAxis == -1) starts no drag session.
+            if (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3) {
                 beginRotateDragSession(vts);
             } else {
                 rotDragAxisIdx = -1;
@@ -497,11 +513,13 @@ public:
             dragBaseline[i] = mesh.vertices[i];
 
         headlessRotate = Vec3(0, 0, 0);   // zero ALL axes (S1)
+        headlessRotateViewAxis  = Vec3(0, 0, 0);
+        headlessRotateViewAngle = 0;
 
-        // Principal-axis ring index (0/1/2). The caller (MS-4) only invokes
-        // this session for principal-axis drags; view-ring (3) stays legacy
-        // and never reaches here, so clamp anything else to -1 defensively.
-        rotDragAxisIdx = (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2)
+        // Ring index: 0/1/2 = principal (Euler slot), 3 = view-ring (axis-angle
+        // slot). Both are wrapper-owned now; clamp anything else to -1
+        // defensively.
+        rotDragAxisIdx = (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3)
                        ? rotateSub.dragAxis : -1;
 
         auto cp = queryClusterPivots(vts);
@@ -622,12 +640,12 @@ public:
             }
         } else if (activeDrag is rotateSub) {
             r = rotateSub.onMouseMotion(e, vts);
-            // MS-4: drain the PRINCIPAL-AXIS gesture scalar
-            // (rotDragAxisIdx 0/1/2) into headlessRotate and run the single
-            // applyTRS evaluate. View-ring (rotDragAxisIdx == -1) is the
-            // legacy path: rotateSub already mutated geometry / set its own
-            // gpuMatrix, so we just let syncGpuMatrix forward it below.
-            if (r && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
+            // Drain the gesture scalar rotateSub published this motion into the
+            // wrapper-owned rotate state and run the single applyTRS evaluate.
+            // Principal axes (0/1/2) → headlessRotate (Euler about bX/bY/bZ).
+            // View-ring (3) → headlessRotateViewAxis/Angle (axis-angle about the
+            // camera-forward axis). Both share applyTRS + the fast-path bypass.
+            if (r && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 3) {
                 int   ax  = rotateSub.pendingRotateAxis;
                 float ang = rotateSub.pendingRotateAngle;
                 rotateSub.pendingRotateAxis = -1;
@@ -637,6 +655,8 @@ public:
                     // Absolute-from-baseline: only the dragged axis is set;
                     // beginRotateDragSession zeroed all three (S1).
                     headlessRotate = Vec3(0, 0, 0);
+                    headlessRotateViewAxis  = Vec3(0, 0, 0);
+                    headlessRotateViewAngle = 0;
                     if      (ax == 0) headlessRotate.x = deg;
                     else if (ax == 1) headlessRotate.y = deg;
                     else              headlessRotate.z = deg;
@@ -653,6 +673,23 @@ public:
                                    : ax == 1 ? rotateSub.handler.axisY
                                              : rotateSub.handler.axisZ;
                         gpuMatrix = pivotRotationMatrix(pivot, axisV, ang);
+                    } else {
+                        needsGpuUpdate = true;
+                    }
+                } else if (ax == 3) {
+                    import std.math : PI;
+                    float deg = ang * 180.0f / cast(float)PI;
+                    // Absolute-from-baseline: the running view-axis angle this
+                    // drag has accumulated, about the camera-forward axis the
+                    // producer captured. Euler slot stays zeroed (S1).
+                    headlessRotate = Vec3(0, 0, 0);
+                    headlessRotateViewAxis  = rotateSub.pendingRotateViewAxis;
+                    headlessRotateViewAngle = deg;
+                    applyTRS(dragBaseline);
+                    if (rotDragFastPath) {
+                        Vec3 pivot = rotateSub.handler.center;
+                        gpuMatrix = pivotRotationMatrix(
+                            pivot, headlessRotateViewAxis, ang);
                     } else {
                         needsGpuUpdate = true;
                     }
@@ -705,13 +742,13 @@ public:
         // the visible mesh lags behind the sub-tool's CPU vertices.
         //
         // The wrapper OWNS gpuMatrix when it drives the geometry itself —
-        // moveSub drag, OR a principal-axis rotateSub drag (it wrote
-        // gpuMatrix in the fast-path branch / left it identity otherwise).
-        // Forwarding the sub-tool's identity gpuMatrix in those cases would
-        // clobber the wrapper's. View-ring rotate + scale still need the sync.
+        // moveSub drag, OR any rotateSub ring drag (principal 0/1/2 or
+        // view-ring 3 — it wrote gpuMatrix in the fast-path branch / left it
+        // identity otherwise), OR a scale drag. Forwarding the sub-tool's
+        // identity gpuMatrix in those cases would clobber the wrapper's.
         bool wrapperOwnsGpu = (activeDrag is moveSub)
             || (activeDrag is rotateSub
-                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2)
+                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 3)
             || (activeDrag is scaleSub && scaleDragActive);
         if (!wrapperOwnsGpu)
             syncGpuMatrix();
@@ -722,8 +759,9 @@ public:
         bool r;
         bool wasMoveDrag = (activeDrag is moveSub);
         // Capture BEFORE rotateSub.onMouseButtonUp resets its dragAxis to -1.
-        bool rotPrincipal = (activeDrag is rotateSub)
-            && rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2;
+        // Both principal (0/1/2) and view-ring (3) drags are wrapper-owned.
+        bool rotWrapperOwned = (activeDrag is rotateSub)
+            && rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3;
         bool wasScaleDrag = (activeDrag is scaleSub) && scaleDragActive;
         if (activeDrag !is null) {
             r = activeDrag.onMouseButtonUp(e, vts);
@@ -760,17 +798,21 @@ public:
                 commitEdit("Move");
         }
 
-        // MS-4: principal-axis rotate drag — wrapper owns the final upload +
-        // gpuMatrix reset (CPU verts were rebuilt by applyTRS every frame, so
-        // this uploads the already-rotated mesh; no stale-CPU, B3). The edit
-        // SESSION is still committed by rotateSub (its deactivate / update
-        // selection-change guard) until MS-5 migrates it to the wrapper.
-        if (rotPrincipal && e.button == SDL_BUTTON_LEFT) {
+        // Rotate drag (principal axes OR view-ring) — wrapper owns the final
+        // upload + gpuMatrix reset (CPU verts were rebuilt by applyTRS every
+        // frame, so this uploads the already-rotated mesh; no stale-CPU, B3).
+        // Zero the view-ring slot so a later panel/falloff re-apply (which
+        // drives applyTRS with the Euler slot) does NOT re-apply this drag's
+        // view rotation on top. The edit SESSION is still committed by
+        // rotateSub (its deactivate / update selection-change guard).
+        if (rotWrapperOwned && e.button == SDL_BUTTON_LEFT) {
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate  = false;
             rotDragFastPath = false;
             rotDragAxisIdx  = -1;
+            headlessRotateViewAxis  = Vec3(0, 0, 0);
+            headlessRotateViewAngle = 0;
         }
 
         // Scale single-source — wrapper owns the final upload + gpuMatrix
@@ -786,10 +828,9 @@ public:
             scaleDragActive   = false;
         }
 
-        // View-ring rotate drags drive their own sub-tool gpuMatrix;
-        // forward it. moveSub + principal-axis rotate + scale are
-        // wrapper-owned.
-        if (!wasMoveDrag && !rotPrincipal && !wasScaleDrag)
+        // moveSub + all rotate rings + scale are wrapper-owned. Anything else
+        // (a sub-tool driving its own gpuMatrix) still needs the forward.
+        if (!wasMoveDrag && !rotWrapperOwned && !wasScaleDrag)
             syncGpuMatrix();
         return r;
     }
@@ -900,6 +941,25 @@ public:
                                        headlessRotate.z * cast(float)(PI / 180.0),
                                        dragFalloff, cachedVp,
                                        cp, ap, dragSymmetry, toProcess);
+
+            // View-ring rotation: a single rotation about the arbitrary
+            // camera-forward axis. dragAxisIdx == -1 makes the kernel use the
+            // axis as-is (no per-cluster substitution) and apply the SAME
+            // per-vertex falloff-weighted Rodrigues rotation as the principal
+            // axes — correct under falloff (one weighted rotation about one
+            // axis, not three weighted Euler rotations). Per-cluster axes are
+            // intentionally ignored here: a view rotation is global by
+            // definition. Nonzero only during a live view-ring drag.
+            bool hasViewRot = headlessRotateViewAngle != 0
+                && (headlessRotateViewAxis.x != 0
+                 || headlessRotateViewAxis.y != 0
+                 || headlessRotateViewAxis.z != 0);
+            if (hasViewRot)
+                applyRotateIncremental(mesh, vertexIndicesToProcess,
+                                       pivot, headlessRotateViewAxis, -1,
+                                       headlessRotateViewAngle * cast(float)(PI / 180.0),
+                                       dragFalloff, cachedVp,
+                                       cp, ap, dragSymmetry, toProcess);
         }
 
         if (flagS) {
@@ -955,6 +1015,10 @@ public:
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
+        // Euler-slot path: the view-ring slot must be clear so a prior
+        // view-ring drag's axis-angle does not re-apply on top.
+        headlessRotateViewAxis  = Vec3(0, 0, 0);
+        headlessRotateViewAngle = 0;
         applyTRS(baseline);
     }
 
@@ -1003,6 +1067,10 @@ public:
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
         vertexCacheDirty = true;
+        // Numeric path uses RX/RY/RZ (Euler slot) only — the view-ring slot
+        // has no numeric attr, so keep it clear.
+        headlessRotateViewAxis  = Vec3(0, 0, 0);
+        headlessRotateViewAngle = 0;
         return applyTRS(mesh.vertices.dup);
     }
 
