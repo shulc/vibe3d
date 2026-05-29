@@ -1,0 +1,145 @@
+{
+  "name": "rotate_xfrm_reference",
+  "description": "Cross-engine pin for the unified xfrm.transform rotate apply (applyTRS). Reuses the frozen reference golden from a real rotate-ring handle capture (top face, +Y axis, 60 deg), but applies it through the xfrm.transform Euler path (tool.set rotate / tool.attr rotate RY / tool.doApply) instead of the rotate_about primitive \u2014 so it exercises the REFACTORED geometry path against the reference engine output. Only the Y-axis case is reproducible this way: a Y rotation is invariant to the pivot Y-component, so ACEN.Auto (top-face centroid 0,0.5,0) yields the same result as the captured origin pivot. Combined with test_rotate_drag_parity (drag==numeric==applyTRS) this gives drag==reference transitively.",
+  "source": "Frozen reference capture (regenerate via tools/local/fixture_gen/rotate_drag).",
+  "tolerance": 0.001,
+  "input": [
+    {
+      "reset": true
+    },
+    {
+      "select": {
+        "mode": "vertices",
+        "coords": [
+          [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ]
+        ]
+      }
+    }
+  ],
+  "op": [
+    {
+      "rotate": [
+        0.0,
+        60.0,
+        0.0
+      ]
+    }
+  ],
+  "expected_pairs": [
+    {
+      "before": [
+        -0.5,
+        -0.5,
+        -0.5
+      ],
+      "after": [
+        -0.5,
+        -0.5,
+        -0.5
+      ]
+    },
+    {
+      "before": [
+        0.5,
+        -0.5,
+        -0.5
+      ],
+      "after": [
+        0.5,
+        -0.5,
+        -0.5
+      ]
+    },
+    {
+      "before": [
+        0.5,
+        -0.5,
+        0.5
+      ],
+      "after": [
+        0.5,
+        -0.5,
+        0.5
+      ]
+    },
+    {
+      "before": [
+        -0.5,
+        -0.5,
+        0.5
+      ],
+      "after": [
+        -0.5,
+        -0.5,
+        0.5
+      ]
+    },
+    {
+      "before": [
+        -0.5,
+        0.5,
+        -0.5
+      ],
+      "after": [
+        -0.683013,
+        0.5,
+        0.183013
+      ]
+    },
+    {
+      "before": [
+        0.5,
+        0.5,
+        -0.5
+      ],
+      "after": [
+        -0.183013,
+        0.5,
+        -0.683013
+      ]
+    },
+    {
+      "before": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "after": [
+        0.683013,
+        0.5,
+        -0.183013
+      ]
+    },
+    {
+      "before": [
+        -0.5,
+        0.5,
+        0.5
+      ],
+      "after": [
+        0.183013,
+        0.5,
+        0.683013
+      ]
+    }
+  ]
+}
