@@ -73,7 +73,8 @@ import bindbc.sdl;
 import operator : VectorStack;
 
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
-               closestPointOnSegmentToRay, translationMatrix, dot;
+               closestPointOnSegmentToRay, translationMatrix,
+               pivotRotationMatrix, dot;
 import editmode : EditMode;
 import mesh;
 import shader : Shader;
@@ -141,9 +142,12 @@ public:
         if (flagR) rotateSub.activate();
         if (flagS) scaleSub.activate();
         moveSub.wrapperRef = this;
+        rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         activeDrag                = null;
         dragBaseline.length       = 0;
         moveDragFastPath          = false;
+        rotDragFastPath           = false;
+        rotDragAxisIdx            = -1;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
         lastSelectionHash         = uint.max;
@@ -332,6 +336,15 @@ public:
             activeDrag = moveSub;  return true;
         }
         if (flagR && rotateSub.onMouseButtonDown(e, vts)) {
+            // MS-4: principal-axis ring (0/1/2) → wrapper owns geometry via
+            // applyTRS (capture the drag state). View-ring (3) → legacy
+            // incremental path inside rotateSub (decision A). A relocate /
+            // no-axis click (dragAxis == -1) starts no drag session.
+            if (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2) {
+                beginRotateDragSession(vts);
+            } else {
+                rotDragAxisIdx = -1;
+            }
             activeDrag = rotateSub; return true;
         }
         if (flagS && scaleSub.onMouseButtonDown(e, vts)) {
@@ -436,6 +449,58 @@ public:
                             == cast(int)mesh.vertices.length);
     }
 
+    // MS-2 (rotate single-source) — rotate counterpart of
+    // `beginMoveDragSession`. Captures the per-drag state that the rotate
+    // `applyTRS` path + the fast-path bypass read from. Runs once per drag,
+    // right after `rotateSub.onMouseButtonDown` has settled the sub-tool's
+    // `dragAxis` / `cachedVp`. INERT until MS-4 wires it into the wrapper's
+    // mouse-down dispatch.
+    //
+    //   - `dragFalloff`/`dragSymmetry`: captured ONCE here so per-frame
+    //     re-evaluates see a stable packet.
+    //   - per-SESSION display snapshot (round-3 S-survivor-1): only on the
+    //     first edit-open frame, so undo peels back the whole tool session.
+    //   - `dragBaseline`: full-mesh dup AFTER any prior panel rotation is
+    //     already baked into `mesh.vertices` (S1 composition).
+    //   - `headlessRotate`: zeroed for ALL axes (move pattern; S1 — NOT
+    //     per-axis, which would double-apply a prior panel rotation).
+    //   - `rotDragAxisIdx` / `rotDragFastPath`: dragged ring index + the
+    //     once-per-drag GPU-skip predicate.
+    void beginRotateDragSession(ref VectorStack vts) {
+        buildVertexCacheIfNeeded();
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+
+        // NOTE: the rotate edit SESSION is owned by `rotateSub` (its
+        // `onMouseButtonDown` calls `beginEdit`, and its `deactivate`/`update`
+        // commit "Rotate" with the display-state undo hooks). The wrapper here
+        // captures only the GEOMETRY drag state (`dragBaseline`/falloff/
+        // symmetry/fast-path); the geometry is applied through `applyTRS`. The
+        // session deliberately stays on `rotateSub` (MS-5 decision) — keeping
+        // it there avoids the cross-instance commit problem entirely.
+
+        dragBaseline.length = mesh.vertices.length;
+        foreach (i; 0 .. mesh.vertices.length)
+            dragBaseline[i] = mesh.vertices[i];
+
+        headlessRotate = Vec3(0, 0, 0);   // zero ALL axes (S1)
+
+        // Principal-axis ring index (0/1/2). The caller (MS-4) only invokes
+        // this session for principal-axis drags; view-ring (3) stays legacy
+        // and never reaches here, so clamp anything else to -1 defensively.
+        rotDragAxisIdx = (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2)
+                       ? rotateSub.dragAxis : -1;
+
+        auto cp = queryClusterPivots(vts);
+        // Same once-per-drag freeze contract as `moveDragFastPath`; see its
+        // anti-relocation note. Do NOT recompute mid-drag.
+        rotDragFastPath = !dragFalloff.enabled
+                       && !dragSymmetry.enabled
+                       && !cp.active
+                       && (vertexProcessCount
+                           == cast(int)mesh.vertices.length);
+    }
+
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         bool r;
         if (activeDrag is moveSub) {
@@ -501,6 +566,44 @@ public:
                 moveSub.handler.setPosition(
                     moveSub.handler.center + worldStep);
             }
+        } else if (activeDrag is rotateSub) {
+            r = rotateSub.onMouseMotion(e, vts);
+            // MS-4: drain the PRINCIPAL-AXIS gesture scalar
+            // (rotDragAxisIdx 0/1/2) into headlessRotate and run the single
+            // applyTRS evaluate. View-ring (rotDragAxisIdx == -1) is the
+            // legacy path: rotateSub already mutated geometry / set its own
+            // gpuMatrix, so we just let syncGpuMatrix forward it below.
+            if (r && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
+                int   ax  = rotateSub.pendingRotateAxis;
+                float ang = rotateSub.pendingRotateAngle;
+                rotateSub.pendingRotateAxis = -1;
+                if (ax >= 0 && ax <= 2) {
+                    import std.math : PI;
+                    float deg = ang * 180.0f / cast(float)PI;
+                    // Absolute-from-baseline: only the dragged axis is set;
+                    // beginRotateDragSession zeroed all three (S1).
+                    headlessRotate = Vec3(0, 0, 0);
+                    if      (ax == 0) headlessRotate.x = deg;
+                    else if (ax == 1) headlessRotate.y = deg;
+                    else              headlessRotate.z = deg;
+
+                    // CPU is rebuilt from the drag baseline EVERY frame so it
+                    // is never stale at mouseUp (round-1/3 B3; landed-move
+                    // parity). The fast-path then merely skips the per-frame
+                    // vertex re-upload — the GPU keeps the baseline buffer and
+                    // u_model = pivotRotationMatrix bridges the rotation.
+                    applyTRS(dragBaseline);
+                    if (rotDragFastPath) {
+                        Vec3 pivot = rotateSub.handler.center;
+                        Vec3 axisV = ax == 0 ? rotateSub.handler.axisX
+                                   : ax == 1 ? rotateSub.handler.axisY
+                                             : rotateSub.handler.axisZ;
+                        gpuMatrix = pivotRotationMatrix(pivot, axisV, ang);
+                    } else {
+                        needsGpuUpdate = true;
+                    }
+                }
+            }
         } else if (activeDrag !is null) {
             r = activeDrag.onMouseMotion(e, vts);
         }
@@ -519,12 +622,15 @@ public:
         // forwarding the wrapper's gpuMatrix stays at identity and
         // the visible mesh lags behind the sub-tool's CPU vertices.
         //
-        // Note: when `activeDrag is moveSub`, the wrapper already
-        // wrote `gpuMatrix` in the fast-path branch above; the
-        // syncGpuMatrix call below would overwrite it with
-        // moveSub.gpuMatrix (identity now). Skip the sync in that
-        // case.
-        if (!(activeDrag is moveSub))
+        // The wrapper OWNS gpuMatrix when it drives the geometry itself —
+        // moveSub drag, OR a principal-axis rotateSub drag (it wrote
+        // gpuMatrix in the fast-path branch / left it identity otherwise).
+        // Forwarding the sub-tool's identity gpuMatrix in those cases would
+        // clobber the wrapper's. View-ring rotate + scale still need the sync.
+        bool wrapperOwnsGpu = (activeDrag is moveSub)
+            || (activeDrag is rotateSub
+                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2);
+        if (!wrapperOwnsGpu)
             syncGpuMatrix();
         return r;
     }
@@ -532,6 +638,9 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         bool r;
         bool wasMoveDrag = (activeDrag is moveSub);
+        // Capture BEFORE rotateSub.onMouseButtonUp resets its dragAxis to -1.
+        bool rotPrincipal = (activeDrag is rotateSub)
+            && rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2;
         if (activeDrag !is null) {
             r = activeDrag.onMouseButtonUp(e, vts);
             activeDrag = null;
@@ -567,7 +676,22 @@ public:
                 commitEdit("Move");
         }
 
-        if (!wasMoveDrag)
+        // MS-4: principal-axis rotate drag — wrapper owns the final upload +
+        // gpuMatrix reset (CPU verts were rebuilt by applyTRS every frame, so
+        // this uploads the already-rotated mesh; no stale-CPU, B3). The edit
+        // SESSION is still committed by rotateSub (its deactivate / update
+        // selection-change guard) until MS-5 migrates it to the wrapper.
+        if (rotPrincipal && e.button == SDL_BUTTON_LEFT) {
+            gpu.upload(*mesh);
+            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            needsGpuUpdate  = false;
+            rotDragFastPath = false;
+            rotDragAxisIdx  = -1;
+        }
+
+        // View-ring rotate + scale drags drive their own sub-tool gpuMatrix;
+        // forward it. moveSub + principal-axis rotate are wrapper-owned.
+        if (!wasMoveDrag && !rotPrincipal)
             syncGpuMatrix();
         return r;
     }
@@ -703,6 +827,39 @@ public:
         return true;
     }
 
+    // MS-5 (rotate single-source) — ABSOLUTE-from-origVertices rotate apply,
+    // routed through the single `applyTRS` evaluate. `RotateTool`'s panel
+    // slider path and its kept-open-edit falloff-reapply both call
+    // `RotateTool.applyAbsoluteFromOrigCpuOnly`, which now delegates here so
+    // the PANEL ("ui") and the live-drag / numeric ("handle" / "headless")
+    // paths share ONE geometry-apply entry point. `angleAccumRad` is the
+    // cumulative per-basis-axis Euler rotation (radians) the panel/display
+    // maintains; we convert to the `headlessRotate` degree attribute and run
+    // `applyTRS(baseline)` with `baseline == origVertices` (the absolute
+    // rebuild baseline). Falloff/symmetry are (re)captured from the live
+    // toolpipe so a mid-edit falloff change takes effect, matching the prior
+    // `applyRotateFromOrig` behaviour.
+    //
+    // The edit SESSION stays owned by `RotateTool` (its `beginEdit` /
+    // `commitEdit` with the angleAccum/propDeg undo hooks) — only the
+    // GEOMETRY is unified here. This sidesteps the per-instance edit-snapshot
+    // ownership problem (would-be B2) entirely: no session migrates to the
+    // wrapper, so there is no cross-instance commit.
+    void applyRotateAbsolute(Vec3[] baseline, Vec3 angleAccumRad) {
+        import std.math : PI;
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;
+        VectorStack vts;
+        buildLocalVts(subj, vts);
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        vertexCacheDirty = true;   // wrapper cache may be stale (panel path)
+        headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
+                              angleAccumRad.y * 180.0f / cast(float)PI,
+                              angleAccumRad.z * 180.0f / cast(float)PI);
+        applyTRS(baseline);
+    }
+
     // Numeric headless apply (`tool.doApply` + cross-engine deform
     // diff). Captures falloff + symmetry from the current toolpipe state
     // (no live-drag snapshot to read from), then delegates to
@@ -773,6 +930,11 @@ public:
         applyTRS(dragBaseline);
         needsGpuUpdate = true;
     }
+
+    // (MS-2's `commitRotateEdit` / `applyRotatePanelDelta` scaffolding was
+    // removed in MS-8: the simpler MS-5 design keeps the rotate edit session
+    // on `RotateTool` and unifies only the GEOMETRY via `applyRotateAbsolute`
+    // → `applyTRS`, so no wrapper-side commit / panel-delta path is needed.)
 
     // Phase 3 — public accessor for MoveTool's `update()` to gate
     // its ACEN-pull on whether the wrapper has an open edit
@@ -1001,6 +1163,16 @@ private:
     // `dragAxis>=0` early-return at `transform.d`'s update. Do NOT
     // recompute mid-drag: the predicate cannot flip during a drag.
     bool moveDragFastPath;
+
+    // MS-2 (rotate single-source): rotate counterpart of `moveDragFastPath`.
+    // `rotDragFastPath` is the ONCE-PER-DRAG decision (evaluated in
+    // `beginRotateDragSession`) for whether the whole-mesh / no-falloff /
+    // no-symmetry / non-per-cluster principal-axis ring drag can use the
+    // zero-CPU `gpuMatrix = pivotRotationMatrix(...)` GPU-skip bypass.
+    // `rotDragAxisIdx` is the dragged ring's basis-axis index (0/1/2)
+    // captured at drag start; view-ring stays legacy/exempt and leaves it -1.
+    bool rotDragFastPath;
+    int  rotDragAxisIdx = -1;
 
     // `accumulatedWorldDelta`: total world-space translate for the
     // current drag, used to drive `gpuMatrix = translation(...)`
