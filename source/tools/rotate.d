@@ -59,6 +59,24 @@ private:
     Vec3     headlessRotate;
 
 public:
+    // ── rotate single-source plumbing (MS-2; doc/rotate_single_source_plan.md) ──
+    // Inert until MS-3/MS-4/MS-5 switch the call sites; declared here so the
+    // wrapper-side scaffolding compiles against stable members.
+    //
+    // Gesture-scalar producer output. MS-3 makes the principal-axis drag
+    // branch (axis 0/1/2) publish the ABSOLUTE accumulated ring angle here
+    // and return without mutating geometry; the wrapper drains it into its
+    // `headlessRotate` and runs `applyTRS`. `axis == -1` means "nothing
+    // pending" (idle / hover / view-ring frames leave it untouched).
+    int   pendingRotateAxis  = -1;
+    float pendingRotateAngle = 0;       // radians, absolute since drag start
+
+    // Back-pointer to the unified `XfrmTransformTool`, wired at the wrapper's
+    // `activate()`. Typed as the base class to avoid a field-level circular
+    // import (mirrors `MoveTool.wrapperRef`); cast to `XfrmTransformTool`
+    // locally where needed. Null for any standalone (unit-test) instance.
+    TransformTool wrapperRef;
+
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         handler = new RotateHandler(Vec3(0, 0, 0));
@@ -74,6 +92,9 @@ public:
         propDeg = Vec3(0, 0, 0);
         origVertices = mesh.vertices.dup;
         headlessRotate = Vec3(0, 0, 0);
+        // Reset the gesture-producer scratch on (re)activation.
+        pendingRotateAxis   = -1;
+        pendingRotateAngle  = 0;
     }
 
     // `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`
@@ -410,16 +431,24 @@ public:
             angleAccum.z += effectiveAngle * dot(viewDragAxis, handler.axisZ);
         }
 
-        if (wholeMeshDrag) {
-            // Apply the final rotation to CPU vertices from the drag-start snapshot.
-            commitWholeMeshRotation(effectiveAngle, vts);
-            gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            wholeMeshDrag = false;
-        } else if (needsGpuUpdate) {
-            uploadToGpu();
-            needsGpuUpdate = false;
+        // MS-3/MS-4: geometry + GPU for the principal-axis ring (0/1/2) are
+        // owned by the wrapper now (XfrmTransformTool.onMouseButtonUp uploads
+        // and resets gpuMatrix; applyTRS already wrote the final CPU verts).
+        // This handler only commits/uploads for the EXEMPT view-ring (dragAxis
+        // == 3) legacy path; the angleAccum fold above still runs for ALL axes
+        // so the panel display total stays correct (round-3 B-survivor-1).
+        if (dragAxis == 3) {
+            if (wholeMeshDrag) {
+                // Apply the final rotation to CPU vertices from the drag-start snapshot.
+                commitWholeMeshRotation(effectiveAngle, vts);
+                gpu.upload(*mesh);
+                gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            } else if (needsGpuUpdate) {
+                uploadToGpu();
+                needsGpuUpdate = false;
+            }
         }
+        wholeMeshDrag = false;
 
         dragAxis   = -1;
         totalAngle = 0;
@@ -483,30 +512,26 @@ public:
             lastSnappedAngle = round(totalAngle / (PI / 12.0f)) * (PI / 12.0f);
         }
 
-        if (wholeMeshDrag) {
-            // Whole mesh: no CPU vertex work, no GPU upload — just update the matrix.
-            gpuMatrix = pivotRotationMatrix(center, dragAxisVec, effectiveAngle);
-        } else if (dragAxis >= 0 && dragAxis <= 2) {
-            // Partial selection, principal-axis ring (X/Y/Z):
-            // Route through the stable from-orig path to avoid falloff drift
-            // and per-frame radius-pinch compounding with the matrix-lerp kernel.
-            // Set the full accumulated effectiveAngle on the dragged axis
-            // (zero the others) and rebuild from origVertices with weight
-            // evaluated at the ORIGINAL positions — no drift, no compounding.
-            Vec3 savedAccum = angleAccum;
-            angleAccum = Vec3(0, 0, 0);
-            if (dragAxis == 0) angleAccum.x = effectiveAngle;
-            else if (dragAxis == 1) angleAccum.y = effectiveAngle;
-            else angleAccum.z = effectiveAngle;
-            applyAbsoluteFromOrigCpuOnly(vts);
-            angleAccum = savedAccum;
+        if (dragAxis >= 0 && dragAxis <= 2) {
+            // MS-3 (rotate single-source): the principal-axis ring is now a
+            // GESTURE-SCALAR PRODUCER. Publish the ABSOLUTE accumulated angle
+            // for the dragged ring; the unified wrapper drains it into its
+            // `headlessRotate` and runs `applyTRS` (matrix bypass for the
+            // whole-mesh fast path). NO geometry mutation here — the single
+            // geometry-apply entry point is `XfrmTransformTool.applyTRS`.
+            // (The legacy whole-mesh `gpuMatrix` and `applyAbsoluteFromOrigCpuOnly`
+            // paths are owned by the wrapper now for these axes.)
+            pendingRotateAxis  = dragAxis;
+            pendingRotateAngle = effectiveAngle;
         } else {
-            // Partial selection, view-aligned ring (dragAxis == 3):
-            // applyRotateFromOrig's per-axis basis (axisX/Y/Z) cannot
-            // represent an arbitrary screen-normal axis, so we keep the
-            // incremental path here. Falloff drift on the view ring is an
-            // accepted limitation (same behaviour as before this change).
-            if (ctrlHeld) {
+            // view-aligned ring (dragAxis == 3) — legacy incremental path
+            // (decision A: no UI/headless equivalent for an arbitrary screen
+            // axis, so it stays interactive-only). Whole-mesh uses the matrix
+            // bypass; partial selection mutates verts. Falloff drift on the
+            // view ring is an accepted limitation (unchanged).
+            if (wholeMeshDrag) {
+                gpuMatrix = pivotRotationMatrix(center, dragAxisVec, effectiveAngle);
+            } else if (ctrlHeld) {
                 import std.math : round, PI;
                 enum float step2 = PI / 12.0f;
                 float prevSnapped = round((totalAngle - angle) / step2) * step2;
@@ -667,12 +692,27 @@ private:
     // axis1/normal/axis2 when non-auto, world XYZ when auto). With per-cluster
     // basis active, each cluster uses its own (right, up, fwd).
     //
-    // Phase 7.5: each per-axis angle is scaled by the falloff weight,
-    // evaluated at the ORIGINAL vert position (origVertices[i]). Using
-    // the original position keeps the weight stable across the slider
-    // drag — otherwise the vert "drifts" through the falloff field as
-    // it rotates.
+    // MS-5 (rotate single-source): the panel slider path and the kept-open-edit
+    // falloff-reapply both reach geometry through here. It now DELEGATES to the
+    // wrapper's `applyRotateAbsolute` → `applyTRS` so the "ui" (panel) path
+    // shares the SAME single geometry-apply entry point as the "handle" (drag)
+    // and "headless" (numeric) paths. The edit session + undo display hooks
+    // stay on this sub-tool (no session migration → no cross-instance commit).
+    //
+    // Standalone fallback (a bare RotateTool with no wrapper — only unit-test
+    // construction): the original `applyRotateFromOrig` kernel call. For a
+    // single non-zero axis the two are numerically identical (weight at the
+    // baseline position; per-cluster via pivotFor/axisFor), so behaviour is
+    // preserved either way.
     void applyAbsoluteFromOrigCpuOnly(ref VectorStack vts) {
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            auto wrap = cast(XfrmTransformTool) wrapperRef;
+            if (wrap !is null) {
+                wrap.applyRotateAbsolute(origVertices, angleAccum);
+                return;
+            }
+        }
         import tools.xform_kernels : applyRotateFromOrig;
         applyRotateFromOrig(mesh, origVertices, toProcess,
                             handler.center,
