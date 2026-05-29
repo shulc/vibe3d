@@ -74,7 +74,7 @@ import operator : VectorStack;
 
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
-               pivotRotationMatrix, dot;
+               pivotRotationMatrix, pivotScaleMatrixBasis, dot;
 import editmode : EditMode;
 import mesh;
 import shader : Shader;
@@ -143,11 +143,14 @@ public:
         if (flagS) scaleSub.activate();
         moveSub.wrapperRef = this;
         rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
+        scaleSub.wrapperRef = this;    // scale single-source plumbing
         activeDrag                = null;
         dragBaseline.length       = 0;
         moveDragFastPath          = false;
         rotDragFastPath           = false;
         rotDragAxisIdx            = -1;
+        scaleDragFastPath         = false;
+        scaleDragActive           = false;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
         lastSelectionHash         = uint.max;
@@ -348,6 +351,16 @@ public:
             activeDrag = rotateSub; return true;
         }
         if (flagS && scaleSub.onMouseButtonDown(e, vts)) {
+            // Scale single-source: a real gizmo drag (dragAxis >= 0 — any
+            // of single-axis 0/1/2, uniform disc 3, plane circle 4/5/6)
+            // → wrapper owns geometry via applyTRS (capture the drag
+            // state). A falloff-handle grab or click-relocate leaves
+            // dragAxis == -1 and starts no scale session.
+            if (scaleSub.dragAxis >= 0) {
+                beginScaleDragSession(vts);
+            } else {
+                scaleDragActive = false;
+            }
             activeDrag = scaleSub;  return true;
         }
 
@@ -501,6 +514,47 @@ public:
                            == cast(int)mesh.vertices.length);
     }
 
+    // Scale single-source — scale counterpart of `beginMoveDragSession` /
+    // `beginRotateDragSession`. Captures the per-drag state the scale
+    // `applyTRS` path + the fast-path bypass read from. Runs once per drag,
+    // right after `scaleSub.onMouseButtonDown` has settled the sub-tool's
+    // `dragAxis` / `cachedVp`.
+    //
+    //   - `dragFalloff`/`dragSymmetry`: captured ONCE here so per-frame
+    //     re-evaluates see a stable packet (mirrors move/rotate).
+    //   - `dragBaseline`: full-mesh dup AFTER any prior panel scale is
+    //     already baked into `mesh.vertices`.
+    //   - `headlessScale`: reset to identity (1,1,1) — this drag's
+    //     within-drag absolute factor accumulates from there.
+    //   - `scaleDragActive` / `scaleDragFastPath`: drag-owns-geometry flag +
+    //     the once-per-drag GPU-skip predicate.
+    //
+    // The scale edit SESSION stays owned by `scaleSub` (its
+    // `onMouseButtonDown` calls `beginEdit`, its `deactivate`/`update` commit
+    // "Scale" with the scaleAccum/propScale undo hooks). The wrapper captures
+    // only the GEOMETRY drag state; geometry is applied through `applyTRS`.
+    void beginScaleDragSession(ref VectorStack vts) {
+        buildVertexCacheIfNeeded();
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+
+        dragBaseline.length = mesh.vertices.length;
+        foreach (i; 0 .. mesh.vertices.length)
+            dragBaseline[i] = mesh.vertices[i];
+
+        headlessScale = Vec3(1, 1, 1);
+
+        auto cp = queryClusterPivots(vts);
+        // Same once-per-drag freeze contract as `moveDragFastPath`; see its
+        // anti-relocation note. Do NOT recompute mid-drag.
+        scaleDragFastPath = !dragFalloff.enabled
+                         && !dragSymmetry.enabled
+                         && !cp.active
+                         && (vertexProcessCount
+                             == cast(int)mesh.vertices.length);
+        scaleDragActive = true;
+    }
+
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         bool r;
         if (activeDrag is moveSub) {
@@ -604,6 +658,34 @@ public:
                     }
                 }
             }
+        } else if (activeDrag is scaleSub && scaleDragActive) {
+            r = scaleSub.onMouseMotion(e, vts);
+            // Drain the within-drag absolute per-axis scale factor the
+            // producer published this motion (any gizmo drag mode). Idle /
+            // hover frames leave pendingScaleValid false → no-op.
+            if (r && scaleSub.pendingScaleValid) {
+                scaleSub.pendingScaleValid = false;
+                Vec3 f = scaleSub.pendingScale;
+                // Absolute-from-baseline: headlessScale carries this drag's
+                // running factor; beginScaleDragSession reset it to identity.
+                headlessScale = f;
+
+                // CPU is rebuilt from the drag baseline EVERY frame so it is
+                // never stale at mouseUp. The fast-path then merely skips the
+                // per-frame vertex re-upload — the GPU keeps the baseline
+                // buffer and u_model = pivotScaleMatrixBasis bridges the scale.
+                applyTRS(dragBaseline);
+                if (scaleDragFastPath) {
+                    gpuMatrix = pivotScaleMatrixBasis(
+                        scaleSub.handler.center,
+                        scaleSub.handler.axisX,
+                        scaleSub.handler.axisY,
+                        scaleSub.handler.axisZ,
+                        f.x, f.y, f.z);
+                } else {
+                    needsGpuUpdate = true;
+                }
+            }
         } else if (activeDrag !is null) {
             r = activeDrag.onMouseMotion(e, vts);
         }
@@ -629,7 +711,8 @@ public:
         // clobber the wrapper's. View-ring rotate + scale still need the sync.
         bool wrapperOwnsGpu = (activeDrag is moveSub)
             || (activeDrag is rotateSub
-                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2);
+                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2)
+            || (activeDrag is scaleSub && scaleDragActive);
         if (!wrapperOwnsGpu)
             syncGpuMatrix();
         return r;
@@ -641,6 +724,7 @@ public:
         // Capture BEFORE rotateSub.onMouseButtonUp resets its dragAxis to -1.
         bool rotPrincipal = (activeDrag is rotateSub)
             && rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 2;
+        bool wasScaleDrag = (activeDrag is scaleSub) && scaleDragActive;
         if (activeDrag !is null) {
             r = activeDrag.onMouseButtonUp(e, vts);
             activeDrag = null;
@@ -689,9 +773,23 @@ public:
             rotDragAxisIdx  = -1;
         }
 
-        // View-ring rotate + scale drags drive their own sub-tool gpuMatrix;
-        // forward it. moveSub + principal-axis rotate are wrapper-owned.
-        if (!wasMoveDrag && !rotPrincipal)
+        // Scale single-source — wrapper owns the final upload + gpuMatrix
+        // reset (CPU verts were rebuilt by applyTRS every frame, so this
+        // uploads the already-scaled mesh; no stale-CPU). The edit SESSION
+        // is still committed by scaleSub (its deactivate / update
+        // selection-change guard).
+        if (wasScaleDrag && e.button == SDL_BUTTON_LEFT) {
+            gpu.upload(*mesh);
+            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            needsGpuUpdate    = false;
+            scaleDragFastPath = false;
+            scaleDragActive   = false;
+        }
+
+        // View-ring rotate drags drive their own sub-tool gpuMatrix;
+        // forward it. moveSub + principal-axis rotate + scale are
+        // wrapper-owned.
+        if (!wasMoveDrag && !rotPrincipal && !wasScaleDrag)
             syncGpuMatrix();
         return r;
     }
@@ -857,6 +955,35 @@ public:
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
+        applyTRS(baseline);
+    }
+
+    // Scale single-source — ABSOLUTE-from-activationVertices scale apply,
+    // routed through the single `applyTRS` evaluate. `ScaleTool`'s panel
+    // slider path and its kept-open-edit falloff-reapply both call
+    // `ScaleTool.applyScaleFromActivationCpuOnly`, which now delegates here so
+    // the PANEL ("ui") and the live-drag / numeric ("handle" / "headless")
+    // paths share ONE geometry-apply entry point. `scaleAccum` is the
+    // cumulative per-axis scale factor the panel/display maintains; we write
+    // it into the `headlessScale` attribute and run `applyTRS(baseline)` with
+    // `baseline == activationVertices` (the absolute rebuild baseline).
+    // Falloff/symmetry are (re)captured from the live toolpipe so a mid-edit
+    // falloff change takes effect, matching the prior `applyScaleFromActivation`
+    // behaviour.
+    //
+    // The edit SESSION stays owned by `ScaleTool` (its `beginEdit` /
+    // `commitEdit` with the scaleAccum/propScale undo hooks) — only the
+    // GEOMETRY is unified here, sidestepping the per-instance edit-snapshot
+    // ownership problem (no session migrates to the wrapper).
+    void applyScaleAbsolute(Vec3[] baseline, Vec3 scaleAccum) {
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;
+        VectorStack vts;
+        buildLocalVts(subj, vts);
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        vertexCacheDirty = true;   // wrapper cache may be stale (panel path)
+        headlessScale = scaleAccum;
         applyTRS(baseline);
     }
 
@@ -1174,6 +1301,18 @@ private:
     bool rotDragFastPath;
     int  rotDragAxisIdx = -1;
 
+    // Scale single-source: scale counterpart of `moveDragFastPath` /
+    // `rotDragFastPath`. `scaleDragActive` marks that the wrapper owns the
+    // current scale drag's geometry + gpuMatrix (set in
+    // `beginScaleDragSession`, cleared at mouseUp). `scaleDragFastPath` is the
+    // ONCE-PER-DRAG decision for whether the whole-mesh / no-falloff /
+    // no-symmetry / non-per-cluster drag can use the zero-CPU
+    // `gpuMatrix = pivotScaleMatrixBasis(...)` GPU-skip bypass. Unlike rotate
+    // there is no view-ring exemption — every scale gizmo mode is unified — so
+    // a single `scaleDragActive` flag (no per-axis index) suffices.
+    bool scaleDragFastPath;
+    bool scaleDragActive;
+
     // `accumulatedWorldDelta`: total world-space translate for the
     // current drag, used to drive `gpuMatrix = translation(...)`
     // when the fast-path is active. Reset at drag start. Tracks the
@@ -1210,6 +1349,16 @@ private:
         // drives rotateSub.gpuMatrix and needs the sync below.
         if (activeDrag is rotateSub
             && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) return;
+
+        // Same for a scale drag (any gizmo mode): the wrapper owns gpuMatrix
+        // (set to `pivotScaleMatrixBasis` in the fast-path branch of
+        // onMouseMotion), and scaleSub no longer writes its own gpuMatrix
+        // during a drag. Forwarding scaleSub's identity here every
+        // update()/draw() frame would clobber the wrapper's scale matrix
+        // between motion events — the whole-mesh cube would flicker back to
+        // its drag-start size. The panel path (activeDrag is null) still
+        // drives scaleSub.gpuMatrix and needs the sync below.
+        if (activeDrag is scaleSub && scaleDragActive) return;
 
         if (activeDrag !is null) {
             gpuMatrix = activeDrag.gpuMatrix;
