@@ -703,3 +703,160 @@ unittest {
     assert(!(fabs(g.compoundPasses - 1.0f) > 1e-4f),
            "compoundPasses==1 must NOT skip");
 }
+
+// ---------------------------------------------------------------------------
+// (vii) MS-3.5 (Gate-0) — b-vs-c blend-formula signal-floor measurement
+// ---------------------------------------------------------------------------
+//
+// This is the EVIDENCE the canonical-matrix milestone needs before committing
+// to a per-pass blend formula. The two live candidates are:
+//
+//   b = BlendMode.MatrixLerp : M(w) = (1-w)*I + w*M  — what applyTRS hardcodes
+//                              today. It lerps the raw matrix entries, so a
+//                              partially-weighted ROTATION traces a CHORD (the
+//                              straight segment between I and R), not the arc;
+//                              the moved point's distance from the pivot shrinks.
+//   c = BlendMode.PolarQuat  : rotation via slerp(I->R, w) (the ARC), scale +
+//                              translation via lerp. Radius-preserving.
+//
+// At w>=1 both equal M exactly; they diverge only for w in (0,1), and the
+// divergence is MAXIMAL for rotation (chord vs arc). This harness sweeps w and
+// a set of probe points at varying radius from the pivot, and for each sample
+// records (a) absolute |p_b - p_c|, (b) the ANGLE between (p_b - pivot) and
+// (p_c - pivot), and (c) the radius difference. The angular + radius gaps are
+// the geometrically meaningful "how different could a user EVER see this look"
+// numbers; the absolute gap is scale-dependent.
+//
+// Gate-0 verdict (pre-registered): take the MEDIAN angular gap over w in
+// (0.05,0.95) for the PURE-ROTATION cases. Below 0.25 deg the two formulas are
+// visually indistinguishable at realistic falloff weights and the cheap
+// incumbent (b) should be kept (KEEP-B-INCONCLUSIVE); at or above the floor
+// there is real signal worth a deeper comparison (SIGNAL-ABOVE-FLOOR). This is
+// a MEASUREMENT, not a pass/fail — the test asserts only that the table was
+// produced, NOT which side of the floor we land on.
+
+private struct BlendMCase {
+    string  name;
+    float[16] M;
+    bool    pureRotation;   // contributes to the Gate-0 median
+}
+
+// Median of a slice (sorts a copy). Empty -> 0.
+private double medianOf(double[] xs) {
+    if (xs.length == 0) return 0;
+    import std.algorithm.sorting : sort;
+    auto v = xs.dup;
+    v.sort();
+    size_t n = v.length;
+    return (n % 2 == 1) ? v[n/2] : 0.5 * (v[n/2 - 1] + v[n/2]);
+}
+
+unittest {
+    import std.math : acos, PI, fabs;
+    import std.format : format;
+    import math : matMul4, applyAffine;
+
+    // blendToIdentity returns an ORIGIN-fixing matrix, so the blend's fixed
+    // point — the "pivot" in the (p - pivot) framing below — is the origin.
+    const Vec3 pivot = Vec3(0, 0, 0);
+
+    // Off-axis rotation axis (no coordinate-plane alignment) so the chord-vs-arc
+    // difference is exercised across all three components.
+    Vec3 axis = normalize(Vec3(0.37f, -0.62f, 0.69f));
+
+    BlendMCase[] cases;
+    foreach (degAng; [15.0f, 45.0f, 90.0f]) {
+        float ang = degAng * cast(float)PI / 180.0f;
+        BlendMCase c;
+        c.name = format("pure-rot %0.0fdeg", degAng);
+        c.M = pivotRotationMatrix(Vec3(0,0,0), axis, ang);
+        c.pureRotation = true;
+        cases ~= c;
+    }
+    {
+        // rotation (45deg) + non-uniform scale — the realistic "drag" matrix.
+        BlendMCase c;
+        c.name = "rot45+scale(1.6,0.7,1.2)";
+        auto Rm = pivotRotationMatrix(Vec3(0,0,0), axis,
+                                      45.0f * cast(float)PI / 180.0f);
+        auto Sm = pivotScaleMatrixBasis(Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0),
+                                        Vec3(0,0,1), 1.6f, 0.7f, 1.2f);
+        c.M = matMul4(Rm, Sm);   // rotation · scale (origin-fixing)
+        c.pureRotation = false;
+        cases ~= c;
+    }
+
+    // Probe points at varying radius from the pivot.
+    Vec3[] probes = [
+        Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
+        Vec3(0.5f, -0.4f, 0.8f), Vec3(-1, -1, -1),
+        Vec3(2.3f, 0.1f, -1.7f),   // larger radius
+    ];
+
+    float[] ws = [0.05f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f,
+                  0.6f, 0.7f, 0.8f, 0.9f, 0.95f];
+
+    writeln("");
+    writeln("MS35 b-vs-c blend gap (b=MatrixLerp chord, c=PolarQuat arc)");
+    writeln("  ang = angle(deg) between (p_b-pivot) and (p_c-pivot);"
+            ~ "  rad = | |p_b-pivot| - |p_c-pivot| |");
+    writefln("%-26s %5s  %10s  %10s  %12s",
+             "M-case", "w", "max_ang", "med_ang", "max_rad");
+
+    double[] gate0Pool;     // per-(pure-rot-case, w) MEDIAN angular gap
+    bool producedTable = false;
+
+    foreach (ref c; cases) {
+        foreach (w; ws) {
+            auto Mb = blendToIdentity(c.M, w, BlendMode.MatrixLerp);
+            auto Mc = blendToIdentity(c.M, w, BlendMode.PolarQuat);
+
+            double maxAng = 0, maxRad = 0;
+            double[] angs;
+            foreach (p; probes) {
+                Vec3 pb = applyAffine(Mb, p);
+                Vec3 pc = applyAffine(Mc, p);
+
+                Vec3 vb = pb - pivot;
+                Vec3 vc = pc - pivot;
+                double rb = vb.length;
+                double rc = vc.length;
+
+                double ang = 0;
+                if (rb > 1e-9 && rc > 1e-9) {
+                    double dot = (vb.x*vc.x + vb.y*vc.y + vb.z*vc.z) / (rb * rc);
+                    if (dot >  1.0) dot =  1.0;
+                    if (dot < -1.0) dot = -1.0;
+                    ang = acos(dot) * 180.0 / PI;
+                }
+                angs ~= ang;
+                if (ang > maxAng) maxAng = ang;
+                double dr = fabs(rb - rc);
+                if (dr > maxRad) maxRad = dr;
+            }
+            double medAng = medianOf(angs);
+            writefln("%-26s %5.2f  %10.6f  %10.6f  %12.3e",
+                     c.name, w, maxAng, medAng, maxRad);
+            producedTable = true;
+
+            // Gate-0 pool: pure-rotation cases, w strictly inside (0.05,0.95).
+            if (c.pureRotation && w > 0.05f && w < 0.95f)
+                gate0Pool ~= medAng;
+        }
+    }
+
+    double gate0Median = medianOf(gate0Pool);
+    enum double GATE0_FLOOR = 0.25;   // deg — pre-registered signal floor
+    string verdict = gate0Median >= GATE0_FLOOR
+        ? "SIGNAL-ABOVE-FLOOR" : "KEEP-B-INCONCLUSIVE";
+    writeln("");
+    writefln("MS35 GATE0: median_ang_gap=%.6gdeg threshold=%.2f => %s",
+             gate0Median, GATE0_FLOOR, verdict);
+    writeln("");
+
+    // Measurement, NOT a pass/fail on the verdict. Assert only that the table
+    // was actually produced and the pool non-empty, so a silently empty sweep
+    // can't masquerade as a clean run.
+    assert(producedTable, "MS35: gap table was not produced");
+    assert(gate0Pool.length > 0, "MS35: Gate-0 pool empty — no pure-rot samples");
+}

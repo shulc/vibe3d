@@ -98,6 +98,31 @@ import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
+// MS-3.5 (Gate-0) — runtime blend-mode toggle. The per-pass matrix kernel
+// blends each pass's matrix toward identity by the falloff weight; the blend
+// FORMULA is the open decision this milestone is gathering evidence for. The
+// production default is MatrixLerp (byte-for-byte today's behaviour); setting
+// VIBE3D_BLEND_MODE=polarquat routes EVERY apply pass through the polar/quat
+// blend instead so the SAME drag can be measured under either candidate. The
+// env var is read ONCE (cached in a static) — no per-vertex getenv. The shadow
+// reference lane (tools.xfrm_shadow) is deliberately NOT toggled; it stays
+// MatrixLerp so it remains a fixed reference regardless of this switch.
+private BlendMode blendModeForMeasure() @trusted nothrow {
+    import std.process : environment;
+    static bool resolved = false;
+    static BlendMode cached = BlendMode.MatrixLerp;
+    if (!resolved) {
+        resolved = true;
+        try {
+            if (environment.get("VIBE3D_BLEND_MODE", "") == "polarquat")
+                cached = BlendMode.PolarQuat;
+        } catch (Exception) {
+            cached = BlendMode.MatrixLerp;
+        }
+    }
+    return cached;
+}
+
 alias VertexEditFactory = MeshVertexEdit delegate();
 
 class XfrmTransformTool : TransformTool {
@@ -956,7 +981,7 @@ public:
                     }
                     FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
                     applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                     pivot, identityMatrix, BlendMode.MatrixLerp,
+                                     pivot, identityMatrix, blendModeForMeasure(),
                                      noFo, cachedVp, cp, ap, clusterM,
                                      dragSymmetry, toProcess);
                 } else {
@@ -968,7 +993,7 @@ public:
                                + bZ * headlessTranslate.z;
                     applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
                                      pivot, translationMatrix(delta),
-                                     BlendMode.MatrixLerp,
+                                     blendModeForMeasure(),
                                      dragFalloff, cachedVp, cp, ap, null,
                                      dragSymmetry, toProcess);
                 }
@@ -1055,7 +1080,7 @@ public:
                                          bX, bY, bZ,
                                          headlessScale.x, headlessScale.y,
                                          headlessScale.z),
-                                     BlendMode.MatrixLerp,
+                                     blendModeForMeasure(),
                                      dragFalloff, cachedVp, cp, ap, clusterM,
                                      dragSymmetry, toProcess,
                                      /*weightVerts=*/ baseline);
@@ -1392,7 +1417,7 @@ private:
             applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
                              pivot,
                              pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
-                             BlendMode.MatrixLerp,
+                             blendModeForMeasure(),
                              dragFalloff, cachedVp, cp, ap, clusterM,
                              dragSymmetry, toProcess);
         } else {
@@ -1400,7 +1425,7 @@ private:
             applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
                              pivot,
                              pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
-                             BlendMode.MatrixLerp,
+                             blendModeForMeasure(),
                              dragFalloff, cachedVp, cp, ap, null,
                              dragSymmetry, toProcess);
         }
