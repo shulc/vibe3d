@@ -982,6 +982,26 @@ public:
             }
         }
 
+        // MS-2 — per-pass dual-run shadow (measure-only). Compiled ONLY under
+        // `debug(xfrmShadow)` (the test-shadow dub config / `-d xfrmShadow`);
+        // production + the normal `./run_test.d` instance never compile it, so
+        // the chain above is byte-identical without it. The shadow reconstructs
+        // the SAME T -> R -> S chain through the MS-1 matrix kernel and compares;
+        // a mismatch is LOGGED, never asserted (F3). See tools.xfrm_shadow.
+        debug (xfrmShadow) {
+            import tools.xfrm_shadow : runShadow;
+            Vec3[] shadowLive = mesh.vertices.dup;
+            runShadow(mesh, shadowLive, baseline,
+                      vertexIndicesToProcess, toProcess,
+                      pivot, bX, bY, bZ,
+                      flagT, flagR, flagS,
+                      headlessTranslate, headlessRotate,
+                      headlessRotateViewAxis, headlessRotateViewAngle,
+                      headlessScale,
+                      dragFalloff, dragSymmetry, cachedVp,
+                      cp, ap, name());
+        }
+
         return true;
     }
 

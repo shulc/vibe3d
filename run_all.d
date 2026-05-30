@@ -108,6 +108,28 @@ int main(string[] args) {
         suites ~= Suite("unit", "1/4 Unit tests (run_test.d)", cmd);
     }
 
+    // MS-2 shadow lane (doc/modo_transform_model_plan.md, R1). Builds vibe3d
+    // with --config=test-shadow (adds -debug=xfrmShadow), runs the normal
+    // event-replay suite against it, and GATES on any logged
+    // `xfrmShadow: SHADOW MISMATCH` / SUMMARY mismatches != 0 — so a regression
+    // in applyTRS or a transform kernel reds this lane in the canonical
+    // pre-commit run. The `xfrmShadow: SKIP` lines (compoundPasses != 1, F2)
+    // never trip the gate. Bare `./run_test.d` (the fast inner loop) builds the
+    // normal modeling binary and carries NO shadow. The shadow lane reuses the
+    // same exclusions as the unit lane (a shadow build of a flaky test is still
+    // flaky for the same non-shadow reason).
+    if (include("shadow")) {
+        string[] cmd = ["./run_test.d", "-j", j.format!"%d",
+                        "--shadow", "--shadow-gate"];
+        if (noBuild) cmd ~= "--no-build";
+        foreach (e; excluded) {
+            if (e.length == 0) continue;
+            cmd ~= "--exclude";
+            cmd ~= e;
+        }
+        suites ~= Suite("shadow", "1b/4 Shadow lane (xfrmShadow matrix gate)", cmd);
+    }
+
     if (include("blender")) {
         if (exists("tools/local/blender_diff/run.d")) {
             string[] cmd = ["rdmd", "tools/local/blender_diff/run.d"];
