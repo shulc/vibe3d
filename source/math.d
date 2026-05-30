@@ -282,6 +282,35 @@ float[16] matMul4(float[16] a, float[16] b) {
     return c;
 }
 
+// Re-express an ORIGIN-FIXING matrix `M` (one built so that the intended
+// transform is `pivot + M*(v - pivot)`, the convention applyXformMatrix uses) as
+// a plain world-space matrix `W` such that `W*v == pivot + M*(v - pivot)`. This
+// is the bridge between the CPU fold's pivot-relative matrix and the GPU
+// fast-path's `u_model` (applied directly to baseline verts): W = T(pivot) * M *
+// T(-pivot). For an origin-fixing rotation/scale this returns exactly the
+// about-pivot builder (pivotRotationMatrix(pivot,..) / pivotScaleMatrixBasis(
+// pivot,..)) — see the unittests — so the GPU path can reuse the CPU fold matrix
+// instead of rebuilding a parallel about-pivot one (MS-4.5).
+float[16] wrapAboutPivot(float[16] M, Vec3 pivot) {
+    return matMul4(translationMatrix(pivot),
+                   matMul4(M, translationMatrix(Vec3(-pivot.x, -pivot.y, -pivot.z))));
+}
+unittest { // wrapAboutPivot of an origin-fixing rotation == the about-pivot one
+    auto Morigin = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.7f);
+    auto W = wrapAboutPivot(Morigin, Vec3(0.3f, -0.4f, 0.9f));
+    auto direct = pivotRotationMatrix(Vec3(0.3f, -0.4f, 0.9f), Vec3(0,1,0), 0.7f);
+    foreach (i; 0 .. 16) assert(isClose(W[i], direct[i], 1e-5f, 1e-5f));
+}
+unittest { // wrapAboutPivot of an origin-fixing scale == the about-pivot one
+    auto Morigin = pivotScaleMatrixBasis(Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0),
+                                         Vec3(0,0,1), 2.0f, 0.5f, 1.5f);
+    Vec3 piv = Vec3(-0.2f, 0.6f, 0.1f);
+    auto W = wrapAboutPivot(Morigin, piv);
+    auto direct = pivotScaleMatrixBasis(piv, Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                        2.0f, 0.5f, 1.5f);
+    foreach (i; 0 .. 16) assert(isClose(W[i], direct[i], 1e-5f, 1e-5f));
+}
+
 // Build a column-major model matrix from a local frame + scale + translation.
 // Columns are: right*scale.x, up*scale.y, fwd*scale.z, translation.
 float[16] modelMatrix(Vec3 right, Vec3 up, Vec3 fwd,
