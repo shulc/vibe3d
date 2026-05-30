@@ -85,9 +85,7 @@ import tools.move      : MoveTool;
 import tools.rotate    : RotateTool;
 import tools.scale     : ScaleTool;
 import tools.xform_kernels :
-    applyTranslateIncremental,
-    applyRotateIncremental,
-    applyScaleFromActivation,
+    applyScaleFromActivation,   // dormant compoundPasses!=1 pow path only (applyTRS, F2)
     applyXformMatrix,
     BlendMode;
 import command_history : CommandHistory;
