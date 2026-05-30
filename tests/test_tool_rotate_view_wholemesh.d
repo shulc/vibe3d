@@ -6,7 +6,7 @@
 // mesh, per the universal transform rule). That exercises the wrapper-owned
 // view-ring FAST PATH: XfrmTransformTool.beginRotateDragSession sets
 // rotDragFastPath=true, onMouseMotion drains the producer's view axis+angle
-// into headlessRotateViewAxis/Angle, runs applyTRS(dragBaseline), and bridges
+// into applyTRS's transient view-axis/angle params, runs applyTRS(dragBaseline), and bridges
 // the GPU with pivotRotationMatrix. The arbitrary view axis is applied through
 // the SAME applyRotateIncremental kernel (dragAxisIdx == -1) the principal
 // rings use — single source of truth for ui/handle/headless.
