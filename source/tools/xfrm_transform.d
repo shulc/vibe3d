@@ -74,7 +74,8 @@ import operator : VectorStack;
 
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
-               pivotRotationMatrix, pivotScaleMatrixBasis, dot;
+               pivotRotationMatrix, pivotScaleMatrixBasis, dot,
+               identityMatrix;
 import editmode : EditMode;
 import mesh;
 import shader : Shader;
@@ -86,7 +87,9 @@ import tools.scale     : ScaleTool;
 import tools.xform_kernels :
     applyTranslateIncremental,
     applyRotateIncremental,
-    applyScaleFromActivation;
+    applyScaleFromActivation,
+    applyXformMatrix,
+    BlendMode;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import toolpipe.pipeline : g_pipeCtx;
@@ -897,88 +900,166 @@ public:
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
 
-        if (flagT) {
-            bool hasT = (headlessTranslate.x != 0
-                      || headlessTranslate.y != 0
-                      || headlessTranslate.z != 0);
+        // MS-3.2 — canonical-matrix apply. Each pass (T, R.x/y/z, view-ring, S)
+        // is applied through the MS-1 per-pass MATRIX kernel `applyXformMatrix`
+        // with `BlendMode.MatrixLerp`, instead of the per-component kernels.
+        // This is the SAME pass sequence the legacy chain ran (restore -> T ->
+        // R.x -> R.y -> R.z -> view-ring -> S) — NOT one composed T·R·S matrix
+        // (MS-2 measured that single-composed path diverging ~1.2 even at w==1,
+        // so each pass keeps its own matrix blended by THAT pass's weight at
+        // THAT pass's eval position). The reconstruction is promoted verbatim
+        // from `tools.xfrm_shadow.runShadow`, which the MS-2 shadow gate proved
+        // reproduces the legacy decomposed output to maxErr 5.96e-08.
+        //
+        // The decomposed state fields (headlessTranslate / headlessRotate /
+        // headlessRotateViewAxis / headlessRotateViewAngle / headlessScale)
+        // still BUILD each pass's matrix — they remain the input attributes
+        // (MS-3.4 removes the view-ring slot; MS-3.6 removes the per-component
+        // kernels). `mesh.vertices` already holds the restored baseline.
+        {
+            import std.math : PI, fabs;
+
+            // Each pass's matrix kernel takes an ORDINAL-parallel source buffer
+            // (source[k] is the current position of vertex
+            // vertexIndicesToProcess[k]) — see applyXformMatrix's array-layout
+            // contract. ordinalSrc() gathers the LIVE post-prior-pass positions
+            // for the moving set so each pass reads the previous pass's output.
+            Vec3[] ordinalSrc() {
+                auto s = new Vec3[](vertexIndicesToProcess.length);
+                foreach (k, vi; vertexIndicesToProcess)
+                    s[k] = (vi >= 0 && vi < cast(int)mesh.vertices.length)
+                         ? mesh.vertices[vi] : Vec3(0, 0, 0);
+                return s;
+            }
+
+            bool hasT = flagT && (headlessTranslate.x != 0
+                              || headlessTranslate.y != 0
+                              || headlessTranslate.z != 0);
+            bool hasS = flagS && (headlessScale.x != 1
+                              || headlessScale.y != 1
+                              || headlessScale.z != 1);
+
+            // ---- T pass -------------------------------------------------------
             if (hasT) {
-                // Per-cluster translate: when ACEN.Local provides per-cluster
-                // axes, TX/TY/TZ are interpreted along each cluster's OWN
-                // right/up/fwd axis frame. Without per-cluster axes (single
-                // cluster or non-Local mode) fall back to the global basis.
                 if (cp.active && ap.active) {
-                    applyTranslatePerCluster(cp, ap, headlessTranslate);
+                    // Per-cluster translate: falloff-EXEMPT (w==1, no falloff),
+                    // signed per-cluster axes — matches applyTranslatePerCluster.
+                    // One pivot-relative translation matrix per cluster from its
+                    // OWN right/up/fwd frame, selected per vertex via clusterM.
+                    float[16][] clusterM;
+                    clusterM.length = ap.right.length;
+                    foreach (cid; 0 .. ap.right.length) {
+                        Vec3 wd = ap.right[cid] * headlessTranslate.x
+                                + ap.up[cid]    * headlessTranslate.y
+                                + ap.fwd[cid]   * headlessTranslate.z;
+                        clusterM[cid] = translationMatrix(wd);
+                    }
+                    FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
+                    applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
+                                     pivot, identityMatrix, BlendMode.MatrixLerp,
+                                     noFo, cachedVp, cp, ap, clusterM,
+                                     dragSymmetry, toProcess);
                 } else {
-                    // Global basis: project headlessTranslate onto bX/bY/bZ.
+                    // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
+                    // LIVE position (source == weightVerts == current scratch),
+                    // matching applyTranslateIncremental.
                     Vec3 delta = bX * headlessTranslate.x
                                + bY * headlessTranslate.y
                                + bZ * headlessTranslate.z;
-                    applyTranslateIncremental(mesh, vertexIndicesToProcess,
-                                              delta,
-                                              dragFalloff, cachedVp,
-                                              dragSymmetry, toProcess);
+                    applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
+                                     pivot, translationMatrix(delta),
+                                     BlendMode.MatrixLerp,
+                                     dragFalloff, cachedVp, cp, ap, null,
+                                     dragSymmetry, toProcess);
                 }
             }
-        }
 
-        if (flagR) {
-            import std.math : PI;
-            if (headlessRotate.x != 0)
-                applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, bX, 0,
-                                       headlessRotate.x * cast(float)(PI / 180.0),
-                                       dragFalloff, cachedVp,
-                                       cp, ap, dragSymmetry, toProcess);
-            if (headlessRotate.y != 0)
-                applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, bY, 1,
-                                       headlessRotate.y * cast(float)(PI / 180.0),
-                                       dragFalloff, cachedVp,
-                                       cp, ap, dragSymmetry, toProcess);
-            if (headlessRotate.z != 0)
-                applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, bZ, 2,
-                                       headlessRotate.z * cast(float)(PI / 180.0),
-                                       dragFalloff, cachedVp,
-                                       cp, ap, dragSymmetry, toProcess);
+            // ---- R.x / R.y / R.z + view-ring passes --------------------------
+            // Each rotation about a basis axis (or per-cluster axis,
+            // dragAxisIdx 0/1/2); weight at the LIVE position. Per-cluster
+            // rotate is LIVE-weighted, NOT falloff-exempt (unlike per-cluster
+            // translate). The matrix is origin-fixing; applyXformMatrix
+            // re-applies the (possibly per-cluster) pivot.
+            if (flagR) {
+                if (headlessRotate.x != 0)
+                    applyRotatePass(bX, 0,
+                        headlessRotate.x * cast(float)(PI / 180.0),
+                        pivot, cp, ap, &ordinalSrc);
+                if (headlessRotate.y != 0)
+                    applyRotatePass(bY, 1,
+                        headlessRotate.y * cast(float)(PI / 180.0),
+                        pivot, cp, ap, &ordinalSrc);
+                if (headlessRotate.z != 0)
+                    applyRotatePass(bZ, 2,
+                        headlessRotate.z * cast(float)(PI / 180.0),
+                        pivot, cp, ap, &ordinalSrc);
 
-            // View-ring rotation: a single rotation about the arbitrary
-            // camera-forward axis. dragAxisIdx == -1 makes the kernel use the
-            // axis as-is (no per-cluster substitution) and apply the SAME
-            // per-vertex falloff-weighted Rodrigues rotation as the principal
-            // axes — correct under falloff (one weighted rotation about one
-            // axis, not three weighted Euler rotations). Per-cluster axes are
-            // intentionally ignored here: a view rotation is global by
-            // definition. Nonzero only during a live view-ring drag.
-            bool hasViewRot = headlessRotateViewAngle != 0
-                && (headlessRotateViewAxis.x != 0
-                 || headlessRotateViewAxis.y != 0
-                 || headlessRotateViewAxis.z != 0);
-            if (hasViewRot)
-                applyRotateIncremental(mesh, vertexIndicesToProcess,
-                                       pivot, headlessRotateViewAxis, -1,
-                                       headlessRotateViewAngle * cast(float)(PI / 180.0),
-                                       dragFalloff, cachedVp,
-                                       cp, ap, dragSymmetry, toProcess);
-        }
+                // View-ring rotation: a single rotation about the arbitrary
+                // camera-forward axis. dragAxisIdx == -1 keeps the axis as-is
+                // (no per-cluster substitution) and applies one weighted
+                // rotation about one axis (correct under falloff). A view
+                // rotation is global by definition. Nonzero only during a live
+                // view-ring drag.
+                bool hasViewRot = headlessRotateViewAngle != 0
+                    && (headlessRotateViewAxis.x != 0
+                     || headlessRotateViewAxis.y != 0
+                     || headlessRotateViewAxis.z != 0);
+                if (hasViewRot)
+                    applyRotatePass(headlessRotateViewAxis, -1,
+                        headlessRotateViewAngle * cast(float)(PI / 180.0),
+                        pivot, cp, ap, &ordinalSrc);
+            }
 
-        if (flagS) {
-            bool hasS = (headlessScale.x != 1
-                      || headlessScale.y != 1
-                      || headlessScale.z != 1);
+            // ---- S pass -------------------------------------------------------
             if (hasS) {
-                Vec3[] activation = mesh.vertices.dup;
-                // Scale's per-vert falloff weight is evaluated at the
-                // pre-chain BASELINE position so the weight stays
-                // stable across the T/R stages' mutations. We pass
-                // the same baseline we just restored from.
-                applyScaleFromActivation(mesh, vertexIndicesToProcess,
-                                         activation, pivot,
+                // compoundPasses != 1 (Selection/flex falloff's scale pow) has
+                // NO matrix expression (plan F2). The matrix path cannot carry
+                // it, so route this one pass through the per-component scale
+                // kernel — which applies pow(s_eff, compoundPasses) for real —
+                // exactly as the legacy chain did. compoundPasses is published
+                // 1.0 everywhere in the current tree, so the matrix branch is
+                // the live path; this preserves the dormant pow path correctly.
+                float passes = dragFalloff.compoundPasses > 0.0f
+                             ? dragFalloff.compoundPasses : 1.0f;
+                if (fabs(passes - 1.0f) > 1e-4f) {
+                    Vec3[] activation = mesh.vertices.dup;
+                    // Per-vert weight at the pre-chain BASELINE position.
+                    applyScaleFromActivation(mesh, vertexIndicesToProcess,
+                                             activation, pivot,
+                                             bX, bY, bZ,
+                                             headlessScale,
+                                             dragFalloff, cachedVp,
+                                             cp, ap, dragSymmetry, toProcess,
+                                             baseline);
+                } else {
+                    // Matrix path. Source = current scratch (post-T/R), gathered
+                    // ordinal-parallel; weight at the pre-chain BASELINE
+                    // (weightVerts == baseline, mesh-length vid-indexed). The
+                    // scale matrix is origin-fixing (built around Vec3(0));
+                    // applyXformMatrix re-applies the pivot. Per-cluster scale
+                    // uses each cluster's OWN right/up/fwd frame (matching the
+                    // per-component kernel's axesFor()), selected via clusterM.
+                    float[16][] clusterM = null;
+                    if (cp.active && ap.active) {
+                        clusterM = new float[16][](ap.right.length);
+                        foreach (cid; 0 .. ap.right.length)
+                            clusterM[cid] = pivotScaleMatrixBasis(
+                                Vec3(0, 0, 0),
+                                ap.right[cid], ap.up[cid], ap.fwd[cid],
+                                headlessScale.x, headlessScale.y,
+                                headlessScale.z);
+                    }
+                    applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
+                                     pivot,
+                                     pivotScaleMatrixBasis(Vec3(0, 0, 0),
                                          bX, bY, bZ,
-                                         headlessScale,
-                                         dragFalloff, cachedVp,
-                                         cp, ap, dragSymmetry, toProcess,
-                                         baseline);
+                                         headlessScale.x, headlessScale.y,
+                                         headlessScale.z),
+                                     BlendMode.MatrixLerp,
+                                     dragFalloff, cachedVp, cp, ap, clusterM,
+                                     dragSymmetry, toProcess,
+                                     /*weightVerts=*/ baseline);
+                }
             }
         }
 
@@ -1274,6 +1355,56 @@ private:
         return true;
     }
 
+
+    // MS-3.2 — one rotation pass of the canonical-matrix apply (called from
+    // applyTRS). Applies a single origin-fixing rotation about `axis` by
+    // `angleRad` through the MS-1 matrix kernel, weight at the LIVE position.
+    // `srcGather` re-gathers the current (post-prior-pass) scratch positions
+    // ordinal-parallel to `vertexIndicesToProcess`, so each rotate pass reads
+    // the previous pass's output. `dragAxisIdx ∈ {0,1,2}` enables per-cluster
+    // axis lookup (each cluster rotates about its OWN right/up/fwd at that
+    // index, around its OWN pivot via cp); -1 keeps `axis` as-is (global /
+    // view-ring). Per-cluster rotate is LIVE-weighted, NOT falloff-exempt
+    // (unlike per-cluster translate). Mirrors xfrm_shadow.rotatePass.
+    void applyRotatePass(Vec3 axis, int dragAxisIdx, float angleRad,
+                         Vec3 pivot,
+                         TransformTool.ClusterPivots cp,
+                         TransformTool.ClusterAxes ap,
+                         Vec3[] delegate() srcGather)
+    {
+        if (dragAxisIdx >= 0 && dragAxisIdx <= 2 && ap.active) {
+            // Per-cluster rotate: one origin-fixing rotation matrix per cluster
+            // about that cluster's axis. The kernel resolves the per-cluster
+            // pivot via cp; M is built around the ORIGIN so
+            // pivot + M·(src - pivot) yields the cluster-pivoted rotation. The
+            // GLOBAL fallback matrix (passed as `M`) rotates any non-cluster
+            // vertex about the global `axis`/`pivot` — matching the legacy
+            // rotate kernel, whose pivotFor()/axisFor() fall back to the global
+            // axis/pivot for verts outside every cluster (NOT identity).
+            float[16][] clusterM;
+            clusterM.length = ap.right.length;
+            foreach (cid; 0 .. ap.right.length) {
+                Vec3 ca = dragAxisIdx == 0 ? ap.right[cid]
+                        : dragAxisIdx == 1 ? ap.up[cid]
+                                           : ap.fwd[cid];
+                clusterM[cid] = pivotRotationMatrix(Vec3(0, 0, 0), ca, angleRad);
+            }
+            applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
+                             pivot,
+                             pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                             BlendMode.MatrixLerp,
+                             dragFalloff, cachedVp, cp, ap, clusterM,
+                             dragSymmetry, toProcess);
+        } else {
+            // Global / view-ring: single origin-fixing rotation about `axis`.
+            applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
+                             pivot,
+                             pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                             BlendMode.MatrixLerp,
+                             dragFalloff, cachedVp, cp, ap, null,
+                             dragSymmetry, toProcess);
+        }
+    }
 
     // Per-cluster translate: each vertex is displaced along its OWN
     // cluster's axis frame (right/up/fwd from the ClusterAxes packet).
