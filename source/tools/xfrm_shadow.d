@@ -231,6 +231,11 @@ void runShadow(
             // Per-cluster translate is falloff-EXEMPT (w==1, no falloff), signed
             // per-cluster axes — match applyTranslatePerCluster. Build one
             // translation matrix per cluster from its OWN right/up/fwd frame.
+            // The GLOBAL fallback matrix is identityMatrix: a non-cluster vertex
+            // (cid < 0) stays FIXED — matching the LIVE applyTRS T pass (which
+            // also passes identityMatrix) and the legacy kernel
+            // (legacyApplyTranslatePerCluster, which `continue`s on cid < 0). So
+            // out-of-cluster translate is faithful as-is.
             float[16][] clusterM;
             clusterM.length = ap.right.length;
             foreach (cid; 0 .. ap.right.length) {
@@ -294,12 +299,29 @@ void runShadow(
     // weight is at BASELINE, but baseline here is the mesh-length vid-indexed
     // buffer the live scale kernel uses (weightVerts[vi]) — passed as-is.
     if (hasS) {
+        // Per-cluster scale uses each cluster's OWN right/up/fwd frame (matching
+        // the per-component kernel's axesFor()), selected per vertex via
+        // clusterM. The GLOBAL scale matrix (built from bX/bY/bZ) is the fallback
+        // `M` for any non-cluster vertex (cid < 0) — matching the LIVE applyTRS
+        // S pass. Earlier the shadow passed clusterM=null and only the global
+        // matrix, so in-cluster verts would use the global basis instead of their
+        // per-cluster frame; the suite never tripped it because ACEN.Local scale
+        // was not exercised. Mirror live exactly so the gate covers it.
+        float[16][] clusterM = null;
+        if (cp.active && ap.active) {
+            clusterM = new float[16][](ap.right.length);
+            foreach (cid; 0 .. ap.right.length)
+                clusterM[cid] = pivotScaleMatrixBasis(
+                    Vec3(0, 0, 0),
+                    ap.right[cid], ap.up[cid], ap.fwd[cid],
+                    headlessScale.x, headlessScale.y, headlessScale.z);
+        }
         applyXformMatrix(scratch, idxRef, ordinalSrc(), pivot,
                          pivotScaleMatrixBasis(Vec3(0, 0, 0), bX, bY, bZ,
                                                headlessScale.x, headlessScale.y,
                                                headlessScale.z),
                          BlendMode.MatrixLerp,
-                         dragFalloff, vp, cp, ap, null, dragSymmetry, toProcess,
+                         dragFalloff, vp, cp, ap, clusterM, dragSymmetry, toProcess,
                          /*weightVerts=*/ baseline);
     }
 
@@ -365,7 +387,10 @@ void runShadow(
 // positions for the moving set. Leaving weightVerts null makes applyXformMatrix
 // weight at base[k], i.e. the LIVE scratch position for this pass (R4: cluster
 // rotate is LIVE-weighted, NOT falloff-exempt). The matrix is ORIGIN-fixing;
-// applyXformMatrix re-applies the (possibly per-cluster) pivot.
+// applyXformMatrix re-applies the (possibly per-cluster) pivot. For the
+// per-cluster branch the GLOBAL fallback `M` is the global rotation about
+// `axis`/`pivot` (NOT identity) so non-cluster verts (cid < 0) rotate globally,
+// matching the LIVE applyTRS rotate pass exactly.
 // ---------------------------------------------------------------------------
 private void rotatePass(
     Mesh* scratch, const(int)[] idxRef, Vec3[] base, bool[] toProcess,
@@ -379,7 +404,15 @@ private void rotatePass(
         // that cluster's axis (right/up/fwd at dragAxisIdx). The kernel resolves
         // the per-cluster pivot via cp; M is built around the ORIGIN so
         // pivot + M·(base - pivot) yields the cluster-pivoted rotation (matches
-        // the MS-1 (iv-rotate) construction).
+        // the MS-1 (iv-rotate) construction). The GLOBAL fallback matrix (passed
+        // as `M`) rotates any non-cluster vertex (cid < 0) about the global
+        // `axis`/`pivot` — matching the LIVE applyTRS rotate pass
+        // (applyRotatePass) and the legacy rotate kernel, whose
+        // pivotFor()/axisFor() fall back to the global axis/pivot for verts
+        // outside every cluster (NOT identity). Earlier this passed
+        // identityMatrix, which left out-of-cluster verts fixed and diverged
+        // from live; the suite never tripped it because every moving vert was
+        // in a cluster.
         float[16][] clusterM;
         clusterM.length = ap.right.length;
         foreach (cid; 0 .. ap.right.length) {
@@ -389,7 +422,8 @@ private void rotatePass(
             clusterM[cid] = pivotRotationMatrix(Vec3(0, 0, 0), ca, angleRad);
         }
         applyXformMatrix(scratch, idxRef, base, pivot,
-                         identityMatrix, BlendMode.MatrixLerp,
+                         pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                         BlendMode.MatrixLerp,
                          dragFalloff, vp, cp, ap, clusterM, dragSymmetry, toProcess);
     } else {
         // Global / view-ring: single origin-fixing rotation about `axis`.
