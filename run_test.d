@@ -145,10 +145,20 @@ void killStaleVibe(ushort port) {
 // Build steps
 // ---------------------------------------------------------------------------
 
-bool dubBuild() {
-    write("Building vibe3d... ");
+bool dubBuild(bool shadow = false) {
+    // MS-2 shadow lane (doc/modo_transform_model_plan.md): when `shadow` is set
+    // the vibe3d-under-test binary is built with the `test-shadow` dub config,
+    // which hands dmd `-debug=xfrmShadow` and so compiles in the measure-only
+    // per-pass matrix shadow (XfrmTransformTool.applyTRS / tools.xfrm_shadow).
+    // The event-replay test .d files are UNCHANGED — only the binary differs,
+    // which is what makes "the whole suite drives the shadow". The default path
+    // (`dub build`) is the normal modeling config with NO shadow.
+    write(shadow ? "Building vibe3d (test-shadow)... " : "Building vibe3d... ");
     stdout.flush();
-    auto r = executeShell("dub build 2>&1");
+    string buildCmd = shadow
+        ? "dub build --config=test-shadow 2>&1"
+        : "dub build 2>&1";
+    auto r = executeShell(buildCmd);
     if (r.status != 0) {
         writeln(red("FAIL"));
         writeln(r.output);
@@ -156,6 +166,53 @@ bool dubBuild() {
     }
     writeln(green("OK"));
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// MS-2 shadow-lane gate (R1). Greps each worker's captured vibe3d log for the
+// `xfrmShadow: SHADOW MISMATCH` fast-fail prefix AND reads the F4 `SUMMARY
+// ... mismatches=<m>` counter; either non-zero ⇒ the lane is RED. The
+// `xfrmShadow: SKIP ...` lines (compoundPasses != 1, F2) use a DISTINCT prefix
+// and never trip the gate. Returns true iff the gate PASSES (0 mismatches).
+bool shadowGatePasses(Worker[] workers) {
+    bool ok = true;
+    foreach (ref w; workers) {
+        string txt;
+        try { txt = readText(w.logPath); } catch (Exception) { continue; }
+        long worstMismatches = 0;
+        bool sawMismatchLine = false;
+        foreach (line; txt.splitLines) {
+            if (line.canFind("xfrmShadow: SHADOW MISMATCH")) {
+                sawMismatchLine = true;
+                writeln("  ", red("SHADOW MISMATCH"),
+                        dim(format(" [w%d] ", w.id)), line);
+            } else if (line.canFind("xfrmShadow: SUMMARY")) {
+                // Parse mismatches=<m> out of the SUMMARY line.
+                auto k = line.indexOf("mismatches=");
+                if (k >= 0) {
+                    auto rest = line[k + "mismatches=".length .. $];
+                    string num;
+                    foreach (c; rest) {
+                        if (c >= '0' && c <= '9') num ~= c; else break;
+                    }
+                    if (num.length) {
+                        try {
+                            auto m = num.to!long;
+                            if (m > worstMismatches) worstMismatches = m;
+                        } catch (Exception) {}
+                    }
+                }
+                writeln("  ", dim(format("[w%d] ", w.id)), line);
+            }
+        }
+        if (sawMismatchLine || worstMismatches != 0) {
+            ok = false;
+            writeln("  ", red(format(
+                "worker %d: shadow gate RED (mismatches=%d)",
+                w.id, worstMismatches)));
+        }
+    }
+    return ok;
 }
 
 // Pure-D unit tests that exercise project source modules in-process (e.g.
@@ -468,6 +525,7 @@ void printSummary(TestResult[] results) {
 
 int main(string[] args) {
     bool verbose, noBuild, keep;
+    bool shadow, shadowGate;
     ushort port = 8080;
     int j = 1;
     string[] exclude;
@@ -476,6 +534,12 @@ int main(string[] args) {
         "v|verbose",  "stream test output instead of summarizing on failure", &verbose,
         "k|keep",     "leave vibe3d running after tests finish",              &keep,
         "no-build",   "skip `dub build`",                                     &noBuild,
+        "shadow",     "MS-2 shadow lane: build vibe3d with --config=test-shadow "
+                    ~ "(adds -debug=xfrmShadow) and run the normal event-replay "
+                    ~ "suite against it. Log-only unless --shadow-gate.",      &shadow,
+        "shadow-gate","with --shadow, FAIL the run if any worker log shows "
+                    ~ "`xfrmShadow: SHADOW MISMATCH` or SUMMARY mismatches != 0 "
+                    ~ "(the SKIP lines never trip the gate).",                 &shadowGate,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default 1)",                             &j,
@@ -522,7 +586,7 @@ int main(string[] args) {
         return 0;
     }
 
-    if (!noBuild && !dubBuild()) return 1;
+    if (!noBuild && !dubBuild(shadow)) return 1;
 
     scratchDir = buildPath(tempDir(), "vibe3d-tests-" ~ environment.get("PPID", "0"));
     if (exists(scratchDir)) rmdirRecurse(scratchDir);
@@ -572,5 +636,28 @@ int main(string[] args) {
     printSummary(results);
     int failed = 0;
     foreach (ref r; results) if (!r.passed) failed++;
-    return failed == 0 ? 0 : 1;
+    int rc = failed == 0 ? 0 : 1;
+
+    // MS-2 shadow lane (R1). After the normal suite runs, surface the shadow
+    // SUMMARY / SKIP / MISMATCH lines from each worker log. Log-only by default
+    // (the R-1 bootstrap measurement run); --shadow-gate turns a logged mismatch
+    // or a non-zero SUMMARY counter into a non-zero exit. The shadow only ever
+    // LOGS in-process (F3) — the gate lives here, in the runner. Bare
+    // `./run_test.d` (no --shadow) builds the normal binary and never sees the
+    // shadow; `./run_all.d` drives the lane with --shadow --shadow-gate.
+    if (shadow) {
+        writeln();
+        writeln(bold("Shadow lane (xfrmShadow):"));
+        bool gateOk = shadowGatePasses(workers);
+        if (shadowGate && !gateOk) {
+            writeln("  ", red("SHADOW GATE FAILED — applyTRS matrix shadow diverged"));
+            if (rc == 0) rc = 2;
+        } else if (shadowGate) {
+            writeln("  ", green("shadow gate PASSED (0 mismatches)"));
+        } else {
+            writeln("  ", dim("log-only (no --shadow-gate): mismatches do not fail the run"));
+        }
+    }
+
+    return rc;
 }
