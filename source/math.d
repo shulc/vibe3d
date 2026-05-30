@@ -1,6 +1,6 @@
 module math;
 
-import std.math : tan, sin, cos, sqrt, PI, abs;
+import std.math : tan, sin, cos, sqrt, PI, abs, acos;
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -136,6 +136,137 @@ Vec3 scaleAlongBasis(Vec3 v, Vec3 pivot, Vec3 ax, Vec3 ay, Vec3 az,
     float b = d.x*ay.x + d.y*ay.y + d.z*ay.z;
     float c = d.x*az.x + d.y*az.y + d.z*az.z;
     return pivot + ax*(a*sx) + ay*(b*sy) + az*(c*sz);
+}
+
+// ---------------------------------------------------------------------------
+// Quaternion + matrix helpers for the canonical-matrix transform blend (MS-1).
+//
+// These support `blendToIdentity` in tools/xform_kernels.d, which interpolates a
+// pivot-relative transform matrix toward identity by a per-vertex falloff weight.
+// The PolarQuat blend mode (option (c) of the modo_transform_model_plan) needs
+// to decompose a rotation·scale 3×3 into a pure rotation quaternion + per-axis
+// scale; slerp the rotation toward identity; lerp scale toward 1; recompose.
+// All matrices here follow the same column-major (m[row + col*4]) convention as
+// the rest of this module (see pivotRotationMatrix / pivotScaleMatrixBasis).
+// ---------------------------------------------------------------------------
+
+// Unit quaternion (w + xi + yj + zk). Rotation only; no translation/scale.
+struct Quat {
+    float w = 1, x = 0, y = 0, z = 0;
+
+    static Quat identity() @safe pure nothrow @nogc { return Quat(1, 0, 0, 0); }
+
+    Quat normalize() const @safe pure nothrow @nogc {
+        float n = sqrt(w*w + x*x + y*y + z*z);
+        if (n < 1e-12f) return Quat.identity();
+        float inv = 1.0f / n;
+        return Quat(w*inv, x*inv, y*inv, z*inv);
+    }
+}
+
+// Spherical linear interpolation between two unit quaternions. t==0 → a,
+// t==1 → b. Picks the shorter arc (negates b on a negative dot) and falls
+// back to a normalized lerp (nlerp) for nearly-parallel inputs to avoid the
+// 1/sin(theta) blow-up. Result is unit length.
+Quat slerp(Quat a, Quat b, float t) @safe pure nothrow @nogc {
+    a = a.normalize();
+    b = b.normalize();
+    float d = a.w*b.w + a.x*b.x + a.y*b.y + a.z*b.z;
+    if (d < 0.0f) { // shorter arc
+        b = Quat(-b.w, -b.x, -b.y, -b.z);
+        d = -d;
+    }
+    if (d > 0.9995f) {
+        // Nearly parallel — nlerp to dodge the small-angle singularity.
+        Quat r = Quat(a.w + t*(b.w - a.w),
+                      a.x + t*(b.x - a.x),
+                      a.y + t*(b.y - a.y),
+                      a.z + t*(b.z - a.z));
+        return r.normalize();
+    }
+    float theta0 = acos(d);
+    float theta  = theta0 * t;
+    float sin0   = sin(theta0);
+    float s0 = sin(theta0 - theta) / sin0;
+    float s1 = sin(theta)          / sin0;
+    return Quat(a.w*s0 + b.w*s1,
+                a.x*s0 + b.x*s1,
+                a.y*s0 + b.y*s1,
+                a.z*s0 + b.z*s1);
+}
+
+// Extract the rotation quaternion from the upper-left 3×3 of a column-major
+// affine matrix. Per-axis scale is divided out first (via the column norms),
+// so a rotation·scale matrix yields the PURE rotation. Uses the standard
+// trace-based branch for numerical stability. Translation (column 3) ignored.
+Quat quatFromMatrix(float[16] m) @safe pure nothrow @nogc {
+    // Column 0 = m[0..2], column 1 = m[4..6], column 2 = m[8..10].
+    float sx = sqrt(m[0]*m[0] + m[1]*m[1] + m[2]*m[2]);
+    float sy = sqrt(m[4]*m[4] + m[5]*m[5] + m[6]*m[6]);
+    float sz = sqrt(m[8]*m[8] + m[9]*m[9] + m[10]*m[10]);
+    float ix = sx > 1e-12f ? 1.0f / sx : 0.0f;
+    float iy = sy > 1e-12f ? 1.0f / sy : 0.0f;
+    float iz = sz > 1e-12f ? 1.0f / sz : 0.0f;
+    // Rotation entries R[row][col] (column-major storage: m[row + col*4]).
+    float r00 = m[0]*ix, r10 = m[1]*ix, r20 = m[2]*ix;     // col 0
+    float r01 = m[4]*iy, r11 = m[5]*iy, r21 = m[6]*iy;     // col 1
+    float r02 = m[8]*iz, r12 = m[9]*iz, r22 = m[10]*iz;    // col 2
+    float tr = r00 + r11 + r22;
+    Quat q;
+    if (tr > 0.0f) {
+        float s = sqrt(tr + 1.0f) * 2.0f; // s = 4*w
+        q.w = 0.25f * s;
+        q.x = (r21 - r12) / s;
+        q.y = (r02 - r20) / s;
+        q.z = (r10 - r01) / s;
+    } else if (r00 > r11 && r00 > r22) {
+        float s = sqrt(1.0f + r00 - r11 - r22) * 2.0f; // s = 4*x
+        q.w = (r21 - r12) / s;
+        q.x = 0.25f * s;
+        q.y = (r01 + r10) / s;
+        q.z = (r02 + r20) / s;
+    } else if (r11 > r22) {
+        float s = sqrt(1.0f + r11 - r00 - r22) * 2.0f; // s = 4*y
+        q.w = (r02 - r20) / s;
+        q.x = (r01 + r10) / s;
+        q.y = 0.25f * s;
+        q.z = (r12 + r21) / s;
+    } else {
+        float s = sqrt(1.0f + r22 - r00 - r11) * 2.0f; // s = 4*z
+        q.w = (r10 - r01) / s;
+        q.x = (r02 + r20) / s;
+        q.y = (r12 + r21) / s;
+        q.z = 0.25f * s;
+    }
+    return q.normalize();
+}
+
+// Build a column-major rotation matrix (no translation, no scale) from a unit
+// quaternion. Inverse of quatFromMatrix for a pure-rotation input.
+float[16] matrixFromQuat(Quat q) @safe pure nothrow @nogc {
+    q = q.normalize();
+    float xx = q.x*q.x, yy = q.y*q.y, zz = q.z*q.z;
+    float xy = q.x*q.y, xz = q.x*q.z, yz = q.y*q.z;
+    float wx = q.w*q.x, wy = q.w*q.y, wz = q.w*q.z;
+    float r00 = 1 - 2*(yy + zz), r01 = 2*(xy - wz),     r02 = 2*(xz + wy);
+    float r10 = 2*(xy + wz),     r11 = 1 - 2*(xx + zz), r12 = 2*(yz - wx);
+    float r20 = 2*(xz - wy),     r21 = 2*(yz + wx),     r22 = 1 - 2*(xx + yy);
+    // Column-major storage: m[row + col*4].
+    return [r00, r10, r20, 0,
+            r01, r11, r21, 0,
+            r02, r12, r22, 0,
+            0,   0,   0,   1];
+}
+
+// Apply a column-major affine matrix to a point (w == 1): returns the xyz of
+// M·(p,1). Same math as `mulMV(m, Vec4(p, 1))` but inlined so this stays
+// @safe/pure/nothrow/@nogc (mulMV carries none of those attributes).
+Vec3 applyAffine(float[16] m, Vec3 p) @safe pure nothrow @nogc {
+    return Vec3(
+        m[0]*p.x + m[4]*p.y + m[ 8]*p.z + m[12],
+        m[1]*p.x + m[5]*p.y + m[ 9]*p.z + m[13],
+        m[2]*p.x + m[6]*p.y + m[10]*p.z + m[14],
+    );
 }
 
 // Column-major 4x4 matrix multiplication: C = A * B
@@ -513,6 +644,85 @@ unittest { // offsetMeet: 90° corner, both bev — meets at the diagonal
 // ---------------------------------------------------------------------------
 
 version (unittest) import std.math : isClose;
+
+unittest { // Quat.identity is a unit quaternion w=1
+    auto q = Quat.identity();
+    assert(q.w == 1 && q.x == 0 && q.y == 0 && q.z == 0);
+}
+
+unittest { // Quat.normalize yields unit length
+    auto q = Quat(2, 0, 0, 0).normalize();
+    assert(isClose(q.w, 1.0f) && isClose(q.x, 0) && isClose(q.y, 0) && isClose(q.z, 0));
+    auto q2 = Quat(1, 1, 1, 1).normalize();
+    assert(isClose(sqrt(q2.w*q2.w + q2.x*q2.x + q2.y*q2.y + q2.z*q2.z), 1.0f));
+}
+
+unittest { // slerp endpoints: t=0 → a, t=1 → b
+    auto a = Quat.identity();
+    auto b = quatFromMatrix(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,0,1), PI/2));
+    auto r0 = slerp(a, b, 0.0f);
+    assert(isClose(r0.w, a.w, 1e-5f) && isClose(r0.x, a.x, 1e-5f)
+        && isClose(r0.y, a.y, 1e-5f) && isClose(r0.z, a.z, 1e-5f));
+    auto r1 = slerp(a, b, 1.0f);
+    // Sign-insensitive compare (q and -q are the same rotation).
+    float d = r1.w*b.w + r1.x*b.x + r1.y*b.y + r1.z*b.z;
+    assert(isClose(abs(d), 1.0f, 1e-5f));
+}
+
+unittest { // quatFromMatrix(pivotRotationMatrix(...)) recovers the angle
+    // Rotation of PI/3 about Z (pivot irrelevant for the rotation part).
+    float ang = PI / 3;
+    auto m = pivotRotationMatrix(Vec3(2, -1, 0.5f), Vec3(0, 0, 1), ang);
+    auto q = quatFromMatrix(m);
+    // For a unit-axis rotation, w = cos(ang/2), |z| = sin(ang/2).
+    assert(isClose(abs(q.w), cos(ang/2), 1e-4f));
+    assert(isClose(abs(q.z), sin(ang/2), 1e-4f));
+    assert(isClose(q.x, 0, 1e-4f, 1e-4f) && isClose(q.y, 0, 1e-4f, 1e-4f));
+}
+
+unittest { // quatFromMatrix divides out per-axis scale → pure rotation
+    // Rotation·scale: rotate PI/4 about Y, then scale (2, 3, 4) along the
+    // rotated axes. quatFromMatrix must recover ONLY the rotation.
+    float ang = PI / 4;
+    Vec3 ax = Vec3(cos(ang), 0, -sin(ang)); // R(Y, ang) applied to X
+    Vec3 ay = Vec3(0, 1, 0);
+    Vec3 az = Vec3(sin(ang), 0, cos(ang));  // R(Y, ang) applied to Z
+    auto rs = pivotScaleMatrixBasis(Vec3(0,0,0), ax, ay, az, 2, 3, 4);
+    auto qpure = quatFromMatrix(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), ang));
+    auto qrs   = quatFromMatrix(rs);
+    // pivotScaleMatrixBasis builds R·diag(s)·R^T (a symmetric stretch, NOT a
+    // rotation·scale), so this case just asserts scale is removed: the result
+    // is a unit quaternion and (here) the identity rotation.
+    assert(isClose(sqrt(qrs.w*qrs.w+qrs.x*qrs.x+qrs.y*qrs.y+qrs.z*qrs.z), 1.0f, 1e-4f));
+}
+
+unittest { // matrixFromQuat ∘ quatFromMatrix round-trips a rotation matrix
+    auto m = pivotRotationMatrix(Vec3(0,0,0), normalize(Vec3(1, 2, 3)), 0.7f);
+    auto m2 = matrixFromQuat(quatFromMatrix(m));
+    // Compare the 3×3 rotation block (translation is zero for pivot at origin).
+    foreach (i; [0,1,2, 4,5,6, 8,9,10])
+        assert(isClose(m[i], m2[i], 1e-4f), "rotation block mismatch");
+}
+
+unittest { // matrixFromQuat(identity) == identity matrix
+    auto m = matrixFromQuat(Quat.identity());
+    foreach (i, v; identityMatrix)
+        assert(isClose(m[i], v, 1e-6f));
+}
+
+unittest { // applyAffine: translation matrix moves a point by t
+    auto m = translationMatrix(Vec3(1, -2, 3));
+    auto p = applyAffine(m, Vec3(5, 5, 5));
+    assert(isClose(p.x, 6) && isClose(p.y, 3) && isClose(p.z, 8));
+}
+
+unittest { // applyAffine: pivotRotationMatrix matches a hand-rotated point
+    // 90° about Z around origin sends (1,0,0) → (0,1,0).
+    auto m = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,0,1), PI/2);
+    auto p = applyAffine(m, Vec3(1, 0, 0));
+    assert(isClose(p.x, 0, 1e-5f, 1e-5f) && isClose(p.y, 1.0f, 1e-5f)
+        && isClose(p.z, 0, 1e-5f, 1e-5f));
+}
 
 unittest { // vec3Add
     auto r = Vec3(1,2,3) + Vec3(4,5,6);

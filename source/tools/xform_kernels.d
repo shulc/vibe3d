@@ -22,6 +22,8 @@ module tools.xform_kernels;
 // captureFalloffForDrag / captureSymmetryForDrag.
 
 import math    : Vec3, Viewport;
+import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
+                 matMul4, identityMatrix;
 import mesh    : Mesh;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
@@ -347,6 +349,221 @@ void applyScaleFromActivation(
         }
         mesh.vertices[vi] = scaleAlongBasis(activationVerts[vi], pivot,
                                              ax, ay, az, sx, sy, sz);
+    }
+    if (dragSymmetry.enabled
+        && dragSymmetry.pairOf.length == mesh.vertices.length)
+        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+}
+
+// ---------------------------------------------------------------
+// Canonical single-matrix kernel (MS-1)
+// ---------------------------------------------------------------
+//
+// The four kernels above re-express MODO's decomposed transform state
+// (separate T / R / S passes). MS-1 of the canonical-matrix plan
+// (doc/modo_transform_model_plan.md) introduces a SINGLE pivot-relative
+// matrix `M` that is applied per vertex, blended toward identity by the
+// per-vertex falloff weight. This block adds that kernel WITHOUT touching
+// any existing call path — it is additive and used (so far) only by
+// tests/test_xform_matrix_kernel.d. MS-2 wires it into a measure-only
+// shadow; MS-3 flips the real apply.
+//
+// Contract:
+//   - `M` is a PIVOT-RELATIVE, origin-fixing matrix: it operates on the
+//     offset (v - pivot), and the caller adds `pivot` back. Equivalently
+//     `v' = pivot + blendToIdentity(M, w) · (v - pivot)`. Builders produce
+//     such an M via translationMatrix(delta-in-basis),
+//     matrixFromQuat / pivotRotationMatrix(origin, axis, angle) (translation
+//     column zero ⇒ origin-fixing), or pivotScaleMatrixBasis(origin, ...).
+//   - This kernel models ONLY `compoundPasses == 1`. The scale `pow(s, passes)`
+//     path has no matrix expression (see plan F2); callers MUST skip the
+//     matrix kernel when `fabs(dragFalloff.compoundPasses - 1) > 1e-4`.
+//   - (C2 caveat) Decompose / PolarQuat assume `M = R · diag(s)` — i.e. scale in
+//     M's OWN column directions. A rotated-basis stretch, a symmetric (shear)
+//     stretch, or a reflection (negative-determinant M) is mis-decomposed by the
+//     column-norm + quaternion extraction here; only MatrixLerp is exact for
+//     such M. The live builders only ever produce R·diag(s), so this is a
+//     documented contract, not a live-reachable bug.
+
+/// Per-vertex falloff-weight blend of a pivot-relative transform matrix
+/// toward identity. Three modes, matching the plan's options a / b / c:
+///   - Decompose  (a): decompose M's 3×3 into rotation-quat + per-axis scale +
+///                     translation; rotate by `w·angle` via AXIS-ANGLE (linear
+///                     in angle, NOT slerp); lerp scale toward 1; lerp
+///                     translation toward 0; recompose.
+///   - MatrixLerp (b): entrywise `(1-w)·I + w·M`. Cheap, but mid-blend the
+///                     3×3 is no longer orthogonal (shears) — this is exactly
+///                     the current `rotateVecLerp` / `1+(s-1)w` blend the
+///                     existing kernels use.
+///   - PolarQuat  (c): decompose as in (a) but interpolate the rotation by
+///                     SLERP(identity, R, w) (great-circle, radius-preserving)
+///                     instead of the axis-angle linear blend. scale + translation
+///                     lerp as in (a).
+///
+/// The precise a-vs-c distinction: BOTH decompose M into R + S + t and lerp the
+/// scale (toward 1) and translation (toward 0) identically. They differ ONLY in
+/// how the rotation is taken to a fraction `w` of itself —
+///   (a) uses the rotation's axis-angle (θ_w = w·θ about the same axis), a LINEAR
+///       interpolation of the angle, and
+///   (c) uses slerp(identity, R, w), which for a single-axis rotation is the SAME
+///       great circle and therefore numerically equal to (a); they diverge only
+///       for rotations whose extraction/axis handling differs under float, or
+///       when chained with non-uniform scale that makes the decomposition
+///       axis ambiguous. (b) is distinct from both: it never re-orthogonalizes.
+///
+/// `w == 1` returns `M` exactly (all modes); `w == 0` returns identity exactly
+/// (all modes).
+float[16] blendToIdentity(float[16] M, float w, BlendMode mode)
+    @safe pure nothrow @nogc
+{
+    if (w >= 1.0f) return M;
+    if (w <= 0.0f) return identityMatrix;
+
+    final switch (mode) {
+    case BlendMode.MatrixLerp:
+        float[16] r;
+        foreach (i; 0 .. 16)
+            r[i] = (1.0f - w) * identityMatrix[i] + w * M[i];
+        return r;
+
+    case BlendMode.Decompose:
+    case BlendMode.PolarQuat:
+        // Decompose the 3×3 into per-axis scale (column norms) + rotation; the
+        // 4th column is the translation. Lerp scale → 1 and translation → 0;
+        // take the rotation to fraction w.
+        import std.math : sqrt;
+        float sx = sqrt(M[0]*M[0] + M[1]*M[1] + M[2]*M[2]);
+        float sy = sqrt(M[4]*M[4] + M[5]*M[5] + M[6]*M[6]);
+        float sz = sqrt(M[8]*M[8] + M[9]*M[9] + M[10]*M[10]);
+        float sxW = 1.0f + (sx - 1.0f) * w;
+        float syW = 1.0f + (sy - 1.0f) * w;
+        float szW = 1.0f + (sz - 1.0f) * w;
+
+        Quat R = quatFromMatrix(M);
+        Quat Rw;
+        if (mode == BlendMode.PolarQuat) {
+            // (c) slerp(identity, R, w): great-circle interpolation of the
+            // rotation, radius-preserving.
+            Rw = slerp(Quat.identity(), R, w);
+        } else {
+            // (a) axis-angle LINEAR: extract R's axis-angle (θ, axis) and rebuild
+            // the rotation at the LINEARLY-scaled angle w·θ about the same axis.
+            // This is genuinely distinct from (c)'s slerp once M carries scale or
+            // shear (the decomposition's residual rotation differs); for a SINGLE
+            // pure rotation both trace the same great circle and coincide.
+            import std.math : acos, sin, cos;
+            // q = (w_q, x, y, z) with w_q = cos(θ/2); |q| == 1 (quatFromMatrix
+            // normalizes). Use |w_q| so we always extract the shorter-arc angle,
+            // matching slerp's shorter-arc choice.
+            float qw = R.w < 0.0f ? -R.w : R.w;   // |cos(θ/2)|
+            float qx = R.w < 0.0f ? -R.x : R.x;   // flip the vector part with it
+            float qy = R.w < 0.0f ? -R.y : R.y;   // so the axis sign stays consistent
+            float qz = R.w < 0.0f ? -R.z : R.z;
+            if (qw > 1.0f) qw = 1.0f;
+            float half = acos(qw);                // θ/2 ∈ [0, π/2]
+            float vlen = sqrt(qx*qx + qy*qy + qz*qz);  // = sin(θ/2)
+            if (vlen < 1e-7f) {
+                // θ ≈ 0: degenerate axis → identity rotation at any w.
+                Rw = Quat.identity();
+            } else {
+                float halfW = half * w;           // (θ·w)/2: linear in the angle
+                float s = sin(halfW) / vlen;      // re-spread sin onto the unit axis
+                // Assign by name so we don't depend on the positional field order.
+                Rw.x = qx * s; Rw.y = qy * s; Rw.z = qz * s; Rw.w = cos(halfW);
+            }
+        }
+        float[16] rot = matrixFromQuat(Rw);
+
+        // Recompose: rotation · diag(scale_w), then weighted translation column.
+        float[16] r;
+        // Columns 0..2 = rot columns scaled by per-axis weighted scale.
+        r[0] = rot[0]*sxW; r[1] = rot[1]*sxW; r[2]  = rot[2]*sxW;  r[3]  = 0;
+        r[4] = rot[4]*syW; r[5] = rot[5]*syW; r[6]  = rot[6]*syW;  r[7]  = 0;
+        r[8] = rot[8]*szW; r[9] = rot[9]*szW; r[10] = rot[10]*szW; r[11] = 0;
+        r[12] = M[12] * w; r[13] = M[13] * w; r[14] = M[14] * w;   r[15] = 1;
+        return r;
+    }
+}
+
+/// Blend modes for `blendToIdentity` — the plan's options a / b / c.
+enum BlendMode { Decompose, MatrixLerp, PolarQuat }
+
+/// Pure single-pass matrix apply (MS-1). Reproduces ONE pass of `applyTRS`
+/// expressed as a single pivot-relative matrix blended toward identity per
+/// vertex by the falloff weight. No symmetry mirror is run by callers via the
+/// SAME `applySymmetryMirror` at the end (sharing the live mirror path).
+///
+/// Per vertex `vi`:
+///   pivot = clusterPivots(vi) when a cluster is active, else `pivotFallback`.
+///   Mv    = (clusterM[cid] when the vert's cluster is active and clusterM is
+///            non-null) else the global `M`.
+///   w     = evaluateFalloff(dragFalloff, weightVerts ? weightVerts[vi]
+///                                                     : baseline[i], vi, vp)
+///           (1.0 when falloff disabled; verts with w==0 are left untouched).
+///           NB: `baseline` is ordinal-indexed (baseline[i] ↔ indices[i]) but
+///           `weightVerts` is vertex-id-indexed + mesh-length, matching the live
+///           scale kernel so MS-2 can share its buffer. See the body contract.
+///   mesh.vertices[vi] = pivot + applyAffine(blendToIdentity(Mv, w, mode),
+///                                            baseline[vi] - pivot).
+///
+/// Contract: models ONLY `compoundPasses == 1` (callers skip otherwise, F2).
+/// `M` / `clusterM[cid]` must be PIVOT-RELATIVE (origin-fixing) so the
+/// `pivot +  … · (baseline - pivot)` framing holds; see `blendToIdentity`.
+void applyXformMatrix(
+    Mesh* mesh,
+    const(int)[] indices,
+    const(Vec3)[] baseline,
+    Vec3 pivotFallback,
+    float[16] M,
+    BlendMode mode,
+    const ref FalloffPacket dragFalloff,
+    const ref Viewport vp,
+    TransformTool.ClusterPivots clusterPivots,
+    TransformTool.ClusterAxes clusterAxes,
+    float[16][] clusterM,
+    const ref SymmetryPacket dragSymmetry,
+    bool[] toProcess,
+    const(Vec3)[] weightVerts = null)
+{
+    // Array-layout contract (locked by test (v), the non-identity-indices case):
+    //   - `baseline` is ORDINAL-parallel to `indices`: baseline[i] is the pre-edit
+    //     position of the vertex `indices[i]`. (It only needs to cover the moving
+    //     set, so it is sized `indices.length`.)
+    //   - `weightVerts`, when supplied, is VERTEX-ID-indexed and mesh-length, to
+    //     MATCH the live scale kernel (applyScaleFromActivation reads
+    //     weightVerts[vi]). MS-2 can therefore feed the SAME weightVerts buffer
+    //     the live scale path uses with no re-indexing. Empty / wrong-length ⇒
+    //     fall back to weighting at `baseline[i]`.
+    // The asymmetry (baseline ordinal, weightVerts vid) is deliberate: baseline
+    // is a compact per-move-set snapshot, weightVerts mirrors a mesh-length live
+    // buffer.
+    bool useWeightVerts = (weightVerts.length == mesh.vertices.length);
+    foreach (i, vi; indices) {
+        if (vi >= mesh.vertices.length) continue;
+        if (i >= baseline.length) continue;
+        Vec3 base  = baseline[i];
+        Vec3 pivot = pivotFor(vi, clusterPivots, pivotFallback);
+
+        // Per-cluster matrix override (ACEN.Local). When the vert belongs to
+        // an active cluster and a per-cluster matrix array is supplied, use
+        // that cluster's matrix; otherwise the global M.
+        float[16] Mv = M;
+        if (clusterM !is null && clusterPivots.active
+            && vi < clusterPivots.clusterOf.length) {
+            int cid = clusterPivots.clusterOf[vi];
+            if (cid >= 0 && cid < cast(int)clusterM.length)
+                Mv = clusterM[cid];
+        }
+
+        float w = dragFalloff.enabled
+            ? evaluateFalloff(dragFalloff,
+                              useWeightVerts ? weightVerts[vi] : base,
+                              cast(int)vi, vp)
+            : 1.0f;
+        if (w == 0.0f) continue;
+
+        float[16] Mw = blendToIdentity(Mv, w, mode);
+        mesh.vertices[vi] = pivot + applyAffine(Mw, base - pivot);
     }
     if (dragSymmetry.enabled
         && dragSymmetry.pairOf.length == mesh.vertices.length)

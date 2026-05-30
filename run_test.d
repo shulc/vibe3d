@@ -158,6 +158,87 @@ bool dubBuild() {
     return true;
 }
 
+// Pure-D unit tests that exercise project source modules in-process (e.g.
+// test_xform_matrix_kernel imports `tools.xform_kernels` / `mesh` / `math`)
+// cannot be compiled with the bare `-I=tests` line below — they pull the
+// full dependency graph (bindbc-opengl, OpenSubdiv C libs, …). For those we
+// harvest dmd flags from `dub describe` ONCE and append them. Other tests
+// (HTTP drivers that only import std.* + helpers) are unaffected.
+//
+// `__gshared` + lazy init so the (slowish) `dub describe` runs at most once
+// across all workers, and only if a source-backed test is present.
+__gshared string g_sourceTestFlags;     // set once; "" means "not computed / none"
+__gshared bool   g_sourceTestFlagsDone;
+
+string sourceTestFlags() {
+    synchronized {
+        if (g_sourceTestFlagsDone) return g_sourceTestFlags;
+        g_sourceTestFlagsDone = true;
+        string[] parts;
+        // Each `--data=<x> --data-list` emits one item per line; dub prints a
+        // few leading "Warning" lines to stderr which 2>/dev/null drops.
+        string gather(string kind, string prefix) {
+            auto rr = executeShell(format(
+                "dub describe --config=modeling --data=%s --data-list 2>/dev/null", kind));
+            if (rr.status != 0) return "";
+            string acc;
+            foreach (line; rr.output.splitLines) {
+                auto s = line.strip;
+                if (s.length == 0) continue;
+                acc ~= " " ~ prefix ~ s;
+            }
+            return acc;
+        }
+        string flags;
+        flags ~= gather("import-paths",        "-I=");
+        flags ~= gather("string-import-paths", "-J=");
+        flags ~= gather("versions",            "-version=");
+        flags ~= gather("lflags",              "-L");
+        flags ~= gather("libs",                "-L-l");
+        // linker-files (.a archives) are passed verbatim.
+        {
+            auto rr = executeShell(
+                "dub describe --config=modeling --data=linker-files --data-list 2>/dev/null");
+            if (rr.status == 0)
+                foreach (line; rr.output.splitLines) {
+                    auto s = line.strip;
+                    if (s.length) flags ~= " " ~ s;
+                }
+        }
+        g_sourceTestFlags = flags;
+        return g_sourceTestFlags;
+    }
+}
+
+// A test is "source-backed" if it imports any first-party project module.
+// Heuristic: a top-level `import <mod>` / `import <mod> :` whose module is one
+// of the known project roots. HTTP-driver tests only import std.* + helpers,
+// so this stays false for them and the cheap compile path is used.
+bool isSourceBackedTest(string path) {
+    string txt;
+    try { txt = readText(path); } catch (Exception) { return false; }
+    static immutable string[] roots = [
+        "math", "mesh", "tools.", "toolpipe.", "falloff", "symmetry",
+        "view", "viewcache", "handler", "shader", "editmode", "command",
+        "snapshot",
+    ];
+    foreach (line; txt.splitLines) {
+        auto s = line.strip;
+        // R1: anchor to column 0 — test the RAW line so only genuinely top-level
+        // imports count (an indented function-local `import math:` must NOT
+        // flip an HTTP test to the heavy source-backed compile line).
+        if (!line.startsWith("import ")) continue;
+        string mod = s["import ".length .. $].strip;
+        foreach (root; roots) {
+            if (mod == root || mod.startsWith(root ~ " ")
+                || mod.startsWith(root ~ ":") || mod.startsWith(root ~ ";")
+                || (root.endsWith(".") && mod.startsWith(root)))
+                return true;
+        }
+    }
+    return false;
+}
+
 /// Compile each test in `paths` into `outDir`. Source is read AS-IS unless
 /// `port` differs from 8080 — then literal "localhost:8080" is rewritten
 /// to "localhost:<port>" in a per-test scratch copy. This keeps tests
@@ -196,8 +277,23 @@ string[] compileTests(string[] paths, string outDir, ushort port) {
         // test embed a golden fixture via `import("fixtures/<name>.json")`
         // (see tests/fixture_helpers.d) — the path is resolved against the
         // repo's tests/ dir regardless of the per-worker scratch copy.
-        auto cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s %s -w -of=%s 2>&1",
-                          outDir, helpers, src, of);
+        //
+        // Source-backed tests (those importing project modules like
+        // tools.xform_kernels / mesh / math) need the full dependency graph:
+        // dmd's `-i` auto-includes the imported project source, and the
+        // harvested `dub describe` flags supply the dep import paths + the
+        // native link inputs (OpenSubdiv C libs, bindbc archives, …). We drop
+        // `-w` for these because the third-party dep code carries warnings
+        // that aren't ours to fix; the test's own warnings still surface via
+        // the bare-path tests. HTTP-driver tests keep the original cheap line.
+        string cmd;
+        if (isSourceBackedTest(p)) {
+            cmd = format("dmd -unittest -i -J=tests -I=%s -I=tests%s%s %s -of=%s 2>&1",
+                         outDir, helpers, sourceTestFlags(), src, of);
+        } else {
+            cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s %s -w -of=%s 2>&1",
+                         outDir, helpers, src, of);
+        }
         auto r = executeShell(cmd);
         if (r.status != 0) {
             writeln("  ", red("FAIL  "), name);
