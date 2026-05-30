@@ -100,13 +100,23 @@ unittest { // SX/SY/SZ likewise no-ops on the T-only preset.
                 "S-flag off ⇒ SX=2 no-op; got " ~ v[c].to!string);
 }
 
-unittest { // Full T+R+S chain available via the unified `Transform`
-           // preset (T=R=S=1). With pickedCenter at a corner +
-           // empty selection: TX=0.3 shifts only v6 (weight=1
-           // inside the 0.5 sphere); RY=90 around the corner
-           // pivot keeps v6 at the same X (rotating a point
-           // about itself), SX=2 around the corner pivot likewise
-           // leaves v6's X invariant. Net: v6 at (0.8, 0.5, 0.5).
+unittest { // Full T+R+S chain via the unified `Transform` preset (T=R=S=1),
+           // exercising the MS-4.3 canonical-matrix FOLD. pickedCenter at the
+           // corner (0.5,0.5,0.5) + empty selection: v6 sits AT that corner and
+           // is the only vertex inside the 0.5 element-falloff sphere, with
+           // weight==1 at its BASELINE position.
+           //
+           // applyTRS now COMPOSES the whole chain into ONE pivot-relative matrix
+           // M = S·R·T and applies it once with that single baseline weight
+           // (MS-4.1/4.2: this is the reference model). v6 is AT the pivot, so
+           // M·(v6-pivot)=0 and only M's composed translation moves it:
+           //   t = S·R·delta,  delta = (0.3,0,0) (TX along world X)
+           //   RY=90 sends (0.3,0,0) → (0,0,-0.3);  SX=2 leaves Z untouched
+           //   ⇒ v6 = pivot + (0,0,-0.3) = (0.5, 0.5, 0.2).
+           //
+           // (The pre-fold per-pass chain translated v6 OFF the pivot FIRST at
+           // full weight, then rotated/scaled the displaced point at a REDUCED
+           // live weight, yielding +X — the divergence MS-4 corrects.)
     postJson("/api/reset", "");
     cmd("tool.set Transform on");
     cmd("tool.pipe.attr falloff type element");
@@ -118,13 +128,9 @@ unittest { // Full T+R+S chain available via the unified `Transform`
     cmd("tool.attr Transform SX 2.0");
     cmd("tool.doApply");
     auto verts = dumpVerts();
-    // v6 sits AT the rotate/scale pivot after the T step's offset
-    // takes it to (0.8, 0.5, 0.5)? No — pivot is queryActionCenter
-    // which returns pickedCenter (0.5, 0.5, 0.5). v6 after T is
-    // (0.8, 0.5, 0.5), so R/S around (0.5, 0.5, 0.5) DO move it
-    // (it's no longer at the pivot). Just assert the chain ran and
-    // v6 moved.
-    assert(verts[6][0] > 0.5 + 1e-3,
-        "Transform T→R→S chain: v6 must move in +X; got x="
-        ~ verts[6][0].to!string);
+    assert(approxEq(verts[6][0], 0.5, 1e-4)
+        && approxEq(verts[6][1], 0.5, 1e-4)
+        && approxEq(verts[6][2], 0.2, 1e-4),
+        "Transform T→R→S fold: v6 must be the composed-matrix result "
+        ~ "(0.5,0.5,0.2); got " ~ verts[6].to!string);
 }

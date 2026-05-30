@@ -313,6 +313,30 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
         cmd("tool.doApply", ctx);
         cmd(format("tool.set %s off", tl), ctx);
+    } else if ("falloff_rotate_matrix" in step) {
+        // MS-4.3 production-fold parity: drive a MULTI-AXIS rotation under a
+        // falloff through the LIVE rotate tool (RX/RY/RZ Euler + the recovered
+        // falloff handles, about the default action center = origin). vibe3d's
+        // applyTRS now COMPOSES the three axes into one matrix blended once per
+        // vertex (the fold), so it must land on the frozen reference `after`.
+        // The stored `rotation`/`pivot` are the ground-truth matrix + origin; the
+        // tool path rebuilds R from `euler_deg` (R = Rz·Ry·Rx, same as the fold).
+        auto ft  = step["falloff_rotate_matrix"];
+        auto eul = ft["euler_deg"];
+        auto fo  = ft["falloff"];
+        cmd("tool.set rotate on", ctx);
+        cmd(format("tool.pipe.attr falloff type %s", fo["type"].str), ctx);
+        cmd(format("tool.pipe.attr falloff shape %s",
+                   ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
+        auto a = jvec3(fo["start"]);
+        auto b = jvec3(fo["end"]);
+        cmd(format(`tool.pipe.attr falloff start "%g,%g,%g"`, a[0], a[1], a[2]), ctx);
+        cmd(format(`tool.pipe.attr falloff end "%g,%g,%g"`,   b[0], b[1], b[2]), ctx);
+        cmd(format("tool.attr rotate RX %g", asDouble(eul["rx"])), ctx);
+        cmd(format("tool.attr rotate RY %g", asDouble(eul["ry"])), ctx);
+        cmd(format("tool.attr rotate RZ %g", asDouble(eul["rz"])), ctx);
+        cmd("tool.doApply", ctx);
+        cmd("tool.set rotate off", ctx);
     } else if ("acen_transform" in step) {
         // Action-center transform: set an actr.<mode> preset (ACEN+AXIS), then
         // run a single-axis numeric transform. With actr.local on a multi-
