@@ -350,6 +350,19 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         string ac = ft["acen"].str;          // local|origin|auto|...
         cmd(format("actr.%s", ac), ctx);
         cmd(format("tool.set %s on", tl), ctx);
+        // Optional falloff (MS-4 per-cluster fold parity): a graded falloff makes
+        // the per-cluster transform per-vertex weighted. Set the stage before the
+        // attr, like falloff_transform.
+        if ("falloff" in ft) {
+            auto fo = ft["falloff"];
+            cmd(format("tool.pipe.attr falloff type %s", fo["type"].str), ctx);
+            cmd(format("tool.pipe.attr falloff shape %s",
+                       ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
+            auto a = jvec3(fo["start"]);
+            auto b = jvec3(fo["end"]);
+            cmd(format(`tool.pipe.attr falloff start "%g,%g,%g"`, a[0], a[1], a[2]), ctx);
+            cmd(format(`tool.pipe.attr falloff end "%g,%g,%g"`,   b[0], b[1], b[2]), ctx);
+        }
         cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
         cmd("tool.doApply", ctx);
         cmd(format("tool.set %s off", tl), ctx);

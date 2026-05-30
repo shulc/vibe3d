@@ -967,20 +967,21 @@ public:
                               || headlessScale.y != 1
                               || headlessScale.z != 1);
 
-            // MS-4.3 — GLOBAL fold: compose T->R->S into ONE pivot-relative
-            // matrix and apply it once with ONE baseline-position weight (the
-            // reference model, validated in MS-4.1/4.2). Per-cluster (ACEN.Local)
-            // and the dormant pow-scale path fall through to the legacy per-pass
-            // chain below — UNCHANGED. At w==1 the fold is bit-equivalent to the
-            // chain (same factor order), so the w==1 multi-pass suite gates the
-            // compose; under fractional falloff the fold is the validated change.
-            bool perCluster = cp.active && ap.active;
+            // MS-4.3/4.4 — fold: compose T->R->S into ONE pivot-relative matrix
+            // (per cluster in the ACEN.Local case) and apply it once with ONE
+            // baseline-position weight (the reference model, validated in
+            // MS-4.1/4.2 globally and the per-cluster translate-weighting captured
+            // in per_cluster_translate_falloff_bug). Only the dormant pow-scale
+            // path falls through to the legacy per-pass chain below (no matrix
+            // form, F2). At w==1 the fold is bit-equivalent to the chain (same
+            // factor order), so the w==1 suite gates the compose; under fractional
+            // falloff the fold is the validated change.
             float passesS = dragFalloff.compoundPasses > 0.0f
                           ? dragFalloff.compoundPasses : 1.0f;
             bool powScale = hasS && fabs(passesS - 1.0f) > 1e-4f;
-            if (!perCluster && !powScale) {
-                applyGlobalFold(baseline, pivot, bX, bY, bZ, cp, ap,
-                                hasT, hasS, viewAxis, viewAngleDeg);
+            if (!powScale) {
+                applyFold(baseline, pivot, bX, bY, bZ, cp, ap,
+                          hasT, hasS, viewAxis, viewAngleDeg);
             } else {
 
             // ---- T pass -------------------------------------------------------
@@ -1396,8 +1397,8 @@ private:
         return true;
     }
 
-    // MS-4.3 — canonical-matrix FOLD (global path). Composes the whole T->R->S
-    // chain into ONE pivot-relative matrix and applies it through a SINGLE
+    // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole T->R->S chain into
+    // ONE pivot-relative matrix per moving set and applies it through a SINGLE
     // `applyXformMatrix` call, blended toward identity per vertex by ONE falloff
     // weight evaluated at the BASELINE position. This is what MS-4.1/4.2 proved
     // the reference engine does (one composed matrix, one baseline weight):
@@ -1412,48 +1413,63 @@ private:
     //   M = S . (view . Rz . Ry . Rx) . T,
     // and applyXformMatrix re-applies `pivot` as `pivot + blend(M)*(v - pivot)`.
     //
-    // Scope: GLOBAL, compoundPasses==1 only. Per-cluster (ACEN.Local) and the
-    // dormant `pow(scale, passes)` path keep the legacy per-pass chain in
-    // applyTRS (the fold's single weight would change per-cluster translate,
-    // which is falloff-exempt today and has no reference fixture yet; pow has no
-    // matrix form, F2).
-    void applyGlobalFold(Vec3[] baseline, Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ,
-                         TransformTool.ClusterPivots cp,
-                         TransformTool.ClusterAxes ap,
-                         bool hasT, bool hasS,
-                         Vec3 viewAxis, float viewAngleDeg) {
+    // Per-cluster (ACEN.Local): each cluster composes the SAME chain in ITS OWN
+    // frame (ap.right/up/fwd[cid]) about ITS OWN pivot (cp), blended by ONE
+    // weight. Unlike the legacy per-cluster chain this WEIGHTS the translate too,
+    // matching the reference (per-cluster translate is falloff-weighted there, not
+    // exempt — the divergence this fold fixes). View-ring is global only.
+    //
+    // Scope: compoundPasses==1. The dormant `pow(scale, passes)` path keeps the
+    // legacy per-pass chain in applyTRS (no matrix form, F2).
+    void applyFold(Vec3[] baseline, Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ,
+                   TransformTool.ClusterPivots cp,
+                   TransformTool.ClusterAxes ap,
+                   bool hasT, bool hasS,
+                   Vec3 viewAxis, float viewAngleDeg) {
         import std.math : PI;
-        float[16] M = identityMatrix;
-        if (hasT) {
-            Vec3 delta = bX * headlessTranslate.x
-                       + bY * headlessTranslate.y
-                       + bZ * headlessTranslate.z;
-            M = translationMatrix(delta);                 // T (rightmost)
+        // Compose S·R·T in a given frame (ax/ay/az). `withView` folds the global
+        // view-ring rotation in (per-cluster frames get no view rotation).
+        float[16] composeFor(Vec3 ax, Vec3 ay, Vec3 az, bool withView) {
+            float[16] M = identityMatrix;
+            if (hasT)
+                M = translationMatrix(ax * headlessTranslate.x
+                                    + ay * headlessTranslate.y
+                                    + az * headlessTranslate.z);    // T (rightmost)
+            void rot(Vec3 axis, float deg) {
+                if (deg == 0) return;
+                M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
+                                                deg * cast(float)(PI / 180.0)), M);
+            }
+            if (flagR) {
+                rot(ax, headlessRotate.x);
+                rot(ay, headlessRotate.y);
+                rot(az, headlessRotate.z);
+                if (withView && viewAngleDeg != 0
+                    && (viewAxis.x != 0 || viewAxis.y != 0 || viewAxis.z != 0))
+                    rot(viewAxis, viewAngleDeg);
+            }
+            if (hasS)
+                M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), ax, ay, az,
+                                                  headlessScale.x, headlessScale.y,
+                                                  headlessScale.z), M);   // S (leftmost)
+            return M;
         }
-        // Rotations, in the legacy apply order (Rx, then Ry, then Rz, then view),
-        // each origin-fixing about the basis/view axis: R = view . Rz . Ry . Rx.
-        void rot(Vec3 axis, float deg) {
-            if (deg == 0) return;
-            M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
-                                            deg * cast(float)(PI / 180.0)), M);
-        }
-        if (flagR) {
-            rot(bX, headlessRotate.x);
-            rot(bY, headlessRotate.y);
-            rot(bZ, headlessRotate.z);
-            bool hasViewRot = viewAngleDeg != 0
-                && (viewAxis.x != 0 || viewAxis.y != 0 || viewAxis.z != 0);
-            if (hasViewRot) rot(viewAxis, viewAngleDeg);
-        }
-        if (hasS)
-            M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), bX, bY, bZ,
-                                              headlessScale.x, headlessScale.y,
-                                              headlessScale.z), M);    // S (leftmost)
 
-        // MS-4.5 — publish the composed matrix + pivot for the GPU fast-path to
-        // reuse (it bypasses applyXformMatrix but must apply the SAME transform).
+        float[16] M = composeFor(bX, bY, bZ, /*withView=*/true);
+
+        // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
+        // fast-path to reuse (whole-mesh fast-path is never per-cluster).
         lastFoldMatrix = M;
         lastFoldPivot  = pivot;
+
+        // Per-cluster: one composed matrix per cluster, in its own frame.
+        float[16][] clusterM = null;
+        if (cp.active && ap.active) {
+            clusterM = new float[16][](ap.right.length);
+            foreach (cid; 0 .. ap.right.length)
+                clusterM[cid] = composeFor(ap.right[cid], ap.up[cid], ap.fwd[cid],
+                                           /*withView=*/false);
+        }
 
         // Source = restored baseline gathered ordinal-parallel to the moving set;
         // weight at the BASELINE position (weightVerts == the mesh-length baseline).
@@ -1463,7 +1479,7 @@ private:
                    ? baseline[vi] : Vec3(0, 0, 0);
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                          blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
-                         null, dragSymmetry, toProcess, /*weightVerts=*/ baseline);
+                         clusterM, dragSymmetry, toProcess, /*weightVerts=*/ baseline);
     }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from
