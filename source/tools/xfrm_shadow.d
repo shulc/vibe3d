@@ -17,13 +17,27 @@ module tools.xfrm_shadow;
 // pass by pass through the MS-1 matrix kernel (`applyXformMatrix` +
 // `blendToIdentity`, BlendMode.MatrixLerp) into a SCRATCH mesh, mirroring each
 // pass's exact weight-eval position (T/R/view = LIVE scratch, S = BASELINE —
-// the plan's per-pass table), then compare scratch vs the live result. A
+// the plan's per-pass table), then compare scratch vs an INDEPENDENT reference.
+//
+// MS-3 sub-task 1: the reference is NO LONGER `mesh.vertices` (the live applyTRS
+// output passed in as `live`). Instead the shadow computes its OWN reference by
+// running the FROZEN legacy per-component kernels (`tools.xform_kernels_legacy`,
+// a verbatim copy of today's live kernels) through the exact same restore ->
+// T -> R.x -> R.y -> R.z -> view-ring -> S chain into a REFERENCE mesh. Because
+// the legacy kernels are byte-identical to the live ones, this reference equals
+// `mesh.vertices` to the bit today, so the gate's maxErr / mismatch counts are
+// unchanged. The point is independence: a LATER MS-3 task flips `applyTRS` to the
+// matrix path, after which `mesh.vertices` IS the matrix result; comparing the
+// matrix candidate against `mesh.vertices` would then be vacuous (matrix vs
+// matrix). The legacy-computed reference keeps the comparison meaningful
+// (matrix-apply vs legacy-frozen-reference). A
 // mismatch is LOGGED to stderr with the `xfrmShadow: SHADOW MISMATCH` prefix; it
 // NEVER asserts or aborts (F3) — the green-gate is enforced by the RUNNER
 // grepping that prefix (R1), not in-process.
 //
-// It also accumulates the a/b/c drift report (F4): b = live per-component
-// result, c = the per-pass MatrixLerp reconstruction (the gate), a = a single
+// It also accumulates the a/b/c drift report (F4): b = the legacy-computed
+// per-component reference (was `live`; identical bits today, see above),
+// c = the per-pass MatrixLerp reconstruction (the gate), a = a single
 // composed `T·R·S` matrix blended once per vertex (the MS-3 naive candidate).
 // b-vs-c runs every call; a-vs-c runs on a COARSER cadence (R2). All stats are
 // THREAD-LOCAL (the shadow runs on the same thread as applyTRS — the UI thread);
@@ -44,6 +58,9 @@ import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform : TransformTool;
 import tools.xform_kernels : applyXformMatrix, blendToIdentity, BlendMode;
+import tools.xform_kernels_legacy :
+    legacyApplyTranslateIncremental, legacyApplyTranslatePerCluster,
+    legacyApplyRotateIncremental, legacyApplyScaleFromActivation;
 
 // ---------------------------------------------------------------------------
 // Shared tolerance (plan N2 / R3).
@@ -101,11 +118,14 @@ private bool[16] g_abcFalloffSeen;  // FalloffType ordinals observed in a/b/c
 // is a value already live inside applyTRS at the call site — we reconstruct the
 // chain from them so applyTRS's signature is untouched (O1: no committedApply
 // param). `live` is `mesh.vertices.dup` captured by the caller AFTER the live
-// chain wrote it.
+// chain wrote it. As of MS-3 sub-task 1 the shadow NO LONGER uses `live` as its
+// reference — it recomputes an independent reference from the frozen legacy
+// kernels (see buildLegacyReference below). `live` is retained for context only
+// (the caller passes it unchanged) and is no longer read.
 // ---------------------------------------------------------------------------
 void runShadow(
     Mesh*               mesh,
-    const(Vec3)[]       live,        // live per-component result (mesh.vertices.dup)
+    const(Vec3)[]       live,        // live per-component result (UNUSED — legacy ref computed below)
     const(Vec3)[]       baseline,    // pre-chain snapshot (== mesh.vertices at restore)
     const(int)[]        indices,     // vertexIndicesToProcess
     bool[]              toProcess,
@@ -159,6 +179,22 @@ void runShadow(
     if (live.length != mesh.vertices.length
         || baseline.length != mesh.vertices.length)
         return;   // defensive; the caller guarantees these, but never gate on it
+
+    // ---- Build the INDEPENDENT legacy reference (the gate's `b`). ----------
+    // MS-3 sub-task 1: instead of trusting `mesh.vertices` / `live` (which a
+    // later task will make BE the matrix result), recompute the per-component
+    // result from the FROZEN legacy kernels through the EXACT same chain
+    // applyTRS runs: restore baseline -> T (per-cluster or global) -> R.x ->
+    // R.y -> R.z -> view-ring -> S. Byte-identical to the live chain today
+    // (legacy kernels are a verbatim copy), so the gate numbers are unchanged;
+    // independent of applyTRS so the gate stays meaningful after the flip.
+    auto reference = buildLegacyReference(
+        baseline, indices, toProcess, pivot, bX, bY, bZ,
+        flagT, flagR, hasT, hasS,
+        headlessTranslate, headlessRotate,
+        headlessRotateViewAxis, headlessRotateViewAngle, headlessScale,
+        dragFalloff, dragSymmetry, vp, cp, ap);
+    const(Vec3)[] ref_ = reference.vertices;
 
     // ---- Reconstruct the chain into a scratch mesh (MatrixLerp). ----------
     // The scratch shares the live mirror path: applyXformMatrix runs the SAME
@@ -267,15 +303,16 @@ void runShadow(
                          /*weightVerts=*/ baseline);
     }
 
-    // ---- b-vs-c equality GATE: scratch (c) vs live (b). -------------------
-    // Compare on every processed index AND every symmetry-mirror index. The live
-    // result already contains the mirror writes, and scratch ran the SAME
-    // applySymmetryMirror, so a plain whole-array compare covers both.
+    // ---- b-vs-c equality GATE: scratch (c) vs legacy reference (b). -------
+    // Compare on every processed index AND every symmetry-mirror index. The
+    // legacy reference ran the SAME applySymmetryMirror chain the live kernels
+    // do, and scratch ran the matrix-path mirror, so a plain whole-array compare
+    // covers both. `ref_` is the independent legacy result, NOT `live`.
     ++g_calls;
     float maxDiff = 0;
     size_t worstVi = 0;
     foreach (vi; 0 .. mesh.vertices.length) {
-        float e = maxAbs(scratch.vertices[vi] - live[vi]);
+        float e = maxAbs(scratch.vertices[vi] - ref_[vi]);
         if (e > maxDiff) { maxDiff = e; worstVi = vi; }
     }
     if (maxDiff > g_maxErr) g_maxErr = maxDiff;
@@ -285,11 +322,12 @@ void runShadow(
         // Diagnostics (plan F3): worst vertex, the active component(s), falloff
         // type, ACEN mode (the pivot is its observable output), the maxDiff. The
         // literal `SHADOW MISMATCH` substring is what the R1 runner greps.
+        // `live=` reports the legacy reference (the gate's `b`).
         stderr.writefln(
             "xfrmShadow: SHADOW MISMATCH case=%s vi=%d live=(%g,%g,%g) "
             ~ "shadow=(%g,%g,%g) err=%g active=[%s] falloff=%s pivot=(%g,%g,%g)",
             caseId(), worstVi,
-            live[worstVi].x, live[worstVi].y, live[worstVi].z,
+            ref_[worstVi].x, ref_[worstVi].y, ref_[worstVi].z,
             scratch.vertices[worstVi].x, scratch.vertices[worstVi].y,
             scratch.vertices[worstVi].z,
             maxDiff,
@@ -307,7 +345,7 @@ void runShadow(
     // ~10-20 applyTRS calls, so a large N would never sample). It is strictly
     // coarser than the b-vs-c gate and never runs on EVERY per-frame apply.
     if (g_calls == 1 || (g_calls % 8) == 0)
-        sampleAbc(mesh, live, baseline, idxRef, toProcess, pivot, bX, bY, bZ,
+        sampleAbc(mesh, ref_, baseline, idxRef, toProcess, pivot, bX, bY, bZ,
                   flagT, flagR, flagS, headlessTranslate, headlessRotate,
                   headlessRotateViewAxis, headlessRotateViewAngle, headlessScale,
                   hasT, hasS, dragFalloff, dragSymmetry, vp, cp, ap);
@@ -363,6 +401,99 @@ private void rotatePass(
 }
 
 // ---------------------------------------------------------------------------
+// Independent legacy reference (MS-3 sub-task 1, the gate's `b`).
+//
+// Runs the FROZEN legacy per-component kernels (tools.xform_kernels_legacy)
+// through the EXACT chain `applyTRS` executes:
+//   restore baseline -> T (per-cluster OR global) -> R.x -> R.y -> R.z ->
+//   view-ring -> S
+// into a fresh REFERENCE mesh, and returns it. This is a verbatim mirror of the
+// live `applyTRS` body (xfrm_transform.d) but calling the `legacyApply*`
+// kernels, so it is byte-identical to `mesh.vertices` today AND independent of
+// whatever applyTRS does after the MS-3 flip.
+//
+// The reference buffer is built by explicit element copy from the
+// `const(Vec3)[] baseline` (NOT `.dup` of the const slice — same unaliasing rule
+// as the scratch buffer). `toProcess` is dup'd so the legacy kernels (which take
+// a mutable `bool[]` for the symmetry mirror) never alias the caller's array.
+// ---------------------------------------------------------------------------
+private Mesh* buildLegacyReference(
+    const(Vec3)[] baseline, const(int)[] indices, bool[] toProcess,
+    Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ,
+    bool flagT, bool flagR, bool hasT, bool hasS,
+    Vec3 headlessTranslate, Vec3 headlessRotate,
+    Vec3 headlessRotateViewAxis, float headlessRotateViewAngle, Vec3 headlessScale,
+    const ref FalloffPacket dragFalloff, const ref SymmetryPacket dragSymmetry,
+    const ref Viewport vp,
+    TransformTool.ClusterPivots cp, TransformTool.ClusterAxes ap)
+{
+    import std.math : PI;
+
+    // Restore baseline into a fresh mesh-length buffer (== applyTRS's
+    // unconditional whole-baseline restore prologue).
+    auto refMesh = new Mesh();
+    refMesh.vertices = new Vec3[](baseline.length);
+    foreach (i; 0 .. baseline.length) refMesh.vertices[i] = baseline[i];
+
+    auto idxRef = indices.dup;
+    auto tp     = toProcess.dup;   // legacy kernels need a mutable bool[]
+
+    // -- T pass (applyTRS: flagT && hasT branch). ---------------------------
+    if (flagT && hasT) {
+        if (cp.active && ap.active) {
+            legacyApplyTranslatePerCluster(refMesh, idxRef, cp, ap,
+                                           headlessTranslate,
+                                           dragSymmetry, tp);
+        } else {
+            Vec3 delta = bX * headlessTranslate.x
+                       + bY * headlessTranslate.y
+                       + bZ * headlessTranslate.z;
+            legacyApplyTranslateIncremental(refMesh, idxRef, delta,
+                                            dragFalloff, vp,
+                                            dragSymmetry, tp);
+        }
+    }
+
+    // -- R.x / R.y / R.z + view-ring passes (applyTRS: flagR branch). -------
+    if (flagR) {
+        if (headlessRotate.x != 0)
+            legacyApplyRotateIncremental(refMesh, idxRef, pivot, bX, 0,
+                                         headlessRotate.x * cast(float)(PI / 180.0),
+                                         dragFalloff, vp, cp, ap, dragSymmetry, tp);
+        if (headlessRotate.y != 0)
+            legacyApplyRotateIncremental(refMesh, idxRef, pivot, bY, 1,
+                                         headlessRotate.y * cast(float)(PI / 180.0),
+                                         dragFalloff, vp, cp, ap, dragSymmetry, tp);
+        if (headlessRotate.z != 0)
+            legacyApplyRotateIncremental(refMesh, idxRef, pivot, bZ, 2,
+                                         headlessRotate.z * cast(float)(PI / 180.0),
+                                         dragFalloff, vp, cp, ap, dragSymmetry, tp);
+
+        bool hasViewRot = headlessRotateViewAngle != 0
+            && (headlessRotateViewAxis.x != 0 || headlessRotateViewAxis.y != 0
+                || headlessRotateViewAxis.z != 0);
+        if (hasViewRot)
+            legacyApplyRotateIncremental(refMesh, idxRef, pivot,
+                                         headlessRotateViewAxis, -1,
+                                         headlessRotateViewAngle * cast(float)(PI / 180.0),
+                                         dragFalloff, vp, cp, ap, dragSymmetry, tp);
+    }
+
+    // -- S pass (applyTRS: flagS && hasS branch). ---------------------------
+    // Mirrors the live S call: activation = current (post-T/R) positions,
+    // weightVerts = baseline (so the per-vert weight is at the pre-chain pos).
+    if (hasS) {
+        Vec3[] activation = refMesh.vertices.dup;
+        legacyApplyScaleFromActivation(refMesh, idxRef, activation, pivot,
+                                       bX, bY, bZ, headlessScale,
+                                       dragFalloff, vp, cp, ap, dragSymmetry, tp,
+                                       baseline);
+    }
+
+    return refMesh;
+}
+
+// ---------------------------------------------------------------------------
 // a-vs-c drift sample (R2). Builds a SINGLE composed M = T·R·S (the MS-3 naive
 // single-matrix candidate, blended once per vertex by the baseline weight) and
 // compares it to the faithful per-pass reconstruction c (and to live b). This
@@ -374,7 +505,8 @@ private void rotatePass(
 // b-vs-c still gated it above.
 // ---------------------------------------------------------------------------
 private void sampleAbc(
-    Mesh* mesh, const(Vec3)[] live, const(Vec3)[] baseline,
+    Mesh* mesh, const(Vec3)[] live /* b = legacy reference, see runShadow */,
+    const(Vec3)[] baseline,
     const(int)[] indices, bool[] toProcess,
     Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ,
     bool flagT, bool flagR, bool flagS,
