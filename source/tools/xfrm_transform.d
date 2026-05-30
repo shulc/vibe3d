@@ -75,7 +75,7 @@ import operator : VectorStack;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix, matMul4;
+               identityMatrix, matMul4, wrapAboutPivot;
 import editmode : EditMode;
 import mesh;
 import shader : Shader;
@@ -139,6 +139,15 @@ public:
     Vec3 headlessTranslate = Vec3(0, 0, 0);
     Vec3 headlessRotate    = Vec3(0, 0, 0);
     Vec3 headlessScale     = Vec3(1, 1, 1);
+
+    // MS-4.5 — the composed pivot-relative matrix the GLOBAL fold built on the
+    // last applyGlobalFold (origin-fixing) plus the pivot it used. The GPU
+    // fast-path (whole-mesh / no-falloff, which always takes the fold) reuses
+    // THIS matrix — `gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot)` —
+    // instead of rebuilding a parallel about-pivot rotation/scale matrix, so the
+    // GPU preview is the literal same transform the CPU fold applied.
+    float[16] lastFoldMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    Vec3      lastFoldPivot  = Vec3(0, 0, 0);
 
     // View-ring rotate — the arbitrary-axis counterpart of `headlessRotate`.
     // `headlessRotate.{x,y,z}` are rotations about the basis axes bX/bY/bZ;
@@ -690,11 +699,11 @@ public:
                     // u_model = pivotRotationMatrix bridges the rotation.
                     applyTRS(dragBaseline);
                     if (rotDragFastPath) {
-                        Vec3 pivot = rotateSub.handler.center;
-                        Vec3 axisV = ax == 0 ? rotateSub.handler.axisX
-                                   : ax == 1 ? rotateSub.handler.axisY
-                                             : rotateSub.handler.axisZ;
-                        gpuMatrix = pivotRotationMatrix(pivot, axisV, ang);
+                        // MS-4.5 — reuse the matrix applyTRS's fold just built
+                        // (wrapped about its pivot) rather than rebuilding a
+                        // parallel about-pivot rotation. Whole-mesh/no-falloff
+                        // fast-path always takes the global fold, so it is fresh.
+                        gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
                     } else {
                         needsGpuUpdate = true;
                     }
@@ -711,9 +720,9 @@ public:
                     float viewDegLocal  = deg;
                     applyTRS(dragBaseline, viewAxisLocal, viewDegLocal);
                     if (rotDragFastPath) {
-                        Vec3 pivot = rotateSub.handler.center;
-                        gpuMatrix = pivotRotationMatrix(
-                            pivot, viewAxisLocal, ang);
+                        // MS-4.5 — reuse the fold's composed matrix (view-ring
+                        // rotation included) wrapped about its pivot.
+                        gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
                     } else {
                         needsGpuUpdate = true;
                     }
@@ -737,12 +746,9 @@ public:
                 // buffer and u_model = pivotScaleMatrixBasis bridges the scale.
                 applyTRS(dragBaseline);
                 if (scaleDragFastPath) {
-                    gpuMatrix = pivotScaleMatrixBasis(
-                        scaleSub.handler.center,
-                        scaleSub.handler.axisX,
-                        scaleSub.handler.axisY,
-                        scaleSub.handler.axisZ,
-                        f.x, f.y, f.z);
+                    // MS-4.5 — reuse the fold's composed scale matrix wrapped
+                    // about its pivot instead of rebuilding it here.
+                    gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
                 } else {
                     needsGpuUpdate = true;
                 }
@@ -1443,6 +1449,11 @@ private:
             M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), bX, bY, bZ,
                                               headlessScale.x, headlessScale.y,
                                               headlessScale.z), M);    // S (leftmost)
+
+        // MS-4.5 — publish the composed matrix + pivot for the GPU fast-path to
+        // reuse (it bypasses applyXformMatrix but must apply the SAME transform).
+        lastFoldMatrix = M;
+        lastFoldPivot  = pivot;
 
         // Source = restored baseline gathered ordinal-parallel to the moving set;
         // weight at the BASELINE position (weightVerts == the mesh-length baseline).
