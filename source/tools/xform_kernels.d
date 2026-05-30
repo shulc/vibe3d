@@ -77,38 +77,6 @@ void applyTranslateIncremental(
         applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
 }
 
-/// Translate from a captured baseline (editBefore + dragDelta) —
-/// MoveTool.applyAbsoluteFromBaseline. Re-runnable: a second call
-/// with a NEW dragFalloff produces correctly re-weighted output.
-/// Per-vert weight is evaluated at the BASELINE position so verts on
-/// the falloff boundary don't drift through the field mid-drag.
-void applyTranslateFromBaseline(
-    Mesh* mesh,
-    const(uint)[] editIndices,
-    const(Vec3)[] editBefore,
-    Vec3 dragDelta,
-    const ref FalloffPacket dragFalloff,
-    const ref Viewport vp,
-    const ref SymmetryPacket dragSymmetry,
-    bool[] toProcess)
-{
-    if (editIndices.length != editBefore.length) return;
-    foreach (i; 0 .. editIndices.length) {
-        uint vi = editIndices[i];
-        if (vi >= mesh.vertices.length) continue;
-        Vec3 baseline = editBefore[i];
-        float w = dragFalloff.enabled
-            ? evaluateFalloff(dragFalloff, baseline, cast(int)vi, vp)
-            : 1.0f;
-        mesh.vertices[vi].x = baseline.x + dragDelta.x * w;
-        mesh.vertices[vi].y = baseline.y + dragDelta.y * w;
-        mesh.vertices[vi].z = baseline.z + dragDelta.z * w;
-    }
-    if (dragSymmetry.enabled
-        && dragSymmetry.pairOf.length == mesh.vertices.length)
-        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
-}
-
 // ---------------------------------------------------------------
 // Rotate
 // ---------------------------------------------------------------
