@@ -75,7 +75,7 @@ import operator : VectorStack;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix;
+               identityMatrix, matMul4;
 import editmode : EditMode;
 import mesh;
 import shader : Shader;
@@ -961,6 +961,22 @@ public:
                               || headlessScale.y != 1
                               || headlessScale.z != 1);
 
+            // MS-4.3 — GLOBAL fold: compose T->R->S into ONE pivot-relative
+            // matrix and apply it once with ONE baseline-position weight (the
+            // reference model, validated in MS-4.1/4.2). Per-cluster (ACEN.Local)
+            // and the dormant pow-scale path fall through to the legacy per-pass
+            // chain below — UNCHANGED. At w==1 the fold is bit-equivalent to the
+            // chain (same factor order), so the w==1 multi-pass suite gates the
+            // compose; under fractional falloff the fold is the validated change.
+            bool perCluster = cp.active && ap.active;
+            float passesS = dragFalloff.compoundPasses > 0.0f
+                          ? dragFalloff.compoundPasses : 1.0f;
+            bool powScale = hasS && fabs(passesS - 1.0f) > 1e-4f;
+            if (!perCluster && !powScale) {
+                applyGlobalFold(baseline, pivot, bX, bY, bZ, cp, ap,
+                                hasT, hasS, viewAxis, viewAngleDeg);
+            } else {
+
             // ---- T pass -------------------------------------------------------
             if (hasT) {
                 if (cp.active && ap.active) {
@@ -1083,6 +1099,7 @@ public:
                                      /*weightVerts=*/ baseline);
                 }
             }
+            }  // MS-4.3 — close legacy per-pass else (per-cluster / pow-scale)
         }
 
         // MS-2 — per-pass dual-run shadow (measure-only). Compiled ONLY under
@@ -1373,6 +1390,70 @@ private:
         return true;
     }
 
+    // MS-4.3 — canonical-matrix FOLD (global path). Composes the whole T->R->S
+    // chain into ONE pivot-relative matrix and applies it through a SINGLE
+    // `applyXformMatrix` call, blended toward identity per vertex by ONE falloff
+    // weight evaluated at the BASELINE position. This is what MS-4.1/4.2 proved
+    // the reference engine does (one composed matrix, one baseline weight):
+    // `tests/test_fixture_falloff_multi.d` + `tests/fixtures/falloff_*_multi.json`
+    // confirm it reproduces multi-axis rotation + combined T+R+S exactly, where
+    // the prior per-pass sequential blend diverged 0.02-0.03.
+    //
+    // Order (matches the legacy pass order T -> R.x -> R.y -> R.z -> view -> S,
+    // so at w==1 this is BIT-EQUIVALENT to the per-pass chain — the existing
+    // w==1 multi-pass suite is the compose-correctness gate): with each factor
+    // origin-fixing (R/S built around Vec3(0)) and T the basis-space delta,
+    //   M = S . (view . Rz . Ry . Rx) . T,
+    // and applyXformMatrix re-applies `pivot` as `pivot + blend(M)*(v - pivot)`.
+    //
+    // Scope: GLOBAL, compoundPasses==1 only. Per-cluster (ACEN.Local) and the
+    // dormant `pow(scale, passes)` path keep the legacy per-pass chain in
+    // applyTRS (the fold's single weight would change per-cluster translate,
+    // which is falloff-exempt today and has no reference fixture yet; pow has no
+    // matrix form, F2).
+    void applyGlobalFold(Vec3[] baseline, Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ,
+                         TransformTool.ClusterPivots cp,
+                         TransformTool.ClusterAxes ap,
+                         bool hasT, bool hasS,
+                         Vec3 viewAxis, float viewAngleDeg) {
+        import std.math : PI;
+        float[16] M = identityMatrix;
+        if (hasT) {
+            Vec3 delta = bX * headlessTranslate.x
+                       + bY * headlessTranslate.y
+                       + bZ * headlessTranslate.z;
+            M = translationMatrix(delta);                 // T (rightmost)
+        }
+        // Rotations, in the legacy apply order (Rx, then Ry, then Rz, then view),
+        // each origin-fixing about the basis/view axis: R = view . Rz . Ry . Rx.
+        void rot(Vec3 axis, float deg) {
+            if (deg == 0) return;
+            M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
+                                            deg * cast(float)(PI / 180.0)), M);
+        }
+        if (flagR) {
+            rot(bX, headlessRotate.x);
+            rot(bY, headlessRotate.y);
+            rot(bZ, headlessRotate.z);
+            bool hasViewRot = viewAngleDeg != 0
+                && (viewAxis.x != 0 || viewAxis.y != 0 || viewAxis.z != 0);
+            if (hasViewRot) rot(viewAxis, viewAngleDeg);
+        }
+        if (hasS)
+            M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), bX, bY, bZ,
+                                              headlessScale.x, headlessScale.y,
+                                              headlessScale.z), M);    // S (leftmost)
+
+        // Source = restored baseline gathered ordinal-parallel to the moving set;
+        // weight at the BASELINE position (weightVerts == the mesh-length baseline).
+        auto src = new Vec3[](vertexIndicesToProcess.length);
+        foreach (k, vi; vertexIndicesToProcess)
+            src[k] = (vi >= 0 && vi < cast(int)baseline.length)
+                   ? baseline[vi] : Vec3(0, 0, 0);
+        applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
+                         blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
+                         null, dragSymmetry, toProcess, /*weightVerts=*/ baseline);
+    }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from
     // applyTRS). Applies a single origin-fixing rotation about `axis` by
