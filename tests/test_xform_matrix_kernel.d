@@ -452,6 +452,138 @@ unittest { // (iv-translate) per-cluster ACEN.Local translate, falloff-EXEMPT
 }
 
 // ---------------------------------------------------------------------------
+// (iv-oob) out-of-cluster vertices take the GLOBAL transform, not identity
+// ---------------------------------------------------------------------------
+//
+// Regression coverage for the MS-3.2 out-of-cluster fallback (the blind spot
+// the measure-only shadow originally missed): under ACEN.Local a moving-set
+// vertex can be UNCLUSTERED (cp.clusterOf[vi] == -1) when the moving set is
+// wider than the clustered selection (e.g. whole-mesh moving set, falloff.element
+// drag). The per-cluster matrix kernel must then apply the GLOBAL fallback `M`
+// to that vertex (matching the LIVE applyTRS rotate/scale passes and the legacy
+// kernels' pivotFor()/axisFor() global fallback) — NOT leave it fixed (identity).
+//
+// This asserts BOTH halves of the contract in one pass:
+//   - in-cluster verts use their clusterM (per-cluster rotation/scale frame);
+//   - the out-of-cluster vert uses the global M, so it MOVES (≠ its baseline)
+//     and lands EXACTLY where a plain global-M apply would put it.
+
+private TransformTool.ClusterPivots partialClusterPivots(size_t nVerts) {
+    // Two real clusters, but the LAST vertex is unclustered (cid == -1): a
+    // moving-set vertex outside every cluster. .active is derived from
+    // centers.length>=2, so two centers keep it active.
+    TransformTool.ClusterPivots cp;
+    cp.centers = [Vec3(-1, 0, 0), Vec3(1, 0, 0)];
+    cp.clusterOf = new int[nVerts];
+    foreach (i; 0 .. nVerts) {
+        if (i + 1 == nVerts) cp.clusterOf[i] = -1;          // last → unclustered
+        else                 cp.clusterOf[i] = (i < nVerts / 2) ? 0 : 1;
+    }
+    return cp;
+}
+
+unittest { // (iv-oob-rotate) unclustered vert rotates GLOBALLY, not fixed
+    auto vp = testViewport();
+    auto fp = noFalloff();
+    auto sp = noSymmetry();
+    auto verts = sampleVerts();
+    auto cp = partialClusterPivots(verts.length);
+    auto ca = twoClusterAxes();
+    int dragAxisIdx = 0;          // rotate about each cluster's RIGHT axis
+    Vec3 globalAxis = Vec3(0, 0, 1);
+    Vec3 pivot = Vec3(0.1f, -0.2f, 0.05f);
+    float ang = 0.5f;
+    auto idx = allIndices(verts.length);
+    int oob = cast(int)verts.length - 1;   // the unclustered vertex
+
+    // A: matrix kernel with per-cluster matrices AND a GLOBAL fallback M (the
+    //    global rotation about globalAxis/pivot) — exactly what the LIVE applyTRS
+    //    rotate pass (applyRotatePass) feeds as `M`.
+    auto A = makeMesh(verts);
+    bool[] tpA = new bool[A.vertices.length]; tpA[] = true;
+    auto baseA = verts;
+    float[16][] clusterM;
+    foreach (cid; 0 .. cp.centers.length)
+        clusterM ~= pivotRotationMatrix(Vec3(0,0,0), ca.right[cid], ang);
+    applyXformMatrix(A, idx, baseA, pivot,
+                     pivotRotationMatrix(Vec3(0,0,0), globalAxis, ang),
+                     BlendMode.MatrixLerp, fp, vp, cp, ca, clusterM, sp, tpA);
+
+    // The unclustered vert MUST have moved (proves it is NOT left at identity).
+    {
+        float moved = (A.vertices[oob] - verts[oob]).length;
+        assert(moved > 1e-4f,
+               "iv-oob rotate: unclustered vert must move (global fallback, "
+               ~ "not identity)");
+    }
+
+    // And it must land EXACTLY where a plain global-M rotate (no cluster
+    // resolvers) puts it — i.e. the fallback truly applies the global matrix.
+    {
+        auto G = makeMesh(verts);
+        bool[] tpG = new bool[G.vertices.length]; tpG[] = true;
+        auto baseG = verts;
+        applyXformMatrix(G, idx, baseG, pivot,
+                         pivotRotationMatrix(Vec3(0,0,0), globalAxis, ang),
+                         BlendMode.MatrixLerp, fp, vp,
+                         noClusterPivots(), noClusterAxes(), null, sp, tpG);
+        float e = (A.vertices[oob] - G.vertices[oob]).length;
+        assert(e < SHADOW_TOL,
+               "iv-oob rotate: unclustered vert must match the global-M apply");
+    }
+}
+
+unittest { // (iv-oob-scale) unclustered vert scales GLOBALLY, not fixed
+    auto vp = testViewport();
+    auto fp = noFalloff();
+    auto sp = noSymmetry();
+    auto verts = sampleVerts();
+    auto cp = partialClusterPivots(verts.length);
+    auto ca = twoClusterAxes();
+    Vec3 pivot = Vec3(0.05f, 0.0f, -0.1f);
+    Vec3 bx = Vec3(1,0,0), by = Vec3(0,1,0), bz = Vec3(0,0,1);
+    Vec3 s = Vec3(2.0f, 0.5f, 1.3f);
+    auto idx = allIndices(verts.length);
+    int oob = cast(int)verts.length - 1;   // the unclustered vertex
+
+    // A: matrix kernel with per-cluster scale matrices AND a GLOBAL fallback M
+    //    (the global-basis scale) — exactly what the LIVE applyTRS S pass feeds.
+    auto A = makeMesh(verts);
+    bool[] tpA = new bool[A.vertices.length]; tpA[] = true;
+    auto baseA = verts;
+    float[16][] clusterM;
+    foreach (cid; 0 .. cp.centers.length)
+        clusterM ~= pivotScaleMatrixBasis(Vec3(0,0,0),
+                        ca.right[cid], ca.up[cid], ca.fwd[cid], s.x, s.y, s.z);
+    applyXformMatrix(A, idx, baseA, pivot,
+                     pivotScaleMatrixBasis(Vec3(0,0,0), bx, by, bz, s.x, s.y, s.z),
+                     BlendMode.MatrixLerp, fp, vp, cp, ca, clusterM, sp, tpA);
+
+    // The unclustered vert MUST have moved (proves it is NOT left at identity).
+    {
+        float moved = (A.vertices[oob] - verts[oob]).length;
+        assert(moved > 1e-4f,
+               "iv-oob scale: unclustered vert must move (global fallback, "
+               ~ "not identity)");
+    }
+
+    // And it must land EXACTLY where a plain global-basis scale puts it.
+    {
+        auto G = makeMesh(verts);
+        bool[] tpG = new bool[G.vertices.length]; tpG[] = true;
+        auto baseG = verts;
+        applyXformMatrix(G, idx, baseG, pivot,
+                         pivotScaleMatrixBasis(Vec3(0,0,0), bx, by, bz,
+                                               s.x, s.y, s.z),
+                         BlendMode.MatrixLerp, fp, vp,
+                         noClusterPivots(), noClusterAxes(), null, sp, tpG);
+        float e = (A.vertices[oob] - G.vertices[oob]).length;
+        assert(e < SHADOW_TOL,
+               "iv-oob scale: unclustered vert must match the global-M apply");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // (v) non-identity `indices` locks the array-layout contract (X1)
 // ---------------------------------------------------------------------------
 //
