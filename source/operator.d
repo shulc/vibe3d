@@ -108,6 +108,15 @@ struct VectorStack {
     bool has(T)() const {
         return _slots[packetKindOf!T] !is null;
     }
+
+    /// Runtime presence check by PacketKind. The templated `has!T()`
+    /// needs the packet type at compile time; this overload answers the
+    /// same question for a kind discovered at runtime — used by the
+    /// pipeline to validate each operator's `requiredPackets()` against
+    /// what has actually been published (or supplied by the caller).
+    bool has(PacketKind kind) const {
+        return _slots[kind] !is null;
+    }
 }
 
 /// Boilerplate stubs for terminal (Actr-slot) Operators. Provides
