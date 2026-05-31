@@ -70,6 +70,25 @@ struct IntEnumEntry {
     string userLabel;  // for UI: "Offset", "Width", ...
 }
 
+// ---------------------------------------------------------------------------
+// ParamFlags — bitfield of per-parameter arg attributes.
+//
+// Each bit toggles one behaviour in a real consumer:
+//   Hidden   — the generic UI renderers (PropertyPanel, ArgsDialog) skip the
+//              row entirely. The schema entry stays so the headless HTTP/JSON
+//              injector and argstring serialisation still see it.
+//   ReadOnly — the generic UI renderers draw the widget disabled (greyed,
+//              non-interactive) via the same BeginDisabled/EndDisabled path
+//              already used for cross-field graying. Headless paths ignore it.
+//
+// Set with the chainable .hidden() / .readonly() setters.
+// ---------------------------------------------------------------------------
+enum ParamFlags : uint {
+    None     = 0,
+    Hidden   = 1 << 0,
+    ReadOnly = 1 << 1,
+}
+
 struct Param {
     enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum, IntArray, Vec3Array }
 
@@ -77,10 +96,17 @@ struct Param {
     string label;         // UI label
     Kind   kind;
     ParamHints hints;
-    // UI-only flag: when true, the Property Panel skips this param.
-    // The schema entry stays so the headless HTTP/JSON injector and
-    // argstring serialisation continue to see it.
-    bool   hidden_;
+    // Bitfield of arg attributes (see ParamFlags). Access via the hidden /
+    // readonly accessors below rather than poking the bits directly.
+    uint   flags;
+
+    // Back-compat read accessors so existing `.hidden_` readers keep working
+    // against the bitfield. The trailing-underscore names mirror the prior
+    // `hidden_` field and stay distinct from the no-arg chainable setters
+    // `hidden()` / `readonly()` declared further down (which set the bit and
+    // return the Param for literal chaining).
+    bool hidden_()   const { return (flags & ParamFlags.Hidden)   != 0; }
+    bool readonly_() const { return (flags & ParamFlags.ReadOnly) != 0; }
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
@@ -237,7 +263,12 @@ struct Param {
     Param step(float v)               { hints.hasStep = true; hints.step_ = v; return this; }
     Param fmt(string f)               { hints.hasFmt  = true; hints.fmt   = f; return this; }
     Param widget(ParamHints.Widget w) { hints.widget = w; return this; }
-    Param hidden()                    { hidden_ = true; return this; }
+
+    // Flag setters — set the bit and return by value for literal chaining,
+    // matching the hint-setter style above. Read the bits via the const
+    // `hidden` / `readonly` accessors declared near the top of the struct.
+    Param hidden()   { flags |= ParamFlags.Hidden;   return this; }
+    Param readonly() { flags |= ParamFlags.ReadOnly; return this; }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +313,26 @@ bool isUserSet(const ref Param p)
         case Param.Kind.Vec3Array:
             return (*p.v3aPtr).length > 0;
     }
+}
+
+unittest {
+    // Flags — default clear, setters set bits, accessors read them, chaining
+    // composes. The bitfield consolidates the former standalone hidden_ bool.
+    int i = 0;
+    auto p0 = Param.int_("n", "N", &i, 0);
+    assert(!p0.hidden_ && !p0.readonly_);
+    assert(p0.flags == ParamFlags.None);
+
+    auto ph = Param.int_("n", "N", &i, 0).hidden();
+    assert(ph.hidden_ && !ph.readonly_);
+
+    auto pr = Param.int_("n", "N", &i, 0).readonly();
+    assert(pr.readonly_ && !pr.hidden_);
+
+    // Both flags compose, and order/independence holds with hint setters.
+    auto pb = Param.int_("n", "N", &i, 0).readonly().hidden().min(0).max(9);
+    assert(pb.hidden_ && pb.readonly_);
+    assert((pb.flags & ParamFlags.Hidden) && (pb.flags & ParamFlags.ReadOnly));
 }
 
 unittest {
