@@ -357,7 +357,6 @@ class SemicircleHandler : Handler {
     Vec3  normal;   // axis perpendicular to the plane of the arc
     float radius;
     Vec3  color;
-    bool  selected;
     float lineWidth  = 5.0f;
     float startAngle = 0.0f;  // arc begins at this angle (radians) in the local XY plane
 
@@ -394,9 +393,7 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
-               : selected                      ? Vec3(1.0f, 0.64f, 0.0f)    // orange
-               :                                 color;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
@@ -412,12 +409,6 @@ public:
         glEnable(GL_DEPTH_TEST);
         // Restore main program's u_model to identity
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
-    }
-
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (e.button != SDL_BUTTON_LEFT || !isHovered()) return false;
-        selected = !selected;
-        return true;
     }
 
     // Set startAngle so the arc begins at the direction of `dir` in the arc plane.
@@ -643,24 +634,6 @@ class MoveHandler : Handler {
         arrowY.draw(shader, vp);
         arrowZ.draw(shader, vp);
     }
-
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        return arrowX.onMouseButtonDown(e) ||
-               arrowY.onMouseButtonDown(e) ||
-               arrowZ.onMouseButtonDown(e);
-    }
-
-    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
-        return arrowX.onMouseButtonUp(e) ||
-               arrowY.onMouseButtonUp(e) ||
-               arrowZ.onMouseButtonUp(e);
-    }
-
-    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
-        return arrowX.onMouseMotion(e) ||
-               arrowY.onMouseMotion(e) ||
-               arrowZ.onMouseMotion(e);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -801,12 +774,6 @@ public:
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (e.button != SDL_BUTTON_LEFT || !isHovered()) return false;
-        selected = !selected;
-        return true;
-    }
-
 public:
     // Fresh hit-test (does not rely on cached hover state); also satisfies Handler.hitTest.
     override bool hitTest(int mx, int my, const ref Viewport vp)
@@ -859,7 +826,6 @@ class CircleHandler : Handler {
     Vec3  color;        // outline
     Vec3  fillColor;    // disc fill
     float lineWidth = 1.5f;
-    bool  selected;
 
 private:
     GLuint outlineVao, outlineVbo;
@@ -901,9 +867,6 @@ public:
         glDeleteVertexArrays(1, &fillVao);    glDeleteBuffers(1, &fillVbo);
     }
 
-    bool isSelected()        const { return selected; }
-    void setSelected(bool v)       { selected = v; }
-
     override bool hitTest(int mx, int my, const ref Viewport vp) {
         return doHitTest(mx, my, vp);
     }
@@ -915,12 +878,8 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 oc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
-                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
-                :                                 color;
-        Vec3 fc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
-                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
-                :                                 fillColor;
+        Vec3 oc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 fc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : fillColor;
 
         auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
 
@@ -938,12 +897,6 @@ public:
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
-    }
-
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (e.button != SDL_BUTTON_LEFT || !isHovered()) return false;
-        selected = !selected;
-        return true;
     }
 
 private:
@@ -1149,24 +1102,6 @@ class ScaleHandler : Handler {
         if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.draw(shader, vp);
         if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.draw(shader, vp);
         if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.draw(shader, vp);
-    }
-
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        return arrowX.onMouseButtonDown(e) ||
-               arrowY.onMouseButtonDown(e) ||
-               arrowZ.onMouseButtonDown(e);
-    }
-
-    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e) {
-        return arrowX.onMouseButtonUp(e) ||
-               arrowY.onMouseButtonUp(e) ||
-               arrowZ.onMouseButtonUp(e);
-    }
-
-    override bool onMouseMotion(ref const SDL_MouseMotionEvent e) {
-        return arrowX.onMouseMotion(e) ||
-               arrowY.onMouseMotion(e) ||
-               arrowZ.onMouseMotion(e);
     }
 }
 
