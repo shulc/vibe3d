@@ -11,7 +11,8 @@ import tool   : Tool;
 import params : Param;
 import math   : Vec3, Viewport, screenToWorkPlane;
 import shader : Shader;
-import handler : ClickPointHandler;
+import handler : ClickPointHandler, ToolHandles;
+import eventlog : queryMouse;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import tools.transform : VertexEditFactory;
@@ -25,6 +26,8 @@ import commands.mesh.jitter   : MeshJitter;
 import commands.mesh.quantize : MeshQuantize;
 
 import ImGui = d_imgui;
+
+private enum int FALLOFF_BASE = 100;
 
 /// Tool wrapper around a one-shot Command. Lets a Command be activated
 /// via `tool.set <id> on`, configured via `tool.attr`, and applied via
@@ -113,6 +116,7 @@ abstract class CommandWrapperTool : Tool {
     // FalloffGizmo usage. Null when no falloff is active in the
     // tool's lifetime.
     private FalloffGizmo  falloffGizmo;
+    private ToolHandles   toolHandles;
 
     override string name() const { return "CommandWrapperTool"; }
     override Param[] params() { return inner.params(); }
@@ -172,6 +176,7 @@ abstract class CommandWrapperTool : Tool {
             falloffGizmo.destroy();
             falloffGizmo = null;
         }
+        toolHandles = null;
         baseline.length = 0;
         dirty    = false;
         dragging = false;
@@ -325,6 +330,19 @@ abstract class CommandWrapperTool : Tool {
         drawFalloffOverlay(fp, vp);
         if (fp.enabled) {
             if (falloffGizmo is null) falloffGizmo = new FalloffGizmo();
+            if (toolHandles  is null) toolHandles  = new ToolHandles();
+            // Host arbiter (MODO tmod_Test -> tmod_Draw): register the
+            // falloff handles, resolve one hot/captured part, then render.
+            // CommandWrapper has no gizmo bank, so falloff is the only
+            // emitter — this unifies the previously per-endpoint self-hover
+            // into a single winner across all falloff handles.
+            toolHandles.begin();
+            falloffGizmo.registerHandles(toolHandles, FALLOFF_BASE, fp);
+            toolHandles.setHaul(falloffGizmo.isDragging()
+                                ? falloffGizmo.capturedPart(FALLOFF_BASE) : -1);
+            int hmx, hmy;
+            queryMouse(hmx, hmy);
+            toolHandles.update(hmx, hmy, vp);
             falloffGizmo.draw(shader, vp, fp);
         }
 
