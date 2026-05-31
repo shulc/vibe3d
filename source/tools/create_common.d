@@ -289,9 +289,6 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
     SubjectPacket subj;
     subj.mesh             = cast(Mesh*)&mesh;   // SnapStage doesn't mutate
     subj.editMode         = editMode;
-    subj.selectedVertices = mesh.selectedVertices.dup;
-    subj.selectedEdges    = mesh.selectedEdges.dup;
-    subj.selectedFaces    = mesh.selectedFaces.dup;
     subj.viewport         = vp;
     VectorStack vts;
     vts.put(&subj);

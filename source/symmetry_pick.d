@@ -125,9 +125,6 @@ private bool captureLiveSymmetry(Mesh* mesh, ref View view, EditMode em,
     SubjectPacket subj;
     subj.mesh             = mesh;
     subj.editMode         = em;
-    subj.selectedVertices = mesh.selectedVertices.dup;
-    subj.selectedEdges    = mesh.selectedEdges.dup;
-    subj.selectedFaces    = mesh.selectedFaces.dup;
     subj.viewport         = view.viewport();
     VectorStack vts;
     vts.put(&subj);

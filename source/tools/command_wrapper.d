@@ -291,9 +291,6 @@ abstract class CommandWrapperTool : Tool {
                 SubjectPacket subj;
                 subj.mesh             = meshPtr;
                 subj.editMode         = EditMode.Vertices;
-                subj.selectedVertices = meshPtr.selectedVertices.dup;
-                subj.selectedEdges    = meshPtr.selectedEdges.dup;
-                subj.selectedFaces    = meshPtr.selectedFaces.dup;
                 subj.viewport         = cachedVp;
                 VectorStack vts;
                 vts.put(&subj);
@@ -428,9 +425,6 @@ abstract class CommandWrapperTool : Tool {
         SubjectPacket subj;
         subj.mesh             = meshPtr;
         subj.editMode         = EditMode.Vertices;
-        subj.selectedVertices = meshPtr.selectedVertices.dup;
-        subj.selectedEdges    = meshPtr.selectedEdges.dup;
-        subj.selectedFaces    = meshPtr.selectedFaces.dup;
         subj.viewport         = cachedVp;
 
         VectorStack vts;
