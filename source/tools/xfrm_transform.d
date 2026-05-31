@@ -370,9 +370,11 @@ public:
         if (flagS) scaleSub.drawProperties();
     }
 
-    override bool consumesFalloff() const { return true; }
+    // consumesFalloff is inherited from TransformTool (NeedsFalloff flag).
 
-    // Element-falloff hover gating.
+    // Element-falloff hover gating — DYNAMIC, depends on the active
+    // falloff stage's element mode, so this stays a method override
+    // rather than a static Hover* flag.
     // When falloff.element is the active WGHT stage, the user wants to
     // click any vert / edge / face to set the falloff anchor — so the
     // tool opts into hover-highlight for every type matching the

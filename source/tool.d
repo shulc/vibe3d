@@ -10,24 +10,43 @@ import editmode : EditMode;
 import operator : VectorStack;
 
 // ---------------------------------------------------------------------------
-// Tool flags — tool-level behaviour bits. Presets opt in by listing the
-// names under a `flags:` block in `config/tool_presets.yaml`; the preset
-// loader ORs them into the freshly-constructed Tool's `presetFlags`. Tools
-// query `hasFlag(ToolFlag.X)` to fork on behaviour without duplicating
-// preset state in their own classes.
+// Tool flags — tool-level behaviour bits. The enum carries two kinds of bit:
 //
-// - `Immediate`  : deactivate on mouse-up (one-shot tool, no further edits
-//                  in the same session). Not yet consumed by any tool here.
-// - `BrushReset` : reset the edit baseline between strokes. Used by
-//                  `xfrm.softDrag` so each LMB drag commits to history and
-//                  the next click starts a fresh weighted pull from the new
-//                  grab point (instead of accumulating onto the original
-//                  baseline and rubber-banding back).
+//  1. Preset-applied bits. Presets opt in by listing the names under a
+//     `flags:` block in `config/tool_presets.yaml`; the preset loader ORs
+//     them into the freshly-constructed Tool's `presetFlags`. Tools query
+//     `hasFlag(ToolFlag.X)` to fork on behaviour without duplicating preset
+//     state in their own classes.
+//       - `Immediate`  : deactivate on mouse-up (one-shot tool, no further
+//                        edits in the same session). Not yet consumed here.
+//       - `BrushReset` : reset the edit baseline between strokes. Used by
+//                        `xfrm.softDrag` so each LMB drag commits to history
+//                        and the next click starts a fresh weighted pull
+//                        from the new grab point (instead of accumulating
+//                        onto the original baseline and rubber-banding back).
+//
+//  2. Static capability bits. A tool class declares the constant capabilities
+//     it always has by overriding `flags()` to return them. The base
+//     predicates (`consumesFalloff`, `wantsHoverForType`) derive from these
+//     bits, so a tool whose capability is fixed need only list a flag rather
+//     than override a method. Tools whose capability is computed at runtime
+//     keep overriding the predicate method instead.
+//       - `NeedsFalloff`   : per-vertex transforms multiply displacement by
+//                            the per-vertex falloff weight.
+//       - `HoverVertices`  : wants vertex hover-highlight while active.
+//       - `HoverEdges`     : wants edge hover-highlight while active.
+//       - `HoverPolygons`  : wants polygon hover-highlight while active.
 // ---------------------------------------------------------------------------
 enum ToolFlag : uint {
-    None       = 0,
-    Immediate  = 1u << 0,
-    BrushReset = 1u << 1,
+    None          = 0,
+    // Preset-applied bits.
+    Immediate     = 1u << 0,
+    BrushReset    = 1u << 1,
+    // Static capability bits.
+    NeedsFalloff  = 1u << 2,
+    HoverVertices = 1u << 3,
+    HoverEdges    = 1u << 4,
+    HoverPolygons = 1u << 5,
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +62,18 @@ class Tool : ParamProvider {
 
     final bool hasFlag(ToolFlag f) const {
         return (presetFlags & cast(uint)f) != 0;
+    }
+
+    // Static capability bits for this tool class. Override to return the
+    // OR of the constant capabilities the tool always has (NeedsFalloff,
+    // HoverVertices/Edges/Polygons). The base capability predicates below
+    // derive from these. Tools whose capability is computed at runtime
+    // (e.g. hover that depends on the active falloff stage) leave this be
+    // and override the predicate method instead.
+    ToolFlag flags() const { return ToolFlag.None; }
+
+    final bool hasCapability(ToolFlag f) const {
+        return (cast(uint)flags() & cast(uint)f) != 0;
     }
 
     // Human-readable name shown in the UI.
@@ -108,8 +139,9 @@ class Tool : ParamProvider {
     // Other tools (Bevel, primitive create-tools, Pen) leave it
     // `false` — their geometry isn't per-vertex / has no meaningful
     // falloff interpretation. See doc/falloff_plan.md §"Tool
-    // integration points" for the rationale.
-    bool consumesFalloff() const { return false; }
+    // integration points" for the rationale. Derived from the static
+    // `NeedsFalloff` capability bit by default.
+    bool consumesFalloff() const { return hasCapability(ToolFlag.NeedsFalloff); }
 
     // Per-element-type hover opt-in. Tools override to declare which
     // element types they want pickVertices / pickEdges / pickFaces to
@@ -119,7 +151,16 @@ class Tool : ParamProvider {
     // XfrmTransformTool returns `true` for the types matching the
     // active FalloffStage's `elementMode` when falloff.element is
     // wired (Auto → all three, vertex → only Vertices, etc.).
-    bool wantsHoverForType(EditMode type) const { return false; }
+    // The base derives the answer from the static Hover* capability
+    // bits; tools with a fixed hover set just declare the flags, while
+    // tools whose hover depends on runtime state override this method.
+    bool wantsHoverForType(EditMode type) const {
+        final switch (type) {
+            case EditMode.Vertices: return hasCapability(ToolFlag.HoverVertices);
+            case EditMode.Edges:    return hasCapability(ToolFlag.HoverEdges);
+            case EditMode.Polygons: return hasCapability(ToolFlag.HoverPolygons);
+        }
+    }
 
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}
