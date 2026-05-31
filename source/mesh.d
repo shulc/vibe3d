@@ -147,12 +147,12 @@ struct Mesh {
         // brings the per-face pick-order / subpatch / material arrays in sync
         // (e.g. after an import grew `faces`).
         faceSelectionOrder.length   = faces.length;
-        isSubpatch.length           = faces.length;
+        resizeSubpatch();
         faceMaterial.length         = faces.length;
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
-        isSubpatch[] = false;
+        clearSubpatch();
         // NOTE: do not wipe `faceMaterial`. resetSelection is also called
         // after LWO import to bring selection arrays in sync with the
         // imported geometry; the import populates `faceMaterial` before
@@ -178,13 +178,13 @@ struct Mesh {
     // Grow selection arrays to match geometry without clearing.
     // Call after BoxTool or any in-place geometry growth.
     void syncSelection() {
-        if (selectedVertices.length < vertices.length) selectedVertices.length = vertices.length;
-        if (selectedEdges.length    < edges.length)    selectedEdges.length    = edges.length;
-        if (selectedFaces.length    < faces.length)    selectedFaces.length    = faces.length;
+        if (selectedVertices.length < vertices.length) resizeVertexSelection();
+        if (selectedEdges.length    < edges.length)    resizeEdgeSelection();
+        if (selectedFaces.length    < faces.length)    resizeFaceSelection();
         if (vertexSelectionOrder.length < vertices.length) vertexSelectionOrder.length = vertices.length;
         if (edgeSelectionOrder.length   < edges.length)    edgeSelectionOrder.length   = edges.length;
         if (faceSelectionOrder.length   < faces.length)    faceSelectionOrder.length   = faces.length;
-        if (isSubpatch.length           < faces.length)    isSubpatch.length           = faces.length;
+        if (isSubpatch.length           < faces.length)    resizeSubpatch();
         if (faceMaterial.length         < faces.length)    faceMaterial.length         = faces.length;
     }
 
@@ -279,7 +279,7 @@ struct Mesh {
             }
         }
         faces              = newFaces;
-        isSubpatch         = newSubpatch;
+        setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         clearFaceSelectionResize();
@@ -350,9 +350,9 @@ struct Mesh {
         clearEdgeSelectionResize();
         // Face selection is potentially invalidated (face indices changed
         // since collapsed faces are removed). Caller may re-derive.
-        if (selectedFaces.length > faces.length) selectedFaces.length = faces.length;
+        if (selectedFaces.length > faces.length) resizeFaceSelection();
         if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
-        if (isSubpatch.length > faces.length) isSubpatch.length = faces.length;
+        if (isSubpatch.length > faces.length) resizeSubpatch();
         if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
 
         ++mutationVersion; ++topologyVersion;
@@ -432,7 +432,7 @@ struct Mesh {
         }
         if (removed == 0) return 0;
         faces              = keptFaces;
-        isSubpatch         = keptSubpatch;
+        setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
         // Selection bits don't survive index changes; clear and let caller
@@ -494,7 +494,7 @@ struct Mesh {
             }
         }
         faces              = newFaces;
-        isSubpatch         = newSubpatch;
+        setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         clearFaceSelectionResize();
@@ -681,7 +681,7 @@ struct Mesh {
             keptMaterial ~= newPolyMaterial[i];
         }
         faces              = keptFaces;
-        isSubpatch         = keptSubpatch;
+        setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
         clearFaceSelectionResize();
@@ -765,18 +765,17 @@ struct Mesh {
         // Re-derive edges from the new face list.
         rebuildEdges();
 
-        isSubpatch.length         = faces.length;
+        resizeSubpatch();
         faceSelectionOrder.length = faces.length;
-        selectedFaces.length      = faces.length;
+        resizeFaceSelection();
         faceMaterial.length       = faces.length;
         foreach (fi; 0 .. origFaceCount) {
-            selectedFaces[fi]      = false;
-            faceSelectionOrder[fi] = 0;
+            deselectFace(cast(int)fi);
         }
         faceSelectionOrderCounter = 0;
         foreach (idx; newFaceIndices) {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
-            isSubpatch[idx]   = (srcFi < isSubpatch.length   ? isSubpatch[srcFi]   : false);
+            setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             selectFace(cast(int)idx);
         }
@@ -814,9 +813,9 @@ struct Mesh {
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
                 }
                 faces              = keptFaces;
-                isSubpatch         = keptSubpatch;
+                setFaceSubpatchFrom(keptSubpatch);
                 faceSelectionOrder = keptOrder;
-                selectedFaces      = keptSelected;
+                setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
                 rebuildEdges();
                 clearEdgeSelectionResize();
@@ -893,13 +892,12 @@ struct Mesh {
         // Subpatch + face-order arrays follow the new face count. New
         // faces inherit subpatch from their source; selection switches
         // to the new copies.
-        isSubpatch.length         = faces.length;
+        resizeSubpatch();
         faceSelectionOrder.length = faces.length;
-        selectedFaces.length      = faces.length;
+        resizeFaceSelection();
         faceMaterial.length       = faces.length;
         foreach (fi; 0 .. origFaceCount) {
-            selectedFaces[fi]      = false;
-            faceSelectionOrder[fi] = 0;
+            deselectFace(cast(int)fi);
         }
         faceSelectionOrderCounter = 0;
         // Map each new face index back to its source face for subpatch
@@ -908,7 +906,7 @@ struct Mesh {
         // recover the source via modulo.
         foreach (idx; newFaceIndices) {
             size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
-            isSubpatch[idx]   = (srcFi < isSubpatch.length   ? isSubpatch[srcFi]   : false);
+            setFaceSubpatch(idx, (srcFi < isSubpatch.length ? isSubpatch[srcFi] : false));
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             selectFace(cast(int)idx);
         }
@@ -951,9 +949,9 @@ struct Mesh {
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
                 }
                 faces              = keptFaces;
-                isSubpatch         = keptSubpatch;
+                setFaceSubpatchFrom(keptSubpatch);
                 faceSelectionOrder = keptOrder;
-                selectedFaces      = keptSelected;
+                setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
                 rebuildEdges();
                 clearEdgeSelectionResize();
@@ -1035,22 +1033,21 @@ struct Mesh {
         rebuildEdges();
 
         // Subpatch + face-order arrays follow the new face count.
-        isSubpatch.length         = faces.length;
+        resizeSubpatch();
         faceSelectionOrder.length = faces.length;
-        selectedFaces.length      = faces.length;
+        resizeFaceSelection();
         faceMaterial.length       = faces.length;
         // Mark the new mirrored faces as the active selection; clear
         // the originals' face-selection bits (they keep their geometry
         // unchanged but lose the "this is selected" tag, matching
         // duplicateSelectedFaces semantics).
         foreach (fi; 0 .. origFaceCount) {
-            selectedFaces[fi]      = false;
-            faceSelectionOrder[fi] = 0;
+            deselectFace(cast(int)fi);
         }
         faceSelectionOrderCounter = 0;
         foreach (k, fi; toClone) {
             size_t newFi = origFaceCount + k;
-            isSubpatch[newFi]   = (fi < isSubpatch.length   ? isSubpatch[fi]   : false);
+            setFaceSubpatch(newFi, (fi < isSubpatch.length ? isSubpatch[fi] : false));
             faceMaterial[newFi] = (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
             selectFace(cast(int)newFi);
         }
@@ -1100,9 +1097,9 @@ struct Mesh {
                     keptMaterial ~= (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
                 }
                 faces              = keptFaces;
-                isSubpatch         = keptSubpatch;
+                setFaceSubpatchFrom(keptSubpatch);
                 faceSelectionOrder = keptOrder;
-                selectedFaces      = keptSelected;
+                setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
 
                 // Edges may now reference verts that were welded but
@@ -1179,19 +1176,18 @@ struct Mesh {
         // New faces inherit subpatch flag from their source and start
         // with a fresh selection order (1-based) so they are picked up
         // as the active selection.
-        isSubpatch.length         = faces.length;
+        resizeSubpatch();
         faceSelectionOrder.length = faces.length;
-        selectedFaces.length      = faces.length;
+        resizeFaceSelection();
         faceMaterial.length       = faces.length;
         // Clear old face selection first; only new duplicates remain selected.
         foreach (fi; 0 .. origFaceCount) {
-            selectedFaces[fi]      = false;
-            faceSelectionOrder[fi] = 0;
+            deselectFace(cast(int)fi);
         }
         faceSelectionOrderCounter = 0;
         foreach (k, fi; toClone) {
             size_t newFi = origFaceCount + k;
-            isSubpatch[newFi]   = (fi < isSubpatch.length   ? isSubpatch[fi]   : false);
+            setFaceSubpatch(newFi, (fi < isSubpatch.length ? isSubpatch[fi] : false));
             faceMaterial[newFi] = (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
             selectFace(cast(int)newFi);
         }
@@ -1341,6 +1337,45 @@ struct Mesh {
     void clearFaceSelectionResize() {
         resizeFaceSelection();
         selectedFaces[] = false;
+    }
+
+    // --- Subpatch resize / write surface ----------------------------------
+    // Grow/shrink the per-face subpatch-flag array to match `faces` length
+    // WITHOUT clearing it (same grow-and-keep convention as the selection
+    // resize primitives). The parallel pick-order / material arrays are
+    // managed separately by the calling mutator.
+    void resizeSubpatch() {
+        isSubpatch.length = faces.length;
+    }
+
+    // Single-index subpatch write. Bounds-guarded; does NOT bump the
+    // mutation/topology version (callers that need a version bump on a
+    // user-facing toggle use `setSubpatch`). Used by bulk/internal writers.
+    void setFaceSubpatch(size_t fi, bool flag) {
+        if (fi >= isSubpatch.length) return;
+        isSubpatch[fi] = flag;
+    }
+
+    // --- Whole-array selection/subpatch replace (resize-then-copy) ---------
+    // Each setter touches ONLY its own concept (Select bit for vertices /
+    // edges / faces, or the Subpatch flag) so the two face concepts stay
+    // order-independent. `src` is treated as the new authoritative array;
+    // the backing array is resized to `src.length`, then copied.
+    void setVerticesSelectedFrom(const bool[] src) {
+        selectedVertices.length = src.length;
+        selectedVertices[] = src[];
+    }
+    void setEdgesSelectedFrom(const bool[] src) {
+        selectedEdges.length = src.length;
+        selectedEdges[] = src[];
+    }
+    void setFacesSelectedFrom(const bool[] src) {
+        selectedFaces.length = src.length;
+        selectedFaces[] = src[];
+    }
+    void setFaceSubpatchFrom(const bool[] src) {
+        isSubpatch.length = src.length;
+        isSubpatch[] = src[];
     }
 
     void selectVertex(int idx) {

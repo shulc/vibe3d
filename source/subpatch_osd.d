@@ -258,7 +258,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             ];
         }
         // Per-face subpatch flag inherits from the parent cage face.
-        result.isSubpatch = new bool[](limitF);
+        result.resizeSubpatch();
         // Material Groups (MG3): each refined face inherits the same
         // surface index as its source cage face.
         result.faceMaterial = new uint[](limitF);
@@ -266,7 +266,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
             if (cageFi < cast(int)cage.isSubpatch.length)
-                result.isSubpatch[k] = cage.isSubpatch[cageFi];
+                result.setFaceSubpatch(k, cage.isSubpatch[cageFi]);
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
                 result.faceMaterial[k] = cage.faceMaterial[cageFi];
         }
@@ -321,7 +321,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         // Same "replace whole face" pattern as the !anyUnmarked
         // branch above (Stage B of the Mesh.faces flat-refactor).
         result.faces.length = limitF;
-        result.isSubpatch.length = limitF;
+        result.resizeSubpatch();
         result.faceMaterial.length = limitF;
         int cursor = 0;
         foreach (k; 0 .. limitF) {
@@ -332,7 +332,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
             if (cageFi < cast(int)cage.isSubpatch.length)
-                result.isSubpatch[k] = cage.isSubpatch[cageFi];
+                result.setFaceSubpatch(k, cage.isSubpatch[cageFi]);
             // Material Groups (MG3): refined faces from the OSD subset
             // inherit their source cage face's surface index.
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
@@ -395,9 +395,9 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     // Selection masks sized to the new mesh; rebuild loops; bump
     // versions so downstream caches treat this as a fresh state
     // distinct from Mesh.init.
-    result.selectedVertices.length = result.vertices.length;
-    result.selectedEdges.length    = result.edges.length;
-    result.selectedFaces.length    = result.faces.length;
+    result.resizeVertexSelection();
+    result.resizeEdgeSelection();
+    result.resizeFaceSelection();
     // Material Groups (MG3): per-mesh surface table travels through
     // subdivision unchanged — only `faceMaterial` indices change shape.
     // Surfaces dup so a later mutation of either side doesn't alias.
@@ -1181,19 +1181,19 @@ struct OsdAccel {
         }
         // Per-preview-face subpatch flag inherits from its cage parent.
         outTrace.subpatch         .length = limitFaces;
-        outMesh.isSubpatch        .length = limitFaces;
+        outMesh.resizeSubpatch();
         foreach (i; 0 .. limitFaces) {
             immutable int o = scratchFaceOrigins[i];
             bool parentMarked =
                 (o >= 0) && (o < cast(int)cage.isSubpatch.length)
                 && cage.isSubpatch[o];
             outTrace.subpatch [i] = parentMarked;
-            outMesh .isSubpatch[i] = parentMarked;
+            outMesh.setFaceSubpatch(i, parentMarked);
         }
 
-        outMesh.selectedVertices.length = limitVerts;
-        outMesh.selectedEdges.length    = limitEdges;
-        outMesh.selectedFaces.length    = limitFaces;
+        outMesh.resizeVertexSelection();
+        outMesh.resizeEdgeSelection();
+        outMesh.resizeFaceSelection();
 
         // ---- Phase 3b: fan-out infrastructure -----------------------
         // Built only when the GL eval is alive (Phase 3a's glEval).
@@ -1641,7 +1641,7 @@ unittest {
     Mesh cage = makeCube();
     // makeCube leaves isSubpatch empty; grow it before setSubpatch can
     // actually flip bits (setSubpatch returns early on out-of-range idx).
-    cage.isSubpatch.length = cage.faces.length;
+    cage.resizeSubpatch();
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
 
     OsdAccel       accel;
@@ -1703,7 +1703,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     Mesh cage = makeCube();
-    cage.isSubpatch.length = cage.faces.length;
+    cage.resizeSubpatch();
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
 
     OsdAccel       accel;
@@ -1765,7 +1765,7 @@ unittest {
 unittest {
     Mesh cage = makeCube();
     cage.buildLoops();
-    cage.isSubpatch.length = cage.faces.length;
+    cage.resizeSubpatch();
 
     // Mark a single face (cage face 0). The other 5 cage faces stay
     // un-marked and should keep their flat polygonal shape via OSD's
