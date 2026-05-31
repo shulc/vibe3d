@@ -113,9 +113,6 @@ class MeshTransform : Command, Operator {
                 SubjectPacket symmSubj;
                 symmSubj.mesh             = mesh;
                 symmSubj.editMode         = editMode;
-                symmSubj.selectedVertices = mesh.selectedVertices.dup;
-                symmSubj.selectedEdges    = mesh.selectedEdges.dup;
-                symmSubj.selectedFaces    = mesh.selectedFaces.dup;
                 symmSubj.viewport         = view.viewport();
                 VectorStack symmVts;
                 symmVts.put(&symmSubj);

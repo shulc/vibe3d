@@ -23,13 +23,14 @@ import editmode : EditMode;
 struct SubjectPacket {
     Mesh*      mesh;
     EditMode   editMode;
-    // Snapshot of selection-bit arrays at evaluation time. Useful for
-    // stages that compute selection-derived values (Action Center
-    // "selection center", Falloff "lasso") without re-reading the mesh's
-    // arrays mid-pipe.
-    bool[]     selectedVertices;
-    bool[]     selectedEdges;
-    bool[]     selectedFaces;
+    // Selection is NOT snapshotted into this packet. Stages that compute
+    // selection-derived values (Action Center "selection center", Falloff
+    // weight/lasso) read it straight from `mesh` via the non-allocating
+    // mark accessors / index helpers (`mesh.hasAnySelected*()`,
+    // `mesh.selectedVertexIndices*()`). The selection lives solely in the
+    // mesh's mark arrays, so there is nothing to copy here — and copying it
+    // would re-introduce a per-pipe-eval `bool[]` allocation for fields no
+    // consumer reads (see doc/element_marks_migration_plan.md Phase 4 / B6).
     // Active 3D viewport at evaluation time. Some upstream stages
     // (workplane-auto, snap, screen falloff) depend on the camera frame.
     // Added in Phase 0 of doc/operator_refactor_plan.md so the new

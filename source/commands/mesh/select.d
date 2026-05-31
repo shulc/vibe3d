@@ -160,9 +160,6 @@ class MeshSelect : Command {
         SubjectPacket subj;
         subj.mesh             = mesh;
         subj.editMode         = *editModePtr;
-        subj.selectedVertices = mesh.selectedVertices.dup;
-        subj.selectedEdges    = mesh.selectedEdges.dup;
-        subj.selectedFaces    = mesh.selectedFaces.dup;
         subj.viewport         = view.viewport();
         VectorStack vts;
         vts.put(&subj);

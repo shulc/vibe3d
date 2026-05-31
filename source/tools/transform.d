@@ -309,9 +309,6 @@ protected:
         if (g_pipeCtx is null || mesh is null) return false;
         subj.mesh             = mesh;
         subj.editMode         = *editMode;
-        subj.selectedVertices = mesh.selectedVertices.dup;
-        subj.selectedEdges    = mesh.selectedEdges.dup;
-        subj.selectedFaces    = mesh.selectedFaces.dup;
         subj.viewport         = cachedVp;
         vts.put(&subj);
         g_pipeCtx.pipeline.evaluate(vts);

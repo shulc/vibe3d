@@ -1600,9 +1600,6 @@ void main(string[] args) {
             SubjectPacket subj;
             subj.mesh             = &mesh;
             subj.editMode         = editMode;
-            subj.selectedVertices = mesh.selectedVertices.dup;
-            subj.selectedEdges    = mesh.selectedEdges.dup;
-            subj.selectedFaces    = mesh.selectedFaces.dup;
             subj.viewport         = cameraView.viewport();
 
             import operator             : VectorStack;
@@ -1745,9 +1742,6 @@ void main(string[] args) {
                 SubjectPacket subj;
                 subj.mesh             = &mesh;
                 subj.editMode         = editMode;
-                subj.selectedVertices = mesh.selectedVertices.dup;
-                subj.selectedEdges    = mesh.selectedEdges.dup;
-                subj.selectedFaces    = mesh.selectedFaces.dup;
                 subj.viewport         = vp;
                 VectorStack vts;
                 vts.put(&subj);
@@ -2259,9 +2253,6 @@ void main(string[] args) {
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts) {
         subj.mesh             = &mesh;
         subj.editMode         = editMode;
-        subj.selectedVertices = mesh.selectedVertices.dup;
-        subj.selectedEdges    = mesh.selectedEdges.dup;
-        subj.selectedFaces    = mesh.selectedFaces.dup;
         subj.viewport         = cameraView.viewport();
         vts.put(&subj);
         if (g_pipeCtx !is null)

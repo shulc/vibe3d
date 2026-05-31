@@ -61,11 +61,6 @@ class Command {
             SubjectPacket subj;
             subj.mesh     = mesh;
             subj.editMode = editMode;
-            if (mesh !is null) {
-                subj.selectedVertices = mesh.selectedVertices.dup;
-                subj.selectedEdges    = mesh.selectedEdges.dup;
-                subj.selectedFaces    = mesh.selectedFaces.dup;
-            }
             vts.put(&subj);
             return op.evaluate(vts);
         }
