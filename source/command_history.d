@@ -27,6 +27,16 @@ import argstring : serializeParams;
 // refireEnd() commits the latest live command as a single undo entry — the
 // net effect of an interactive drag is one stack entry, regardless of how
 // many sub-fires happened.
+//
+// Command blocks (blockBegin/blockEnd) — general N-commands-as-one grouping.
+// While a block is open, record() appends each command into the open block's
+// child list instead of pushing its own entry. blockEnd() wraps the children
+// in a CompositeCommand and records that as ONE undo entry (so undo/redo of
+// the block re-applies/reverts every child as a unit). Distinct from refire:
+// refire keeps only the LAST live command (interactive drag), whereas a block
+// retains and re-runs ALL children in order. Nested blockBegin flattens into
+// the outermost block (children accumulate in one flat list); blockEnd matches
+// the innermost open block. An empty block (no children recorded) is a no-op.
 // ---------------------------------------------------------------------------
 
 enum UndoState { Invalid, Active, Suspend }
@@ -76,6 +86,76 @@ private uint historyFlagsFor(const Command cmd) {
     return flags;
 }
 
+// ---------------------------------------------------------------------------
+// CompositeCommand — a single Command that wraps N child commands recorded
+// inside a blockBegin/blockEnd pair. It IS its own undo object (same model as
+// a plain Command): the history entry holds the composite, and undo()/redo()
+// call revert()/apply() on it without ever peeking at the children.
+//
+// The children have ALREADY been apply()'d once (record() is called after a
+// successful apply), so the composite's first life on the stack needs no
+// re-apply. revert() walks children in REVERSE order; a later redo's apply()
+// walks them forward again — symmetric with how a sequence of single commands
+// would undo/redo if they were separate entries.
+//
+// cmdFlags(): union of the children's flags. Model (=> undoable) is set if ANY
+// child is a model-mutating command, so a block that contains at least one
+// real edit lands on the stack. A block of purely non-model commands carries
+// no Model bit and record() drops it (consistent with single-command rules).
+// ---------------------------------------------------------------------------
+final class CompositeCommand : Command {
+    private Command[] children_;
+    private string    blockLabel_;
+    private CmdFlags   unionFlags_;
+
+    this(Command[] children, string blockLabel) {
+        // Construct the Command base with the first child's mesh/view/editMode
+        // context (the base ctor requires them). The composite never uses these
+        // fields directly — it delegates to children — but they must be set so
+        // the base is well-formed and any generic Command consumer is safe.
+        assert(children.length > 0,
+            "CompositeCommand requires at least one child");
+        super(children[0].meshPtr, children[0].viewRef, children[0].editModeVal);
+        children_   = children;
+        blockLabel_ = blockLabel;
+        CmdFlags u = CmdFlags.None;
+        foreach (c; children_) u |= c.cmdFlags();
+        unionFlags_ = u;
+    }
+
+    /// Children, in record order. Exposed for inspection/tests.
+    const(Command)[] children() const { return children_; }
+
+    override string name() const {
+        return blockLabel_.length > 0 ? blockLabel_ : "command.block";
+    }
+    override string label() const {
+        return blockLabel_.length > 0 ? blockLabel_ : "Command block";
+    }
+
+    // Re-apply children forward. Used by redo(). Stops and reports failure on
+    // the first child that fails to apply (partial state — same best-effort
+    // contract as the single-command redo path).
+    override bool apply() {
+        foreach (c; children_) {
+            if (!c.apply()) return false;
+        }
+        return true;
+    }
+
+    // Revert children in REVERSE order (mirror of the apply order). Used by
+    // undo(). Stops and reports failure on the first child that fails to
+    // revert.
+    override bool revert() {
+        foreach_reverse (c; children_) {
+            if (!c.revert()) return false;
+        }
+        return true;
+    }
+
+    override CmdFlags cmdFlags() const { return unionFlags_; }
+}
+
 final class CommandHistory {
     private HistoryEntry[] undoStack;
     private HistoryEntry[] redoStack;
@@ -87,6 +167,17 @@ final class CommandHistory {
     // command before applying the new one.
     private bool    refireOpen = false;
     private Command liveCmd;
+
+    // Command-block state (blockBegin/blockEnd). `blockDepth` counts open
+    // blocks; nesting FLATTENS — every blockBegin past the first just bumps
+    // the depth, and all recorded children accumulate in the single flat
+    // `blockChildren` list. blockEnd decrements; only the outermost blockEnd
+    // (depth → 0) actually records the composite. `blockLabel` is captured at
+    // the first (outermost) blockBegin. record() routes into blockChildren
+    // whenever blockDepth > 0.
+    private int       blockDepth = 0;
+    private Command[] blockChildren;
+    private string    blockLabel;
 
     /// Phase 7 macro recorder hook. Invoked AFTER an entry lands on
     /// the undo stack — receives the canonical argstring command
@@ -121,6 +212,24 @@ final class CommandHistory {
         if (cmd is null) return;
         if (!cmd.isUndoable) return;
         if (_state != UndoState.Active) return;
+
+        // Inside an open command block, the command becomes a child of the
+        // block instead of its own stack entry. The composite lands as one
+        // entry at blockEnd(). Same undoable/Active gating as a normal record
+        // applied above, so non-model commands never enter the child list.
+        if (blockDepth > 0) {
+            blockChildren ~= cmd;
+            // Still feed the macro recorder per child so a captured macro
+            // mirrors the individual commands the user ran (the block is a
+            // history-grouping concept, not a scripting one).
+            if (onRecord !is null) {
+                string args = serializeParams(cmd.params());
+                string line = args.length > 0
+                    ? (cmd.name ~ " " ~ args) : cmd.name;
+                onRecord(line, historyFlagsFor(cmd));
+            }
+            return;
+        }
 
         import core.time : MonoTime;
         long tMs = MonoTime.currTime.ticks
@@ -332,5 +441,61 @@ final class CommandHistory {
         refireOpen = false;
         liveCmd    = null;
         if (final_ !is null) record(final_);
+    }
+
+    // ----- command blocks --------------------------------------------------
+    // blockBegin / blockEnd group N commands run between them into ONE undo
+    // entry (a CompositeCommand). Each command's apply() is invoked by the
+    // caller as usual; the caller then passes it to record(), which — while a
+    // block is open — appends it to the block's child list instead of pushing
+    // a standalone entry. blockEnd() records the composite as the single
+    // grouped entry.
+    //
+    // Nesting flattens: a blockBegin inside a blockBegin shares ONE flat child
+    // list and ONE label (the outermost). blockEnd matches the innermost open
+    // block (decrements the depth); only the outermost blockEnd commits.
+    //
+    // Interaction with refire (deliberately kept simple & safe): blocks and
+    // refire are independent grouping primitives and are NOT designed to be
+    // interleaved. fire() is unaware of blocks, so a refire cycle run inside a
+    // block would push its committed entry through record() at refireEnd() and
+    // thus be folded in as ONE child of the block (the block stays the single
+    // user-visible entry — no regression to refire's own coalescing). Callers
+    // should not open a block in the middle of a live refire drag; doing so is
+    // undefined and not exercised by any consumer.
+
+    bool blockActive() const { return blockDepth > 0; }
+
+    /// Open a command block. `label` names the resulting composite entry; for
+    /// nested calls only the outermost label is used.
+    void blockBegin(string label) {
+        if (blockDepth == 0) {
+            blockChildren.length = 0;
+            blockLabel = label;
+        }
+        blockDepth++;
+    }
+
+    /// Close the innermost open block. On the outermost close (depth → 0),
+    /// wrap the collected children in a CompositeCommand and record it as ONE
+    /// entry. An empty block (no children collected) records nothing.
+    /// Calling blockEnd() with no open block is a harmless no-op.
+    void blockEnd() {
+        if (blockDepth == 0) return;
+        blockDepth--;
+        if (blockDepth > 0) return;   // inner end of a nested block — defer.
+
+        Command[] kids = blockChildren;
+        string lbl     = blockLabel;
+        blockChildren.length = 0;
+        blockLabel = "";
+
+        if (kids.length == 0) return; // empty block → drop, no entry.
+
+        // Single-child blocks could be unwrapped, but wrapping keeps the
+        // entry's label = the block label (the user named the group) and the
+        // behaviour uniform. Wrap unconditionally.
+        auto composite = new CompositeCommand(kids, lbl);
+        record(composite);
     }
 }

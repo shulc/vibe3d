@@ -165,6 +165,20 @@ class HttpServer {
     private string pendingRefireAction;
     private string pendingRefireError;
 
+    // ----- /api/history/block synchronous bridge ---------------------------
+    // POST /api/history/block {"action":"begin","label":"..."} opens a command
+    // block; {"action":"end"} closes it. While open, every recorded command is
+    // folded into the block and lands as ONE undo entry at end. Same
+    // main-thread sync pattern as /api/refire — block state lives on the
+    // CommandHistory, which is only safe to touch from the main thread.
+    private alias BlockHandler = void delegate(string action, string label);
+    private BlockHandler blockHandler;
+    private shared long blockSubmittedEpoch;
+    private shared long blockCompletedEpoch;
+    private string pendingBlockAction;
+    private string pendingBlockLabel;
+    private string pendingBlockError;
+
     // Event player for handling event playback via HTTP
     private EventPlayer eventPlayer;
 
@@ -323,6 +337,14 @@ class HttpServer {
      */
     public void setRefireHandler(RefireHandler handler) {
         this.refireHandler = handler;
+    }
+
+    /**
+     * Set the command-block handler — main-thread callback that opens/closes a
+     * command block on the history. action is "begin" (with a label) or "end".
+     */
+    public void setBlockHandler(BlockHandler handler) {
+        this.blockHandler = handler;
     }
 
     /**
@@ -1044,6 +1066,53 @@ class HttpServer {
                 }
             }
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/history/block" && request.method == "POST") {
+            // Command-block grouping: {"action":"begin","label":"..."} opens a
+            // block, {"action":"end"} closes it. N undoable commands recorded
+            // between begin and end collapse into ONE undo entry. Same
+            // main-thread bridge as /api/refire.
+            if (blockHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"block handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if ("action" !in j || j["action"].type != JSONType.string)
+                        throw new Exception("missing 'action' string field");
+                    string action = j["action"].str;
+                    if (action != "begin" && action != "end")
+                        throw new Exception("'action' must be 'begin' or 'end'");
+                    string label = "";
+                    if ("label" in j && j["label"].type == JSONType.string)
+                        label = j["label"].str;
+                    pendingBlockAction = action;
+                    pendingBlockLabel  = label;
+                    pendingBlockError  = "";
+                    long my = atomicOp!"+="(blockSubmittedEpoch, 1);
+                    enum int maxIters = 2500;
+                    int iters = 0;
+                    while (atomicLoad(blockCompletedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingBlockError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingBlockError.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingBlockError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/history" && request.method == "GET") {
             if (historyProvider is null) {
                 response.statusCode = 200;
@@ -1350,6 +1419,26 @@ class HttpServer {
             }
         }
         atomicStore(refireCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick command-block begin/end — same main-thread sync pattern as refire.
+     */
+    public void tickBlock() {
+        long sub = atomicLoad(blockSubmittedEpoch);
+        long cmp = atomicLoad(blockCompletedEpoch);
+        if (sub <= cmp) return;
+        if (blockHandler is null) {
+            pendingBlockError = "block handler not set";
+        } else {
+            try {
+                blockHandler(pendingBlockAction, pendingBlockLabel);
+                pendingBlockError = "";
+            } catch (Exception e) {
+                pendingBlockError = e.msg;
+            }
+        }
+        atomicStore(blockCompletedEpoch, sub);
     }
 
     /**

@@ -123,6 +123,15 @@ class Command {
         this.editMode = editMode;
     }
 
+    // Read-only accessors to the construction context. Needed so a wrapper
+    // command in another module (e.g. CompositeCommand in command_history.d)
+    // can forward another command's mesh/view/editMode into the base ctor —
+    // `protected` fields are only reachable on `this`, not on a sibling
+    // instance across module boundaries.
+    final Mesh*    meshPtr() { return mesh; }
+    final ref View viewRef() { return view; }
+    final EditMode editModeVal() const { return editMode; }
+
 protected:
     Mesh* mesh;
     View view;

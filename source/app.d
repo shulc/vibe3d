@@ -2103,6 +2103,16 @@ void main(string[] args) {
             else throw new Exception("invalid refire action '" ~ action ~ "'");
         });
 
+        // /api/history/block opens/closes a command block on the history.
+        // N undoable commands recorded between begin and end collapse into a
+        // single CompositeCommand undo entry. Exists for HTTP-driven tests and
+        // any future macro/replay consumer that wants to group sub-commands.
+        httpServer.setBlockHandler((string action, string label) {
+            if (action == "begin")     history.blockBegin(label);
+            else if (action == "end")  history.blockEnd();
+            else throw new Exception("invalid block action '" ~ action ~ "'");
+        });
+
         // Phase A.5: dispatch /api/select through the unified Command path
         // (MeshSelect) so selection changes land on the undo stack and
         // share the same snapshot/revert mechanism as everything else.
@@ -3657,6 +3667,7 @@ void main(string[] args) {
             httpServer.tickCameraSet();
             httpServer.tickGpuSurface();
             httpServer.tickRefire();
+            httpServer.tickBlock();
             httpServer.tickUndo();
             httpServer.tickJump();
         }
