@@ -129,7 +129,11 @@ protected:
     // weighting logic lands per subphase (7.5b Move, 7.5c Rotate /
     // Scale). Until then this flag is harmless — there's no
     // evaluateFalloff caller yet.
-    override bool consumesFalloff() const { return true; }
+    // Static capability: every TransformTool subclass (Move / Rotate /
+    // Scale) applies per-vertex transforms during drag, so the Falloff
+    // stage's per-vertex weight is meaningful for all of them. Declared
+    // as a flag; the base `consumesFalloff()` derives from it.
+    override ToolFlag flags() const { return ToolFlag.NeedsFalloff; }
 
     // Begin recording an edit session. Captures the current positions of
     // the verts in vertexIndicesToProcess (must be filled by the caller —
