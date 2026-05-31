@@ -1734,16 +1734,18 @@ private:
         // frame (draw / update both call syncGpuMatrix).
         if (activeDrag is moveSub) return;
 
-        // Same for a PRINCIPAL-AXIS rotate drag (rotDragAxisIdx 0/1/2):
-        // the wrapper owns gpuMatrix (set to `pivotRotationMatrix` in the
-        // fast-path branch of onMouseMotion), and rotateSub no longer writes
-        // its own gpuMatrix for these axes. Forwarding rotateSub's identity
-        // here every update()/draw() frame would clobber the wrapper's
-        // rotation matrix between motion events — the whole-mesh cube would
-        // flicker back to its drag-start pose. View-ring (idx == -1) still
-        // drives rotateSub.gpuMatrix and needs the sync below.
+        // Same for ANY rotate ring drag (rotDragAxisIdx 0/1/2 principal OR
+        // 3 view-ring): the wrapper owns gpuMatrix (set to `pivotRotationMatrix`
+        // / `wrapAboutPivot` in the fast-path branch of onMouseMotion), and
+        // rotateSub no longer writes its own gpuMatrix during a wrapper-owned
+        // drag. Forwarding rotateSub's identity here every update()/draw()
+        // frame would clobber the wrapper's rotation matrix between motion
+        // events — the whole-mesh cube would flicker back to its drag-start
+        // pose (then snap to the rotated CPU result only at mouse-up). This
+        // must match the `wrapperOwnsGpu` predicate in onMouseMotion, which
+        // includes the view-ring (rotDragAxisIdx <= 3).
         if (activeDrag is rotateSub
-            && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) return;
+            && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 3) return;
 
         // Same for a scale drag (any gizmo mode): the wrapper owns gpuMatrix
         // (set to `pivotScaleMatrixBasis` in the fast-path branch of
