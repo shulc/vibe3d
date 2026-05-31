@@ -6,7 +6,6 @@ import bindbc.sdl;
 
 import tools.transform;
 import handler;
-import eventlog : queryMouse;
 import mesh;
 import editmode;
 import math;
@@ -47,13 +46,6 @@ import falloff_render : drawFalloffOverlay;
 
 class MoveTool : TransformTool {
     MoveHandler handler;
-
-    // Single-source hover/capture arbiter for the 7 gizmo handles
-    // (parts 0..6). Replaces the hand-rolled force/block loop. The
-    // captured part mirrors `dragAxis` (set via setHaul on mouse-down)
-    // so the dragged handle stays highlighted for the whole drag;
-    // `dragAxis` stays the source of truth for the drag math itself.
-    ToolHandles toolHandles;
 
     // Phase 3 — gesture-scalar producer for the unified
     // `XfrmTransformTool.applyTRS` flow. `MoveTool.onMouseMotion`'s
@@ -97,7 +89,6 @@ public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         handler = new MoveHandler(Vec3(0, 0, 0));
-        toolHandles = new ToolHandles();
         cachedCenter = Vec3(0, 0, 0);
     }
 
@@ -130,8 +121,23 @@ public:
     // the wrapper's `deactivate()` already committed any open edit
     // before forwarding.
     override void deactivate() {
-        toolHandles.clearHaul();
         super.deactivate();
+    }
+
+    // Register this bank's gizmo handles into the shared arbiter `th`
+    // at part-id offset `base` (so overlapping handles across banks get
+    // distinct parts). Order = hitTestAxes priority (circles > box >
+    // arrows) so the highlighted handle matches the one a click grabs.
+    // Does NOT begin()/update()/suppress() — the wrapper owns the
+    // single test+update pass.
+    void registerHandles(ToolHandles th, int base) {
+        th.add(handler.circleXY,  base + 4);
+        th.add(handler.circleYZ,  base + 5);
+        th.add(handler.circleXZ,  base + 6);
+        th.add(handler.centerBox, base + 3);
+        th.add(handler.arrowX,    base + 0);
+        th.add(handler.arrowY,    base + 1);
+        th.add(handler.arrowZ,    base + 2);
     }
 
     // Recompute gizmo center from current selection / mesh state.
@@ -194,24 +200,6 @@ public:
             needsGpuUpdate = false;
         }
 
-        // Single-source hover/capture: register the 7 gizmo handles in
-        // hitTestAxes priority order (circles > box > arrows) so the
-        // highlighted handle is always the one a click would grab. The
-        // arbiter sets each handle's HandleState; captured (dragAxis,
-        // mirrored via setHaul on mouse-down) keeps the dragged handle
-        // highlighted for the whole drag.
-        toolHandles.begin();
-        toolHandles.add(handler.circleXY,  4);
-        toolHandles.add(handler.circleYZ,  5);
-        toolHandles.add(handler.circleXZ,  6);
-        toolHandles.add(handler.centerBox, 3);
-        toolHandles.add(handler.arrowX,    0);
-        toolHandles.add(handler.arrowY,    1);
-        toolHandles.add(handler.arrowZ,    2);
-        int hmx, hmy;
-        queryMouse(hmx, hmy);
-        toolHandles.update(hmx, hmy, vp);
-
         handler.draw(shader, vp);
 
         // Phase 7.3d: snap visual feedback. Yellow ring (highlighted)
@@ -264,7 +252,6 @@ public:
         // drag-axis state it owns (dragAxis = -1) and clears the snap
         // overlay it published.
         dragAxis = -1;
-        toolHandles.clearHaul();
         lastSnap = SnapResult.init;
         clearLastSnap();
         // Sticky-pin follow: when ACEN.userPlaced is active (set by
@@ -340,7 +327,6 @@ public:
         ctrlConstrain = false;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
-            toolHandles.setHaul(dragAxis);
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {
                 ctrlConstrain = true;
@@ -414,7 +400,6 @@ public:
         if (notifyAcen)
             notifyAcenUserPlaced(hit);
         dragAxis = 3;   // most-facing plane through gizmo center
-        toolHandles.setHaul(3);
         lastMX = mx; lastMY = my;
         buildVertexCacheIfNeeded();
         if (ctrl) {

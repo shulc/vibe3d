@@ -78,6 +78,8 @@ import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                identityMatrix, matMul4, wrapAboutPivot;
 import editmode : EditMode;
 import mesh;
+import handler  : ToolHandles;
+import eventlog : queryMouse;
 import shader : Shader;
 import params : Param;
 import tools.transform : TransformTool;
@@ -119,6 +121,12 @@ private BlendMode blendModeForMeasure() @trusted nothrow {
 }
 
 alias VertexEditFactory = MeshVertexEdit delegate();
+
+// Part-id bases for the shared cross-bank handle arbiter. Each bank
+// registers its local handle ids (0..6) at its base so overlapping
+// handles at the shared gizmo center get distinct global part ids. The
+// falloff base (100) is reserved for step 4b — not used yet.
+private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20;
 
 class XfrmTransformTool : TransformTool {
 public:
@@ -165,6 +173,7 @@ public:
         moveSub   = new MoveTool  (mesh, gpu, editMode);
         rotateSub = new RotateTool(mesh, gpu, editMode);
         scaleSub  = new ScaleTool (mesh, gpu, editMode);
+        toolHandles = new ToolHandles();
     }
 
     override string name() const { return "Transform"; }
@@ -296,6 +305,26 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
         if (!active) return;
         cachedVp = vp;
+
+        // Cross-bank single-winner hover/capture (MODO tmod_Test → tmod_Draw):
+        // register every enabled bank's handles into one shared arbiter (offset
+        // per bank so overlapping handles at the shared center get distinct part
+        // ids), resolve ONE hot/captured part, THEN render the banks.
+        toolHandles.begin();
+        if (flagT) moveSub.registerHandles  (toolHandles, MOVE_BASE);
+        if (flagR) rotateSub.registerHandles(toolHandles, ROT_BASE);
+        if (flagS) scaleSub.registerHandles (toolHandles, SCALE_BASE);
+        // Capture: the active bank's live dragAxis is the hot part. Scale
+        // suppresses ALL highlight during its drag (animated arrow is the cue).
+        // Idle / falloff-handle drag → no gizmo capture.
+        if      (activeDrag is moveSub   && moveSub.dragAxis   >= 0) toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
+        else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0) toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
+        else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0) toolHandles.suppress();
+        else                                                         toolHandles.setHaul(-1);
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        toolHandles.update(hmx, hmy, vp);
+
         if (flagT) moveSub.draw(shader, vp, vts);
         if (flagR) rotateSub.draw(shader, vp, vts);
         if (flagS) scaleSub.draw(shader, vp, vts);
@@ -1588,6 +1617,13 @@ private:
     MoveTool   moveSub;
     RotateTool rotateSub;
     ScaleTool  scaleSub;
+
+    // Single shared cross-bank handle arbiter (MODO tmod_Test → tmod_Draw).
+    // Every enabled bank registers its handles into this each frame at its
+    // part-id base; one resolve picks ONE hot/captured part across move +
+    // rotate + scale, so overlapping handles never co-highlight. Falloff
+    // handles fold in here in step 4b. Constructed in the wrapper ctor.
+    ToolHandles toolHandles;
 
     // Sub-tool that owns the currently active drag, set on
     // mouse-down and cleared on mouse-up. Null when no drag is
