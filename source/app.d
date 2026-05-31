@@ -1392,9 +1392,11 @@ void main(string[] args) {
                 facesCopy[i] = mesh.faces[i].dup;
             }
             // isSubpatch parallel to faces — pad with false if shorter.
+            // Materialize the view once (it allocates per access).
+            auto subView = mesh.isSubpatch;
             bool[] subCopy = new bool[](mesh.faces.length);
             for (size_t i = 0; i < mesh.faces.length; i++)
-                subCopy[i] = i < mesh.isSubpatch.length && mesh.isSubpatch[i];
+                subCopy[i] = i < subView.length && subView[i];
 
             // Material Groups (MG2): per-mesh surface registry + per-face
             // index into it. faceMaterial is padded to faces.length with
@@ -2328,10 +2330,13 @@ void main(string[] args) {
                 // next frame via mutationVersion bumped inside setSubpatch.
                 mesh.syncSelection();
                 bool any = mesh.hasAnySelectedFaces();
+                // Materialize the views once (each access allocates).
+                auto selView = mesh.selectedFaces;
+                auto subView = mesh.isSubpatch;
                 foreach (fi; 0 .. mesh.faces.length) {
-                    if (any && !(fi < mesh.selectedFaces.length && mesh.selectedFaces[fi]))
+                    if (any && !(fi < selView.length && selView[fi]))
                         continue;
-                    bool cur = fi < mesh.isSubpatch.length && mesh.isSubpatch[fi];
+                    bool cur = fi < subView.length && subView[fi];
                     mesh.setSubpatch(fi, !cur);
                 }
                 break;

@@ -43,12 +43,17 @@ class SelectConnect : Command {
     override bool apply() {
         snap = SelectionSnapshot.capture(*mesh);
         // Connected selection — flood-fill from current selection / hovered element.
+        // `selectedX` is now a materialized read view; bfsSelect mutates the
+        // bool[] in place, so capture the view into a local, flood-fill it,
+        // then write the result back through the setter.
         if (editMode == EditMode.Vertices) {
             int[][] vertAdj = new int[][](mesh.vertices.length);
             foreach (vi; 0 .. mesh.vertices.length)
                 foreach (ni; mesh.verticesAroundVertex(cast(uint)vi))
                     vertAdj[vi] ~= cast(int)ni;
-            bfsSelect(mesh.selectedVertices, vertAdj, -1);
+            auto sel = mesh.selectedVertices;
+            bfsSelect(sel, vertAdj, -1);
+            mesh.setVerticesSelectedFrom(sel);
         } else if (editMode == EditMode.Edges) {
             // Build edge → adjacent edges map via shared vertices
             int[][] edgeAdj = new int[][](mesh.edges.length);
@@ -56,13 +61,17 @@ class SelectConnect : Command {
                 foreach (vi; mesh.edges[i])
                     foreach (ni; mesh.edgesAroundVertex(vi))
                         if (ni != i) edgeAdj[i] ~= cast(int)ni;
-            bfsSelect(mesh.selectedEdges, edgeAdj, -1);
+            auto sel = mesh.selectedEdges;
+            bfsSelect(sel, edgeAdj, -1);
+            mesh.setEdgesSelectedFrom(sel);
         } else if (editMode == EditMode.Polygons) {
             int[][] faceAdj = new int[][](mesh.faces.length);
             foreach (fi; 0 .. mesh.faces.length)
                 foreach (adjFi; mesh.adjacentFaces(cast(uint)fi))
                     faceAdj[fi] ~= cast(int)adjFi;
-            bfsSelect(mesh.selectedFaces, faceAdj, -1);
+            auto sel = mesh.selectedFaces;
+            bfsSelect(sel, faceAdj, -1);
+            mesh.setFacesSelectedFrom(sel);
         }
         return true;
     }
