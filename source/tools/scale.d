@@ -6,6 +6,7 @@ import bindbc.sdl;
 
 import tools.transform;
 import handler;
+import eventlog : queryMouse;
 import mesh;
 import editmode;
 import math;
@@ -31,6 +32,14 @@ import params : Param;
 
 class ScaleTool : TransformTool {
     ScaleHandler handler;
+
+    // Single-source hover/capture arbiter for the scale gizmo handles
+    // (arrows 0..2, centerDisk 3 uniform, plane circles 4..6). Replaces
+    // the old force/block loop. Scale is special: during a drag NO handle
+    // highlights (the animated scaleArrow is the feedback), so the draw
+    // path calls toolHandles.suppress() while dragAxis >= 0 instead of
+    // setHaul.
+    ToolHandles toolHandles;
 
 private:
     Vec3     scaleAccum     = Vec3(1, 1, 1);  // cumulative scale factor per axis since tool activated
@@ -71,6 +80,7 @@ public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         handler = new ScaleHandler(Vec3(0, 0, 0));
+        toolHandles = new ToolHandles();
     }
 
     void destroy() { handler.destroy(); }
@@ -149,6 +159,7 @@ public:
     override void deactivate() {
         if (editIsOpen())
             commitEdit("Scale");
+        toolHandles.clearHaul();
         super.deactivate();
     }
 
@@ -258,18 +269,23 @@ public:
             needsGpuUpdate = false;
         }
 
-        CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
-        bool anyHovered = false;
-        foreach (i, arrow; arrows) {
-            arrow.setForceHovered(false);
-            arrow.setHoverBlocked(dragAxis >= 0 || anyHovered);
-            anyHovered |= arrow.isHovered();
-        }
-        handler.centerDisk.setForceHovered(false);
-        handler.centerDisk.setHoverBlocked(dragAxis >= 0 || anyHovered);
-        handler.circleXY.setHoverBlocked(dragAxis >= 0 || anyHovered);
-        handler.circleYZ.setHoverBlocked(dragAxis >= 0 || anyHovered);
-        handler.circleXZ.setHoverBlocked(dragAxis >= 0 || anyHovered);
+        // Single-source hover/capture: register the scale handles in
+        // hitTestAxes priority order (disc, plane circles, then arrows) so
+        // the highlighted handle is the one a click grabs. During a drag the
+        // animated scale arrow is the feedback, so suppress ALL handle
+        // highlight (matches the old "block every handle while dragAxis>=0").
+        toolHandles.begin();
+        toolHandles.add(handler.centerDisk, 3);
+        toolHandles.add(handler.circleXY,   4);
+        toolHandles.add(handler.circleYZ,   5);
+        toolHandles.add(handler.circleXZ,   6);
+        toolHandles.add(handler.arrowX,     0);
+        toolHandles.add(handler.arrowY,     1);
+        toolHandles.add(handler.arrowZ,     2);
+        if (dragAxis >= 0) toolHandles.suppress();
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        toolHandles.update(hmx, hmy, vp);
 
         handler.setScaleAccum(dragScaleAccum);
         handler.activeDragAxis = dragAxis;
@@ -377,6 +393,7 @@ public:
         wholeMeshDrag = false;
 
         dragAxis = -1;
+        toolHandles.clearHaul();
         propScale = scaleAccum;
         // Phase 7.5h: don't reset activationVertices / activationCenter
         // here. The invariant is `mesh == scaleAlongBasis(activationVertices,

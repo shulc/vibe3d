@@ -1320,9 +1320,15 @@ class ToolHandles {
     private Entry[] entries;     // registration order = test priority
     int hot      = -1;           // ROLLOVER part, -1 = none
     int captured = -1;           // hauled part during a drag, -1 = none
+    private bool suppressed;     // when set, update() forces every handle Normal
 
     // Clear the per-frame registration list. Call at the start of each draw.
-    void begin() { entries.length = 0; }
+    void begin() { entries.length = 0; suppressed = false; }
+
+    // Force every registered handle to Normal for this frame, ignoring hover
+    // and capture. Used by ScaleTool, whose drag feedback is the animated
+    // scale arrow — no gizmo handle should highlight while a scale drag runs.
+    void suppress() { suppressed = true; }
 
     // Register a handle with a stable part id, in priority order (first wins
     // on overlap). The handle is switched into arbitrated mode.
@@ -1344,6 +1350,11 @@ class ToolHandles {
     // Resolve the hot part (captured sticks; else test) and hand each
     // registered handle its HandleState for this frame.
     void update(int mx, int my, const ref Viewport vp) {
+        if (suppressed) {
+            hot = -1;
+            foreach (ref e; entries) e.h.setState(HandleState.Normal);
+            return;
+        }
         hot = captured >= 0 ? captured : test(mx, my, vp);
         foreach (ref e; entries)
             e.h.setState(e.part == hot ? HandleState.Rollover : HandleState.Normal);
