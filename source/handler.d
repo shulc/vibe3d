@@ -12,6 +12,13 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 // ---------------------------------------------------------------------------
+// HandleState — mirrors MODO's LXiSELECTION_UNSELECTED / ROLLOVER / SELECTED.
+// One enum replaces the old hovered/selected bool soup at the colour-pick site.
+// ---------------------------------------------------------------------------
+
+enum HandleState { Normal, Rollover, Selected }
+
+// ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
 // All handlers use this program to draw line geometry.
 // ---------------------------------------------------------------------------
@@ -139,10 +146,16 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 
 class Handler {
 private:
-    bool   hovered;
+    // Single source of truth for hover/selected state (mirrors LXiSELECTION_*).
+    HandleState state = HandleState.Normal;
+    // Legacy bridge flags — ~10 tools still call setForceHovered/setHoverBlocked.
+    // They feed updateHover() while the handle self-hovers (!arbitrated).
     bool   forceHovered;
     bool   hoverBlocked;
     bool   visible = true;
+    // When true, an external ToolHandles arbiter owns `state`; updateHover()
+    // becomes a no-op so the handle stops self-computing hover.
+    bool   arbitrated;
 
 public:
     // Called once per frame to render the overlay into the 3-D view.
@@ -158,22 +171,29 @@ public:
     bool onKeyUp  (ref const SDL_KeyboardEvent e) { return false; }
 
     // Hover/visible functions
-    bool isHovered()    const { return hovered; }
+    bool isHovered()    const { return state == HandleState.Rollover; }
     void setForceHovered(bool v) { forceHovered  = v; }
     void setHoverBlocked(bool v) { hoverBlocked  = v; }
-    void setVisible(bool v)      { visible = v; if (!v) hovered = false; }
+    void setVisible(bool v)      { visible = v; if (!v) state = HandleState.Normal; }
     bool isVisible() const       { return visible; }
+
+    // HandleState accessors — used by the ToolHandles arbiter.
+    void setArbitrated(bool v) { arbitrated = v; }
+    void setState(HandleState s) { state = s; }
+    HandleState getState() const { return state; }
 
     // Override in subclasses to define the hover hit area.
     protected bool hitTest(int mx, int my, const ref Viewport vp) { return false; }
 
-    // Updates `hovered` from the current mouse position; respects blocked/forced flags.
+    // Updates `state` from the current mouse position; respects blocked/forced
+    // flags. No-op when an external ToolHandles arbiter owns the state.
     protected void updateHover(const ref Viewport vp) {
-        if (hoverBlocked) { hovered = false; return; }
-        if (forceHovered) { hovered = true;  return; }
+        if (arbitrated) return;                 // external ToolHandles owns state
+        if (hoverBlocked) { state = HandleState.Normal;   return; }
+        if (forceHovered) { state = HandleState.Rollover; return; }
         int mx, my;
         queryMouse(mx, my);
-        hovered = hitTest(mx, my, vp);
+        state = hitTest(mx, my, vp) ? HandleState.Rollover : HandleState.Normal;
     }
 }
 
@@ -255,7 +275,7 @@ class Arrow : ShaftedArrow {
         Vec3  coneBase   = end - fwd * coneLen;
 
         updateHover(vp);
-        Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -326,7 +346,7 @@ class CubicArrow : ShaftedArrow {
         if (shaftLen < 0.0f) shaftLen = 0.0f;
 
         updateHover(vp);
-        Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -396,9 +416,9 @@ public:
 
         updateHover(vp);
 
-        Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
-               : selected ? Vec3(1.0f, 0.64f, 0.0f)    // orange
-               :            color;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
+               : selected                      ? Vec3(1.0f, 0.64f, 0.0f)    // orange
+               :                                 color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
@@ -417,7 +437,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
+        if (e.button != SDL_BUTTON_LEFT || !isHovered()) return false;
         selected = !selected;
         return true;
     }
@@ -505,7 +525,7 @@ public:
 
         updateHover(vp);
 
-        Vec3 c = hovered ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -788,9 +808,9 @@ public:
     {
         updateHover(vp);  // defined in Handler base class
 
-        Vec3 c = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
-               : selected ? Vec3(1.0f, 0.64f, 0.0f)
-               :            color;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
+               : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
+               :                                 color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -807,7 +827,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
+        if (e.button != SDL_BUTTON_LEFT || !isHovered()) return false;
         selected = !selected;
         return true;
     }
@@ -922,12 +942,12 @@ public:
 
         updateHover(vp);
 
-        Vec3 oc = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
-                : selected ? Vec3(1.0f, 0.64f, 0.0f)
-                :            color;
-        Vec3 fc = hovered  ? Vec3(1.0f, 0.95f, 0.15f)
-                : selected ? Vec3(1.0f, 0.64f, 0.0f)
-                :            fillColor;
+        Vec3 oc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
+                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
+                :                                 color;
+        Vec3 fc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
+                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
+                :                                 fillColor;
 
         auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
 
@@ -948,7 +968,7 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e) {
-        if (e.button != SDL_BUTTON_LEFT || !hovered) return false;
+        if (e.button != SDL_BUTTON_LEFT || !isHovered()) return false;
         selected = !selected;
         return true;
     }
@@ -1003,8 +1023,8 @@ class CenterDiskGizmo : Handler {
         }
         if (!allValid) return;
 
-        uint fillCol    = hovered ? IM_COL32(255, 242,  38, 120) : IM_COL32(  0, 220, 220,  80);
-        uint outlineCol = hovered ? IM_COL32(255, 242,  38, 230) : IM_COL32(  0, 220, 220, 200);
+        uint fillCol    = state == HandleState.Rollover ? IM_COL32(255, 242,  38, 120) : IM_COL32(  0, 220, 220,  80);
+        uint outlineCol = state == HandleState.Rollover ? IM_COL32(255, 242,  38, 230) : IM_COL32(  0, 220, 220, 200);
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();
         dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
@@ -1281,4 +1301,54 @@ private:
         vao = buildVao3f(data, vbo);
         built = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// ToolHandles — central hover/capture arbiter, one per active tool. Mirrors
+// MODO's tool-model test/draw pass: a single hot (ROLLOVER) part and a single
+// captured (hauled) part across ALL registered handles, so highlight and
+// click can never disagree. Registered handles must have setArbitrated(true)
+// so they stop self-hovering; ToolHandles drives their state each frame.
+//
+// NOTE: defined in step 1 but not yet wired to any tool. ToolHandles.test /
+// update call Handler.hitTest / setState / setArbitrated — legal from the same
+// module regardless of `protected`.
+// ---------------------------------------------------------------------------
+
+class ToolHandles {
+    private struct Entry { Handler h; int part; }
+    private Entry[] entries;     // registration order = test priority
+    int hot      = -1;           // ROLLOVER part, -1 = none
+    int captured = -1;           // hauled part during a drag, -1 = none
+
+    // Clear the per-frame registration list. Call at the start of each draw.
+    void begin() { entries.length = 0; }
+
+    // Register a handle with a stable part id, in priority order (first wins
+    // on overlap). The handle is switched into arbitrated mode.
+    void add(Handler h, int part) {
+        h.setArbitrated(true);
+        entries ~= Entry(h, part);
+    }
+
+    // tmod_Test: first registered handle (by priority) whose hitTest passes.
+    // Skips invisible handles. Returns its part id, or -1 on miss.
+    int test(int mx, int my, const ref Viewport vp) {
+        foreach (ref e; entries) {
+            if (!e.h.isVisible()) continue;
+            if (e.h.hitTest(mx, my, vp)) return e.part;
+        }
+        return -1;
+    }
+
+    // Resolve the hot part (captured sticks; else test) and hand each
+    // registered handle its HandleState for this frame.
+    void update(int mx, int my, const ref Viewport vp) {
+        hot = captured >= 0 ? captured : test(mx, my, vp);
+        foreach (ref e; entries)
+            e.h.setState(e.part == hot ? HandleState.Rollover : HandleState.Normal);
+    }
+
+    void setHaul(int part) { captured = part; }
+    void clearHaul()       { captured = -1;  }
 }
