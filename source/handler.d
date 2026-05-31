@@ -148,9 +148,10 @@ class Handler {
 private:
     // Single source of truth for hover/selected state (mirrors LXiSELECTION_*).
     HandleState state = HandleState.Normal;
-    // Legacy bridge flags — ~10 tools still call setForceHovered/setHoverBlocked.
-    // They feed updateHover() while the handle self-hovers (!arbitrated).
-    bool   forceHovered;
+    // Permanently-decorative flag: a handle whose draw() self-hovers
+    // (!arbitrated) but should never highlight — set via setHoverBlocked(true)
+    // for RotateHandler's bgCircle. Unregistered self-hovering handles (pen
+    // vertex markers, the mover plane circles) leave it false.
     bool   hoverBlocked;
     bool   visible = true;
     // When true, an external ToolHandles arbiter owns `state`; updateHover()
@@ -172,7 +173,6 @@ public:
 
     // Hover/visible functions
     bool isHovered()    const { return state == HandleState.Rollover; }
-    void setForceHovered(bool v) { forceHovered  = v; }
     void setHoverBlocked(bool v) { hoverBlocked  = v; }
     void setVisible(bool v)      { visible = v; if (!v) state = HandleState.Normal; }
     bool isVisible() const       { return visible; }
@@ -185,12 +185,11 @@ public:
     // Override in subclasses to define the hover hit area.
     protected bool hitTest(int mx, int my, const ref Viewport vp) { return false; }
 
-    // Updates `state` from the current mouse position; respects blocked/forced
-    // flags. No-op when an external ToolHandles arbiter owns the state.
+    // Updates `state` from the current mouse position; respects the decorative
+    // block flag. No-op when an external ToolHandles arbiter owns the state.
     protected void updateHover(const ref Viewport vp) {
         if (arbitrated) return;                 // external ToolHandles owns state
-        if (hoverBlocked) { state = HandleState.Normal;   return; }
-        if (forceHovered) { state = HandleState.Rollover; return; }
+        if (hoverBlocked) { state = HandleState.Normal; return; }
         int mx, my;
         queryMouse(mx, my);
         state = hitTest(mx, my, vp) ? HandleState.Rollover : HandleState.Normal;
