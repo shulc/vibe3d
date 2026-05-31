@@ -18,8 +18,6 @@ import std.math;
 import drag;
 import snap : snapCursor, SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
-import toolpipe.packets : SnapPacket, FalloffPacket, FalloffType;
-import falloff_render : drawFalloffOverlay;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -208,31 +206,12 @@ public:
         // snapped to (vertex / edge / face). No-op when no recent snap
         // (init/cleared SnapResult has highlighted=false).
         drawSnapOverlay(lastSnap, vp, *mesh);
-
-        // Phase 7.5g: falloff overlay (passive — just visualises where
-        // influence ramps from full to zero). During a drag the
-        // captured `dragFalloff` is rendered for stability; otherwise
-        // the live toolpipe state.
-        FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff(vts);
-        drawFalloffOverlay(fp, vp);
-
-        // Phase 7.5h+: interactive endpoint handles for linear falloff.
-        // Lazy-built; renders on top of the passive overlay so the cyan
-        // boxes are visible regardless of the camera angle / handle
-        // overlap with the move arrows.
-        if (fp.enabled) {
-            ensureFalloffGizmo();
-            falloffGizmo.draw(shader, vp, fp);
-        }
+        // Falloff overlay + endpoint handles are drawn ONCE by the
+        // XfrmTransformTool wrapper, which owns the single shared
+        // FalloffGizmo (step 4b-2). The banks no longer touch it.
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // Falloff endpoint drag releases independently of MoveTool's
-        // dragAxis. End the gizmo drag first; if it consumed, the move
-        // tool wasn't dragging anyway so the rest of this method's
-        // commit-GPU path doesn't apply.
-        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
-            return true;
         // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
         // turned it on unconditionally when Screen falloff is active so
         // the disc renders for the whole click+hold, including the
@@ -315,14 +294,6 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-
-        // Falloff endpoint handles take priority over the move arrows
-        // when the click lands on one — otherwise an X-arrow drag and a
-        // falloff start handle near each other would conflict.
-        FalloffPacket curFp = currentFalloff(vts);
-        if (falloffGizmo !is null
-         && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp))
-            return true;
 
         ctrlConstrain = false;
         dragAxis = hitTestAxes(e.x, e.y);
@@ -475,12 +446,6 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active) return false;
-        // Falloff endpoint drag in progress — route to the gizmo, which
-        // pushes the new world position through FalloffStage.setAttr.
-        // The mid-tool falloff change pipeline (Phase 7.5h) re-applies
-        // weighting onto the open edit baseline on the next update().
-        if (falloffGizmo !is null && falloffGizmo.isDragging())
-            return falloffGizmo.onMouseMotion(e, cachedVp);
         if (dragAxis == -1) {
             // Idle hover: refresh the live click-outside snap preview
             // so the cyan overlay shows where the gizmo would land if

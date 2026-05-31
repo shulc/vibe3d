@@ -118,12 +118,9 @@ class FalloffEndpointHandle {
     }
 
     void draw(const ref Shader shader, const ref Viewport vp) {
-        // Force-hover the active sub-handle so it stays highlighted
-        // through the drag (Arrow / BoxHandler highlight on hover).
-        arrowX.setForceHovered(dragAxis == 0);
-        arrowY.setForceHovered(dragAxis == 1);
-        arrowZ.setForceHovered(dragAxis == 2);
-        centerBox.setForceHovered(dragAxis == 3);
+        // Highlight is owned by the shared ToolHandles arbiter now (the
+        // sub-handles are arbitrated via registerHandles); no self-
+        // force-hover here.
         arrowX.draw(shader, vp);
         arrowY.draw(shader, vp);
         arrowZ.draw(shader, vp);
@@ -242,7 +239,6 @@ public:
                     cfg.center.z + RAD_AXES[i].z * sz[axis]);
                 sizeH[i].pos  = worldPos;
                 sizeH[i].size = gizmoSize(worldPos, vp, 0.04f);
-                sizeH[i].setForceHovered(activeRadial == cast(int)i + 1);
                 sizeH[i].draw(shader, vp);
             }
             centerHandle.draw(shader, vp);
