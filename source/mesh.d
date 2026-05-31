@@ -102,6 +102,24 @@ struct Mesh {
     bool[]    selectedVertices;
     bool[]    selectedEdges;
     bool[]    selectedFaces;
+    // --- Per-element marks (migration shadow, Phase 1) -------------------
+    // Bitfield per element folding the per-element flags into one word.
+    // During this phase the `bool[]` arrays above (and `isSubpatch` below)
+    // remain the authoritative source of truth; these marks arrays are a
+    // SYNCHRONIZED SHADOW kept identical via dual-write in every
+    // resize/clear/set/mutate helper. A later phase flips authority to
+    // these words. Lengths are maintained in lock-step with the matching
+    // bool array (vertexMarks↔selectedVertices, edgeMarks↔selectedEdges,
+    // faceMarks↔selectedFaces and faceMarks↔isSubpatch).
+    enum Marks : uint {
+        Select   = 1 << 0,
+        Subpatch = 1 << 1,
+        Hide     = 1 << 2, // reserved, unused this phase
+        Lock     = 1 << 3, // reserved, unused this phase
+    }
+    uint[]    vertexMarks;
+    uint[]    edgeMarks;
+    uint[]    faceMarks;
     int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
     int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
     int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected
@@ -1268,34 +1286,107 @@ struct Mesh {
         return true;
     }
 
+    // --- Marks shadow consistency checks (Phase 1, debug-only) ------------
+    // These verify the `*Marks` shadow stays bit-identical to the
+    // authoritative bool arrays. They LOG a warning to stderr and RETURN on
+    // any divergence — never assert or throw. Reason: a `-unittest` editor
+    // build compiles these into the live editor, so a firing `assert` would
+    // crash the running editor on a benign divergence (B7). Callers wrap the
+    // invocation in a `debug { ... }` block so release builds skip it
+    // entirely.
+    private void checkVertexMarksConsistency() {
+        import std.stdio : stderr;
+        if (vertexMarks.length != selectedVertices.length) {
+            stderr.writefln("WARNING: marks length mismatch: vertexMarks.length=%s selectedVertices.length=%s",
+                            vertexMarks.length, selectedVertices.length);
+            return;
+        }
+        foreach (i; 0 .. vertexMarks.length) {
+            if (((vertexMarks[i] & Marks.Select) != 0) != selectedVertices[i]) {
+                stderr.writefln("WARNING: marks mismatch: vertexMarks[%s] Select bit != selectedVertices[%s]", i, i);
+                return;
+            }
+        }
+    }
+    private void checkEdgeMarksConsistency() {
+        import std.stdio : stderr;
+        if (edgeMarks.length != selectedEdges.length) {
+            stderr.writefln("WARNING: marks length mismatch: edgeMarks.length=%s selectedEdges.length=%s",
+                            edgeMarks.length, selectedEdges.length);
+            return;
+        }
+        foreach (i; 0 .. edgeMarks.length) {
+            if (((edgeMarks[i] & Marks.Select) != 0) != selectedEdges[i]) {
+                stderr.writefln("WARNING: marks mismatch: edgeMarks[%s] Select bit != selectedEdges[%s]", i, i);
+                return;
+            }
+        }
+    }
+    private void checkFaceMarksConsistency() {
+        import std.stdio : stderr;
+        if (faceMarks.length != selectedFaces.length) {
+            stderr.writefln("WARNING: marks length mismatch: faceMarks.length=%s selectedFaces.length=%s",
+                            faceMarks.length, selectedFaces.length);
+            return;
+        }
+        if (faceMarks.length != isSubpatch.length) {
+            stderr.writefln("WARNING: marks length mismatch: faceMarks.length=%s isSubpatch.length=%s",
+                            faceMarks.length, isSubpatch.length);
+            return;
+        }
+        foreach (i; 0 .. faceMarks.length) {
+            if (((faceMarks[i] & Marks.Select) != 0) != selectedFaces[i]) {
+                stderr.writefln("WARNING: marks mismatch: faceMarks[%s] Select bit != selectedFaces[%s]", i, i);
+                return;
+            }
+            if (((faceMarks[i] & Marks.Subpatch) != 0) != isSubpatch[i]) {
+                stderr.writefln("WARNING: marks mismatch: faceMarks[%s] Subpatch bit != isSubpatch[%s]", i, i);
+                return;
+            }
+        }
+    }
+
     void setSubpatch(size_t idx, bool on) {
         if (idx >= isSubpatch.length) return;
         if (isSubpatch[idx] != on) {
             isSubpatch[idx] = on;
+            if (idx < faceMarks.length) {
+                if (on) faceMarks[idx] |=  Marks.Subpatch;
+                else    faceMarks[idx] &= ~Marks.Subpatch;
+            }
             ++mutationVersion; ++topologyVersion;
         }
+        debug checkFaceMarksConsistency();
     }
     void clearSubpatch() {
         bool any = false;
         foreach (b; isSubpatch) if (b) { any = true; break; }
         isSubpatch[] = false;
+        foreach (ref m; faceMarks) m &= ~Marks.Subpatch;
         if (any) { ++mutationVersion; ++topologyVersion; }
+        debug checkFaceMarksConsistency();
     }
 
     void clearVertexSelection() {
         selectedVertices[] = false;
+        foreach (ref m; vertexMarks) m &= ~Marks.Select;
         vertexSelectionOrder[] = 0;
         vertexSelectionOrderCounter = 0;
+        debug checkVertexMarksConsistency();
     }
     void clearEdgeSelection() {
         selectedEdges[] = false;
+        foreach (ref m; edgeMarks) m &= ~Marks.Select;
         edgeSelectionOrder[] = 0;
         edgeSelectionOrderCounter = 0;
+        debug checkEdgeMarksConsistency();
     }
     void clearFaceSelection() {
         selectedFaces[] = false;
+        foreach (ref m; faceMarks) m &= ~Marks.Select;
         faceSelectionOrder[] = 0;
         faceSelectionOrderCounter = 0;
+        debug checkFaceMarksConsistency();
     }
 
     // --- Per-element selection-array resize primitives ---------------------
@@ -1308,16 +1399,21 @@ struct Mesh {
     // need to extend the relevant primitive here, not every call site.
     void resizeVertexSelection() {
         selectedVertices.length     = vertices.length;
+        vertexMarks.length          = vertices.length;
         vertexSelectionOrder.length = vertices.length;
     }
     void resizeEdgeSelection() {
         selectedEdges.length      = edges.length;
+        edgeMarks.length          = edges.length;
         edgeSelectionOrder.length = edges.length;
     }
     void resizeFaceSelection() {
         // Only the selection-bit array. The pick-order / subpatch / material
         // arrays are rebuilt in lock-step with `faces` by the calling mutator.
+        // The marks array tracks faces (Select + Subpatch bits) so it grows
+        // here in lock-step with `selectedFaces`.
         selectedFaces.length = faces.length;
+        faceMarks.length     = faces.length;
     }
 
     // Resize the per-edge arrays to `edges` length and drop every edge
@@ -1328,6 +1424,8 @@ struct Mesh {
     void clearEdgeSelectionResize() {
         resizeEdgeSelection();
         selectedEdges[] = false;
+        foreach (ref m; edgeMarks) m &= ~Marks.Select;
+        debug checkEdgeMarksConsistency();
     }
 
     // Resize the per-face selection-bit array to `faces` length and drop every
@@ -1337,6 +1435,10 @@ struct Mesh {
     void clearFaceSelectionResize() {
         resizeFaceSelection();
         selectedFaces[] = false;
+        // Mask ONLY the Select bit — Subpatch shares this word and the
+        // calling mutator has already written it (B3 ordering).
+        foreach (ref m; faceMarks) m &= ~Marks.Select;
+        debug checkFaceMarksConsistency();
     }
 
     // --- Subpatch resize / write surface ----------------------------------
@@ -1346,6 +1448,10 @@ struct Mesh {
     // managed separately by the calling mutator.
     void resizeSubpatch() {
         isSubpatch.length = faces.length;
+        // faceMarks tracks both Select and Subpatch for faces; keep its
+        // length in lock-step with `faces` here too (resizeFaceSelection may
+        // not have been called on the subpatch-only resize path).
+        faceMarks.length  = faces.length;
     }
 
     // Single-index subpatch write. Bounds-guarded; does NOT bump the
@@ -1354,6 +1460,11 @@ struct Mesh {
     void setFaceSubpatch(size_t fi, bool flag) {
         if (fi >= isSubpatch.length) return;
         isSubpatch[fi] = flag;
+        if (fi < faceMarks.length) {
+            if (flag) faceMarks[fi] |=  Marks.Subpatch;
+            else      faceMarks[fi] &= ~Marks.Subpatch;
+        }
+        debug checkFaceMarksConsistency();
     }
 
     // --- Whole-array selection/subpatch replace (resize-then-copy) ---------
@@ -1364,48 +1475,93 @@ struct Mesh {
     void setVerticesSelectedFrom(const bool[] src) {
         selectedVertices.length = src.length;
         selectedVertices[] = src[];
+        vertexMarks.length = src.length;
+        foreach (i, s; src) {
+            if (s) vertexMarks[i] |=  Marks.Select;
+            else   vertexMarks[i] &= ~Marks.Select;
+        }
+        debug checkVertexMarksConsistency();
     }
     void setEdgesSelectedFrom(const bool[] src) {
         selectedEdges.length = src.length;
         selectedEdges[] = src[];
+        edgeMarks.length = src.length;
+        foreach (i, s; src) {
+            if (s) edgeMarks[i] |=  Marks.Select;
+            else   edgeMarks[i] &= ~Marks.Select;
+        }
+        debug checkEdgeMarksConsistency();
     }
     void setFacesSelectedFrom(const bool[] src) {
         selectedFaces.length = src.length;
         selectedFaces[] = src[];
+        // Touch ONLY the Select bit so this stays order-independent with
+        // setFaceSubpatchFrom (B4 — snapshot restore writes both separately).
+        faceMarks.length = src.length;
+        foreach (i, s; src) {
+            if (s) faceMarks[i] |=  Marks.Select;
+            else   faceMarks[i] &= ~Marks.Select;
+        }
+        // NOTE: no consistency check here. This setter is called mid-mutation
+        // (e.g. weld/delete write subpatch+select via separate setters before
+        // selectedFaces is re-sized), so selectedFaces / isSubpatch lengths
+        // transiently diverge from faceMarks. The face check runs at the end
+        // of the terminal helper (clearFaceSelectionResize) where all three
+        // are aligned again.
     }
     void setFaceSubpatchFrom(const bool[] src) {
         isSubpatch.length = src.length;
         isSubpatch[] = src[];
+        // Touch ONLY the Subpatch bit (order-independent with
+        // setFacesSelectedFrom).
+        faceMarks.length = src.length;
+        foreach (i, s; src) {
+            if (s) faceMarks[i] |=  Marks.Subpatch;
+            else   faceMarks[i] &= ~Marks.Subpatch;
+        }
+        // NOTE: no consistency check here — see setFacesSelectedFrom.
     }
 
     void selectVertex(int idx) {
         if (!selectedVertices[idx])
             vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
         selectedVertices[idx] = true;
+        if (idx < cast(int)vertexMarks.length) vertexMarks[idx] |= Marks.Select;
+        debug checkVertexMarksConsistency();
     }
     void deselectVertex(int idx) {
         selectedVertices[idx] = false;
+        if (idx < cast(int)vertexMarks.length) vertexMarks[idx] &= ~Marks.Select;
         vertexSelectionOrder[idx] = 0;
+        debug checkVertexMarksConsistency();
     }
 
     void selectEdge(int idx) {
         if (!selectedEdges[idx])
             edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
         selectedEdges[idx] = true;
+        if (idx < cast(int)edgeMarks.length) edgeMarks[idx] |= Marks.Select;
+        debug checkEdgeMarksConsistency();
     }
     void deselectEdge(int idx) {
         selectedEdges[idx] = false;
+        if (idx < cast(int)edgeMarks.length) edgeMarks[idx] &= ~Marks.Select;
         edgeSelectionOrder[idx] = 0;
+        debug checkEdgeMarksConsistency();
     }
 
     void selectFace(int idx) {
         if (!selectedFaces[idx])
             faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
         selectedFaces[idx] = true;
+        if (idx < cast(int)faceMarks.length) faceMarks[idx] |= Marks.Select;
+        debug checkFaceMarksConsistency();
     }
     void deselectFace(int idx) {
         selectedFaces[idx] = false;
+        if (idx < cast(int)faceMarks.length) faceMarks[idx] &= ~Marks.Select;
         faceSelectionOrder[idx] = 0;
+        debug checkFaceMarksConsistency();
     }
 
     void clear() {
