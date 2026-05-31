@@ -50,10 +50,12 @@ class PropertyPanel {
         if (p is null) return;
         foreach (ref par; p.params()) {
             if (par.hidden_) continue;
-            bool enabled = p.paramEnabled(par.name);
-            if (!enabled) ImGui.BeginDisabled();
+            // A row is disabled if the provider greys it out for the current
+            // state (paramEnabled) OR the param is flagged readonly (static).
+            bool disabled = !p.paramEnabled(par.name) || par.readonly_;
+            if (disabled) ImGui.BeginDisabled();
             bool changed = drawParamWidget(par);
-            if (!enabled) ImGui.EndDisabled();
+            if (disabled) ImGui.EndDisabled();
             if (changed) p.onParamChanged(par.name);
         }
         // Tool subclasses also need an `evaluate()` re-run for live

@@ -50,10 +50,12 @@ class ArgsDialog {
         {
             foreach (ref p; active.params()) {
                 if (p.hidden_) continue;
-                bool enabled = active.paramEnabled(p.name);
-                if (!enabled) ImGui.BeginDisabled();
+                // Disabled if the command greys it out for the current state
+                // (paramEnabled) OR the param is flagged readonly (static).
+                bool disabled = !active.paramEnabled(p.name) || p.readonly_;
+                if (disabled) ImGui.BeginDisabled();
                 bool changed = drawParamWidget(p);
-                if (!enabled) ImGui.EndDisabled();
+                if (disabled) ImGui.EndDisabled();
                 if (changed) active.onParamChanged(p.name);
             }
 
