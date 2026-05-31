@@ -6,6 +6,7 @@ import bindbc.sdl;
 
 import tools.transform;
 import handler;
+import eventlog : queryMouse;
 import mesh;
 import editmode;
 import math;
@@ -30,6 +31,14 @@ import params : Param;
 
 class RotateTool : TransformTool {
     RotateHandler handler;
+
+    // Single-source hover/capture arbiter for the rotate arcs
+    // (parts 0..3: arcX/arcY/arcZ/arcView). Replaces the hand-rolled
+    // force/block loop. The captured part mirrors `dragAxis` (set via
+    // setHaul on mouse-down) so the dragged arc stays highlighted for
+    // the whole drag; `dragAxis` stays the source of truth for the
+    // rotation math itself. bgCircle is decorative — not registered.
+    ToolHandles toolHandles;
 
 private:
     float    cachedSize;      // gizmo radius in world units (from last draw)
@@ -84,6 +93,7 @@ public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         handler = new RotateHandler(Vec3(0, 0, 0));
+        toolHandles = new ToolHandles();
     }
 
     void destroy() { handler.destroy(); }
@@ -152,6 +162,7 @@ public:
     // Phase 7.5h: tool-session boundary — commit any pending edit
     // before tool switch so the session lands as one undo entry.
     override void deactivate() {
+        toolHandles.clearHaul();
         if (editIsOpen())
             commitEdit("Rotate");
         super.deactivate();
@@ -276,16 +287,18 @@ public:
             needsGpuUpdate = false;
         }
 
-        SemicircleHandler[3] arcs = [handler.arcX, handler.arcY, handler.arcZ];
-        bool anyHovered = false;
-        foreach (i, arc; arcs) {
-            bool isActive = (dragAxis == cast(int)i);
-            arc.setForceHovered(isActive);
-            arc.setHoverBlocked(dragAxis >= 0 && !isActive || anyHovered);
-            anyHovered |= arc.isHovered();
-        }
-        handler.arcView.setForceHovered(dragAxis == 3);
-        handler.arcView.setHoverBlocked(dragAxis >= 0 && dragAxis != 3 || anyHovered);
+        // Single-source hover/capture: register the rotate arcs in
+        // hitTestAxes priority order (X, Y, Z, view-ring) so the highlighted
+        // arc is the one a click grabs. Captured arc (dragAxis, mirrored via
+        // setHaul on mouse-down) stays highlighted for the whole drag.
+        toolHandles.begin();
+        toolHandles.add(handler.arcX,    0);
+        toolHandles.add(handler.arcY,    1);
+        toolHandles.add(handler.arcZ,    2);
+        toolHandles.add(handler.arcView, 3);
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        toolHandles.update(hmx, hmy, vp);
 
         handler.draw(shader, vp);
         cachedSize = handler.size;
@@ -362,6 +375,9 @@ public:
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             return true;
         }
+        // A gizmo arc was grabbed (dragAxis >= 0). Mirror the capture into
+        // the arbiter so the dragged arc stays highlighted for the drag.
+        toolHandles.setHaul(dragAxis);
         lastMX = e.x; lastMY = e.y;
         totalAngle = 0;
         lastSnappedAngle = 0;
@@ -459,6 +475,7 @@ public:
         wholeMeshDrag = false;
 
         dragAxis   = -1;
+        toolHandles.clearHaul();
         totalAngle = 0;
         // Drop the snap overlay so it doesn't linger after the drag.
         // (No-op when the live-preview already cleared it.)
