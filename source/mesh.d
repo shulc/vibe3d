@@ -140,11 +140,12 @@ struct Mesh {
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
     void resetSelection() {
-        selectedVertices.length     = vertices.length;
-        vertexSelectionOrder.length = vertices.length;
-        selectedEdges.length        = edges.length;
-        edgeSelectionOrder.length   = edges.length;
-        selectedFaces.length        = faces.length;
+        resizeVertexSelection();
+        resizeEdgeSelection();
+        resizeFaceSelection();
+        // resizeFaceSelection only touches the bit array; resetSelection also
+        // brings the per-face pick-order / subpatch / material arrays in sync
+        // (e.g. after an import grew `faces`).
         faceSelectionOrder.length   = faces.length;
         isSubpatch.length           = faces.length;
         faceMaterial.length         = faces.length;
@@ -281,13 +282,10 @@ struct Mesh {
         isSubpatch         = newSubpatch;
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
-        selectedFaces.length = faces.length;
-        selectedFaces[]      = false;
+        clearFaceSelectionResize();
 
         rebuildEdges();
-        selectedEdges.length      = edges.length;
-        selectedEdges[]           = false;
-        edgeSelectionOrder.length = edges.length;
+        clearEdgeSelectionResize();
         compactUnreferenced();
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
@@ -349,9 +347,7 @@ struct Mesh {
 
         rebuildEdges();
 
-        selectedEdges.length = edges.length;
-        selectedEdges[] = false;
-        edgeSelectionOrder.length = edges.length;
+        clearEdgeSelectionResize();
         // Face selection is potentially invalidated (face indices changed
         // since collapsed faces are removed). Caller may re-derive.
         if (selectedFaces.length > faces.length) selectedFaces.length = faces.length;
@@ -399,12 +395,9 @@ struct Mesh {
         rebuildEdges();
         // Selection arrays follow vertices length; truncate / repack the
         // simple cases (selected vertices: re-built bool array).
-        selectedVertices.length = vertices.length;
-        vertexSelectionOrder.length = vertices.length;
+        resizeVertexSelection();
         // Edges have changed — clear edge selection for safety.
-        selectedEdges.length = edges.length;
-        selectedEdges[] = false;
-        edgeSelectionOrder.length = edges.length;
+        clearEdgeSelectionResize();
         ++mutationVersion; ++topologyVersion;
         return removed;
     }
@@ -444,16 +437,13 @@ struct Mesh {
         faceMaterial       = keptMaterial;
         // Selection bits don't survive index changes; clear and let caller
         // restore as needed.
-        selectedFaces.length = faces.length;
-        selectedFaces[] = false;
+        clearFaceSelectionResize();
         // Re-derive edges from the surviving faces. Some edges may be gone
         // entirely (only-touched the deleted faces); others stay. Always
         // do this even if no verts were orphaned — compactUnreferenced
         // skips the rebuild when removed==0.
         rebuildEdges();
-        selectedEdges.length      = edges.length;
-        selectedEdges[]           = false;
-        edgeSelectionOrder.length = edges.length;
+        clearEdgeSelectionResize();
         // Compact orphan vertices (no-op if all verts still referenced).
         compactUnreferenced();
         // Half-edge loops carry face/vert indices that compaction just
@@ -507,16 +497,13 @@ struct Mesh {
         isSubpatch         = newSubpatch;
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
-        selectedFaces.length = faces.length;
-        selectedFaces[]      = false;
+        clearFaceSelectionResize();
 
         // Rebuild edges from the new faces (some edges are gone, some
         // boundaries are shorter). compactUnreferenced then removes the
         // dissolved (now-orphan) verts and re-derives edges yet again.
         rebuildEdges();
-        selectedEdges.length      = edges.length;
-        selectedEdges[]           = false;
-        edgeSelectionOrder.length = edges.length;
+        clearEdgeSelectionResize();
         compactUnreferenced();
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
@@ -697,14 +684,11 @@ struct Mesh {
         isSubpatch         = keptSubpatch;
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
-        selectedFaces.length = faces.length;
-        selectedFaces[]      = false;
+        clearFaceSelectionResize();
 
         // Rebuild edges + compact orphan verts.
         rebuildEdges();
-        selectedEdges.length      = edges.length;
-        selectedEdges[]           = false;
-        edgeSelectionOrder.length = edges.length;
+        clearEdgeSelectionResize();
         compactUnreferenced();
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
@@ -796,11 +780,9 @@ struct Mesh {
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             selectFace(cast(int)idx);
         }
-        selectedVertices.length     = vertices.length;
-        vertexSelectionOrder.length = vertices.length;
+        resizeVertexSelection();
         clearVertexSelection();
-        selectedEdges.length      = edges.length;
-        edgeSelectionOrder.length = edges.length;
+        resizeEdgeSelection();
         clearEdgeSelection();
 
         if (weld > 0.0f) {
@@ -837,9 +819,7 @@ struct Mesh {
                 selectedFaces      = keptSelected;
                 faceMaterial       = keptMaterial;
                 rebuildEdges();
-                selectedEdges.length      = edges.length;
-                selectedEdges[]           = false;
-                edgeSelectionOrder.length = edges.length;
+                clearEdgeSelectionResize();
                 compactUnreferenced();
             }
         }
@@ -932,11 +912,9 @@ struct Mesh {
             faceMaterial[idx] = (srcFi < faceMaterial.length ? faceMaterial[srcFi] : 0u);
             selectFace(cast(int)idx);
         }
-        selectedVertices.length     = vertices.length;
-        vertexSelectionOrder.length = vertices.length;
+        resizeVertexSelection();
         clearVertexSelection();
-        selectedEdges.length      = edges.length;
-        edgeSelectionOrder.length = edges.length;
+        resizeEdgeSelection();
         clearEdgeSelection();
 
         // Optional weld + face-fingerprint dedup — identical to the
@@ -978,9 +956,7 @@ struct Mesh {
                 selectedFaces      = keptSelected;
                 faceMaterial       = keptMaterial;
                 rebuildEdges();
-                selectedEdges.length      = edges.length;
-                selectedEdges[]           = false;
-                edgeSelectionOrder.length = edges.length;
+                clearEdgeSelectionResize();
                 compactUnreferenced();
             }
         }
@@ -1081,11 +1057,9 @@ struct Mesh {
 
         // Resize selection arrays (verts/edges) to current sizes; both
         // selections are invalidated by the topology changes.
-        selectedVertices.length     = vertices.length;
-        vertexSelectionOrder.length = vertices.length;
+        resizeVertexSelection();
         clearVertexSelection();
-        selectedEdges.length      = edges.length;
-        edgeSelectionOrder.length = edges.length;
+        resizeEdgeSelection();
         clearEdgeSelection();
 
         // Optional weld pass: verts on the mirror plane reflected to
@@ -1135,9 +1109,7 @@ struct Mesh {
                 // are still recorded as endpoints; re-derive from the
                 // surviving faces.
                 rebuildEdges();
-                selectedEdges.length      = edges.length;
-                selectedEdges[]           = false;
-                edgeSelectionOrder.length = edges.length;
+                clearEdgeSelectionResize();
                 compactUnreferenced();
             }
         }
@@ -1226,11 +1198,9 @@ struct Mesh {
 
         // Vertex / edge selections are invalidated by the edge rebuild
         // and the new verts respectively; clear them out.
-        selectedVertices.length     = vertices.length;
-        vertexSelectionOrder.length = vertices.length;
+        resizeVertexSelection();
         clearVertexSelection();
-        selectedEdges.length      = edges.length;
-        edgeSelectionOrder.length = edges.length;
+        resizeEdgeSelection();
         clearEdgeSelection();
 
         buildLoops();
@@ -1330,6 +1300,47 @@ struct Mesh {
         selectedFaces[] = false;
         faceSelectionOrder[] = 0;
         faceSelectionOrderCounter = 0;
+    }
+
+    // --- Per-element selection-array resize primitives ---------------------
+    // Grow/shrink the parallel selection-bit + pick-order arrays to match the
+    // current geometry length WITHOUT clearing them. Topology mutators call
+    // one of these (then a clear*, when the bits are no longer valid) instead
+    // of writing the `.length = ...` lines by hand — the boilerplate was
+    // duplicated across resetSelection, weld, compact, delete/dissolve and the
+    // create-style mutators. New per-element flags (hide/lock/…) would only
+    // need to extend the relevant primitive here, not every call site.
+    void resizeVertexSelection() {
+        selectedVertices.length     = vertices.length;
+        vertexSelectionOrder.length = vertices.length;
+    }
+    void resizeEdgeSelection() {
+        selectedEdges.length      = edges.length;
+        edgeSelectionOrder.length = edges.length;
+    }
+    void resizeFaceSelection() {
+        // Only the selection-bit array. The pick-order / subpatch / material
+        // arrays are rebuilt in lock-step with `faces` by the calling mutator.
+        selectedFaces.length = faces.length;
+    }
+
+    // Resize the per-edge arrays to `edges` length and drop every edge
+    // selection bit. The pick-order array is resized but NOT zeroed and the
+    // counter is left alone (callers that reach here have already replaced the
+    // topology, so surviving order values are stale-but-harmless) — this is
+    // the exact triplet the topology mutators ran after a `rebuildEdges()`.
+    void clearEdgeSelectionResize() {
+        resizeEdgeSelection();
+        selectedEdges[] = false;
+    }
+
+    // Resize the per-face selection-bit array to `faces` length and drop every
+    // face selection bit. The pick-order / subpatch / material arrays are
+    // managed by the caller. Extracted from the identical pair the topology
+    // mutators ran after assigning a freshly filtered `faces` array.
+    void clearFaceSelectionResize() {
+        resizeFaceSelection();
+        selectedFaces[] = false;
     }
 
     void selectVertex(int idx) {
