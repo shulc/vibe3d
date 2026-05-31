@@ -19,7 +19,7 @@ class HistoryUndo : Command {
 
     override string name()  const { return "history.undo"; }
     override string label() const { return "Undo"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override bool apply() {
         return history.undo();

@@ -1,6 +1,7 @@
 module command_history;
 
 import command;
+import command : CmdFlags;
 import argstring : serializeParams;
 
 // ---------------------------------------------------------------------------
@@ -37,10 +38,11 @@ enum UndoState { Invalid, Active, Suspend }
 /// anything that actually landed on the stack but kept as a bit
 /// for future filter toggles (e.g. "hide undoable" in Phase 4).
 ///
-/// Currently only Succeeded + Undoable are set at record() time —
-/// the dispatcher only records on successful apply() of an undoable
-/// command. The remaining bits are reserved for a future widening
-/// that captures failed/quiet/side-effect commands too.
+/// Set at record() time from the command's CmdFlags: Undoable mirrors
+/// CmdFlags.Model, Quiet mirrors CmdFlags.Quiet, SideEffect mirrors
+/// CmdFlags.SideEffect; Succeeded is always set here (the dispatcher
+/// only records on a successful apply()). Failed is reserved for a
+/// future widening that records failed applies too.
 enum HistoryFlags : uint {
     None       = 0,
     Succeeded  = 1 << 0,
@@ -60,6 +62,18 @@ struct HistoryEntry {
                             //  history-panel design doc surfaces this in
                             //  the panel's display options.
     uint    flags;          // bitfield of HistoryFlags; Phase 7.
+}
+
+/// Map a command's CmdFlags to the per-entry HistoryFlags recorded on
+/// the stack. Succeeded is always set here because record() / refire
+/// only fire after a successful apply().
+private uint historyFlagsFor(const Command cmd) {
+    CmdFlags cf = cmd.cmdFlags();
+    uint flags = HistoryFlags.Succeeded;
+    if (cf & CmdFlags.Model)      flags |= HistoryFlags.Undoable;
+    if (cf & CmdFlags.Quiet)      flags |= HistoryFlags.Quiet;
+    if (cf & CmdFlags.SideEffect) flags |= HistoryFlags.SideEffect;
+    return flags;
 }
 
 final class CommandHistory {
@@ -111,7 +125,7 @@ final class CommandHistory {
         import core.time : MonoTime;
         long tMs = MonoTime.currTime.ticks
                  * 1000 / MonoTime.ticksPerSecond;
-        uint flags = HistoryFlags.Succeeded | HistoryFlags.Undoable;
+        uint flags = historyFlagsFor(cmd);
         string args = serializeParams(cmd.params());
         HistoryEntry e = { label: cmd.label,
                            args:  args,
@@ -260,7 +274,7 @@ final class CommandHistory {
             import core.time : MonoTime;
             long tMs = MonoTime.currTime.ticks
                      * 1000 / MonoTime.ticksPerSecond;
-            uint flags = HistoryFlags.Succeeded | HistoryFlags.Undoable;
+            uint flags = historyFlagsFor(liveCmd);
             string args = serializeParams(liveCmd.params());
             HistoryEntry e = { label: liveCmd.label,
                                args:  args,

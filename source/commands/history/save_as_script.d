@@ -28,7 +28,7 @@ class HistorySaveAsScript : Command {
 
     override string name()  const { return "history.saveAsScript"; }
     override string label() const { return "Save History as Script"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override Param[] params() {
         return [Param.string_("path", "Path", &path_, "")];

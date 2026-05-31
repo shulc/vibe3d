@@ -19,7 +19,7 @@ class HistoryShow : Command {
 
     override string name()  const { return "history.show"; }
     override string label() const { return "History Panel"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.UI; }
 
     override bool apply() {
         if (toggle !is null) toggle();

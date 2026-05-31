@@ -19,7 +19,7 @@ class HistoryRedo : Command {
 
     override string name()  const { return "history.redo"; }
     override string label() const { return "Redo"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override bool apply() {
         return history.redo();

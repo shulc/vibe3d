@@ -25,7 +25,7 @@ class MacroSaveRecorded : Command {
 
     override string name()  const { return "macro.saveRecorded"; }
     override string label() const { return "Save Recorded Macro"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override Param[] params() {
         return [Param.string_("path", "Path", &path_, "")];

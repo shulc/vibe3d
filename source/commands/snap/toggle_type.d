@@ -32,7 +32,7 @@ class SnapToggleTypeCommand : Command {
     override string name()  const { return "snap.toggleType"; }
     override string label() const { return "Toggle Snap Type"; }
 
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setTypeName(string n) { typeName_ = n; }
 
