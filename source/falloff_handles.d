@@ -119,8 +119,8 @@ class FalloffEndpointHandle {
 
     void draw(const ref Shader shader, const ref Viewport vp) {
         // Highlight is owned by the shared ToolHandles arbiter now (the
-        // sub-handles are arbitrated via registerHandles); no self-
-        // force-hover here.
+        // sub-handles are registered via registerHandles); no self-
+        // hover here.
         arrowX.draw(shader, vp);
         arrowY.draw(shader, vp);
         arrowZ.draw(shader, vp);
