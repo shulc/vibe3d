@@ -96,6 +96,7 @@ import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket;
+import falloff_render    : drawFalloffOverlay;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
 // MS-3.5 — runtime blend-mode toggle. The fold blends the composed matrix toward
@@ -125,8 +126,10 @@ alias VertexEditFactory = MeshVertexEdit delegate();
 // Part-id bases for the shared cross-bank handle arbiter. Each bank
 // registers its local handle ids (0..6) at its base so overlapping
 // handles at the shared gizmo center get distinct global part ids. The
-// falloff base (100) is reserved for step 4b — not used yet.
-private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20;
+// falloff base (100) hosts the single wrapper-owned FalloffGizmo, which
+// registers FIRST (highest test priority) so a falloff endpoint handle
+// wins over a co-located gizmo arrow — matching the click-dispatch order.
+private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20, FALLOFF_BASE = 100;
 
 class XfrmTransformTool : TransformTool {
 public:
@@ -306,21 +309,29 @@ public:
         if (!active) return;
         cachedVp = vp;
 
+        // Live falloff packet: frozen snapshot during a gizmo drag, live
+        // (so the overlay/handles follow a dragged endpoint) otherwise.
+        FalloffPacket fp = (activeDrag !is null) ? dragFalloff : currentFalloff(vts);
+
         // Cross-bank single-winner hover/capture (MODO tmod_Test → tmod_Draw):
-        // register every enabled bank's handles into one shared arbiter (offset
-        // per bank so overlapping handles at the shared center get distinct part
-        // ids), resolve ONE hot/captured part, THEN render the banks.
+        // ONE shared arbiter over the falloff handles (registered first =
+        // highest priority) + every enabled gizmo bank, resolve ONE
+        // hot/captured part, THEN render.
         toolHandles.begin();
+        if (fp.enabled) {
+            ensureFalloffGizmo();
+            falloffGizmo.registerHandles(toolHandles, FALLOFF_BASE, fp);
+        }
         if (flagT) moveSub.registerHandles  (toolHandles, MOVE_BASE);
         if (flagR) rotateSub.registerHandles(toolHandles, ROT_BASE);
         if (flagS) scaleSub.registerHandles (toolHandles, SCALE_BASE);
-        // Capture: the active bank's live dragAxis is the hot part. Scale
-        // suppresses ALL highlight during its drag (animated arrow is the cue).
-        // Idle / falloff-handle drag → no gizmo capture.
-        if      (activeDrag is moveSub   && moveSub.dragAxis   >= 0) toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
-        else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0) toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
-        else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0) toolHandles.suppress();
-        else                                                         toolHandles.setHaul(-1);
+        // Capture precedence: a live falloff-handle drag wins; else the active
+        // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
+        if      (falloffGizmo !is null && falloffGizmo.isDragging())  toolHandles.setHaul(falloffGizmo.capturedPart(FALLOFF_BASE));
+        else if (activeDrag is moveSub   && moveSub.dragAxis   >= 0)  toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
+        else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0)  toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
+        else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0)  toolHandles.suppress();
+        else                                                          toolHandles.setHaul(-1);
         int hmx, hmy;
         queryMouse(hmx, hmy);
         toolHandles.update(hmx, hmy, vp);
@@ -328,6 +339,11 @@ public:
         if (flagT) moveSub.draw(shader, vp, vts);
         if (flagR) rotateSub.draw(shader, vp, vts);
         if (flagS) scaleSub.draw(shader, vp, vts);
+
+        // Falloff overlay + handles drawn ONCE, on top of the gizmo banks.
+        drawFalloffOverlay(fp, vp);
+        if (fp.enabled) { ensureFalloffGizmo(); falloffGizmo.draw(shader, vp, fp); }
+
         syncGpuMatrix();
     }
 
@@ -403,6 +419,16 @@ public:
             ctrlMod = (mods & KMOD_CTRL) != 0;
             bool plain = (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
             if (plain) picked = tryPickElement(e.x, e.y);
+        }
+
+        // Falloff endpoint handles claim the click first (Linear/Radial),
+        // at the wrapper now that it owns the single FalloffGizmo.
+        if (e.button == SDL_BUTTON_LEFT) {
+            FalloffPacket curFp = currentFalloff(vts);
+            if (falloffGizmo !is null && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp)) {
+                activeDrag = null;   // falloff owns the drag, no gizmo bank
+                return true;
+            }
         }
 
         // Dispatch to the first enabled sub-tool that consumes the
@@ -632,6 +658,8 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (falloffGizmo !is null && falloffGizmo.isDragging())
+            return falloffGizmo.onMouseMotion(e, cachedVp);
         bool r;
         if (activeDrag is moveSub) {
             r = moveSub.onMouseMotion(e, vts);
@@ -812,6 +840,8 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
+            return true;
         bool r;
         bool wasMoveDrag = (activeDrag is moveSub);
         // Capture BEFORE rotateSub.onMouseButtonUp resets its dragAxis to -1.

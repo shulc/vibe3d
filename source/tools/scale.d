@@ -19,7 +19,6 @@ import std.math : sqrt;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
-import falloff_render : drawFalloffOverlay;
 import toolpipe.packets : FalloffPacket;
 import params : Param;
 
@@ -283,12 +282,9 @@ public:
         // candidate. Populated by updateLiveSnapPreview(, vts) during idle
         // hover (click-outside-relocate hint).
         drawSnapOverlay(lastSnap, vp, *mesh);
-        FalloffPacket fp = dragAxis >= 0 ? dragFalloff : currentFalloff(vts);
-        drawFalloffOverlay(fp, vp);
-        if (fp.enabled) {
-            ensureFalloffGizmo();
-            falloffGizmo.draw(shader, vp, fp);
-        }
+        // Falloff overlay + endpoint handles are drawn ONCE by the
+        // XfrmTransformTool wrapper, which owns the single shared
+        // FalloffGizmo (step 4b-2). The banks no longer touch it.
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
@@ -311,10 +307,6 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        FalloffPacket curFp = currentFalloff(vts);
-        if (falloffGizmo !is null
-         && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp))
-            return true;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
@@ -361,8 +353,6 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
-            return true;
         // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
         // turned it on unconditionally when Screen falloff is active so
         // the disc shows for the whole click+hold, including the click-
@@ -400,8 +390,6 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active) return false;
-        if (falloffGizmo !is null && falloffGizmo.isDragging())
-            return falloffGizmo.onMouseMotion(e, cachedVp);
         if (dragAxis == -1) {
             // Live snap preview during idle hover — same convention as
             // Move/Rotate. hitTestAxes >= 0 = on a scale handle
