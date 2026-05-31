@@ -10,11 +10,6 @@ import shader;
 // Mesh
 // ---------------------------------------------------------------------------
 
-private bool hasAnySelected(const bool[] sel) {
-    foreach (s; sel) if (s) return true;
-    return false;
-}
-
 /// Face vertex-index list, wrapping the underlying `uint[][]`
 /// storage. Stage A of doc/mesh_faces_flat_refactor_plan.md —
 /// `alias this` forwards every operation to the inner array, so this
