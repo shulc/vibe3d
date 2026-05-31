@@ -2,13 +2,14 @@ module toolpipe.pipeline;
 
 import std.algorithm : sort, remove;
 import std.array     : array;
+import std.conv      : to;
 
 import math : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket;
-import operator : Operator, Task, VectorStack;
+import operator : Operator, Task, VectorStack, PacketKind;
 
 // ---------------------------------------------------------------------------
 // Pipeline — ordered list of Stages with dispatch.
@@ -133,9 +134,42 @@ public:
         // overhead beyond the array bounds check.
         static foreach (member; __traits(allMembers, Task)) {{
             auto slotOps = operators_[__traits(getMember, Task, member)];
-            foreach (op; slotOps)
+            foreach (op; slotOps) {
+                checkRequiredPackets(op, vts);
                 op.evaluate(vts);
+            }
         }}
+    }
+
+    /// Diagnostic: confirm every PacketKind the operator declares in
+    /// `requiredPackets()` is actually present in the VectorStack at the
+    /// moment it runs — i.e. published by an earlier-order operator or
+    /// supplied up front by the caller (the SubjectPacket is always
+    /// caller-provided). A missing packet is NOT fatal: the operator is
+    /// expected to null-check and degrade gracefully, so we warn and let
+    /// it run. The check exists to surface ordering gaps and over-declared
+    /// dependencies early.
+    ///
+    /// De-spam: the pipeline re-evaluates every drag frame, so an
+    /// uncorrected gap would flood stderr. We fire at most once per
+    /// (operator type, missing kind) pair via a process-wide warned set.
+    /// A correctly-configured pipeline produces zero warnings, so the set
+    /// stays empty in the steady state.
+    private static void checkRequiredPackets(Operator op, ref const VectorStack vts) {
+        static bool[string] warned;
+        foreach (kind; op.requiredPackets()) {
+            if (vts.has(kind)) continue;
+            const opName = typeid(op).name;
+            const key = opName ~ "|" ~ kind.to!string;
+            if (key in warned) continue;
+            warned[key] = true;
+            import std.stdio : stderr;
+            stderr.writefln(
+                "[toolpipe] WARNING: operator %s requires packet %s but " ~
+                "no earlier operator produced it (and the caller did not " ~
+                "supply it). Running anyway; operator must degrade gracefully.",
+                opName, kind.to!string);
+        }
     }
 
     /// Insert an Operator into its `task()` slot. When `replace=true`
