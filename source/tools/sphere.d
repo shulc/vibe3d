@@ -8,7 +8,8 @@ import tool;
 import mesh;
 import math;
 import params : Param;
-import handler : MoveHandler, BoxHandler, gizmoSize;
+import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
+import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -516,8 +517,10 @@ private:
     //   0:+X  1:-X  2:+Y  3:-Y  4:+Z  5:-Z
     BoxHandler[6] radH;
     int           radDragIdx    = -1;
-    int           radHoveredIdx = -1;
     int           radLastMX, radLastMY;
+
+    // Single-source hover/capture arbiter for the radius handles + mover.
+    ToolHandles   toolHandles;
 
     static immutable Vec3[6] RAD_AXES = [
         Vec3( 1, 0, 0), Vec3(-1, 0, 0),
@@ -540,6 +543,7 @@ public:
                                : Vec3(0.2f, 0.2f, 0.9f);
             radH[i] = new BoxHandler(Vec3(0, 0, 0), col);
         }
+        toolHandles = new ToolHandles();
     }
 
     void destroy() {
@@ -595,6 +599,7 @@ public:
         meshChanged    = false;
         moverDragAxis  = -1;
         radDragIdx     = -1;
+        toolHandles.clearHaul();
         axisAtLastSync = params_.axis;
         previewGpu.init();
     }
@@ -770,8 +775,8 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
-        if (radDragIdx >= 0)    { radDragIdx = -1;    return true; }
-        if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
+        if (radDragIdx >= 0)    { radDragIdx = -1;    toolHandles.clearHaul(); return true; }
+        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
 
         if (state == SphereState.DrawingBase) {
             // Ctrl-uniform mode: the drag fully defined a 3D sphere on its
@@ -960,23 +965,23 @@ public:
             // the arrows along the sphere's local axes (frame.axis1,
             // frame.normal, frame.axis2 in world).
             mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
-            radHoveredIdx = -1;
-            bool radBusy = radDragIdx >= 0;
-            foreach (i; 0 .. 6) {
-                radH[i].setForceHovered(radDragIdx == cast(int)i);
-                radH[i].setHoverBlocked(radBusy && radDragIdx != cast(int)i);
-                radH[i].draw(shader, vp);
-                if (radH[i].isHovered()) radHoveredIdx = cast(int)i;
-            }
-            mover.arrowX.setForceHovered(moverDragAxis == 0);
-            mover.arrowY.setForceHovered(moverDragAxis == 1);
-            mover.arrowZ.setForceHovered(moverDragAxis == 2);
-            mover.centerBox.setForceHovered(moverDragAxis == 3);
-            bool radPriority = radDragIdx >= 0 || radHoveredIdx >= 0;
-            mover.arrowX.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 0));
-            mover.arrowY.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 1));
-            mover.arrowZ.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 2));
-            mover.centerBox.setHoverBlocked(radPriority || (moverDragAxis >= 0 && moverDragAxis != 3));
+            // Single-source hover/capture: radius handles (priority) then
+            // the mover (centerBox, arrows) — same order moverHitTest/click
+            // use, so the highlighted handle is the one a click grabs. The
+            // dragged handle (radDragIdx / moverDragAxis) stays highlighted.
+            toolHandles.begin();
+            foreach (i; 0 .. 6) toolHandles.add(radH[i], cast(int)i);
+            toolHandles.add(mover.centerBox, 13);
+            toolHandles.add(mover.arrowX,    10);
+            toolHandles.add(mover.arrowY,    11);
+            toolHandles.add(mover.arrowZ,    12);
+            if      (radDragIdx >= 0)    toolHandles.setHaul(radDragIdx);
+            else if (moverDragAxis >= 0) toolHandles.setHaul(10 + moverDragAxis);
+            else                         toolHandles.setHaul(-1);
+            int hmx, hmy;
+            queryMouse(hmx, hmy);
+            toolHandles.update(hmx, hmy, vp);
+            foreach (i; 0 .. 6) radH[i].draw(shader, vp);
             mover.draw(shader, vp);
         }
     }
