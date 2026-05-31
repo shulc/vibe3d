@@ -166,7 +166,7 @@ enum ElementMode : ubyte {
 ///   EaseIn  → 1 - t²                   stronger near full-influence
 ///   EaseOut → (1 - t)²                 stronger near zero-influence
 ///   Smooth  → 1 - smoothstep(t)        S-curve (default)
-///   Custom  → cubic Hermite via in_/out_ tangents
+///   Custom  → cubic Bézier via in_/out_ control coords
 enum FalloffShape : ubyte {
     Linear  = 0,
     EaseIn  = 1,
@@ -271,7 +271,7 @@ struct FalloffPacket {
     float        softBorderPx = 16;
 
     // Custom shape (when `shape == FalloffShape.Custom`): cubic
-    // Hermite tangents at t=0 (in_) and t=1 (out_). Both ∈ [0, 1].
+    // Bézier control coords at t=0 (in_) and t=1 (out_). Both ∈ [0, 1].
     float        in_         = 0.5f;
     float        out_        = 0.5f;
 

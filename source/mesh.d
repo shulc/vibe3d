@@ -284,11 +284,7 @@ struct Mesh {
         selectedFaces.length = faces.length;
         selectedFaces[]      = false;
 
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref face; faces)
-            foreach (k; 0 .. face.length)
-                addEdge(face[k], face[(k + 1) % face.length]);
+        rebuildEdges();
         selectedEdges.length      = edges.length;
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
@@ -351,11 +347,7 @@ struct Mesh {
         }
         faces = newFaces;
 
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref face; faces)
-            foreach (k; 0 .. face.length)
-                addEdge(face[k], face[(k + 1) % face.length]);
+        rebuildEdges();
 
         selectedEdges.length = edges.length;
         selectedEdges[] = false;
@@ -404,11 +396,7 @@ struct Mesh {
                 if (vid < remap.length) vid = remap[vid];
         vertices = newVerts;
         // Re-derive edges from faces (remap can break edge endpoints).
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref face; faces)
-            foreach (k; 0 .. face.length)
-                addEdge(face[k], face[(k + 1) % face.length]);
+        rebuildEdges();
         // Selection arrays follow vertices length; truncate / repack the
         // simple cases (selected vertices: re-built bool array).
         selectedVertices.length = vertices.length;
@@ -462,11 +450,7 @@ struct Mesh {
         // entirely (only-touched the deleted faces); others stay. Always
         // do this even if no verts were orphaned — compactUnreferenced
         // skips the rebuild when removed==0.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
         selectedEdges.length      = edges.length;
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
@@ -529,11 +513,7 @@ struct Mesh {
         // Rebuild edges from the new faces (some edges are gone, some
         // boundaries are shorter). compactUnreferenced then removes the
         // dissolved (now-orphan) verts and re-derives edges yet again.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
         selectedEdges.length      = edges.length;
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
@@ -721,11 +701,7 @@ struct Mesh {
         selectedFaces[]      = false;
 
         // Rebuild edges + compact orphan verts.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
         selectedEdges.length      = edges.length;
         selectedEdges[]           = false;
         edgeSelectionOrder.length = edges.length;
@@ -803,11 +779,7 @@ struct Mesh {
         }
 
         // Re-derive edges from the new face list.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
 
         isSubpatch.length         = faces.length;
         faceSelectionOrder.length = faces.length;
@@ -864,11 +836,7 @@ struct Mesh {
                 faceSelectionOrder = keptOrder;
                 selectedFaces      = keptSelected;
                 faceMaterial       = keptMaterial;
-                edges.length = 0;
-                edgeIndexMap.clear();
-                foreach (ref f; faces)
-                    foreach (k; 0 .. f.length)
-                        addEdge(f[k], f[(k + 1) % f.length]);
+                rebuildEdges();
                 selectedEdges.length      = edges.length;
                 selectedEdges[]           = false;
                 edgeSelectionOrder.length = edges.length;
@@ -940,11 +908,7 @@ struct Mesh {
         }
 
         // Re-derive edges from the new face list.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
 
         // Subpatch + face-order arrays follow the new face count. New
         // faces inherit subpatch from their source; selection switches
@@ -1013,11 +977,7 @@ struct Mesh {
                 faceSelectionOrder = keptOrder;
                 selectedFaces      = keptSelected;
                 faceMaterial       = keptMaterial;
-                edges.length = 0;
-                edgeIndexMap.clear();
-                foreach (ref f; faces)
-                    foreach (k; 0 .. f.length)
-                        addEdge(f[k], f[(k + 1) % f.length]);
+                rebuildEdges();
                 selectedEdges.length      = edges.length;
                 selectedEdges[]           = false;
                 edgeSelectionOrder.length = edges.length;
@@ -1096,11 +1056,7 @@ struct Mesh {
         }
 
         // Re-derive edges from the (now larger) face list.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
 
         // Subpatch + face-order arrays follow the new face count.
         isSubpatch.length         = faces.length;
@@ -1178,11 +1134,7 @@ struct Mesh {
                 // Edges may now reference verts that were welded but
                 // are still recorded as endpoints; re-derive from the
                 // surviving faces.
-                edges.length = 0;
-                edgeIndexMap.clear();
-                foreach (ref f; faces)
-                    foreach (k; 0 .. f.length)
-                        addEdge(f[k], f[(k + 1) % f.length]);
+                rebuildEdges();
                 selectedEdges.length      = edges.length;
                 selectedEdges[]           = false;
                 edgeSelectionOrder.length = edges.length;
@@ -1249,11 +1201,7 @@ struct Mesh {
         // wholesale is simpler and faster than tracking which edges are
         // new — and stays consistent with the dedup'd-edge invariant
         // used by delete / dissolve.
-        edges.length = 0;
-        edgeIndexMap.clear();
-        foreach (ref f; faces)
-            foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+        rebuildEdges();
 
         // Subpatch + face-order arrays follow the new face count.
         // New faces inherit subpatch flag from their source and start
@@ -1300,6 +1248,22 @@ struct Mesh {
         edgeIndexMap[key] = cast(uint)edges.length;
         edges ~= [a, b];
         ++mutationVersion; ++topologyVersion;
+    }
+    /// Re-derive the deduplicated edge list AND `edgeIndexMap` from the
+    /// current `faces` via `addEdge` (which also bumps the version
+    /// counters). Mutating ops that rewrite `faces` call this to keep
+    /// edges + the lookup map consistent. Iteration order over faces/loop
+    /// corners is fixed, so the resulting edge indices are deterministic —
+    /// callers rely on this when resizing the edge-selection arrays
+    /// afterwards. This helper does NOT touch selection arrays; the caller
+    /// owns those. (Distinct from `rebuildEdgesFromFaces`, which rebuilds
+    /// `edges` only and leaves `edgeIndexMap` / the version counters alone.)
+    private void rebuildEdges() {
+        edges.length = 0;
+        edgeIndexMap.clear();
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                addEdge(f[k], f[(k + 1) % f.length]);
     }
     void addFace(uint[] idx) {
         faces ~= idx.dup;
