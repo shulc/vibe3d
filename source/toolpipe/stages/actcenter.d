@@ -420,18 +420,15 @@ private:
             }
             return false;
         }
-        bool selectedFace(size_t i) {
-            return i < mesh_.selectedFaces.length && mesh_.selectedFaces[i];
-        }
         int cid = 0;
         foreach (start; 0 .. nF) {
-            if (!selectedFace(start) || clusterOfFace[start] != -1) continue;
+            if (!mesh_.isFaceSelected(start) || clusterOfFace[start] != -1) continue;
             uint[] queue; queue ~= cast(uint)start;
             clusterOfFace[start] = cid;
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
                 foreach (other; 0 .. nF) {
-                    if (!selectedFace(other) || clusterOfFace[other] != -1) continue;
+                    if (!mesh_.isFaceSelected(other) || clusterOfFace[other] != -1) continue;
                     if (faceShareEdge(cur, cast(uint)other)) {
                         clusterOfFace[other] = cid;
                         queue ~= cast(uint)other;
@@ -460,7 +457,7 @@ private:
         size_t nV = mesh_.vertices.length;
         bool[] inSel = new bool[](nV);
         foreach (i, edge; mesh_.edges) {
-            if (i < mesh_.selectedEdges.length && mesh_.selectedEdges[i]) {
+            if (mesh_.isEdgeSelected(i)) {
                 inSel[edge[0]] = true;
                 inSel[edge[1]] = true;
             }
@@ -473,8 +470,7 @@ private:
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
                 foreach (i, edge; mesh_.edges) {
-                    if (!(i < mesh_.selectedEdges.length
-                          && mesh_.selectedEdges[i])) continue;
+                    if (!mesh_.isEdgeSelected(i)) continue;
                     uint other = uint.max;
                     if      (edge[0] == cur) other = edge[1];
                     else if (edge[1] == cur) other = edge[0];
@@ -495,8 +491,7 @@ private:
         size_t nV = mesh_.vertices.length;
         int cid = 0;
         foreach (start; 0 .. nV) {
-            if (!(start < mesh_.selectedVertices.length
-                  && mesh_.selectedVertices[start])) continue;
+            if (!mesh_.isVertexSelected(start)) continue;
             if (clusterOf[start] != -1) continue;
             uint[] queue; queue ~= cast(uint)start;
             clusterOf[start] = cid;
@@ -507,8 +502,7 @@ private:
                     if      (edge[0] == cur) other = edge[1];
                     else if (edge[1] == cur) other = edge[0];
                     if (other == uint.max || clusterOf[other] != -1) continue;
-                    if (!(other < mesh_.selectedVertices.length
-                          && mesh_.selectedVertices[other])) continue;
+                    if (!mesh_.isVertexSelected(other)) continue;
                     clusterOf[other] = cid;
                     queue ~= other;
                 }
@@ -567,9 +561,6 @@ private:
             }
             return false;
         }
-        bool selectedFace(size_t i) {
-            return i < mesh_.selectedFaces.length && mesh_.selectedFaces[i];
-        }
         Vec3 faceCentroid(uint fi) {
             Vec3 c = Vec3(0, 0, 0);
             const(uint)[] face = mesh_.faces[fi];
@@ -577,7 +568,7 @@ private:
             return face.length > 0 ? c / cast(float)face.length : c;
         }
         foreach (start; 0 .. nF) {
-            if (!selectedFace(start) || visited[start]) continue;
+            if (!mesh_.isFaceSelected(start) || visited[start]) continue;
             // BFS.
             uint[] queue;
             queue ~= cast(uint)start;
@@ -590,7 +581,7 @@ private:
                 sum += faceCentroid(cur);
                 n++;
                 foreach (other; 0 .. nF) {
-                    if (!selectedFace(other) || visited[other]) continue;
+                    if (!mesh_.isFaceSelected(other) || visited[other]) continue;
                     if (faceShareEdge(cur, cast(uint)other)) {
                         visited[other] = true;
                         queue ~= cast(uint)other;
@@ -609,7 +600,7 @@ private:
         size_t nV = mesh_.vertices.length;
         bool[] inSel = new bool[](nV);
         foreach (i, edge; mesh_.edges) {
-            if (i < mesh_.selectedEdges.length && mesh_.selectedEdges[i]) {
+            if (mesh_.isEdgeSelected(i)) {
                 inSel[edge[0]] = true;
                 inSel[edge[1]] = true;
             }
@@ -629,8 +620,7 @@ private:
                 sum += mesh_.vertices[cur];
                 n++;
                 foreach (i, edge; mesh_.edges) {
-                    if (!(i < mesh_.selectedEdges.length
-                          && mesh_.selectedEdges[i])) continue;
+                    if (!mesh_.isEdgeSelected(i)) continue;
                     uint other = uint.max;
                     if      (edge[0] == cur) other = edge[1];
                     else if (edge[1] == cur) other = edge[0];
@@ -651,8 +641,7 @@ private:
         size_t nV = mesh_.vertices.length;
         bool[] visited = new bool[](nV);
         foreach (start; 0 .. nV) {
-            if (!(start < mesh_.selectedVertices.length
-                  && mesh_.selectedVertices[start])) continue;
+            if (!mesh_.isVertexSelected(start)) continue;
             if (visited[start]) continue;
             uint[] queue;
             queue ~= cast(uint)start;
@@ -669,8 +658,7 @@ private:
                     if      (edge[0] == cur) other = edge[1];
                     else if (edge[1] == cur) other = edge[0];
                     if (other == uint.max || visited[other]) continue;
-                    if (!(other < mesh_.selectedVertices.length
-                          && mesh_.selectedVertices[other])) continue;
+                    if (!mesh_.isVertexSelected(other)) continue;
                     visited[other] = true;
                     queue ~= other;
                 }
@@ -697,8 +685,7 @@ private:
             case EditMode.Vertices: {
                 bool any = mesh_.hasAnySelectedVertices();
                 foreach (i, v; mesh_.vertices) {
-                    if (!any || (i < mesh_.selectedVertices.length
-                                 && mesh_.selectedVertices[i])) {
+                    if (!any || mesh_.isVertexSelected(i)) {
                         sum += v;
                         count++;
                     }
@@ -708,8 +695,7 @@ private:
             case EditMode.Edges: {
                 bool any = mesh_.hasAnySelectedEdges();
                 foreach (i, edge; mesh_.edges) {
-                    if (any && !(i < mesh_.selectedEdges.length
-                                 && mesh_.selectedEdges[i])) continue;
+                    if (any && !mesh_.isEdgeSelected(i)) continue;
                     Vec3 mid = (mesh_.vertices[edge[0]] + mesh_.vertices[edge[1]]) * 0.5f;
                     sum += mid;
                     count++;
@@ -719,8 +705,7 @@ private:
             case EditMode.Polygons: {
                 bool any = mesh_.hasAnySelectedFaces();
                 foreach (i, face; mesh_.faces) {
-                    if (any && !(i < mesh_.selectedFaces.length
-                                 && mesh_.selectedFaces[i])) continue;
+                    if (any && !mesh_.isFaceSelected(i)) continue;
                     Vec3 c = Vec3(0, 0, 0);
                     foreach (vi; face) c += mesh_.vertices[vi];
                     if (face.length > 0) c = c / cast(float)face.length;
@@ -808,20 +793,17 @@ private:
         final switch (*editMode_) {
             case EditMode.Vertices:
                 foreach (vi; 0 .. mesh_.vertices.length)
-                    if (vi < mesh_.selectedVertices.length
-                     && mesh_.selectedVertices[vi])
+                    if (mesh_.isVertexSelected(vi))
                         touch(cast(uint)vi);
                 break;
             case EditMode.Edges:
                 foreach (ei; 0 .. mesh_.edges.length)
-                    if (ei < mesh_.selectedEdges.length
-                     && mesh_.selectedEdges[ei])
+                    if (mesh_.isEdgeSelected(ei))
                         foreach (vi; mesh_.edges[ei]) touch(vi);
                 break;
             case EditMode.Polygons:
                 foreach (fi; 0 .. mesh_.faces.length)
-                    if (fi < mesh_.selectedFaces.length
-                     && mesh_.selectedFaces[fi])
+                    if (mesh_.isFaceSelected(fi))
                         foreach (vi; mesh_.faces[fi]) touch(vi);
                 break;
         }
@@ -857,22 +839,19 @@ private:
         final switch (*editMode_) {
             case EditMode.Vertices:
                 foreach (i, v; mesh_.vertices) {
-                    if (!hasSelV || (i < mesh_.selectedVertices.length
-                                  && mesh_.selectedVertices[i])) touch(v);
+                    if (!hasSelV || mesh_.isVertexSelected(i)) touch(v);
                 }
                 break;
             case EditMode.Edges:
                 foreach (i, edge; mesh_.edges) {
-                    if (hasSelE && !(i < mesh_.selectedEdges.length
-                                  && mesh_.selectedEdges[i])) continue;
+                    if (hasSelE && !mesh_.isEdgeSelected(i)) continue;
                     foreach (vi; edge)
                         if (!visited[vi]) { touch(mesh_.vertices[vi]); visited[vi] = true; }
                 }
                 break;
             case EditMode.Polygons:
                 foreach (i, face; mesh_.faces) {
-                    if (hasSelF && !(i < mesh_.selectedFaces.length
-                                  && mesh_.selectedFaces[i])) continue;
+                    if (hasSelF && !mesh_.isFaceSelected(i)) continue;
                     foreach (vi; face)
                         if (!visited[vi]) { touch(mesh_.vertices[vi]); visited[vi] = true; }
                 }
