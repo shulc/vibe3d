@@ -146,6 +146,25 @@ struct Mesh {
         foreach (i, m; faceMarks) r[i] = (m & Marks.Subpatch) != 0;
         return r;
     }
+
+    // --- Non-allocating scalar accessors ---------------------------------
+    // Hot-path counterparts to the materialized `bool[]` views above: a
+    // single mark-bit test instead of allocating a whole snapshot array per
+    // read. Each bounds-checks internally and returns false when out of
+    // range, so they drop straight into the common
+    // `if (i >= sel.length || !sel[i])` guard pattern.
+    bool isVertexSelected(size_t i) const {
+        return i < vertexMarks.length && (vertexMarks[i] & Marks.Select) != 0;
+    }
+    bool isEdgeSelected(size_t i) const {
+        return i < edgeMarks.length && (edgeMarks[i] & Marks.Select) != 0;
+    }
+    bool isFaceSelected(size_t i) const {
+        return i < faceMarks.length && (faceMarks[i] & Marks.Select) != 0;
+    }
+    bool isFaceSubpatch(size_t i) const {
+        return i < faceMarks.length && (faceMarks[i] & Marks.Subpatch) != 0;
+    }
     int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
     int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
     int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected
@@ -1295,10 +1314,25 @@ struct Mesh {
         }
         ++mutationVersion; ++topologyVersion;
     }
-    bool hasAnySelectedVertices() const { return hasAnySelected(selectedVertices); }
-    bool hasAnySelectedEdges() const { return hasAnySelected(selectedEdges); }
-    bool hasAnySelectedFaces() const { return hasAnySelected(selectedFaces); }
-    bool hasAnySubpatch() const        { return hasAnySelected(isSubpatch); }
+    // Non-allocating "any bit set?" scans straight over the marks arrays.
+    // These run per-frame / per-drag-event from the toolpipe stages and
+    // render path, so they avoid materializing a `bool[]` snapshot first.
+    bool hasAnySelectedVertices() const {
+        foreach (m; vertexMarks) if (m & Marks.Select) return true;
+        return false;
+    }
+    bool hasAnySelectedEdges() const {
+        foreach (m; edgeMarks) if (m & Marks.Select) return true;
+        return false;
+    }
+    bool hasAnySelectedFaces() const {
+        foreach (m; faceMarks) if (m & Marks.Select) return true;
+        return false;
+    }
+    bool hasAnySubpatch() const {
+        foreach (m; faceMarks) if (m & Marks.Subpatch) return true;
+        return false;
+    }
     /// True iff every face is subpatch-marked AND there's at least one
     /// face. Gates the OSD-accelerated SubpatchPreview fast path:
     /// OpenSubdiv subdivides the WHOLE mesh, so selective subpatch
@@ -1584,9 +1618,9 @@ struct Mesh {
     /// If nothing is selected, returns all vertex indices.
     int[] selectedVertexIndicesVertices() const {
         int[] idx;
-        if (hasAnySelected(selectedVertices)) {
-            foreach (i, s; selectedVertices)
-                if (s && i < vertices.length) idx ~= cast(int)i;
+        if (hasAnySelectedVertices()) {
+            foreach (i; 0 .. vertices.length)
+                if (isVertexSelected(i)) idx ~= cast(int)i;
         } else {
             foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
         }
@@ -1598,10 +1632,10 @@ struct Mesh {
     /// If nothing is selected, returns all vertex indices.
     int[] selectedVertexIndicesEdges() const {
         int[] idx;
-        if (hasAnySelected(selectedEdges)) {
+        if (hasAnySelectedEdges()) {
             bool[] added = new bool[](vertices.length);
             foreach (i, edge; edges) {
-                if (i >= selectedEdges.length || !selectedEdges[i]) continue;
+                if (!isEdgeSelected(i)) continue;
                 if (!added[edge[0]]) { added[edge[0]] = true; idx ~= cast(int)edge[0]; }
                 if (!added[edge[1]]) { added[edge[1]] = true; idx ~= cast(int)edge[1]; }
             }
@@ -1616,10 +1650,10 @@ struct Mesh {
     /// If nothing is selected, returns all vertex indices.
     int[] selectedVertexIndicesFaces() const {
         int[] idx;
-        if (hasAnySelected(selectedFaces)) {
+        if (hasAnySelectedFaces()) {
             bool[] added = new bool[](vertices.length);
             foreach (i, face; faces) {
-                if (i >= selectedFaces.length || !selectedFaces[i]) continue;
+                if (!isFaceSelected(i)) continue;
                 foreach (vi; face)
                     if (!added[vi]) { added[vi] = true; idx ~= cast(int)vi; }
             }
@@ -1631,11 +1665,11 @@ struct Mesh {
 
     /// Return the centroid of the current vertex selection (or all vertices if none selected).
     Vec3 selectionCentroidVertices() const {
-        bool any = hasAnySelected(selectedVertices);
+        bool any = hasAnySelectedVertices();
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
         foreach (i, v; vertices) {
-            if (!any || (i < selectedVertices.length && selectedVertices[i])) {
+            if (!any || isVertexSelected(i)) {
                 sum += v;
                 count++;
             }
@@ -1646,12 +1680,12 @@ struct Mesh {
     /// Return the centroid of vertices belonging to the current edge selection
     /// (or all edge vertices if none selected).  Each vertex is counted once.
     Vec3 selectionCentroidEdges() const {
-        bool any = hasAnySelected(selectedEdges);
+        bool any = hasAnySelectedEdges();
         bool[] vis = new bool[](vertices.length);
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
         foreach (i, edge; edges) {
-            if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
+            if (any && !isEdgeSelected(i)) continue;
             foreach (vi; edge) {
                 if (!vis[vi]) {
                     sum += vertices[vi];
@@ -1666,12 +1700,12 @@ struct Mesh {
     /// Return the centroid of vertices belonging to the current face selection
     /// (or all face vertices if none selected).  Each vertex is counted once.
     Vec3 selectionCentroidFaces() const {
-        bool any = hasAnySelected(selectedFaces);
+        bool any = hasAnySelectedFaces();
         bool[] vis = new bool[](vertices.length);
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
         foreach (i, face; faces) {
-            if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
+            if (any && !isFaceSelected(i)) continue;
             foreach (vi; face) {
                 if (!vis[vi]) {
                     sum += vertices[vi];
@@ -1694,12 +1728,12 @@ struct Mesh {
     // action-center parity plan.
 
     Vec3 selectionBBoxCenterVertices() const {
-        bool any = hasAnySelected(selectedVertices);
+        bool any = hasAnySelectedVertices();
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         bool seen = false;
         foreach (i, v; vertices) {
-            if (any && !(i < selectedVertices.length && selectedVertices[i])) continue;
+            if (any && !isVertexSelected(i)) continue;
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -1714,12 +1748,12 @@ struct Mesh {
     /// empty mesh — caller can synthesise a sensible default. Used by
     /// the FalloffStage's auto-size path (phase 7.5).
     void selectionBBoxMinMaxVertices(out Vec3 mn, out Vec3 mx, out bool seen) const {
-        bool any = hasAnySelected(selectedVertices);
+        bool any = hasAnySelectedVertices();
         mn = Vec3(float.infinity, float.infinity, float.infinity);
         mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         seen = false;
         foreach (i, v; vertices) {
-            if (any && !(i < selectedVertices.length && selectedVertices[i])) continue;
+            if (any && !isVertexSelected(i)) continue;
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -1728,13 +1762,13 @@ struct Mesh {
     }
 
     void selectionBBoxMinMaxEdges(out Vec3 mn, out Vec3 mx, out bool seen) const {
-        bool any = hasAnySelected(selectedEdges);
+        bool any = hasAnySelectedEdges();
         bool[] vis = new bool[](vertices.length);
         mn = Vec3(float.infinity, float.infinity, float.infinity);
         mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         seen = false;
         foreach (i, edge; edges) {
-            if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
+            if (any && !isEdgeSelected(i)) continue;
             foreach (vi; edge) {
                 if (vis[vi]) continue;
                 vis[vi] = true;
@@ -1748,13 +1782,13 @@ struct Mesh {
     }
 
     void selectionBBoxMinMaxFaces(out Vec3 mn, out Vec3 mx, out bool seen) const {
-        bool any = hasAnySelected(selectedFaces);
+        bool any = hasAnySelectedFaces();
         bool[] vis = new bool[](vertices.length);
         mn = Vec3(float.infinity, float.infinity, float.infinity);
         mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         seen = false;
         foreach (i, face; faces) {
-            if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
+            if (any && !isFaceSelected(i)) continue;
             foreach (vi; face) {
                 if (vis[vi]) continue;
                 vis[vi] = true;
@@ -1768,13 +1802,13 @@ struct Mesh {
     }
 
     Vec3 selectionBBoxCenterEdges() const {
-        bool any = hasAnySelected(selectedEdges);
+        bool any = hasAnySelectedEdges();
         bool[] vis = new bool[](vertices.length);
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         bool seen = false;
         foreach (i, edge; edges) {
-            if (any && !(i < selectedEdges.length && selectedEdges[i])) continue;
+            if (any && !isEdgeSelected(i)) continue;
             foreach (vi; edge) {
                 if (vis[vi]) continue;
                 vis[vi] = true;
@@ -1789,13 +1823,13 @@ struct Mesh {
     }
 
     Vec3 selectionBBoxCenterFaces() const {
-        bool any = hasAnySelected(selectedFaces);
+        bool any = hasAnySelectedFaces();
         bool[] vis = new bool[](vertices.length);
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         bool seen = false;
         foreach (i, face; faces) {
-            if (any && !(i < selectedFaces.length && selectedFaces[i])) continue;
+            if (any && !isFaceSelected(i)) continue;
             foreach (vi; face) {
                 if (vis[vi]) continue;
                 vis[vi] = true;
@@ -1819,15 +1853,15 @@ struct Mesh {
     /// edge (every selected face's edges are also adjacent to other
     /// selected faces — closed selection on a closed manifold).
     Vec3 selectionBorderBBoxCenterFaces() const {
-        if (!hasAnySelected(selectedFaces)) return Vec3(0, 0, 0);
+        if (!hasAnySelectedFaces()) return Vec3(0, 0, 0);
         bool[] onBorder = new bool[](vertices.length);
         bool   any      = false;
         // For each edge, count selected and unselected adjacent faces.
         foreach (ei; 0 .. cast(uint)edges.length) {
             int sel = 0, unsel = 0;
             foreach (fi; facesAroundEdge(ei)) {
-                if (fi < selectedFaces.length && selectedFaces[fi]) sel++;
-                else                                                unsel++;
+                if (isFaceSelected(fi)) sel++;
+                else                    unsel++;
             }
             if (sel == 1 && unsel >= 1) {
                 onBorder[edges[ei][0]] = true;

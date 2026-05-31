@@ -306,8 +306,7 @@ private:
             case EditMode.Polygons:
                 if (!mesh_.hasAnySelectedFaces()) return false;
                 foreach (i, face; mesh_.faces) {
-                    if (!(i < mesh_.selectedFaces.length
-                          && mesh_.selectedFaces[i])) continue;
+                    if (!mesh_.isFaceSelected(i)) continue;
                     normalAcc = normalAcc + mesh_.faceNormal(cast(uint)i);
                     foreach (vi; face) touchVert(vi);
                 }
@@ -315,15 +314,14 @@ private:
             case EditMode.Edges:
                 if (!mesh_.hasAnySelectedEdges()) return false;
                 foreach (i, edge; mesh_.edges) {
-                    if (!(i < mesh_.selectedEdges.length
-                          && mesh_.selectedEdges[i])) continue;
+                    if (!mesh_.isEdgeSelected(i)) continue;
                     foreach (vi; edge) touchVert(vi);
                 }
                 break;
             case EditMode.Vertices:
                 if (!mesh_.hasAnySelectedVertices()) return false;
-                foreach (vi, sel; mesh_.selectedVertices) {
-                    if (!sel) continue;
+                foreach (vi; 0 .. mesh_.vertices.length) {
+                    if (!mesh_.isVertexSelected(vi)) continue;
                     touchVert(cast(uint)vi);
                     // Per-vert normal = sum of incident face normals.
                     foreach (fi, face; mesh_.faces) {
@@ -421,7 +419,7 @@ private:
             foreach (fi, face; mesh_.faces) {
                 bool inCluster = false;
                 if (*editMode_ == EditMode.Polygons) {
-                    if (fi >= mesh_.selectedFaces.length || !mesh_.selectedFaces[fi])
+                    if (!mesh_.isFaceSelected(fi))
                         continue;
                     // A face is in the cluster if all its verts are
                     // assigned cid. (Mirrors how we project face cluster
@@ -574,7 +572,7 @@ private:
             case EditMode.Polygons: {
                 if (!mesh_.hasAnySelectedFaces()) return false;
                 foreach (i, _; mesh_.faces) {
-                    if (i < mesh_.selectedFaces.length && mesh_.selectedFaces[i]) {
+                    if (mesh_.isFaceSelected(i)) {
                         nUp = mesh_.faceNormal(cast(uint)i);
                         // Tangent: first edge of the face, projected
                         // perpendicular to the face normal.
@@ -591,7 +589,7 @@ private:
             case EditMode.Edges: {
                 if (!mesh_.hasAnySelectedEdges()) return false;
                 foreach (i, edge; mesh_.edges) {
-                    if (i < mesh_.selectedEdges.length && mesh_.selectedEdges[i]) {
+                    if (mesh_.isEdgeSelected(i)) {
                         Vec3 t = mesh_.vertices[edge[1]] - mesh_.vertices[edge[0]];
                         nRight = normalize(t);
                         // Up = workplane normal projected perpendicular
@@ -612,8 +610,8 @@ private:
                 // weighting by face area), but a coarse vertex-normal
                 // heuristic is close enough for gizmo alignment.
                 Vec3 acc = Vec3(0, 0, 0);
-                foreach (vi, sel; mesh_.selectedVertices) {
-                    if (!sel) continue;
+                foreach (vi; 0 .. mesh_.vertices.length) {
+                    if (!mesh_.isVertexSelected(vi)) continue;
                     foreach (fi, face; mesh_.faces)
                         foreach (vj; face)
                             if (vj == vi) {

@@ -2330,14 +2330,10 @@ void main(string[] args) {
                 // next frame via mutationVersion bumped inside setSubpatch.
                 mesh.syncSelection();
                 bool any = mesh.hasAnySelectedFaces();
-                // Materialize the views once (each access allocates).
-                auto selView = mesh.selectedFaces;
-                auto subView = mesh.isSubpatch;
                 foreach (fi; 0 .. mesh.faces.length) {
-                    if (any && !(fi < selView.length && selView[fi]))
+                    if (any && !mesh.isFaceSelected(fi))
                         continue;
-                    bool cur = fi < subView.length && subView[fi];
-                    mesh.setSubpatch(fi, !cur);
+                    mesh.setSubpatch(fi, !mesh.isFaceSubpatch(fi));
                 }
                 break;
             }
@@ -4518,7 +4514,7 @@ void main(string[] args) {
                     if (mesh.hasAnySelectedFaces()) {
                         bool[ulong] edgeSet;
                         foreach (fi, face; mesh.faces) {
-                            if (fi >= mesh.selectedFaces.length || !mesh.selectedFaces[fi]) continue;
+                            if (!mesh.isFaceSelected(fi)) continue;
                             foreach (e; mesh.faceEdges(cast(uint)fi))
                                 edgeSet[edgeKey(e.a, e.b)] = true;
                         }

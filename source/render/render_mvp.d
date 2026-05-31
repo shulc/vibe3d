@@ -858,8 +858,7 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     // raw cage otherwise. IPR-owned SubpatchPreview rebuilds lazily; it
     // returns early if cage version + depth match its cached state.
     const(Mesh)* sourceMesh = m;
-    bool anySubpatch = false;
-    foreach (b; m.isSubpatch) if (b) { anySubpatch = true; break; }
+    bool anySubpatch = m.hasAnySubpatch();
     if (anySubpatch) {
         g.iprSubpatch.rebuildIfStale(*m, g.iprSubdivDepth, null);
         sourceMesh = &g.iprSubpatch.mesh;
