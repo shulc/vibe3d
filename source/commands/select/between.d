@@ -77,7 +77,7 @@ private:
 
     bool applyPolygons() {
         if (mesh.selectedFaces.length < mesh.faces.length)
-            mesh.selectedFaces.length = mesh.faces.length;
+            mesh.resizeFaceSelection();
         if (mesh.faceSelectionOrder.length < mesh.faces.length)
             mesh.faceSelectionOrder.length = mesh.faces.length;
 
@@ -150,9 +150,7 @@ private:
 
     bool applyEdges() {
         if (mesh.selectedEdges.length < mesh.edges.length)
-            mesh.selectedEdges.length = mesh.edges.length;
-        if (mesh.edgeSelectionOrder.length < mesh.edges.length)
-            mesh.edgeSelectionOrder.length = mesh.edges.length;
+            mesh.resizeEdgeSelection();
 
         int lastEdge = -1, secondLastEdge = -1, lastOrd = 0, secondLastOrd = 0;
         foreach (i; 0 .. mesh.selectedEdges.length) {
@@ -200,9 +198,7 @@ private:
 
     bool applyVertices() {
         if (mesh.selectedVertices.length < mesh.vertices.length)
-            mesh.selectedVertices.length = mesh.vertices.length;
-        if (mesh.vertexSelectionOrder.length < mesh.vertices.length)
-            mesh.vertexSelectionOrder.length = mesh.vertices.length;
+            mesh.resizeVertexSelection();
 
         int lastVert = -1, secondLastVert = -1, lastOrd = 0, secondLastOrd = 0;
         foreach (i; 0 .. mesh.selectedVertices.length) {

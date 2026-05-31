@@ -297,11 +297,11 @@ bool importLWO(string path, ref Mesh mesh)
 
     // Map PTCH polygons onto our isSubpatch flag so LightWave subpatches
     // render through the subdivision preview without requiring manual Tab.
-    mesh.isSubpatch.length = mesh.faces.length;
+    mesh.resizeSubpatch();
     int subpatchCount = 0;
     foreach (fi, flag; polyIsSubpatch) {
         if (fi >= mesh.isSubpatch.length) break;
-        mesh.isSubpatch[fi] = flag;
+        mesh.setFaceSubpatch(fi, flag);
         if (flag) ++subpatchCount;
     }
 

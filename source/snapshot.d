@@ -67,16 +67,16 @@ struct MeshSnapshot {
         mesh.vertices                    = vertices.dup;
         mesh.edges                       = edges.dup;
         mesh.faces                       = faces.map!(f => f.dup).array;
-        mesh.selectedVertices            = selectedVertices.dup;
-        mesh.selectedEdges               = selectedEdges.dup;
-        mesh.selectedFaces               = selectedFaces.dup;
+        mesh.setVerticesSelectedFrom(selectedVertices);
+        mesh.setEdgesSelectedFrom(selectedEdges);
+        mesh.setFacesSelectedFrom(selectedFaces);
         mesh.vertexSelectionOrder        = vertexSelectionOrder.dup;
         mesh.edgeSelectionOrder          = edgeSelectionOrder.dup;
         mesh.faceSelectionOrder          = faceSelectionOrder.dup;
         mesh.vertexSelectionOrderCounter = vertexSelectionOrderCounter;
         mesh.edgeSelectionOrderCounter   = edgeSelectionOrderCounter;
         mesh.faceSelectionOrderCounter   = faceSelectionOrderCounter;
-        mesh.isSubpatch                  = isSubpatch.dup;
+        mesh.setFaceSubpatchFrom(isSubpatch);
         mesh.surfaces                    = surfaces.dup;
         mesh.faceMaterial                = faceMaterial.dup;
         mesh.buildLoops();
@@ -122,9 +122,9 @@ struct SelectionSnapshot {
     }
 
     void restore(ref Mesh mesh) const {
-        mesh.selectedVertices            = selectedVertices.dup;
-        mesh.selectedEdges               = selectedEdges.dup;
-        mesh.selectedFaces               = selectedFaces.dup;
+        mesh.setVerticesSelectedFrom(selectedVertices);
+        mesh.setEdgesSelectedFrom(selectedEdges);
+        mesh.setFacesSelectedFrom(selectedFaces);
         mesh.vertexSelectionOrder        = vertexSelectionOrder.dup;
         mesh.edgeSelectionOrder          = edgeSelectionOrder.dup;
         mesh.faceSelectionOrder          = faceSelectionOrder.dup;

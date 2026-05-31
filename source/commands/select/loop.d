@@ -24,7 +24,7 @@ class SelectLoop : Command {
         // ------------------------------------------------------------------ //
         if (editMode == EditMode.Edges) {
             if (mesh.selectedEdges.length < mesh.edges.length)
-                mesh.selectedEdges.length = mesh.edges.length;
+                mesh.resizeEdgeSelection();
 
             bool[] initSel = mesh.selectedEdges.dup;
             foreach (i; 0 .. initSel.length) {
@@ -41,7 +41,7 @@ class SelectLoop : Command {
         // ------------------------------------------------------------------ //
         if (editMode == EditMode.Vertices) {
             if (mesh.selectedVertices.length < mesh.vertices.length)
-                mesh.selectedVertices.length = mesh.vertices.length;
+                mesh.resizeVertexSelection();
 
             bool[] initVSel = mesh.selectedVertices.dup;
             foreach (i; 0 .. mesh.edges.length) {
