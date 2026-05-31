@@ -364,8 +364,13 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
                 }
             }
             result.faces ~= widened;
-            result.isSubpatch ~= (fi < cage.isSubpatch.length)
-                ? cage.isSubpatch[fi] : false;
+            // Grow the per-face marks array in lock-step with `faces` and set
+            // the Subpatch bit for the just-appended face (isSubpatch is now a
+            // read-only @property backed by faceMarks).
+            result.faceMarks.length = result.faces.length;
+            immutable bool sub = (fi < cage.faceMarks.length)
+                && (cage.faceMarks[fi] & Mesh.Marks.Subpatch) != 0;
+            result.setFaceSubpatch(result.faces.length - 1, sub);
             // Material Groups (MG3): widened-but-unmarked cage faces
             // keep their original surface assignment.
             result.faceMaterial ~= (fi < cage.faceMaterial.length)

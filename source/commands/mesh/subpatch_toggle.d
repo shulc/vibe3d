@@ -44,10 +44,13 @@ class SubpatchToggle : Command, Operator {
 
         mesh.syncSelection();
         bool any = mesh.hasAnySelectedFaces();
+        // Materialize the views once (each access allocates).
+        auto selView = mesh.selectedFaces;
+        auto subView = mesh.isSubpatch;
         foreach (fi; 0 .. mesh.faces.length) {
-            if (any && !(fi < mesh.selectedFaces.length && mesh.selectedFaces[fi]))
+            if (any && !(fi < selView.length && selView[fi]))
                 continue;
-            bool cur = fi < mesh.isSubpatch.length && mesh.isSubpatch[fi];
+            bool cur = fi < subView.length && subView[fi];
             mesh.setSubpatch(fi, !cur);
         }
         return true;
