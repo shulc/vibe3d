@@ -7,7 +7,8 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
-import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize;
+import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize, ToolHandles;
+import eventlog : queryMouse;
 import drag;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -1850,12 +1851,15 @@ private:
     // 0 = edge 0-1, 1 = edge 1-2, 2 = edge 2-3, 3 = edge 3-0
     BoxHandler[4] edgeH;
     int           edgeDragIdx    = -1;
-    int           edgeHoveredIdx = -1;
     int           edgeLastMX, edgeLastMY;
 
     BoxHandler[2] heightH;           // [0] = bottom face, [1] = top face
     int           heightHDragIdx  = -1;  // -1 = none, 0/1 = which handle is dragging
-    bool          heightHHovered  = false;
+
+    // Single-source hover/capture arbiter for edge handles + height handles
+    // + mover. Registration order = click hit-test priority so the
+    // highlighted handle is always the one a click would grab.
+    ToolHandles   toolHandles;
 
     // Phase C-followup: undo plumbing. Pre-commit mesh state is captured
     // in deactivate() right before commitBase / commitCuboid mutates the
@@ -1879,6 +1883,7 @@ public:
             edgeH[i] = new BoxHandler(Vec3(0,0,0), Vec3(0.9f, 0.2f, 0.2f));
         foreach (i; 0 .. 2)
             heightH[i] = new BoxHandler(Vec3(0,0,0), Vec3(0.9f, 0.9f, 0.2f));
+        toolHandles = new ToolHandles();
     }
 
     void destroy() {
@@ -1902,7 +1907,7 @@ public:
         moverDragAxis   = -1;
         edgeDragIdx     = -1;
         heightHDragIdx  = -1;
-        heightHHovered  = false;
+        toolHandles.clearHaul();
         previewGpu.init();
     }
 
@@ -2090,9 +2095,9 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
-        if (edgeDragIdx >= 0) { edgeDragIdx = -1; return true; }
-        if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
-        if (heightHDragIdx >= 0 && state == BoxState.HeightSet) { heightHDragIdx = -1; return true; }
+        if (edgeDragIdx >= 0) { edgeDragIdx = -1; toolHandles.clearHaul(); return true; }
+        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
+        if (heightHDragIdx >= 0 && state == BoxState.HeightSet) { heightHDragIdx = -1; toolHandles.clearHaul(); return true; }
 
         if (state == BoxState.DrawingBase) {
             // Ctrl-uniform mode: the drag fully defined a 3D cube on its
@@ -2124,6 +2129,7 @@ public:
         if (state == BoxState.DrawingHeight) {
             state = BoxState.HeightSet;
             heightHDragIdx = -1;
+            toolHandles.clearHaul();
             return true;
         }
 
@@ -2239,20 +2245,9 @@ public:
             return true;
         }
 
-        // Track hover over edge/height handles when nothing is being dragged
-        if (state == BoxState.BaseSet || state == BoxState.HeightSet) {
-            edgeHoveredIdx = -1;
-            heightHHovered = false;
-            foreach (i, h; edgeH)
-                if (h.hitTest(e.x, e.y, cachedVp)) { edgeHoveredIdx = cast(int)i; break; }
-            if (edgeHoveredIdx < 0) {
-                heightHHovered = heightH[0].hitTest(e.x, e.y, cachedVp) ||
-                                 (state == BoxState.HeightSet && heightH[1].hitTest(e.x, e.y, cachedVp));
-            }
-        } else {
-            edgeHoveredIdx = -1;
-            heightHHovered = false;
-        }
+        // Hover highlight is owned by the ToolHandles arbiter (resolved in
+        // draw() from the live mouse position), so no per-motion hover
+        // bookkeeping is needed here.
 
         if (state == BoxState.DrawingBase) {
             Vec3 hit;
@@ -2359,49 +2354,53 @@ public:
 
         previewGpu.drawEdges(shader.locColor, -1, []);
 
-        // Draw edge and height handles (BaseSet and above)
+        // Handles + move gizmo (BaseSet and above). Geometry is positioned
+        // first; hover/capture is then resolved by the single-source
+        // ToolHandles arbiter so highlight always matches what a click grabs.
         if (state >= BoxState.BaseSet) {
             updateEdgeHandlers(vp);
             updateHeightHandler(vp);
-            bool moverBusy  = moverDragAxis >= 0;
-            bool anyEdgeBusy = edgeDragIdx >= 0;
-            foreach (i, h; edgeH) {
-                h.setForceHovered(edgeDragIdx == cast(int)i);
-                h.setHoverBlocked(moverBusy || (anyEdgeBusy && edgeDragIdx != cast(int)i));
-                h.draw(shader, vp);
-            }
-            bool heightBlocked  = moverBusy || anyEdgeBusy || edgeHoveredIdx >= 0;
-            bool anyHeightBusy  = heightHDragIdx >= 0 || state == BoxState.DrawingHeight;
-            // In DrawingHeight the top face moves with the mouse — heightH[1] is active.
-            // In HeightSet it depends on which handle was grabbed.
-            bool h0Force = (state == BoxState.HeightSet) && (heightHDragIdx == 0);
-            bool h1Force = (state == BoxState.DrawingHeight) || ((state == BoxState.HeightSet) && (heightHDragIdx == 1));
-            heightH[0].setForceHovered(h0Force);
-            heightH[0].setHoverBlocked(heightBlocked || (anyHeightBusy && !h0Force));
-            heightH[0].draw(shader, vp);
-            if (state >= BoxState.DrawingHeight) {
-                heightH[1].setForceHovered(h1Force);
-                heightH[1].setHoverBlocked(heightBlocked || (anyHeightBusy && !h1Force));
-                heightH[1].draw(shader, vp);
-            }
-        }
-
-        // Draw move gizmo only once the base is finalized
-        if (state >= BoxState.BaseSet) {
             mover.setPosition(toWorldP(boxCenter()));
             // Mover gizmo follows the workplane frame captured at first
             // click — keeps the arrows aligned with the cube's local axes
             // (frame.axis1, frame.normal, frame.axis2 in world).
             mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
-            mover.arrowX.setForceHovered(moverDragAxis == 0);
-            mover.arrowY.setForceHovered(moverDragAxis == 1);
-            mover.arrowZ.setForceHovered(moverDragAxis == 2);
-            mover.centerBox.setForceHovered(moverDragAxis == 3);
-            bool edgePriority = edgeDragIdx >= 0 || edgeHoveredIdx >= 0 || heightHHovered || heightHDragIdx >= 0;
-            mover.arrowX.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 0));
-            mover.arrowY.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 1));
-            mover.arrowZ.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 2));
-            mover.centerBox.setHoverBlocked(edgePriority || (moverDragAxis >= 0 && moverDragAxis != 3));
+
+            // Register in click hit-test priority order (see
+            // onMouseButtonDown): edge handles, then height handles
+            // (heightH[1] only once a height exists), then the mover
+            // (centerBox before arrows, mirroring moverHitTest). Distinct
+            // part-id ranges keep groups from colliding:
+            //   edges 0..3, heights 20/21, mover centerBox 13 / arrows 10/11/12.
+            toolHandles.begin();
+            foreach (i, h; edgeH) toolHandles.add(h, cast(int)i);
+            toolHandles.add(heightH[0], 20);
+            if (state >= BoxState.DrawingHeight)
+                toolHandles.add(heightH[1], 21);
+            toolHandles.add(mover.centerBox, 13);
+            toolHandles.add(mover.arrowX,    10);
+            toolHandles.add(mover.arrowY,    11);
+            toolHandles.add(mover.arrowZ,    12);
+
+            // Capture the active drag's part so it stays highlighted through
+            // the drag. Mirrors the old force flags exactly: an edge drag
+            // wins, then the mover, then the height handles — where a live
+            // DrawingHeight always drives the top handle (heightH[1]).
+            if      (edgeDragIdx >= 0)                 toolHandles.setHaul(edgeDragIdx);
+            else if (moverDragAxis >= 0)              toolHandles.setHaul(10 + moverDragAxis);
+            else if (state == BoxState.DrawingHeight) toolHandles.setHaul(21);
+            else if (heightHDragIdx == 0)             toolHandles.setHaul(20);
+            else if (heightHDragIdx == 1)             toolHandles.setHaul(21);
+            else                                      toolHandles.setHaul(-1);
+
+            int hmx, hmy;
+            queryMouse(hmx, hmy);
+            toolHandles.update(hmx, hmy, vp);
+
+            foreach (h; edgeH) h.draw(shader, vp);
+            heightH[0].draw(shader, vp);
+            if (state >= BoxState.DrawingHeight)
+                heightH[1].draw(shader, vp);
             mover.draw(shader, vp);
         }
     }

@@ -8,7 +8,8 @@ import tool;
 import mesh;
 import math;
 import params : Param;
-import handler : MoveHandler, BoxHandler, gizmoSize;
+import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
+import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -251,8 +252,10 @@ private:
 
     BoxHandler[6] sizeH;
     int           sizeDragIdx    = -1;
-    int           sizeHoveredIdx = -1;
     int           sizeLastMX, sizeLastMY;
+
+    // Single-source hover/capture arbiter for the size handles + mover.
+    ToolHandles   toolHandles;
 
     static immutable Vec3[6] SIZE_AXES = [
         Vec3( 1, 0, 0), Vec3(-1, 0, 0),
@@ -275,6 +278,7 @@ public:
                                : Vec3(0.2f, 0.2f, 0.9f);
             sizeH[i] = new BoxHandler(Vec3(0, 0, 0), col);
         }
+        toolHandles = new ToolHandles();
     }
 
     void destroy() {
@@ -315,6 +319,7 @@ public:
         meshChanged   = false;
         moverDragAxis = -1;
         sizeDragIdx   = -1;
+        toolHandles.clearHaul();
         previewGpu.init();
     }
 
@@ -438,8 +443,8 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
-        if (sizeDragIdx >= 0)   { sizeDragIdx = -1;   return true; }
-        if (moverDragAxis >= 0) { moverDragAxis = -1; return true; }
+        if (sizeDragIdx >= 0)   { sizeDragIdx = -1;   toolHandles.clearHaul(); return true; }
+        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
 
         if (state == CapsuleState.DrawingBase) {
             if (dragUniform) {
@@ -603,23 +608,23 @@ public:
             updateSizeHandlers(vp);
             mover.setPosition(toWorldP(capsuleCenter()));
             mover.setOrientation(frame.axis1, frame.normal, frame.axis2);
-            sizeHoveredIdx = -1;
-            bool sizeBusy = sizeDragIdx >= 0;
-            foreach (i; 0 .. 6) {
-                sizeH[i].setForceHovered(sizeDragIdx == cast(int)i);
-                sizeH[i].setHoverBlocked(sizeBusy && sizeDragIdx != cast(int)i);
-                sizeH[i].draw(shader, vp);
-                if (sizeH[i].isHovered()) sizeHoveredIdx = cast(int)i;
-            }
-            mover.arrowX.setForceHovered(moverDragAxis == 0);
-            mover.arrowY.setForceHovered(moverDragAxis == 1);
-            mover.arrowZ.setForceHovered(moverDragAxis == 2);
-            mover.centerBox.setForceHovered(moverDragAxis == 3);
-            bool sizePriority = sizeDragIdx >= 0 || sizeHoveredIdx >= 0;
-            mover.arrowX.setHoverBlocked(sizePriority || (moverDragAxis >= 0 && moverDragAxis != 0));
-            mover.arrowY.setHoverBlocked(sizePriority || (moverDragAxis >= 0 && moverDragAxis != 1));
-            mover.arrowZ.setHoverBlocked(sizePriority || (moverDragAxis >= 0 && moverDragAxis != 2));
-            mover.centerBox.setHoverBlocked(sizePriority || (moverDragAxis >= 0 && moverDragAxis != 3));
+            // Single-source hover/capture: size handles (priority) then
+            // the mover (centerBox, arrows) — same order moverHitTest/click
+            // use, so the highlighted handle is the one a click grabs. The
+            // dragged handle (sizeDragIdx / moverDragAxis) stays highlighted.
+            toolHandles.begin();
+            foreach (i; 0 .. 6) toolHandles.add(sizeH[i], cast(int)i);
+            toolHandles.add(mover.centerBox, 13);
+            toolHandles.add(mover.arrowX,    10);
+            toolHandles.add(mover.arrowY,    11);
+            toolHandles.add(mover.arrowZ,    12);
+            if      (sizeDragIdx >= 0)    toolHandles.setHaul(sizeDragIdx);
+            else if (moverDragAxis >= 0)  toolHandles.setHaul(10 + moverDragAxis);
+            else                          toolHandles.setHaul(-1);
+            int hmx, hmy;
+            queryMouse(hmx, hmy);
+            toolHandles.update(hmx, hmy, vp);
+            foreach (i; 0 .. 6) sizeH[i].draw(shader, vp);
             mover.draw(shader, vp);
         }
     }
