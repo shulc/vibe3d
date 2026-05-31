@@ -147,16 +147,11 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 class Handler {
 private:
     // Single source of truth for hover/selected state (mirrors LXiSELECTION_*).
+    // Set by the central ToolHandles Test pass for registered handles; left at
+    // the default Normal for draw-only (unregistered) handles, which therefore
+    // never highlight — exactly as MODO treats a handle absent from tmod_Test.
     HandleState state = HandleState.Normal;
-    // Permanently-decorative flag: a handle whose draw() self-hovers
-    // (!arbitrated) but should never highlight — set via setHoverBlocked(true)
-    // for RotateHandler's bgCircle. Unregistered self-hovering handles (pen
-    // vertex markers, the mover plane circles) leave it false.
-    bool   hoverBlocked;
     bool   visible = true;
-    // When true, an external ToolHandles arbiter owns `state`; updateHover()
-    // becomes a no-op so the handle stops self-computing hover.
-    bool   arbitrated;
 
 public:
     // Called once per frame to render the overlay into the 3-D view.
@@ -173,27 +168,15 @@ public:
 
     // Hover/visible functions
     bool isHovered()    const { return state == HandleState.Rollover; }
-    void setHoverBlocked(bool v) { hoverBlocked  = v; }
     void setVisible(bool v)      { visible = v; if (!v) state = HandleState.Normal; }
     bool isVisible() const       { return visible; }
 
     // HandleState accessors — used by the ToolHandles arbiter.
-    void setArbitrated(bool v) { arbitrated = v; }
     void setState(HandleState s) { state = s; }
     HandleState getState() const { return state; }
 
     // Override in subclasses to define the hover hit area.
     protected bool hitTest(int mx, int my, const ref Viewport vp) { return false; }
-
-    // Updates `state` from the current mouse position; respects the decorative
-    // block flag. No-op when an external ToolHandles arbiter owns the state.
-    protected void updateHover(const ref Viewport vp) {
-        if (arbitrated) return;                 // external ToolHandles owns state
-        if (hoverBlocked) { state = HandleState.Normal; return; }
-        int mx, my;
-        queryMouse(mx, my);
-        state = hitTest(mx, my, vp) ? HandleState.Rollover : HandleState.Normal;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +256,6 @@ class Arrow : ShaftedArrow {
         float shaftLen   = len - coneLen;
         Vec3  coneBase   = end - fwd * coneLen;
 
-        updateHover(vp);
         Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
@@ -344,7 +326,6 @@ class CubicArrow : ShaftedArrow {
         }
         if (shaftLen < 0.0f) shaftLen = 0.0f;
 
-        updateHover(vp);
         Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
@@ -413,8 +394,6 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        updateHover(vp);
-
         Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)   // yellow
                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)    // orange
                :                                 color;
@@ -452,7 +431,7 @@ public:
         startAngle = atan2(dy, dx);
     }
 
-    // Fresh hit test — does not rely on cached hover state; also used by Handler.updateHover.
+    // Fresh hit test — does not rely on cached hover state; used by ToolHandles.test.
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
         Vec3 right, up;
@@ -522,8 +501,6 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        updateHover(vp);
-
         Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
@@ -537,7 +514,7 @@ public:
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
 
-    // Fresh hit test — does not rely on cached hover state; also used by Handler.updateHover.
+    // Fresh hit test — does not rely on cached hover state; used by ToolHandles.test.
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
         Vec3 right, up;
@@ -717,7 +694,8 @@ class RotateHandler : Handler {
         arcView.lineWidth += 1.0f;
         bgCircle = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.0f, 0.0f, 0.0f));
         bgCircle.lineWidth = 2.0f;
-        bgCircle.setHoverBlocked(true);
+        // bgCircle is decorative: drawn but never registered in the Test pass
+        // (ToolHandles), so it stays at HandleState.Normal and never highlights.
     }
 
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); arcView.destroy(); bgCircle.destroy(); }
@@ -805,8 +783,6 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
-        updateHover(vp);  // defined in Handler base class
-
         Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
                :                                 color;
@@ -939,8 +915,6 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        updateHover(vp);
-
         Vec3 oc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
                 : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
                 :                                 color;
@@ -1005,7 +979,6 @@ class CenterDiskGizmo : Handler {
 
     override void draw(const ref Shader shader, const ref Viewport vp) {
         if (!visible) return;
-        updateHover(vp);
 
         enum SEGS = 32;
         Vec3 right, up;
@@ -1306,12 +1279,12 @@ private:
 // ToolHandles — central hover/capture arbiter, one per active tool. Mirrors
 // MODO's tool-model test/draw pass: a single hot (ROLLOVER) part and a single
 // captured (hauled) part across ALL registered handles, so highlight and
-// click can never disagree. Registered handles must have setArbitrated(true)
-// so they stop self-hovering; ToolHandles drives their state each frame.
+// click can never disagree. ToolHandles drives each registered handle's
+// `state` every frame via setState; handles never self-compute hover.
+// Unregistered handles are draw-only and stay at HandleState.Normal.
 //
-// NOTE: defined in step 1 but not yet wired to any tool. ToolHandles.test /
-// update call Handler.hitTest / setState / setArbitrated — legal from the same
-// module regardless of `protected`.
+// ToolHandles.test / update call Handler.hitTest / setState — legal from the
+// same module regardless of `protected`.
 // ---------------------------------------------------------------------------
 
 class ToolHandles {
@@ -1330,9 +1303,8 @@ class ToolHandles {
     void suppress() { suppressed = true; }
 
     // Register a handle with a stable part id, in priority order (first wins
-    // on overlap). The handle is switched into arbitrated mode.
+    // on overlap).
     void add(Handler h, int part) {
-        h.setArbitrated(true);
         entries ~= Entry(h, part);
     }
 
