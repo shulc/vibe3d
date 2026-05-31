@@ -8,7 +8,8 @@ import tool;
 import mesh;
 import math;
 import params : Param;
-import handler : BoxHandler, gizmoSize;
+import handler : BoxHandler, gizmoSize, ToolHandles;
+import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
@@ -66,9 +67,9 @@ struct PenParams {
 //   Drawing ── Backspace ─→ pop last vertex; ─→ Idle if buffer empties
 //   Drawing ── Esc / RMB ─→ cancel (drop buffer); back to Idle
 //
-// In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); BoxHandler's
-// built-in hover paint flips the cursor-over vertex to yellow ("they'll
-// turn yellow when the mouse is directly over them).
+// In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); the central
+// ToolHandles arbiter (MODO Test pass) flips the single cursor-over vertex to
+// yellow ("they'll turn yellow when the mouse is directly over them").
 // Edges between consecutive in-progress vertices preview as the standard
 // wireframe (open polyline — closing happens at commit).
 //
@@ -104,6 +105,7 @@ private:
     PenState         state;
     Vec3[]           vertices_;     // LOCAL workplane positions of the in-progress sequence
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
+    ToolHandles      toolHandles;   // single-source hover arbiter (MODO Test pass)
 
     Mesh             previewMesh;
     GpuMesh          previewGpu;
@@ -146,6 +148,7 @@ public:
         this.vc        = vc;
         this.ec        = ec;
         this.fc        = fc;
+        toolHandles    = new ToolHandles();
     }
 
     void destroy() {
@@ -501,12 +504,24 @@ public:
         if (vertices_.length >= 2)
             previewGpu.drawEdges(shader.locColor, -1, []);
 
-        // Vertex markers — three-state colour, by BoxHandler.draw precedence:
-        //   hovered  → yellow (BoxHandler base, set by updateHover in draw)
-        //   selected (not hovered) → orange — used for the current point
+        // Vertex markers — three-state colour, by BoxHandler.draw precedence
+        // from the arbiter-assigned HandleState:
+        //   Rollover  → yellow (single hot part, set by ToolHandles.update)
+        //   selected (not hot) → orange — used for the current point
         //   default → cyan
+        // Single-source hover (MODO Test pass): register every vertex
+        // marker, resolve ONE hot part so overlapping markers can't both
+        // highlight. A live vertex drag (dragArmed) keeps its marker hot.
+        toolHandles.begin();
         foreach (i, h; vertHandlers) {
-            h.size     = gizmoSize(h.pos, vp, 0.04f);
+            h.size = gizmoSize(h.pos, vp, 0.04f);
+            toolHandles.add(h, cast(int)i);
+        }
+        toolHandles.setHaul(dragArmed ? dragVertIdx : -1);
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        toolHandles.update(hmx, hmy, vp);
+        foreach (i, h; vertHandlers) {
             h.selected = (cast(int)i == params_.currentPoint);
             h.draw(shader, vp);
         }
