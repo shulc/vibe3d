@@ -13,19 +13,12 @@
 //   tests/test_acen_local_rotate_parity.d  (HTTP-driven)
 //   tests/test_fixture_acen_local.d         (fixture-driven)
 //
-// Tolerance (plan N2 / R3): SHADOW_TOL is the single shared equality tolerance
-// used by BOTH this unit test and the MS-2 shadow comparison
-// (source/tools/xfrm_shadow.d defines its own `SHADOW_TOL` enum at the SAME
-// value — keep them in lockstep). It is DERIVED, not guessed:
-//   measured_max = 5.96046e-08 on 2026-05-30 / Fedora 43 x86_64, harvested from
-//   the WORST per-worker SUMMARY `maxErr` of a clean `./run_test.d --shadow`
-//   log-only run across the event-replay transform suite on green main. That is
-//   the float ULP-scale residue between the live decomposed chain and the matrix
-//   kernel's multi-pass T->R->S reconstruction — far below the 1e-3 "kernel is
-//   wrong" sanity bound the plan sets. (The single-pass in-process cases below
-//   sit at the same ~1e-7 scale.)
-//   SHADOW_TOL = measured_max * 16 (≈9.54e-7, rounded to 1e-6) absorbs platform
-//   libm drift without admitting a real divergence (16× safety factor, N2).
+// Tolerance: SHADOW_TOL is the per-component-vs-matrix-kernel equality tolerance
+// for the cases below. DERIVED, not guessed: the float ULP-scale residue between
+// the legacy decomposed kernels and the matrix kernel sits at ~5.96e-08 (Fedora
+// 43 x86_64); SHADOW_TOL = that × 16 (≈9.54e-7, rounded to 1e-6) absorbs platform
+// libm drift without admitting a real divergence. (The name is historical — the
+// MS-2 shadow that shared this constant was retired in MS-3.6.)
 
 import std.stdio;
 import std.math : PI, fabs, sqrt;
@@ -40,8 +33,7 @@ import tools.xform_kernels :
     applyTranslateIncremental, applyRotateIncremental, applyScaleFromActivation,
     applyXformMatrix, BlendMode, blendToIdentity;
 
-// Single shared tolerance constant (plan N2 / R3). See header for derivation.
-// Must match source/tools/xfrm_shadow.d's SHADOW_TOL.
+// Equality tolerance for the per-component-vs-matrix-kernel cases (see header).
 enum float SHADOW_TOL = 1e-6f;   // measured_max 5.96046e-08 × 16, 2026-05-30
 
 void main() {}

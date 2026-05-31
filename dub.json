@@ -61,11 +61,6 @@
 			"_comment": "Default. Modeling-only build — no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`)."
 		},
 		{
-			"name": "test-shadow",
-			"debugVersions": ["xfrmShadow"],
-			"_comment": "MS-2 shadow lane (doc/modo_transform_model_plan.md). Clones the modeling config and adds `-debug=xfrmShadow`, which compiles in XfrmTransformTool.applyTRS's measure-only per-pass matrix shadow (tools/xfrm_shadow.d). Used by `./run_test.d --shadow`; the default `modeling` build is untouched so production + normal tests carry no shadow."
-		},
-		{
 			"name": "with-render",
 			"versions": ["WithRender"],
 			"dependencies": {
