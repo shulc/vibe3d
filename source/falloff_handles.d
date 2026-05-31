@@ -2,7 +2,7 @@ module falloff_handles;
 
 import bindbc.sdl;
 
-import handler : Arrow, BoxHandler, Handler, gizmoSize;
+import handler : Arrow, BoxHandler, Handler, ToolHandles, gizmoSize;
 import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot,
                 screenRay, rayPlaneIntersect;
 import shader : Shader;
@@ -104,6 +104,17 @@ class FalloffEndpointHandle {
         arrowX.setVisible(abs(viewDir.x) < HIDE);
         arrowY.setVisible(abs(viewDir.y) < HIDE);
         arrowZ.setVisible(abs(viewDir.z) < HIDE);
+    }
+
+    // Register this endpoint's 4 sub-handles into the shared arbiter at
+    // `base`, in hitTest priority order (box first, then arrows). Positions
+    // come from the prior draw()'s layout (last-frame geometry), consistent
+    // with the gizmo banks.
+    void registerHandles(ToolHandles th, int base) {
+        th.add(centerBox, base + 3);
+        th.add(arrowX,    base + 0);
+        th.add(arrowY,    base + 1);
+        th.add(arrowZ,    base + 2);
     }
 
     void draw(const ref Shader shader, const ref Viewport vp) {
@@ -377,6 +388,33 @@ public:
     }
 
     bool isDragging() const { return activeLinear >= 0 || activeRadial >= 0; }
+
+    // Register the active falloff handles into the shared arbiter at `base`
+    // so they join the single-winner pool. Part layout (mutually exclusive
+    // by mode, so no clash): Linear start = base+0..3, end = base+10..13;
+    // Radial center = base+0..3, size handles = base+20..25.
+    void registerHandles(ToolHandles th, int base, const ref FalloffPacket cfg) {
+        if (!cfg.enabled) return;
+        if (cfg.type == FalloffType.Linear) {
+            startHandle.registerHandles(th, base + 0);
+            endHandle.registerHandles  (th, base + 10);
+        } else if (cfg.type == FalloffType.Radial) {
+            centerHandle.registerHandles(th, base + 0);
+            foreach (i; 0 .. 6) th.add(sizeH[i], base + 20 + cast(int)i);
+        }
+    }
+
+    // Global part id of the falloff handle currently being hauled (offset by
+    // `base`), or -1 when no falloff drag is live — lets the host arbiter
+    // keep the dragged handle highlighted (setHaul). Mirrors the part layout
+    // in registerHandles.
+    int capturedPart(int base) {
+        if (activeLinear == 0) return base + 0  + startHandle.dragAxis;
+        if (activeLinear == 1) return base + 10 + endHandle.dragAxis;
+        if (activeRadial == 0) return base + 0  + centerHandle.dragAxis;
+        if (activeRadial >= 1) return base + 20 + (activeRadial - 1);
+        return -1;
+    }
 }
 
 // ---------------------------------------------------------------------------
