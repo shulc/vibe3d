@@ -20,7 +20,7 @@ class FileQuit : Command {
 
     override string name()  const { return "file.quit"; }
     override string label() const { return "Quit"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override bool apply() {
         if (onQuit_ !is null) onQuit_();

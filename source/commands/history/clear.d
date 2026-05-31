@@ -21,7 +21,7 @@ class HistoryClear : Command {
 
     override string name()  const { return "history.clear"; }
     override string label() const { return "Clear History"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override bool apply() {
         if (doClear !is null) doClear();

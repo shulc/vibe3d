@@ -37,7 +37,7 @@ class ToolPipeAttrCommand : Command {
     override string label() const { return "Set Tool Pipe Attribute"; }
 
     // Not undoable — pipe configuration is UI state, not mesh edit.
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setStageId(string id)    { stageId_   = id; }
     void setAttrName(string n)    { attrName_  = n; }

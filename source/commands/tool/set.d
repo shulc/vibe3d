@@ -36,7 +36,7 @@ class ToolSetCommand : Command {
     override string label() const { return "Set Tool"; }
 
     // Not undoable — tool activation is UI state, not mesh edit.
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setToolId(string id)      { toolId_  = id; }
     void setTurnOff(bool v)        { turnOff_ = v; }

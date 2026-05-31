@@ -23,7 +23,7 @@ class SymmetryToggleCommand : Command {
     override string label() const { return "Toggle Symmetry"; }
 
     // Pipe configuration is UI state, not a mesh edit.
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override bool apply() {
         if (g_pipeCtx is null)

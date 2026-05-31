@@ -47,7 +47,7 @@ class WorkplaneResetCommand : Command, Operator {
     }
     override string name()  const { return "workplane.reset"; }
     override string label() const { return "Reset Work Plane"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
@@ -80,7 +80,7 @@ class WorkplaneEditCommand : Command, Operator {
     }
     override string name()  const { return "workplane.edit"; }
     override string label() const { return "Edit Work Plane"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setCenX(float v) { cenX_ = v; }
     void setCenY(float v) { cenY_ = v; }
@@ -116,7 +116,7 @@ class WorkplaneRotateCommand : Command, Operator {
     }
     override string name()  const { return "workplane.rotate"; }
     override string label() const { return "Rotate Work Plane"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setAxis(string s)  { axisStr_  = s; }
     void setAngle(float v)  { angleDeg_ = v; }
@@ -152,7 +152,7 @@ class WorkplaneOffsetCommand : Command, Operator {
     }
     override string name()  const { return "workplane.offset"; }
     override string label() const { return "Offset Work Plane"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setAxis(string s) { axisStr_ = s; }
     void setDist(float v)  { dist_    = v; }
@@ -189,7 +189,7 @@ class WorkplaneAlignToSelectionCommand : Command, Operator {
     }
     override string name()  const { return "workplane.alignToSelection"; }
     override string label() const { return "Align Work Plane to Selection"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;

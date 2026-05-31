@@ -31,7 +31,7 @@ class MacroRecord : Command {
 
     override string name()  const { return "macro.record"; }
     override string label() const { return "Macro Record"; }
-    override bool   isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override Param[] params() {
         return [Param.int_("state", "State", &state_, 1)];

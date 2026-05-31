@@ -14,12 +14,26 @@ import params : Param, ParamHints;
 // - revert()   — restore the pre-apply state (using the snapshot).
 //                Default: no-op (returns false). Mutating commands MUST
 //                override and return true on successful revert.
-// - isUndoable — false for read-only / non-mutating commands; the
-//                dispatcher then skips pushing to the undo stack.
+// - cmdFlags() — bitfield classifying the command (see CmdFlags).
+//                Undoability is DERIVED from it: a command is undoable
+//                iff its flags carry CmdFlags.Model. Read-only /
+//                non-mutating commands override cmdFlags() to drop Model;
+//                the dispatcher then skips pushing to the undo stack.
 // - label()    — short human-readable text for the Edit menu / history
 //                viewer ("Bevel edges", "Move 3 verts"). Defaults to
 //                name().
 // ---------------------------------------------------------------------------
+
+// Bitfield classifying a command's effect on the application. The
+// undo dispatcher and history panel read these bits; behaviour for any
+// single command is determined entirely by which bits are set.
+enum CmdFlags : uint {
+    None       = 0,
+    Model      = 1 << 0, // Alters scene/document (mesh) state → undoable.
+    UI         = 1 << 1, // Alters UI/view state only (camera, panels) — no undo entry.
+    Quiet      = 1 << 2, // Suppress logging / notification for this command.
+    SideEffect = 1 << 3, // Transient session/tool-pipe change — no undo entry.
+}
 
 class Command {
     // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
@@ -62,10 +76,17 @@ class Command {
     // Mutating commands override and return true on success.
     bool revert() { return false; }
 
+    // Classify the command. BASE default is CmdFlags.Model — most
+    // commands alter scene state and are therefore undoable. Read-only /
+    // view-only / transient commands override this to drop Model (and
+    // pick UI or SideEffect as appropriate).
+    CmdFlags cmdFlags() const { return CmdFlags.Model; }
+
     // Whether this command should land on the undo stack after a
-    // successful apply(). Read-only queries / fit-camera / file.save
-    // override to return false.
-    bool isUndoable() const { return true; }
+    // successful apply(). Derived from cmdFlags(): a command is undoable
+    // iff it alters scene/document state (carries CmdFlags.Model). Kept
+    // as a final accessor so existing call sites need not change.
+    final bool isUndoable() const { return (cmdFlags() & CmdFlags.Model) != 0; }
 
     // Short human-readable label. Defaults to name() — override for a
     // friendlier menu / history-viewer string.

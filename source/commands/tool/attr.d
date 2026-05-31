@@ -36,7 +36,7 @@ class ToolAttrCommand : Command {
     override string name()  const { return "tool.attr"; }
     override string label() const { return "Set Tool Attribute"; }
 
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setToolId(string id)       { toolId_   = id; }
     void setAttrName(string n)      { attrName_ = n; }

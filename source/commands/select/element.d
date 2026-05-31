@@ -25,7 +25,7 @@ class SelectElementCommand : Command {
     }
 
     override string name()  const { return "select.element"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setTargetType(string t) { targetType = t; }
     void setAction(string a)     { action = a; }

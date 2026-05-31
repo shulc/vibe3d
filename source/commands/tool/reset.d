@@ -28,7 +28,7 @@ class ToolResetCommand : Command {
     override string name()  const { return "tool.reset"; }
     override string label() const { return "Reset Tool"; }
 
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setToolId(string id) { optToolId_ = id; }
 

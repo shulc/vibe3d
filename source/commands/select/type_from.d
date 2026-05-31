@@ -18,7 +18,7 @@ class SelectTypeFromCommand : Command {
     }
 
     override string name()  const { return "select.typeFrom"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setTargetType(string t) { targetType = t; }
 

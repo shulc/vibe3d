@@ -39,7 +39,7 @@ class ActrPresetCommand : Command {
     override string label() const { return "Action Center: " ~ presetName_; }
 
     // Pipe configuration is UI state, not a mesh edit — not undoable.
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     override bool apply() {
         if (g_pipeCtx is null)

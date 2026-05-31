@@ -31,7 +31,7 @@ class SelectConvertCommand : Command {
     }
 
     override string name()  const { return "select.convert"; }
-    override bool isUndoable() const { return false; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setTargetType(string t) { targetType = t; }
 
