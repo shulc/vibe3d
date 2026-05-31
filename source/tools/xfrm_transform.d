@@ -96,15 +96,12 @@ import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
-// MS-3.5 (Gate-0) — runtime blend-mode toggle. The per-pass matrix kernel
-// blends each pass's matrix toward identity by the falloff weight; the blend
-// FORMULA is the open decision this milestone is gathering evidence for. The
-// production default is MatrixLerp (byte-for-byte today's behaviour); setting
-// VIBE3D_BLEND_MODE=polarquat routes EVERY apply pass through the polar/quat
-// blend instead so the SAME drag can be measured under either candidate. The
-// env var is read ONCE (cached in a static) — no per-vertex getenv. The shadow
-// reference lane (tools.xfrm_shadow) is deliberately NOT toggled; it stays
-// MatrixLerp so it remains a fixed reference regardless of this switch.
+// MS-3.5 — runtime blend-mode toggle. The fold blends the composed matrix toward
+// identity by the falloff weight; MatrixLerp (keep-b) is the decision, confirmed
+// reference-correct in MS-4.1/4.2. The production default is MatrixLerp; setting
+// VIBE3D_BLEND_MODE=polarquat routes the apply through the polar/quat blend
+// instead so the SAME drag can be re-measured under the alternative candidate.
+// The env var is read ONCE (cached in a static) — no per-vertex getenv.
 private BlendMode blendModeForMeasure() @trusted nothrow {
     import std.process : environment;
     static bool resolved = false;
@@ -927,23 +924,21 @@ public:
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
 
-        // MS-3.2 — canonical-matrix apply. Each pass (T, R.x/y/z, view-ring, S)
-        // is applied through the MS-1 per-pass MATRIX kernel `applyXformMatrix`
-        // with `BlendMode.MatrixLerp`, instead of the per-component kernels.
-        // This is the SAME pass sequence the legacy chain ran (restore -> T ->
-        // R.x -> R.y -> R.z -> view-ring -> S) — NOT one composed T·R·S matrix
-        // (MS-2 measured that single-composed path diverging ~1.2 even at w==1,
-        // so each pass keeps its own matrix blended by THAT pass's weight at
-        // THAT pass's eval position). The reconstruction is promoted verbatim
-        // from `tools.xfrm_shadow.runShadow`, which the MS-2 shadow gate proved
-        // reproduces the legacy decomposed output to maxErr 5.96e-08.
+        // MS-4.3/4.4 — canonical-matrix FOLD. The whole T->R->S chain is composed
+        // into ONE pivot-relative matrix (per cluster in the ACEN.Local case) and
+        // applied through a SINGLE `applyXformMatrix` call, blended toward identity
+        // per vertex by ONE falloff weight at the BASELINE position — see
+        // `applyFold`. MS-4.1/4.2 proved this is what the reference does (one
+        // composed matrix, one baseline weight; multi-axis rotate + combined
+        // T+R+S + per-cluster translate-under-falloff all reproduce exactly), and
+        // it is what fixes the per-cluster-translate-falloff divergence. Only the
+        // dormant `pow(scale, passes)` path (no matrix form, F2) keeps the legacy
+        // per-pass `else` chain below.
         //
         // The decomposed state fields (headlessTranslate / headlessRotate /
-        // headlessScale) plus the transient view-ring params (viewAxis /
-        // viewAngleDeg, MS-3.4 — no longer a persistent slot) still BUILD each
-        // pass's matrix — they remain the input attributes (MS-3.6 removes the
-        // per-component kernels). `mesh.vertices` already holds the restored
-        // baseline.
+        // headlessScale) + the transient view-ring params (viewAxis / viewAngleDeg,
+        // MS-3.4) remain the input attributes that BUILD the matrix.
+        // `mesh.vertices` already holds the restored baseline.
         {
             import std.math : PI, fabs;
 
@@ -1109,25 +1104,14 @@ public:
             }  // MS-4.3 — close legacy per-pass else (per-cluster / pow-scale)
         }
 
-        // MS-2 — per-pass dual-run shadow (measure-only). Compiled ONLY under
-        // `debug(xfrmShadow)` (the test-shadow dub config / `-d xfrmShadow`);
-        // production + the normal `./run_test.d` instance never compile it, so
-        // the chain above is byte-identical without it. The shadow reconstructs
-        // the SAME T -> R -> S chain through the MS-1 matrix kernel and compares;
-        // a mismatch is LOGGED, never asserted (F3). See tools.xfrm_shadow.
-        debug (xfrmShadow) {
-            import tools.xfrm_shadow : runShadow;
-            Vec3[] shadowLive = mesh.vertices.dup;
-            runShadow(mesh, shadowLive, baseline,
-                      vertexIndicesToProcess, toProcess,
-                      pivot, bX, bY, bZ,
-                      flagT, flagR, flagS,
-                      headlessTranslate, headlessRotate,
-                      viewAxis, viewAngleDeg,
-                      headlessScale,
-                      dragFalloff, dragSymmetry, cachedVp,
-                      cp, ap, name());
-        }
+        // (MS-3.6) The MS-2 measure-only per-pass shadow was retired here: it
+        // reconstructed the LEGACY decomposed T->R->S chain and compared it to
+        // the live apply, but MS-4.3/4.4 deliberately replaced that chain with the
+        // canonical-matrix fold (which diverges from the per-pass reconstruction
+        // under fractional falloff — the validated correctness change), so the
+        // shadow now guarded a superseded model. The fold is gated instead by the
+        // reference-parity fixtures (tests/fixtures/falloff_{rot,trs,local}_*.json,
+        // tests/test_fixture_falloff_*).
 
         return true;
     }
@@ -1491,7 +1475,7 @@ private:
     // axis lookup (each cluster rotates about its OWN right/up/fwd at that
     // index, around its OWN pivot via cp); -1 keeps `axis` as-is (global /
     // view-ring). Per-cluster rotate is LIVE-weighted, NOT falloff-exempt
-    // (unlike per-cluster translate). Mirrors xfrm_shadow.rotatePass.
+    // (unlike per-cluster translate). Still used by the legacy pow-scale chain.
     void applyRotatePass(Vec3 axis, int dragAxisIdx, float angleRad,
                          Vec3 pivot,
                          TransformTool.ClusterPivots cp,
