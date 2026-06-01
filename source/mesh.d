@@ -57,6 +57,46 @@ struct Surface {
     string compiledFromTreeId;
 }
 
+/// Domain a `MeshMap` channel is attached to — which element array its
+/// per-element values run parallel to.
+///
+///   Point      — one value-tuple per vertex (`data.length == vertices.length * dim`).
+///   Edge       — one value-tuple per deduplicated edge (`data.length == edges.length * dim`).
+///   PolyVertex — one value-tuple per face-corner (per-loop). RESERVED: not
+///                implemented in v1. Corner-domain channels need a stable
+///                corner enumeration that survives topology edits (loops are
+///                rebuilt wholesale by `buildLoops`), so `addMeshMap` rejects
+///                this domain with a clear message rather than half-wiring it.
+enum MapDomain {
+    Point,
+    Edge,
+    PolyVertex,
+}
+
+/// A generic named, typed per-element float attribute channel — the single
+/// reusable home for continuous per-element data (UV, vertex weight, edge
+/// crease, vertex color, …) so each such attribute does NOT become a bespoke
+/// parallel array on `Mesh`.
+///
+/// **Layout** is element-major: element `i`'s `dim` components occupy
+/// `data[i*dim .. i*dim + dim]`. So a dim-2 UV map stores `[u0,v0, u1,v1, …]`.
+/// The invariant `data.length == elementCount(domain) * dim` is maintained in
+/// lock-step with topology by the mesh resize path (see `Mesh.resizeMeshMaps`).
+///
+/// `dim` is the number of float components per element (1 = weight/crease,
+/// 2 = UV, 3 = color, …). `name` is the lookup key in the registry and must be
+/// unique per mesh.
+struct MeshMap {
+    string    name;
+    ubyte     dim;
+    MapDomain domain;
+    float[]   data;
+
+    MeshMap dup() const {
+        return MeshMap(name, dim, domain, data.dup);
+    }
+}
+
 /// Half-edge dart: represents the directed edge vert → next(vert) inside one face.
 struct Loop {
     uint vert;   // start vertex of this dart
@@ -194,6 +234,26 @@ struct Mesh {
     /// to know whether the cache is still valid, vs. just refreshing
     /// positions.
     ulong     topologyVersion;
+
+    // --- Mesh maps (generic per-element float attribute channels) ----------
+    // Named, typed per-element float channels (UV, vertex weight, edge crease,
+    // vertex color, …). ONE reusable home so each new continuous per-element
+    // attribute does not become a bespoke parallel array. Each `MeshMap`'s
+    // `data` runs parallel to the element array named by its `domain` (Point ↔
+    // vertices, Edge ↔ edges) and is kept length-correct in lock-step with
+    // topology by `resizeMeshMaps`, hooked into the same resize primitives the
+    // selection/marks arrays use (`resizeVertexSelection` / `resizeEdgeSelection`).
+    //
+    // NOTE: maps are RESIZED (not value-remapped) across destructive edits that
+    // renumber elements (weld / delete / dissolve). Length stays correct so
+    // reads never go out of bounds, but values do not follow vertices to their
+    // new indices — full value-remapping is out of scope for v1.
+    //
+    // Discrete polygon tags (`faceMaterial`, a per-face surface INDEX) are
+    // deliberately NOT mesh maps: a float channel cannot represent an integer
+    // surface id without precision/semantic abuse, so `faceMaterial` stays its
+    // own `uint[]`. Mesh maps are for CONTINUOUS float attributes only.
+    MeshMap[] meshMaps;
 
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
@@ -1387,16 +1447,133 @@ struct Mesh {
     void resizeVertexSelection() {
         vertexMarks.length          = vertices.length;
         vertexSelectionOrder.length = vertices.length;
+        resizeMeshMaps(MapDomain.Point);
     }
     void resizeEdgeSelection() {
         edgeMarks.length          = edges.length;
         edgeSelectionOrder.length = edges.length;
+        resizeMeshMaps(MapDomain.Edge);
     }
     void resizeFaceSelection() {
         // Only the per-face marks array (folding Select + Subpatch). The
         // pick-order / subpatch / material arrays are rebuilt in lock-step with
         // `faces` by the calling mutator.
         faceMarks.length = faces.length;
+    }
+
+    // --- Mesh-map registry + lifecycle ------------------------------------
+    // Number of elements in a given domain — the per-domain length a map's
+    // `data` is `dim`-times larger than.
+    size_t elementCount(MapDomain domain) const {
+        final switch (domain) {
+            case MapDomain.Point:      return vertices.length;
+            case MapDomain.Edge:       return edges.length;
+            case MapDomain.PolyVertex: return loops.length;
+        }
+    }
+
+    // Grow/shrink every registered map of `domain` so its `data.length`
+    // matches `elementCount(domain) * dim`. New trailing slots default to 0.
+    // Same grow-and-keep discipline as the selection/marks resize primitives:
+    // values are length-correct but NOT remapped across destructive edits.
+    // Called from resizeVertexSelection (Point) / resizeEdgeSelection (Edge)
+    // so it cannot be forgotten by a topology mutator.
+    void resizeMeshMaps(MapDomain domain) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != domain) continue;
+            resizeMeshMapData(m);
+        }
+    }
+
+    // Resize all registered maps across every domain (used by snapshot restore
+    // and any caller that replaced multiple element arrays at once).
+    void resizeAllMeshMaps() {
+        foreach (ref m; meshMaps)
+            resizeMeshMapData(m);
+    }
+
+    // Grow/shrink one map's data to `elementCount(domain) * dim`, zero-filling
+    // any newly grown slots. `float.init` is NaN in D, so an explicit zero is
+    // required for new entries to read back as 0 (the documented default).
+    private void resizeMeshMapData(ref MeshMap m) {
+        const size_t want = elementCount(m.domain) * m.dim;
+        const size_t old  = m.data.length;
+        m.data.length = want;
+        if (want > old) m.data[old .. $] = 0.0f;
+    }
+
+    // Register a new per-element float channel. `dim` must be >= 1; `name`
+    // must be non-empty and not already registered; PolyVertex is reserved.
+    // Returns a pointer to the stored map (data zero-initialised to the right
+    // length), or null on rejection. Defensive, like the rest of mesh.d.
+    MeshMap* addMeshMap(string name, ubyte dim, MapDomain domain) {
+        if (name.length == 0) return null;
+        if (dim == 0) return null;
+        if (domain == MapDomain.PolyVertex) {
+            // RESERVED — see MapDomain.PolyVertex. Corner-domain channels are
+            // not implemented in v1; reject rather than half-wire them.
+            return null;
+        }
+        if (meshMap(name) !is null) return null; // names are unique per mesh
+        MeshMap m;
+        m.name   = name;
+        m.dim    = dim;
+        m.domain = domain;
+        m.data.length = elementCount(domain) * dim;
+        m.data[] = 0.0f; // float.init is NaN; default mesh-map value is 0
+        meshMaps ~= m;
+        return &meshMaps[$ - 1];
+    }
+
+    // Lookup by name → pointer to the stored map, or null if absent.
+    MeshMap* meshMap(string name) return {
+        foreach (ref m; meshMaps)
+            if (m.name == name) return &m;
+        return null;
+    }
+
+    // const overload for read-only call sites.
+    const(MeshMap)* meshMap(string name) const return {
+        foreach (ref m; meshMaps)
+            if (m.name == name) return &m;
+        return null;
+    }
+
+    // Remove a registered map by name. Returns true if one was removed.
+    bool removeMeshMap(string name) {
+        foreach (i, ref m; meshMaps) {
+            if (m.name == name) {
+                meshMaps = meshMaps[0 .. i] ~ meshMaps[i + 1 .. $];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Read element `elemIdx`'s components from map `name`. Returns an empty
+    // slice if the map is missing or the index is out of range (defensive).
+    // The returned slice is a fresh copy (`dup`), safe to hold across edits.
+    float[] meshMapValue(string name, size_t elemIdx) const {
+        auto m = meshMap(name);
+        if (m is null) return [];
+        const size_t base = elemIdx * m.dim;
+        if (base + m.dim > m.data.length) return [];
+        return m.data[base .. base + m.dim].dup;
+    }
+
+    // Write element `elemIdx`'s components into map `name`. `values.length`
+    // must equal the map's `dim`. No-op (returns false) on a missing map,
+    // out-of-range index, or dim mismatch. Bumps `mutationVersion` on a real
+    // write so caches that depend on map values can detect the change.
+    bool setMeshMapValue(string name, size_t elemIdx, const float[] values) {
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (values.length != m.dim) return false;
+        const size_t base = elemIdx * m.dim;
+        if (base + m.dim > m.data.length) return false;
+        m.data[base .. base + m.dim] = values[];
+        ++mutationVersion;
+        return true;
     }
 
     // Resize the per-edge arrays to `edges` length and drop every edge

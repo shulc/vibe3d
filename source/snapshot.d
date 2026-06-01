@@ -38,6 +38,7 @@ struct MeshSnapshot {
     bool[]   isSubpatch;
     Surface[] surfaces;
     uint[]    faceMaterial;
+    MeshMap[] meshMaps;
     bool     filled = false;
 
     static MeshSnapshot capture(in Mesh mesh) {
@@ -59,6 +60,9 @@ struct MeshSnapshot {
         s.isSubpatch           = mesh.isSubpatch.dup;
         s.surfaces             = mesh.surfaces.dup;
         s.faceMaterial         = mesh.faceMaterial.dup;
+        // Deep-dup each map (its `data` too) so later mesh mutations don't
+        // alias the snapshot — MeshMap.dup dups the float[] data.
+        s.meshMaps             = mesh.meshMaps.map!(mm => mm.dup).array;
         s.filled               = true;
         return s;
     }
@@ -79,7 +83,14 @@ struct MeshSnapshot {
         mesh.setFaceSubpatchFrom(isSubpatch);
         mesh.surfaces                    = surfaces.dup;
         mesh.faceMaterial                = faceMaterial.dup;
+        // Restore the map registry (deep-dup so the live mesh doesn't alias
+        // the snapshot's data). buildLoops below rebuilds loops/edges; the
+        // restored maps' lengths already match the restored geometry because
+        // they were captured alongside it, but resizeAllMeshMaps keeps them
+        // correct if buildLoops were ever to change an element count.
+        mesh.meshMaps                    = meshMaps.map!(mm => mm.dup).array;
         mesh.buildLoops();
+        mesh.resizeAllMeshMaps();
         ++mesh.mutationVersion;
         // Snapshot restore rebuilds the WHOLE mesh — topology may
         // have changed across the undo/redo, so cached subpatch
