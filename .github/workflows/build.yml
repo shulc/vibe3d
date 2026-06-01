@@ -138,13 +138,20 @@ jobs:
         shell: powershell
         run: |
           $sdlVer = "2.30.3"
-          $url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip"
-          Invoke-WebRequest $url -OutFile SDL2-devel.zip
-          # Remove any stale C:\SDL2 from a previous run — Expand-Archive errors
-          # if the destination files already exist (self-hosted runners persist it).
-          if (Test-Path C:\SDL2) { Remove-Item C:\SDL2 -Recurse -Force }
-          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2 -Force
-          $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
+          # Reuse a cached C:\SDL2 across runs; only download+extract if absent.
+          $sdlDir = Get-ChildItem C:\SDL2 -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { Test-Path "$($_.FullName)\lib\x64\SDL2.dll" } | Select-Object -First 1
+          if (-not $sdlDir) {
+            $url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip"
+            Invoke-WebRequest $url -OutFile SDL2-devel.zip
+            if (Test-Path C:\SDL2) { Remove-Item C:\SDL2 -Recurse -Force }
+            Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2 -Force
+            $sdlDir = Get-ChildItem C:\SDL2 -Directory |
+                      Where-Object { Test-Path "$($_.FullName)\lib\x64\SDL2.dll" } | Select-Object -First 1
+          } else {
+            Write-Host "Reusing cached SDL2 at $($sdlDir.FullName)"
+          }
+          # Per-run: export SDL2_DIR, stage SDL2.dll for the zip, add libs to PATH.
           echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
           Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
           echo "$($sdlDir.FullName)\lib\x64" >> $env:GITHUB_PATH
@@ -188,20 +195,24 @@ jobs:
             git submodule update --init --recursive
           fi
 
+      # PowerShell (not bash) — the self-hosted Windows runner has no Git Bash.
       - name: First-pass build (Windows — fetches nfde, expected to fail)
         if: runner.os == 'Windows'
-        shell: bash
-        run: dub build --compiler=ldc2 --build=release || true
+        shell: powershell
+        run: |
+          dub build --compiler=ldc2 --build=release
+          exit 0   # first pass is expected to fail (nfde submodule not yet inited)
 
       - name: Initialize nativefiledialog-extended submodules (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: powershell
         run: |
-          NFD_DIR="$LOCALAPPDATA/dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
-          if [ -d "$NFD_DIR" ]; then
-            cd "$NFD_DIR"
+          $nfd = "$env:LOCALAPPDATA\dub\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
+          if (Test-Path $nfd) {
+            Push-Location $nfd
             git submodule update --init --recursive
-          fi
+            Pop-Location
+          }
 
       # ---- Build ----
 
@@ -301,12 +312,19 @@ jobs:
         shell: powershell
         run: |
           $sdlVer = "2.30.3"
-          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip" -OutFile SDL2-devel.zip
-          # Remove any stale C:\SDL2 from a previous run — Expand-Archive errors
-          # if the destination files already exist (self-hosted runners persist it).
-          if (Test-Path C:\SDL2) { Remove-Item C:\SDL2 -Recurse -Force }
-          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2 -Force
-          $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
+          # Reuse a cached C:\SDL2 across runs; only download+extract if absent.
+          $sdlDir = Get-ChildItem C:\SDL2 -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { Test-Path "$($_.FullName)\lib\x64\SDL2.dll" } | Select-Object -First 1
+          if (-not $sdlDir) {
+            Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip" -OutFile SDL2-devel.zip
+            if (Test-Path C:\SDL2) { Remove-Item C:\SDL2 -Recurse -Force }
+            Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2 -Force
+            $sdlDir = Get-ChildItem C:\SDL2 -Directory |
+                      Where-Object { Test-Path "$($_.FullName)\lib\x64\SDL2.dll" } | Select-Object -First 1
+          } else {
+            Write-Host "Reusing cached SDL2 at $($sdlDir.FullName)"
+          }
+          # Per-run: export SDL2_DIR, stage SDL2.dll for the zip, add libs to PATH.
           echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
           Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
           echo "$($sdlDir.FullName)\lib\x64" >> $env:GITHUB_PATH
