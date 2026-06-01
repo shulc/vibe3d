@@ -2,7 +2,7 @@
 # They are provided by a third-party and are governed by
 # separate terms of service, privacy policy, and support
 # documentation.
-name: D
+name: CI
 
 on:
   push:
@@ -35,9 +35,17 @@ jobs:
           git submodule update --init --recursive
         fi
 
-    - name: 'Build & Test'
-      run: |
-        dub build --compiler=dmd
-        # nfde's static ctor calls NFD_Init() (GTK), which needs a display.
-        # xvfb-run gives the headless runner a virtual one.
-        xvfb-run -a dub test --compiler=dmd
+    - name: 'Build'
+      run: dub build --compiler=dmd
+
+    - name: 'Unit tests (embedded unittest blocks)'
+      # nfde's static ctor calls NFD_Init() (GTK), which needs a display;
+      # xvfb-run gives the headless runner a virtual one.
+      run: xvfb-run -a dub test --compiler=dmd
+
+    - name: 'Integration tests (HTTP suite via run_all.d)'
+      # run_all.d --only unit fans out to ./run_test.d -j 4 with the documented
+      # flaky tests excluded (test_selection, test_toolpipe_axis). --no-build
+      # reuses the ./vibe3d binary from the Build step. The whole thing runs
+      # under one Xvfb display so each spawned `vibe3d --test` gets a GL context.
+      run: xvfb-run -a ./run_all.d --only unit --no-build -j 4
