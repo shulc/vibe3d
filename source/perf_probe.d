@@ -39,6 +39,12 @@ enum Cat {
     symmetryMirror,
     cacheInvalidate,
     gpuUpload,
+    // snapQuery is the REAL per-drag-frame snap work: the geometric
+    // candidate walk in snap.d:snapCursor (vertex/edge/grid/workplane
+    // candidates projected + ranged). pipeSnap above only times the
+    // SnapStage that publishes a config packet (~0); the heavy query
+    // runs from the tools every motion event and is timed here.
+    snapQuery,
     // --- counters ---
     falloffEvalCount,
     vertsTouched,

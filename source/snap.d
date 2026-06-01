@@ -7,6 +7,7 @@ import math : Vec3, Viewport, projectToWindowFull, screenRay,
               closestOnSegment2DSquared, cross, dot;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType;
+import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
 // Snap math — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
@@ -47,6 +48,12 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                       const ref SnapPacket cfg,
                       const(uint)[] excludeVerts = null)
 {
+    // One coarse scope per call — snapCursor is invoked once per drag
+    // frame (not per vertex), so this captures the WHOLE geometric
+    // candidate walk (the real per-frame snap cost) in one timer. Zero
+    // cost in the default modeling build (perf_probe is a no-op there).
+    auto z = g_perf.scope_(Cat.snapQuery);
+
     SnapResult res;
     res.worldPos     = cursorWorld;
     res.highlightPos = cursorWorld;

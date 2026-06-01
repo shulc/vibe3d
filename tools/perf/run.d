@@ -415,11 +415,28 @@ Case[] casesForTool(Tool t) {
         [PipeAttr("actionCenter", "mode", "local")],
         "acen=local (half sel)");
 
-    // Snap to grid.
-    cs ~= Case(tname ~ "/snap=grid", t, "whole",
-        [PipeAttr("snap", "enabled", "true"),
-         PipeAttr("snap", "types", "grid")],
-        "snap=grid");
+    // Snap cases — MOVE ONLY. Cursor snap (grid/vertex via SnapPacket +
+    // snap.snapCursor) is only consulted by MoveTool.applySnapToDelta during a
+    // drag. RotateTool/ScaleTool never call snapCursor — they have their own
+    // angle/scale-increment snapping (rotate.d lastSnappedAngle), a separate
+    // path not driven by the SnapStage. Enabling SnapStage on rotate/scale is a
+    // no-op, so generating snap cases there would test nothing. KNOWN SCOPE
+    // LIMITATION: this matrix does not cover rotate/scale increment snapping.
+    if (t == Tool.move) {
+        // Snap to grid (pure arithmetic quantization — legitimately sub-µs).
+        cs ~= Case(tname ~ "/snap=grid", t, "whole",
+            [PipeAttr("snap", "enabled", "true"),
+             PipeAttr("snap", "types", "grid")],
+            "snap=grid");
+
+        // Snap to vertex (element). Exercises the per-vertex candidate walk
+        // over the whole mesh (the most expensive snap query — O(verts) every
+        // drag frame). Token "vertex" per SnapStage's setAttr("types", ...).
+        cs ~= Case(tname ~ "/snap=vertex", t, "whole",
+            [PipeAttr("snap", "enabled", "true"),
+             PipeAttr("snap", "types", "vertex")],
+            "snap=vertex (per-vertex candidate walk)");
+    }
 
     // Selection variations off the baseline config.
     cs ~= Case(tname ~ "/selection=single", t, "single", [], "selection=single");
@@ -494,6 +511,9 @@ struct CaseResult {
     double     kernelMedianUs, kernelP95Us;
     double     pipeMedianUs;
     double     pipeSymmetryMedianUs;   // pipe.symmetry stage cost (for I2)
+    double     snapQueryMedianUs;      // snap.d:snapCursor cost (informational)
+    double     snapQuerySumUs;         // last-repeat snapQuery sum (informational)
+    long       snapQueryCount;         // last-repeat snapCursor call count (for I5)
     string     dominantStage;
     long       vertsTouched;     // sum from the last repeat
     long       kernelInternalP95Ns;  // /api/perf's own per-sample p95
@@ -548,6 +568,7 @@ string dominantStage(JSONValue perf) {
     static immutable string[] stages = [
         "pipeSymmetry", "pipeSnap", "pipeAcen", "pipeAxis", "pipeFalloff",
         "kernelApply", "symmetryMirror", "cacheInvalidate", "gpuUpload",
+        "snapQuery",
     ];
     string best = "-";
     long bestNs = -1;
@@ -633,6 +654,7 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     double[] kernelTot;   // total kernelApply ns per drag (sum across frames)
     double[] pipeTot;     // total pipeTotal ns per drag
     double[] pipeSymTot;  // total pipeSymmetry ns per drag
+    double[] snapQTot;    // total snapQuery ns per drag (for I5)
     JSONValue last;
     foreach (r; 0 .. repeats) {
         JSONValue perf;
@@ -646,6 +668,7 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
         kernelTot  ~= cast(double)sumNs(perf, "kernelApply")  / 1000.0;
         pipeTot    ~= cast(double)sumNs(perf, "pipeTotal")    / 1000.0;
         pipeSymTot ~= cast(double)sumNs(perf, "pipeSymmetry") / 1000.0;
+        snapQTot   ~= cast(double)sumNs(perf, "snapQuery")    / 1000.0;
         last = perf;
     }
 
@@ -654,6 +677,10 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     res.kernelP95Us          = p95Of(kernelTot);
     res.pipeMedianUs         = medianOf(pipeTot);
     res.pipeSymmetryMedianUs = medianOf(pipeSymTot);
+    res.snapQueryMedianUs    = medianOf(snapQTot);
+    res.snapQuerySumUs       = cast(double)sumNs(last, "snapQuery") / 1000.0;
+    res.snapQueryCount       = ("snapQuery" in last)
+        ? last["snapQuery"]["count"].integer : 0;
     res.dominantStage  = dominantStage(last);
     res.vertsTouched   = ("vertsTouched" in last)
         ? last["vertsTouched"]["sum"].integer : 0;
@@ -730,17 +757,19 @@ bool launchVibe(ushort port, string viewport, string logPath) {
 void printTable(CaseResult[] results) {
     writeln();
     writeln("=== perf results ===");
-    writefln("%-28s %12s %12s %12s %-16s %10s",
-             "case", "kApply med", "kApply p95", "pipe med", "dominant", "verts");
-    writefln("%-28s %12s %12s %12s %-16s %10s",
-             "", "(us)", "(us)", "(us)", "stage", "touched");
-    writeln("".replicate(96));
+    writefln("%-28s %12s %12s %12s %10s %-16s %10s",
+             "case", "kApply med", "kApply p95", "pipe med", "snapQ med",
+             "dominant", "verts");
+    writefln("%-28s %12s %12s %12s %10s %-16s %10s",
+             "", "(us)", "(us)", "(us)", "(us)", "stage", "touched");
+    writeln("".replicate(108));
     foreach (r; results) {
         final switch (r.status) {
             case CaseStatus.OK:
-                writefln("%-28s %12.2f %12.2f %12.2f %-16s %10d",
+                writefln("%-28s %12.2f %12.2f %12.2f %10.2f %-16s %10d",
                          r.name, r.kernelMedianUs, r.kernelP95Us,
-                         r.pipeMedianUs, r.dominantStage, r.vertsTouched);
+                         r.pipeMedianUs, r.snapQueryMedianUs,
+                         r.dominantStage, r.vertsTouched);
                 break;
             case CaseStatus.SKIP:
                 writefln("%-28s  SKIP  %s", r.name, r.detail);
@@ -756,7 +785,7 @@ void printTable(CaseResult[] results) {
         case CaseStatus.SKIP:  skip++; break;
         case CaseStatus.ERROR: err++;  break;
     }
-    writeln("".replicate(96));
+    writeln("".replicate(108));
     writefln("Totals: OK=%d  SKIP=%d  ERROR=%d  (of %d cases)",
              ok, skip, err, results.length);
 }
@@ -946,6 +975,13 @@ enum double K1_FALLOFF        = 6.0;
 enum double K2_SYM_OFF_US     = 200.0;   // absolute µs ceiling, per case
 enum double K3_SYMMETRY       = 4.0;
 enum double K4_PIPE_OVERHEAD  = 4.0;
+// I5 — snap is actually engaged: when a snap=* case is active, snapCursor
+// must have been CALLED during the drag (count > 0). We check the call
+// COUNT, not its time, because grid snap is legitimately near-free (pure
+// arithmetic quantization, sub-µs) while vertex/element snap does an
+// O(verts) candidate walk — a time threshold would false-fail healthy grid
+// snap. count==0 with snap enabled means the hot query got bypassed (the
+// exact gap snapQuery was added to catch).
 
 struct Invariant {
     string id;        // "I1", "I2", ...
@@ -1020,6 +1056,23 @@ Invariant[] checkInvariants(CaseResult[] results) {
                          format("ratio=%.2f× (%.1f/%.1f µs) threshold %.1f×",
                                 ratio, base.pipeMedianUs, base.kernelMedianUs,
                                 K4_PIPE_OVERHEAD));
+    }
+
+    // I5 — snap is engaged: for every snap=* case present, snapCursor must
+    // have been called during the drag (count > 0). This pins the gap that
+    // motivated the snapQuery category: pipeSnap only times the config-packet
+    // SnapStage (~0), so snap silently doing no per-frame work would pass
+    // every other invariant. Checks call COUNT not time — grid snap is
+    // legitimately sub-µs. Per snap case (per tool).
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        if (!r.name.canFind("snap=")) continue;
+        bool ok = r.snapQueryCount > 0;
+        inv ~= Invariant("I5",
+            format("%s snapQuery engaged (snapCursor called)", r.name),
+            ok,
+            format("snapQuery count=%d, sum=%.2f µs (median %.2f µs)",
+                   r.snapQueryCount, r.snapQuerySumUs, r.snapQueryMedianUs));
     }
 
     return inv;
