@@ -560,7 +560,12 @@ void applyXformMatrix(
         float[16] Mw = blendToIdentity(Mv, w, mode);
         mesh.vertices[vi] = pivot + applyAffine(Mw, base - pivot);
     }
+    // Symmetry mirror on the LIVE unified path (applyFold → here). Timed in
+    // its own category; the per-vertex loop above is the kernelApply work the
+    // caller (applyFold) scopes. See doc/perf_harness_plan.md.
     if (dragSymmetry.enabled
-        && dragSymmetry.pairOf.length == mesh.vertices.length)
+        && dragSymmetry.pairOf.length == mesh.vertices.length) {
+        auto zMirror = g_perf.scope_(Cat.symmetryMirror);
         applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+    }
 }

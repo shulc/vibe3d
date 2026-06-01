@@ -92,6 +92,7 @@ import tools.xform_kernels :
     BlendMode;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
+import perf_probe : g_perf, Cat;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
@@ -1522,6 +1523,20 @@ private:
         foreach (k, vi; vertexIndicesToProcess)
             src[k] = (vi >= 0 && vi < cast(int)baseline.length)
                    ? baseline[vi] : Vec3(0, 0, 0);
+
+        // Perf (doc/perf_harness_plan.md): this is the SINGLE per-frame
+        // vertex-cloud apply for the live unified T/R/S drag — `applyFold`
+        // composes one matrix and `applyXformMatrix` runs the per-vertex blend
+        // loop (+ symmetry mirror) exactly once per `applyTRS`. The scope wraps
+        // the whole apply but NOT the inner loop; the counters are DERIVED from
+        // the moving-set size (recorded once, never per vertex). The legacy
+        // incremental kernels self-time on their own (standalone) path — the
+        // two paths are mutually exclusive per drag, so there is no
+        // double-counting (see xform_kernels.d header).
+        const long nProc = cast(long)vertexIndicesToProcess.length;
+        g_perf.count(Cat.vertsTouched, nProc);
+        if (dragFalloff.enabled) g_perf.count(Cat.falloffEvalCount, nProc);
+        auto zKernel = g_perf.scope_(Cat.kernelApply);
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                          blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
                          clusterM, dragSymmetry, toProcess, /*weightVerts=*/ baseline);
