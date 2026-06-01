@@ -28,14 +28,16 @@ overhead is watched relatively by I4). The `snap=*` cases and sub-microsecond
 selection cases are excluded from the absolute comparison (their moving-set
 size / timing is not stable run-to-run).
 
-## `baseline.json` is MACHINE-SPECIFIC and LOCAL (gitignored)
+## `baseline.json` is committed but MACHINE-SPECIFIC
 
-Absolute timings are hardware-bound, so `baseline.json` is **not committed** —
-it is gitignored and you generate your own with `--update-baseline`. Its header
-records `buildType` / `compiler` / `meshType` / `n` / `faceCount` / `viewport` /
-`repeats`; the **build-mismatch guard** in `run.d` refuses the absolute
-comparison (prints a warning, falls back to relative invariants) when any of
-those differ. NOTE: the header does NOT identify the host — so a baseline is
-only meaningful on the machine that produced it. Do not copy one between
-machines even if the toolchain matches; the guard cannot catch that. The
-relative invariants need no baseline and are what runs in CI / `run_all.d`.
+`baseline.json` is committed as the reference (a full n=316 / 100K run). Its
+header records `buildType` / `compiler` / `meshType` / `n` / `faceCount` /
+`viewport` / `repeats`; the **build-mismatch guard** in `run.d` refuses the
+absolute comparison (prints a warning, falls back to relative invariants) when
+any of those differ. CAVEAT: absolute timings are hardware-bound and the header
+does NOT identify the host — so on a different machine with the same toolchain
+the guard will NOT catch the mismatch and the absolute comparison would
+false-flag. On another machine either run with `--no-absolute` (relative
+invariants only — what CI / `run_all.d` does) or re-capture with
+`--update-baseline`. The relative invariants need no baseline and are
+hardware-stable.
