@@ -67,7 +67,17 @@ class ActionCenterStage : Stage, Operator {
             lastWpNormal_ = wp.normal;
         }
         ActionCenterPacket pkt;
-        pkt.center = computeCenter();
+        // Local mode's per-frame center comes from the cached cluster
+        // partition (see localCenterAndClustersCached) so the O(E·V) BFS is
+        // not redone every drag frame. All other modes use the const
+        // computeCenter() path (cheap centroid/bbox scans).
+        Vec3[] localCenters;
+        int[]  localClusterOf;
+        if (mode == Mode.Local && mesh_ !is null) {
+            pkt.center = localCenterAndClustersCached(localCenters, localClusterOf);
+        } else {
+            pkt.center = computeCenter();
+        }
 
         // Phase 7.6 (BaseSide gizmo): when symmetry is on and the
         // selection contains BOTH sides of the plane (via 7.6c
@@ -97,12 +107,9 @@ class ActionCenterStage : Stage, Operator {
         // per-cluster pivots so transform tools can scale/rotate each
         // cluster around its own centroid (actr.local).
         if (mode == Mode.Local && mesh_ !is null) {
-            Vec3[] centers;
-            int[]  clusterOf;
-            computeLocalClustersFull(centers, clusterOf);
-            if (centers.length >= 2) {
-                pkt.clusterCenters = centers;
-                pkt.clusterOf      = clusterOf;
+            if (localCenters.length >= 2) {
+                pkt.clusterCenters = localCenters;
+                pkt.clusterOf      = localClusterOf;
             }
         }
         _publishedPacket = pkt;
@@ -169,6 +176,38 @@ private:
     Vec3      lastWpCenter_  = Vec3(0, 0, 0);
     Vec3      lastWpNormal_  = Vec3(0, 1, 0);
 
+    // --- Local-mode cluster cache -----------------------------------------
+    // During a transform drag the connected-component partition is INVARIANT
+    // (selection frozen, topology frozen — transform tools mutate vertex
+    // POSITIONS directly without bumping mesh.mutationVersion, on purpose),
+    // so only per-cluster centers need recomputing each frame. The membership
+    // partition (`_cachedClusterOf` + count) and the vertex adjacency it was
+    // built from are cached and reused while the key holds.
+    //
+    // Cache key: (mutationVersion, editMode, selectionSignature). mutationVersion
+    // bumps on every topology/geometry-structure edit (always paired with
+    // topologyVersion) and is NOT bumped by selection writes NOR by drag-time
+    // vertex moves — so it alone cannot detect a selection change. Selection
+    // lives in the Marks.Select bit of vertexMarks/edgeMarks/faceMarks and has
+    // no version counter, so we fold a cheap rolling hash of the relevant
+    // marks array's Select bits into the key. Edit mode picks which cluster
+    // variant runs, so it is part of the key too.
+    bool   _cacheValid       = false;
+    ulong  _cachedMutVer     = ulong.max;
+    int    _cachedEditMode   = -1;
+    ulong  _cachedSelSig     = 0;
+    int    _cachedClusterCnt = 0;
+    int[]  _cachedClusterOf;          // per-vertex cluster id (-1 = not in sel)
+    int[]  _cachedFaceClusterOf;      // per-face cluster id (Polygons mode only)
+    // Cached vertex→neighbor adjacency (CSR: flat neighbor list + per-vertex
+    // [offset, offset+1] bounds). Topology-invariant, rebuilt only on a
+    // mutationVersion change. Used by the vert/edge cluster BFS so neighbor
+    // lookup is O(degree) instead of O(E) per dequeued vertex.
+    ulong  _adjMutVer        = ulong.max;
+    uint[] _adjNeighbors;             // flattened neighbor ids
+    size_t[] _adjOffset;              // length nV+1; neighbors of v are
+                                      // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
+
 public:
     this(Mesh* mesh, EditMode* editMode) {
         this.mesh_     = mesh;
@@ -192,7 +231,20 @@ public:
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
         userLocked       = false;
+        invalidateClusterCache();
         publishState();
+    }
+
+    /// Drop the Local-mode partition + adjacency cache. Called on reset and
+    /// whenever the cache key is known to be stale. (The key check in
+    /// computeLocalClustersFull also catches selection / topology changes
+    /// mid-session, so this is a belt-and-braces hook for explicit resets.)
+    private void invalidateClusterCache() {
+        _cacheValid     = false;
+        _cachedMutVer   = ulong.max;
+        _cachedEditMode = -1;
+        _cachedSelSig   = 0;
+        _adjMutVer      = ulong.max;
     }
 
     /// resetTransient: same as reset() but respects userLocked.
@@ -364,21 +416,144 @@ private:
     // are bounding-box midpoints (consistent with Phase 2's bbox-Select
     // choice). `clusterOf[vi] == -1` for verts not in the selection.
     void computeLocalClustersFull(out Vec3[] clusterCenters,
-                                  out int[]  clusterOf) const {
+                                  out int[]  clusterOf) {
         if (mesh_ is null) return;
-        clusterOf = new int[](mesh_.vertices.length);
-        foreach (ref c; clusterOf) c = -1;
+
+        // --- Cache key check --------------------------------------------------
+        // Membership is invariant while (mutationVersion, editMode, selSig) all
+        // hold; only centers (read from live mesh_.vertices) change per frame.
+        const ulong mutVer  = mesh_.mutationVersion;
+        const int   edMode  = cast(int)(*editMode_);
+        const ulong selSig  = selectionSignature();
+        const bool  hit = _cacheValid
+                       && _cachedMutVer   == mutVer
+                       && _cachedEditMode == edMode
+                       && _cachedSelSig   == selSig
+                       && _cachedClusterOf.length == mesh_.vertices.length;
+
+        if (!hit) {
+            // MISS: rebuild membership (O(V+E) via cached adjacency) and the
+            // partition, then stamp the new key.
+            _cachedClusterOf.length = mesh_.vertices.length;
+            foreach (ref c; _cachedClusterOf) c = -1;
+            _cachedClusterCnt = 0;
+            _cachedFaceClusterOf.length = 0;
+            final switch (*editMode_) {
+                case EditMode.Polygons:
+                    buildFaceClusterMembership(_cachedClusterOf, _cachedClusterCnt);
+                    break;
+                case EditMode.Edges:
+                    buildEdgeClusterMembership(_cachedClusterOf, _cachedClusterCnt);
+                    break;
+                case EditMode.Vertices:
+                    buildVertClusterMembership(_cachedClusterOf, _cachedClusterCnt);
+                    break;
+            }
+            _cachedMutVer   = mutVer;
+            _cachedEditMode = edMode;
+            _cachedSelSig   = selSig;
+            _cacheValid     = true;
+        }
+
+        if (_cachedClusterCnt <= 0) return;   // nothing selected
+        // Always recompute centers from the live positions (cheap, O(sel verts))
+        // so a drag's per-frame motion is reflected, EXACTLY as before.
+        clusterOf = _cachedClusterOf;
+        clusterCenters = new Vec3[](_cachedClusterCnt);
+        foreach (i; 0 .. _cachedClusterCnt)
+            clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
+    }
+
+    // Per-frame Local-mode entry for evaluate(). Returns the SAME single-pivot
+    // center the const computeCenter()/computeLocalClusters path produces
+    // (cluster-0 AVERAGE centroid — NOT the bbox center), while also handing
+    // back the per-cluster BBOX centers + partition for the published packet.
+    // Both reuse the cross-frame membership cache so the O(E·V) BFS runs at
+    // most once per (topology, selection, edit-mode) change instead of per
+    // drag frame.
+    Vec3 localCenterAndClustersCached(out Vec3[] clusterCenters,
+                                      out int[]  clusterOf) {
+        computeLocalClustersFull(clusterCenters, clusterOf);
+        if (_cachedClusterCnt <= 0)
+            return centroidWithGeometryFallback();
+        // Average centroid of CLUSTER 0, replicating the per-mode single-pivot
+        // formula exactly (face mode averages face centroids; vert/edge modes
+        // average the cluster's verts).
+        Vec3 sum = Vec3(0, 0, 0);
+        int  n   = 0;
         final switch (*editMode_) {
             case EditMode.Polygons:
-                computeLocalFaceClustersFull(clusterCenters, clusterOf);
+                // Average of the centroids of faces in cluster 0.
+                foreach (fi, c; _cachedFaceClusterOf) {
+                    if (c != 0) continue;
+                    const(uint)[] face = mesh_.faces[fi];
+                    Vec3 fc = Vec3(0, 0, 0);
+                    foreach (vi; face) fc += mesh_.vertices[vi];
+                    if (face.length > 0) fc = fc / cast(float)face.length;
+                    sum += fc;
+                    n++;
+                }
                 break;
             case EditMode.Edges:
-                computeLocalEdgeClustersFull(clusterCenters, clusterOf);
-                break;
             case EditMode.Vertices:
-                computeLocalVertClustersFull(clusterCenters, clusterOf);
+                // Average of the verts assigned to cluster 0.
+                foreach (vi, c; _cachedClusterOf) {
+                    if (c != 0) continue;
+                    sum += mesh_.vertices[vi];
+                    n++;
+                }
                 break;
         }
+        return n > 0 ? sum / cast(float)n : centroidWithGeometryFallback();
+    }
+
+    // Cheap rolling hash of the Select bit across the marks array relevant to
+    // the active edit mode. Two different selections collide with vanishingly
+    // small probability; a collision would only ever cause a stale partition,
+    // and selection changes during an interactive drag don't happen (the drag
+    // freezes the selection), so this is safe for the cache-key use.
+    ulong selectionSignature() const {
+        if (mesh_ is null) return 0;
+        ulong h = 1469598103934665603UL; // FNV-1a offset basis
+        void mix(ulong x) { h ^= x; h *= 1099511628211UL; }
+        const(uint)[] marks;
+        final switch (*editMode_) {
+            case EditMode.Vertices: marks = mesh_.vertexMarks; break;
+            case EditMode.Edges:    marks = mesh_.edgeMarks;   break;
+            case EditMode.Polygons: marks = mesh_.faceMarks;   break;
+        }
+        mix(marks.length);
+        // Fold one bit per element (the Select bit) into the hash by index, so
+        // both WHICH elements are selected and HOW MANY are captured.
+        foreach (i, m; marks)
+            if (m & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
+        return h;
+    }
+
+    // Build (or reuse) the vertex→neighbor CSR adjacency from mesh_.edges.
+    // Topology-invariant, so it is rebuilt only when mutationVersion moves.
+    void ensureVertexAdjacency() {
+        if (_adjMutVer == mesh_.mutationVersion
+         && _adjOffset.length == mesh_.vertices.length + 1)
+            return;
+        const size_t nV = mesh_.vertices.length;
+        // Counting pass → per-vertex degree, then prefix-sum into offsets.
+        _adjOffset.length = nV + 1;
+        _adjOffset[] = 0;
+        foreach (edge; mesh_.edges) {
+            _adjOffset[edge[0] + 1]++;
+            _adjOffset[edge[1] + 1]++;
+        }
+        foreach (i; 1 .. nV + 1) _adjOffset[i] += _adjOffset[i - 1];
+        _adjNeighbors.length = _adjOffset[nV];
+        // Fill pass with a temporary cursor per vertex.
+        auto cursor = new size_t[](nV);
+        foreach (i; 0 .. nV) cursor[i] = _adjOffset[i];
+        foreach (edge; mesh_.edges) {
+            _adjNeighbors[cursor[edge[0]]++] = edge[1];
+            _adjNeighbors[cursor[edge[1]]++] = edge[0];
+        }
+        _adjMutVer = mesh_.mutationVersion;
     }
 
     // Helper: bbox center of vertices in a cluster (verts identified by
@@ -399,39 +574,45 @@ private:
         return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
     }
 
-    void computeLocalFaceClustersFull(out Vec3[] clusterCenters,
-                                      ref int[]  clusterOf) const {
+    // Membership-only builders (centers are computed by the caller from live
+    // positions). They fill `clusterOf[vi]` with a cluster id per selected
+    // vertex (-1 = not in selection) and set `cid` to the cluster count.
+    // Topology adjacency is O(V+E) via the cached CSR / face-edge maps, NOT
+    // O(E·V) per dequeued element as the old inline scans were.
+    void buildFaceClusterMembership(ref int[] clusterOf, ref int cid) {
         if (!mesh_.hasAnySelectedFaces()) return;
         size_t nF = mesh_.faces.length;
         int[]  clusterOfFace = new int[](nF);
         foreach (ref c; clusterOfFace) c = -1;
-        bool faceShareEdge(uint a, uint b) {
-            const(uint)[] fa = mesh_.faces[a];
-            const(uint)[] fb = mesh_.faces[b];
-            foreach (i; 0 .. fa.length) {
-                uint v0 = fa[i];
-                uint v1 = fa[(i + 1) % fa.length];
-                foreach (j; 0 .. fb.length) {
-                    uint w0 = fb[j];
-                    uint w1 = fb[(j + 1) % fb.length];
-                    if ((v0 == w0 && v1 == w1) || (v0 == w1 && v1 == w0))
-                        return true;
-                }
-            }
-            return false;
+        // Build face adjacency via a shared-edge map: each undirected vertex
+        // pair (v0,v1) maps to the faces incident on it; two faces sharing a
+        // key are edge-adjacent. O(total face corners) to build.
+        uint[][ulong] facesByEdgeKey;
+        ulong edgeKey(uint a, uint b) {
+            return a < b ? (cast(ulong)a << 32) | b
+                         : (cast(ulong)b << 32) | a;
         }
-        int cid = 0;
+        foreach (fi; 0 .. nF) {
+            const(uint)[] f = mesh_.faces[fi];
+            foreach (i; 0 .. f.length) {
+                ulong k = edgeKey(f[i], f[(i + 1) % f.length]);
+                facesByEdgeKey[k] ~= cast(uint)fi;
+            }
+        }
         foreach (start; 0 .. nF) {
             if (!mesh_.isFaceSelected(start) || clusterOfFace[start] != -1) continue;
             uint[] queue; queue ~= cast(uint)start;
             clusterOfFace[start] = cid;
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
-                foreach (other; 0 .. nF) {
-                    if (!mesh_.isFaceSelected(other) || clusterOfFace[other] != -1) continue;
-                    if (faceShareEdge(cur, cast(uint)other)) {
+                const(uint)[] f = mesh_.faces[cur];
+                foreach (i; 0 .. f.length) {
+                    ulong k = edgeKey(f[i], f[(i + 1) % f.length]);
+                    foreach (other; facesByEdgeKey[k]) {
+                        if (other == cur) continue;
+                        if (!mesh_.isFaceSelected(other) || clusterOfFace[other] != -1) continue;
                         clusterOfFace[other] = cid;
-                        queue ~= cast(uint)other;
+                        queue ~= other;
                     }
                 }
             }
@@ -447,49 +628,54 @@ private:
                     clusterOf[vi] = c;
             }
         }
-        clusterCenters = new Vec3[](cid);
-        foreach (i; 0 .. cid) clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
+        // Stash the per-face partition so the single-pivot first-center
+        // (average of face centroids in cluster 0) can be recomputed from
+        // cache without redoing the BFS.
+        _cachedFaceClusterOf = clusterOfFace;
     }
 
-    void computeLocalEdgeClustersFull(out Vec3[] clusterCenters,
-                                      ref int[]  clusterOf) const {
+    void buildEdgeClusterMembership(ref int[] clusterOf, ref int cid) {
         if (!mesh_.hasAnySelectedEdges()) return;
+        ensureVertexAdjacency();
         size_t nV = mesh_.vertices.length;
+        // A vert participates iff it is an endpoint of some SELECTED edge; the
+        // graph walked is the full vertex adjacency restricted to selected
+        // edges. Build a per-(undirected-edge) selected lookup so neighbor
+        // traversal can confirm the connecting edge is selected.
         bool[] inSel = new bool[](nV);
+        bool[ulong] selEdgeKey;
+        ulong edgeKey(uint a, uint b) {
+            return a < b ? (cast(ulong)a << 32) | b
+                         : (cast(ulong)b << 32) | a;
+        }
         foreach (i, edge; mesh_.edges) {
             if (mesh_.isEdgeSelected(i)) {
                 inSel[edge[0]] = true;
                 inSel[edge[1]] = true;
+                selEdgeKey[edgeKey(edge[0], edge[1])] = true;
             }
         }
-        int cid = 0;
         foreach (start; 0 .. nV) {
             if (!inSel[start] || clusterOf[start] != -1) continue;
             uint[] queue; queue ~= cast(uint)start;
             clusterOf[start] = cid;
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
-                foreach (i, edge; mesh_.edges) {
-                    if (!mesh_.isEdgeSelected(i)) continue;
-                    uint other = uint.max;
-                    if      (edge[0] == cur) other = edge[1];
-                    else if (edge[1] == cur) other = edge[0];
-                    if (other == uint.max || clusterOf[other] != -1) continue;
+                foreach (other; _adjNeighbors[_adjOffset[cur] .. _adjOffset[cur + 1]]) {
+                    if (clusterOf[other] != -1) continue;
+                    if (edgeKey(cur, other) !in selEdgeKey) continue;
                     clusterOf[other] = cid;
                     queue ~= other;
                 }
             }
             cid++;
         }
-        clusterCenters = new Vec3[](cid);
-        foreach (i; 0 .. cid) clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
     }
 
-    void computeLocalVertClustersFull(out Vec3[] clusterCenters,
-                                      ref int[]  clusterOf) const {
+    void buildVertClusterMembership(ref int[] clusterOf, ref int cid) {
         if (!mesh_.hasAnySelectedVertices()) return;
+        ensureVertexAdjacency();
         size_t nV = mesh_.vertices.length;
-        int cid = 0;
         foreach (start; 0 .. nV) {
             if (!mesh_.isVertexSelected(start)) continue;
             if (clusterOf[start] != -1) continue;
@@ -497,11 +683,8 @@ private:
             clusterOf[start] = cid;
             while (queue.length > 0) {
                 uint cur = queue[0]; queue = queue[1 .. $];
-                foreach (edge; mesh_.edges) {
-                    uint other = uint.max;
-                    if      (edge[0] == cur) other = edge[1];
-                    else if (edge[1] == cur) other = edge[0];
-                    if (other == uint.max || clusterOf[other] != -1) continue;
+                foreach (other; _adjNeighbors[_adjOffset[cur] .. _adjOffset[cur + 1]]) {
+                    if (clusterOf[other] != -1) continue;
                     if (!mesh_.isVertexSelected(other)) continue;
                     clusterOf[other] = cid;
                     queue ~= other;
@@ -509,8 +692,6 @@ private:
             }
             cid++;
         }
-        clusterCenters = new Vec3[](cid);
-        foreach (i; 0 .. cid) clusterCenters[i] = clusterBBoxCenter(clusterOf, cast(int)i);
     }
 
     // Local mode: enumerate connected components inside the current
