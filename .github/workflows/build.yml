@@ -16,7 +16,7 @@ on:
   # there were no commits in the last 24h. The runner must be online at this
   # time — adjust the cron if needed (UTC).
   schedule:
-    - cron: '4,8,12,16 15 * * *'
+    - cron: '0 3 * * *'
 
 permissions:
   contents: write
@@ -41,7 +41,7 @@ jobs:
           IN_TAG:    ${{ inputs.tag }}
           IN_RENDER: ${{ inputs.with_render }}
         run: |
-          if [ "$EVENT" = "schedule" ] || [ "$EVENT" = "workflow_dispatch" ]; then
+          if [ "$EVENT" = "schedule" ]; then
             # with_render disabled for the regular nightly for now (render
             # backends still need toolchain work on the runners); modeling only.
             tag=nightly; with_render=false; nightly=true
