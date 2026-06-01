@@ -399,6 +399,23 @@ Case[] casesForTool(Tool t) {
         [PipeAttr("falloff", "type", "screen"),
          PipeAttr("falloff", "screenSize", "300")],
         "falloff=screen (300px)");
+    cs ~= Case(tname ~ "/falloff=cylinder", t, "whole",
+        [PipeAttr("falloff", "type", "cylinder"),
+         PipeAttr("falloff", "center", "0,0,0"),
+         PipeAttr("falloff", "size",   "1,1,1"),
+         PipeAttr("falloff", "axis",   "0,1,0")],
+        "falloff=cylinder (r=1 about Y)");
+    // Selection falloff: selected=1, unselected decays by BFS hop distance
+    // over mesh edges — needs an actual selection (whole-mesh ⇒ all weight 1,
+    // trivial), so use the half selection. `dist` is the BFS step count.
+    cs ~= Case(tname ~ "/falloff=selection", t, "half",
+        [PipeAttr("falloff", "type", "selection"),
+         PipeAttr("falloff", "dist", "4")],
+        "falloff=selection (BFS 4 hops, half sel)");
+    // falloff=lasso is intentionally NOT benched: the lasso polygon is painted
+    // by an interactive gesture and has NO numeric setAttr (no `lassoPoly`
+    // key), so a headless lasso has <3 points and lassoWeight early-returns 1.0
+    // — a hollow case measuring nothing. Add it when a lassoPoly attr exists.
 
     // Symmetry X.
     cs ~= Case(tname ~ "/symmetry=X", t, "whole",
@@ -436,6 +453,18 @@ Case[] casesForTool(Tool t) {
             [PipeAttr("snap", "enabled", "true"),
              PipeAttr("snap", "types", "vertex")],
             "snap=vertex (per-vertex candidate walk)");
+
+        // Remaining snap types, isolated, to measure each candidate walk.
+        // edge/edgeCenter scan all edges; polygon/polyCenter scan all faces;
+        // workplane is O(1) arithmetic (like grid). Each is set as the SOLE
+        // enabled type so snapQuery attributes only that type's cost.
+        foreach (snapType; ["edge", "edgeCenter", "polygon",
+                            "polyCenter", "workplane"]) {
+            cs ~= Case(tname ~ "/snap=" ~ snapType, t, "whole",
+                [PipeAttr("snap", "enabled", "true"),
+                 PipeAttr("snap", "types", snapType)],
+                "snap=" ~ snapType);
+        }
     }
 
     // Selection variations off the baseline config.
