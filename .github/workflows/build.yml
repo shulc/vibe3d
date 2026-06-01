@@ -82,6 +82,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Windows C: is small; put the dub package cache (nfde + heavy render git
+      # deps / LFS) on F: where there's room. Must precede any dub command.
+      - name: Use F: for dub cache (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path F:\dub | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "DUB_HOME=F:\dub"
+
       # Release is built with LDC (optimized). LDC must be pre-installed on the
       # runner host — these steps only LOCATE it (PATH or common dlang install
       # dirs) and fail with a clear message if absent; they never download it.
@@ -207,7 +216,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $nfd = "$env:LOCALAPPDATA\dub\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
+          $nfd = "$env:DUB_HOME\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
           if (Test-Path $nfd) {
             Push-Location $nfd
             git submodule update --init --recursive
@@ -260,6 +269,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # Windows C: is small; put the dub package cache (heavy render git deps /
+      # LFS) on F: where there's room. Must precede any dub command.
+      - name: Use F: for dub cache (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path F:\dub | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "DUB_HOME=F:\dub"
 
       # Locate the host LDC (the bundle scripts build with --compiler=ldc2 by
       # default). Fails clearly if ldc2 isn't installed on the runner.
@@ -357,7 +375,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $nfd = "$env:LOCALAPPDATA\dub\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
+          $nfd = "$env:DUB_HOME\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
           if (Test-Path $nfd) {
             Push-Location $nfd
             git submodule update --init --recursive
