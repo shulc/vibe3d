@@ -12,6 +12,7 @@ import core.thread;
 
 import mesh : Surface;
 import core.atomic;
+import perf_probe : g_perf;
 
 // For event player functionality
 import bindbc.sdl;
@@ -581,6 +582,29 @@ class HttpServer {
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Selection data provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/perf/reset" && request.method == "POST") {
+            // Zero all perf counters before a measured run. No-op in the
+            // default build (g_perf.reset compiles away).
+            g_perf.reset();
+            response.statusCode = 200;
+            response.body = "{\"status\":\"ok\"}";
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/perf" && request.method == "GET") {
+            // Per-category timing + counter breakdown. Direct read of the
+            // process-wide probe from the HTTP thread — plain counters, no
+            // lock needed for this diagnostic. Returns "{}" in the default
+            // (non-PerfProbe) build. Mesh vertex/face counts are available
+            // via /api/model, so they're intentionally not duplicated here.
+            try {
+                response.statusCode = 200;
+                response.body = g_perf.toJson();
+                response.headers["Content-Type"] = "application/json";
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
+                               e.msg.replace("\"", "\\\"") ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/toolpipe/eval") {

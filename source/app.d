@@ -30,6 +30,7 @@ import gizmo;
 import view;
 import shader;
 import viewcache;
+import perf_probe : g_perf, Cat;
 import lwo;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 
@@ -4195,6 +4196,10 @@ void main(string[] args) {
         // bump mutationVersion (see GpuMesh.suppressCageUpload) so this main
         // loop owns the actual upload.
         {
+            // Perf: time the per-frame GPU vertex upload (cage refresh or
+            // full re-upload after a drag mutates the mesh). No-op in the
+            // default build. Single coarse site, per the plan.
+            auto zGpu = g_perf.scope_(Cat.gpuUpload);
             bool wantPreview = subpatchPreview.active;
             gpu.suppressCageUpload = wantPreview;
             bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
@@ -4424,15 +4429,21 @@ void main(string[] args) {
                                 dragMode == DragMode.Zoom  ||
                                 dragMode == DragMode.Pan);
 
-        // Invalidate caches when tools are active (they modify mesh)
-        if (activeTool !is null && (vertexCache.valid.length > 0)) {
-            vertexCache.invalidate();
-            edgeCache.invalidate();
-            faceCache.invalidate();
-            vertexCache.update(vp);
-        } else if (!doingCameraDrag && vertexCache.needsUpdate(vp)) {
-            vertexCache.invalidate();
-            vertexCache.update(vp);
+        // Invalidate caches when tools are active (they modify mesh).
+        // Perf: time the screen-space cache invalidate + vertex re-project
+        // that follows every tool-driven mesh mutation. No-op in the
+        // default build; this is the single coarse site for the drag path.
+        {
+            auto zCache = g_perf.scope_(Cat.cacheInvalidate);
+            if (activeTool !is null && (vertexCache.valid.length > 0)) {
+                vertexCache.invalidate();
+                edgeCache.invalidate();
+                faceCache.invalidate();
+                vertexCache.update(vp);
+            } else if (!doingCameraDrag && vertexCache.needsUpdate(vp)) {
+                vertexCache.invalidate();
+                vertexCache.update(vp);
+            }
         }
 
         pickVertices(vp, doingCameraDrag);

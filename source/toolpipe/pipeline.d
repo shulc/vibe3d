@@ -10,6 +10,7 @@ import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket;
 import operator : Operator, Task, VectorStack, PacketKind;
+import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
 // Pipeline — ordered list of Stages with dispatch.
@@ -128,17 +129,41 @@ public:
     /// doc/operator_refactor_plan.md). Other slots typically hold one
     /// operator but the list shape is uniform.
     void evaluate(ref VectorStack vts) {
+        // Perf: time the whole pipeline pass, then each stage by its slot.
+        // No-op in the default build (g_perf.scope_ → empty struct).
+        auto zTotal = g_perf.scope_(Cat.pipeTotal);
         // Iterate slots in declared Task order: Work → Symm → Snap →
         // Acen → Axis → Wght → Actr. static foreach so the dispatch
         // unrolls to seven straight-line array walks; no runtime
         // overhead beyond the array bounds check.
         static foreach (member; __traits(allMembers, Task)) {{
-            auto slotOps = operators_[__traits(getMember, Task, member)];
+            enum Task slot = __traits(getMember, Task, member);
+            auto slotOps = operators_[slot];
+            // Map the slot to a perf category. Slots without a dedicated
+            // bucket (Work, Actr) don't open a timer — Actr's mesh mutation
+            // is timed separately in the kernels as Cat.kernelApply.
+            enum hasCat = perfCatFor(slot) != -1;
+            static if (hasCat)
+                auto zStage = g_perf.scope_(cast(Cat)perfCatFor(slot));
             foreach (op; slotOps) {
                 checkRequiredPackets(op, vts);
                 op.evaluate(vts);
             }
         }}
+    }
+
+    // Compile-time Task → perf Cat map. Returns -1 for slots with no
+    // dedicated timer category (Work, Wght-as-actor, Actr).
+    private static int perfCatFor(Task slot) pure nothrow @nogc @safe {
+        final switch (slot) {
+            case Task.Work: return -1;
+            case Task.Symm: return cast(int)Cat.pipeSymmetry;
+            case Task.Snap: return cast(int)Cat.pipeSnap;
+            case Task.Acen: return cast(int)Cat.pipeAcen;
+            case Task.Axis: return cast(int)Cat.pipeAxis;
+            case Task.Wght: return cast(int)Cat.pipeFalloff;
+            case Task.Actr: return -1;
+        }
     }
 
     /// Diagnostic: confirm every PacketKind the operator declares in
