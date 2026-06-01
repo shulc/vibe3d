@@ -26,16 +26,19 @@ struct MeshSnapshot {
     Vec3[]   vertices;
     uint[2][] edges;
     uint[][] faces;
-    bool[]   selectedVertices;
-    bool[]   selectedEdges;
-    bool[]   selectedFaces;
+    // Packed per-element flag words (selection + subpatch + any future
+    // reserved bits) — the same representation the mesh stores. faceMarks
+    // carries both the Select and Subpatch bits, so subpatch round-trips
+    // automatically and new mark bits need no snapshot change.
+    uint[]   vertexMarks;
+    uint[]   edgeMarks;
+    uint[]   faceMarks;
     int[]    vertexSelectionOrder;
     int[]    edgeSelectionOrder;
     int[]    faceSelectionOrder;
     int      vertexSelectionOrderCounter;
     int      edgeSelectionOrderCounter;
     int      faceSelectionOrderCounter;
-    bool[]   isSubpatch;
     Surface[] surfaces;
     uint[]    faceMaterial;
     MeshMap[] meshMaps;
@@ -48,16 +51,15 @@ struct MeshSnapshot {
         // .range needed because the templated `map!` instantiation
         // through `alias this` can't carry const(FaceList) cleanly.
         s.faces                = mesh.faces.range.map!(f => f.dup).array;
-        s.selectedVertices     = mesh.selectedVertices.dup;
-        s.selectedEdges        = mesh.selectedEdges.dup;
-        s.selectedFaces        = mesh.selectedFaces.dup;
+        s.vertexMarks          = mesh.vertexMarks.dup;
+        s.edgeMarks            = mesh.edgeMarks.dup;
+        s.faceMarks            = mesh.faceMarks.dup;
         s.vertexSelectionOrder = mesh.vertexSelectionOrder.dup;
         s.edgeSelectionOrder   = mesh.edgeSelectionOrder.dup;
         s.faceSelectionOrder   = mesh.faceSelectionOrder.dup;
         s.vertexSelectionOrderCounter = mesh.vertexSelectionOrderCounter;
         s.edgeSelectionOrderCounter   = mesh.edgeSelectionOrderCounter;
         s.faceSelectionOrderCounter   = mesh.faceSelectionOrderCounter;
-        s.isSubpatch           = mesh.isSubpatch.dup;
         s.surfaces             = mesh.surfaces.dup;
         s.faceMaterial         = mesh.faceMaterial.dup;
         // Deep-dup each map (its `data` too) so later mesh mutations don't
@@ -71,16 +73,19 @@ struct MeshSnapshot {
         mesh.vertices                    = vertices.dup;
         mesh.edges                       = edges.dup;
         mesh.faces                       = faces.map!(f => f.dup).array;
-        mesh.setVerticesSelectedFrom(selectedVertices);
-        mesh.setEdgesSelectedFrom(selectedEdges);
-        mesh.setFacesSelectedFrom(selectedFaces);
+        // Whole-word restore: faceMarks carries Select + Subpatch (+ any
+        // reserved bits) together, so this restores the full per-element
+        // flag state. Lengths match the geometry restored just above
+        // because they were captured alongside it.
+        mesh.vertexMarks                 = vertexMarks.dup;
+        mesh.edgeMarks                   = edgeMarks.dup;
+        mesh.faceMarks                   = faceMarks.dup;
         mesh.vertexSelectionOrder        = vertexSelectionOrder.dup;
         mesh.edgeSelectionOrder          = edgeSelectionOrder.dup;
         mesh.faceSelectionOrder          = faceSelectionOrder.dup;
         mesh.vertexSelectionOrderCounter = vertexSelectionOrderCounter;
         mesh.edgeSelectionOrderCounter   = edgeSelectionOrderCounter;
         mesh.faceSelectionOrderCounter   = faceSelectionOrderCounter;
-        mesh.setFaceSubpatchFrom(isSubpatch);
         mesh.surfaces                    = surfaces.dup;
         mesh.faceMaterial                = faceMaterial.dup;
         // Restore the map registry (deep-dup so the live mesh doesn't alias
