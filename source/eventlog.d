@@ -222,6 +222,15 @@ struct EventPlayer {
     int     mouseX, mouseY;   // current replayed cursor position
     bool    mouseDown;        // left button state (for visual feedback)
 
+    // Fast-forward replay (set by app.d's --perf mode). When true, tick()
+    // ignores the recorded wall-clock timestamps and drains EVERY pending
+    // event each call — the perf harness measures CPU work inside the tool
+    // loop via PerfProbe, which is independent of feed rate, so firing the
+    // whole drag as fast as possible keeps the matrix run to seconds while
+    // leaving per-stage timings correct. The normal (timestamp-gated) path
+    // is untouched when this is false.
+    bool    fastForward;
+
     // Recorded viewport from the log's VIEWPORT meta line, if present.
     // Used together with the module-level g_replayCurrentViewport to remap
     // pixel coordinates of mouse events on replay.
@@ -380,8 +389,13 @@ struct EventPlayer {
     // in the log).
     bool tick() {
         if (!active) return false;
-        double nowMs = cast(double)(_perfCounter() - startCounter)
-                     / cast(double)freq * 1000.0;
+        // In fast-forward mode every remaining event is treated as due —
+        // skip the wall-clock read entirely. Otherwise gate on elapsed
+        // time as recorded in the log.
+        double nowMs = fastForward
+            ? double.infinity
+            : cast(double)(_perfCounter() - startCounter)
+              / cast(double)freq * 1000.0;
         while (idx < entries.length && entries[idx].timeMs <= nowMs) {
             auto  entry = entries[idx];
             SDL_Event e = entry.event;
@@ -652,4 +666,41 @@ unittest { // EventPlayer.tick: deactivates when all events are consumed
     assert(p.tick() == false);
     assert(!p.active);
     assert(g_testPushCount == 1);
+}
+
+unittest { // EventPlayer.tick: fastForward drains ALL events regardless of nowMs
+    // Perf-counter stays at 0 (nowMs would be 0), so without fastForward
+    // none of these far-future events would fire. fastForward must drain
+    // the whole queue in one tick and deactivate.
+    _mock_PerfCounter = function() { return 0UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_SetModState = function(SDL_Keymod m) {};
+    _mock_PushEvent   = function(SDL_Event* e) { g_testPushCount++; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq  = null;
+        _mock_SetModState = null; _mock_PushEvent = null;
+    }
+
+    EventPlayer p;
+    p.active       = true;
+    p.startCounter = 0;
+    p.freq         = 1000;
+    p.idx          = 0;
+    p.fastForward  = true;
+
+    SDL_Event e;
+    e.type = SDL_QUIT;
+    p.entries = [
+        EventPlayer.Entry(1000.0,   e, cast(SDL_Keymod)0),
+        EventPlayer.Entry(5000.0,   e, cast(SDL_Keymod)0),
+        EventPlayer.Entry(999999.0, e, cast(SDL_Keymod)0),
+    ];
+
+    g_testPushCount = 0;
+    // All three are far in the future by wall-clock, but fastForward fires
+    // them all and exhausts the queue → returns false, deactivates.
+    assert(p.tick() == false);
+    assert(g_testPushCount == 3);
+    assert(p.idx == 3);
+    assert(!p.active);
 }

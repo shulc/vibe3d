@@ -8,9 +8,10 @@ import viewcache;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 
-/// Reset the scene to a chosen primitive (cube/diamond/octahedron/lshape).
-/// Replaces the legacy /api/reset direct handler. Snapshots the entire
-/// pre-reset mesh so undo brings back whatever was there.
+/// Reset the scene to a chosen primitive
+/// (cube/diamond/octahedron/lshape/grid/subdivcube). Replaces the legacy
+/// /api/reset direct handler. Snapshots the entire pre-reset mesh so undo
+/// brings back whatever was there.
 class SceneReset : Command {
     private GpuMesh*         gpu;
     private VertexCache*     vc;
@@ -20,8 +21,12 @@ class SceneReset : Command {
     private View*            viewPtr;
     private void delegate()  onResetTool;
 
-    private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape"
+    private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
+    // Integer parameter for the dense perf meshes: grid side count (n) for
+    // "grid", Catmull-Clark depth (levels) for "subdivcube". -1 → use the
+    // primitive's default. Ignored by the small fixed primitives.
+    private int          primParam = -1;
     private MeshSnapshot snap;
     private EditMode     prevEditMode;
     private bool         captured;
@@ -47,6 +52,9 @@ class SceneReset : Command {
 
     void setPrimitive(string p) { primitive = p; emptyScene = false; }
     void setEmpty(bool b) { emptyScene = b; }
+    /// Integer arg for the dense perf meshes (grid side / subdiv levels).
+    /// Pass -1 (the default) to let the factory pick its own default.
+    void setPrimitiveParam(int p) { primParam = p; }
 
     override bool apply() {
         snap         = MeshSnapshot.capture(*mesh);
@@ -59,6 +67,16 @@ class SceneReset : Command {
             case "lshape":     *mesh = makeLShape();    break;
             case "diamond":    *mesh = makeDiamond();   break;
             case "octahedron": *mesh = makeOctahedron();break;
+            case "grid":
+                // Dense flat grid for the perf harness. Default 316 → ~100 K
+                // quads (316×316), matching the perf-mesh target.
+                *mesh = makeGridPlane(primParam > 0 ? primParam : 316);
+                break;
+            case "subdivcube":
+                // Catmull-Clark cube for the perf harness. Default 7 levels
+                // → ~98 K faces.
+                *mesh = subdivideCube(primParam > 0 ? primParam : 7);
+                break;
             case "":
             case "cube":
             default:           *mesh = makeCube();      break;
