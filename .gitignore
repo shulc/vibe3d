@@ -33,6 +33,6 @@ vibe3d-windows-render/
 vibe3d-linux-render/
 vibe3d-macos-render/
 
-# perf harness generated output
+# perf harness generated output (results.json is a transient per-run dump;
+# baseline.json is committed as the reference — see tools/perf/README.md)
 tools/perf/results.json
-tools/perf/baseline.json

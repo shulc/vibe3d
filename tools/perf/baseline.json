@@ -1,0 +1,379 @@
+{
+  "buildType": "perf",
+  "compiler": "ldc2 1.42.0",
+  "meshType": "grid",
+  "n": 316,
+  "faceCount": 99856,
+  "viewport": "1280x960",
+  "repeats": 5,
+  "cases": [
+    {
+      "name": "move/baseline",
+      "kernelMedianUs": 14085.600,
+      "kernelP95Us": 14149.500,
+      "pipeMedianUs": 4897.100,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/falloff=linear",
+      "kernelMedianUs": 26565.800,
+      "kernelP95Us": 26896.500,
+      "pipeMedianUs": 47.000,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/falloff=radial",
+      "kernelMedianUs": 25309.000,
+      "kernelP95Us": 25693.500,
+      "pipeMedianUs": 52.400,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/falloff=element",
+      "kernelMedianUs": 0.400,
+      "kernelP95Us": 0.600,
+      "pipeMedianUs": 2993.100,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 20
+    },
+    {
+      "name": "move/falloff=screen",
+      "kernelMedianUs": 51314.200,
+      "kernelP95Us": 51350.100,
+      "pipeMedianUs": 43.000,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/falloff=cylinder",
+      "kernelMedianUs": 36598.200,
+      "kernelP95Us": 36607.000,
+      "pipeMedianUs": 77.000,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/falloff=selection",
+      "kernelMedianUs": 7714.800,
+      "kernelP95Us": 7787.600,
+      "pipeMedianUs": 6697.900,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "move/symmetry=X",
+      "kernelMedianUs": 21315.500,
+      "kernelP95Us": 21859.000,
+      "pipeMedianUs": 6356.300,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/acen=selection",
+      "kernelMedianUs": 6571.800,
+      "kernelP95Us": 6574.200,
+      "pipeMedianUs": 2840.400,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "move/acen=local",
+      "kernelMedianUs": 6680.000,
+      "kernelP95Us": 6682.400,
+      "pipeMedianUs": 12891.800,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "move/snap=grid",
+      "kernelMedianUs": 13117.800,
+      "kernelP95Us": 13897.400,
+      "pipeMedianUs": 4410.200,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/snap=vertex",
+      "kernelMedianUs": 13294.700,
+      "kernelP95Us": 13481.100,
+      "pipeMedianUs": 4731.100,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/snap=edge",
+      "kernelMedianUs": 13238.300,
+      "kernelP95Us": 13241.900,
+      "pipeMedianUs": 4540.700,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/snap=edgeCenter",
+      "kernelMedianUs": 13195.600,
+      "kernelP95Us": 13202.800,
+      "pipeMedianUs": 4595.600,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/snap=polygon",
+      "kernelMedianUs": 14105.800,
+      "kernelP95Us": 14109.600,
+      "pipeMedianUs": 4750.200,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/snap=polyCenter",
+      "kernelMedianUs": 13284.900,
+      "kernelP95Us": 13334.900,
+      "pipeMedianUs": 3917.700,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/snap=workplane",
+      "kernelMedianUs": 13258.400,
+      "kernelP95Us": 13363.900,
+      "pipeMedianUs": 5287.000,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "move/selection=single",
+      "kernelMedianUs": 0.300,
+      "kernelP95Us": 0.600,
+      "pipeMedianUs": 3078.800,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 20
+    },
+    {
+      "name": "move/selection=ring",
+      "kernelMedianUs": 42.500,
+      "kernelP95Us": 45.800,
+      "pipeMedianUs": 2993.300,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 6340
+    },
+    {
+      "name": "move/selection=half",
+      "kernelMedianUs": 6713.800,
+      "kernelP95Us": 6770.500,
+      "pipeMedianUs": 2805.900,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "rotate/baseline",
+      "kernelMedianUs": 13265.300,
+      "kernelP95Us": 13282.200,
+      "pipeMedianUs": 5114.600,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "rotate/falloff=linear",
+      "kernelMedianUs": 26869.500,
+      "kernelP95Us": 27085.100,
+      "pipeMedianUs": 47.200,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "rotate/falloff=radial",
+      "kernelMedianUs": 25332.000,
+      "kernelP95Us": 25472.200,
+      "pipeMedianUs": 3737.900,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "rotate/falloff=element",
+      "kernelMedianUs": 0.700,
+      "kernelP95Us": 0.800,
+      "pipeMedianUs": 65.900,
+      "dominantStage": "cacheInvalidate",
+      "vertsTouched": 20
+    },
+    {
+      "name": "rotate/falloff=screen",
+      "kernelMedianUs": 49866.000,
+      "kernelP95Us": 52073.500,
+      "pipeMedianUs": 4110.900,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "rotate/falloff=cylinder",
+      "kernelMedianUs": 36505.400,
+      "kernelP95Us": 36793.600,
+      "pipeMedianUs": 5316.300,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "rotate/falloff=selection",
+      "kernelMedianUs": 7593.500,
+      "kernelP95Us": 7614.700,
+      "pipeMedianUs": 10337.000,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "rotate/symmetry=X",
+      "kernelMedianUs": 19998.200,
+      "kernelP95Us": 20001.800,
+      "pipeMedianUs": 53.500,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2009780
+    },
+    {
+      "name": "rotate/acen=selection",
+      "kernelMedianUs": 6567.100,
+      "kernelP95Us": 6580.000,
+      "pipeMedianUs": 2824.800,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "rotate/acen=local",
+      "kernelMedianUs": 7099.500,
+      "kernelP95Us": 7443.800,
+      "pipeMedianUs": 12655.400,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "rotate/selection=single",
+      "kernelMedianUs": 0.200,
+      "kernelP95Us": 0.300,
+      "pipeMedianUs": 2981.200,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 20
+    },
+    {
+      "name": "rotate/selection=ring",
+      "kernelMedianUs": 46.000,
+      "kernelP95Us": 47.400,
+      "pipeMedianUs": 3064.800,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 6340
+    },
+    {
+      "name": "rotate/selection=half",
+      "kernelMedianUs": 7056.500,
+      "kernelP95Us": 7191.100,
+      "pipeMedianUs": 2904.700,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "scale/baseline",
+      "kernelMedianUs": 16644.700,
+      "kernelP95Us": 17443.500,
+      "pipeMedianUs": 4918.600,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2311247
+    },
+    {
+      "name": "scale/falloff=linear",
+      "kernelMedianUs": 28726.900,
+      "kernelP95Us": 29668.200,
+      "pipeMedianUs": 3833.300,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2110269
+    },
+    {
+      "name": "scale/falloff=radial",
+      "kernelMedianUs": 26157.800,
+      "kernelP95Us": 26203.400,
+      "pipeMedianUs": 3483.400,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2110269
+    },
+    {
+      "name": "scale/falloff=element",
+      "kernelMedianUs": 1.200,
+      "kernelP95Us": 1.400,
+      "pipeMedianUs": 2619.600,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 24
+    },
+    {
+      "name": "scale/falloff=screen",
+      "kernelMedianUs": 52194.700,
+      "kernelP95Us": 52460.100,
+      "pipeMedianUs": 3438.600,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2110269
+    },
+    {
+      "name": "scale/falloff=cylinder",
+      "kernelMedianUs": 39792.200,
+      "kernelP95Us": 39941.300,
+      "pipeMedianUs": 3979.600,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2210758
+    },
+    {
+      "name": "scale/falloff=selection",
+      "kernelMedianUs": 7658.500,
+      "kernelP95Us": 7751.900,
+      "pipeMedianUs": 10253.700,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "scale/symmetry=X",
+      "kernelMedianUs": 21255.100,
+      "kernelP95Us": 21315.000,
+      "pipeMedianUs": 5932.500,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 2210758
+    },
+    {
+      "name": "scale/acen=selection",
+      "kernelMedianUs": 6615.000,
+      "kernelP95Us": 6905.600,
+      "pipeMedianUs": 3533.400,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "scale/acen=local",
+      "kernelMedianUs": 6629.100,
+      "kernelP95Us": 6642.600,
+      "pipeMedianUs": 13455.300,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 1001720
+    },
+    {
+      "name": "scale/selection=single",
+      "kernelMedianUs": 0.800,
+      "kernelP95Us": 0.800,
+      "pipeMedianUs": 2687.500,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 23
+    },
+    {
+      "name": "scale/selection=ring",
+      "kernelMedianUs": 49.900,
+      "kernelP95Us": 53.600,
+      "pipeMedianUs": 2703.900,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 7291
+    },
+    {
+      "name": "scale/selection=half",
+      "kernelMedianUs": 6675.400,
+      "kernelP95Us": 7051.800,
+      "pipeMedianUs": 2790.100,
+      "dominantStage": "kernelApply",
+      "vertsTouched": 1001720
+    }
+  ]
+}
