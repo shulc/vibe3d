@@ -140,7 +140,10 @@ jobs:
           $sdlVer = "2.30.3"
           $url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip"
           Invoke-WebRequest $url -OutFile SDL2-devel.zip
-          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
+          # Remove any stale C:\SDL2 from a previous run — Expand-Archive errors
+          # if the destination files already exist (self-hosted runners persist it).
+          if (Test-Path C:\SDL2) { Remove-Item C:\SDL2 -Recurse -Force }
+          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2 -Force
           $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
           echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
           Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
@@ -299,7 +302,10 @@ jobs:
         run: |
           $sdlVer = "2.30.3"
           Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip" -OutFile SDL2-devel.zip
-          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2
+          # Remove any stale C:\SDL2 from a previous run — Expand-Archive errors
+          # if the destination files already exist (self-hosted runners persist it).
+          if (Test-Path C:\SDL2) { Remove-Item C:\SDL2 -Recurse -Force }
+          Expand-Archive SDL2-devel.zip -DestinationPath C:\SDL2 -Force
           $sdlDir = Get-ChildItem C:\SDL2 -Directory | Select-Object -First 1
           echo "SDL2_DIR=$($sdlDir.FullName)" >> $env:GITHUB_ENV
           Copy-Item "$($sdlDir.FullName)\lib\x64\SDL2.dll" -Destination .
