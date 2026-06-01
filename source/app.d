@@ -4449,9 +4449,15 @@ void main(string[] args) {
                                 dragMode == DragMode.Pan);
 
         // Invalidate caches when tools are active (they modify mesh).
-        // Perf: time the screen-space cache invalidate + vertex re-project
-        // that follows every tool-driven mesh mutation. No-op in the
-        // default build; this is the single coarse site for the drag path.
+        // Perf (doc/perf_harness_plan.md): `cacheInvalidate` counts PER-FRAME
+        // screen-space cache invalidations, NOT per-edit. The first branch
+        // fires every frame a tool is active (the tool MAY have mutated the
+        // mesh; we cannot cheaply tell here), the second on camera-only frames
+        // that move the projection. So a long drag racks up one sample per
+        // rendered frame regardless of whether geometry actually moved — this
+        // is the cost of keeping the pick caches live during a drag, and the
+        // structurally-correct place to measure it is per frame, not per apply.
+        // No-op in the default build.
         {
             auto zCache = g_perf.scope_(Cat.cacheInvalidate);
             if (activeTool !is null && (vertexCache.valid.length > 0)) {
