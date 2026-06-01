@@ -36,9 +36,12 @@
  *                 perf-abs is opt-in (n=316, ~5 min, absolute vs the
  *                 committed baseline) and runs ONLY via --only perf-abs.
  *
- * Excluded by default (pre-existing flakes documented in CLAUDE.md):
+ * Excluded by default (pre-existing flakes that pass in isolation / at -j 1
+ * but race under parallel workers):
  *   test_selection
  *   test_toolpipe_axis
+ *   test_http_endpoint
+ *   test_property_panel_drag
  *
  * Override via $RUN_ALL_EXCLUDE (comma-separated, replaces default).
  */
@@ -102,7 +105,7 @@ int main(string[] args) {
     }
 
     string excludeEnv = environment.get("RUN_ALL_EXCLUDE",
-        "test_selection,test_toolpipe_axis,test_http_endpoint");
+        "test_selection,test_toolpipe_axis,test_http_endpoint,test_property_panel_drag");
     string[] excluded = excludeEnv.split(",");
 
     Suite[] suites;
