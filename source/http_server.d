@@ -60,7 +60,7 @@ class HttpServer {
     // screenshot diff.
     private alias SnapLastProvider = string delegate();
     private SnapLastProvider snapLastProvider;
-    private alias ResetHandler = void delegate(string primitiveType, bool empty);
+    private alias ResetHandler = void delegate(string primitiveType, bool empty, int param);
     private ResetHandler resetHandler;
     // POST /api/camera — sync bridge to set the live View. Used by
     // the cross-engine drag test to align vibe3d's camera with a
@@ -75,6 +75,7 @@ class HttpServer {
     private shared long resetCompletedEpoch;
     private string resetPendingType;     // primitive type for the in-flight reset
     private bool   resetPendingEmpty;    // true → empty scene, ignore primitiveType
+    private int    resetPendingParam;    // grid n / subdivcube levels; -1 → factory default
     private bool testMode = false;
 
     // ----- GET /api/gpu/face-vbo synchronous bridge ------------------------
@@ -248,6 +249,13 @@ class HttpServer {
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
+
+    /// Enable fast-forward replay on the HTTP-driven event player (--perf
+    /// mode). EventPlayer.load() preserves this flag across /api/play-events
+    /// requests, so it only needs setting once at startup.
+    public void setPlayerFastForward(bool enabled) {
+        eventPlayer.fastForward = enabled;
+    }
 
     public int  playerMouseX()    const { return eventPlayer.mouseX; }
     public int  playerMouseY()    const { return eventPlayer.mouseY; }
@@ -773,6 +781,13 @@ class HttpServer {
                 resetPendingType  = parseQueryString(request.path, "type", "");
                 string emptyParam = parseQueryString(request.path, "empty", "");
                 resetPendingEmpty = (emptyParam == "true" || emptyParam == "1");
+                // Dense perf meshes take an int: grid → ?n=<int>,
+                // subdivcube → ?levels=<int>. -1 means "use the factory
+                // default" (n=316 / levels=7). Accept either key; n wins if
+                // both are somehow present.
+                int nParam = parseQueryInt(request.path, "n", -1);
+                int lvlParam = parseQueryInt(request.path, "levels", -1);
+                resetPendingParam = (nParam >= 0) ? nParam : lvlParam;
                 long my = atomicOp!"+="(resetSubmittedEpoch, 1);
                 enum int maxIters = 2500;
                 int iters = 0;
@@ -1320,7 +1335,7 @@ class HttpServer {
         long sub = atomicLoad(resetSubmittedEpoch);
         long cmp = atomicLoad(resetCompletedEpoch);
         if (sub <= cmp) return;
-        if (resetHandler !is null) resetHandler(resetPendingType, resetPendingEmpty);
+        if (resetHandler !is null) resetHandler(resetPendingType, resetPendingEmpty, resetPendingParam);
         atomicStore(resetCompletedEpoch, sub);
     }
 

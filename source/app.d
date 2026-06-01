@@ -287,6 +287,13 @@ void main(string[] args) {
     string playbackFile;
     bool startHttpServer = true;  // Enable HTTP server by default
     bool testMode = false;
+    // --perf: benchmark mode. Disables vsync (SDL_GL_SetSwapInterval(0)) and
+    // fast-forwards event replay (ignores recorded timestamps, drains every
+    // due event per tick) so the perf harness can churn its matrix in
+    // seconds. Composes with --test (the runner launches `vibe3d --test
+    // --perf`). PerfProbe timers inside the tool loop are independent of feed
+    // rate, so fast-forward leaves the per-stage measurements correct.
+    bool perfMode = false;
     ushort httpPort = 8080;       // Default port
     int  cliWinW = 800, cliWinH = 600;   // overridable via --window WxH
                                           // (also via --viewport WxH which
@@ -312,6 +319,8 @@ void main(string[] args) {
             playbackFile = args[++i];
         } else if (args[i] == "--test") {
             testMode = true;
+        } else if (args[i] == "--perf") {
+            perfMode = true;
         } else if (args[i] == "--no-http") {
             startHttpServer = false;
         } else if (args[i] == "--http-port") {
@@ -446,6 +455,9 @@ void main(string[] args) {
             httpServer.setTestMode(true);
             mouseOverride();
         }
+        // --perf: fast-forward the HTTP-driven replay too (the harness drives
+        // drags through /api/play-events → tickEventPlayer).
+        if (perfMode) httpServer.setPlayerFastForward(true);
         httpServer.start();
         writeln("HTTP server starting on port ", httpPort);
     }
@@ -467,6 +479,9 @@ void main(string[] args) {
     EventPlayer evPlay;
     if (playbackMode && !evPlay.open(playbackFile)) return;
     if (playbackMode) mouseOverride();
+    // --perf fast-forwards file playback too (the HTTP-driven player is set
+    // separately, below, once httpServer exists).
+    if (perfMode) evPlay.fastForward = true;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -501,7 +516,9 @@ void main(string[] args) {
     int fbW, fbH;
     SDL_GL_GetDrawableSize(window, &fbW, &fbH);
 
-    SDL_GL_SetSwapInterval(1);
+    // --perf disables vsync so the benchmark isn't capped at the display
+    // refresh rate; normal runs keep vsync on to avoid tearing.
+    SDL_GL_SetSwapInterval(perfMode ? 0 : 1);
     glEnable(GL_DEPTH_TEST);
     glViewport(0, 0, fbW, fbH);
 
@@ -2188,12 +2205,14 @@ void main(string[] args) {
         // by tests to bring vibe3d to a fresh state, we may want a way
         // to NOT push it onto the stack — handled via cmd.isUndoable in
         // future if needed.
-        httpServer.setResetHandler((string primitiveType, bool empty) {
+        httpServer.setResetHandler((string primitiveType, bool empty, int param) {
             auto cmd = cast(SceneReset)reg.commandFactories["scene.reset"]();
             if (empty)
                 cmd.setEmpty(true);
-            else
+            else {
                 cmd.setPrimitive(primitiveType);
+                cmd.setPrimitiveParam(param);   // grid n / subdivcube levels
+            }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
             history.record(cmd);

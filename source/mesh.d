@@ -3042,6 +3042,145 @@ Mesh makeLShape() {
     m.buildLoops();
     return m;
 }
+
+// Dense flat grid of quads on the XZ plane (y = 0), centered at the origin
+// and spanning [-1, 1] on both axes — a regression-friendly perf mesh
+// (predictable poly count; a flat plane is clean for falloff radius and
+// symmetry pairing). `n` is the number of quads per side, so the grid has
+// (n+1)×(n+1) vertices and n×n quad faces. 316 → 100 K faces.
+//
+// Built the same way as makeCube/makeOctahedron: lay out the vertices, then
+// `addFace` each quad (which deduplicates the shared interior edges) and call
+// buildLoops() so the result is a fully valid editable Mesh — loops,
+// faceLoop, vertLoop, loopEdge, marks and edge dedup all populated. Selection,
+// picking and symmetry pairing all depend on that half-edge structure.
+Mesh makeGridPlane(int n) {
+    Mesh m;
+    if (n < 1) n = 1;
+    immutable int side = n + 1;            // verts per row/column
+
+    // Row-major vertex grid: index(i, j) = i * side + j, with i along Z
+    // and j along X. Span the fixed [-1, 1] extent on both axes.
+    m.vertices.length = cast(size_t)side * side;
+    foreach (i; 0 .. side) {
+        immutable float z = -1.0f + 2.0f * cast(float)i / cast(float)n;
+        foreach (j; 0 .. side) {
+            immutable float x = -1.0f + 2.0f * cast(float)j / cast(float)n;
+            m.vertices[cast(size_t)i * side + j] = Vec3(x, 0.0f, z);
+        }
+    }
+
+    // One quad per cell. CCW winding when viewed from +Y (the up axis):
+    // (i,j) → (i,j+1) → (i+1,j+1) → (i+1,j). addFace dedups the interior
+    // edges shared between neighbouring cells.
+    foreach (i; 0 .. n) {
+        foreach (j; 0 .. n) {
+            immutable uint v00 = cast(uint)(cast(size_t)i * side + j);
+            immutable uint v01 = v00 + 1;
+            immutable uint v10 = cast(uint)(cast(size_t)(i + 1) * side + j);
+            immutable uint v11 = v10 + 1;
+            m.addFace([v00, v01, v11, v10]);
+        }
+    }
+    m.buildLoops();
+    return m;
+}
+
+// Catmull-Clark subdivision of a cube, `levels` deep — a dense rounded perf
+// mesh with smoothing (complements the flat makeGridPlane). 7 levels →
+// ~98 K faces. Reuses the existing OpenSubdiv back-end (OsdAccel.buildPreview,
+// the same uniform Catmull-Clark the subpatch preview runs) rather than
+// reimplementing the subdivision: mark every cube face subpatch, build the
+// limit mesh at depth `levels`, then re-add its faces into a fresh Mesh via
+// addFace + buildLoops. The preview mesh OsdAccel emits is position/edge/face
+// only (it skips buildLoops and aliases faces into scratch buffers for the
+// real-time path), so we copy its geometry into a clean, fully valid Mesh.
+Mesh subdivideCube(int levels) {
+    import subpatch_osd : OsdAccel;
+
+    Mesh cage = makeCube();
+    if (levels < 1) return cage;   // depth 0 → unchanged cube
+
+    // makeCube leaves the subpatch marks empty; grow them, then mark every
+    // face so OSD runs uniform (whole-mesh) Catmull-Clark.
+    cage.resizeSubpatch();
+    foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
+
+    OsdAccel      accel;
+    Mesh          preview;
+    SubpatchTrace trace;
+    if (!accel.buildPreview(cage, levels, preview, trace))
+        return cage;   // degenerate / OSD failure → fall back to the cage
+
+    // Rebuild a clean Mesh from the preview's vertices + faces. The
+    // preview's vertices are freshly allocated (safe to take), but its
+    // faces alias OsdAccel's scratch buffers and it carries no loops, so
+    // we re-add each face through addFace (deduping edges) + buildLoops.
+    Mesh m;
+    m.vertices = preview.vertices.dup;
+    foreach (ref f; preview.faces)
+        m.addFace(f.dup);
+    m.buildLoops();
+    return m;
+}
+
+unittest { // makeGridPlane: vertex/face/edge counts + half-edge validity
+    // n×n quads → (n+1)² verts, n² faces. Edges: each cell has 4 edges, but
+    // interior edges are shared → dedup count is the closed-form
+    // 2·n·(n+1) (n+1 lines each way, each split into n segments).
+    foreach (n; [1, 2, 3, 4]) {
+        Mesh m = makeGridPlane(n);
+        immutable size_t side = n + 1;
+        assert(m.vertices.length == side * side);
+        assert(m.faces.length    == cast(size_t)n * n);
+        assert(m.edges.length    == cast(size_t)2 * n * (n + 1));
+
+        // Half-edge structure must be fully populated: buildLoops emits one
+        // loop per face-corner, and every face's loops must resolve.
+        size_t totalCorners = 0;
+        foreach (ref f; m.faces) totalCorners += f.length;
+        assert(m.loops.length    == totalCorners);
+        assert(m.faceLoop.length == m.faces.length);
+        assert(m.loopEdge.length == m.loops.length);
+
+        // Every vertex index referenced by a face is in range, and every
+        // face is a quad on the y = 0 plane.
+        foreach (ref f; m.faces) {
+            assert(f.length == 4);
+            foreach (vi; f) {
+                assert(vi < m.vertices.length);
+                assert(m.vertices[vi].y == 0.0f);
+            }
+        }
+    }
+}
+
+unittest { // subdivideCube: counts match uniform Catmull-Clark + valid loops
+    // Cube → uniform CC. After L passes a quad-only mesh has
+    //   F = 6 · 4^L faces, E = 2·F edges (every edge shared by 2 quads),
+    //   V = E − F + 2 (Euler, genus 0).
+    foreach (L; [1, 2]) {
+        Mesh m = subdivideCube(L);
+        immutable size_t F = 6 * (4UL ^^ L);
+        immutable size_t E = 2 * F;
+        immutable size_t V = E - F + 2;
+        assert(m.faces.length    == F);
+        assert(m.edges.length    == E);
+        assert(m.vertices.length == V);
+
+        // Fully valid editable mesh: loops resolve, all quads, indices in range.
+        size_t totalCorners = 0;
+        foreach (ref f; m.faces) {
+            assert(f.length == 4);
+            totalCorners += f.length;
+            foreach (vi; f) assert(vi < m.vertices.length);
+        }
+        assert(m.loops.length    == totalCorners);
+        assert(m.faceLoop.length == m.faces.length);
+        assert(m.loopEdge.length == m.loops.length);
+    }
+}
+
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
 /// is true is split into n quads using its centroid and edge midpoints — no
 /// vertex smoothing, unlike Catmull-Clark. Non-selected faces sharing an edge
