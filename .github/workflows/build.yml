@@ -97,7 +97,7 @@ jobs:
           command -v ldc2 >/dev/null 2>&1 || {
             echo "::error::ldc2 not found on this runner. Install LDC (e.g. ~/dlang/ldc-<ver>) so ldc2 is on PATH."
             exit 1; }
-          ldc2 --version | head -1
+          ldc2 --version | head -1 || true
 
       - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
@@ -122,7 +122,9 @@ jobs:
             Write-Output "::error::ldc2 not found on this runner. Install LDC so ldc2.exe is on PATH."
             exit 1
           }
-          ldc2 --version | Select-Object -First 1
+          # Print the banner WITHOUT a pipe — `| Select-Object -First 1` stops
+          # the pipeline early, kills ldc2.exe, and sets a non-zero exit code.
+          ldc2 --version
 
       # ---- SDL2 ----
       # Linux self-hosted runner has SDL2/GTK3/ninja pre-installed on the host.
@@ -259,7 +261,7 @@ jobs:
           command -v ldc2 >/dev/null 2>&1 || {
             echo "::error::ldc2 not found on this runner. Install LDC (e.g. ~/dlang/ldc-<ver>) so ldc2 is on PATH."
             exit 1; }
-          ldc2 --version | head -1
+          ldc2 --version | head -1 || true
 
       - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
@@ -284,7 +286,9 @@ jobs:
             Write-Output "::error::ldc2 not found on this runner. Install LDC so ldc2.exe is on PATH."
             exit 1
           }
-          ldc2 --version | Select-Object -First 1
+          # Print the banner WITHOUT a pipe — `| Select-Object -First 1` stops
+          # the pipeline early, kills ldc2.exe, and sets a non-zero exit code.
+          ldc2 --version
 
       # Linux self-hosted runner has the with-render deps (SDL2/GTK3/ninja/cmake/
       # git-lfs/xz) pre-installed on the host.
