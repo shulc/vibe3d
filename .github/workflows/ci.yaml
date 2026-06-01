@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# Self-hosted runner has a small disk. Cancel an in-progress run on the same
+# ref when a new push lands so two full builds never write GBs side by side.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
@@ -49,3 +55,14 @@ jobs:
       # reuses the ./vibe3d binary from the Build step. The whole thing runs
       # under one Xvfb display so each spawned `vibe3d --test` gets a GL context.
       run: xvfb-run -a ./run_all.d --only unit --no-build -j 4
+
+    - name: 'Reclaim disk (bound dub build cache)'
+      # dub caches every build under a content hash in ~/.dub/cache/vibe3d and
+      # never evicts old ones, so it grows unbounded across commits and fills the
+      # small VM disk. Drop it (next run rebuilds from scratch, ~40s) plus any
+      # stray test scratch. `always()` so a failed/cancelled run still cleans up.
+      if: always()
+      run: |
+        dub clean || true
+        rm -rf ~/.dub/cache/vibe3d /tmp/vibe3d-tests-* || true
+        df -h / | tail -1
