@@ -82,13 +82,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Linux self-hosted runner has DMD pre-installed on the host (system dmd
-      # via dpkg), so it skips setup-dlang. Windows still provisions DMD per-run.
-      - name: Setup DMD (Windows)
+      # Release is built with LDC (optimized). LDC must be pre-installed on the
+      # runner host — these steps only LOCATE it (PATH or common dlang install
+      # dirs) and fail with a clear message if absent; they never download it.
+      - name: Locate LDC (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v ldc2 >/dev/null 2>&1; then
+            for d in "$HOME"/dlang/ldc*/bin "$HOME"/.local/dlang/ldc*/bin \
+                     /opt/ldc*/bin /usr/lib/ldc*/bin /usr/local/ldc*/bin; do
+              if [ -x "$d/ldc2" ]; then echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; fi
+            done
+          fi
+          command -v ldc2 >/dev/null 2>&1 || {
+            echo "::error::ldc2 not found on this runner. Install LDC (e.g. ~/dlang/ldc-<ver>) so ldc2 is on PATH."
+            exit 1; }
+          ldc2 --version | head -1
+
+      - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
-        uses: dlang-community/setup-dlang@v1
-        with:
-          compiler: dmd-latest
+        shell: pwsh
+        run: |
+          $ldc = Get-Command ldc2 -ErrorAction SilentlyContinue
+          if (-not $ldc) {
+            foreach ($p in @("$env:USERPROFILE\dlang\ldc*\bin","C:\ldc*\bin",
+                             "C:\Program Files\ldc*\bin","C:\tools\ldc*\bin")) {
+              $hit = Get-ChildItem -Path $p -Filter ldc2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($hit) { Add-Content $env:GITHUB_PATH $hit.DirectoryName; $env:PATH = "$($hit.DirectoryName);$env:PATH"; break }
+            }
+          }
+          if (-not (Get-Command ldc2 -ErrorAction SilentlyContinue)) {
+            Write-Output "::error::ldc2 not found on this runner. Install LDC so ldc2.exe is on PATH."
+            exit 1
+          }
+          ldc2 --version | Select-Object -First 1
 
       # ---- SDL2 ----
       # Linux self-hosted runner has SDL2/GTK3/ninja pre-installed on the host.
@@ -136,7 +163,7 @@ jobs:
 
       - name: First-pass build (Linux/macOS — fetches nfde, expected to fail)
         if: runner.os != 'Windows'
-        run: dub build --compiler=dmd --build=release || true
+        run: dub build --compiler=ldc2 --build=release || true
 
       - name: Initialize nativefiledialog-extended submodules (Linux/macOS)
         if: runner.os != 'Windows'
@@ -150,7 +177,7 @@ jobs:
       - name: First-pass build (Windows — fetches nfde, expected to fail)
         if: runner.os == 'Windows'
         shell: bash
-        run: dub build --compiler=dmd --build=release || true
+        run: dub build --compiler=ldc2 --build=release || true
 
       - name: Initialize nativefiledialog-extended submodules (Windows)
         if: runner.os == 'Windows'
@@ -165,7 +192,7 @@ jobs:
       # ---- Build ----
 
       - name: Build
-        run: dub build --compiler=dmd --build=release
+        run: dub build --compiler=ldc2 --build=release
 
       # ---- Zip ----
 
@@ -209,12 +236,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # DMD is pre-installed on the Linux host; provision it per-run on Windows.
-      - name: Setup DMD (Windows)
+      # Locate the host LDC (the bundle scripts build with --compiler=ldc2 by
+      # default). Fails clearly if ldc2 isn't installed on the runner.
+      - name: Locate LDC (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v ldc2 >/dev/null 2>&1; then
+            for d in "$HOME"/dlang/ldc*/bin "$HOME"/.local/dlang/ldc*/bin \
+                     /opt/ldc*/bin /usr/lib/ldc*/bin /usr/local/ldc*/bin; do
+              if [ -x "$d/ldc2" ]; then echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; fi
+            done
+          fi
+          command -v ldc2 >/dev/null 2>&1 || {
+            echo "::error::ldc2 not found on this runner. Install LDC (e.g. ~/dlang/ldc-<ver>) so ldc2 is on PATH."
+            exit 1; }
+          ldc2 --version | head -1
+
+      - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
-        uses: dlang-community/setup-dlang@v1
-        with:
-          compiler: dmd-latest
+        shell: pwsh
+        run: |
+          $ldc = Get-Command ldc2 -ErrorAction SilentlyContinue
+          if (-not $ldc) {
+            foreach ($p in @("$env:USERPROFILE\dlang\ldc*\bin","C:\ldc*\bin",
+                             "C:\Program Files\ldc*\bin","C:\tools\ldc*\bin")) {
+              $hit = Get-ChildItem -Path $p -Filter ldc2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($hit) { Add-Content $env:GITHUB_PATH $hit.DirectoryName; $env:PATH = "$($hit.DirectoryName);$env:PATH"; break }
+            }
+          }
+          if (-not (Get-Command ldc2 -ErrorAction SilentlyContinue)) {
+            Write-Output "::error::ldc2 not found on this runner. Install LDC so ldc2.exe is on PATH."
+            exit 1
+          }
+          ldc2 --version | Select-Object -First 1
 
       # Linux self-hosted runner has the with-render deps (SDL2/GTK3/ninja/cmake/
       # git-lfs/xz) pre-installed on the host.
@@ -237,7 +291,7 @@ jobs:
 
       - name: First-pass build (fetches nfde, expected to fail)
         shell: bash
-        run: dub build --compiler=dmd --build=release || true
+        run: dub build --compiler=ldc2 --build=release || true
 
       - name: Initialize nativefiledialog-extended submodules
         shell: bash
