@@ -136,11 +136,44 @@ class FalloffStage : Stage, Operator {
 
     // D.7 — Selection-falloff scratch buffer (xfrm.flex). Owned by
     // the stage so the slice we publish on the packet stays valid
-    // for the duration of the pipe walk. Recomputed every evaluate()
-    // when type=Selection — BFS over mesh.edges is O(V+E), cheap
-    // enough that a cache with invalidation keys would add more code
-    // than it saves wall-time.
+    // for the duration of the pipe walk.
+    //
+    // The weight map is COMPLETELY position-independent: it depends only
+    // on mesh topology (edges + vertex count), the selection (per edit
+    // mode), `dist` (→ stepsI/iters), and the shape params (shape/in_/out_).
+    // ALL of those are frozen during a transform drag (selection frozen,
+    // topology frozen — transform tools mutate vertex POSITIONS directly
+    // without bumping mesh.mutationVersion). So the map can be computed
+    // ONCE per drag and reused across the ~17 iteration frames, instead of
+    // re-running the Laplacian smoothing every pipe walk. We cache it keyed
+    // on (mutationVersion, editMode, selectionSignature, stepsI, shape,
+    // in_, out_); a key miss recomputes.
     private float[] selWeights_;
+
+    // --- selWeights_ cache key (see recomputeSelectionWeights) ---
+    // mutationVersion bumps on every topology/geometry-structure edit and is
+    // NOT bumped by selection writes nor drag-time vertex moves. Selection
+    // lives in the Marks.Select bit and has no version counter, so a cheap
+    // FNV-1a rolling hash over the selected-element set is folded into the
+    // key (mirrors ActionCenterStage.selectionSignature). `_selCacheValid`
+    // is force-cleared whenever the non-Selection branch in evaluate() runs,
+    // so flipping the falloff type away from Selection and back recomputes.
+    private bool   _selCacheValid    = false;
+    private ulong  _selCacheMutVer   = ulong.max;
+    private int    _selCacheEditMode = -1;
+    private ulong  _selCacheSelSig   = 0;
+    private int    _selCacheSteps    = int.min;
+    private FalloffShape _selCacheShape = cast(FalloffShape)(-1);
+    private float  _selCacheIn        = float.nan;
+    private float  _selCacheOut       = float.nan;
+    // Cached vertex→neighbor CSR adjacency (flat neighbor list + per-vertex
+    // [offset, offset+1] bounds). Topology-invariant, rebuilt only when
+    // mutationVersion moves. Used by the Laplacian smoothing so neighbor
+    // lookup is O(degree) instead of allocating uint[][] every recompute.
+    private ulong    _adjMutVer   = ulong.max;
+    private uint[]   _adjNeighbors;   // flattened neighbor ids
+    private size_t[] _adjOffset;      // length nV+1; neighbors of v are
+                                      // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
 
     this(Mesh* mesh = null, EditMode* editMode = null) {
         this.mesh_     = mesh;
@@ -173,6 +206,13 @@ class FalloffStage : Stage, Operator {
         in_          = 0.5f;
         out_         = 0.5f;
         anchorRing.length = 0;
+        // Drop the selection-weight cache so a fresh start recomputes.
+        selWeights_.length = 0;
+        _selCacheValid     = false;
+        _selCacheMutVer    = ulong.max;
+        _adjMutVer         = ulong.max;
+        _adjOffset.length  = 0;
+        _adjNeighbors.length = 0;
         publishState();
     }
 
@@ -227,8 +267,13 @@ class FalloffStage : Stage, Operator {
         pkt.out_         = out_;
         if (type == FalloffType.Selection)
             recomputeSelectionWeights();
-        else
+        else {
             selWeights_.length = 0;
+            // Force a miss next time the type returns to Selection: the key
+            // does not include `type`, so without this a stale cached map
+            // could be reused after a type round-trip.
+            _selCacheValid = false;
+        }
         pkt.selectionWeights = selWeights_;
         pkt.compoundPasses   = 1.0f;
         _publishedPacket = pkt;
@@ -562,10 +607,31 @@ class FalloffStage : Stage, Operator {
     /// convention every transform path uses).
     void recomputeSelectionWeights() {
         import std.math : sqrt;
-        selWeights_.length = 0;
-        if (mesh_ is null || editMode_ is null) return;
+        if (mesh_ is null || editMode_ is null) { selWeights_.length = 0; return; }
         size_t nVerts = mesh_.vertices.length;
-        if (nVerts == 0) return;
+        if (nVerts == 0) { selWeights_.length = 0; return; }
+
+        // --- Cache gate -------------------------------------------------
+        // selWeights_ is position-independent. If every key field matches
+        // the cached values AND the buffer is the right length, the result
+        // is identical to last frame — reuse it and skip the smoothing.
+        int stepsI = cast(int)dist;
+        if (stepsI < 0) stepsI = 0;
+        const ulong  mutVer    = mesh_.mutationVersion;
+        const int    editModeI = cast(int)(*editMode_);
+        const ulong  selSig    = selectionSignature();
+        if (_selCacheValid
+         && selWeights_.length == nVerts
+         && _selCacheMutVer   == mutVer
+         && _selCacheEditMode == editModeI
+         && _selCacheSelSig   == selSig
+         && _selCacheSteps    == stepsI
+         && _selCacheShape    == shape
+         && _selCacheIn       == in_
+         && _selCacheOut      == out_)
+            return; // hit — keep the existing selWeights_ slice as-is.
+
+        selWeights_.length = 0;
 
         int[] selVertsList;
         bool hasAny;
@@ -583,25 +649,28 @@ class FalloffStage : Stage, Operator {
                 if (hasAny) selVertsList = mesh_.selectedVertexIndicesFaces();
                 break;
         }
-        if (!hasAny) return;
+        if (!hasAny) {
+            // Empty selection → empty weights (caller treats as "no
+            // constraint", moves everything). selWeights_ is already
+            // length 0; leave the cache invalid — the empty-selection path
+            // is just a hasAny() query, so re-running it per frame is cheap
+            // and the length-0 buffer can never satisfy the hit guard
+            // (nVerts > 0 here) anyway.
+            _selCacheValid = false;
+            return;
+        }
 
         bool[] inSel = new bool[](nVerts);
         foreach (vi; selVertsList) {
             if (vi >= 0 && cast(size_t)vi < nVerts) inSel[vi] = true;
         }
 
-        // Adjacency list. Edge lengths used to be required for the
-        // Dijkstra-based weight pass; the iterative Laplacian
+        // Vertex→neighbor CSR adjacency. Edge lengths used to be required
+        // for the Dijkstra-based weight pass; the iterative Laplacian
         // smoothing below ignores them (each in-selection neighbour
-        // contributes equally), but we keep the build cheap and may
-        // re-add edge-weighted smoothing if it ever helps a fit.
-        uint[][]  adj    = new uint[][](nVerts);
-        foreach (e; mesh_.edges) {
-            uint a = e[0], b = e[1];
-            if (a >= nVerts || b >= nVerts) continue;
-            adj[a] ~= b;
-            adj[b] ~= a;
-        }
+        // contributes equally). Built once per topology version (cached
+        // across drag frames) — no per-call uint[][] GC churn.
+        ensureVertexAdjacency();
 
         // Boundary verts: selected with ≥1 unselected neighbour.
         // These are pinned to weight 0 across the smoothing — the
@@ -609,7 +678,7 @@ class FalloffStage : Stage, Operator {
         bool[] isB = new bool[](nVerts);
         foreach (vi; 0 .. nVerts) {
             if (!inSel[vi]) continue;
-            foreach (n; adj[vi]) {
+            foreach (n; _adjNeighbors[_adjOffset[vi] .. _adjOffset[vi + 1]]) {
                 if (!inSel[n]) { isB[vi] = true; break; }
             }
         }
@@ -626,8 +695,7 @@ class FalloffStage : Stage, Operator {
         // Steps=0 we collapse to no smoothing — the selection-edge
         // hinge is the whole weight map (binary 0/1).
         enum float kLapAlpha = 0.76f;
-        int stepsI = cast(int)dist;
-        if (stepsI < 0) stepsI = 0;
+        // stepsI computed at the cache gate above.
         int iters = (stepsI <= 0) ? 0 : (4 * stepsI + 1);
 
         float[] wA = new float[](nVerts);
@@ -645,7 +713,7 @@ class FalloffStage : Stage, Operator {
                 if (isB[vi])         { wB[vi] = 0.0f; continue; }
                 float sum = 0.0f;
                 int   cnt = 0;
-                foreach (n; adj[vi]) {
+                foreach (n; _adjNeighbors[_adjOffset[vi] .. _adjOffset[vi + 1]]) {
                     if (!inSel[n]) continue;
                     sum += wA[n];
                     cnt += 1;
@@ -671,6 +739,71 @@ class FalloffStage : Stage, Operator {
             // input low → result high.
             selWeights_[vi] = applyShape(1.0f - wA[vi], shape, in_, out_);
         }
+
+        storeSelCacheKey(mutVer, editModeI, selSig, stepsI);
+    }
+
+    // Cheap rolling hash of the Select bit across the marks array relevant
+    // to the active edit mode (mirrors ActionCenterStage.selectionSignature).
+    // Selection writes bump no version counter, so this folds WHICH elements
+    // are selected (and how many) into the cache key. A collision would only
+    // ever produce a stale weight map, and the selection is frozen during a
+    // drag, so this is safe for cache-key use.
+    ulong selectionSignature() const {
+        if (mesh_ is null || editMode_ is null) return 0;
+        ulong h = 1469598103934665603UL; // FNV-1a offset basis
+        void mix(ulong x) { h ^= x; h *= 1099511628211UL; }
+        const(uint)[] marks;
+        final switch (*editMode_) {
+            case EditMode.Vertices: marks = mesh_.vertexMarks; break;
+            case EditMode.Edges:    marks = mesh_.edgeMarks;   break;
+            case EditMode.Polygons: marks = mesh_.faceMarks;   break;
+        }
+        mix(marks.length);
+        foreach (i, m; marks)
+            if (m & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
+        return h;
+    }
+
+    // Build (or reuse) the vertex→neighbor CSR adjacency from mesh_.edges.
+    // Topology-invariant, so it is rebuilt only when mutationVersion moves.
+    void ensureVertexAdjacency() {
+        const size_t nV = mesh_.vertices.length;
+        if (_adjMutVer == mesh_.mutationVersion
+         && _adjOffset.length == nV + 1)
+            return;
+        // Counting pass → per-vertex degree, then prefix-sum into offsets.
+        _adjOffset.length = nV + 1;
+        _adjOffset[] = 0;
+        foreach (e; mesh_.edges) {
+            if (e[0] >= nV || e[1] >= nV) continue;
+            _adjOffset[e[0] + 1]++;
+            _adjOffset[e[1] + 1]++;
+        }
+        foreach (i; 1 .. nV + 1) _adjOffset[i] += _adjOffset[i - 1];
+        _adjNeighbors.length = _adjOffset[nV];
+        // Fill pass with a temporary cursor per vertex.
+        auto cursor = new size_t[](nV);
+        foreach (i; 0 .. nV) cursor[i] = _adjOffset[i];
+        foreach (e; mesh_.edges) {
+            if (e[0] >= nV || e[1] >= nV) continue;
+            _adjNeighbors[cursor[e[0]]++] = e[1];
+            _adjNeighbors[cursor[e[1]]++] = e[0];
+        }
+        _adjMutVer = mesh_.mutationVersion;
+    }
+
+    // Record the current cache key as valid. Shape params are captured here
+    // (not passed) since they are stage fields read directly.
+    void storeSelCacheKey(ulong mutVer, int editModeI, ulong selSig, int stepsI) {
+        _selCacheValid    = true;
+        _selCacheMutVer   = mutVer;
+        _selCacheEditMode = editModeI;
+        _selCacheSelSig   = selSig;
+        _selCacheSteps    = stepsI;
+        _selCacheShape    = shape;
+        _selCacheIn       = in_;
+        _selCacheOut      = out_;
     }
 
 private:
