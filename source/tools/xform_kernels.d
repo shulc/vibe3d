@@ -29,6 +29,33 @@ import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform : TransformTool;
+import perf_probe : g_perf, Cat;
+
+// Coarse perf instrumentation for the kernels (doc/perf_harness_plan.md).
+// One scope at function entry (NEVER inside the per-vertex loop), the
+// symmetry mirror call wrapped in its own category, and DERIVED counters
+// recorded once after the loop (verts.touched / falloff.evalCount =
+// number of vertices processed — not incremented per vertex). All of this
+// compiles to no-ops in the default build.
+
+/// Time + mirror the symmetry pass and record the per-call vertex counters.
+/// `nVerts` is the number of vertices the kernel processed this call; both
+/// vertsTouched and falloffEvalCount are derived from it (one falloff
+/// evaluation per processed vertex when falloff is enabled).
+private void mirrorAndCount(
+    Mesh* mesh,
+    const ref SymmetryPacket dragSymmetry,
+    bool[] selA, bool[] selB,
+    long nVerts, bool falloffEnabled)
+{
+    g_perf.count(Cat.vertsTouched, nVerts);
+    if (falloffEnabled) g_perf.count(Cat.falloffEvalCount, nVerts);
+    if (dragSymmetry.enabled
+        && dragSymmetry.pairOf.length == mesh.vertices.length) {
+        auto zMirror = g_perf.scope_(Cat.symmetryMirror);
+        applySymmetryMirror(mesh, dragSymmetry, selA, selB);
+    }
+}
 
 // ---------------------------------------------------------------
 // Translate
@@ -55,6 +82,7 @@ void applyTranslateIncremental(
     const ref SymmetryPacket dragSymmetry,
     bool[] toProcess)
 {
+    auto zKernel = g_perf.scope_(Cat.kernelApply);
     if (!dragFalloff.enabled) {
         foreach (vi; indices) {
             mesh.vertices[vi].x += delta.x;
@@ -72,9 +100,8 @@ void applyTranslateIncremental(
             mesh.vertices[vi].z += delta.z * w;
         }
     }
-    if (dragSymmetry.enabled
-        && dragSymmetry.pairOf.length == mesh.vertices.length)
-        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+    mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
+                   cast(long)indices.length, dragFalloff.enabled);
 }
 
 // ---------------------------------------------------------------
@@ -173,6 +200,7 @@ void applyRotateIncremental(
     const ref SymmetryPacket dragSymmetry,
     bool[] toProcess)
 {
+    auto zKernel = g_perf.scope_(Cat.kernelApply);
     foreach (vi; indices) {
         Vec3 pivot = pivotFor(vi, clusterPivots, pivotFallback);
         Vec3 ax = (dragAxisIdx >= 0 && dragAxisIdx <= 2)
@@ -185,9 +213,8 @@ void applyRotateIncremental(
         if (w == 0.0f) continue;
         mesh.vertices[vi] = rotateVecLerp(mesh.vertices[vi], pivot, ax, angleRad, w);
     }
-    if (dragSymmetry.enabled
-        && dragSymmetry.pairOf.length == mesh.vertices.length)
-        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+    mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
+                   cast(long)indices.length, dragFalloff.enabled);
 }
 
 /// X→Y→Z Euler rotation from a captured origVertices snapshot.
@@ -282,6 +309,7 @@ void applyScaleFromActivation(
 {
     import math : scaleAlongBasis;
     import std.math : pow, fabs;
+    auto zKernel = g_perf.scope_(Cat.kernelApply);
     if (activationVerts.length == 0) return;
     // Float exponent — Selection falloff publishes
     // `Steps · 0.955` (~1.91 for Steps=2), so the compound
@@ -318,9 +346,8 @@ void applyScaleFromActivation(
         mesh.vertices[vi] = scaleAlongBasis(activationVerts[vi], pivot,
                                              ax, ay, az, sx, sy, sz);
     }
-    if (dragSymmetry.enabled
-        && dragSymmetry.pairOf.length == mesh.vertices.length)
-        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+    mirrorAndCount(mesh, dragSymmetry, toProcess, toProcess,
+                   cast(long)indices.length, dragFalloff.enabled);
 }
 
 // ---------------------------------------------------------------
