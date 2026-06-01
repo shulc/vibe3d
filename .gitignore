@@ -35,3 +35,4 @@ vibe3d-macos-render/
 
 # perf harness generated output
 tools/perf/results.json
+tools/perf/baseline.json
