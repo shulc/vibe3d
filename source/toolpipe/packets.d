@@ -86,6 +86,27 @@ struct AxisPacket {
     Vec3[] clusterRight;
     Vec3[] clusterUp;
     Vec3[] clusterFwd;
+
+    // Cached orthonormal frame matrix (forward-compat — see below).
+    //
+    // `m` is the rotation-only orthonormal frame whose upper-left 3x3 has
+    // the basis vectors right/up/fwd in columns 0/1/2 (translation = 0,
+    // bottom-right w = 1). Column-major, m[row + col*4] — the same layout
+    // as every other matrix in math.d (modelMatrix / matMul4 / mulMV).
+    // `mInv` is its inverse; because the frame is orthonormal the inverse
+    // equals the transpose of the rotation part, so we store the transpose
+    // directly.
+    //
+    // No current consumer reconstructs a frame matrix from right/up/fwd —
+    // every existing reader uses the three basis vectors directly. These two
+    // fields are provided for downstream use (a consumer that wants to map
+    // world<->frame coordinates without rebuilding the matrix each call) and
+    // are populated by AxisStage.evaluate from the SAME right/up/fwd it
+    // computes, so they never disagree with the vectors. GLOBAL frame only:
+    // there is deliberately no per-cluster m/mInv (no consumer needs it; the
+    // per-cluster basis stays available as the clusterRight/Up/Fwd vectors).
+    float[16] m    = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    float[16] mInv = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 }
 
 /// Workplane state — produced by WORK stage in 7.1. Default = world XZ

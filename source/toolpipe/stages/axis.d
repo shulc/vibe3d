@@ -3,7 +3,7 @@ module toolpipe.stages.axis;
 import std.format : format;
 import std.math   : abs, sqrt;
 
-import math    : Vec3, Viewport, cross, dot, normalize;
+import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrixInverse;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
@@ -61,6 +61,14 @@ class AxisStage : Stage, Operator {
         pkt.right   = r;
         pkt.up      = u;
         pkt.fwd     = f;
+        // Cache the orthonormal frame matrix + inverse from the SAME
+        // right/up/fwd just computed (single source of truth, so the
+        // matrix and the basis vectors can never disagree). `m` puts the
+        // basis in columns 0/1/2; `mInv` is the transpose (== inverse for
+        // an orthonormal frame). GLOBAL frame only — no per-cluster m/mInv
+        // (no consumer). Forward-compat: nothing reads these yet.
+        pkt.m       = frameMatrix(r, u, f);
+        pkt.mInv    = frameMatrixInverse(r, u, f);
         pkt.axIndex = axIndex;
         pkt.type    = cast(int)mode;
         pkt.isAuto  = (mode == Mode.Auto);
@@ -702,4 +710,73 @@ private:
     void publishState() {
         setStatePath("axis/mode", modeLabel());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — cached orthonormal frame matrix m / mInv on the published packet.
+//
+// AxisStage's behaviour tests live in tests/test_toolpipe_axis.d (HTTP, which
+// can only observe the basis VECTORS via /api/toolpipe attrs — not the packet
+// matrix). The forward-compat m/mInv fields aren't surfaced over HTTP, so we
+// verify them here by driving evaluate() directly with a Manual basis (Manual
+// mode reads manualRight/Up/Fwd and needs neither a mesh nor the global pipe
+// context). This justifies the otherwise-unread fields.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    import std.math : isClose, sin, cos, PI;
+    import math : matMul4, applyAffine, identityMatrix;
+    import operator : VectorStack;
+    import toolpipe.packets : SubjectPacket, AxisPacket;
+}
+
+unittest {
+    // Non-trivial right-handed orthonormal frame: 30° about +Y.
+    immutable float a = cast(float) PI / 6;
+    immutable float c = cos(a), s = sin(a);
+    Vec3 r = Vec3(c, 0, -s);
+    Vec3 u = Vec3(0, 1, 0);
+    Vec3 f = Vec3(s, 0,  c);
+
+    auto st = new AxisStage();          // no mesh/editmode needed for Manual
+    st.mode        = AxisStage.Mode.Manual;
+    st.manualRight = r;
+    st.manualUp    = u;
+    st.manualFwd   = f;
+
+    SubjectPacket subj;                 // viewport unused by Manual mode
+    VectorStack vts;
+    vts.put(&subj);
+    assert(st.evaluate(vts));
+
+    AxisPacket* pkt = vts.get!AxisPacket();
+    assert(pkt !is null);
+
+    enum float tol = 1e-5f;
+
+    // Sanity: published basis is the non-trivial frame we set.
+    assert(isClose(pkt.fwd.x, s, tol, tol) && !isClose(pkt.fwd.z, 1.0f, tol, tol));
+
+    // 1) m's basis columns equal right/up/fwd (column-major, m[row + col*4]:
+    //    column 0 = m[0..2], column 1 = m[4..6], column 2 = m[8..10]).
+    assert(isClose(pkt.m[0], pkt.right.x, tol, tol));
+    assert(isClose(pkt.m[1], pkt.right.y, tol, tol));
+    assert(isClose(pkt.m[2], pkt.right.z, tol, tol));
+    assert(isClose(pkt.m[4], pkt.up.x,    tol, tol));
+    assert(isClose(pkt.m[5], pkt.up.y,    tol, tol));
+    assert(isClose(pkt.m[6], pkt.up.z,    tol, tol));
+    assert(isClose(pkt.m[8],  pkt.fwd.x,  tol, tol));
+    assert(isClose(pkt.m[9],  pkt.fwd.y,  tol, tol));
+    assert(isClose(pkt.m[10], pkt.fwd.z,  tol, tol));
+
+    // 2) m * mInv ≈ identity (via the project's matMul4).
+    auto prod = matMul4(pkt.m, pkt.mInv);
+    foreach (i; 0 .. 16)
+        assert(isClose(prod[i], identityMatrix[i], tol, tol));
+
+    // 3) applyAffine(m, unit-x) == right — confirms the multiply convention
+    //    is NOT transposed (a transposed m would yield mInv·x = a row, not right).
+    auto mx = applyAffine(pkt.m, Vec3(1, 0, 0));
+    assert(isClose(mx.x, pkt.right.x, tol, tol));
+    assert(isClose(mx.y, pkt.right.y, tol, tol));
+    assert(isClose(mx.z, pkt.right.z, tol, tol));
 }

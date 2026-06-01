@@ -269,6 +269,54 @@ Vec3 applyAffine(float[16] m, Vec3 p) @safe pure nothrow @nogc {
     );
 }
 
+// Build a column-major orthonormal frame matrix from a basis. The basis
+// vectors right/up/fwd are placed in columns 0/1/2 of the upper-left 3x3;
+// rotation-only (translation 0, w 1). Same column-major (m[row + col*4])
+// convention as modelMatrix — equivalent to modelMatrix(right, up, fwd,
+// Vec3(1,1,1), Vec3(0,0,0)) but spelled out for the AxisPacket frame cache.
+float[16] frameMatrix(Vec3 right, Vec3 up, Vec3 fwd) @safe pure nothrow @nogc {
+    return [
+        right.x, right.y, right.z, 0,
+        up.x,    up.y,    up.z,    0,
+        fwd.x,   fwd.y,   fwd.z,   0,
+        0,       0,       0,       1,
+    ];
+}
+
+// Inverse of frameMatrix for an ORTHONORMAL basis: the inverse of an
+// orthonormal rotation equals its transpose, so the basis vectors become
+// the ROWS of the upper-left 3x3 (column-major storage m[row + col*4]).
+float[16] frameMatrixInverse(Vec3 right, Vec3 up, Vec3 fwd) @safe pure nothrow @nogc {
+    return [
+        right.x, up.x, fwd.x, 0,
+        right.y, up.y, fwd.y, 0,
+        right.z, up.z, fwd.z, 0,
+        0,       0,    0,     1,
+    ];
+}
+
+unittest { // frameMatrix columns hold right/up/fwd; identity basis → identity
+    auto m = frameMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1));
+    foreach (i, v; identityMatrix) assert(isClose(m[i], v));
+}
+
+unittest { // frameMatrix * frameMatrixInverse ≈ identity for a rotated frame
+    // 30° about Y → non-axis-aligned orthonormal basis.
+    float a = cast(float) PI / 6;
+    Vec3 r = Vec3(cos(a), 0, -sin(a));
+    Vec3 u = Vec3(0, 1, 0);
+    Vec3 f = Vec3(sin(a), 0, cos(a));
+    auto m    = frameMatrix(r, u, f);
+    auto mInv = frameMatrixInverse(r, u, f);
+    auto prod = matMul4(m, mInv);
+    foreach (i; 0 .. 16) assert(isClose(prod[i], identityMatrix[i], 1e-5f, 1e-5f));
+    // m·(unit x) == right (multiply convention is not transposed).
+    auto mx = applyAffine(m, Vec3(1, 0, 0));
+    assert(isClose(mx.x, r.x, 1e-5f, 1e-5f)
+        && isClose(mx.y, r.y, 1e-5f, 1e-5f)
+        && isClose(mx.z, r.z, 1e-5f, 1e-5f));
+}
+
 // Column-major 4x4 matrix multiplication: C = A * B
 float[16] matMul4(float[16] a, float[16] b) {
     float[16] c;
