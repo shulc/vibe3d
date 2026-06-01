@@ -493,6 +493,7 @@ struct CaseResult {
     // medians/p95 across R repeats, in microseconds.
     double     kernelMedianUs, kernelP95Us;
     double     pipeMedianUs;
+    double     pipeSymmetryMedianUs;   // pipe.symmetry stage cost (for I2)
     string     dominantStage;
     long       vertsTouched;     // sum from the last repeat
     long       kernelInternalP95Ns;  // /api/perf's own per-sample p95
@@ -631,6 +632,7 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     // R measured repeats.
     double[] kernelTot;   // total kernelApply ns per drag (sum across frames)
     double[] pipeTot;     // total pipeTotal ns per drag
+    double[] pipeSymTot;  // total pipeSymmetry ns per drag
     JSONValue last;
     foreach (r; 0 .. repeats) {
         JSONValue perf;
@@ -641,15 +643,17 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
             res.detail = format("repeat %d drag: %s", r, e.msg);
             return res;
         }
-        kernelTot ~= cast(double)sumNs(perf, "kernelApply") / 1000.0;
-        pipeTot   ~= cast(double)sumNs(perf, "pipeTotal")   / 1000.0;
+        kernelTot  ~= cast(double)sumNs(perf, "kernelApply")  / 1000.0;
+        pipeTot    ~= cast(double)sumNs(perf, "pipeTotal")    / 1000.0;
+        pipeSymTot ~= cast(double)sumNs(perf, "pipeSymmetry") / 1000.0;
         last = perf;
     }
 
     res.status = CaseStatus.OK;
-    res.kernelMedianUs = medianOf(kernelTot);
-    res.kernelP95Us    = p95Of(kernelTot);
-    res.pipeMedianUs   = medianOf(pipeTot);
+    res.kernelMedianUs       = medianOf(kernelTot);
+    res.kernelP95Us          = p95Of(kernelTot);
+    res.pipeMedianUs         = medianOf(pipeTot);
+    res.pipeSymmetryMedianUs = medianOf(pipeSymTot);
     res.dominantStage  = dominantStage(last);
     res.vertsTouched   = ("vertsTouched" in last)
         ? last["vertsTouched"]["sum"].integer : 0;
@@ -813,6 +817,263 @@ string replaceQuotes(string s) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5 — regression detection (two levels: absolute baseline + relative
+// invariants). See doc/perf_harness_plan.md §7.
+//
+//   * ABSOLUTE  — compare each case's kernelApply/pipeTotal median against a
+//                 captured baseline.json. Machine-bound, so it is GATED by a
+//                 build/mesh/viewport-match guard: a baseline captured on a
+//                 different config is NOT compared (warn + skip), falling back
+//                 to relative invariants only.
+//   * RELATIVE  — same-run ratios that do not drift with hardware. These run
+//                 ALWAYS (no baseline / mismatched machine included). Generous
+//                 thresholds: gross-regression guards, not tight benchmarks.
+// ---------------------------------------------------------------------------
+
+// Baseline.json shares the same header shape the runner already writes for
+// results.json, so a header mismatch can be detected field-by-field.
+struct RunHeader {
+    string buildType, compiler, meshType, viewport;
+    int    n;
+    long   faceCount;
+    int    repeats;
+}
+
+RunHeader currentHeader(string meshType, int n, long faceCount,
+                        string viewport, int repeats) {
+    return RunHeader("perf", "ldc2 1.42.0", meshType, viewport,
+                     n, faceCount, repeats);
+}
+
+// One per-case row stored in baseline.json.
+struct BaselineCase {
+    string name;
+    double kernelMedianUs, kernelP95Us, pipeMedianUs;
+    string dominantStage;
+    long   vertsTouched;
+}
+
+void writeBaselineJson(string path, RunHeader h, CaseResult[] results) {
+    auto a = appender!string();
+    a.put("{\n");
+    a.put(format(`  "buildType": "%s",` ~ "\n", h.buildType));
+    a.put(format(`  "compiler": "%s",` ~ "\n", h.compiler));
+    a.put(format(`  "meshType": "%s",` ~ "\n", h.meshType));
+    a.put(format(`  "n": %d,` ~ "\n", h.n));
+    a.put(format(`  "faceCount": %d,` ~ "\n", h.faceCount));
+    a.put(format(`  "viewport": "%s",` ~ "\n", h.viewport));
+    a.put(format(`  "repeats": %d,` ~ "\n", h.repeats));
+    a.put(`  "cases": [` ~ "\n");
+    bool first = true;
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;  // only OK cases are baselined
+        if (!first) a.put(",\n");
+        first = false;
+        a.put("    {\n");
+        a.put(format(`      "name": "%s",` ~ "\n", r.name));
+        a.put(format(`      "kernelMedianUs": %.3f,` ~ "\n", r.kernelMedianUs));
+        a.put(format(`      "kernelP95Us": %.3f,` ~ "\n", r.kernelP95Us));
+        a.put(format(`      "pipeMedianUs": %.3f,` ~ "\n", r.pipeMedianUs));
+        a.put(format(`      "dominantStage": "%s",` ~ "\n", r.dominantStage));
+        a.put(format(`      "vertsTouched": %d` ~ "\n", r.vertsTouched));
+        a.put("    }");
+    }
+    a.put("\n  ]\n}\n");
+    std.file.write(path, a.data);
+}
+
+struct Baseline {
+    RunHeader header;
+    BaselineCase[string] byName;   // keyed by case name
+}
+
+Baseline loadBaseline(string path) {
+    Baseline b;
+    auto j = parseJSON(cast(string)std.file.read(path));
+    b.header.buildType = j["buildType"].str;
+    b.header.compiler  = j["compiler"].str;
+    b.header.meshType  = j["meshType"].str;
+    b.header.viewport  = j["viewport"].str;
+    b.header.n         = cast(int)j["n"].integer;
+    b.header.faceCount = j["faceCount"].integer;
+    b.header.repeats   = cast(int)j["repeats"].integer;
+    foreach (cv; j["cases"].array) {
+        BaselineCase bc;
+        bc.name           = cv["name"].str;
+        bc.kernelMedianUs = cv["kernelMedianUs"].floating;
+        bc.kernelP95Us    = cv["kernelP95Us"].floating;
+        bc.pipeMedianUs   = cv["pipeMedianUs"].floating;
+        bc.dominantStage  = cv["dominantStage"].str;
+        bc.vertsTouched   = cv["vertsTouched"].integer;
+        b.byName[bc.name] = bc;
+    }
+    return b;
+}
+
+// The build-mismatch guard. Absolute comparison is only meaningful when the
+// baseline was captured on the SAME build + mesh + viewport. Returns a
+// non-empty reason string if the configs differ (⇒ skip absolute).
+string headerMismatch(RunHeader baseH, RunHeader curH) {
+    if (baseH.buildType != curH.buildType)
+        return format("buildType %s vs %s", baseH.buildType, curH.buildType);
+    if (baseH.compiler != curH.compiler)
+        return format("compiler %s vs %s", baseH.compiler, curH.compiler);
+    if (baseH.meshType != curH.meshType)
+        return format("meshType %s vs %s", baseH.meshType, curH.meshType);
+    if (baseH.n != curH.n)
+        return format("n %d vs %d", baseH.n, curH.n);
+    if (baseH.viewport != curH.viewport)
+        return format("viewport %s vs %s", baseH.viewport, curH.viewport);
+    return "";
+}
+
+// Find an OK case result by exact name.
+CaseResult* findCase(CaseResult[] results, string name) {
+    foreach (ref r; results)
+        if (r.name == name && r.status == CaseStatus.OK) return &r;
+    return null;
+}
+
+// ----- Relative invariant thresholds -----------------------------------
+//
+// Tuned from observed n=64 ratios with generous margin (gross-regression
+// guards, not tight benchmarks). Observed (worst tool) ⇒ chosen K:
+//   I1 falloff radial / baseline kernelApply:  ~1.95×   ⇒ K1 = 6.0
+//   I2 pipeSymmetry sum when symmetry OFF:     ≤ ~7.5µs ⇒ K2 = 200µs (abs)
+//   I3 symmetry=X / baseline kernelApply:      ~1.86×   ⇒ K3 = 4.0
+//   I4 baseline pipeTotal / kernelApply:       ~1.19×   ⇒ K4 = 4.0
+enum double K1_FALLOFF        = 6.0;
+enum double K2_SYM_OFF_US     = 200.0;   // absolute µs ceiling, per case
+enum double K3_SYMMETRY       = 4.0;
+enum double K4_PIPE_OVERHEAD  = 4.0;
+
+struct Invariant {
+    string id;        // "I1", "I2", ...
+    string desc;      // human-readable
+    bool   pass;
+    string detail;    // actual ratio vs threshold
+}
+
+// Run the relative invariants over the results. Per-tool where applicable.
+Invariant[] checkInvariants(CaseResult[] results) {
+    Invariant[] inv;
+
+    // I1 — falloff loop bounded: radial kernelApply ≤ K1 × baseline (per tool).
+    foreach (tool; ["move", "rotate", "scale"]) {
+        auto base = findCase(results, tool ~ "/baseline");
+        auto rad  = findCase(results, tool ~ "/falloff=radial");
+        if (base is null || rad is null || base.kernelMedianUs <= 0) continue;
+        double ratio = rad.kernelMedianUs / base.kernelMedianUs;
+        bool ok = ratio <= K1_FALLOFF;
+        inv ~= Invariant("I1", format("%s falloff=radial kernelApply ≤ %.1f× baseline",
+                                      tool, K1_FALLOFF), ok,
+                         format("ratio=%.2f× (%.1f/%.1f µs) threshold %.1f×",
+                                ratio, rad.kernelMedianUs, base.kernelMedianUs,
+                                K1_FALLOFF));
+    }
+
+    // I2 — symmetry disabled is free: pipeSymmetry sum ≈ 0 in every case whose
+    // name is NOT symmetry=X (i.e. symmetry OFF). Catches the SymmetryStage
+    // running/allocating (rebuildPairing O(n log n)) when disabled.
+    {
+        double worst = 0;
+        string worstCase = "-";
+        foreach (r; results) {
+            if (r.status != CaseStatus.OK) continue;
+            if (r.name.canFind("symmetry=X")) continue;   // symmetry ON
+            if (r.pipeSymmetryMedianUs > worst) {
+                worst = r.pipeSymmetryMedianUs;
+                worstCase = r.name;
+            }
+        }
+        bool ok = worst <= K2_SYM_OFF_US;
+        inv ~= Invariant("I2",
+            format("symmetry OFF ⇒ pipeSymmetry ≤ %.0f µs", K2_SYM_OFF_US), ok,
+            format("worst=%.2f µs (%s) threshold %.0f µs",
+                   worst, worstCase, K2_SYM_OFF_US));
+    }
+
+    // I3 — symmetry mirror bounded: symmetry=X kernelApply ≤ K3 × baseline
+    // (per tool). Mirroring at most ~doubles the moving set.
+    foreach (tool; ["move", "rotate", "scale"]) {
+        auto base = findCase(results, tool ~ "/baseline");
+        auto sym  = findCase(results, tool ~ "/symmetry=X");
+        if (base is null || sym is null || base.kernelMedianUs <= 0) continue;
+        double ratio = sym.kernelMedianUs / base.kernelMedianUs;
+        bool ok = ratio <= K3_SYMMETRY;
+        inv ~= Invariant("I3", format("%s symmetry=X kernelApply ≤ %.1f× baseline",
+                                      tool, K3_SYMMETRY), ok,
+                         format("ratio=%.2f× (%.1f/%.1f µs) threshold %.1f×",
+                                ratio, sym.kernelMedianUs, base.kernelMedianUs,
+                                K3_SYMMETRY));
+    }
+
+    // I4 — pipeline overhead bounded: baseline pipeTotal ≤ K4 × kernelApply
+    // (per tool). Catches per-frame pipeline cost dominating the transform.
+    foreach (tool; ["move", "rotate", "scale"]) {
+        auto base = findCase(results, tool ~ "/baseline");
+        if (base is null || base.kernelMedianUs <= 0) continue;
+        double ratio = base.pipeMedianUs / base.kernelMedianUs;
+        bool ok = ratio <= K4_PIPE_OVERHEAD;
+        inv ~= Invariant("I4", format("%s baseline pipeTotal ≤ %.1f× kernelApply",
+                                      tool, K4_PIPE_OVERHEAD), ok,
+                         format("ratio=%.2f× (%.1f/%.1f µs) threshold %.1f×",
+                                ratio, base.pipeMedianUs, base.kernelMedianUs,
+                                K4_PIPE_OVERHEAD));
+    }
+
+    return inv;
+}
+
+struct AbsRegression {
+    string name;
+    string metric;     // "kernelApply" | "pipeTotal"
+    double baseUs, curUs, growth;   // growth = cur/base - 1
+}
+
+// Below this baseline median (µs), a metric is in the timing noise floor and a
+// percentage-growth comparison is meaningless (e.g. selection=single touches
+// ~20 verts ⇒ kernelApply 0.1µs, where +0.2µs reads as +200%). Real
+// regressions land on the heavy cases (kernelApply ~550µs+), far above this.
+enum double ABS_NOISE_FLOOR_US = 50.0;
+
+// Compare current results to a baseline. Flags a regression when the
+// kernelApply median grows by more than `tolerance` (e.g. 0.30 ⇒ +30%).
+//
+// kernelApply is the only metric compared absolutely: it is the actual
+// transform cost and is stable run-to-run (observed full-matrix spread on the
+// heavy cases ~1.02–1.06×, well under +30%). pipeTotal is deliberately NOT
+// compared absolutely — it is dominated by the per-frame ActionCenter pivot
+// recompute (pipeAcen) which jitters 40–90% run-to-run and is not a transform
+// regression; pipeline overhead is instead watched RELATIVELY by invariant I4
+// (pipeTotal / kernelApply ratio), which is hardware-stable.
+//
+// Cases whose baseline kernelApply is below ABS_NOISE_FLOOR_US are skipped:
+// they touch a handful of verts (selection=single/falloff=element ⇒ ~0.1µs)
+// and a percentage comparison there is pure timer granularity. The slow
+// acen=local case is kernelApply-cheap (its cost is pipeAcen, not compared) so
+// it never trips an invariant; it still appears in results/baseline as-is.
+AbsRegression[] checkAbsolute(CaseResult[] results, Baseline base,
+                              double tolerance) {
+    AbsRegression[] regs;
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        // snap cases recompute WHICH verts land on grid points each run, so
+        // their moving-set size (and thus kernelApply) varies run-to-run and is
+        // not a stable absolute metric — skip them (snap is still in the table).
+        if (r.name.canFind("snap=")) continue;
+        auto p = r.name in base.byName;
+        if (p is null) continue;   // new case absent from baseline — not a regression
+        if (p.kernelMedianUs < ABS_NOISE_FLOOR_US) continue;  // noise floor
+        double g = r.kernelMedianUs / p.kernelMedianUs - 1.0;
+        if (g > tolerance)
+            regs ~= AbsRegression(r.name, "kernelApply",
+                                  p.kernelMedianUs, r.kernelMedianUs, g);
+    }
+    return regs;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -828,6 +1089,9 @@ int main(string[] args) {
     int  repeats = 5;
     ushort port  = 8088;
     string viewport = "1280x960";
+    bool   updateBaseline = false;
+    bool   noAbsolute     = false;   // skip absolute comparison (invariants only)
+    double tolerance      = 0.30;    // absolute regression threshold (+30%)
 
     auto helpInfo = getopt(args,
         config.passThrough,
@@ -838,7 +1102,10 @@ int main(string[] args) {
         "subdivcube","use subdivideCube(levels) instead of grid", &subdivLevels,
         "repeats",   "measured drags per case (default 5)",  &repeats,
         "http-port", "HTTP port (default 8088)",             &port,
-        "viewport",  "fixed viewport WxH (default 1280x960)", &viewport);
+        "viewport",  "fixed viewport WxH (default 1280x960)", &viewport,
+        "update-baseline", "write tools/perf/baseline.json from this run", &updateBaseline,
+        "no-absolute",     "skip absolute baseline comparison (relative invariants only)", &noAbsolute,
+        "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance);
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run.d [options] [case-name-substring...]");
@@ -913,5 +1180,86 @@ int main(string[] args) {
                      viewport, repeats, results);
     writeln("\nWrote ", outPath);
 
-    return 0;
+    // -------------------------------------------------------------------
+    // Phase 5 — regression detection.
+    // -------------------------------------------------------------------
+    auto curHeader = currentHeader(meshType, meshParam, mi.faceCount,
+                                   viewport, repeats);
+    string baselinePath = buildPath(g_repoRoot, "tools", "perf", "baseline.json");
+
+    if (updateBaseline) {
+        writeBaselineJson(baselinePath, curHeader, results);
+        writeln("Wrote ", baselinePath, " (baseline updated from this run)");
+        // An --update-baseline run still reports invariants below but does
+        // not perform an absolute comparison against the freshly-written file.
+        noAbsolute = true;
+    }
+
+    int failures = 0;
+
+    // 1. Relative invariants — ALWAYS run (machine-stable).
+    writeln();
+    writeln("=== relative invariants (machine-stable) ===");
+    auto invs = checkInvariants(results);
+    int invFail = 0;
+    foreach (iv; invs) {
+        writefln("  [%s] %-4s %-52s  %s",
+                 iv.pass ? "PASS" : "FAIL", iv.id, iv.desc, iv.detail);
+        if (!iv.pass) { invFail++; failures++; }
+    }
+    if (invs.length == 0)
+        writeln("  (no invariants applicable — no OK baseline cases)");
+
+    // 2. Absolute baseline comparison — gated by build-match guard.
+    writeln();
+    writeln("=== absolute baseline comparison ===");
+    int absFail = 0;
+    if (noAbsolute && !updateBaseline) {
+        writeln("  skipped (--no-absolute)");
+    } else if (updateBaseline) {
+        writeln("  skipped (baseline was just written by --update-baseline)");
+    } else if (!exists(baselinePath)) {
+        writeln("  no baseline (", baselinePath, " absent) — run with",
+                " --update-baseline to capture one");
+    } else {
+        auto base = loadBaseline(baselinePath);
+        string mismatch = headerMismatch(base.header, curHeader);
+        if (mismatch.length > 0) {
+            writefln("  build mismatch — skipping absolute comparison: %s",
+                     mismatch);
+            writefln("  baseline was captured on {buildType=%s, compiler=%s," ~
+                     " meshType=%s, n=%d, viewport=%s}; current run is" ~
+                     " {buildType=%s, compiler=%s, meshType=%s, n=%d," ~
+                     " viewport=%s} — relative invariants only.",
+                     base.header.buildType, base.header.compiler,
+                     base.header.meshType, base.header.n, base.header.viewport,
+                     curHeader.buildType, curHeader.compiler,
+                     curHeader.meshType, curHeader.n, curHeader.viewport);
+        } else {
+            auto regs = checkAbsolute(results, base, tolerance);
+            if (regs.length == 0) {
+                writefln("  no regressions (tolerance +%.0f%%, %d cases" ~
+                         " compared)", tolerance * 100, base.byName.length);
+            } else {
+                foreach (rg; regs) {
+                    writefln("  [FAIL] %-28s %-12s %+.0f%%  (%.1f → %.1f µs)",
+                             rg.name, rg.metric, rg.growth * 100,
+                             rg.baseUs, rg.curUs);
+                    absFail++;
+                    failures++;
+                }
+            }
+        }
+    }
+
+    // 3. Final verdict.
+    writeln();
+    writeln("=== verdict ===");
+    writefln("  relative invariants: %d/%d passed", invs.length - invFail,
+             invs.length);
+    if (absFail > 0)
+        writefln("  absolute regressions: %d", absFail);
+    writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
+
+    return failures == 0 ? 0 : failures;
 }

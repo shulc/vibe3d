@@ -144,6 +144,21 @@ int main(string[] args) {
         }
     }
 
+    // Perf lane — RELATIVE INVARIANTS ONLY on a small (n=64) mesh. A full
+    // 100K × 36 × R run is slow and absolute timing is machine-bound, so the
+    // run_all lane skips the absolute baseline comparison (--no-absolute) and
+    // relies on the hardware-stable ratio invariants (I1–I4), which are
+    // designed to tolerate the noise of a loaded parallel suite. Included in
+    // the DEFAULT set: the invariants are cheap (~25s at n=64) and noise-robust;
+    // --skip perf / --only perf both work. Uses the perf buildType (ldc2),
+    // built by the runner itself unless --no-build is forwarded.
+    if (include("perf")) {
+        string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "64",
+                        "--no-absolute"];
+        if (noBuild) cmd ~= "--no-build";
+        suites ~= Suite("perf", "5/5 perf relative invariants (n=64)", cmd);
+    }
+
     if (suites.length == 0) {
         writeln(yellow("nothing to run (check --only / --skip)"));
         return 0;
