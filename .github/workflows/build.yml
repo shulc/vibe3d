@@ -41,7 +41,7 @@ jobs:
           IN_TAG:    ${{ inputs.tag }}
           IN_RENDER: ${{ inputs.with_render }}
         run: |
-          if [ "$EVENT" = "schedule" ]; then
+          if [ "$EVENT" = "schedule" ] || [ "$EVENT" = "workflow_dispatch" ]; then
             # with_render disabled for the regular nightly for now (render
             # backends still need toolchain work on the runners); modeling only.
             tag=nightly; with_render=false; nightly=true
