@@ -11,9 +11,10 @@ on:
         description: 'Also build the with-render variant (slow: pulls Blender LFS, builds Cycles, bundles RPR/Cycles libs)'
         type: boolean
         default: false
-  # Nightly build: publishes a single rolling "nightly" pre-release (with-render
-  # included) and skips when there were no commits in the last 24h. The runner
-  # must be online at this time — adjust the cron if needed (UTC).
+  # Nightly build: publishes a single rolling "nightly" pre-release (modeling
+  # only — with-render is disabled for the regular build for now) and skips when
+  # there were no commits in the last 24h. The runner must be online at this
+  # time — adjust the cron if needed (UTC).
   schedule:
     - cron: '0 3 * * *'
 
@@ -22,8 +23,9 @@ permissions:
 
 jobs:
   # Resolve what this run should do. For a scheduled run it becomes a nightly
-  # (tag=nightly, with_render=true, prerelease) and is skipped when main saw no
-  # commits in the last 24h. A manual dispatch keeps its tag / with_render inputs.
+  # (tag=nightly, modeling-only, prerelease) and is skipped when main saw no
+  # commits in the last 24h. A manual dispatch keeps its tag / with_render inputs
+  # (so with-render can still be exercised on demand).
   check:
     runs-on: [self-hosted, Linux]
     outputs:
@@ -40,7 +42,9 @@ jobs:
           IN_RENDER: ${{ inputs.with_render }}
         run: |
           if [ "$EVENT" = "schedule" ]; then
-            tag=nightly; with_render=true; nightly=true
+            # with_render disabled for the regular nightly for now (render
+            # backends still need toolchain work on the runners); modeling only.
+            tag=nightly; with_render=false; nightly=true
             age=$(( $(date +%s) - $(git log -1 --format=%ct) ))
             if [ "$age" -lt 86400 ]; then
               should_run=true
