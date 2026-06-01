@@ -16,7 +16,7 @@ on:
   # there were no commits in the last 24h. The runner must be online at this
   # time — adjust the cron if needed (UTC).
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '4,8,12,16 15 * * *'
 
 permissions:
   contents: write
