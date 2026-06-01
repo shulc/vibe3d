@@ -91,28 +91,35 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
 
     // Vertex candidates (7.3a). Backed by a screen-space bucket grid
     // (built once per view, queried ~O(1)) instead of an O(verts)
-    // per-frame projection scan. The grid query returns the SAME
-    // winning vertex the old linear scan did: the in-`outerRangePx`
-    // vertex with the smallest cursor pixel distance, ties broken by
-    // lowest vertex index (matching the old strict-`<` ascending walk).
-    // The winner is funneled back through `consider()` so the
-    // cross-type min (vertex vs edge vs grid …) is byte-for-byte the
-    // same as before.
+    // per-frame projection scan. The grid query returns an
+    // index-ASCENDING list of every non-excluded vertex whose
+    // projected pixel could be within `outerRangePx` of the cursor
+    // (a superset); each is funneled through the UNCHANGED `consider()`
+    // walk, so visiting them in ascending index order with consider()'s
+    // strict-`<` reproduces the old linear scan's winner + tie-break
+    // (smallest pixel distance, ties → lowest index) byte-for-byte.
     if (cfg.enabledTypes & SnapType.Vertex) {
-        int    vWinIdx;
-        Vec3   vWinWorld;
-        if (queryVertexGrid(mesh, vp, sx, sy, cfg.outerRangePx,
-                            excludeVerts, vWinIdx, vWinWorld))
-            consider(vWinWorld, vWinIdx, SnapType.Vertex);
+        auto cands = queryCandidateGrid(Kind.Vertex, mesh, vp, sx, sy,
+                                        cfg.outerRangePx, excludeVerts);
+        foreach (vi; cands)
+            consider(mesh.vertices[vi], cast(int)vi, SnapType.Vertex);
     }
 
     // Edge candidates (7.3b) — closest point on each edge segment in
     // screen space. Skipped when both endpoints are part of the
     // dragged set (the entire edge is moving with the cursor).
+    //
+    // Broad-phase: a per-edge screen-bbox bucket grid (Kind.Edge)
+    // returns only edges whose projected bbox overlaps the cursor's
+    // 3×3 cell block; each is then run through the UNCHANGED exact
+    // segment-distance + consider() math below, so the winner is
+    // byte-identical to the old O(edges) scan. Exclusion (both
+    // endpoints dragged) is applied at query time.
     if (cfg.enabledTypes & SnapType.Edge) {
-        foreach (ei, edge; mesh.edges) {
-            if (isVertExcluded(edge[0], excludeVerts)
-             && isVertExcluded(edge[1], excludeVerts)) continue;
+        auto cands = queryCandidateGrid(Kind.Edge, mesh, vp, sx, sy,
+                                        cfg.outerRangePx, excludeVerts);
+        foreach (ei; cands) {
+            auto edge = mesh.edges[ei];
             float px0, py0, ndcZ0, px1, py1, ndcZ1;
             Vec3 a = mesh.vertices[edge[0]];
             Vec3 b = mesh.vertices[edge[1]];
@@ -132,11 +139,13 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
 
-    // EdgeCenter candidates (7.3b) — midpoint of each edge.
+    // EdgeCenter candidates (7.3b) — midpoint of each edge. Point
+    // candidate ⇒ Kind.EdgeCenter point grid; same 3×3 query as Vertex.
     if (cfg.enabledTypes & SnapType.EdgeCenter) {
-        foreach (ei, edge; mesh.edges) {
-            if (isVertExcluded(edge[0], excludeVerts)
-             && isVertExcluded(edge[1], excludeVerts)) continue;
+        auto cands = queryCandidateGrid(Kind.EdgeCenter, mesh, vp, sx, sy,
+                                        cfg.outerRangePx, excludeVerts);
+        foreach (ei; cands) {
+            auto edge = mesh.edges[ei];
             Vec3 mid = (mesh.vertices[edge[0]] + mesh.vertices[edge[1]]) * 0.5f;
             consider(mid, cast(int)ei, SnapType.EdgeCenter);
         }
@@ -146,9 +155,15 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // surface. Cursor inside the screen-projected polygon ⇒ ray-plane
     // hit on the face. Outside ⇒ closest point on the boundary
     // (= closest segment of the face's edge ring).
+    //
+    // Broad-phase: per-face screen-bbox bucket grid (Kind.Polygon).
+    // The expensive `closestOnPolygonSurface` (which projects all face
+    // verts + allocates) now runs ONLY on near faces.
     if (cfg.enabledTypes & SnapType.Polygon) {
-        foreach (fi, face; mesh.faces) {
-            if (isFaceFullyExcluded(face, excludeVerts)) continue;
+        auto cands = queryCandidateGrid(Kind.Polygon, mesh, vp, sx, sy,
+                                        cfg.outerRangePx, excludeVerts);
+        foreach (fi; cands) {
+            auto face = mesh.faces[fi];
             Vec3 hit;
             if (closestOnPolygonSurface(face, mesh, sx, sy, vp, hit))
                 consider(hit, cast(int)fi, SnapType.Polygon);
@@ -156,9 +171,12 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     }
 
     // PolyCenter candidates (7.3b) — face centroid (average of verts).
+    // Point candidate ⇒ Kind.PolyCenter point grid.
     if (cfg.enabledTypes & SnapType.PolyCenter) {
-        foreach (fi, face; mesh.faces) {
-            if (isFaceFullyExcluded(face, excludeVerts)) continue;
+        auto cands = queryCandidateGrid(Kind.PolyCenter, mesh, vp, sx, sy,
+                                        cfg.outerRangePx, excludeVerts);
+        foreach (fi; cands) {
+            auto face = mesh.faces[fi];
             if (face.length == 0) continue;
             Vec3 c = Vec3(0, 0, 0);
             foreach (vi; face) c += mesh.vertices[vi];
@@ -217,20 +235,6 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
     return res;
-}
-
-private bool isVertExcluded(uint vi, const(uint)[] exclude) {
-    foreach (ex; exclude)
-        if (ex == vi) return true;
-    return false;
-}
-
-private bool isFaceFullyExcluded(const(uint)[] face,
-                                  const(uint)[] exclude) {
-    if (exclude.length == 0) return false;
-    foreach (vi; face)
-        if (!isVertExcluded(vi, exclude)) return false;
-    return true;
 }
 
 // Closest world-space point on a polygon's surface to the cursor at
@@ -294,73 +298,127 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 }
 
 // ---------------------------------------------------------------------------
-// Screen-space vertex bucket grid (perf — see top-of-file note + the
-// vertex-candidate block in snapCursor).
+// Screen-space candidate bucket grid (perf — see top-of-file note + the
+// candidate blocks in snapCursor).
 //
-// WHY: the vertex snap target used to project EVERY mesh vertex with
-// `projectToWindowFull` on every drag frame (O(verts) × ~40 flops). At
-// 100K verts that is ~50ms/frame. The camera + viewport are static for
-// the whole duration of a drag, and interactive drags do NOT bump
+// WHY: each per-element snap type used to project + test EVERY element
+// of its kind on every drag frame (O(verts) for Vertex/EdgeCenter,
+// O(edges) for Edge, O(faces) × per-face allocation for Polygon, etc).
+// At n=64 (4K verts) the geometric types cost ~150ms/frame; at 100K
+// they are catastrophic. The camera + viewport are static for the whole
+// duration of a drag, and interactive drags do NOT bump
 // `mesh.mutationVersion` (the moving verts are passed in `excludeVerts`
 // instead — see mesh.d's uploadVersion note). So we can project all
-// vertices ONCE at drag start into a uniform screen-space bucket grid
-// and answer each frame's "nearest in-range vertex" with a 3×3 cell
+// elements of a kind ONCE at drag start into a uniform screen-space
+// bucket grid and answer each frame's candidate query with a 3×3 cell
 // scan.
 //
-// CACHE KEY: a signature of (vp.view, vp.proj) + mesh.mutationVersion.
-// Both are stable during a drag, so the grid is built once at drag
-// start and reused every subsequent frame. Topology / non-drag
-// geometry edits bump mutationVersion and force a rebuild.
+// ONE GENERIC GRID, FIVE KINDS: `Kind` selects which per-element
+// projection feeds the grid:
+//   - Vertex / EdgeCenter / PolyCenter — POINT candidates: one projected
+//     screen point per element. Bucketed into the single cell that point
+//     falls in.
+//   - Edge / Polygon — EXTENT candidates: the element's PROJECTED
+//     screen-space bounding box (edge = both endpoints; face = all
+//     verts). Bucketed into EVERY cell its bbox overlaps, so a long edge
+//     or large face is reachable from any cell near it.
+// Each enabled kind keeps its own cached grid (`g_grids[kind]`); only
+// the grids for the types actually queried in a given snapCursor call
+// are ever built. The grids are independent so an Edge-only drag never
+// pays to index faces, etc.
 //
-// EXCLUDE IS QUERY-TIME, NOT KEY: every vertex is indexed at build
-// time; excluded verts are skipped at QUERY time. The exclude list is
-// the small dragged set and changes within a single drag (it stays
-// constant per drag, but is not part of the cache key on purpose).
-// Keeping it out of the key means the moving verts' stored projections
-// go stale as they move — but they are excluded from results anyway,
-// so the cache stays valid across the whole drag.
+// BROAD-PHASE CONTRACT + COVERAGE GUARANTEE: queryCandidateGrid is a
+// SUPERSET filter. It returns (index-ascending, deduplicated) every
+// element whose closest screen-space point COULD lie within
+// `outerRangePx` of the cursor; the caller then runs the UNCHANGED exact
+// distance math (consider() / segment distance / closestOnPolygonSurface)
+// on only those, and consider()'s own `d > outerRangePx` reject + best
+// tracking produces the identical winner the linear scan did. Because
+// candidates are visited in ascending index order with consider()'s
+// strict-`<`, the lowest-index-wins tie-break is preserved byte-for-byte.
+//
+// The coverage guarantee with cell size == outerRangePx and a 3×3 query:
+//   POINT kinds: a point within `outerRangePx` (= one cell width) of the
+//   cursor is at most one cell away in each axis, so it lies in the
+//   cursor cell or an 8-neighbor — the 3×3 block. Exact.
+//   EXTENT kinds: let P be the screen point on the element closest to
+//   the cursor; if |P - cursor| <= outerRangePx then P is within one
+//   cell of the cursor, so P's cell is inside the 3×3 block. P lies
+//   inside the element's screen bbox, and the element was inserted into
+//   EVERY cell its bbox overlaps — so it was inserted into P's cell, and
+//   the 3×3 scan finds it. Hence any element whose closest screen point
+//   is within outerRangePx is returned. (The segment/polygon exact tests
+//   use the element's true closest point, which is <= the closest bbox
+//   point's distance, so no in-range element is missed.) Exact superset.
+//
+// CACHE KEY (per kind): (vp.view, vp.proj, viewport rect) +
+// mesh.mutationVersion + element count + cellPx. All stable during a
+// drag ⇒ built once at drag start, reused every frame. Topology / non-
+// drag edits bump mutationVersion and force a rebuild.
+//
+// EXCLUDE IS QUERY-TIME, NOT KEY: every element is indexed at build
+// time; the dragged set (excludeVerts) is applied at QUERY time. An
+// element is excluded iff ALL its incident verts are dragged — for
+// points: the source vert (Vertex) / both edge endpoints (EdgeCenter) /
+// all face verts (PolyCenter); for extents: both endpoints (Edge) / all
+// face verts (Polygon) — matching the original linear loops' skip rule
+// exactly. The moving elements' stored projections go stale as they
+// move, but they are excluded from results anyway, so the cache stays
+// valid across the whole drag.
 //
 // THREAD SAFETY: snapCursor's drag callers run on the main thread, but
 // the `/api/snap` test bridge (app.d) calls snapCursor directly on the
-// HTTP server thread. A module-level cache is therefore shared across
-// two threads; a mutex serializes build + query (queries are O(1) and
-// builds rare, so contention is negligible).
+// HTTP server thread. The module-level grid cache is shared across two
+// threads; g_vgridMutex serializes build + query for ALL kinds (queries
+// are ~O(1) and builds rare, so contention is negligible).
 //
-// CELL SIZE: `outerRangePx` (the vertex-snap max pixel range). With a
-// cell that wide, any vertex within `outerRangePx` of the cursor lands
-// in the cursor's cell or one of its 8 neighbors, so the 3×3 scan is
-// exact. When outerRangePx is degenerate (<= 0) we fall back to a
-// linear scan of all indexed verts (still correct, same O(verts) as
-// the old path — only ever hit for pathological configs).
+// CELL SIZE: `outerRangePx`. When degenerate (<= 0) the query falls back
+// to returning ALL non-excluded element indices (index-ascending) so the
+// caller's exact walk is a full — but still correct — linear scan; only
+// ever reached for pathological configs.
 
-private struct VertexGrid {
+private enum Kind { Vertex, EdgeCenter, PolyCenter, Edge, Polygon }
+
+private bool kindIsPoint(Kind k) {
+    return k == Kind.Vertex || k == Kind.EdgeCenter || k == Kind.PolyCenter;
+}
+
+// Number of elements of a kind present in the mesh.
+private size_t kindCount(Kind k, const ref Mesh mesh) {
+    final switch (k) {
+        case Kind.Vertex:                      return mesh.vertices.length;
+        case Kind.EdgeCenter: case Kind.Edge:  return mesh.edges.length;
+        case Kind.PolyCenter: case Kind.Polygon: return mesh.faces.length;
+    }
+}
+
+private struct CandidateGrid {
     // Cache identity.
     ulong  meshVersion = ulong.max;
     float[16] view;
     float[16] proj;
     int    vpW, vpH, vpX, vpY;
     float  cellPx = 0;          // grid cell size (== outerRangePx at build)
-    size_t vertCount = 0;
+    size_t elemCount = 0;
 
     // Bucket extents in screen-space cell coordinates.
     int    minCx, minCy, nCols, nRows;
 
     // CSR-style bucket layout: `cellStart[c .. c+1]` indexes a contiguous
-    // run in `items`. An item is (sx, sy, vi). ndcZ is unused (no depth
-    // tie-break in the linear scan it replaces).
+    // run in `items`. An item is just the element index — the caller
+    // re-projects for the exact test, and points re-derive trivially.
     int[]  cellStart;           // length nCols*nRows + 1
-    struct Item { float sx, sy; int vi; }
-    Item[] items;
-
+    int[]  items;               // element indices, possibly duplicated
+                                // across cells for EXTENT kinds.
     bool valid;
 }
 
-private __gshared VertexGrid g_vgrid;
+private __gshared CandidateGrid[Kind.max + 1] g_grids;
 private __gshared Mutex      g_vgridMutex;
 
 shared static this() { g_vgridMutex = new Mutex(); }
 
-private bool sameViewport(const ref VertexGrid g, const ref Viewport vp) {
+private bool sameViewport(const ref CandidateGrid g, const ref Viewport vp) {
     if (g.vpW != vp.width || g.vpH != vp.height
      || g.vpX != vp.x     || g.vpY != vp.y) return false;
     foreach (i; 0 .. 16) {
@@ -370,189 +428,289 @@ private bool sameViewport(const ref VertexGrid g, const ref Viewport vp) {
     return true;
 }
 
-// Build (or rebuild) the grid for `mesh` under viewport `vp`, cell size
-// `cellPx`. Indexes ALL vertices (exclusion happens at query time).
-private void buildVertexGrid(const ref Mesh mesh, const ref Viewport vp,
-                             float cellPx) {
-    g_vgrid.meshVersion = mesh.mutationVersion;
-    g_vgrid.view[]      = vp.view[];
-    g_vgrid.proj[]      = vp.proj[];
-    g_vgrid.vpW = vp.width;  g_vgrid.vpH = vp.height;
-    g_vgrid.vpX = vp.x;      g_vgrid.vpY = vp.y;
-    g_vgrid.cellPx    = cellPx;
-    g_vgrid.vertCount = mesh.vertices.length;
-    g_vgrid.valid     = false;
-
-    // Pass 1: project every vertex, record screen pos + cell, and track
-    // the cell-coordinate bounding box of the projected (front-facing)
-    // verts.
-    static struct Proj { float sx, sy; int cx, cy; int vi; bool ok; }
-    Proj[] projs = new Proj[](mesh.vertices.length);
-    bool any = false;
-    int loCx, loCy, hiCx, hiCy;
-    float inv = 1.0f / cellPx;
-    foreach (vi, ref v; mesh.vertices) {
+// Project the screen-space cell-coord bbox [loCx..hiCx]×[loCy..hiCy] of
+// element `idx` of kind `k`. Returns false (element skipped) when any
+// required vertex is behind the camera or the element is degenerate.
+private bool projectElementCells(Kind k, int idx, const ref Mesh mesh,
+                                 const ref Viewport vp, float inv,
+                                 out int loCx, out int loCy,
+                                 out int hiCx, out int hiCy) {
+    // Helper: project a single world point into a cell, expanding bbox.
+    bool first = true;
+    bool accumulate(Vec3 w) {
         float pxs, pys, ndcZ;
-        if (!projectToWindowFull(v, vp, pxs, pys, ndcZ)) {
-            projs[vi].ok = false;
-            continue;
-        }
+        if (!projectToWindowFull(w, vp, pxs, pys, ndcZ)) return false;
         int cx = cast(int)floor(pxs * inv);
         int cy = cast(int)floor(pys * inv);
-        projs[vi] = Proj(pxs, pys, cx, cy, cast(int)vi, true);
-        if (!any) {
-            loCx = hiCx = cx; loCy = hiCy = cy; any = true;
+        if (first) {
+            loCx = hiCx = cx; loCy = hiCy = cy; first = false;
         } else {
             if (cx < loCx) loCx = cx; if (cx > hiCx) hiCx = cx;
             if (cy < loCy) loCy = cy; if (cy > hiCy) hiCy = cy;
+        }
+        return true;
+    }
+
+    final switch (k) {
+        case Kind.Vertex:
+            return accumulate(mesh.vertices[idx]);
+        case Kind.EdgeCenter: {
+            auto e = mesh.edges[idx];
+            Vec3 mid = (mesh.vertices[e[0]] + mesh.vertices[e[1]]) * 0.5f;
+            return accumulate(mid);
+        }
+        case Kind.PolyCenter: {
+            auto f = mesh.faces[idx];
+            if (f.length == 0) return false;
+            Vec3 c = Vec3(0, 0, 0);
+            foreach (vi; f) c += mesh.vertices[vi];
+            c = c / cast(float)f.length;
+            return accumulate(c);
+        }
+        case Kind.Edge: {
+            auto e = mesh.edges[idx];
+            if (!accumulate(mesh.vertices[e[0]])) return false;
+            if (!accumulate(mesh.vertices[e[1]])) return false;
+            return true;
+        }
+        case Kind.Polygon: {
+            auto f = mesh.faces[idx];
+            if (f.length == 0) return false;
+            foreach (vi; f)
+                if (!accumulate(mesh.vertices[vi])) return false;
+            return true;
+        }
+    }
+}
+
+// Build (or rebuild) the grid for kind `k` of `mesh` under viewport
+// `vp`, cell size `cellPx`. Indexes ALL elements (exclusion happens at
+// query time). EXTENT kinds insert each element into every cell its
+// projected bbox overlaps; POINT kinds insert into a single cell.
+private void buildCandidateGrid(Kind k, const ref Mesh mesh,
+                                const ref Viewport vp, float cellPx) {
+    auto g = &g_grids[k];
+    g.meshVersion = mesh.mutationVersion;
+    g.view[]      = vp.view[];
+    g.proj[]      = vp.proj[];
+    g.vpW = vp.width;  g.vpH = vp.height;
+    g.vpX = vp.x;      g.vpY = vp.y;
+    g.cellPx    = cellPx;
+    g.elemCount = kindCount(k, mesh);
+    g.valid     = false;
+
+    size_t n = g.elemCount;
+    float inv = 1.0f / cellPx;
+
+    // Pass 1: project every element's cell bbox; track overall bbox.
+    static struct Box { int loCx, loCy, hiCx, hiCy; bool ok; }
+    Box[] boxes = new Box[](n);
+    bool any = false;
+    int loCx, loCy, hiCx, hiCy;
+    foreach (i; 0 .. n) {
+        Box b;
+        b.ok = projectElementCells(k, cast(int)i, mesh, vp, inv,
+                                   b.loCx, b.loCy, b.hiCx, b.hiCy);
+        boxes[i] = b;
+        if (!b.ok) continue;
+        if (!any) {
+            loCx = b.loCx; hiCx = b.hiCx; loCy = b.loCy; hiCy = b.hiCy;
+            any = true;
+        } else {
+            if (b.loCx < loCx) loCx = b.loCx;
+            if (b.hiCx > hiCx) hiCx = b.hiCx;
+            if (b.loCy < loCy) loCy = b.loCy;
+            if (b.hiCy > hiCy) hiCy = b.hiCy;
         }
     }
 
     if (!any) {
         // Nothing projects in front of the camera — empty grid.
-        g_vgrid.minCx = g_vgrid.minCy = 0;
-        g_vgrid.nCols = g_vgrid.nRows = 0;
-        g_vgrid.cellStart = [0];
-        g_vgrid.items = null;
-        g_vgrid.valid = true;
+        g.minCx = g.minCy = 0;
+        g.nCols = g.nRows = 0;
+        g.cellStart = [0];
+        g.items = null;
+        g.valid = true;
         return;
     }
 
-    g_vgrid.minCx = loCx;
-    g_vgrid.minCy = loCy;
-    g_vgrid.nCols = hiCx - loCx + 1;
-    g_vgrid.nRows = hiCy - loCy + 1;
-    size_t nCells = cast(size_t)g_vgrid.nCols * g_vgrid.nRows;
+    g.minCx = loCx;
+    g.minCy = loCy;
+    g.nCols = hiCx - loCx + 1;
+    g.nRows = hiCy - loCy + 1;
+    size_t nCells = cast(size_t)g.nCols * g.nRows;
 
-    // CSR counting sort into buckets.
+    // CSR counting sort into buckets. EXTENT kinds contribute one entry
+    // per overlapped cell.
     auto counts = new int[](nCells + 1);
-    foreach (ref p; projs) {
-        if (!p.ok) continue;
-        size_t c = cast(size_t)(p.cy - loCy) * g_vgrid.nCols
-                 + (p.cx - loCx);
-        counts[c + 1]++;
+    foreach (ref b; boxes) {
+        if (!b.ok) continue;
+        foreach (cy; b.loCy .. b.hiCy + 1)
+            foreach (cx; b.loCx .. b.hiCx + 1) {
+                size_t c = cast(size_t)(cy - loCy) * g.nCols + (cx - loCx);
+                counts[c + 1]++;
+            }
     }
     foreach (i; 1 .. nCells + 1) counts[i] += counts[i - 1];
-    g_vgrid.cellStart = counts;
+    g.cellStart = counts;
 
     int total = counts[nCells];
-    g_vgrid.items = new VertexGrid.Item[](total);
-    // Walk verts in ascending index so within each bucket items stay
-    // index-ascending — lets the query's strict-`<` tie-break pick the
-    // lowest vertex index, matching the old linear scan exactly.
+    g.items = new int[](total);
+    // Walk elements in ascending index so within each bucket items stay
+    // index-ascending. The query merges the 3×3 block's buckets and
+    // returns a deduplicated, index-ascending candidate list — matching
+    // the old linear scans' ascending element order exactly.
     auto cursor = new int[](nCells);
     foreach (i; 0 .. nCells) cursor[i] = counts[i];
-    foreach (ref p; projs) {
-        if (!p.ok) continue;
-        size_t c = cast(size_t)(p.cy - loCy) * g_vgrid.nCols
-                 + (p.cx - loCx);
-        g_vgrid.items[cursor[c]++] =
-            VertexGrid.Item(p.sx, p.sy, p.vi);
+    foreach (i; 0 .. n) {
+        Box b = boxes[i];
+        if (!b.ok) continue;
+        foreach (cy; b.loCy .. b.hiCy + 1)
+            foreach (cx; b.loCx .. b.hiCx + 1) {
+                size_t c = cast(size_t)(cy - loCy) * g.nCols + (cx - loCx);
+                g.items[cursor[c]++] = cast(int)i;
+            }
     }
-    g_vgrid.valid = true;
+    g.valid = true;
 }
 
-// Find the nearest non-excluded vertex within `outerRangePx` of cursor
-// pixel (sx, sy). Returns true + (outIdx, outWorld) on a hit. Result is
-// identical to the old linear `consider()` walk over SnapType.Vertex:
-// min pixel distance within range, ties → lowest vertex index.
-private bool queryVertexGrid(const ref Mesh mesh, const ref Viewport vp,
-                             int sx, int sy, float outerRangePx,
-                             const(uint)[] excludeVerts,
-                             out int outIdx, out Vec3 outWorld) {
-    if (mesh.vertices.length == 0) return false;
+// Is element `idx` of kind `k` fully part of the dragged (excluded) set?
+// Mirrors the original per-type linear loop skip rule exactly, but uses
+// an O(1) per-vertex membership bitset (`ex`, indexed by vertex id) so a
+// whole-mesh drag's huge exclude list doesn't turn each test into an
+// O(exclude) scan — which would reintroduce the very O(n²) blowup the
+// grid removes (esp. for edge/polygon, where many candidates are tested).
+private bool kindExcluded(Kind k, int idx, const ref Mesh mesh,
+                          const bool[] ex) {
+    if (ex.length == 0) return false;
+    bool exV(uint vi) { return vi < ex.length && ex[vi]; }
+    final switch (k) {
+        case Kind.Vertex:
+            return exV(cast(uint)idx);
+        case Kind.EdgeCenter: case Kind.Edge: {
+            auto e = mesh.edges[idx];
+            return exV(e[0]) && exV(e[1]);
+        }
+        case Kind.PolyCenter: case Kind.Polygon: {
+            auto f = mesh.faces[idx];
+            if (f.length == 0) return false;
+            foreach (vi; f)
+                if (!exV(vi)) return false;
+            return true;
+        }
+    }
+}
 
+// Query the kind-`k` grid: return the index-ASCENDING, deduplicated list
+// of candidate element indices whose closest screen point could lie
+// within `outerRangePx` of cursor pixel (sx, sy), with the dragged set
+// excluded. The list is a reusable module-scoped scratch buffer (valid
+// until the next query) — the caller iterates it immediately. See the
+// broad-phase contract + coverage guarantee in the section header.
+private int[] queryCandidateGrid(Kind k, const ref Mesh mesh,
+                                 const ref Viewport vp,
+                                 int sx, int sy, float outerRangePx,
+                                 const(uint)[] excludeVerts) {
     g_vgridMutex.lock();
     scope (exit) g_vgridMutex.unlock();
 
-    // Degenerate range → linear scan fallback (preserves exact result;
-    // only reached for pathological configs where the bucket cell size
-    // would be non-positive).
-    if (!(outerRangePx > 0)) {
-        float bd = float.infinity; int bi = -1;
-        foreach (vi, ref v; mesh.vertices) {
-            if (isVertExcluded(cast(uint)vi, excludeVerts)) continue;
-            float pxs, pys, ndcZ;
-            if (!projectToWindowFull(v, vp, pxs, pys, ndcZ)) continue;
-            float dx = pxs - cast(float)sx, dy = pys - cast(float)sy;
-            float d = sqrt(dx*dx + dy*dy);
-            if (d > outerRangePx) continue;
-            if (d < bd) { bd = d; bi = cast(int)vi; }
-        }
-        if (bi < 0) return false;
-        outIdx = bi; outWorld = mesh.vertices[bi];
-        return true;
-    }
+    g_candScratch.length = 0;
+    size_t n = kindCount(k, mesh);
+    if (n == 0) return g_candScratch;
 
-    // (Re)build if stale.
-    if (!g_vgrid.valid
-     || g_vgrid.meshVersion != mesh.mutationVersion
-     || g_vgrid.vertCount   != mesh.vertices.length
-     || g_vgrid.cellPx      != outerRangePx
-     || !sameViewport(g_vgrid, vp))
-        buildVertexGrid(mesh, vp, outerRangePx);
-
-    if (g_vgrid.nCols == 0 || g_vgrid.nRows == 0) return false;
-
-    // O(1) exclusion membership. The old linear scan was fine when the
-    // dragged set was tiny, but a whole-mesh move makes excludeVerts
-    // span every vertex — turning the per-item `isVertExcluded` linear
-    // scan back into O(verts) and reintroducing the bottleneck. A
-    // reusable bool[] keyed by vertex index gives O(1) lookup; it is
-    // module-scoped (guarded by the same mutex) so it isn't reallocated
-    // every frame.
+    // O(1) per-vertex exclude membership (indexed by vertex id), built
+    // once per query and cleared in O(exclude) — keeps kindExcluded O(1).
     bool[] ex = excludeMembership(excludeVerts, mesh.vertices.length);
     scope (exit) clearExcludeMembership(excludeVerts);
 
-    float inv = 1.0f / g_vgrid.cellPx;
+    // Degenerate range → return every non-excluded index (ascending).
+    // The caller's exact walk then degrades to a correct linear scan.
+    if (!(outerRangePx > 0)) {
+        foreach (i; 0 .. n)
+            if (!kindExcluded(k, cast(int)i, mesh, ex))
+                g_candScratch ~= cast(int)i;
+        return g_candScratch;
+    }
+
+    auto g = &g_grids[k];
+
+    // (Re)build if stale.
+    if (!g.valid
+     || g.meshVersion != mesh.mutationVersion
+     || g.elemCount   != n
+     || g.cellPx      != outerRangePx
+     || !sameViewport(*g, vp))
+        buildCandidateGrid(k, mesh, vp, outerRangePx);
+
+    if (g.nCols == 0 || g.nRows == 0) return g_candScratch;
+
+    float inv = 1.0f / g.cellPx;
     int ccx = cast(int)floor(cast(float)sx * inv);
     int ccy = cast(int)floor(cast(float)sy * inv);
 
-    float bestDist = float.infinity;
-    int   bestIdx  = -1;
+    // Collect the 3×3 block's bucketed indices. EXTENT kinds can emit an
+    // element from multiple cells of the block, so dedup via a seen-set
+    // keyed by element index (reused scratch, cleared O(emitted) after).
+    bool[] seen = candSeen(n);
+    scope (exit) clearCandSeen();
+
     foreach (gy; ccy - 1 .. ccy + 2) {
-        int ly = gy - g_vgrid.minCy;
-        if (ly < 0 || ly >= g_vgrid.nRows) continue;
+        int ly = gy - g.minCy;
+        if (ly < 0 || ly >= g.nRows) continue;
         foreach (gx; ccx - 1 .. ccx + 2) {
-            int lx = gx - g_vgrid.minCx;
-            if (lx < 0 || lx >= g_vgrid.nCols) continue;
-            size_t c = cast(size_t)ly * g_vgrid.nCols + lx;
-            int s = g_vgrid.cellStart[c];
-            int e = g_vgrid.cellStart[c + 1];
-            foreach (k; s .. e) {
-                auto it = g_vgrid.items[k];
-                if (it.vi < cast(int)ex.length && ex[it.vi])
-                    continue;
-                float dx = it.sx - cast(float)sx;
-                float dy = it.sy - cast(float)sy;
-                float d  = sqrt(dx*dx + dy*dy);
-                if (d > outerRangePx) continue;
-                // Strict-`<` keeps the FIRST item at a tied distance.
-                // Items within a bucket are index-ascending, but two
-                // tied verts can live in different buckets scanned in
-                // an arbitrary order — so add an explicit lowest-index
-                // tie-break to guarantee parity with the old ascending
-                // linear walk.
-                if (d < bestDist
-                 || (d == bestDist && it.vi < bestIdx)) {
-                    bestDist = d;
-                    bestIdx  = it.vi;
-                }
+            int lx = gx - g.minCx;
+            if (lx < 0 || lx >= g.nCols) continue;
+            size_t c = cast(size_t)ly * g.nCols + lx;
+            int s = g.cellStart[c];
+            int e = g.cellStart[c + 1];
+            foreach (kk; s .. e) {
+                int idx = g.items[kk];
+                if (seen[idx]) continue;
+                seen[idx] = true;
+                g_candSeenIdx ~= idx;   // remember to clear this bit
+                if (kindExcluded(k, idx, mesh, ex)) continue;
+                g_candScratch ~= idx;
             }
         }
     }
 
-    if (bestIdx < 0) return false;
-    outIdx   = bestIdx;
-    outWorld = mesh.vertices[bestIdx];
-    return true;
+    // The buckets are index-ascending within each cell, but the 3×3 scan
+    // visits cells in row-major order, so the merged list is NOT globally
+    // ascending. Sort to restore the linear scan's ascending element
+    // order (cheap — only the near-cursor candidates, typically a handful).
+    import std.algorithm.sorting : sort;
+    sort(g_candScratch);
+    return g_candScratch;
 }
 
-// Reusable exclude-membership scratch (guarded by g_vgridMutex via the
-// query). `excludeMembership` sets the bits for `exclude` and returns
-// the buffer (sized to `vertCount`); `clearExcludeMembership` resets
-// only the bits it set (O(exclude)) so the buffer stays reusable
-// without an O(verts) memset each frame.
+// Reusable candidate-list scratch + dedup seen-set, both guarded by
+// g_vgridMutex via the query. `g_candScratch` holds the returned
+// candidate indices; `g_candSeenIdx` records which seen-set bits were
+// set this query so they can be cleared in O(emitted) rather than an
+// O(n) memset.
+private __gshared int[]  g_candScratch;
+private __gshared bool[] g_candSeen;
+private __gshared int[]  g_candSeenIdx;
+
+private bool[] candSeen(size_t n) {
+    if (g_candSeen.length < n) g_candSeen.length = n;
+    g_candSeenIdx.length = 0;
+    return g_candSeen[0 .. n];
+}
+
+private void clearCandSeen() {
+    // g_candSeenIdx records every index whose `seen` bit we set (incl.
+    // excluded ones that never made it into g_candScratch); clear in
+    // O(emitted) rather than an O(n) memset so the buffer stays reusable.
+    foreach (idx; g_candSeenIdx)
+        if (idx >= 0 && idx < g_candSeen.length) g_candSeen[idx] = false;
+}
+
+// Reusable per-vertex exclude-membership scratch (guarded by
+// g_vgridMutex via the query). `excludeMembership` sets the bits for
+// `exclude` and returns the buffer (sized to `vertCount`);
+// `clearExcludeMembership` resets only the bits it set (O(exclude)) so
+// the buffer stays reusable without an O(verts) memset each frame.
 private __gshared bool[] g_excludeScratch;
 
 private bool[] excludeMembership(const(uint)[] exclude, size_t vertCount) {
