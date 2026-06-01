@@ -349,7 +349,13 @@ public:
         activationCenter   = hit;
         scaleAccum         = Vec3(1, 1, 1);
         propScale          = Vec3(1, 1, 1);
-        return false;  // don't start a drag
+        // Consume the click (no scale drag starts). The relocate
+        // already moved the ACEN pivot via notifyAcenUserPlaced above;
+        // returning true makes click-away-relocate behave uniformly
+        // with Move / Rotate (both relocate + consume the click in
+        // Auto), so a scale-tool click away from the gizmo can't fall
+        // through to selection-picking and drop the user's selection.
+        return true;
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
