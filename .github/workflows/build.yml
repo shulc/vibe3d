@@ -84,7 +84,7 @@ jobs:
 
       # Windows C: is small; put the dub package cache (nfde + heavy render git
       # deps / LFS) on F: where there's room. Must precede any dub command.
-      - name: Use F: for dub cache (Windows)
+      - name: Put dub cache on F drive (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -272,7 +272,7 @@ jobs:
 
       # Windows C: is small; put the dub package cache (heavy render git deps /
       # LFS) on F: where there's room. Must precede any dub command.
-      - name: Use F: for dub cache (Windows)
+      - name: Put dub cache on F drive (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
