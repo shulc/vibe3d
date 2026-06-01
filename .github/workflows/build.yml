@@ -101,7 +101,7 @@ jobs:
 
       - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $ldc = Get-Command ldc2 -ErrorAction SilentlyContinue
           if (-not $ldc) {
@@ -126,7 +126,7 @@ jobs:
 
       - name: Install SDL2 (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $sdlVer = "2.30.3"
           $url = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip"
@@ -141,14 +141,16 @@ jobs:
 
       - name: Remove MinGW / Strawberry Perl / LLVM from PATH (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $filtered = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'mingw|Strawberry|LLVM' }) -join ';'
-          echo "PATH=$filtered" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Add-Content (not Out-File -Encoding utf8) avoids the UTF-8 BOM that
+          # Windows PowerShell 5.1 would otherwise prepend into $GITHUB_ENV.
+          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$filtered"
 
       - name: Define NDEBUG for nfde C/C++ build (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           echo "CFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
           echo "CXXFLAGS=-DNDEBUG" >> $env:GITHUB_ENV
@@ -202,7 +204,7 @@ jobs:
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, config -DestinationPath vibe3d-${{ matrix.name }}.zip
 
       # ---- Upload zip as artifact for the release job ----
@@ -254,7 +256,7 @@ jobs:
 
       - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $ldc = Get-Command ldc2 -ErrorAction SilentlyContinue
           if (-not $ldc) {
@@ -275,7 +277,7 @@ jobs:
 
       - name: Install SDL2 (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $sdlVer = "2.30.3"
           Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVer/SDL2-devel-$sdlVer-VC.zip" -OutFile SDL2-devel.zip
@@ -314,7 +316,7 @@ jobs:
 
       - name: Bundle vibe3d-${{ matrix.name }}-render.zip (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: ${{ matrix.bundle }}
 
       - name: Upload zip
