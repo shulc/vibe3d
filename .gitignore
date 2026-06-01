@@ -32,3 +32,6 @@ vibe3d-*.zip
 vibe3d-windows-render/
 vibe3d-linux-render/
 vibe3d-macos-render/
+
+# perf harness generated output
+tools/perf/results.json
