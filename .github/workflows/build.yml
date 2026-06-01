@@ -333,21 +333,36 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: First-pass build (fetches nfde, expected to fail)
-        shell: bash
+      - name: First-pass build (Linux/macOS — fetches nfde, expected to fail)
+        if: runner.os != 'Windows'
         run: dub build --compiler=ldc2 --build=release || true
 
-      - name: Initialize nativefiledialog-extended submodules
-        shell: bash
+      # PowerShell (not bash) — the self-hosted Windows runner has no Git Bash.
+      - name: First-pass build (Windows — fetches nfde, expected to fail)
+        if: runner.os == 'Windows'
+        shell: powershell
         run: |
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-              NFD_DIR="$LOCALAPPDATA/dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
-          else
-              NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
+          dub build --compiler=ldc2 --build=release
+          exit 0   # first pass is expected to fail (nfde submodule not yet inited)
+
+      - name: Initialize nativefiledialog-extended submodules (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
+          if [ -d "$NFD_DIR" ]; then
+            cd "$NFD_DIR" && git submodule update --init --recursive
           fi
-          if [[ -d "$NFD_DIR" ]]; then
-              cd "$NFD_DIR" && git submodule update --init --recursive
-          fi
+
+      - name: Initialize nativefiledialog-extended submodules (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $nfd = "$env:LOCALAPPDATA\dub\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
+          if (Test-Path $nfd) {
+            Push-Location $nfd
+            git submodule update --init --recursive
+            Pop-Location
+          }
 
       # `shell:` can't take a ${{ matrix.* }} expression (GitHub rejects the whole
       # workflow file), so the bundle step is split per-OS with a literal shell.
