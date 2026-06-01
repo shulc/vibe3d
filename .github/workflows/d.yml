@@ -16,17 +16,16 @@ permissions:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    # Self-hosted Ubuntu runner. DMD + dub are pre-installed on the host
+    # (system dmd via dpkg), so we skip dlang-community/setup-dlang and call
+    # `dmd` directly instead of the $DC it would otherwise export.
+    runs-on: [self-hosted, Linux]
 
     steps:
     - uses: actions/checkout@v4
-    - uses: dlang-community/setup-dlang@4c99aa991ce7d19dd3064de0a4f2f6b2f152e2d7
-
-    - name: 'Install system dependencies'
-      run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libgtk-3-dev ninja-build xvfb
 
     - name: 'First-pass build (fetches nfde and clones NFD repo, expected to fail)'
-      run: dub build --compiler=$DC || true
+      run: dub build --compiler=dmd || true
 
     - name: 'Initialize nativefiledialog-extended submodules'
       run: |
@@ -38,7 +37,7 @@ jobs:
 
     - name: 'Build & Test'
       run: |
-        dub build --compiler=$DC
+        dub build --compiler=dmd
         # nfde's static ctor calls NFD_Init() (GTK), which needs a display.
         # xvfb-run gives the headless runner a virtual one.
-        xvfb-run -a dub test --compiler=$DC
+        xvfb-run -a dub test --compiler=dmd
