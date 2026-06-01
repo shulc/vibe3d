@@ -26,7 +26,10 @@ try {
         # shortly after [osd_gl_smoke]. Latent UB exposed by
         # -O -inline -release -boundscheck=off; debug build is fine.
         # TODO: track down the offending site; until then ship debug.
-        dub build --config=with-render
+        # Compiler defaults to ldc2 (override via $env:DC). Build stays debug
+        # because --build=release SEGVs at startup on Windows (see note above).
+        $dc = if ($env:DC) { $env:DC } else { "ldc2" }
+        dub build --config=with-render --compiler=$dc
         if ($LASTEXITCODE -ne 0) { throw "dub build failed" }
     }
     if (-not (Test-Path "vibe3d.exe")) { throw "vibe3d.exe not present" }
