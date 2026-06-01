@@ -11,12 +11,56 @@ on:
         description: 'Also build the with-render variant (slow: pulls Blender LFS, builds Cycles, bundles RPR/Cycles libs)'
         type: boolean
         default: false
+  # Nightly build: publishes a single rolling "nightly" pre-release (with-render
+  # included) and skips when there were no commits in the last 24h. The runner
+  # must be online at this time — adjust the cron if needed (UTC).
+  schedule:
+    - cron: '0 3 * * *'
 
 permissions:
   contents: write
 
 jobs:
+  # Resolve what this run should do. For a scheduled run it becomes a nightly
+  # (tag=nightly, with_render=true, prerelease) and is skipped when main saw no
+  # commits in the last 24h. A manual dispatch keeps its tag / with_render inputs.
+  check:
+    runs-on: [self-hosted, Linux]
+    outputs:
+      should_run:  ${{ steps.decide.outputs.should_run }}
+      tag:         ${{ steps.decide.outputs.tag }}
+      with_render: ${{ steps.decide.outputs.with_render }}
+      nightly:     ${{ steps.decide.outputs.nightly }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        env:
+          EVENT:     ${{ github.event_name }}
+          IN_TAG:    ${{ inputs.tag }}
+          IN_RENDER: ${{ inputs.with_render }}
+        run: |
+          if [ "$EVENT" = "schedule" ]; then
+            tag=nightly; with_render=true; nightly=true
+            age=$(( $(date +%s) - $(git log -1 --format=%ct) ))
+            if [ "$age" -lt 86400 ]; then
+              should_run=true
+            else
+              should_run=false
+              echo "No commits in the last 24h — skipping nightly."
+            fi
+          else
+            tag="$IN_TAG"; with_render="$IN_RENDER"; nightly=false; should_run=true
+          fi
+          {
+            echo "should_run=$should_run"
+            echo "tag=$tag"
+            echo "with_render=$with_render"
+            echo "nightly=$nightly"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: check
+    if: ${{ needs.check.outputs.should_run == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -144,10 +188,11 @@ jobs:
 
   # Heavy with-render variant. Builds D-Cycles (Blender LFS submodule
   # ~5 GB + CMake compile of Cycles) + bundles the Cycles + RPR runtime
-  # libs into a self-contained zip. Gated by `inputs.with_render` to
-  # keep modeling-only releases fast.
+  # libs into a self-contained zip. Gated by the resolved with_render flag
+  # (true for nightly, the dispatch input otherwise) to keep plain releases fast.
   build-render:
-    if: ${{ inputs.with_render }}
+    needs: check
+    if: ${{ needs.check.outputs.should_run == 'true' && needs.check.outputs.with_render == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -227,8 +272,8 @@ jobs:
   release:
     # `needs: build` always; `build-render` is conditional so the
     # release job uses `if: always()` to tolerate it being skipped.
-    needs: [build, build-render]
-    if: always() && needs.build.result == 'success'
+    needs: [check, build, build-render]
+    if: always() && needs.check.outputs.should_run == 'true' && needs.build.result == 'success'
     # Needs the `gh` CLI on the host to create the release.
     runs-on: [self-hosted, Linux]
 
@@ -246,12 +291,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          TAG:     ${{ needs.check.outputs.tag }}
+          NIGHTLY: ${{ needs.check.outputs.nightly }}
         run: |
           ASSETS=( vibe3d-linux.zip vibe3d-windows.zip )
           # Append with-render assets only if their build job actually ran.
           [[ -f vibe3d-linux-render.zip   ]] && ASSETS+=( vibe3d-linux-render.zip )
           [[ -f vibe3d-windows-render.zip ]] && ASSETS+=( vibe3d-windows-render.zip )
-          gh release create "${{ inputs.tag }}" \
-            --title "vibe3d ${{ inputs.tag }}" \
-            --generate-notes \
-            "${ASSETS[@]}"
+
+          if [ "$NIGHTLY" = "true" ]; then
+            # Rolling nightly: drop the previous release + its tag, then recreate
+            # at the current commit so "nightly" always points at the latest build.
+            gh release delete "$TAG" --yes --cleanup-tag || true
+            gh release create "$TAG" \
+              --title "vibe3d nightly ($(date -u +%Y-%m-%d))" \
+              --notes "Automated nightly build from ${GITHUB_SHA:0:7} at $(date -u +%Y-%m-%dT%H:%MZ)." \
+              --prerelease \
+              "${ASSETS[@]}"
+          else
+            gh release create "$TAG" \
+              --title "vibe3d $TAG" \
+              --generate-notes \
+              "${ASSETS[@]}"
+          fi
