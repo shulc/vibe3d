@@ -6,6 +6,14 @@
  *   2. rdmd tools/local/blender_diff/run.d
  *   3. rdmd tools/local/modo_diff/run.d
  *   4. ./tools/local/modo_diff/run_acen_drag.py -j N
+ *   5. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
+ *
+ * Opt-in (NOT in the default set, runs only via --only perf-abs):
+ *   perf-abs: rdmd tools/perf/run.d --n 316 — the FULL ~100K-face matrix
+ *             with the ABSOLUTE comparison against the committed
+ *             tools/perf/baseline.json (plus invariants). ~5 min; the
+ *             baseline header's host field lets it auto-skip the absolute
+ *             leg on a different machine (falls back to invariants).
  *
  * Suites 2-4 are reference-comparison harnesses that drive external
  * engines; they live under tools/local/ (gitignored, local-only) and
@@ -22,8 +30,11 @@
  *                 their own -j today — they boot a single MODO/Blender
  *                 instance.) default = 4.
  *   --no-build    forwarded to suites that accept it.
- *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen}.
+ *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf}.
  *   --only-X      run ONLY suite X (mutually exclusive with --skip-X).
+ *                 X ∈ {unit, blender, modo, acen, perf, perf-abs};
+ *                 perf-abs is opt-in (n=316, ~5 min, absolute vs the
+ *                 committed baseline) and runs ONLY via --only perf-abs.
  *
  * Excluded by default (pre-existing flakes documented in CLAUDE.md):
  *   test_selection
@@ -80,8 +91,8 @@ int main(string[] args) {
     auto info = getopt(args,
         "j|jobs",     "worker count for unit + ACEN drag suites (default 4)", &j,
         "no-build",   "skip dub build in unit + Blender + MODO suites", &noBuild,
-        "only",       "run only one suite (unit | blender | modo | acen)", &only,
-        "skip",       "skip a suite (repeatable: unit | blender | modo | acen)", &skip);
+        "only",       "run only one suite (unit | blender | modo | acen | perf | perf-abs)", &only,
+        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf)", &skip);
 
     if (info.helpWanted) {
         writeln("usage: ./run_all.d [options]");
@@ -157,6 +168,22 @@ int main(string[] args) {
                         "--no-absolute"];
         if (noBuild) cmd ~= "--no-build";
         suites ~= Suite("perf", "5/5 perf relative invariants (n=64)", cmd);
+    }
+
+    // perf-abs lane — OPT-IN, NEVER in the default set. Runs the full n=316
+    // (~100K-face) matrix WITHOUT --no-absolute, i.e. it performs the absolute
+    // comparison against the committed tools/perf/baseline.json (plus the
+    // relative invariants). Slow (~5 min) and machine-bound, so it is gated on
+    // an explicit `--only perf-abs`: an empty `only` (the default run) never
+    // includes it, and `--skip` is irrelevant to it. The host field in the
+    // baseline header lets run.d auto-skip the absolute leg on a different
+    // machine (falling back to invariants). Uses the perf buildType (ldc2),
+    // built by the runner itself unless --no-build is forwarded.
+    if (only == "perf-abs") {
+        string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "316"];
+        if (noBuild) cmd ~= "--no-build";
+        suites ~= Suite("perf-abs",
+                        "perf absolute vs 100K baseline (n=316)", cmd);
     }
 
     if (suites.length == 0) {
