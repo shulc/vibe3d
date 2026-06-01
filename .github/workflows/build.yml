@@ -103,12 +103,19 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $ldc = Get-Command ldc2 -ErrorAction SilentlyContinue
-          if (-not $ldc) {
-            foreach ($p in @("$env:USERPROFILE\dlang\ldc*\bin","C:\ldc*\bin",
-                             "C:\Program Files\ldc*\bin","C:\tools\ldc*\bin")) {
-              $hit = Get-ChildItem -Path $p -Filter ldc2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($hit) { Add-Content $env:GITHUB_PATH $hit.DirectoryName; $env:PATH = "$($hit.DirectoryName);$env:PATH"; break }
+          if (-not (Get-Command ldc2 -ErrorAction SilentlyContinue)) {
+            # Enumerate ldc* dirs under each base and check for bin\ldc2.exe —
+            # more reliable than a wildcard-in-path + -Filter query.
+            foreach ($base in @("$env:USERPROFILE\dlang", "C:\", "C:\Program Files", "C:\tools")) {
+              if (-not (Test-Path $base)) { continue }
+              $d = Get-ChildItem -Path $base -Directory -Filter "ldc*" -ErrorAction SilentlyContinue |
+                   Where-Object { Test-Path (Join-Path $_.FullName "bin\ldc2.exe") } | Select-Object -First 1
+              if ($d) {
+                $bin = Join-Path $d.FullName "bin"
+                Add-Content $env:GITHUB_PATH $bin
+                $env:PATH = "$bin;$env:PATH"
+                break
+              }
             }
           }
           if (-not (Get-Command ldc2 -ErrorAction SilentlyContinue)) {
@@ -258,12 +265,19 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $ldc = Get-Command ldc2 -ErrorAction SilentlyContinue
-          if (-not $ldc) {
-            foreach ($p in @("$env:USERPROFILE\dlang\ldc*\bin","C:\ldc*\bin",
-                             "C:\Program Files\ldc*\bin","C:\tools\ldc*\bin")) {
-              $hit = Get-ChildItem -Path $p -Filter ldc2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($hit) { Add-Content $env:GITHUB_PATH $hit.DirectoryName; $env:PATH = "$($hit.DirectoryName);$env:PATH"; break }
+          if (-not (Get-Command ldc2 -ErrorAction SilentlyContinue)) {
+            # Enumerate ldc* dirs under each base and check for bin\ldc2.exe —
+            # more reliable than a wildcard-in-path + -Filter query.
+            foreach ($base in @("$env:USERPROFILE\dlang", "C:\", "C:\Program Files", "C:\tools")) {
+              if (-not (Test-Path $base)) { continue }
+              $d = Get-ChildItem -Path $base -Directory -Filter "ldc*" -ErrorAction SilentlyContinue |
+                   Where-Object { Test-Path (Join-Path $_.FullName "bin\ldc2.exe") } | Select-Object -First 1
+              if ($d) {
+                $bin = Join-Path $d.FullName "bin"
+                Add-Content $env:GITHUB_PATH $bin
+                $env:PATH = "$bin;$env:PATH"
+                break
+              }
             }
           }
           if (-not (Get-Command ldc2 -ErrorAction SilentlyContinue)) {
