@@ -54,7 +54,37 @@ jobs:
       # flaky tests excluded (test_selection, test_toolpipe_axis). --no-build
       # reuses the ./vibe3d binary from the Build step. The whole thing runs
       # under one Xvfb display so each spawned `vibe3d --test` gets a GL context.
-      run: xvfb-run -a ./run_all.d --only unit --no-build -j 4
+      # tee the output so the next step can build a pass/fail table; pipefail
+      # keeps the test exit code (not tee's) as the step result.
+      run: |
+        set -o pipefail
+        xvfb-run -a ./run_all.d --only unit --no-build -j 4 2>&1 | tee integration.log
+
+    - name: 'Test results summary'
+      # Parse run_test.d's per-test lines ("PASS  [wN]  name" / "FAIL ...") into a
+      # GitHub job summary table, shown on the run's page. always() so it renders
+      # on failure too. Output is plain (no tty → no ANSI) so fields split cleanly.
+      if: always()
+      run: |
+        {
+          echo "## Integration test results"
+          echo ""
+          echo "| | Result | Test |"
+          echo "|---|---|---|"
+          awk '
+            /^[[:space:]]*(PASS|FAIL)[[:space:]]/ {
+              res=$1
+              test=($2 ~ /^\[w/) ? $3 : $2
+              if (test=="") next
+              icon=(res=="PASS")?"✅":"❌"
+              print "| "icon" | "res" | "test" |"
+            }
+          ' integration.log | sort -t'|' -k3,3 -k4,4 -u
+          p=$(awk '/^[[:space:]]*PASS[[:space:]]/{n++} END{print n+0}' integration.log)
+          f=$(awk '/^[[:space:]]*FAIL[[:space:]]/{n++} END{print n+0}' integration.log)
+          echo ""
+          echo "**Passed: ${p} · Failed: ${f}**"
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: 'Reclaim disk (bound dub build cache)'
       # dub caches every build under a content hash in ~/.dub/cache/vibe3d and
