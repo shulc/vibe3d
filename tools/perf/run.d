@@ -50,6 +50,7 @@ import std.path      : absolutePath, buildPath, buildNormalizedPath, dirName;
 import std.process   : execute, executeShell, spawnProcess, Config, Pid,
                        environment, ProcessException;
 import std.range     : enumerate, iota;
+import std.socket    : Socket;
 import std.stdio     : writeln, writefln, write, stdout, stderr, File, stdin;
 import std.string    : strip, startsWith;
 
@@ -831,6 +832,7 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
     a.put("{\n");
     a.put(format(`  "buildType": "perf",` ~ "\n"));
     a.put(format(`  "compiler": "ldc2 1.42.0",` ~ "\n"));
+    a.put(format(`  "host": "%s",` ~ "\n", Socket.hostName));
     a.put(format(`  "meshType": "%s",` ~ "\n", meshType));
     a.put(format(`  "n": %d,` ~ "\n", n));
     a.put(format(`  "faceCount": %d,` ~ "\n", faceCount));
@@ -891,7 +893,7 @@ string replaceQuotes(string s) {
 // Baseline.json shares the same header shape the runner already writes for
 // results.json, so a header mismatch can be detected field-by-field.
 struct RunHeader {
-    string buildType, compiler, meshType, viewport;
+    string buildType, compiler, host, meshType, viewport;
     int    n;
     long   faceCount;
     int    repeats;
@@ -899,7 +901,7 @@ struct RunHeader {
 
 RunHeader currentHeader(string meshType, int n, long faceCount,
                         string viewport, int repeats) {
-    return RunHeader("perf", "ldc2 1.42.0", meshType, viewport,
+    return RunHeader("perf", "ldc2 1.42.0", Socket.hostName, meshType, viewport,
                      n, faceCount, repeats);
 }
 
@@ -916,6 +918,7 @@ void writeBaselineJson(string path, RunHeader h, CaseResult[] results) {
     a.put("{\n");
     a.put(format(`  "buildType": "%s",` ~ "\n", h.buildType));
     a.put(format(`  "compiler": "%s",` ~ "\n", h.compiler));
+    a.put(format(`  "host": "%s",` ~ "\n", h.host));
     a.put(format(`  "meshType": "%s",` ~ "\n", h.meshType));
     a.put(format(`  "n": %d,` ~ "\n", h.n));
     a.put(format(`  "faceCount": %d,` ~ "\n", h.faceCount));
@@ -950,6 +953,9 @@ Baseline loadBaseline(string path) {
     auto j = parseJSON(cast(string)std.file.read(path));
     b.header.buildType = j["buildType"].str;
     b.header.compiler  = j["compiler"].str;
+    // host may be absent in a legacy (pre-host) baseline ⇒ empty string,
+    // which headerMismatch treats as "no host recorded" and does not compare.
+    b.header.host      = ("host" in j) ? j["host"].str : "";
     b.header.meshType  = j["meshType"].str;
     b.header.viewport  = j["viewport"].str;
     b.header.n         = cast(int)j["n"].integer;
@@ -976,6 +982,12 @@ string headerMismatch(RunHeader baseH, RunHeader curH) {
         return format("buildType %s vs %s", baseH.buildType, curH.buildType);
     if (baseH.compiler != curH.compiler)
         return format("compiler %s vs %s", baseH.compiler, curH.compiler);
+    // Host is only compared when the baseline actually recorded one — a
+    // legacy host-less baseline (empty) still compares on the other fields.
+    // Absolute timings are hardware-bound, so a different host with the same
+    // toolchain would false-flag; this guard makes it auto-skip instead.
+    if (baseH.host.length && baseH.host != curH.host)
+        return format("host %s vs %s", baseH.host, curH.host);
     if (baseH.meshType != curH.meshType)
         return format("meshType %s vs %s", baseH.meshType, curH.meshType);
     if (baseH.n != curH.n)

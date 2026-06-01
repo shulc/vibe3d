@@ -28,16 +28,36 @@ overhead is watched relatively by I4). The `snap=*` cases and sub-microsecond
 selection cases are excluded from the absolute comparison (their moving-set
 size / timing is not stable run-to-run).
 
+## `run_all.d` lanes
+
+The DEFAULT `run_all.d` perf lane runs `--n 64 --no-absolute` (the fast
+relative invariants only). There is also an OPT-IN lane for the absolute
+comparison:
+
+```bash
+./run_all.d --only perf-abs            # n=316, ~5 min, ABSOLUTE vs committed baseline
+./run_all.d --only perf-abs --no-build # reuse an already-built perf binary
+```
+
+`perf-abs` runs `rdmd tools/perf/run.d --n 316` (no `--no-absolute`), so it
+performs the full ~100K-face matrix and the absolute comparison against the
+committed `baseline.json` in addition to the invariants. It is NEVER part of
+the default `./run_all.d` set — it runs ONLY when explicitly selected with
+`--only perf-abs`. Keep it out of routine pre-commit runs; reach for it when
+you want to validate against the 100K baseline on the baseline's host.
+
 ## `baseline.json` is committed but MACHINE-SPECIFIC
 
 `baseline.json` is committed as the reference (a full n=316 / 100K run). Its
-header records `buildType` / `compiler` / `meshType` / `n` / `faceCount` /
-`viewport` / `repeats`; the **build-mismatch guard** in `run.d` refuses the
-absolute comparison (prints a warning, falls back to relative invariants) when
-any of those differ. CAVEAT: absolute timings are hardware-bound and the header
-does NOT identify the host — so on a different machine with the same toolchain
-the guard will NOT catch the mismatch and the absolute comparison would
-false-flag. On another machine either run with `--no-absolute` (relative
-invariants only — what CI / `run_all.d` does) or re-capture with
-`--update-baseline`. The relative invariants need no baseline and are
+header records `buildType` / `compiler` / `host` / `meshType` / `n` /
+`faceCount` / `viewport` / `repeats`; the **build-mismatch guard** in `run.d`
+refuses the absolute comparison (prints a warning, falls back to relative
+invariants) when any of those differ. The `host` field identifies the machine
+the baseline was captured on: when the baseline records a host and the current
+run is on a DIFFERENT host (even with the same toolchain), the guard prints a
+`host <a> vs <b>` mismatch and auto-skips the absolute leg, falling back to the
+hardware-stable relative invariants. (A legacy baseline with no `host` field
+records an empty string and is NOT host-checked, so it still compares on the
+other fields.) To compare absolutely on another machine, re-capture with
+`--update-baseline`; the relative invariants need no baseline and are
 hardware-stable.
