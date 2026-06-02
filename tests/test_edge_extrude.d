@@ -1001,3 +1001,115 @@ unittest {
     assert(isHoleFree(m), "cut-diag: result is not hole-free / has folded faces");
     assert(noCoincidentVerts(m), "cut-diag: coincident duplicate vertices present");
 }
+
+// ---------------------------------------------------------------------------
+// 12. CLOSED LOOP whose every edge is FLAT-EMBEDDED (its two neighbour faces
+//     are coplanar). A 4-edge loop wraps a cut cube corner: the two "inset"
+//     loop edges lie inside the ±Z / +X faces, the two "diagonal" loop edges
+//     lie inside the ±Y cap faces — for each loop edge BOTH neighbour faces
+//     share one plane. The reference lifts every loop edge straight to the
+//     ridge and re-tessellates the surrounding flat region; it does NOT carve
+//     a perpendicular-to-the-edge inset band inside any of those coplanar
+//     faces. Each welded loop corner is dissolved into TWO insets, one per
+//     incident NON-selected cube edge (face-aware), so the only new in-plane
+//     verts sit ON the cube edges. The pre-fix behaviour emitted a spurious
+//     perpendicular inset band inside each coplanar face (8 extra verts at the
+//     "endpoint ± width perpendicular" positions); those must be ABSENT now.
+//
+//     Fixture mirrors the reference cube_cut_loop case: a pure-inset preop
+//     (extrude=0, width=0.455) on the front-right vertical cube edge cuts the
+//     +X+Z corner, giving the 4-edge loop; then extrude the loop
+//     (extrude=0.2, width=0.1). Target topology: 20v / 18f.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+
+    // Preop: pure inset (extrude=0) of the front-right vertical edge to cut the
+    // corner, creating the closed 4-edge loop around the cut.
+    auto cube = getModel();
+    int pa = vertAt(cube, V3(0.5, -0.5, 0.5));
+    int pb = vertAt(cube, V3(0.5,  0.5, 0.5));
+    assert(pa >= 0 && pb >= 0, "cut-loop: preop edge endpoints not found");
+    int pei = edgeIndex(cube, pa, pb);
+    assert(pei >= 0, "cut-loop: preop edge not found");
+    postSelect("edges", [pei]);
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":0.455}}`);
+
+    // Main op: select the closed 4-edge loop and extrude it. Loop corners (live):
+    //   TF=(0.045, 0.5, 0.5)  TR=(0.5, 0.5, 0.045)
+    //   BR=(0.5,-0.5, 0.045)  BF=(0.045,-0.5, 0.5)
+    // Loop edges: front-inset (TF–BF, in +Z), top-diag (TF–TR, in +Y),
+    //   right-inset (TR–BR, in +X), bottom-diag (BR–BF, in −Y).
+    auto mid = getModel();
+    immutable TF = V3(0.045,  0.5, 0.5);
+    immutable TR = V3(0.5,    0.5, 0.045);
+    immutable BR = V3(0.5,   -0.5, 0.045);
+    immutable BF = V3(0.045, -0.5, 0.5);
+    int iTF = vertAt(mid, TF), iTR = vertAt(mid, TR);
+    int iBR = vertAt(mid, BR), iBF = vertAt(mid, BF);
+    assert(iTF >= 0 && iTR >= 0 && iBR >= 0 && iBF >= 0,
+        "cut-loop: loop corner verts not found");
+    int[] loop = [
+        edgeIndex(mid, iTF, iBF),   // front-inset (in +Z)
+        edgeIndex(mid, iTF, iTR),   // top-diagonal (in +Y)
+        edgeIndex(mid, iTR, iBR),   // right-inset (in +X)
+        edgeIndex(mid, iBR, iBF),   // bottom-diagonal (in −Y)
+    ];
+    foreach (i, ei; loop) assert(ei >= 0,
+        "cut-loop: loop edge " ~ i.to!string ~ " not found");
+    postSelect("edges", loop);
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+    auto m = getModel();
+
+    // Target topology: 20 verts / 18 faces (NOT 28v — the pre-fix band added 8).
+    assert(m["vertexCount"].integer == 20,
+        "cut-loop: expected 20 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 18,
+        "cut-loop: expected 18 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // Each welded loop corner insets along its TWO incident NON-selected cube
+    // edges, IN the cap plane (y = ±0.5), landing ON the cube edges (one
+    // coordinate at ±0.5, the offset coordinate = corner ± width). All 8:
+    immutable V3[8] expectedInsets = [
+        V3(-0.055, 0.5, 0.5), V3(0.145, 0.5, 0.5),    // TF along ∓X in +Y cap
+        V3(0.5, 0.5, 0.145),  V3(0.5, 0.5, -0.055),   // TR along ±Z in +Y cap
+        V3(0.5, -0.5, 0.145), V3(0.5, -0.5, -0.055),  // BR along ±Z in −Y cap
+        V3(-0.055, -0.5, 0.5), V3(0.145, -0.5, 0.5),  // BF along ∓X in −Y cap
+    ];
+    foreach (p; expectedInsets)
+        assert(countAt(m, p) == 1,
+            "cut-loop: face-aware corner inset missing/duplicated at " ~ p.to!string);
+
+    // The four loop corners are LIFTED to the ridge (no in-plane band) — the
+    // flat region fans up to these. extrude=0.2 along the (1,1)/√2 cap-edge
+    // average gives the ±0.6414 ridge coords.
+    immutable V3[4] ridge = [
+        V3(0.045,  0.6414, 0.6414), V3(0.6414,  0.6414, 0.045),
+        V3(0.6414, -0.6414, 0.045), V3(0.045,  -0.6414, 0.6414),
+    ];
+    foreach (p; ridge)
+        assert(vertAt(m, p) >= 0, "cut-loop: ridge vert missing at " ~ p.to!string);
+
+    // NO perpendicular-to-the-edge inset band: the pre-fix kernel placed 8
+    // spurious verts at "loop-corner ± width perpendicular to the diagonal,
+    // inside the cap plane" (e.g. (−0.0257,0.5,0.4293) / (0.1157,0.5,0.5707)
+    // and their +X / −Y mirrors). NONE of those may exist.
+    immutable V3[8] spurious = [
+        V3(-0.0257, 0.5, 0.4293), V3(0.1157, 0.5, 0.5707),    // TF perp band (+Y)
+        V3(0.4293,  0.5, -0.0257), V3(0.5707, 0.5, 0.1157),   // TR perp band (+Y)
+        V3(-0.0257, -0.5, 0.4293), V3(0.1157, -0.5, 0.5707),  // BF perp band (−Y)
+        V3(0.4293,  -0.5, -0.0257), V3(0.5707, -0.5, 0.1157), // BR perp band (−Y)
+    ];
+    foreach (p; spurious)
+        assert(countAt(m, p) == 0,
+            "cut-loop: spurious perpendicular-band vert present at " ~ p.to!string);
+
+    // Clean surface: no orphans, no holes/folds (also catches the flipped-bridge
+    // winding the welded coplanar bridges would otherwise produce), no
+    // coincident duplicates.
+    assert(orphanVerts(m).length == 0,
+        "cut-loop: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "cut-loop: result is not hole-free / has folded faces");
+    assert(noCoincidentVerts(m), "cut-loop: coincident duplicate vertices present");
+}
