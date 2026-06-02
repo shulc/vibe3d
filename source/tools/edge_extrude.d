@@ -9,7 +9,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : Arrow, BoxHandler, ToolHandles, HandleState, gizmoSize;
+import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -59,8 +59,10 @@ alias EdgeExtrudeEditFactory = MeshEdgeExtrudeEdit delegate();
 //     pointing along the averaged extrude direction. Dragging it changes
 //     `extrude` only (mouse delta projected onto the arrow's screen-space
 //     direction → world distance → param delta).
-//   - Handle WIDTH = a RED BoxHandler offset from the centroid along the
-//     in-plane inset direction. Dragging it changes `width` only.
+//   - Handle WIDTH = a RED CubicArrow (a shaft with a small cube at the tip,
+//     matching the reference modeler's scale-axis handle / vibe3d's
+//     ScaleHandler) running from the gizmo anchor along the in-plane inset
+//     direction. Dragging it changes `width` only.
 // Both handles get their highlight (Rollover) state ONLY from the
 // ToolHandles arbiter's update→setState pass (the handle-arbiter model), so
 // they highlight on hover and the dragged handle stays highlighted while
@@ -116,8 +118,8 @@ private:
     float dragBaseExtrude, dragBaseWidth;
 
     // Two registered, clickable gizmo handles + their arbiter.
-    Arrow       extrudeArrow;      // BLUE — extrude
-    BoxHandler  widthBox;          // RED  — width
+    Arrow       extrudeArrow;      // BLUE — extrude (cone head)
+    CubicArrow  widthArrow;        // RED  — width   (cube head, scale-axis style)
     ToolHandles toolHandles;
 
     enum Vec3 EXTRUDE_COLOR = Vec3(0.2f, 0.45f, 1.0f);   // blue
@@ -136,13 +138,13 @@ public:
         // Geometry placeholders; the real anchor/axes are written each frame
         // in draw() from the activate()-computed gizmo frame.
         extrudeArrow = new Arrow(Vec3(0, 0, 0), Vec3(0, 0, 1), EXTRUDE_COLOR);
-        widthBox     = new BoxHandler(Vec3(0, 0, 0), WIDTH_COLOR);
+        widthArrow   = new CubicArrow(Vec3(0, 0, 0), Vec3(1, 0, 0), WIDTH_COLOR);
         toolHandles  = new ToolHandles();
     }
 
     void destroy() {
         if (extrudeArrow !is null) extrudeArrow.destroy();
-        if (widthBox     !is null) widthBox.destroy();
+        if (widthArrow   !is null) widthArrow.destroy();
     }
 
     /// Inject undo plumbing — called by app.d after construction.
@@ -308,28 +310,40 @@ public:
         cachedVp = vp;
         // Selection may have changed since activate() (e.g. the user picked a
         // different edge in the viewport before grabbing a handle). Recompute
-        // the gizmo frame when it does — but never mid-drag (the moving set is
-        // frozen for the whole haul).
+        // the gizmo FRAME (anchor + the fixed axes) when it does — but never
+        // mid-drag (the moving set is frozen for the whole haul).
         if (dragPart < 0 && mesh.selectionHashEdges() != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        // Position the two handles. Screen-stable sizing via gizmoSize().
-        float armLen = gizmoSize(anchor, vp, 1.0f);          // arrow length
-        float boxOff = gizmoSize(anchor, vp, 0.75f);         // box offset from anchor
+        // Anchor FOLLOWS the live edge: recompute the anchor from the CURRENT
+        // selected edges' centroid every frame (after the kernel reselects the
+        // lifted ridge edges, mesh.selectedEdges ARE those ridge edges, so the
+        // centroid tracks the ridge and the whole gizmo slides outward with the
+        // edge as extrude grows — exactly like the move gizmo following moved
+        // geometry). The AXES stay fixed (computed once at activate() from the
+        // ORIGINAL pre-extrude neighbour normals); only the position moves.
+        anchor = currentAnchor();
+
+        // Position the two handles, screen-stable via gizmoSize(). The WIDTH
+        // handle mirrors ScaleHandler's axis arrows: shaft from anchor+axis*
+        // (size/7) to anchor+axis*size, with a fixed-size cube head (size*0.03).
+        float armLen   = gizmoSize(anchor, vp, 1.0f);
+        float cubeHalf = gizmoSize(anchor, vp, 0.03f);
         extrudeArrow.start = anchor + extrudeAxis * (armLen / 6.0f);
         extrudeArrow.end   = anchor + extrudeAxis * armLen;
         extrudeArrow.color = EXTRUDE_COLOR;
-        widthBox.pos       = anchor + widthAxis * boxOff;
-        widthBox.size      = gizmoSize(anchor, vp, 0.05f);
-        widthBox.color     = WIDTH_COLOR;
+        widthArrow.start         = anchor + widthAxis * (armLen / 7.0f);
+        widthArrow.end           = anchor + widthAxis * armLen;
+        widthArrow.fixedCubeHalf = cubeHalf;
+        widthArrow.color         = WIDTH_COLOR;
 
         // Single test+update pass: register both handles (arrow priority over
-        // box on overlap — arrow is the primary action), keep the hauled
+        // width on overlap — extrude is the primary action), keep the hauled
         // handle highlighted, then hand each handle its HandleState.
         toolHandles.begin();
         toolHandles.add(extrudeArrow, PART_EXTRUDE);
-        toolHandles.add(widthBox,     PART_WIDTH);
+        toolHandles.add(widthArrow,   PART_WIDTH);
         if (dragPart >= 0) toolHandles.setHaul(dragPart);
         else               toolHandles.setHaul(-1);
         int hmx, hmy;
@@ -337,7 +351,7 @@ public:
         toolHandles.update(hmx, hmy, vp);
 
         extrudeArrow.draw(shader, vp);
-        widthBox.draw(shader, vp);
+        widthArrow.draw(shader, vp);
     }
 
 private:
@@ -388,9 +402,37 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // computeGizmoFrame — anchor + extrude/width axes from the CURRENT edge
-    // selection (empty ⇒ whole mesh). Computed at activate() and whenever the
-    // selection changes while idle, so the gizmo doesn't jump during a drag.
+    // currentAnchor — centroid of the CURRENT selected edges' endpoints
+    // (empty ⇒ whole mesh). Called every frame in draw() so the gizmo follows
+    // the live ridge as extrude grows: after the kernel reselects the lifted
+    // ridge edges, mesh.selectedEdges ARE those edges, so their centroid tracks
+    // the ridge outward. This is the anchor-only counterpart to
+    // computeGizmoFrame() (which also builds the FIXED axes); it never touches
+    // the axes. Falls back to the cached anchor if nothing is selectable.
+    // -----------------------------------------------------------------------
+    Vec3 currentAnchor() {
+        if (mesh.edges.length == 0) return anchor;
+        bool wholeMesh = mesh.nothingSelected(EditMode.Edges);
+        auto sel = mesh.selectedEdges;
+        Vec3 sum = Vec3(0, 0, 0);
+        size_t n = 0;
+        foreach (i; 0 .. mesh.edges.length) {
+            bool selected = wholeMesh || (i < sel.length && sel[i]);
+            if (!selected) continue;
+            sum = sum + mesh.vertices[mesh.edges[i][0]] + mesh.vertices[mesh.edges[i][1]];
+            n  += 2;
+        }
+        if (n == 0) return anchor;
+        return Vec3(sum.x / n, sum.y / n, sum.z / n);
+    }
+
+    // -----------------------------------------------------------------------
+    // computeGizmoFrame — anchor + FIXED extrude/width axes from the CURRENT
+    // edge selection (empty ⇒ whole mesh). Computed at activate() and whenever
+    // the selection changes while idle. The AXES are the fixed part: they are
+    // built ONCE here from the ORIGINAL pre-extrude neighbour normals and are
+    // never recomputed from the deformed mesh during a drag (only the anchor
+    // POSITION follows the live edge, via currentAnchor()).
     //
     //   anchor      = centroid of the selected edges' endpoints.
     //   extrudeAxis = normalized average of `faceNormal` over the faces
