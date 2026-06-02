@@ -173,6 +173,24 @@ bool isHoleFree(JSONValue m) {
     return true;
 }
 
+// Count vertices coincident with position p (within tol).
+int countAt(JSONValue m, V3 p) {
+    int n = 0;
+    foreach (i; 0 .. m["vertices"].array.length)
+        if (len3(sub3(vert(m, i), p)) < 1e-4) ++n;
+    return n;
+}
+
+// True if NO two distinct vertices in the model share a position (within tol).
+// A welded result must have zero coincident duplicate verts.
+bool noCoincidentVerts(JSONValue m) {
+    auto n = m["vertices"].array.length;
+    foreach (i; 0 .. n)
+        foreach (j; i + 1 .. n)
+            if (len3(sub3(vert(m, i), vert(m, j))) < 1e-4) return false;
+    return true;
+}
+
 V3 avgNeighborNormal(JSONValue before, int a, int b) {
     V3 sum = V3(0, 0, 0);
     foreach (face; before["faces"].array) {
@@ -397,6 +415,10 @@ unittest {
     assert(atCenter == 1,
         "chain: expected ONE welded ridge vert at the shared corner, got " ~
         atCenter.to!string);
+
+    // No two output vertices may be coincident (welds must collapse, never
+    // duplicate).
+    assert(noCoincidentVerts(m), "chain: coincident duplicate vertices present");
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +464,123 @@ unittest {
     assert(atCorner == 1,
         "fan: expected ONE welded ridge vert at the shared corner, got " ~
         atCorner.to!string);
+
+    // No two output vertices may be coincident.
+    assert(noCoincidentVerts(m), "fan: coincident duplicate vertices present");
+}
+
+// ---------------------------------------------------------------------------
+// 8. CUBE corner fan — two top edges sharing the +X/+Y/+Z corner. Pins the
+//    distinct-face-normal ridge average AND the no-coincident-vert weld at a
+//    shared corner whose two edges border one common neighbor face (+Y).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+
+    // Edge A = top edge along X on the +Y/+Z faces: (0.5,0.5,0.5)-(-0.5,0.5,0.5).
+    // Edge B = top-right edge along Z on the +X/+Y faces: (0.5,0.5,0.5)-(0.5,0.5,-0.5).
+    // They share corner C=(0.5,0.5,0.5); their neighbor faces are {+Y,+Z} and
+    // {+X,+Y} — +Y is shared by BOTH edges.
+    int c   = vertAt(before, V3(0.5, 0.5, 0.5));
+    int a1  = vertAt(before, V3(-0.5, 0.5, 0.5));
+    int b1  = vertAt(before, V3(0.5, 0.5, -0.5));
+    assert(c >= 0 && a1 >= 0 && b1 >= 0, "fan-weld endpoints not found");
+    int eA = edgeIndex(before, c, a1);
+    int eB = edgeIndex(before, c, b1);
+    assert(eA >= 0 && eB >= 0, "fan-weld edges not found");
+    postSelect("edges", [eA, eB]);
+
+    enum extrude = 0.2;
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+    auto m = getModel();
+
+    // Reference target: 14 verts, 12 faces, fv-dist {4:8, 5:2, 3:2}.
+    assert(m["vertexCount"].integer == 14,
+        "fan-weld: expected 14 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 12,
+        "fan-weld: expected 12 faces, got " ~ m["faceCount"].integer.to!string);
+    auto fv = fvDist(m);
+    assert(fv == [4: 8, 5: 2, 3: 2],
+        "fan-weld: expected fv-dist {4:8,5:2,3:2}, got " ~ fv.to!string);
+
+    assert(orphanVerts(m).length == 0, "fan-weld: orphan verts");
+    assert(isHoleFree(m), "fan-weld: not hole-free");
+    assert(noCoincidentVerts(m), "fan-weld: coincident duplicate vertices present");
+
+    // Distinct-face-normal ridge average at the shared corner C. The reference
+    // displaces C along normalize(sum of the DISTINCT neighbor-face normals over
+    // both incident edges) = {+X,+Y,+Z} → (1,1,1)/√3 — NOT the per-edge-averaged
+    // normal sum (which double-counts the shared +Y face and skews the direction).
+    V3 dirDistinct = norm3(V3(1, 1, 1));
+    auto ridgeExp = add3(vert(before, c),
+        V3(dirDistinct.x*extrude, dirDistinct.y*extrude, dirDistinct.z*extrude));
+    assert(countAt(m, ridgeExp) == 1,
+        "fan-weld: shared-corner ridge not at distinct-face-normal average " ~
+        "(expected one vert at " ~
+        to!string([ridgeExp.x, ridgeExp.y, ridgeExp.z]) ~ ")");
+
+    // The two-edge-averaged sum (each edge's normalize(nT+nF)) would land here —
+    // it MUST NOT, proving the dedupe of the shared +Y face.
+    V3 nA = avgNeighborNormal(before, c, a1);   // normalize(+Y + +Z)
+    V3 nB = avgNeighborNormal(before, c, b1);   // normalize(+X + +Y)
+    V3 dirPerEdge = norm3(add3(nA, nB));
+    auto ridgeWrong = add3(vert(before, c),
+        V3(dirPerEdge.x*extrude, dirPerEdge.y*extrude, dirPerEdge.z*extrude));
+    assert(len3(sub3(ridgeWrong, ridgeExp)) > 1e-3,
+        "fan-weld: test precondition — the two ridge formulas must differ");
+    assert(countAt(m, ridgeWrong) == 0,
+        "fan-weld: shared-corner ridge used per-edge-sum (double-counted +Y face)");
+}
+
+// ---------------------------------------------------------------------------
+// 9. CUBE top loop — the 4 edges of the +Y face form a CLOSED loop (every
+//    endpoint shared, no free ends). The reference unifies it into one inset
+//    ring with NO caps and NO duplicate verts: 16 verts, 14 faces, all quads.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+
+    int v00 = vertAt(before, V3(-0.5, 0.5, 0.5));
+    int v10 = vertAt(before, V3( 0.5, 0.5, 0.5));
+    int v11 = vertAt(before, V3( 0.5, 0.5, -0.5));
+    int v01 = vertAt(before, V3(-0.5, 0.5, -0.5));
+    assert(v00 >= 0 && v10 >= 0 && v11 >= 0 && v01 >= 0, "top-loop corners not found");
+    int e0 = edgeIndex(before, v00, v10);
+    int e1 = edgeIndex(before, v10, v11);
+    int e2 = edgeIndex(before, v11, v01);
+    int e3 = edgeIndex(before, v01, v00);
+    assert(e0 >= 0 && e1 >= 0 && e2 >= 0 && e3 >= 0, "top-loop edges not found");
+    postSelect("edges", [e0, e1, e2, e3]);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+    auto m = getModel();
+
+    // Closed loop: 16 verts, 14 faces, ALL quads (no caps).
+    assert(m["vertexCount"].integer == 16,
+        "top-loop: expected 16 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 14,
+        "top-loop: expected 14 faces, got " ~ m["faceCount"].integer.to!string);
+    auto fv = fvDist(m);
+    assert(fv == [4: 14],
+        "top-loop: expected all-quad fv-dist {4:14}, got " ~ fv.to!string);
+    assert(fv.get(3, 0) == 0, "top-loop: closed loop must have NO triangle caps");
+
+    assert(orphanVerts(m).length == 0, "top-loop: orphan verts");
+    assert(isHoleFree(m), "top-loop: not hole-free");
+    // The crux of the multi-edge weld fix: no coincident duplicate verts. The
+    // two side faces flanking each vertical corner edge both inset that corner
+    // straight down — those insets MUST weld to one vert, not duplicate.
+    assert(noCoincidentVerts(m), "top-loop: coincident duplicate vertices present");
+
+    // The inner inset ring stays in the +Y plane (y == 0.5) inset by width along
+    // BOTH in-plane directions (offsets ADD, not average-renormalize): the +X/+Z
+    // corner insets to (0.4,0.5,0.4).
+    assert(countAt(m, V3(0.4, 0.5, 0.4)) == 1,
+        "top-loop: top-plane inset ring vert (0.4,0.5,0.4) missing/duplicated");
 }
 
 // ---------------------------------------------------------------------------

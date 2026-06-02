@@ -891,13 +891,40 @@ struct Mesh {
         }
         if (exEdges.length == 0) return 0;
 
-        // --- Pass 1: welded ridge vertex per original endpoint. Accumulate the
-        //     per-edge extrude normals of every selected edge incident to v, then
-        //     place ONE ridge vertex per v along the averaged direction (§1.4.1).
-        Vec3[uint] ridgeAccum;            // Σ ne over incident selected edges
+        // --- Per-endpoint selected-edge incidence (needed below to choose the
+        //     weld vs per-face behavior at shared corners). An endpoint incident
+        //     to exactly ONE selected edge is a *free end*; ≥2 is a shared corner
+        //     (chain joint / fan / loop) where the reference welds geometry.
+        int[uint] selEdgeCount;
         foreach (ref e; exEdges) {
-            ridgeAccum.update(e.va, () => e.ne, (ref Vec3 acc) { acc = acc + e.ne; });
-            ridgeAccum.update(e.vb, () => e.ne, (ref Vec3 acc) { acc = acc + e.ne; });
+            selEdgeCount.update(e.va, () => 1, (ref int c) { ++c; });
+            selEdgeCount.update(e.vb, () => 1, (ref int c) { ++c; });
+        }
+        bool isFreeEnd(uint v) { auto p = v in selEdgeCount; return p !is null && *p == 1; }
+        bool isShared(uint v) { auto p = v in selEdgeCount; return p !is null && *p >= 2; }
+
+        // --- Pass 1: welded ridge vertex per original endpoint. The ridge is
+        //     displaced along the average of the DISTINCT neighbour-face normals
+        //     of every selected edge incident to v (§1.4.1). Deduping by face id
+        //     matters at shared corners: two co-incident selected edges that
+        //     border the SAME neighbour face must count that face once, otherwise
+        //     it is double-weighted and skews the direction. For a free end the
+        //     single edge's two neighbour faces are already distinct, so this is
+        //     identical to summing the per-edge averaged normal there (no
+        //     single-edge regression).
+        Vec3[uint] ridgeAccum;            // Σ distinct neighbour-face normals
+        bool[ulong] ridgeFaceSeen;        // (v<<32|fi) → already counted at v
+        void accumRidgeFace(uint v, int fi) {
+            if (fi < 0) return;
+            ulong fk = (cast(ulong)v << 32) | cast(uint)fi;
+            if (fk in ridgeFaceSeen) return;
+            ridgeFaceSeen[fk] = true;
+            Vec3 nf = faceNormal(cast(uint)fi);
+            ridgeAccum.update(v, () => nf, (ref Vec3 acc) { acc = acc + nf; });
+        }
+        foreach (ref e; exEdges) {
+            accumRidgeFace(e.va, e.fA); accumRidgeFace(e.va, e.fB);
+            accumRidgeFace(e.vb, e.fA); accumRidgeFace(e.vb, e.fB);
         }
         uint[uint] ridgeVert;
         foreach (v, acc; ridgeAccum) {
@@ -941,25 +968,37 @@ struct Mesh {
                 accumInset(e.vb, e.fB, dB);
             }
         }
-        uint[ulong] insetVert;
+        // Per (v,face) inset vert, with a (endpoint, position) weld so that two
+        //     selected edges meeting at a shared corner that inset that corner in
+        //     the SAME direction (e.g. the two side faces flanking a vertical edge
+        //     on a closed loop both push their shared top corner straight down the
+        //     edge) collapse onto ONE vertex instead of emitting coincident
+        //     duplicates. The weld key is (endpoint, quantised position); distinct
+        //     in-plane insets at the same corner (e.g. the top-face inset vs the
+        //     side-weld inset) stay separate because their positions differ.
+        uint[ulong] insetVert;            // (v<<32|fi) → vertex id
+        uint[string] insetPosWeld;        // "v|qx|qy|qz" → vertex id (coincident weld)
         foreach (k, acc; insetAccum) {
             uint v  = cast(uint)(k >> 32);
-            // The accumulated direction is renormalized then scaled by width.
-            Vec3 d = (acc.length < 1e-6f) ? Vec3(0, 0, 0) : normalize(acc);
-            insetVert[k] = addVertex(vertices[v] + d * width);
+            // Each contributing selected edge insets this corner by `width` along
+            //     its own unit inward dir; when several edges share (v,face) the
+            //     offsets ADD (they do NOT average-and-renormalize). For a single
+            //     contribution `acc` is already a unit vector ⇒ width*acc, i.e.
+            //     identical to the single-edge inset (no single-edge regression).
+            Vec3 p = vertices[v] + acc * width;
+            import std.format : format;
+            string wk = format("%u|%d|%d|%d", v,
+                cast(long)(p.x * 1e5f + (p.x >= 0 ? 0.5f : -0.5f)),
+                cast(long)(p.y * 1e5f + (p.y >= 0 ? 0.5f : -0.5f)),
+                cast(long)(p.z * 1e5f + (p.z >= 0 ? 0.5f : -0.5f)));
+            if (auto wp = wk in insetPosWeld) { insetVert[k] = *wp; continue; }
+            uint nv = addVertex(p);
+            insetPosWeld[wk] = nv;
+            insetVert[k] = nv;
         }
 
-        // --- Free-end classification (§5). A selected-edge endpoint that is
-        //     incident to exactly ONE selected edge is a *free end*; one that is
-        //     shared by ≥2 selected edges is an interior chain joint (keep the
-        //     welded-ridge behavior — no cap, no side-corner split). Count the
-        //     selected-edge incidences per endpoint.
-        int[uint] selEdgeCount;
-        foreach (ref e; exEdges) {
-            selEdgeCount.update(e.va, () => 1, (ref int c) { ++c; });
-            selEdgeCount.update(e.vb, () => 1, (ref int c) { ++c; });
-        }
-        bool isFreeEnd(uint v) { auto p = v in selEdgeCount; return p !is null && *p == 1; }
+        // --- Free-end classification (§5). selEdgeCount / isFreeEnd / isShared
+        //     were computed above (needed for the ridge dedupe + inset weld).
         // An *interior* free end has two neighbor faces (its single selected edge
         // is interior). Only interior free ends split their side-face corner into
         // two insets + a triangle cap; a BOUNDARY free end (one neighbor face)
