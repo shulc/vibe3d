@@ -94,6 +94,7 @@ import commands.mesh.linear_align;
 import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
+import commands.scene.load_mesh;
 import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
 import commands.history.show : HistoryShow;
@@ -1244,6 +1245,10 @@ void main(string[] args) {
         new SceneReset(&mesh, cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache,
                        &editMode, &cameraView, () => setActiveTool(null));
+    reg.commandFactories["scene.loadMesh"] = () => cast(Command)
+        new MeshLoadRaw(&mesh, cameraView, editMode, &gpu,
+                        &vertexCache, &edgeCache, &faceCache,
+                        &editMode, &cameraView, () => setActiveTool(null));
     reg.commandFactories["history.undo"] = () => cast(Command)
         new HistoryUndo(&mesh, cameraView, editMode, history);
     reg.commandFactories["history.redo"] = () => cast(Command)
@@ -2238,6 +2243,63 @@ void main(string[] args) {
             }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
+            history.record(cmd);
+        });
+
+        // Test-only raw-mesh injection (POST /api/load-mesh). Parses the
+        // JSON payload into Vec3 verts + uint[] faces, then dispatches the
+        // MeshLoadRaw command on the main thread (GPU upload + cache refresh
+        // need the GL/main thread). MeshLoadRaw re-validates degree / index
+        // range before touching the live mesh.
+        httpServer.setLoadMeshHandler((JSONValue params) {
+            import math : Vec3;
+
+            if ("vertices" !in params || params["vertices"].type != JSONType.array)
+                throw new Exception("missing 'vertices' array field");
+            if ("faces" !in params || params["faces"].type != JSONType.array)
+                throw new Exception("missing 'faces' array field");
+
+            double numFrom(JSONValue n) {
+                switch (n.type) {
+                    case JSONType.integer:  return cast(double)n.integer;
+                    case JSONType.uinteger: return cast(double)n.uinteger;
+                    case JSONType.float_:   return n.floating;
+                    default: throw new Exception("vertex components must be numbers");
+                }
+            }
+
+            auto vArr = params["vertices"].array;
+            Vec3[] verts = new Vec3[](vArr.length);
+            foreach (i, vj; vArr) {
+                if (vj.type != JSONType.array || vj.array.length != 3)
+                    throw new Exception("each vertex must be [x,y,z]");
+                verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
+                                cast(float)numFrom(vj.array[1]),
+                                cast(float)numFrom(vj.array[2]));
+            }
+
+            auto fArr = params["faces"].array;
+            uint[][] faces = new uint[][](fArr.length);
+            foreach (i, fj; fArr) {
+                if (fj.type != JSONType.array)
+                    throw new Exception("each face must be an array of vertex indices");
+                auto idxArr = fj.array;
+                uint[] face = new uint[](idxArr.length);
+                foreach (k, ij; idxArr) {
+                    if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
+                        throw new Exception("face indices must be integers");
+                    long v = ij.integer;
+                    if (v < 0)
+                        throw new Exception("face index must be non-negative");
+                    face[k] = cast(uint)v;
+                }
+                faces[i] = face;
+            }
+
+            auto cmd = cast(MeshLoadRaw)reg.commandFactories["scene.loadMesh"]();
+            cmd.setData(verts, faces);
+            if (!cmd.apply())
+                throw new Exception("scene.loadMesh did not apply");
             history.record(cmd);
         });
     }
@@ -3707,6 +3769,7 @@ void main(string[] args) {
             httpServer.tickCommand();
             httpServer.tickSelection();
             httpServer.tickTransform();
+            httpServer.tickLoadMesh();
             httpServer.tickCameraSet();
             httpServer.tickGpuSurface();
             httpServer.tickRefire();
