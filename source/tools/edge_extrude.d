@@ -119,6 +119,9 @@ private:
     int   dragLastMX, dragLastMY;  // last mouse pos (incremental on-handle drags)
     int   dragStartMX, dragStartMY;// drag-start mouse pos (total-delta free drag)
     float dragBaseExtrude, dragBaseWidth;
+    // Ctrl axis-lock for the free drag, LATCHED once a clear direction is set
+    // so it never flips mid-drag: 0 = unlocked, 1 = extrude-only, 2 = width-only.
+    int   freeLockAxis = 0;
 
     // Pixel→param scale for the off-handle free drag (matches the tool's prior
     // blind whole-screen 2-axis drag scale).
@@ -273,6 +276,7 @@ public:
         dragStartMY     = e.y;
         dragBaseExtrude = extrude_;
         dragBaseWidth   = width_;
+        freeLockAxis    = 0;   // fresh latch for any new free drag
 
         if (part == PART_EXTRUDE || part == PART_WIDTH) {
             // On-handle: single-axis world-projected incremental drag.
@@ -300,11 +304,23 @@ public:
             int dy = e.y - dragStartMY;
             extrude_ = dragBaseExtrude + (-dy) * FREE_SCALE;
             width_   = dragBaseWidth   + ( dx) * FREE_SCALE;
-            // Ctrl locks to the dominant axis (by total-delta magnitude): a
-            // taller-than-wide drag is pure extrude, otherwise pure width.
+            // Ctrl locks the drag to ONE axis. LATCH the axis the first time
+            // Ctrl is held with a clear dominant direction (>= LATCH_PX), then
+            // keep it for as long as Ctrl stays down — recomputing dominance
+            // every frame let a near-diagonal / direction-changing drag flip
+            // the lock between extrude and width ("doesn't always lock").
+            // Releasing Ctrl clears the latch (free 2-axis resumes; re-pressing
+            // re-latches).
             if (SDL_GetModState() & KMOD_CTRL) {
-                if (abs(dy) >= abs(dx)) width_   = dragBaseWidth;    // EXTRUDE only
-                else                    extrude_ = dragBaseExtrude;  // WIDTH only
+                if (freeLockAxis == 0) {
+                    enum int LATCH_PX = 4;
+                    if (abs(dx) >= LATCH_PX || abs(dy) >= LATCH_PX)
+                        freeLockAxis = (abs(dy) >= abs(dx)) ? 1 : 2;
+                }
+                if      (freeLockAxis == 1) width_   = dragBaseWidth;    // EXTRUDE only
+                else if (freeLockAxis == 2) extrude_ = dragBaseExtrude;  // WIDTH only
+            } else {
+                freeLockAxis = 0;
             }
             if (width_ < 0.0f) width_ = 0.0f;
             rebuildPreview();
