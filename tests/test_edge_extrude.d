@@ -905,3 +905,99 @@ unittest {
     }
     assert(tris == 2, "coplanar: expected exactly 2 triangle caps, got " ~ tris.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// 11. FACE-AWARE free-end inset on NON-COPLANAR surroundings (the cut-corner
+//     fold). Each dissolved free-end corner is inset along ITS incident edges
+//     IN EACH INCIDENT FACE'S OWN PLANE — so an inner-rim edge that dives off
+//     the neighbour plane onto a vertical side face folds the inset DOWN onto
+//     that side face, instead of keeping it in the neighbour plane.
+//
+//     Fixture (mirrors the reference cube_cut_diag case): a pure-inset preop on
+//     the front-right vertical cube edge (0.5,-0.5,0.5)-(0.5,0.5,0.5) cuts the
+//     +X+Z corner, leaving a DIAGONAL top edge (0.277,0.5,0.5)-(0.5,0.5,0.277)
+//     between two coplanar +Y faces (a top 5-gon + a corner triangle). Each
+//     endpoint of that diagonal edge is a free end ringed by NON-coplanar
+//     vertical side faces (x=+0.5 at one end, z=+0.5 at the other). Extruding
+//     the diagonal edge (extrude=0.2 +Y, width=0.1) must:
+//       - place the two neighbour-plane insets IN the +Y plane (y=0.5) along the
+//         top faces' boundary edges at each free end, and
+//       - FOLD the inner-rim inset DOWN onto the vertical side face (y=0.4),
+//         NOT keep it at y=0.5.
+//     If the inset were neighbour-plane-only (the pre-fix behaviour) every new
+//     vert would sit at y=0.5 and the y=0.4 folded verts would be ABSENT.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+
+    // Preop: pure inset (extrude=0) of the front-right vertical edge to cut the
+    // corner and create the diagonal top edge.
+    auto cube = getModel();
+    int pa = vertAt(cube, V3(0.5, -0.5, 0.5));
+    int pb = vertAt(cube, V3(0.5,  0.5, 0.5));
+    assert(pa >= 0 && pb >= 0, "cut-diag: preop edge endpoints not found");
+    int pei = edgeIndex(cube, pa, pb);
+    assert(pei >= 0, "cut-diag: preop edge not found");
+    postSelect("edges", [pei]);
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":0.223}}`);
+
+    // Main op: extrude the diagonal top edge between the two coplanar +Y faces.
+    auto mid = getModel();
+    immutable P = V3(0.277, 0.5, 0.5);   // free end ringed by z=+0.5 side faces
+    immutable Q = V3(0.5,   0.5, 0.277); // free end ringed by x=+0.5 side faces
+    int da = vertAt(mid, P);
+    int db = vertAt(mid, Q);
+    assert(da >= 0 && db >= 0, "cut-diag: diagonal edge endpoints not found");
+    int dei = edgeIndex(mid, da, db);
+    assert(dei >= 0, "cut-diag: diagonal edge not found");
+    postSelect("edges", [dei]);
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+    auto m = getModel();
+
+    // Topology matches the reference cut_diag target (18v / 16f).
+    assert(m["vertexCount"].integer == 18,
+        "cut-diag: expected 18 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 16,
+        "cut-diag: expected 16 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // The FOLD: each free end's inner-rim inset is pushed −Y onto its vertical
+    // side face (y=0.4), NOT kept in the +Y neighbour plane.
+    //   Q=(0.5,0.5,0.277) folds onto x=+0.5 side → (0.5,0.4,0.277)
+    //   P=(0.277,0.5,0.5) folds onto z=+0.5 side → (0.277,0.4,0.5)
+    immutable foldQ = V3(0.5,   0.4, 0.277);
+    immutable foldP = V3(0.277, 0.4, 0.5);
+    assert(countAt(m, foldQ) == 1,
+        "cut-diag: Q inner-rim inset must fold onto the x=+0.5 side (0.5,0.4,0.277)");
+    assert(countAt(m, foldP) == 1,
+        "cut-diag: P inner-rim inset must fold onto the z=+0.5 side (0.277,0.4,0.5)");
+
+    // The neighbour-plane insets stay IN the +Y top plane, along the two top
+    // faces' boundary edges at each free end (NOT folded).
+    assert(countAt(m, V3(0.5,   0.5, 0.377)) == 1, "cut-diag: Q +Z in-plane inset missing");
+    assert(countAt(m, V3(0.5,   0.5, 0.177)) == 1, "cut-diag: Q −Z in-plane inset missing");
+    assert(countAt(m, V3(0.377, 0.5, 0.5))   == 1, "cut-diag: P +X in-plane inset missing");
+    assert(countAt(m, V3(0.177, 0.5, 0.5))   == 1, "cut-diag: P −X in-plane inset missing");
+
+    // The fold must be a REAL departure from the neighbour plane: the would-be
+    // neighbour-plane-only insets (the pre-fix positions, y=0.5 directly above
+    // the folds) must NOT exist.
+    assert(vertAt(m, V3(0.5,   0.5, 0.277)) < 0 || countAt(m, V3(0.5, 0.5, 0.277)) == 0,
+        "cut-diag: Q inner-rim inset must not remain in the +Y plane");
+    assert(countAt(m, V3(0.277, 0.5, 0.5)) == 0,
+        "cut-diag: P inner-rim inset must not remain in the +Y plane");
+
+    // The +Y ridge verts are exact (extrude only — already correct pre-fix).
+    assert(vertAt(m, V3(0.277, 0.7, 0.5)) >= 0, "cut-diag: ridge vert P+0.2Y missing");
+    assert(vertAt(m, V3(0.5,   0.7, 0.277)) >= 0, "cut-diag: ridge vert Q+0.2Y missing");
+
+    // Sanity: every folded inset sits ON its side-face plane.
+    assert(abs(foldQ.x - 0.5) < 1e-6, "cut-diag: foldQ off the x=0.5 side plane");
+    assert(abs(foldP.z - 0.5) < 1e-6, "cut-diag: foldP off the z=0.5 side plane");
+
+    // Clean surface: no orphans, no holes/folds, no coincident duplicates.
+    assert(orphanVerts(m).length == 0,
+        "cut-diag: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "cut-diag: result is not hole-free / has folded faces");
+    assert(noCoincidentVerts(m), "cut-diag: coincident duplicate vertices present");
+}

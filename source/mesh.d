@@ -1011,14 +1011,53 @@ struct Mesh {
             if (dot(d, c - mid) < 0.0f) d = -d;
             return d;
         }
+        // Face-aware inset direction at a single endpoint `v` (one endpoint of the
+        //     extruded edge whose OTHER endpoint is `other`) within neighbour face
+        //     fi. The reference modeler insets a dissolved free-end corner along the
+        //     incident NON-EXTRUDED boundary edge of that face — i.e. toward the
+        //     face's other vertex sharing a boundary edge at v — IN THAT FACE'S OWN
+        //     PLANE. When the surrounding faces are coplanar with the neighbour face
+        //     this boundary edge is perpendicular to the extruded edge inside the
+        //     plane, so it reduces to the old cross-product inset (one shared point,
+        //     no regression). When they are NOT coplanar (e.g. vertical side faces
+        //     around a cut corner) the boundary edge dives out of the neighbour
+        //     plane, folding the inset onto the side face — exactly what the
+        //     reference does. Returns Vec3(0) if no distinct boundary edge is found
+        //     (caller falls back to the perpendicular inwardDir).
+        Vec3 boundaryEdgeDir(uint v, uint other, int fi) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                if (f[k] != v) continue;
+                uint prev = f[(k + f.length - 1) % f.length];
+                uint next = f[(k + 1) % f.length];
+                // The non-extruded boundary edge is the one whose far endpoint is
+                // NOT the extruded edge's other endpoint.
+                uint far = (prev == other) ? next : prev;
+                Vec3 d = vertices[far] - vertices[v];
+                if (d.length < 1e-6f) return Vec3(0, 0, 0);
+                return normalize(d);
+            }
+            return Vec3(0, 0, 0);
+        }
+        // Inset direction at endpoint `v` of the extruded edge (va,vb) within
+        //     neighbour face fi. A FREE END is dissolved corner-by-corner along its
+        //     incident edges (face-aware, see boundaryEdgeDir); any other endpoint
+        //     (shared chain/fan corner) keeps the original perpendicular inset so
+        //     its welded-corner behaviour is byte-identical.
+        Vec3 insetDirAt(uint v, uint va, uint vb, int fi) {
+            if (isFreeEnd(v)) {
+                uint other = (v == va) ? vb : va;
+                Vec3 d = boundaryEdgeDir(v, other, fi);
+                if (d.length >= 1e-6f) return d;
+            }
+            return inwardDir(va, vb, fi);
+        }
         foreach (ref e; exEdges) {
-            Vec3 dA = inwardDir(e.va, e.vb, e.fA);
-            accumInset(e.va, e.fA, dA);
-            accumInset(e.vb, e.fA, dA);
+            accumInset(e.va, e.fA, insetDirAt(e.va, e.va, e.vb, e.fA));
+            accumInset(e.vb, e.fA, insetDirAt(e.vb, e.va, e.vb, e.fA));
             if (e.fB != -1) {
-                Vec3 dB = inwardDir(e.va, e.vb, e.fB);
-                accumInset(e.va, e.fB, dB);
-                accumInset(e.vb, e.fB, dB);
+                accumInset(e.va, e.fB, insetDirAt(e.va, e.va, e.vb, e.fB));
+                accumInset(e.vb, e.fB, insetDirAt(e.vb, e.va, e.vb, e.fB));
             }
         }
         // Per (v,face) inset vert, with a (endpoint, position) weld so that two
@@ -1175,6 +1214,10 @@ struct Mesh {
                 }
                 return false;
             }
+            // For each qualifying free end we also remember the FAR endpoint of its
+            //     inner rim edge so the along-inset can be placed along that ACTUAL
+            //     edge (face-aware fold), not merely along the extruded-edge tangent.
+            uint[uint] alongFar;          // free-end v → inner-rim edge's far vertex
             foreach (fi; 0 .. faces.length) {
                 auto f = faces[fi];
                 foreach (k; 0 .. f.length) {
@@ -1185,15 +1228,30 @@ struct Mesh {
                     uint next = f[(k + 1) % f.length];
                     // An inner rim edge at c is a boundary edge of this back face
                     // that is NOT one of the extruded edge's neighbor faces.
-                    if (!isNeighborEdgeAt(c, prev, c) || !isNeighborEdgeAt(c, c, next))
+                    if (!isNeighborEdgeAt(c, prev, c)) {
                         needsAlong[c] = true;
+                        if (c !in alongFar) alongFar[c] = prev;
+                    }
+                    if (!isNeighborEdgeAt(c, c, next)) {
+                        needsAlong[c] = true;
+                        if (c !in alongFar) alongFar[c] = next;
+                    }
                 }
             }
-            // Materialize one along-edge inset vert per qualifying free end.
+            // Materialize one along-edge inset vert per qualifying free end, placed
+            //     `width` ALONG the inner rim edge (v → far). This folds the inset
+            //     onto whatever face that edge bounds: when the rim edge lies in the
+            //     neighbour plane (coplanar surroundings) the fold direction equals
+            //     the extruded-edge tangent (no change); when it dives onto a
+            //     non-coplanar side face the inset folds onto that side face — the
+            //     reference's face-aware free-end inset.
             foreach (v, _; needsAlong) {
-                auto op = v in freeEndOther;
-                if (op is null) continue;
-                Vec3 t = vertices[v] - vertices[*op];
+                Vec3 t;
+                if (auto fp = v in alongFar) {
+                    t = vertices[*fp] - vertices[v];
+                } else if (auto op = v in freeEndOther) {
+                    t = vertices[v] - vertices[*op];   // fallback: extruded tangent
+                } else continue;
                 if (t.length < 1e-6f) continue;
                 t = normalize(t);
                 freeEndAlongVert[v] = addVertex(vertices[v] + t * width);
