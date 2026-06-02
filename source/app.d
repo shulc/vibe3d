@@ -71,6 +71,7 @@ import commands.mesh.subdivide_faceted;
 import commands.mesh.subpatch_toggle;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
+import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
@@ -1147,6 +1148,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
         new MeshSplitEdge(&mesh, cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.edge_extrude"] = () => cast(Command)
+        new MeshEdgeExtrude(&mesh, cameraView, editMode, &gpu,
+                            &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh, cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
