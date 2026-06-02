@@ -13,10 +13,12 @@
 //     endpoints are dropped by compaction (no orphans).
 //   - SHARED endpoints (chain joints, ≥2 selected edges) stay welded: one ridge
 //     vertex, NO cap.
-//   - BOUNDARY edges (one neighbor face) close with an inset-gap quad + a
-//     ridge-bridge quad; their free ends keep their other faces intact (only one
-//     inset, no split, no cap). Boundary parity vs the reference is out of scope, but the
-//     result must be hole-free.
+//   - BOUNDARY edges (one neighbor face F) emit a width-only CHAMFER and IGNORE
+//     extrude (no ridge, no lift, no bridge, no cap): each endpoint dissolves
+//     into a top inset (+width along F's in-plane inward dir) and an anti-normal
+//     inset (−width·faceNormal(F)). F keeps the top-inset edge (stays a quad);
+//     each other incident face absorbs both insets (quad → 5-gon). The chamfer
+//     edge lies on the open boundary. This matches the reference (test 3).
 //
 // The canonical reference-parity fixture is the CUBE interior edge (test 1); the grid
 // cases (tests 2-5) exercise welding / boundary / fan / chain on a small open
@@ -410,40 +412,114 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Boundary edge (1 adjacent face): hole-free, +4 verts / +2 faces.
+// 3. Boundary edge (1 adjacent face) → width-only CHAMFER (reference parity).
+//
+//    The reference treats a boundary edge entirely differently from an interior
+//    one: it IGNORES the extrude amount (no outward lift, no ridge, no bridge)
+//    and emits a width-only chamfer. Each endpoint is DISSOLVED into TWO insets:
+//      topInset        = endpoint + width · (in-plane inward dir of the sole
+//                        neighbour face F, perpendicular to the edge)
+//      antiNormalInset = endpoint − width · faceNormal(F)
+//    F keeps the topInset edge (stays a quad); every OTHER face incident to the
+//    endpoint absorbs BOTH insets in winding order (quad → 5-gon). The chamfer
+//    edge topInset–antiNormalInset lies on the OPEN boundary. NO ridge vert, NO
+//    lift past the original face plane, NO triangle cap.
+//
+//    Fixture = the reference parity case: a cube with its +Z front face deleted
+//    (so the top-front edge becomes a boundary edge whose sole neighbour is the
+//    +Y top face), then that edge extruded. Reference target: 10 verts, 5 faces,
+//    fv-dist {4:3, 5:2}.
 // ---------------------------------------------------------------------------
 
 unittest {
-    resetGrid(2);
-    auto before = getModel();
+    resetCube();
 
-    int ei = edgeIndex(before, 0, 1);
-    assert(ei >= 0, "boundary edge (0,1) not found");
+    // Delete the +Z front face (addFace index 1 = [4,5,6,7]) → its 4 perimeter
+    // edges become boundary edges (one adjacent face).
+    postSelect("polygons", [1]);
+    postCommand(`{"id":"mesh.delete"}`);
+
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 8, "boundary: open cube should keep 8 verts");
+    assert(before["faceCount"].integer == 5, "boundary: open cube should have 5 faces");
+
+    immutable V3 vaPos = V3(-0.5, 0.5, 0.5);   // top-front-left  endpoint
+    immutable V3 vbPos = V3( 0.5, 0.5, 0.5);   // top-front-right endpoint
+    int va = vertAt(before, vaPos);
+    int vb = vertAt(before, vbPos);
+    assert(va >= 0 && vb >= 0, "boundary: top-front endpoints not found");
+    int ei = edgeIndex(before, va, vb);
+    assert(ei >= 0, "boundary: top-front edge not found");
+    // Sole neighbour of this edge is the +Y top face → its normal is +Y.
+    immutable V3 faceN = V3(0, 1, 0);
     postSelect("edges", [ei]);
 
-    enum extrude = 0.2;
+    enum extrude = 0.2, width = 0.1;
     postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
     auto m = getModel();
 
-    // Boundary branch: 4 new verts (ridge×2 + inset×2), 2 new quads (inset-gap +
-    // ridge-bridge). Boundary free ends keep their other faces (no split / cap),
-    // so all faces stay quads and v0/v1 survive (no compaction removal).
-    assert(m["vertexCount"].integer == before["vertexCount"].integer + 4,
-        "boundary: expected +4 verts, got " ~
-        to!string(m["vertexCount"].integer - before["vertexCount"].integer));
-    assert(m["faceCount"].integer == before["faceCount"].integer + 2,
-        "boundary: expected +2 faces, got " ~
-        to!string(m["faceCount"].integer - before["faceCount"].integer));
-    assert(orphanVerts(m).length == 0, "boundary: unexpected orphan verts");
-    assert(isHoleFree(m), "boundary: result has a hole / non-manifold edge");
+    // Exact reference counts: chamfer adds 2 insets per endpoint (4 new) and
+    // dissolves both endpoints (2 dropped) ⇒ 8 − 2 + 4 = 10 verts; the face count
+    // is unchanged (F stays a quad, two side faces grow to 5-gons) ⇒ 5 faces.
+    assert(m["vertexCount"].integer == 10,
+        "boundary: expected 10 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 5,
+        "boundary: expected 5 faces, got " ~ m["faceCount"].integer.to!string);
+    auto fv = fvDist(m);
+    assert(fv == [4: 3, 5: 2],
+        "boundary: expected fv-dist {4:3,5:2}, got " ~ fv.to!string);
 
-    // Ridge moves along the single face normal by extrude.
-    V3 ne = avgNeighborNormal(before, 0, 1);
-    assert(len3(ne) > 0.5, "boundary neighbor normal degenerate");
-    auto exp0 = add3(vert(before, 0), V3(ne.x*extrude, ne.y*extrude, ne.z*extrude));
-    auto exp1 = add3(vert(before, 1), V3(ne.x*extrude, ne.y*extrude, ne.z*extrude));
-    assert(vertAt(m, exp0) >= 0, "boundary: ridge vert for v0 missing");
-    assert(vertAt(m, exp1) >= 0, "boundary: ridge vert for v1 missing");
+    // The chamfer ignores extrude: NO ridge vertex and NO lift past the original
+    // top-face plane — nothing rises above y = 0.5.
+    foreach (i; 0 .. m["vertices"].array.length)
+        assert(vert(m, i).y <= 0.5 + 1e-4,
+            "boundary: chamfer must not lift any vertex above y=0.5 (extrude ignored)");
+
+    // NO triangle caps (chamfer emits none).
+    assert(fv.get(3, 0) == 0, "boundary: chamfer must emit no triangle caps");
+
+    // Both original endpoints are DISSOLVED (no surviving vertex sits at them).
+    assert(vertAt(m, vaPos) < 0, "boundary: endpoint va must be dissolved");
+    assert(vertAt(m, vbPos) < 0, "boundary: endpoint vb must be dissolved");
+
+    // Per endpoint: a top inset at +width along the in-plane inward dir of F
+    // (perpendicular to the edge; the edge runs along ±X, F extends in −Z from
+    // it, so inward = −Z) and an anti-normal inset at −width·faceNormal(F) (−Y).
+    immutable V3 inward = V3(0, 0, -1);
+    foreach (immutable ep; [vaPos, vbPos]) {
+        auto topInset  = add3(ep, V3(inward.x*width, inward.y*width, inward.z*width));
+        auto antiInset = sub3(ep, V3(faceN.x*width, faceN.y*width, faceN.z*width));
+        assert(countAt(m, topInset) == 1,
+            "boundary: top inset missing/duplicated at " ~
+            to!string([topInset.x, topInset.y, topInset.z]));
+        assert(countAt(m, antiInset) == 1,
+            "boundary: anti-normal inset missing/duplicated at " ~
+            to!string([antiInset.x, antiInset.y, antiInset.z]));
+    }
+
+    // F (the +Y top neighbour) stays a QUAD: exactly the 3 quads are F + the back
+    // and bottom faces; the two side faces (+X / −X) are the 5-gons. Verify the
+    // quad that contains BOTH top insets (that is F) and that it has 4 corners.
+    auto topA = add3(vaPos, V3(inward.x*width, inward.y*width, inward.z*width));
+    auto topB = add3(vbPos, V3(inward.x*width, inward.y*width, inward.z*width));
+    int fFaces = 0;
+    foreach (f; m["faces"].array) {
+        bool hasA = false, hasB = false;
+        foreach (c; f.array) {
+            auto p = vert(m, cast(size_t)c.integer);
+            if (len3(sub3(p, topA)) < 1e-4) hasA = true;
+            if (len3(sub3(p, topB)) < 1e-4) hasB = true;
+        }
+        if (hasA && hasB) { ++fFaces; assert(f.array.length == 4,
+            "boundary: neighbour face F must stay a quad, got " ~
+            f.array.length.to!string ~ "-gon"); }
+    }
+    assert(fFaces == 1, "boundary: expected exactly one face (F) spanning both top insets");
+
+    // Hole-free / no orphans (open boundary edges allowed).
+    assert(orphanVerts(m).length == 0, "boundary: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "boundary: result has a hole / non-manifold edge");
+    assert(noCoincidentVerts(m), "boundary: coincident duplicate vertices present");
 }
 
 // ---------------------------------------------------------------------------
@@ -495,13 +571,19 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Corner / fan — two boundary edges sharing a single quad and a vertex.
+// 5. Corner / fan — two BOUNDARY edges sharing a single quad and a vertex.
+//
+//    f0 = [0,1,4,3]. Edges (0,1) and (0,3) both border f0 (one adjacent face →
+//    both boundary) and share v0. A SHARED corner on boundary edges is OUT OF
+//    SCOPE for exact reference parity (the in-scope chamfer case is a single
+//    boundary edge with free-end corners). This test only pins the best-effort
+//    contract: the op must NOT crash and must leave a clean, hole-free, orphan-
+//    free, duplicate-free mesh. (Both endpoints' single selected edge is a
+//    boundary edge, so extrude is ignored and no ridge lift is produced — the
+//    pre-chamfer ridge-vert assertion no longer applies.)
 // ---------------------------------------------------------------------------
 
 unittest {
-    // f0 = [0,1,4,3]. Edges (0,1) and (0,3) both border f0 and share v0. Both are
-    // perimeter (boundary) edges. Face-centric rewrite must produce ONE inset
-    // vert for v0 in f0 and ONE welded ridge vert for v0 — no duplicated corner.
     resetGrid(2);
     auto before = getModel();
     int e01 = edgeIndex(before, 0, 1);
@@ -513,33 +595,27 @@ unittest {
     assert(parseJSON(raw)["status"].str == "ok", "fan extrude failed: " ~ raw);
     auto m = getModel();
 
-    // The rewritten neighbor quad f0 must remain a clean polygon: no repeated
-    // corner index, ≥ 3 corners.
-    auto f0 = m["faces"].array[0].array;
-    assert(f0.length >= 3, "fan: f0 collapsed to < 3 corners");
-    foreach (i; 0 .. f0.length)
-        foreach (j; i + 1 .. f0.length)
-            assert(f0[i].integer != f0[j].integer,
-                "fan: f0 has a duplicated corner");
+    // Every face must remain a clean polygon: no repeated corner index, ≥ 3
+    // corners.
+    foreach (f; m["faces"].array) {
+        auto idx = f.array;
+        assert(idx.length >= 3, "fan: a face collapsed to < 3 corners");
+        foreach (i; 0 .. idx.length)
+            foreach (j; i + 1 .. idx.length)
+                assert(idx[i].integer != idx[j].integer,
+                    "fan: a face has a duplicated corner");
+    }
 
-    // Both edges are boundary, sharing v0; v0 welds to ONE ridge vert. Outer free
-    // ends are boundary (one neighbor face) → no caps. Hole-free, no orphans.
+    // Best-effort invariants for the out-of-scope shared boundary corner: the
+    // result is hole-free, has no orphan verts, and no coincident duplicates.
     assert(orphanVerts(m).length == 0, "fan: orphan verts: " ~ orphanVerts(m).to!string);
     assert(isHoleFree(m), "fan: result not hole-free");
-
-    // v0's welded ridge vert: exactly ONE vertex at v0 + extrude·ne0 (averaged
-    // over the two incident edges' neighbor normals — here both border f0).
-    V3 n0 = avgNeighborNormal(before, 0, 1);    // f0 normal
-    auto exp0 = add3(vert(before, 0), V3(n0.x*0.2, n0.y*0.2, n0.z*0.2));
-    int atCorner = 0;
-    foreach (i; 0 .. m["vertices"].array.length)
-        if (len3(sub3(vert(m, i), exp0)) < 1e-4) ++atCorner;
-    assert(atCorner == 1,
-        "fan: expected ONE welded ridge vert at the shared corner, got " ~
-        atCorner.to!string);
-
-    // No two output vertices may be coincident.
     assert(noCoincidentVerts(m), "fan: coincident duplicate vertices present");
+
+    // The shared corner v0 is dissolved (replaced by its welded inset), so no
+    // surviving vertex sits at the original corner position.
+    assert(vertAt(m, vert(before, 0)) < 0,
+        "fan: shared corner v0 should be dissolved into its inset, not kept");
 }
 
 // ---------------------------------------------------------------------------

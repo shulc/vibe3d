@@ -926,6 +926,33 @@ struct Mesh {
         bool isFreeEnd(uint v) { auto p = v in selEdgeCount; return p !is null && *p == 1; }
         bool isShared(uint v) { auto p = v in selEdgeCount; return p !is null && *p >= 2; }
 
+        // --- Boundary chamfer ends. The reference treats a BOUNDARY edge (exactly
+        //     one adjacent face F) entirely differently from an interior edge: it
+        //     IGNORES the extrude amount (no outward lift, no ridge, no bridge) and
+        //     emits a width-only CHAMFER. Each endpoint v of such an edge is
+        //     DISSOLVED into TWO inset verts:
+        //       topInset       = v + width · (in-plane inward dir of F)   [§1.3]
+        //       antiNormalInset = v − width · faceNormal(F)
+        //     F replaces the dissolved edge with the topInset edge (stays a quad —
+        //     handled by the affected-face rewrite below). Every OTHER face
+        //     incident to v replaces its dissolved corner with BOTH insets in
+        //     winding order (quad → 5-gon). The chamfer edge topInset–antiNormalInset
+        //     lies on the open boundary; no bridge / cap is emitted.
+        //
+        //     A *boundary chamfer end* is a FREE end (one selected edge) whose
+        //     single selected edge is a boundary edge. Shared / chain corners on a
+        //     boundary edge are out of scope (handled best-effort by the existing
+        //     welded-ridge path). We record per end its neighbour face F and the
+        //     anti-normal inset vert; the in-plane topInset reuses insetVert[(v,F)]
+        //     materialised in Pass 2.
+        int[uint] chamferNeighborFace;     // boundary chamfer end v → its sole face F
+        foreach (ref e; exEdges) {
+            if (e.fB != -1) continue;       // interior edge — not a boundary chamfer
+            if (isFreeEnd(e.va)) chamferNeighborFace[e.va] = e.fA;
+            if (isFreeEnd(e.vb)) chamferNeighborFace[e.vb] = e.fA;
+        }
+        bool isChamferEnd(uint v) { return (v in chamferNeighborFace) !is null; }
+
         // --- Pass 1: welded ridge vertex per original endpoint. The ridge is
         //     displaced along the average of the DISTINCT neighbour-face normals
         //     of every selected edge incident to v (§1.4.1). Deduping by face id
@@ -951,6 +978,9 @@ struct Mesh {
         }
         uint[uint] ridgeVert;
         foreach (v, acc; ridgeAccum) {
+            // Boundary chamfer ends are NOT lifted — they get no ridge vert (the
+            // chamfer ignores extrude). Their bridge/cap geometry is skipped below.
+            if (isChamferEnd(v)) continue;
             Vec3 dir = (acc.length < 1e-6f) ? Vec3(0, 1, 0) : normalize(acc);
             ridgeVert[v] = addVertex(vertices[v] + dir * extrude);
         }
@@ -1018,6 +1048,17 @@ struct Mesh {
             uint nv = addVertex(p);
             insetPosWeld[wk] = nv;
             insetVert[k] = nv;
+        }
+
+        // --- Anti-normal inset vert per boundary chamfer end. The second chamfer
+        //     inset is the endpoint pushed back along the NEGATIVE face normal of
+        //     its sole neighbour face F by `width`. (The in-plane topInset is
+        //     insetVert[(v,F)], already made above.) This vert sits on the open
+        //     boundary; the side-face rewrite below pairs it with the topInset.
+        uint[uint] chamferAntiInset;       // boundary chamfer end v → anti-normal inset vert
+        foreach (v, fF; chamferNeighborFace) {
+            Vec3 nf = faceNormal(cast(uint)fF);
+            chamferAntiInset[v] = addVertex(vertices[v] - nf * width);
         }
 
         // --- Free-end classification (§5). selEdgeCount / isFreeEnd / isShared
@@ -1172,6 +1213,32 @@ struct Mesh {
             Vec3 origNormal = faceNormal(cast(uint)fi);
             foreach (k; 0 .. f.length) {
                 uint c = f[k];
+                // Boundary chamfer end in a SIDE face (any face that is not its
+                // sole neighbour face F): dissolve the corner into its two chamfer
+                // insets [topInset, antiNormalInset]. The incident edge that is
+                // ALSO an edge of F carries the in-plane topInset; the open-boundary
+                // edge carries the anti-normal inset, so the pair is ordered to keep
+                // F's inset adjacent to the F-shared edge. F itself keeps just the
+                // topInset (the affected-face rewrite handled that above) → quad.
+                if (isChamferEnd(c) && chamferNeighborFace[c] != cast(int)fi) {
+                    uint prevB = f[(k + f.length - 1) % f.length];
+                    uint nextB = f[(k + 1) % f.length];
+                    int fF = chamferNeighborFace[c];
+                    bool edgeInF(uint a, uint b) {
+                        auto p = edgeKeyOrdered(a, b) in edgeFaces;
+                        if (p is null) return false;
+                        return (*p)[0] == fF || (*p)[1] == fF;
+                    }
+                    uint top  = insetVert[(cast(ulong)c << 32) | cast(uint)fF];
+                    uint anti = chamferAntiInset[c];
+                    // If the incoming edge (prev,c) is shared with F, top goes
+                    // first (adjacent to prev); otherwise the outgoing edge is the
+                    // F-shared one and top goes last (adjacent to next).
+                    if (edgeInF(prevB, c)) { rebuilt ~= top; rebuilt ~= anti; }
+                    else                    { rebuilt ~= anti; rebuilt ~= top; }
+                    touched = true;
+                    continue;
+                }
                 bool freeHere = isInteriorFreeEnd(c)
                     && ((cast(ulong)c << 32 | cast(uint)fi) !in isNeighborOf);
                 if (!freeHere) { rebuilt ~= c; continue; }
@@ -1300,25 +1367,32 @@ struct Mesh {
                 }
                 capFreeEnd(e.va, insetVert[kIA], insetVert[kIA2], -axis); // va exits −axis
                 capFreeEnd(e.vb, insetVert[kIB], insetVert[kIB2],  axis); // vb exits +axis
+            } else if (isChamferEnd(e.va) && isChamferEnd(e.vb)) {
+                // Boundary CHAMFER (the in-scope single-edge case). The reference
+                // IGNORES extrude on a boundary edge and emits a width-only chamfer:
+                // both endpoints are dissolved into a topInset (in F) + an
+                // antiNormalInset (off the boundary). F keeps the topInset edge (it
+                // stays a quad), each side face absorbs both insets (→ 5-gon), and
+                // the chamfer edge topInset–antiNormalInset lies on the OPEN
+                // boundary. All of that was emitted by the affected-face + side-face
+                // rewrites above — NO ridge, NO bridge quad, NO cap here.
             } else {
-                // Boundary edge: exactly 2 quads — fill the inset gap with the
-                // original va,vb retained, then bridge the original edge up to
-                // the ridge. (No second neighbor side, so NO interior-style
-                // bridge here — that would over-count to 3 faces.) Boundary free
-                // ends have only ONE inset, so there is no corner triangle to
-                // cap; the inset-gap quad already produces closed geometry (no
-                // holes). Boundary parity vs the reference is out of scope.
-                //
-                // The shell shares two edges that must be traversed OPPOSITELY
-                // by their two incident faces (orientability): the inset edge
+                // Out-of-scope boundary topology (a shared / chain corner on a
+                // boundary edge): fall back to the legacy gap + ridge-bridge shell
+                // so we never crash. Requires ridge verts on both endpoints; if a
+                // ridge vert is missing (a free chamfer end mixed with a shared
+                // corner) we best-effort skip the bridge for this edge.
+                auto rpa = e.va in ridgeVert;
+                auto rpb = e.vb in ridgeVert;
+                if (rpa is null || rpb is null) continue;
+                // The shell shares two edges that must be traversed OPPOSITELY by
+                // their two incident faces (orientability): the inset edge
                 // (insetA,insetB) is shared by the rewritten neighbor face fA and
-                // the gap quad; the original edge (va,vb) is shared by the gap
-                // quad and the ridge bridge. We derive the gap quad's winding
-                // straight from fA's actual traversal of the inset edge so the
-                // result is consistently wound regardless of fA's orientation —
-                // the faceNormal-vs-ne heuristic folds along these shared edges.
+                // the gap quad; the original edge (va,vb) is shared by the gap quad
+                // and the ridge bridge. We derive the gap quad's winding straight
+                // from fA's actual traversal of the inset edge so the result is
+                // consistently wound regardless of fA's orientation.
                 uint iA = insetVert[kIA], iB = insetVert[kIB];
-                // Find the direction fA walks the inset edge (iA→iB or iB→iA).
                 bool faAtoB = false;
                 {
                     auto fa = faces[e.fA];
@@ -1328,21 +1402,15 @@ struct Mesh {
                         if (u == iB && w == iA) { faAtoB = false; break; }
                     }
                 }
-                // Gap quad must traverse the inset edge OPPOSITE to fA. Lay it out
-                // as [insetEdge..., original edge...] closing back on itself.
                 if (faAtoB)
-                    // fA: iA→iB  ⇒ gap: iB→iA, then up the original edge va→vb.
                     faces ~= [iB, iA, e.va, e.vb];
                 else
                     faces ~= [iA, iB, e.vb, e.va];
                 bridgeMaterialSrc ~= cast(uint)e.fA;
-                // The gap quad now traverses the original edge in a known
-                // direction (va→vb when faAtoB, else vb→va). The ridge bridge
-                // must traverse it OPPOSITE so the two stay consistently wound.
                 if (faAtoB)
-                    faces ~= [e.vb, e.va, ridgeVert[e.va], ridgeVert[e.vb]];
+                    faces ~= [e.vb, e.va, *rpa, *rpb];
                 else
-                    faces ~= [e.va, e.vb, ridgeVert[e.vb], ridgeVert[e.va]];
+                    faces ~= [e.va, e.vb, *rpb, *rpa];
                 bridgeMaterialSrc ~= cast(uint)e.fA;
             }
         }
@@ -1366,8 +1434,24 @@ struct Mesh {
         //     invalidating ridgeVert[] — hence the position round-trip.
         Vec3[2][] ridgeEdgePos;
         ridgeEdgePos.reserve(exEdges.length);
-        foreach (ref e; exEdges)
-            ridgeEdgePos ~= [vertices[ridgeVert[e.va]], vertices[ridgeVert[e.vb]]];
+        foreach (ref e; exEdges) {
+            if (e.fB == -1 && isChamferEnd(e.va) && isChamferEnd(e.vb)) {
+                // Boundary chamfer: the surviving edge is the topInset edge in F
+                // (no ridge). Select it so a follow-up op chains off the chamfer.
+                uint ta = insetVert[(cast(ulong)e.va << 32) | cast(uint)e.fA];
+                uint tb = insetVert[(cast(ulong)e.vb << 32) | cast(uint)e.fA];
+                ridgeEdgePos ~= [vertices[ta], vertices[tb]];
+            } else {
+                // Interior edges always have both ridge verts. A mixed boundary
+                // edge (one chamfer end + one shared/ridge end — out of scope) may
+                // be missing a ridge vert for the chamfer end; skip recording a
+                // ridge edge there rather than range-erroring.
+                auto ra = e.va in ridgeVert;
+                auto rb = e.vb in ridgeVert;
+                if (ra is null || rb is null) continue;
+                ridgeEdgePos ~= [vertices[*ra], vertices[*rb]];
+            }
+        }
 
         // --- Rebuild edges + loops; size selection arrays explicitly. Then drop
         //     dissolved free-end endpoints (and any other orphan) so the vertex
