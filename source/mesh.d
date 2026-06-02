@@ -887,7 +887,7 @@ struct Mesh {
         // --- Gather the selected, extrudable edges (≥1 adjacent face). Snapshot
         //     their endpoints + neighbor faces NOW (original index space) — the
         //     kernel finishes all geometry before any rebuildEdges.
-        struct ExEdge { uint va, vb; int fA, fB; Vec3 ne; }
+        struct ExEdge { uint va, vb; int fA, fB; Vec3 ne; bool coplanar; }
         ExEdge[] exEdges;
         foreach (i; 0 .. edges.length) {
             if (!mask[i]) continue;
@@ -898,7 +898,19 @@ struct Mesh {
             if (fA == -1) continue;   // unreferenced edge — not extrudable
 
             // §1.1 per-edge averaged normal (the Extrude direction).
+            //     `coplanar` records whether the two neighbour faces are flat
+            //     (their normals point the same way, dot ≈ 1). A flat-embedded
+            //     selected edge — one whose surrounding region is a single plane
+            //     (e.g. a loop edge lying inside a cap face) — must NOT spawn a
+            //     perpendicular in-plane inset band; the reference lifts it
+            //     straight to the ridge and fans the flat region in. This flag
+            //     is consumed at SHARED (welded) corners to switch their inset
+            //     direction from perpendicular to face-aware (boundary-edge),
+            //     so the corner insets only along its incident NON-selected
+            //     edges — matching the reference's cap re-tessellation. (Free
+            //     ends already use the face-aware path unconditionally.)
             Vec3 ne;
+            bool coplanar = false;
             if (fB == -1) {
                 ne = faceNormal(cast(uint)fA);                 // boundary edge
             } else {
@@ -909,8 +921,9 @@ struct Mesh {
                     ne = faceNormal(cast(uint)(fA < fB ? fA : fB)); // opposed → lower-index fallback
                 else
                     ne = normalize(sum);
+                coplanar = dot(nA, nB) > 0.999f;
             }
-            exEdges ~= ExEdge(va, vb, fA, fB, ne);
+            exEdges ~= ExEdge(va, vb, fA, fB, ne, coplanar);
         }
         if (exEdges.length == 0) return 0;
 
@@ -1041,11 +1054,19 @@ struct Mesh {
         }
         // Inset direction at endpoint `v` of the extruded edge (va,vb) within
         //     neighbour face fi. A FREE END is dissolved corner-by-corner along its
-        //     incident edges (face-aware, see boundaryEdgeDir); any other endpoint
-        //     (shared chain/fan corner) keeps the original perpendicular inset so
-        //     its welded-corner behaviour is byte-identical.
-        Vec3 insetDirAt(uint v, uint va, uint vb, int fi) {
-            if (isFreeEnd(v)) {
+        //     incident edges (face-aware, see boundaryEdgeDir). A SHARED corner on
+        //     a FLAT-EMBEDDED edge (`coplanar`: its two neighbour faces are the same
+        //     plane, so a perpendicular inset would carve an in-plane band the
+        //     reference never makes) is ALSO dissolved face-aware — it insets only
+        //     along its incident NON-selected boundary edges, so two coplanar
+        //     neighbour faces sharing the same non-selected edge produce ONE inset
+        //     (the (endpoint,position) weld below collapses them), and the flat
+        //     region fans to the ridge. Any other endpoint (shared corner on a
+        //     NON-coplanar edge — chain/fan/loop where the two neighbour faces bend)
+        //     keeps the original perpendicular inset, so corner_fan/corner3/top_loop
+        //     stay byte-identical.
+        Vec3 insetDirAt(uint v, uint va, uint vb, int fi, bool coplanar) {
+            if (isFreeEnd(v) || coplanar) {
                 uint other = (v == va) ? vb : va;
                 Vec3 d = boundaryEdgeDir(v, other, fi);
                 if (d.length >= 1e-6f) return d;
@@ -1053,11 +1074,11 @@ struct Mesh {
             return inwardDir(va, vb, fi);
         }
         foreach (ref e; exEdges) {
-            accumInset(e.va, e.fA, insetDirAt(e.va, e.va, e.vb, e.fA));
-            accumInset(e.vb, e.fA, insetDirAt(e.vb, e.va, e.vb, e.fA));
+            accumInset(e.va, e.fA, insetDirAt(e.va, e.va, e.vb, e.fA, e.coplanar));
+            accumInset(e.vb, e.fA, insetDirAt(e.vb, e.va, e.vb, e.fA, e.coplanar));
             if (e.fB != -1) {
-                accumInset(e.va, e.fB, insetDirAt(e.va, e.va, e.vb, e.fB));
-                accumInset(e.vb, e.fB, insetDirAt(e.vb, e.va, e.vb, e.fB));
+                accumInset(e.va, e.fB, insetDirAt(e.va, e.va, e.vb, e.fB, e.coplanar));
+                accumInset(e.vb, e.fB, insetDirAt(e.vb, e.va, e.vb, e.fB, e.coplanar));
             }
         }
         // Per (v,face) inset vert, with a (endpoint, position) weld so that two
@@ -1359,6 +1380,29 @@ struct Mesh {
             }
             bridgeMaterialSrc ~= cast(uint)srcFace;
         }
+        // Bridge winding derived from the neighbour face's OWN traversal of the
+        //     shared inset edge (iA,iB), used for FLAT-EMBEDDED edges where the two
+        //     neighbour faces are coplanar so the `ne` dot test cannot orient the
+        //     two opposing bridges (their geometric normals point sideways, nearly
+        //     orthogonal to the cap-plane ne). The bridge quad [iA,iB,ridgeB,ridgeA]
+        //     shares the inset edge (iA,iB) with the rewritten neighbour face fi and
+        //     must traverse it OPPOSITE to fi (orientability), exactly the rule the
+        //     boundary branch already uses. If fi walks iA→iB, the bridge must walk
+        //     iB→iA, i.e. start [iB,iA,ridgeA,ridgeB]; otherwise [iA,iB,ridgeB,ridgeA].
+        void emitBridgeFromFace(uint iA, uint iB, uint ridgeA, uint ridgeB,
+                                int fi, int srcFace) {
+            bool fiAtoB = false;
+            auto fa = faces[fi];
+            foreach (k; 0 .. fa.length) {
+                uint u = fa[k], w = fa[(k + 1) % fa.length];
+                if (u == iA && w == iB) { fiAtoB = true;  break; }
+                if (u == iB && w == iA) { fiAtoB = false; break; }
+            }
+            uint bfi = cast(uint)faces.length;
+            if (fiAtoB) faces ~= [iB, iA, ridgeA, ridgeB];
+            else        faces ~= [iA, iB, ridgeB, ridgeA];
+            bridgeMaterialSrc ~= cast(uint)srcFace;
+        }
         // Emit a triangle cap, fixing winding so its normal points OUTWARD along
         // the edge axis (positive dot with `outward` = the edge direction that
         // exits the span at this free end). The cap closes the corner gap at the
@@ -1379,13 +1423,26 @@ struct Mesh {
             ulong kIB = (cast(ulong)e.vb << 32) | cast(uint)e.fA;
             if (e.fB != -1) {
                 // Interior edge: one bridge quad per neighbor side, from each
-                // face's inset edge up to the welded ridge edge.
-                emitBridge([insetVert[kIA], insetVert[kIB],
-                            ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fA);
+                // face's inset edge up to the welded ridge edge. A FLAT-EMBEDDED
+                // (coplanar) edge cannot use the `ne` dot test — both its neighbour
+                // faces share the same plane, so its two opposing bridges' normals
+                // point sideways and ne can't tell them apart. Derive their winding
+                // from each neighbour face's own traversal of the shared inset edge
+                // instead. Non-coplanar edges keep the original ne-dot path
+                // byte-identical (corner_fan/corner3/top_loop/interior unaffected).
                 ulong kIA2 = (cast(ulong)e.va << 32) | cast(uint)e.fB;
                 ulong kIB2 = (cast(ulong)e.vb << 32) | cast(uint)e.fB;
+                if (e.coplanar) {
+                    emitBridgeFromFace(insetVert[kIA], insetVert[kIB],
+                                       ridgeVert[e.va], ridgeVert[e.vb], e.fA, e.fA);
+                    emitBridgeFromFace(insetVert[kIA2], insetVert[kIB2],
+                                       ridgeVert[e.va], ridgeVert[e.vb], e.fB, e.fB);
+                } else {
+                emitBridge([insetVert[kIA], insetVert[kIB],
+                            ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fA);
                 emitBridge([insetVert[kIA2], insetVert[kIB2],
                             ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fB);
+                }
                 // §5.c: triangle cap closing each FREE-END corner gap between the
                 // two neighbor insets and the ridge vert. Interior chain joints
                 // (shared endpoints) get NO cap — the neighboring extruded edge
