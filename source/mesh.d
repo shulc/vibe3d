@@ -867,6 +867,23 @@ struct Mesh {
             }
         }
 
+        // --- Mesh-boundary vertices: a vertex incident to ANY edge with only one
+        //     adjacent face sits on the open boundary of the surface. A free end
+        //     that lands on the open boundary is NOT fully surrounded by faces, so
+        //     its corner gap is already closed by the ridge bridge meeting the
+        //     boundary — it needs NO triangle cap (the reference emits none there).
+        //     A fully-interior free end (e.g. a cube corner, or a plane center) is
+        //     ringed by faces and DOES need its corner capped.
+        bool[uint] onMeshBoundary;
+        foreach (key, fp; edgeFaces) {
+            if (fp[1] != -1) continue;        // interior edge — both verts unflagged here
+            uint a = cast(uint)(key >> 32);
+            uint b = cast(uint)(key & 0xffffffffUL);
+            onMeshBoundary[a] = true;
+            onMeshBoundary[b] = true;
+        }
+        bool isOnMeshBoundary(uint v) { return (v in onMeshBoundary) !is null; }
+
         // --- Gather the selected, extrudable edges (≥1 adjacent face). Snapshot
         //     their endpoints + neighbor faces NOW (original index space) — the
         //     kernel finishes all geometry before any rebuildEdges.
@@ -1054,6 +1071,7 @@ struct Mesh {
         //     by (v, neighborFace); the side-face rewrite below resolves which
         //     neighbor face shares a given boundary edge of the side face.
         uint[ulong] freeEndInsetByVF; // (v<<32|neighborFace) → inset vert
+        uint[uint]  freeEndAlongVert; // free-end v → its along-edge inset vert (valence>3 only)
         foreach (ref e; exEdges) {
             void rec(uint v) {
                 if (!isInteriorFreeEnd(v)) return;
@@ -1077,6 +1095,71 @@ struct Mesh {
             mark(e.va);
             mark(e.vb);
         }
+        // --- Along-edge inset for VALENCE>3 interior free ends (the back-fan
+        //     closure). A valence-3 interior free end (e.g. a cube corner) has a
+        //     SINGLE back face whose two boundary edges at v are BOTH the
+        //     extruded edge's neighbor-face edges — the two perpendicular insets
+        //     already span the gap, so a 5-gon + one triangle cap closes it (the
+        //     valence-3 path, kept byte-identical below). A higher-valence
+        //     interior free end (e.g. the center of a flat 2×2 plane) has back
+        //     faces separated by INNER RIM edges that meet at v but are NOT
+        //     neighbor-face edges; the two perpendicular insets do not reach
+        //     those rim edges, leaving a gap. The reference closes it by
+        //     dissolving v into a THIRD point — an inset along the edge axis,
+        //     v + width·t̂ (t̂ = unit edge tangent pointing AWAY from the edge into
+        //     the back fan) — used in place of v on every inner-rim boundary edge,
+        //     plus a fan of triangles up to the ridge.
+        //
+        //     `needsAlong[v]` is true exactly when some back face of v has a
+        //     boundary edge at v that is NOT a neighbor-face edge (i.e. v has an
+        //     inner rim edge). For valence-3 free ends this is always false ⇒ no
+        //     along-edge vert, no extra triangles ⇒ the cube path is unchanged.
+        bool[uint] needsAlong;
+        {
+            // Map each interior free end to its single extruded edge's OTHER
+            // endpoint so we can build the away-pointing tangent.
+            uint[uint] freeEndOther;
+            foreach (ref e; exEdges) {
+                if (e.fB == -1) continue;
+                if (isFreeEnd(e.va)) freeEndOther[e.va] = e.vb;
+                if (isFreeEnd(e.vb)) freeEndOther[e.vb] = e.va;
+            }
+            bool isNeighborEdgeAt(uint v, uint a, uint b) {
+                auto p = edgeKeyOrdered(a, b) in edgeFaces;
+                if (p is null) return false;
+                foreach (cand; [(*p)[0], (*p)[1]]) {
+                    if (cand < 0) continue;
+                    if ((cast(ulong)v << 32 | cast(uint)cand) in isNeighborOf)
+                        return true;
+                }
+                return false;
+            }
+            foreach (fi; 0 .. faces.length) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    uint c = f[k];
+                    if (!isInteriorFreeEnd(c)) continue;
+                    if ((cast(ulong)c << 32 | cast(uint)fi) in isNeighborOf) continue; // not a back face
+                    uint prev = f[(k + f.length - 1) % f.length];
+                    uint next = f[(k + 1) % f.length];
+                    // An inner rim edge at c is a boundary edge of this back face
+                    // that is NOT one of the extruded edge's neighbor faces.
+                    if (!isNeighborEdgeAt(c, prev, c) || !isNeighborEdgeAt(c, c, next))
+                        needsAlong[c] = true;
+                }
+            }
+            // Materialize one along-edge inset vert per qualifying free end.
+            foreach (v, _; needsAlong) {
+                auto op = v in freeEndOther;
+                if (op is null) continue;
+                Vec3 t = vertices[v] - vertices[*op];
+                if (t.length < 1e-6f) continue;
+                t = normalize(t);
+                freeEndAlongVert[v] = addVertex(vertices[v] + t * width);
+            }
+        }
+        bool needsAlongAt(uint v) { return (v in needsAlong) !is null; }
+
         // Rewrite each side face: any face containing a free-end vertex that is
         // NOT a neighbor face of that vertex. Replace the v corner with the two
         // insets ordered to preserve the face's original normal.
@@ -1111,12 +1194,18 @@ struct Mesh {
                 }
                 int fPrev = faceOfEdge(prev, c); // neighbor sharing incoming edge
                 int fNext = faceOfEdge(c, next);  // neighbor sharing outgoing edge
+                // For a neighbor-face boundary edge, use that face's perpendicular
+                // inset. For an INNER RIM edge (no neighbor face), use the
+                // along-edge inset when this free end is valence>3; otherwise
+                // (valence-3 cube path) keep c, leaving the pair to be the two
+                // perpendicular insets exactly as before.
+                uint fallback = needsAlongAt(c) ? freeEndAlongVert[c] : c;
                 uint iArrive = (fPrev >= 0)
                     ? freeEndInsetByVF[(cast(ulong)c << 32) | cast(uint)fPrev]
-                    : c;
+                    : fallback;
                 uint iLeave  = (fNext >= 0)
                     ? freeEndInsetByVF[(cast(ulong)c << 32) | cast(uint)fNext]
-                    : c;
+                    : fallback;
                 rebuilt ~= iArrive;
                 rebuilt ~= iLeave;
                 touched = true;
@@ -1187,12 +1276,30 @@ struct Mesh {
                 // correctly for positive extrude but reverse for negative.
                 float es = (extrude < 0.0f) ? -1.0f : 1.0f;
                 Vec3 axis = (vertices[e.vb] - vertices[e.va]) * es; // va → vb, sign-aware
-                if (isInteriorFreeEnd(e.va))
-                    emitCap([insetVert[kIA], insetVert[kIA2], ridgeVert[e.va]],
-                            -axis, e.fA);                       // va end exits −axis
-                if (isInteriorFreeEnd(e.vb))
-                    emitCap([insetVert[kIB], insetVert[kIB2], ridgeVert[e.vb]],
-                            axis, e.fA);                        // vb end exits +axis
+                // Cap the corner gap between the two perpendicular insets and the
+                // ridge. A valence-3 free end uses ONE triangle [insetA,insetB,
+                // ridge] (the cube path, unchanged). A valence>3 free end has its
+                // gap split by the along-edge inset, so the cap becomes a small
+                // fan of TWO triangles [insetA,vAlong,ridge] + [vAlong,insetB,
+                // ridge] (vAlong is geometrically between insetA and insetB along
+                // the edge axis, so both triangles tile the same corner with no
+                // overlap). emitCap fixes each triangle's winding independently.
+                void capFreeEnd(uint v, uint iA, uint iB, Vec3 outward) {
+                    if (!isInteriorFreeEnd(v)) return;
+                    // A free end on the OPEN mesh boundary needs no cap — the
+                    // ridge bridge already closes its corner against the boundary.
+                    // (A fully-interior free end is ringed by faces and is capped.)
+                    if (isOnMeshBoundary(v)) return;
+                    if (needsAlongAt(v)) {
+                        uint va2 = freeEndAlongVert[v];
+                        emitCap([iA, va2, ridgeVert[v]], outward, e.fA);
+                        emitCap([va2, iB, ridgeVert[v]], outward, e.fA);
+                    } else {
+                        emitCap([iA, iB, ridgeVert[v]], outward, e.fA);
+                    }
+                }
+                capFreeEnd(e.va, insetVert[kIA], insetVert[kIA2], -axis); // va exits −axis
+                capFreeEnd(e.vb, insetVert[kIB], insetVert[kIB2],  axis); // vb exits +axis
             } else {
                 // Boundary edge: exactly 2 quads — fill the inset gap with the
                 // original va,vb retained, then bridge the original edge up to

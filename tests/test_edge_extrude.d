@@ -345,9 +345,11 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Grid interior edge (3,4): boundary endpoint v3 (dissolved + capped) and
-//    center endpoint v4 (insets into its two side faces). Different valence than
-//    the cube, so a different — but still hole-free, orphan-free — topology.
+// 2. Grid interior edge (3,4): boundary endpoint v3 (on the open grid edge → no
+//    cap) and the valence-4 plane center v4 (dissolved into two perpendicular
+//    insets + an along-edge inset, closed by two triangle caps). Different
+//    valence than the cube, so a different — but still hole-free, orphan-free —
+//    topology; counts stay 14v/8f, fv-dist {4:4,5:2,3:2}.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -463,14 +465,18 @@ unittest {
     auto m = getModel();
 
     // v4 is shared (≥2 selected edges) → ONE welded ridge vert, NO cap there.
-    // v1 and v7 are the two outer free ends → each dissolved + capped, so
-    // fv-dist has exactly 2 triangles. No orphans, hole-free.
+    // v1 and v7 are the two outer free ends, but BOTH sit on the open mesh
+    // boundary (top/bottom grid edges): a boundary free end is not ringed by
+    // faces, so the reference (and now this kernel) caps it with NO triangle —
+    // the ridge bridge already closes the corner against the open boundary.
+    // Hence the chain has ZERO triangle caps (was 2 before the boundary-cap
+    // rule landed for the coplanar interior free-end fix). No orphans, hole-free.
     assert(orphanVerts(m).length == 0, "chain: orphan verts: " ~ orphanVerts(m).to!string);
     assert(isHoleFree(m), "chain: result not hole-free");
     auto fv = fvDist(m);
-    assert(fv.get(3, 0) == 2,
-        "chain: expected exactly 2 triangle caps (outer free ends), got " ~
-        fv.get(3, 0).to!string ~ " (fv-dist " ~ fv.to!string ~ ")");
+    assert(fv.get(3, 0) == 0,
+        "chain: expected no triangle caps (outer free ends are on the open " ~
+        "boundary), got " ~ fv.get(3, 0).to!string ~ " (fv-dist " ~ fv.to!string ~ ")");
 
     // Welded center: exactly ONE ridge vert sits at v4 + extrude·ne. A non-welded
     // result would place two coincident ridge verts there.
@@ -730,4 +736,96 @@ unittest {
         m["vertexCount"].integer != before["vertexCount"].integer ||
         m["edgeCount"].integer   != before["edgeCount"].integer;
     assert(changed, "pure inset (extrude=0, width=0.1) must change topology, not no-op");
+}
+
+// ---------------------------------------------------------------------------
+// 10. Coplanar interior FREE END (valence>3, planar). Extruding one interior
+//     edge of a flat plane such that one endpoint is the valence-4 plane CENTER
+//     (ringed by 4 coplanar faces — 2 extruded neighbour faces + 2 back faces)
+//     and the other is on the open boundary.
+//
+//     The center is the case the cube valence-3 path does NOT cover: its two
+//     perpendicular insets leave a gap that the back-fan rim edge cuts through.
+//     The reference dissolves the center into THREE points — the two
+//     perpendicular insets PLUS an along-edge inset at center + width·t̂ (t̂ = unit
+//     edge tangent pointing AWAY from the edge into the back fan) — turns each
+//     back face into a 5-gon using the along-edge point + one perpendicular
+//     inset, and closes the corner with TWO triangles up to the ridge.
+//
+//     The boundary endpoint sits on the open mesh edge → ringed by no full fan →
+//     NO triangle cap (the ridge bridge closes it against the boundary).
+//
+//     Uses makeGridPlane(2) (the same flat valence-4-center topology as the
+//     reference 2×2 plane case, just on the [-1,1] extent): edge (3,4) runs from
+//     the boundary mid v3=(-1,0,0) to the center v4=(0,0,0). With t̂ pointing from
+//     the center AWAY from v3, i.e. +X, the along-edge inset lands at (0.1,0,0).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetGrid(2);
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 9 && before["faceCount"].integer == 4);
+
+    immutable centerPos   = V3( 0.0, 0.0, 0.0);   // v4 — valence-4 plane center
+    immutable boundaryPos = V3(-1.0, 0.0, 0.0);   // v3 — open-boundary endpoint
+    int va = vertAt(before, boundaryPos);
+    int vb = vertAt(before, centerPos);
+    assert(va >= 0 && vb >= 0, "coplanar: endpoints not found");
+    int ei = edgeIndex(before, va, vb);
+    assert(ei >= 0, "coplanar: interior edge (3,4) not found");
+    postSelect("edges", [ei]);
+
+    enum extrude = 0.2, width = 0.1;
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+    auto m = getModel();
+
+    // Counts mirror the reference 2×2-plane target (14v / 8f): the two extruded
+    // neighbour faces (quads) + two back 5-gons + two ridge bridges + two corner
+    // triangles at the center; the original center and the boundary mid are both
+    // dissolved.
+    assert(m["vertexCount"].integer == 14,
+        "coplanar: expected 14 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 8,
+        "coplanar: expected 8 faces, got " ~ m["faceCount"].integer.to!string);
+    auto fv = fvDist(m);
+    assert(fv == [4: 4, 5: 2, 3: 2],
+        "coplanar: expected fv-dist {4:4,5:2,3:2}, got " ~ fv.to!string);
+
+    // The valence-4 center vertex is DISSOLVED (no surviving vertex sits at it).
+    assert(vertAt(m, centerPos) < 0,
+        "coplanar: center vertex (0,0,0) must be dissolved, not kept");
+
+    // The along-edge inset exists at center + width·t̂. The tangent points from
+    // the center AWAY from the boundary endpoint v3=(-1,0,0), i.e. +X.
+    auto t   = norm3(sub3(centerPos, boundaryPos));        // (+1,0,0)
+    auto along = add3(centerPos, V3(t.x*width, t.y*width, t.z*width)); // (0.1,0,0)
+    assert(countAt(m, along) == 1,
+        "coplanar: along-edge inset at center+width·t̂ missing/duplicated");
+
+    // Both perpendicular center insets exist (±width perpendicular to the edge,
+    // in the plane). The edge is along ±X so the perpendiculars are along ±Z.
+    assert(countAt(m, V3(0.0, 0.0, -width)) == 1 || countAt(m, V3(0.0, 0.0, width)) == 1,
+        "coplanar: perpendicular center insets missing");
+
+    assert(orphanVerts(m).length == 0,
+        "coplanar: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "coplanar: result is not hole-free");
+    assert(noCoincidentVerts(m), "coplanar: coincident duplicate vertices present");
+
+    // Exactly two triangle caps, BOTH at the interior center end (the boundary
+    // end gets none). Each cap's normal runs along the edge axis (the corner
+    // faces along ±t̂, not along the extrude direction).
+    int tris = 0;
+    foreach (fi; 0 .. m["faces"].array.length) {
+        auto f = m["faces"].array[fi];
+        if (f.array.length != 3) continue;
+        ++tris;
+        // Every cap must touch the along-edge inset and the center ridge vert.
+        bool touchesAlong = false;
+        foreach (c; f.array)
+            if (len3(sub3(vert(m, cast(size_t)c.integer), along)) < 1e-4) touchesAlong = true;
+        assert(touchesAlong,
+            "coplanar: triangle cap does not touch the along-edge inset");
+    }
+    assert(tris == 2, "coplanar: expected exactly 2 triangle caps, got " ~ tris.to!string);
 }
