@@ -352,8 +352,15 @@ public:
         // Selection may have changed since activate() (e.g. the user picked a
         // different edge in the viewport before grabbing a handle). Recompute
         // the gizmo FRAME (anchor + the fixed axes) when it does — but never
-        // mid-drag (the moving set is frozen for the whole haul).
-        if (dragPart < 0 && mesh.selectionHashEdges() != gizmoSelHash)
+        // mid-drag (the moving set is frozen for the whole haul), and never
+        // once a preview is BUILT: applying an extrude/width reselects the
+        // lifted ridge edges, which changes the selection hash. Recomputing
+        // then would reset baseAnchor to the ridge centroid (= orig +
+        // extrude_*axis) while extrude_ still holds its value, so the analytic
+        // anchor = baseAnchor + extrude_*axis would double-count and the gizmo
+        // would jump (e.g. when switching from the extrude to the width
+        // handle). The frame is frozen for the rest of the session once built.
+        if (dragPart < 0 && !built && mesh.selectionHashEdges() != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
