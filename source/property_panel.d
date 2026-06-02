@@ -48,6 +48,13 @@ class PropertyPanel {
     /// provider's `onParamChanged(name)` after each mutation.
     void drawProvider(ParamProvider p) {
         if (p is null) return;
+        // Flag the interactive edit so tools that build live geometry on a
+        // param change (e.g. EdgeExtrudeTool) rebuild their preview here but
+        // stay inert on the headless `tool.attr` path. Cast is safe: today's
+        // only ParamProvider impls are Tool and Stage (Stage stays null).
+        auto t = cast(Tool)p;
+        if (t !is null) t.interactiveParamEdit = true;
+        scope(exit) if (t !is null) t.interactiveParamEdit = false;
         foreach (ref par; p.params()) {
             if (par.hidden_) continue;
             // A row is disabled if the provider greys it out for the current
@@ -59,13 +66,9 @@ class PropertyPanel {
             if (changed) p.onParamChanged(par.name);
         }
         // Tool subclasses also need an `evaluate()` re-run for live
-        // preview; that's the single Tool-only call site retained
-        // here. Cast is safe because the only ParamProvider impls
-        // today are Tool and Stage (Stage doesn't need it).
-        if (auto t = cast(Tool)p) {
-            // No-op when nothing changed in this frame — `evaluate`
-            // is cheap for tools that aren't previewing.
-            t.evaluate();
-        }
+        // preview; that's the single Tool-only call site retained here.
+        // No-op when nothing changed in this frame — `evaluate` is cheap
+        // for tools that aren't previewing.
+        if (t !is null) t.evaluate();
     }
 }

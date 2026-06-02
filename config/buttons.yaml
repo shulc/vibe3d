@@ -69,8 +69,6 @@ panels:
                   - "prim.torus cenX:0 cenY:0 cenZ:0 majorRadius:0.5 minorRadius:0.125 majorSegments:24 minorSegments:12 axis:1"
           - label: Pen
             action: { kind: tool, id: pen }
-          - label: "Edge Extrude"
-            action: { kind: tool, id: edge.extrude }
   # Deform palette — mirrors MODO's frm_modoTools_Deform layout. D.1
   # of doc/deform_plan.md ships the 9 transform+falloff presets; the
   # remaining MODO tools (Element Move, Flex, Push, Bend, Vortex,
@@ -162,6 +160,11 @@ panels:
         buttons:
           - { label: Join,  action: { kind: command, id: vert.join } }
           - { label: Merge, action: { kind: command, id: vert.merge } }
+  - title: Edge
+    items:
+      - title: Commands
+        buttons:
+          - { label: Extrude, action: { kind: tool, id: edge.extrude } }
   - title: Selection
     items:
       - title: Grow / Shrink

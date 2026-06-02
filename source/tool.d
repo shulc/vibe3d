@@ -54,6 +54,14 @@ enum ToolFlag : uint {
 // ---------------------------------------------------------------------------
 
 class Tool : ParamProvider {
+    // Set true by PropertyPanel for the duration of an interactive
+    // "Tool Properties" param edit (onParamChanged + evaluate), and left
+    // false on the headless `tool.attr` path. Tools that build live
+    // geometry on a param change (e.g. EdgeExtrudeTool) gate their preview
+    // rebuild on this so the headless flow's ToolDoApplyCommand pre-snapshot
+    // stays clean — the headless apply is owned solely by applyHeadless().
+    bool interactiveParamEdit = false;
+
     // Preset-applied behaviour bits — see `ToolFlag`. The preset
     // loader writes this on the freshly-constructed tool before
     // activation. Tools query via `hasFlag` rather than reading the
