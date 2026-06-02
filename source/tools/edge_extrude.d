@@ -155,15 +155,18 @@ public:
         dragging = false;
     }
 
-    // A parameter changed (Tool Properties panel, or `tool.attr` while
-    // active). We DO NOT rebuild the live preview here: the headless path
-    // (`tool.attr ...; tool.doApply`) fires onParamChanged/evaluate per attr
-    // write, and applyHeadless() runs the kernel once from the clean cage —
-    // mutating the mesh on every attr write would (a) double-apply and (b)
-    // poison ToolDoApplyCommand's pre-snapshot (captured AFTER the attr
-    // writes). Interactive live preview is driven exclusively from
-    // onMouseMotion during a drag (see rebuildPreview()).
-    override void onParamChanged(string name) {}
+    // A parameter changed. Two callers, distinguished by `interactiveParamEdit`
+    // (set by PropertyPanel only):
+    //   - Interactive Tool Properties edit → rebuild the live preview from the
+    //     clean cage (the same revert+reapply the drag path uses), so the
+    //     panel's Extrude/Width sliders update the mesh immediately.
+    //   - Headless `tool.attr ...; tool.doApply` → leave the mesh untouched.
+    //     applyHeadless() runs the kernel once from the clean cage; mutating
+    //     the mesh on every attr write would double-apply AND poison
+    //     ToolDoApplyCommand's pre-snapshot (captured AFTER the attr writes).
+    override void onParamChanged(string name) {
+        if (interactiveParamEdit) rebuildPreview();
+    }
     override void evaluate() {}
 
     // -----------------------------------------------------------------------
