@@ -9,14 +9,16 @@ import mesh;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : BoxHandler, gizmoSize;
+import handler : Arrow, BoxHandler, ToolHandles, HandleState, gizmoSize;
+import drag : screenAxisDelta;
+import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 
-import std.math : abs;
+import std.math : abs, sqrt;
 
 /// The interactive tool reuses the dedicated MeshEdgeExtrudeEdit record
 /// command (a before/after MeshSnapshot pair) — analogous to how BoxTool
@@ -36,25 +38,33 @@ alias EdgeExtrudeEditFactory = MeshEdgeExtrudeEdit delegate();
 // Session model (the BoxTool commit pattern):
 //   activate()  — capture `before` = MeshSnapshot.capture(mesh) (geometry +
 //                 selection); reset extrude/width to 0 (identity ⇒ no-op).
+//                 ALSO compute the gizmo anchor (selection centroid) + the two
+//                 handle axes (extrude = averaged neighbour-polygon normal;
+//                 width = in-plane inset direction) from the ORIGINAL
+//                 pre-extrude selection, so the gizmo doesn't jump as the mesh
+//                 changes during the drag.
 //   drag        — restore `before` (re-establishes the original cage AND the
 //                 original edge selection), recompute the (extrude,width) pair
 //                 from the accumulated screen-space mouse delta, re-run
 //                 Mesh.extrudeEdgesByMask on the restored selection, then
-//                 gpu.upload + cache refresh. The kernel is cheap (O(selected
-//                 edges + their faces)), so a per-frame revert+reapply is fine
-//                 — the same revert/reapply pattern bevel_edit.d documents.
+//                 gpu.upload + cache refresh.
 //   deactivate() — if any geometry was built (extrude or width nonzero),
 //                 capture `after`, build a MeshEdgeExtrudeEdit via the injected
 //                 factory, setSnapshots(before, after, "Edge Extrude"), and push
 //                 it onto history as ONE undo step.
 //
-// Interaction mapping (v1, per doc/edge_extrude_plan.md §4): a simple 2-axis
-// screen-space drag — vertical mouse delta (−dy, up = positive) → Extrude,
-// horizontal mouse delta (dx) → Width — each scaled by a constant px→world
-// factor. A draw-only crosshair marker sits at the selection centroid; it is
-// intentionally NOT registered with a ToolHandles arbiter, so it stays
-// draw-only and never highlights (per the plan). A proper single-axis arrow
-// gizmo can land as a follow-up.
+// Interaction (two REAL clickable gizmo handles, matching the reference
+// modeler's edge-extrude tool, registered in a `ToolHandles` arbiter):
+//   - Handle EXTRUDE = a BLUE Arrow anchored at the selection centroid,
+//     pointing along the averaged extrude direction. Dragging it changes
+//     `extrude` only (mouse delta projected onto the arrow's screen-space
+//     direction → world distance → param delta).
+//   - Handle WIDTH = a RED BoxHandler offset from the centroid along the
+//     in-plane inset direction. Dragging it changes `width` only.
+// Both handles get their highlight (Rollover) state ONLY from the
+// ToolHandles arbiter's update→setState pass (the handle-arbiter model), so
+// they highlight on hover and the dragged handle stays highlighted while
+// hauling. No more blind whole-screen 2-axis drag.
 //
 // The headless path (`tool.set edge.extrude on; tool.attr edge.extrude
 // extrude <v>; tool.attr edge.extrude width <v>; tool.doApply`) drives the
@@ -86,17 +96,32 @@ private:
     bool          active;          // between activate() and deactivate()
     bool          built;           // true once a nonzero extrude/width built topology
     MeshSnapshot  before;          // captured at activate() (geometry + selection)
-    Viewport      cachedVp;        // last frame's viewport (for the centroid marker)
+    Viewport      cachedVp;        // last frame's viewport (for the gizmo handles)
 
-    // Drag state — accumulated screen-space delta since LMB-down.
-    bool  dragging;
-    int   dragStartMX, dragStartMY;
+    // Gizmo frame, computed at activate() from the ORIGINAL (pre-extrude)
+    // selection. `gizmoValid` is false when there is no extrudable selection
+    // (empty mesh) — the handles are then not drawn / not registered.
+    bool gizmoValid;
+    Vec3 anchor;        // selection centroid
+    Vec3 extrudeAxis;   // unit: averaged neighbour-polygon normal (ridge lift dir)
+    Vec3 widthAxis;     // unit: in-plane inset direction (perpendicular to edge tangent)
+    uint gizmoSelHash;  // selection signature the gizmo frame was built for
+
+    // Drag state — which handle (part id) is being hauled, and the per-handle
+    // base param + last mouse position for the axis-projected delta.
+    enum int PART_EXTRUDE = 0;
+    enum int PART_WIDTH    = 1;
+    int   dragPart = -1;           // -1 = none, PART_EXTRUDE / PART_WIDTH
+    int   dragLastMX, dragLastMY;
     float dragBaseExtrude, dragBaseWidth;
 
-    // Screen pixels → world units for the drag mapping (v1 constant).
-    enum float PX_TO_WORLD = 0.01f;
+    // Two registered, clickable gizmo handles + their arbiter.
+    Arrow       extrudeArrow;      // BLUE — extrude
+    BoxHandler  widthBox;          // RED  — width
+    ToolHandles toolHandles;
 
-    BoxHandler centroidMarker;      // draw-only; never registered with an arbiter
+    enum Vec3 EXTRUDE_COLOR = Vec3(0.2f, 0.45f, 1.0f);   // blue
+    enum Vec3 WIDTH_COLOR   = Vec3(0.9f, 0.2f, 0.2f);    // red
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
@@ -108,11 +133,16 @@ public:
         this.vc        = vc;
         this.ec        = ec;
         this.fc        = fc;
-        centroidMarker = new BoxHandler(Vec3(0, 0, 0), Vec3(0.9f, 0.6f, 0.1f));
+        // Geometry placeholders; the real anchor/axes are written each frame
+        // in draw() from the activate()-computed gizmo frame.
+        extrudeArrow = new Arrow(Vec3(0, 0, 0), Vec3(0, 0, 1), EXTRUDE_COLOR);
+        widthBox     = new BoxHandler(Vec3(0, 0, 0), WIDTH_COLOR);
+        toolHandles  = new ToolHandles();
     }
 
     void destroy() {
-        if (centroidMarker !is null) centroidMarker.destroy();
+        if (extrudeArrow !is null) extrudeArrow.destroy();
+        if (widthBox     !is null) widthBox.destroy();
     }
 
     /// Inject undo plumbing — called by app.d after construction.
@@ -137,22 +167,27 @@ public:
     override void activate() {
         active   = true;
         built    = false;
-        dragging = false;
+        dragPart = -1;
         extrude_ = 0.0f;
         width_   = 0.0f;
         // Snapshot the cage + selection at the start of the session. The
         // per-drag revert+reapply restores from here; the commit pairs it
         // with the final `after`.
         before = MeshSnapshot.capture(*mesh);
+        // Build the gizmo anchor + axes from the original pre-extrude
+        // selection so the handles stay put across the drag.
+        computeGizmoFrame();
     }
 
     override void deactivate() {
         // Commit one undo step iff a nonzero param actually built topology.
         if (active && built && (extrude_ != 0.0f || width_ != 0.0f))
             commitEdit();
-        active   = false;
-        built    = false;
-        dragging = false;
+        active     = false;
+        built      = false;
+        dragPart   = -1;
+        gizmoValid = false;
+        toolHandles.clearHaul();
     }
 
     // A parameter changed. Two callers, distinguished by `interactiveParamEdit`
@@ -193,7 +228,13 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    // Interactive drag: vertical delta → Extrude, horizontal delta → Width.
+    // Interactive drag — driven by the two registered handles, NOT a blind
+    // whole-screen 2-axis drag.
+    //
+    // LMB-down: hit-test the arbiter. The arrow part begins an extrude drag
+    // (records the base extrude); the box part begins a width drag (records
+    // the base width). A click that hits neither handle does nothing (no
+    // blind drag starts).
     // -----------------------------------------------------------------------
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
@@ -204,52 +245,99 @@ public:
             extrude_ = 0.0f;
             width_   = 0.0f;
             built    = false;
-            dragging = false;
+            dragPart = -1;
+            toolHandles.clearHaul();
             return true;
         }
         if (e.button != SDL_BUTTON_LEFT) return false;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera
         if (*editMode != EditMode.Edges) return false;
-        if (mesh.edges.length == 0) return false;
+        if (mesh.edges.length == 0 || !gizmoValid) return false;
 
-        dragging        = true;
-        dragStartMX     = e.x;
-        dragStartMY     = e.y;
+        // Ask the arbiter which handle (if any) the click landed on.
+        int part = toolHandles.test(e.x, e.y, cachedVp);
+        if (part != PART_EXTRUDE && part != PART_WIDTH) return false;
+
+        dragPart        = part;
+        dragLastMX      = e.x;
+        dragLastMY      = e.y;
         dragBaseExtrude = extrude_;
         dragBaseWidth   = width_;
+        toolHandles.setHaul(part);
         return true;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (!active || !dragging) return false;
-        // Up on screen (smaller y) extrudes outward (positive). Right (larger
-        // x) widens the inset.
-        float dy = cast(float)(e.y - dragStartMY);
-        float dx = cast(float)(e.x - dragStartMX);
-        extrude_ = dragBaseExtrude + (-dy) * PX_TO_WORLD;
-        width_   = dragBaseWidth   + ( dx) * PX_TO_WORLD;
-        rebuildPreview();
+        if (!active || dragPart < 0 || !gizmoValid) return false;
+
+        // Project the per-event mouse delta onto the screen-space direction of
+        // the dragged handle's WORLD axis to get a world-space distance, then
+        // map that distance directly to the param (1 world unit = 1 param unit,
+        // since both extrude and width are world-space offsets the kernel adds
+        // along these very axes). screenAxisDelta returns `axis * d`; the
+        // signed magnitude `d` along the unit axis IS the param delta.
+        Vec3 axis = (dragPart == PART_EXTRUDE) ? extrudeAxis : widthAxis;
+        bool skip;
+        Vec3 delta = screenAxisDelta(e.x, e.y, dragLastMX, dragLastMY,
+                                     anchor, axis, cachedVp, skip);
+        if (!skip) {
+            float d = dot(delta, axis);   // axis is unit ⇒ signed world distance
+            if (dragPart == PART_EXTRUDE) extrude_ += d;
+            else                          width_   += d;
+            // Width is a shrink amount: the kernel no-ops for width < ~0 and
+            // treats tiny widths as a no-op. Clamp to >= 0 so a backward drag
+            // can't drive it negative.
+            if (width_ < 0.0f) width_ = 0.0f;
+            rebuildPreview();
+        }
+        dragLastMX = e.x;
+        dragLastMY = e.y;
         return true;
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || !dragging) return false;
+        if (!active || dragPart < 0) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
-        dragging = false;
+        dragPart = -1;
+        toolHandles.clearHaul();
         return true;
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts) {
         cachedVp = vp;
-        // Draw-only centroid crosshair at the selection centroid. Never
-        // registered with an arbiter — stays draw-only and never highlights.
-        Vec3 c;
-        if (selectionCentroid(c)) {
-            centroidMarker.pos  = c;
-            centroidMarker.size = gizmoSize(c, vp, 0.05f);
-            centroidMarker.draw(shader, vp);
-        }
+        // Selection may have changed since activate() (e.g. the user picked a
+        // different edge in the viewport before grabbing a handle). Recompute
+        // the gizmo frame when it does — but never mid-drag (the moving set is
+        // frozen for the whole haul).
+        if (dragPart < 0 && mesh.selectionHashEdges() != gizmoSelHash)
+            computeGizmoFrame();
+        if (!gizmoValid) return;
+
+        // Position the two handles. Screen-stable sizing via gizmoSize().
+        float armLen = gizmoSize(anchor, vp, 1.0f);          // arrow length
+        float boxOff = gizmoSize(anchor, vp, 0.75f);         // box offset from anchor
+        extrudeArrow.start = anchor + extrudeAxis * (armLen / 6.0f);
+        extrudeArrow.end   = anchor + extrudeAxis * armLen;
+        extrudeArrow.color = EXTRUDE_COLOR;
+        widthBox.pos       = anchor + widthAxis * boxOff;
+        widthBox.size      = gizmoSize(anchor, vp, 0.05f);
+        widthBox.color     = WIDTH_COLOR;
+
+        // Single test+update pass: register both handles (arrow priority over
+        // box on overlap — arrow is the primary action), keep the hauled
+        // handle highlighted, then hand each handle its HandleState.
+        toolHandles.begin();
+        toolHandles.add(extrudeArrow, PART_EXTRUDE);
+        toolHandles.add(widthBox,     PART_WIDTH);
+        if (dragPart >= 0) toolHandles.setHaul(dragPart);
+        else               toolHandles.setHaul(-1);
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        toolHandles.update(hmx, hmy, vp);
+
+        extrudeArrow.draw(shader, vp);
+        widthBox.draw(shader, vp);
     }
 
 private:
@@ -299,32 +387,96 @@ private:
         ec.invalidate();
     }
 
-    // Centroid of the currently selected edges' endpoints (or the whole-mesh
-    // centroid when nothing is selected). False if the mesh is empty.
-    bool selectionCentroid(out Vec3 c) {
-        Vec3 sum = Vec3(0, 0, 0);
-        size_t count;
+    // -----------------------------------------------------------------------
+    // computeGizmoFrame — anchor + extrude/width axes from the CURRENT edge
+    // selection (empty ⇒ whole mesh). Computed at activate() and whenever the
+    // selection changes while idle, so the gizmo doesn't jump during a drag.
+    //
+    //   anchor      = centroid of the selected edges' endpoints.
+    //   extrudeAxis = normalized average of `faceNormal` over the faces
+    //                 adjacent to the selected edges (the same ridge-lift
+    //                 notion the kernel uses).
+    //   widthAxis   = a representative in-plane inset direction: the averaged
+    //                 per-edge inward dir, each perpendicular to the edge
+    //                 tangent and to the extrude axis. Falls back to any axis
+    //                 perpendicular to extrudeAxis when degenerate.
+    // -----------------------------------------------------------------------
+    void computeGizmoFrame() {
+        gizmoValid   = false;
+        gizmoSelHash = mesh.selectionHashEdges();
+        if (mesh.edges.length == 0) return;
+
+        bool wholeMesh = mesh.nothingSelected(EditMode.Edges);
         auto sel = mesh.selectedEdges;
-        bool any;
-        foreach (i; 0 .. mesh.edges.length)
-            if (i < sel.length && sel[i]) { any = true; break; }
-        if (any) {
-            foreach (i; 0 .. mesh.edges.length) {
-                if (i >= sel.length || !sel[i]) continue;
-                auto ed = mesh.edges[i];
-                sum.x += mesh.vertices[ed[0]].x + mesh.vertices[ed[1]].x;
-                sum.y += mesh.vertices[ed[0]].y + mesh.vertices[ed[1]].y;
-                sum.z += mesh.vertices[ed[0]].z + mesh.vertices[ed[1]].z;
-                count += 2;
-            }
-        } else {
-            foreach (v; mesh.vertices) {
-                sum.x += v.x; sum.y += v.y; sum.z += v.z;
-                ++count;
+
+        Vec3 centSum  = Vec3(0, 0, 0);
+        size_t centN  = 0;
+        Vec3 normSum  = Vec3(0, 0, 0);
+        Vec3 insetSum = Vec3(0, 0, 0);
+
+        foreach (i; 0 .. mesh.edges.length) {
+            bool selected = wholeMesh || (i < sel.length && sel[i]);
+            if (!selected) continue;
+            uint va = mesh.edges[i][0];
+            uint vb = mesh.edges[i][1];
+            Vec3 pa = mesh.vertices[va];
+            Vec3 pb = mesh.vertices[vb];
+            centSum = centSum + pa + pb;
+            centN  += 2;
+
+            // Averaged neighbour-polygon normal for this edge (ridge dir).
+            Vec3 ne = edgeAveragedNormal(cast(uint)i);
+            normSum = normSum + ne;
+
+            // In-plane inset direction for this edge: perpendicular to the
+            // edge tangent and lying in the surface (perpendicular to ne).
+            //   tangent t = normalize(pb - pa)
+            //   inward    = normalize(cross(ne, t))   (in-surface, ⟂ to edge)
+            Vec3 t = pb - pa;
+            float tl = sqrt(t.x*t.x + t.y*t.y + t.z*t.z);
+            if (tl > 1e-6f) {
+                t = t / tl;
+                Vec3 inward = cross(ne, t);
+                float il = sqrt(inward.x*inward.x + inward.y*inward.y + inward.z*inward.z);
+                if (il > 1e-6f) insetSum = insetSum + (inward / il);
             }
         }
-        if (count == 0) return false;
-        c = Vec3(sum.x / count, sum.y / count, sum.z / count);
-        return true;
+
+        if (centN == 0) return;
+        anchor = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);
+
+        // Extrude axis = averaged normal; fall back to world +Y if degenerate.
+        float nl = sqrt(normSum.x*normSum.x + normSum.y*normSum.y + normSum.z*normSum.z);
+        extrudeAxis = (nl > 1e-6f) ? (normSum / nl) : Vec3(0, 1, 0);
+
+        // Width axis = averaged in-plane inset; orthogonalize against the
+        // extrude axis and fall back to any perpendicular if degenerate (e.g.
+        // per-edge inward dirs cancelled out on a closed loop).
+        Vec3 w = insetSum - extrudeAxis * dot(insetSum, extrudeAxis);
+        float wl = sqrt(w.x*w.x + w.y*w.y + w.z*w.z);
+        if (wl > 1e-6f) {
+            widthAxis = w / wl;
+        } else {
+            // Any vector perpendicular to extrudeAxis.
+            Vec3 tmp = (abs(extrudeAxis.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+            Vec3 perp = cross(extrudeAxis, tmp);
+            float pl = sqrt(perp.x*perp.x + perp.y*perp.y + perp.z*perp.z);
+            widthAxis = (pl > 1e-6f) ? (perp / pl) : Vec3(1, 0, 0);
+        }
+        gizmoValid = true;
+    }
+
+    // Averaged normal of the 1–2 faces adjacent to edge `ei` — the same notion
+    // the kernel's per-edge `ne` uses for the ridge-lift direction.
+    Vec3 edgeAveragedNormal(uint ei) {
+        Vec3 sum = Vec3(0, 0, 0);
+        size_t n = 0;
+        foreach (fi; mesh.facesAroundEdge(ei)) {
+            sum = sum + mesh.faceNormal(fi);
+            ++n;
+        }
+        if (n == 0) return Vec3(0, 1, 0);
+        float l = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
+        return (l > 1e-6f) ? (sum / l) : Vec3(0, 1, 0);
     }
 }
