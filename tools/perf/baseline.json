@@ -10,371 +10,451 @@
   "cases": [
     {
       "name": "move/baseline",
-      "kernelMedianUs": 13425.800,
-      "kernelP95Us": 13604.600,
-      "pipeMedianUs": 5567.500,
+      "kernelMedianUs": 14327.300,
+      "kernelP95Us": 14342.100,
+      "pipeMedianUs": 5558.700,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/falloff=linear",
-      "kernelMedianUs": 26987.100,
-      "kernelP95Us": 27222.900,
-      "pipeMedianUs": 44.900,
+      "kernelMedianUs": 27314.300,
+      "kernelP95Us": 27860.200,
+      "pipeMedianUs": 48.500,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/falloff=radial",
-      "kernelMedianUs": 25134.400,
-      "kernelP95Us": 25654.300,
-      "pipeMedianUs": 52.600,
+      "kernelMedianUs": 25636.000,
+      "kernelP95Us": 26532.000,
+      "pipeMedianUs": 53.300,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/falloff=element",
-      "kernelMedianUs": 0.500,
-      "kernelP95Us": 0.500,
-      "pipeMedianUs": 56.300,
-      "dominantStage": "cacheInvalidate",
+      "kernelMedianUs": 0.600,
+      "kernelP95Us": 0.900,
+      "pipeMedianUs": 2936.900,
+      "dominantStage": "pipeAcen",
       "vertsTouched": 20
     },
     {
       "name": "move/falloff=screen",
-      "kernelMedianUs": 52840.100,
-      "kernelP95Us": 53623.700,
-      "pipeMedianUs": 51.100,
+      "kernelMedianUs": 51460.700,
+      "kernelP95Us": 51626.900,
+      "pipeMedianUs": 43.200,
       "dominantStage": "kernelApply",
       "vertsTouched": 2110269
     },
     {
       "name": "move/falloff=cylinder",
-      "kernelMedianUs": 36414.000,
-      "kernelP95Us": 37677.200,
-      "pipeMedianUs": 69.700,
+      "kernelMedianUs": 36517.700,
+      "kernelP95Us": 37089.400,
+      "pipeMedianUs": 74.800,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/falloff=selection",
-      "kernelMedianUs": 7965.700,
-      "kernelP95Us": 8051.100,
-      "pipeMedianUs": 6663.200,
+      "kernelMedianUs": 7657.700,
+      "kernelP95Us": 7679.300,
+      "pipeMedianUs": 6657.500,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "move/symmetry=X",
-      "kernelMedianUs": 21410.300,
-      "kernelP95Us": 21730.900,
-      "pipeMedianUs": 6459.200,
+      "kernelMedianUs": 20200.500,
+      "kernelP95Us": 21149.600,
+      "pipeMedianUs": 6267.000,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/acen=selection",
-      "kernelMedianUs": 6601.800,
-      "kernelP95Us": 7189.700,
-      "pipeMedianUs": 2732.700,
+      "kernelMedianUs": 6886.500,
+      "kernelP95Us": 7054.700,
+      "pipeMedianUs": 2919.700,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "move/acen=local",
-      "kernelMedianUs": 6996.200,
-      "kernelP95Us": 7239.500,
-      "pipeMedianUs": 13984.800,
+      "kernelMedianUs": 6641.500,
+      "kernelP95Us": 6984.900,
+      "pipeMedianUs": 13351.400,
       "dominantStage": "pipeAcen",
       "vertsTouched": 1001720
     },
     {
       "name": "move/snap=grid",
-      "kernelMedianUs": 13487.900,
-      "kernelP95Us": 13955.500,
-      "pipeMedianUs": 5336.100,
+      "kernelMedianUs": 13620.900,
+      "kernelP95Us": 13717.700,
+      "pipeMedianUs": 4704.300,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/snap=vertex",
-      "kernelMedianUs": 13538.600,
-      "kernelP95Us": 13772.900,
-      "pipeMedianUs": 4763.000,
+      "kernelMedianUs": 13246.400,
+      "kernelP95Us": 13247.300,
+      "pipeMedianUs": 4632.300,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/snap=edge",
-      "kernelMedianUs": 13691.900,
-      "kernelP95Us": 13950.900,
-      "pipeMedianUs": 4430.400,
+      "kernelMedianUs": 13526.200,
+      "kernelP95Us": 13694.600,
+      "pipeMedianUs": 4364.500,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/snap=edgeCenter",
-      "kernelMedianUs": 13581.600,
-      "kernelP95Us": 14152.500,
-      "pipeMedianUs": 4737.200,
+      "kernelMedianUs": 13231.300,
+      "kernelP95Us": 13242.000,
+      "pipeMedianUs": 4414.100,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/snap=polygon",
-      "kernelMedianUs": 13757.400,
-      "kernelP95Us": 14097.100,
-      "pipeMedianUs": 4291.000,
+      "kernelMedianUs": 13261.700,
+      "kernelP95Us": 13269.800,
+      "pipeMedianUs": 4642.700,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/snap=polyCenter",
-      "kernelMedianUs": 13227.600,
-      "kernelP95Us": 13309.100,
-      "pipeMedianUs": 4515.700,
+      "kernelMedianUs": 13819.000,
+      "kernelP95Us": 13847.600,
+      "pipeMedianUs": 4544.000,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/snap=workplane",
-      "kernelMedianUs": 13403.500,
-      "kernelP95Us": 13556.700,
-      "pipeMedianUs": 5241.000,
+      "kernelMedianUs": 13952.200,
+      "kernelP95Us": 14243.400,
+      "pipeMedianUs": 5281.000,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "move/selection=single",
-      "kernelMedianUs": 0.200,
+      "kernelMedianUs": 0.400,
       "kernelP95Us": 0.400,
-      "pipeMedianUs": 3285.100,
+      "pipeMedianUs": 3151.500,
       "dominantStage": "pipeAcen",
       "vertsTouched": 20
     },
     {
       "name": "move/selection=ring",
-      "kernelMedianUs": 47.000,
-      "kernelP95Us": 48.400,
-      "pipeMedianUs": 3275.900,
+      "kernelMedianUs": 41.600,
+      "kernelP95Us": 42.200,
+      "pipeMedianUs": 3027.900,
       "dominantStage": "pipeAcen",
       "vertsTouched": 6340
     },
     {
       "name": "move/selection=half",
-      "kernelMedianUs": 6603.300,
-      "kernelP95Us": 6675.300,
-      "pipeMedianUs": 2686.800,
+      "kernelMedianUs": 6615.400,
+      "kernelP95Us": 6634.200,
+      "pipeMedianUs": 2842.300,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "rotate/baseline",
-      "kernelMedianUs": 13321.000,
-      "kernelP95Us": 13327.700,
-      "pipeMedianUs": 5192.900,
+      "kernelMedianUs": 13304.200,
+      "kernelP95Us": 13411.000,
+      "pipeMedianUs": 5165.400,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "rotate/falloff=linear",
-      "kernelMedianUs": 26763.700,
-      "kernelP95Us": 26898.000,
-      "pipeMedianUs": 54.800,
+      "kernelMedianUs": 26673.100,
+      "kernelP95Us": 27091.200,
+      "pipeMedianUs": 48.100,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "rotate/falloff=radial",
-      "kernelMedianUs": 25255.400,
-      "kernelP95Us": 25587.400,
-      "pipeMedianUs": 3860.900,
+      "kernelMedianUs": 24870.600,
+      "kernelP95Us": 24890.100,
+      "pipeMedianUs": 3789.000,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "rotate/falloff=element",
-      "kernelMedianUs": 0.500,
-      "kernelP95Us": 0.500,
-      "pipeMedianUs": 54.100,
-      "dominantStage": "cacheInvalidate",
+      "kernelMedianUs": 0.700,
+      "kernelP95Us": 0.900,
+      "pipeMedianUs": 2913.300,
+      "dominantStage": "pipeAcen",
       "vertsTouched": 20
     },
     {
       "name": "rotate/falloff=screen",
-      "kernelMedianUs": 50642.600,
-      "kernelP95Us": 50733.400,
-      "pipeMedianUs": 4089.200,
+      "kernelMedianUs": 52182.000,
+      "kernelP95Us": 53061.100,
+      "pipeMedianUs": 3781.200,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "rotate/falloff=cylinder",
-      "kernelMedianUs": 37276.300,
-      "kernelP95Us": 37570.300,
-      "pipeMedianUs": 5290.000,
+      "kernelMedianUs": 36153.600,
+      "kernelP95Us": 36284.400,
+      "pipeMedianUs": 5150.000,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "rotate/falloff=selection",
-      "kernelMedianUs": 7662.800,
-      "kernelP95Us": 7734.100,
-      "pipeMedianUs": 10459.600,
+      "kernelMedianUs": 7738.000,
+      "kernelP95Us": 7842.700,
+      "pipeMedianUs": 10193.200,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "rotate/symmetry=X",
-      "kernelMedianUs": 20682.500,
-      "kernelP95Us": 21345.900,
-      "pipeMedianUs": 60.900,
+      "kernelMedianUs": 20082.100,
+      "kernelP95Us": 20159.300,
+      "pipeMedianUs": 56.000,
       "dominantStage": "kernelApply",
       "vertsTouched": 2009780
     },
     {
       "name": "rotate/acen=selection",
-      "kernelMedianUs": 6674.800,
-      "kernelP95Us": 6677.900,
-      "pipeMedianUs": 2733.200,
+      "kernelMedianUs": 6590.800,
+      "kernelP95Us": 6630.100,
+      "pipeMedianUs": 2807.600,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "rotate/acen=local",
-      "kernelMedianUs": 6660.000,
-      "kernelP95Us": 6686.500,
-      "pipeMedianUs": 13310.400,
+      "kernelMedianUs": 6537.700,
+      "kernelP95Us": 6592.100,
+      "pipeMedianUs": 13436.600,
       "dominantStage": "pipeAcen",
       "vertsTouched": 1001720
     },
     {
       "name": "rotate/selection=single",
-      "kernelMedianUs": 0.400,
-      "kernelP95Us": 0.500,
-      "pipeMedianUs": 2998.800,
+      "kernelMedianUs": 0.300,
+      "kernelP95Us": 0.300,
+      "pipeMedianUs": 2957.500,
       "dominantStage": "pipeAcen",
       "vertsTouched": 20
     },
     {
       "name": "rotate/selection=ring",
-      "kernelMedianUs": 48.900,
-      "kernelP95Us": 51.900,
-      "pipeMedianUs": 3173.100,
+      "kernelMedianUs": 42.600,
+      "kernelP95Us": 42.700,
+      "pipeMedianUs": 2892.800,
       "dominantStage": "pipeAcen",
       "vertsTouched": 6340
     },
     {
       "name": "rotate/selection=half",
-      "kernelMedianUs": 6579.700,
-      "kernelP95Us": 6848.100,
-      "pipeMedianUs": 2770.500,
+      "kernelMedianUs": 6645.300,
+      "kernelP95Us": 6651.100,
+      "pipeMedianUs": 2816.200,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "scale/baseline",
-      "kernelMedianUs": 13268.300,
-      "kernelP95Us": 13276.100,
-      "pipeMedianUs": 5058.800,
+      "kernelMedianUs": 16853.800,
+      "kernelP95Us": 17595.100,
+      "pipeMedianUs": 5017.000,
       "dominantStage": "kernelApply",
-      "vertsTouched": 2009780
+      "vertsTouched": 2512225
     },
     {
       "name": "scale/falloff=linear",
-      "kernelMedianUs": 27270.100,
-      "kernelP95Us": 27900.500,
-      "pipeMedianUs": 3589.800,
+      "kernelMedianUs": 28252.800,
+      "kernelP95Us": 29499.200,
+      "pipeMedianUs": 3472.900,
       "dominantStage": "kernelApply",
-      "vertsTouched": 2009780
+      "vertsTouched": 2311247
     },
     {
       "name": "scale/falloff=radial",
-      "kernelMedianUs": 25217.100,
-      "kernelP95Us": 25385.400,
-      "pipeMedianUs": 3886.200,
+      "kernelMedianUs": 26204.800,
+      "kernelP95Us": 26341.200,
+      "pipeMedianUs": 3657.300,
       "dominantStage": "kernelApply",
-      "vertsTouched": 2009780
+      "vertsTouched": 2110269
     },
     {
       "name": "scale/falloff=element",
-      "kernelMedianUs": 0.400,
-      "kernelP95Us": 0.500,
-      "pipeMedianUs": 49.600,
-      "dominantStage": "cacheInvalidate",
-      "vertsTouched": 20
+      "kernelMedianUs": 1.100,
+      "kernelP95Us": 1.300,
+      "pipeMedianUs": 2522.200,
+      "dominantStage": "pipeAcen",
+      "vertsTouched": 24
     },
     {
       "name": "scale/falloff=screen",
-      "kernelMedianUs": 51705.800,
-      "kernelP95Us": 52742.400,
-      "pipeMedianUs": 3305.200,
+      "kernelMedianUs": 49814.800,
+      "kernelP95Us": 52112.800,
+      "pipeMedianUs": 3359.400,
       "dominantStage": "kernelApply",
       "vertsTouched": 2110269
     },
     {
       "name": "scale/falloff=cylinder",
-      "kernelMedianUs": 36790.800,
-      "kernelP95Us": 37085.300,
-      "pipeMedianUs": 5249.500,
+      "kernelMedianUs": 40260.600,
+      "kernelP95Us": 41389.600,
+      "pipeMedianUs": 3972.300,
       "dominantStage": "kernelApply",
-      "vertsTouched": 2009780
+      "vertsTouched": 2210758
     },
     {
       "name": "scale/falloff=selection",
-      "kernelMedianUs": 7856.600,
-      "kernelP95Us": 7975.900,
-      "pipeMedianUs": 10379.600,
+      "kernelMedianUs": 7740.500,
+      "kernelP95Us": 7810.400,
+      "pipeMedianUs": 10268.700,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "scale/symmetry=X",
-      "kernelMedianUs": 20413.700,
-      "kernelP95Us": 20720.600,
-      "pipeMedianUs": 6562.900,
+      "kernelMedianUs": 21529.900,
+      "kernelP95Us": 21746.900,
+      "pipeMedianUs": 5783.300,
       "dominantStage": "kernelApply",
-      "vertsTouched": 2009780
+      "vertsTouched": 2110269
     },
     {
       "name": "scale/acen=selection",
-      "kernelMedianUs": 6579.300,
-      "kernelP95Us": 6701.400,
-      "pipeMedianUs": 2831.700,
+      "kernelMedianUs": 6606.700,
+      "kernelP95Us": 6610.900,
+      "pipeMedianUs": 2762.200,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
     },
     {
       "name": "scale/acen=local",
-      "kernelMedianUs": 6671.700,
-      "kernelP95Us": 6743.900,
-      "pipeMedianUs": 13127.800,
+      "kernelMedianUs": 6789.100,
+      "kernelP95Us": 6946.200,
+      "pipeMedianUs": 13182.600,
       "dominantStage": "pipeAcen",
       "vertsTouched": 1001720
     },
     {
       "name": "scale/selection=single",
-      "kernelMedianUs": 0.200,
-      "kernelP95Us": 0.300,
-      "pipeMedianUs": 2996.600,
+      "kernelMedianUs": 0.500,
+      "kernelP95Us": 0.700,
+      "pipeMedianUs": 2485.300,
       "dominantStage": "pipeAcen",
-      "vertsTouched": 20
+      "vertsTouched": 23
     },
     {
       "name": "scale/selection=ring",
-      "kernelMedianUs": 49.200,
-      "kernelP95Us": 49.300,
-      "pipeMedianUs": 3117.500,
+      "kernelMedianUs": 53.500,
+      "kernelP95Us": 54.600,
+      "pipeMedianUs": 2789.100,
       "dominantStage": "pipeAcen",
-      "vertsTouched": 6340
+      "vertsTouched": 7291
     },
     {
       "name": "scale/selection=half",
-      "kernelMedianUs": 7082.400,
-      "kernelP95Us": 7363.400,
-      "pipeMedianUs": 2954.700,
+      "kernelMedianUs": 6612.200,
+      "kernelP95Us": 6640.400,
+      "pipeMedianUs": 2781.700,
       "dominantStage": "kernelApply",
       "vertsTouched": 1001720
+    },
+    {
+      "name": "delete/vertices/whole",
+      "kernelMedianUs": 4480.700,
+      "kernelP95Us": 4564.900,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "delete/vertices/half",
+      "kernelMedianUs": 1482544.700,
+      "kernelP95Us": 1483266.900,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "delete/edges/whole",
+      "kernelMedianUs": 48753.400,
+      "kernelP95Us": 49314.400,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "delete/polygons/whole",
+      "kernelMedianUs": 3464.800,
+      "kernelP95Us": 3494.800,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "delete/polygons/half",
+      "kernelMedianUs": 1512094.900,
+      "kernelP95Us": 1512756.300,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "remove/vertices/whole",
+      "kernelMedianUs": 3780.800,
+      "kernelP95Us": 3798.000,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "remove/vertices/half",
+      "kernelMedianUs": 1692758.400,
+      "kernelP95Us": 1808772.200,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "remove/edges/whole",
+      "kernelMedianUs": 50170.200,
+      "kernelP95Us": 51041.400,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "remove/polygons/whole",
+      "kernelMedianUs": 3637.100,
+      "kernelP95Us": 3873.200,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
+    },
+    {
+      "name": "remove/polygons/half",
+      "kernelMedianUs": 1615434.600,
+      "kernelP95Us": 1623220.500,
+      "pipeMedianUs": nan,
+      "dominantStage": "commandApply",
+      "vertsTouched": 0
     }
   ]
 }
