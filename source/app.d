@@ -47,6 +47,7 @@ import tools.cone;
 import tools.capsule;
 import tools.torus;
 import tools.pen;
+import tools.edge_extrude : EdgeExtrudeTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -72,6 +73,7 @@ import commands.mesh.subpatch_toggle;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
+import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
@@ -833,6 +835,8 @@ void main(string[] args) {
                                                    &gpu, &vertexCache, &edgeCache, &faceCache);
     auto bevelEditFactory = () => new MeshBevelEdit(&mesh, cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
+    auto edgeExtrudeEditFactory = () => new MeshEdgeExtrudeEdit(&mesh, cameraView, editMode,
+                                                     &gpu, &vertexCache, &edgeCache, &faceCache);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -996,6 +1000,18 @@ void main(string[] args) {
         auto t = new PenTool(&mesh, &gpu, litShader,
                              &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Edge Extrude — interactive (drag → extrude/width) + headless
+    // (tool.attr edge.extrude extrude/width; tool.doApply). Topology-creating
+    // tool: own typed edit factory (MeshEdgeExtrudeEdit, not vxEditFactory),
+    // wired via the prim.cube registration template. Gated to Edges mode by
+    // EdgeExtrudeTool.supportedModes().
+    reg.toolFactories["edge.extrude"] = () {
+        auto t = new EdgeExtrudeTool(&mesh, &gpu, &editMode, litShader,
+                                     &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, edgeExtrudeEditFactory);
         return cast(Tool)t;
     };
 
