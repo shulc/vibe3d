@@ -828,6 +828,419 @@ struct Mesh {
         return dissolved;
     }
 
+    /// Edge Extrude: shift each selected edge outward along the average normal
+    /// of its neighbor polygon(s) by `extrude`, inset the neighbor polygon(s) by
+    /// `width` within their planes, and bridge with new faces. Boundary edges use
+    /// the single neighbor normal. Endpoints shared by multiple selected edges are
+    /// welded into one ridge vertex. Returns the number of edges extruded.
+    /// Caller must refresh GPU + caches afterward. `mask.length == edges.length`.
+    ///
+    /// Face-centric construction (see doc/edge_extrude_plan.md §1.4): build the
+    /// final ridgeVert[v] and insetVert[(v,f)] maps FIRST (averaging shared-corner
+    /// in-plane directions), then do ONE rewrite pass per affected face so two
+    /// selected edges that share a corner cannot race on faces[fi].
+    size_t extrudeEdgesByMask(in bool[] mask, float extrude, float width) {
+        import math : Vec3, cross, dot, normalize;
+        if (mask.length != edges.length) return 0;
+        // Identity parameters ⇒ no-op (matches PushTool dist==0 short-circuit).
+        if (extrude == 0.0f && width == 0.0f) return 0;
+
+        // --- Edge → (≤2 faces) adjacency, one pass (no O(E×F) scan). Same idiom
+        //     as removeEdgesByMask: first occurrence → slot 0, second distinct
+        //     face → slot 1; a 3rd+ face / self-doubled edge is ignored.
+        int[2][ulong] edgeFaces;
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeFaces;
+                if (p is null)
+                    edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        // --- Gather the selected, extrudable edges (≥1 adjacent face). Snapshot
+        //     their endpoints + neighbor faces NOW (original index space) — the
+        //     kernel finishes all geometry before any rebuildEdges.
+        struct ExEdge { uint va, vb; int fA, fB; Vec3 ne; }
+        ExEdge[] exEdges;
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            uint va = edges[i][0], vb = edges[i][1];
+            auto p = edgeKeyOrdered(va, vb) in edgeFaces;
+            if (p is null) continue;
+            int fA = (*p)[0], fB = (*p)[1];
+            if (fA == -1) continue;   // unreferenced edge — not extrudable
+
+            // §1.1 per-edge averaged normal (the Extrude direction).
+            Vec3 ne;
+            if (fB == -1) {
+                ne = faceNormal(cast(uint)fA);                 // boundary edge
+            } else {
+                Vec3 nA = faceNormal(cast(uint)fA);
+                Vec3 nB = faceNormal(cast(uint)fB);
+                Vec3 sum = nA + nB;
+                if (sum.length < 1e-6f)
+                    ne = faceNormal(cast(uint)(fA < fB ? fA : fB)); // opposed → lower-index fallback
+                else
+                    ne = normalize(sum);
+            }
+            exEdges ~= ExEdge(va, vb, fA, fB, ne);
+        }
+        if (exEdges.length == 0) return 0;
+
+        // --- Pass 1: welded ridge vertex per original endpoint. Accumulate the
+        //     per-edge extrude normals of every selected edge incident to v, then
+        //     place ONE ridge vertex per v along the averaged direction (§1.4.1).
+        Vec3[uint] ridgeAccum;            // Σ ne over incident selected edges
+        foreach (ref e; exEdges) {
+            ridgeAccum.update(e.va, () => e.ne, (ref Vec3 acc) { acc = acc + e.ne; });
+            ridgeAccum.update(e.vb, () => e.ne, (ref Vec3 acc) { acc = acc + e.ne; });
+        }
+        uint[uint] ridgeVert;
+        foreach (v, acc; ridgeAccum) {
+            Vec3 dir = (acc.length < 1e-6f) ? Vec3(0, 1, 0) : normalize(acc);
+            ridgeVert[v] = addVertex(vertices[v] + dir * extrude);
+        }
+
+        // --- Pass 2: inset vertex per (endpoint v, incident neighbor face f).
+        //     §1.3 in-plane inward direction; when several selected edges meet at
+        //     v and border the SAME face, average their inward dirs (renormalize)
+        //     so the shared corner stays continuous and only ONE inset vert is
+        //     made in that face (§1.4.2).
+        Vec3[ulong] insetAccum;           // key = (v<<32)|fi → Σ inward dir
+        void accumInset(uint v, int fi, Vec3 d) {
+            ulong k = (cast(ulong)v << 32) | cast(uint)fi;
+            insetAccum.update(k, () => d, (ref Vec3 acc) { acc = acc + d; });
+        }
+        // In-plane inward direction at endpoint v of edge (va,vb) within face fi.
+        Vec3 inwardDir(uint va, uint vb, int fi) {
+            Vec3 t  = normalize(vertices[vb] - vertices[va]);
+            Vec3 nf = faceNormal(cast(uint)fi);
+            Vec3 d  = cross(nf, t);
+            if (d.length < 1e-6f) return Vec3(0, 0, 0);
+            d = normalize(d);
+            // Flip toward the face centroid.
+            auto f = faces[fi];
+            Vec3 c = Vec3(0, 0, 0);
+            foreach (vid; f) c = c + vertices[vid];
+            c = c * (1.0f / cast(float)f.length);
+            Vec3 mid = (vertices[va] + vertices[vb]) * 0.5f;
+            if (dot(d, c - mid) < 0.0f) d = -d;
+            return d;
+        }
+        foreach (ref e; exEdges) {
+            Vec3 dA = inwardDir(e.va, e.vb, e.fA);
+            accumInset(e.va, e.fA, dA);
+            accumInset(e.vb, e.fA, dA);
+            if (e.fB != -1) {
+                Vec3 dB = inwardDir(e.va, e.vb, e.fB);
+                accumInset(e.va, e.fB, dB);
+                accumInset(e.vb, e.fB, dB);
+            }
+        }
+        uint[ulong] insetVert;
+        foreach (k, acc; insetAccum) {
+            uint v  = cast(uint)(k >> 32);
+            // The accumulated direction is renormalized then scaled by width.
+            Vec3 d = (acc.length < 1e-6f) ? Vec3(0, 0, 0) : normalize(acc);
+            insetVert[k] = addVertex(vertices[v] + d * width);
+        }
+
+        // --- Free-end classification (§5). A selected-edge endpoint that is
+        //     incident to exactly ONE selected edge is a *free end*; one that is
+        //     shared by ≥2 selected edges is an interior chain joint (keep the
+        //     welded-ridge behavior — no cap, no side-corner split). Count the
+        //     selected-edge incidences per endpoint.
+        int[uint] selEdgeCount;
+        foreach (ref e; exEdges) {
+            selEdgeCount.update(e.va, () => 1, (ref int c) { ++c; });
+            selEdgeCount.update(e.vb, () => 1, (ref int c) { ++c; });
+        }
+        bool isFreeEnd(uint v) { auto p = v in selEdgeCount; return p !is null && *p == 1; }
+        // An *interior* free end has two neighbor faces (its single selected edge
+        // is interior). Only interior free ends split their side-face corner into
+        // two insets + a triangle cap; a BOUNDARY free end (one neighbor face)
+        // has only one inset, so it keeps its other faces intact (no split, no
+        // cap) — the inset-gap quad already closes the geometry.
+        bool[uint] interiorFreeEnd;
+        foreach (ref e; exEdges) {
+            if (e.fB == -1) continue;        // boundary edge — endpoints not interior
+            if (isFreeEnd(e.va)) interiorFreeEnd[e.va] = true;
+            if (isFreeEnd(e.vb)) interiorFreeEnd[e.vb] = true;
+        }
+        bool isInteriorFreeEnd(uint v) { return (v in interiorFreeEnd) !is null; }
+
+        // --- Single face-centric rewrite pass over the NEIGHBOR faces. For each
+        //     affected neighbor face, walk its corners once and replace each
+        //     corner c that has an insetVert[(c,fi)] key. Race-free even when
+        //     va,vb,vc all live in fi.
+        bool[int] affectedFaces;
+        foreach (ref e; exEdges) {
+            affectedFaces[e.fA] = true;
+            if (e.fB != -1) affectedFaces[e.fB] = true;
+        }
+        foreach (fi, _; affectedFaces) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = (cast(ulong)f[k] << 32) | cast(uint)fi;
+                if (auto p = key in insetVert)
+                    faces[fi][k] = *p;
+            }
+        }
+
+        // --- Free-end side-corner rewrite (§5.a/§5.b — the fix). Each free-end
+        //     endpoint `v` must be removed from EVERY face that is NOT one of its
+        //     extruded edge's neighbor faces (those non-neighbor "side" faces
+        //     each have `v` as a single corner). the reference modeler replaces that corner with
+        //     the endpoint's two inset verts so the side quad becomes a 5-gon,
+        //     closing the gap that a bare dissolve would open.
+        //
+        //     We resolve the two insets from the two edges of the side face that
+        //     meet at `v`: the incoming edge (prev,v) and outgoing edge (v,next)
+        //     each coincide with one of the extruded edge's neighbor faces, so we
+        //     look up which neighbor face shares that boundary edge and take its
+        //     inset. The pair is then ordered to PRESERVE the side face's
+        //     original winding (faceNormal backstop swaps the pair if it flips).
+        //
+        //     For each free end, record the per-neighbor-face inset vertex keyed
+        //     by (v, neighborFace); the side-face rewrite below resolves which
+        //     neighbor face shares a given boundary edge of the side face.
+        uint[ulong] freeEndInsetByVF; // (v<<32|neighborFace) → inset vert
+        foreach (ref e; exEdges) {
+            void rec(uint v) {
+                if (!isInteriorFreeEnd(v)) return;
+                ulong kA = (cast(ulong)v << 32) | cast(uint)e.fA;
+                freeEndInsetByVF[(cast(ulong)v << 32) | cast(uint)e.fA] = insetVert[kA];
+                ulong kB = (cast(ulong)v << 32) | cast(uint)e.fB;
+                freeEndInsetByVF[(cast(ulong)v << 32) | cast(uint)e.fB] = insetVert[kB];
+            }
+            rec(e.va);
+            rec(e.vb);
+        }
+        // Set of (interior free-end vertex) → its 2 neighbor-face ids, for "is
+        // this face a neighbor of v?" tests during the side-face scan.
+        bool[ulong] isNeighborOf; // (v<<32|fi) → true
+        foreach (ref e; exEdges) {
+            void mark(uint v) {
+                if (!isInteriorFreeEnd(v)) return;
+                isNeighborOf[(cast(ulong)v << 32) | cast(uint)e.fA] = true;
+                isNeighborOf[(cast(ulong)v << 32) | cast(uint)e.fB] = true;
+            }
+            mark(e.va);
+            mark(e.vb);
+        }
+        // Rewrite each side face: any face containing a free-end vertex that is
+        // NOT a neighbor face of that vertex. Replace the v corner with the two
+        // insets ordered to preserve the face's original normal.
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi].dup;
+            // Snapshot the pre-rewrite normal so we can preserve orientation.
+            bool touched = false;
+            uint[] rebuilt;
+            rebuilt.reserve(f.length + 2);
+            Vec3 origNormal = faceNormal(cast(uint)fi);
+            foreach (k; 0 .. f.length) {
+                uint c = f[k];
+                bool freeHere = isInteriorFreeEnd(c)
+                    && ((cast(ulong)c << 32 | cast(uint)fi) !in isNeighborOf);
+                if (!freeHere) { rebuilt ~= c; continue; }
+                // c is a free-end endpoint sitting in a side face. Resolve the
+                // two neighbor-face insets via the boundary edges (prev,c)/(c,next).
+                uint prev = f[(k + f.length - 1) % f.length];
+                uint next = f[(k + 1) % f.length];
+                // Which neighbor face shares boundary edge (prev,c)? (the edge
+                // belongs to one of c's extruded-edge neighbor faces.)
+                int faceOfEdge(uint a, uint b) {
+                    auto p = edgeKeyOrdered(a, b) in edgeFaces;
+                    if (p is null) return -1;
+                    // return whichever of the (≤2) faces is a neighbor of c.
+                    foreach (cand; [(*p)[0], (*p)[1]]) {
+                        if (cand < 0) continue;
+                        if ((cast(ulong)c << 32 | cast(uint)cand) in isNeighborOf)
+                            return cand;
+                    }
+                    return -1;
+                }
+                int fPrev = faceOfEdge(prev, c); // neighbor sharing incoming edge
+                int fNext = faceOfEdge(c, next);  // neighbor sharing outgoing edge
+                uint iArrive = (fPrev >= 0)
+                    ? freeEndInsetByVF[(cast(ulong)c << 32) | cast(uint)fPrev]
+                    : c;
+                uint iLeave  = (fNext >= 0)
+                    ? freeEndInsetByVF[(cast(ulong)c << 32) | cast(uint)fNext]
+                    : c;
+                rebuilt ~= iArrive;
+                rebuilt ~= iLeave;
+                touched = true;
+            }
+            if (touched) {
+                faces[fi] = rebuilt;
+                // Preserve original winding: flip the whole face if the rewrite
+                // inverted the normal (only the inserted-pair order is ambiguous).
+                if (dot(faceNormal(cast(uint)fi), origNormal) < 0.0f) {
+                    auto r = faces[fi].dup;
+                    foreach (j, vid; r) faces[fi][r.length - 1 - j] = vid;
+                }
+            }
+        }
+
+        // --- Bridge faces. Helper: emit a quad, fixing winding so its normal
+        //     points away from the neighbor-face interior (positive dot with ne).
+        size_t firstBridge = faces.length;
+        uint[] bridgeMaterialSrc;   // neighbor face id each bridge inherits from
+        void emitBridge(uint[4] corners, Vec3 ne, int srcFace) {
+            uint bfi = cast(uint)faces.length;
+            faces ~= [corners[0], corners[1], corners[2], corners[3]];
+            if (dot(faceNormal(bfi), ne) < 0.0f) {
+                // reverse to make the bridge consistently wound
+                faces[bfi] = [corners[3], corners[2], corners[1], corners[0]];
+            }
+            bridgeMaterialSrc ~= cast(uint)srcFace;
+        }
+        // Emit a triangle cap, fixing winding so its normal points OUTWARD along
+        // the edge axis (positive dot with `outward` = the edge direction that
+        // exits the span at this free end). The cap closes the corner gap at the
+        // free end, so its normal runs along the edge axis — NOT the extrude
+        // direction ne (using ne mis-orients caps whose end face points sideways).
+        void emitCap(uint[3] corners, Vec3 outward, int srcFace) {
+            uint cfi = cast(uint)faces.length;
+            faces ~= [corners[0], corners[1], corners[2]];
+            if (dot(faceNormal(cfi), outward) < 0.0f)
+                faces[cfi] = [corners[2], corners[1], corners[0]];
+            bridgeMaterialSrc ~= cast(uint)srcFace;
+        }
+        // Bridge corner order is derived from the neighbor face's own corner
+        // sequence; the faceNormal check is the backstop for any leftover
+        // ambiguity.
+        foreach (ref e; exEdges) {
+            ulong kIA = (cast(ulong)e.va << 32) | cast(uint)e.fA;
+            ulong kIB = (cast(ulong)e.vb << 32) | cast(uint)e.fA;
+            if (e.fB != -1) {
+                // Interior edge: one bridge quad per neighbor side, from each
+                // face's inset edge up to the welded ridge edge.
+                emitBridge([insetVert[kIA], insetVert[kIB],
+                            ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fA);
+                ulong kIA2 = (cast(ulong)e.va << 32) | cast(uint)e.fB;
+                ulong kIB2 = (cast(ulong)e.vb << 32) | cast(uint)e.fB;
+                emitBridge([insetVert[kIA2], insetVert[kIB2],
+                            ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fB);
+                // §5.c: triangle cap closing each FREE-END corner gap between the
+                // two neighbor insets and the ridge vert. Interior chain joints
+                // (shared endpoints) get NO cap — the neighboring extruded edge
+                // closes that side.
+                Vec3 axis = vertices[e.vb] - vertices[e.va];   // va → vb
+                if (isInteriorFreeEnd(e.va))
+                    emitCap([insetVert[kIA], insetVert[kIA2], ridgeVert[e.va]],
+                            -axis, e.fA);                       // va end exits −axis
+                if (isInteriorFreeEnd(e.vb))
+                    emitCap([insetVert[kIB], insetVert[kIB2], ridgeVert[e.vb]],
+                            axis, e.fA);                        // vb end exits +axis
+            } else {
+                // Boundary edge: exactly 2 quads — fill the inset gap with the
+                // original va,vb retained, then bridge the original edge up to
+                // the ridge. (No second neighbor side, so NO interior-style
+                // bridge here — that would over-count to 3 faces.) Boundary free
+                // ends have only ONE inset, so there is no corner triangle to
+                // cap; the inset-gap quad already produces closed geometry (no
+                // holes). Boundary parity vs the reference is out of scope.
+                //
+                // The shell shares two edges that must be traversed OPPOSITELY
+                // by their two incident faces (orientability): the inset edge
+                // (insetA,insetB) is shared by the rewritten neighbor face fA and
+                // the gap quad; the original edge (va,vb) is shared by the gap
+                // quad and the ridge bridge. We derive the gap quad's winding
+                // straight from fA's actual traversal of the inset edge so the
+                // result is consistently wound regardless of fA's orientation —
+                // the faceNormal-vs-ne heuristic folds along these shared edges.
+                uint iA = insetVert[kIA], iB = insetVert[kIB];
+                // Find the direction fA walks the inset edge (iA→iB or iB→iA).
+                bool faAtoB = false;
+                {
+                    auto fa = faces[e.fA];
+                    foreach (k; 0 .. fa.length) {
+                        uint u = fa[k], w = fa[(k + 1) % fa.length];
+                        if (u == iA && w == iB) { faAtoB = true;  break; }
+                        if (u == iB && w == iA) { faAtoB = false; break; }
+                    }
+                }
+                // Gap quad must traverse the inset edge OPPOSITE to fA. Lay it out
+                // as [insetEdge..., original edge...] closing back on itself.
+                if (faAtoB)
+                    // fA: iA→iB  ⇒ gap: iB→iA, then up the original edge va→vb.
+                    faces ~= [iB, iA, e.va, e.vb];
+                else
+                    faces ~= [iA, iB, e.vb, e.va];
+                bridgeMaterialSrc ~= cast(uint)e.fA;
+                // The gap quad now traverses the original edge in a known
+                // direction (va→vb when faAtoB, else vb→va). The ridge bridge
+                // must traverse it OPPOSITE so the two stay consistently wound.
+                if (faAtoB)
+                    faces ~= [e.vb, e.va, ridgeVert[e.va], ridgeVert[e.vb]];
+                else
+                    faces ~= [e.va, e.vb, ridgeVert[e.vb], ridgeVert[e.va]];
+                bridgeMaterialSrc ~= cast(uint)e.fA;
+            }
+        }
+
+        // --- Hand-extend the parallel per-face arrays in lock-step (pure-add op:
+        //     neither addVertex nor compactUnreferenced sizes these for us).
+        foreach (bi; 0 .. faces.length - firstBridge) {
+            uint srcFace = bridgeMaterialSrc[bi];
+            faceMaterial       ~= (srcFace < faceMaterial.length ? faceMaterial[srcFace] : 0u);
+            faceSelectionOrder ~= 0;
+        }
+        resizeSubpatch();
+        foreach (fi; firstBridge .. faces.length)
+            setFaceSubpatch(fi, false);
+
+        // --- Record the ridge endpoints BY POSITION for each extruded edge so we
+        //     can re-find the ridge edges AFTER compaction remaps vertex indices.
+        //     Free-end endpoints are now wholly dissolved (no face references
+        //     them), so compactUnreferenced drops them — making vertexCount match
+        //     the reference's (no orphans). But compaction renumbers every surviving vert,
+        //     invalidating ridgeVert[] — hence the position round-trip.
+        Vec3[2][] ridgeEdgePos;
+        ridgeEdgePos.reserve(exEdges.length);
+        foreach (ref e; exEdges)
+            ridgeEdgePos ~= [vertices[ridgeVert[e.va]], vertices[ridgeVert[e.vb]]];
+
+        // --- Rebuild edges + loops; size selection arrays explicitly. Then drop
+        //     dissolved free-end endpoints (and any other orphan) so the vertex
+        //     count matches the reference exactly.
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();   // remaps verts; rebuilds edges + edgeIndexMap
+        buildLoops();
+        resizeVertexSelection();
+        resizeFaceSelection();
+        clearEdgeSelectionResize();   // resize edge marks + drop all edge selection
+
+        // --- New selection = the ridge edges (so a follow-up move/extrude
+        //     chains). Re-find each ridge endpoint by its (post-compaction)
+        //     position, then look the edge up via edgeKey on the new indices.
+        int findVertByPos(Vec3 p) {
+            foreach (i, ref v; vertices)
+                if ((v - p).length < 1e-5f) return cast(int)i;
+            return -1;
+        }
+        foreach (ref pr; ridgeEdgePos) {
+            int a = findVertByPos(pr[0]);
+            int b = findVertByPos(pr[1]);
+            if (a < 0 || b < 0) continue;
+            ulong rk = edgeKey(cast(uint)a, cast(uint)b);
+            if (auto p = rk in edgeIndexMap)
+                selectEdge(cast(int)*p);
+        }
+        clearVertexSelection();
+        clearFaceSelection();
+
+        ++mutationVersion; ++topologyVersion;
+        return exEdges.length;
+    }
+
     /// Radial-array the faces marked true in `mask`: insert `count-1`
     /// new copies, each rotated around the axis (`axis` ∈ {'X','Y','Z'})
     /// through `center` by `i * totalAngle / count` (i = 1..count-1),
