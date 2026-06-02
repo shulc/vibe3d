@@ -1407,14 +1407,26 @@ struct Mesh {
             //     reference's face-aware free-end inset.
             foreach (v, _; needsAlong) {
                 Vec3 t;
+                // Clamp the along-edge offset so it can never travel PAST the far
+                //     vertex of the inner rim edge it folds along — identical to
+                //     the face-aware boundaryEdgeDir clamp (recordClamp): when
+                //     `width` ≥ that rim edge's length the reference bumps the
+                //     inset into the far vertex and stops rather than overshooting
+                //     and self-intersecting. The clamp length is the rim edge's
+                //     own length, |alongFar − v|. The fallback extruded-tangent
+                //     direction has no well-defined far vertex along it, so (like
+                //     the perpendicular inwardDir path) it carries no cap.
+                float offLen = width;
                 if (auto fp = v in alongFar) {
                     t = vertices[*fp] - vertices[v];
+                    float farLen = t.length;
+                    if (width > farLen) offLen = farLen;   // land at most on far vert
                 } else if (auto op = v in freeEndOther) {
                     t = vertices[v] - vertices[*op];   // fallback: extruded tangent
                 } else continue;
                 if (t.length < 1e-6f) continue;
                 t = normalize(t);
-                freeEndAlongVert[v] = addVertex(vertices[v] + t * width);
+                freeEndAlongVert[v] = addVertex(vertices[v] + t * offLen);
             }
         }
         bool needsAlongAt(uint v) { return (v in needsAlong) !is null; }
