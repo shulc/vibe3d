@@ -1170,7 +1170,17 @@ struct Mesh {
                 // two neighbor insets and the ridge vert. Interior chain joints
                 // (shared endpoints) get NO cap — the neighboring extruded edge
                 // closes that side.
-                Vec3 axis = vertices[e.vb] - vertices[e.va];   // va → vb
+                // The cap lies in the plane of (insetA, insetB, ridge). Its
+                // geometric normal flips with the EXTRUDE SIGN because the ridge
+                // vertex moves to the opposite side of the inset edge when the
+                // ridge goes from outward (extrude>0) to inward (extrude<0). The
+                // edge axis alone is sign-independent, so we fold the extrude sign
+                // into the outward reference — exactly as the bridge quads stay
+                // sign-correct (their ridge position carries the sign while they
+                // validate against the fixed `ne`). Without the sign the caps wind
+                // correctly for positive extrude but reverse for negative.
+                float es = (extrude < 0.0f) ? -1.0f : 1.0f;
+                Vec3 axis = (vertices[e.vb] - vertices[e.va]) * es; // va → vb, sign-aware
                 if (isInteriorFreeEnd(e.va))
                     emitCap([insetVert[kIA], insetVert[kIA2], ridgeVert[e.va]],
                             -axis, e.fA);                       // va end exits −axis
