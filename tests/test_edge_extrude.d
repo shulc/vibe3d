@@ -58,6 +58,13 @@ void postCommand(string body) {
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
+// Inject a raw mesh ({"vertices":[[x,y,z],...],"faces":[[i,j,...],...]}) as the
+// live mesh (test-only path). Used by the non-planar closed-loop fixture below.
+void postLoadMesh(string body) {
+    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
+}
+
 string postCommandRaw(string body) {
     return cast(string)post("http://localhost:8080/api/command", body);
 }
@@ -1184,4 +1191,102 @@ unittest {
     assert(orphanVerts(m).length == 0,
         "clamp: orphan verts: " ~ orphanVerts(m).to!string);
     assert(isHoleFree(m), "clamp: result is not hole-free / has folded faces");
+}
+
+// ---------------------------------------------------------------------------
+// 14. NON-PLANAR CLOSED LOOP — shared-corner seam weld + sharp-corner cap miter.
+//     A captured 20v/18f mesh with a closed 10-edge loop winding around a raised
+//     non-axis-aligned structure (extrude=0.2, width=0.05). Two coupled effects
+//     are pinned here:
+//       (a) SEAM WELD at the non-planar loop corners. Each surrounding neighbour
+//           face is inset along its NON-selected boundary edge (face-aware), so
+//           the two selected edges meeting at a corner produce ONE welded inset
+//           per surface side instead of two slightly-offset duplicates. Without
+//           the fix these corners emit +2 verts each (52v); with it the mesh is
+//           40v, matching the reference.
+//       (b) CAP MITER at the SHARP convex corner whose triangular top face is
+//           ringed entirely by selected edges. There is no non-selected boundary
+//           edge to inset along; the inset is the mitered offset of the cap
+//           polygon (width / sin(half-angle) along the inward bisector), landing
+//           the wall vert at (0.6448,0.5,0.6448) — NOT the perpendicular-sum
+//           overshoot (0.7419,0.5,0.7419). The ridge vert (0.8356,0.6717,0.8356)
+//           is unaffected (it was already correct).
+// ---------------------------------------------------------------------------
+unittest {
+    // Raw mesh (exact captured geometry).
+    immutable string rawMesh = `{"vertices":[`
+        ~ `[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],`
+        ~ `[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.763044,0.5,0.763044],[0.763044,-0.5,0.763044],`
+        ~ `[0.267646,-0.467,0.468878],[0.267646,0.467,0.468878],[0.468878,-0.467,0.267646],`
+        ~ `[0.468878,0.467,0.267646],[0.5,0.5,0.166],[0.166,0.5,0.5],[0.343299,-0.5,0.543557],`
+        ~ `[0.543557,-0.5,0.343299],[0.343299,0.5,0.543557],[0.543557,0.5,0.343299],`
+        ~ `[0.5,-0.5,0.166],[0.166,-0.5,0.5]],`
+        ~ `"faces":[[0,3,2,1],[4,19,13,5],[0,4,5,3],[1,2,12,18],[3,5,13,12,2],`
+        ~ `[0,1,18,19,4],[7,6,16,14],[15,17,6,7],[14,15,7],[6,17,16],[8,9,13,19],`
+        ~ `[14,16,9,8],[11,10,18,12],[17,15,10,11],[12,13,9,11],[16,17,11,9],`
+        ~ `[19,18,10,8],[15,14,8,10]]}`;
+    postLoadMesh(rawMesh);
+
+    auto before = getModel();
+    // The 10 loop-edge endpoint pairs (by ORIGINAL vertex position).
+    immutable V3[2][10] loopEdges = [
+        [V3(-0.5,0.5,-0.5),       V3(0.5,0.5,-0.5)],
+        [V3(0.166,0.5,0.5),       V3(-0.5,0.5,0.5)],
+        [V3(-0.5,0.5,0.5),        V3(-0.5,0.5,-0.5)],
+        [V3(0.5,0.5,-0.5),        V3(0.5,0.5,0.166)],
+        [V3(0.763044,0.5,0.763044), V3(0.343299,0.5,0.543557)],
+        [V3(0.543557,0.5,0.343299), V3(0.763044,0.5,0.763044)],
+        [V3(0.267646,0.467,0.468878), V3(0.166,0.5,0.5)],
+        [V3(0.343299,0.5,0.543557), V3(0.267646,0.467,0.468878)],
+        [V3(0.5,0.5,0.166),       V3(0.468878,0.467,0.267646)],
+        [V3(0.468878,0.467,0.267646), V3(0.543557,0.5,0.343299)],
+    ];
+    int[] edgeIdx;
+    foreach (e; loopEdges) {
+        int a = vertAt(before, e[0]);
+        int b = vertAt(before, e[1]);
+        assert(a >= 0 && b >= 0, "loop10: loop edge endpoint not found");
+        int ei = edgeIndex(before, a, b);
+        assert(ei >= 0, "loop10: loop edge not found in model");
+        edgeIdx ~= ei;
+    }
+    assert(edgeIdx.length == 10, "loop10: expected 10 loop edges");
+    postSelect("edges", edgeIdx);
+
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.05}}`);
+    auto m = getModel();
+
+    // Exact reference counts: the seam weld removes the 12 spurious corner
+    // duplicates (52 → 40) and the topology stays 38 faces.
+    assert(m["vertexCount"].integer == 40,
+        "loop10: expected 40 verts (seam weld), got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 38,
+        "loop10: expected 38 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // (b) CAP MITER at the sharp corner: wall vert at the mitered offset, NOT the
+    //     perpendicular-sum overshoot. Ridge vert unchanged.
+    assert(vertAt(m, V3(0.644780, 0.5, 0.644780)) >= 0,
+        "loop10: sharp-corner cap-miter wall vert missing (expected 0.6448)");
+    assert(vertAt(m, V3(0.741905, 0.5, 0.741905)) < 0,
+        "loop10: perpendicular-sum overshoot wall vert present (cap-miter not applied)");
+    assert(vertAt(m, V3(0.835618, 0.671657, 0.835618)) >= 0,
+        "loop10: sharp-corner ridge vert missing");
+
+    // (a) SEAM WELD: the two welded insets at a non-planar loop corner (v12 region,
+    //     original (0.5,0.5,0.166)) — exactly ONE vert each, no offset duplicate.
+    assert(countAt(m, V3(0.5, 0.45, 0.166)) == 1,
+        "loop10: side inset at v12 not welded to one vert");
+    assert(countAt(m, V3(0.464645, 0.5, 0.201355)) == 1,
+        "loop10: top inset at v12 not welded to one vert");
+    // The pre-fix duplicate offsets (~0.015 away) must be ABSENT.
+    assert(vertAt(m, V3(0.504340, 0.452248, 0.151826)) < 0,
+        "loop10: pre-fix duplicate side inset present at v12 (weld failed)");
+    assert(vertAt(m, V3(0.456138, 0.523273, 0.160126)) < 0,
+        "loop10: pre-fix duplicate top inset present at v12 (weld failed)");
+
+    // Manifold, orientable, no duplicate verts, no orphans.
+    assert(orphanVerts(m).length == 0,
+        "loop10: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "loop10: result is not hole-free / has folded faces");
+    assert(noCoincidentVerts(m), "loop10: coincident duplicate vertices present");
 }

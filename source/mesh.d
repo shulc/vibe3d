@@ -841,6 +841,9 @@ struct Mesh {
     /// selected edges that share a corner cannot race on faces[fi].
     size_t extrudeEdgesByMask(in bool[] mask, float extrude, float width) {
         import math : Vec3, cross, dot, normalize;
+        import std.math : acos, sin;
+        import std.algorithm : clamp;
+        static float clampf(float x, float lo, float hi) { return clamp(x, lo, hi); }
         if (mask.length != edges.length) return 0;
         // (Near-)zero inset width ⇒ NO-OP for the whole operation, regardless of
         // extrude: with no inset there is no shrink room for the bridge faces, so
@@ -1069,6 +1072,54 @@ struct Mesh {
             }
             return Vec3(0, 0, 0);
         }
+        // Set of SELECTED edges (the extrude loop) as ordered keys, so the
+        //     shared-corner inset can tell whether a face's boundary edge at v is
+        //     itself part of the loop. When BOTH of a neighbour face's boundary
+        //     edges at v are selected — a *cap corner* (the face is an interior
+        //     region wholly ringed by the loop at v, e.g. the sharp triangular
+        //     top face at an acute loop corner, or the square top face of a
+        //     top-loop) — there is no non-selected boundary edge to inset along;
+        //     the reference offsets BOTH cap edges inward by `width` and lands the
+        //     inset at the mitered intersection (offset along the inward bisector
+        //     by width/sin(θ/2)). For a 90° cap corner this equals the sum of the
+        //     two perpendicular `width` insets, so the cube top-loop stays
+        //     byte-identical; only sharp/obtuse cap corners (where perpendicular
+        //     summing overshoots) differ.
+        bool[ulong] selEdgeKeys;
+        foreach (i; 0 .. edges.length)
+            if (mask[i]) selEdgeKeys[edgeKeyOrdered(edges[i][0], edges[i][1])] = true;
+        bool isSelEdge(uint a, uint b) {
+            return (edgeKeyOrdered(a, b) in selEdgeKeys) !is null;
+        }
+        // Mitered cap-corner inset at endpoint v inside face fi: offset both of
+        //     fi's boundary edges at v inward (in-plane) by `width` and intersect.
+        //     Returns the inset POSITION (not a direction) so the caller can use it
+        //     directly. Geometrically this is v plus the inward bisector scaled by
+        //     width/sin(half angle); it reduces to v + width·e1⊥ + width·e2⊥ at a
+        //     right angle. Returns false if the corner is degenerate (collinear).
+        bool capMiterInset(uint v, int fi, out Vec3 pos) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                if (f[k] != v) continue;
+                uint prev = f[(k + f.length - 1) % f.length];
+                uint next = f[(k + 1) % f.length];
+                Vec3 e1 = vertices[prev] - vertices[v];
+                Vec3 e2 = vertices[next] - vertices[v];
+                if (e1.length < 1e-6f || e2.length < 1e-6f) return false;
+                e1 = normalize(e1);
+                e2 = normalize(e2);
+                Vec3 bis = e1 + e2;
+                if (bis.length < 1e-6f) return false;   // 180° — collinear
+                bis = normalize(bis);
+                float cosT = dot(e1, e2);
+                float halfT = acos(clampf(cosT, -1.0f, 1.0f)) * 0.5f;
+                float s = sin(halfT);
+                if (s < 1e-6f) return false;
+                pos = vertices[v] + bis * (width / s);
+                return true;
+            }
+            return false;
+        }
         // Inset direction at endpoint `v` of the extruded edge (va,vb) within
         //     neighbour face fi. A FREE END is dissolved corner-by-corner along its
         //     incident edges (face-aware, see boundaryEdgeDir). A SHARED corner on
@@ -1082,16 +1133,70 @@ struct Mesh {
         //     NON-coplanar edge — chain/fan/loop where the two neighbour faces bend)
         //     keeps the original perpendicular inset, so corner_fan/corner3/top_loop
         //     stay byte-identical.
+        // Absolute inset positions for cap-miter corners (keyed (v<<32|fi)); when
+        //     set, they OVERRIDE the direction-accumulated position at
+        //     materialisation. Used at shared cap corners whose surrounding face is
+        //     ringed by selected edges (no non-selected boundary edge to inset
+        //     along) — there the inset is the mitered offset of the cap polygon.
+        Vec3[ulong] insetPosOverride;
+        // (v<<32|fi) keys whose inset took the NEW shared-corner face-aware or
+        //     cap-miter path (NOT free-end / not coplanar, which kept their prior
+        //     routing). A bridge touching such a key on a side is wound by
+        //     orientability (emitBridgeFromFace) rather than the `ne` dot test,
+        //     because the face-aware/mitered inset folds the inset edge enough to
+        //     make the averaged-normal heuristic unreliable.
+        bool[ulong] sharedFaceAwareInset;
         Vec3 insetDirAt(uint v, uint va, uint vb, int fi, bool coplanar) {
-            if (isFreeEnd(v) || coplanar) {
-                uint other = (v == va) ? vb : va;
-                float farLen;
-                Vec3 d = boundaryEdgeDir(v, other, fi, farLen);
-                if (d.length >= 1e-6f) {
-                    // Clamp the inset so it stops at (never passes) the far vertex
-                    // of this incident non-selected edge.
-                    recordClamp(v, fi, farLen);
-                    return d;
+            uint other = (v == va) ? vb : va;
+            bool sharedOnly = isShared(v) && !isFreeEnd(v) && !coplanar;
+            // SHARED corner extension: the reference dissolves a shared (welded)
+            //     loop corner face-aware, the same way it does free ends — inset
+            //     along the face's NON-selected boundary edge at v. When BOTH of
+            //     the face's boundary edges at v are selected (a cap corner), there
+            //     is no non-selected edge; record the mitered cap offset instead.
+            //     A right-angle cap corner's miter equals the perpendicular sum, so
+            //     axis-aligned cube cases (corner_fan/corner3/top_loop) are
+            //     unchanged; only sharp/obtuse cap corners shift.
+            if (isFreeEnd(v) || coplanar || isShared(v)) {
+                auto f = faces[fi];
+                // Identify the two boundary edges of fi at v.
+                bool prevSel = false, nextSel = false, found = false;
+                uint prev, next;
+                foreach (k; 0 .. f.length) {
+                    if (f[k] != v) continue;
+                    prev = f[(k + f.length - 1) % f.length];
+                    next = f[(k + 1) % f.length];
+                    prevSel = isSelEdge(prev, v);
+                    nextSel = isSelEdge(v, next);
+                    found = true;
+                    break;
+                }
+                if (found && prevSel && nextSel) {
+                    // Cap corner — no non-selected boundary edge. Use the mitered
+                    // cap-polygon offset (position override). Only meaningful for
+                    // shared corners; free ends never have both boundary edges
+                    // selected (their single edge is the only selected one).
+                    Vec3 mp;
+                    if (capMiterInset(v, fi, mp)) {
+                        ulong k = (cast(ulong)v << 32) | cast(uint)fi;
+                        insetPosOverride[k] = mp;
+                        if (sharedOnly) sharedFaceAwareInset[k] = true;
+                        // Direction is irrelevant (overridden); return a unit dir
+                        // so accumInset stays well-formed.
+                        return inwardDir(va, vb, fi);
+                    }
+                    // capMiter degenerate → fall through to perpendicular.
+                } else {
+                    float farLen;
+                    Vec3 d = boundaryEdgeDir(v, other, fi, farLen);
+                    if (d.length >= 1e-6f) {
+                        // Clamp the inset so it stops at (never passes) the far
+                        // vertex of this incident non-selected edge.
+                        recordClamp(v, fi, farLen);
+                        if (sharedOnly)
+                            sharedFaceAwareInset[(cast(ulong)v << 32) | cast(uint)fi] = true;
+                        return d;
+                    }
                 }
             }
             return inwardDir(va, vb, fi);
@@ -1129,7 +1234,10 @@ struct Mesh {
                 float len = off.length;
                 if (len > *cap && len > 1e-9f) off = off * (*cap / len);
             }
-            Vec3 p = vertices[v] + off;
+            // Cap-miter corners carry an ABSOLUTE position override (the mitered
+            //     offset of the cap polygon); it supersedes the direction-based
+            //     offset entirely.
+            Vec3 p = (k in insetPosOverride) ? insetPosOverride[k] : vertices[v] + off;
             import std.format : format;
             string wk = format("%u|%d|%d|%d", v,
                 cast(long)(p.x * 1e5f + (p.x >= 0 ? 0.5f : -0.5f)),
@@ -1463,16 +1571,32 @@ struct Mesh {
                 // byte-identical (corner_fan/corner3/top_loop/interior unaffected).
                 ulong kIA2 = (cast(ulong)e.va << 32) | cast(uint)e.fB;
                 ulong kIB2 = (cast(ulong)e.vb << 32) | cast(uint)e.fB;
-                if (e.coplanar) {
+                // A bridge whose neighbour-face side touches a CAP-MITER inset
+                //     (an endpoint whose inset position was overridden) cannot rely
+                //     on the `ne` dot test either: the cap-miter pulls the inset
+                //     deep inward, so the bridge quad becomes strongly non-planar
+                //     and its averaged normal can point opposite `ne`, flipping the
+                //     winding. Such a side is wound the orientable way — from the
+                //     neighbour face's own traversal of the shared inset edge —
+                //     exactly like the coplanar case. A side touching no override
+                //     keeps the byte-identical `ne` path.
+                bool capSideA = ((kIA in sharedFaceAwareInset) !is null)
+                             || ((kIB in sharedFaceAwareInset) !is null);
+                bool capSideB = ((kIA2 in sharedFaceAwareInset) !is null)
+                             || ((kIB2 in sharedFaceAwareInset) !is null);
+                if (e.coplanar || capSideA) {
                     emitBridgeFromFace(insetVert[kIA], insetVert[kIB],
                                        ridgeVert[e.va], ridgeVert[e.vb], e.fA, e.fA);
+                } else {
+                    emitBridge([insetVert[kIA], insetVert[kIB],
+                                ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fA);
+                }
+                if (e.coplanar || capSideB) {
                     emitBridgeFromFace(insetVert[kIA2], insetVert[kIB2],
                                        ridgeVert[e.va], ridgeVert[e.vb], e.fB, e.fB);
                 } else {
-                emitBridge([insetVert[kIA], insetVert[kIB],
-                            ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fA);
-                emitBridge([insetVert[kIA2], insetVert[kIB2],
-                            ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fB);
+                    emitBridge([insetVert[kIA2], insetVert[kIB2],
+                                ridgeVert[e.vb], ridgeVert[e.va]], e.ne, e.fB);
                 }
                 // §5.c: triangle cap closing each FREE-END corner gap between the
                 // two neighbor insets and the ridge vert. Interior chain joints
