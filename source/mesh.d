@@ -1004,9 +1004,24 @@ struct Mesh {
         //     so the shared corner stays continuous and only ONE inset vert is
         //     made in that face (§1.4.2).
         Vec3[ulong] insetAccum;           // key = (v<<32)|fi → Σ inward dir
+        // Face-aware (along-incident-edge) insets clamp their offset so the inset
+        //     can never travel PAST the far vertex of the incident non-selected
+        //     edge — when `width` ≥ that edge's length the reference bumps the
+        //     inset into the far vertex and stops (it does NOT overshoot and
+        //     self-intersect). We record, per (v,fi) inset key, the smallest
+        //     incident-edge length contributing a face-aware direction there; the
+        //     offset length is clamped to it at materialisation time. Keys with no
+        //     face-aware contribution (the perpendicular `inwardDir` path, which
+        //     has no well-defined far vertex along its direction) carry no cap and
+        //     are left unclamped.
+        float[ulong] insetClampLen;       // key = (v<<32)|fi → min face-aware far dist
         void accumInset(uint v, int fi, Vec3 d) {
             ulong k = (cast(ulong)v << 32) | cast(uint)fi;
             insetAccum.update(k, () => d, (ref Vec3 acc) { acc = acc + d; });
+        }
+        void recordClamp(uint v, int fi, float len) {
+            ulong k = (cast(ulong)v << 32) | cast(uint)fi;
+            insetClampLen.update(k, () => len, (ref float c) { if (len < c) c = len; });
         }
         // In-plane inward direction at endpoint v of edge (va,vb) within face fi.
         Vec3 inwardDir(uint va, uint vb, int fi) {
@@ -1037,7 +1052,8 @@ struct Mesh {
         //     plane, folding the inset onto the side face — exactly what the
         //     reference does. Returns Vec3(0) if no distinct boundary edge is found
         //     (caller falls back to the perpendicular inwardDir).
-        Vec3 boundaryEdgeDir(uint v, uint other, int fi) {
+        Vec3 boundaryEdgeDir(uint v, uint other, int fi, out float farLen) {
+            farLen = 0;
             auto f = faces[fi];
             foreach (k; 0 .. f.length) {
                 if (f[k] != v) continue;
@@ -1048,6 +1064,7 @@ struct Mesh {
                 uint far = (prev == other) ? next : prev;
                 Vec3 d = vertices[far] - vertices[v];
                 if (d.length < 1e-6f) return Vec3(0, 0, 0);
+                farLen = d.length;
                 return normalize(d);
             }
             return Vec3(0, 0, 0);
@@ -1068,8 +1085,14 @@ struct Mesh {
         Vec3 insetDirAt(uint v, uint va, uint vb, int fi, bool coplanar) {
             if (isFreeEnd(v) || coplanar) {
                 uint other = (v == va) ? vb : va;
-                Vec3 d = boundaryEdgeDir(v, other, fi);
-                if (d.length >= 1e-6f) return d;
+                float farLen;
+                Vec3 d = boundaryEdgeDir(v, other, fi, farLen);
+                if (d.length >= 1e-6f) {
+                    // Clamp the inset so it stops at (never passes) the far vertex
+                    // of this incident non-selected edge.
+                    recordClamp(v, fi, farLen);
+                    return d;
+                }
             }
             return inwardDir(va, vb, fi);
         }
@@ -1098,7 +1121,15 @@ struct Mesh {
             //     offsets ADD (they do NOT average-and-renormalize). For a single
             //     contribution `acc` is already a unit vector ⇒ width*acc, i.e.
             //     identical to the single-edge inset (no single-edge regression).
-            Vec3 p = vertices[v] + acc * width;
+            Vec3 off = acc * width;
+            // Face-aware insets clamp so they cannot pass the far vertex of their
+            //     incident non-selected edge (offset length ≤ that edge length).
+            //     Keys with no face-aware contribution carry no cap (unclamped).
+            if (auto cap = k in insetClampLen) {
+                float len = off.length;
+                if (len > *cap && len > 1e-9f) off = off * (*cap / len);
+            }
+            Vec3 p = vertices[v] + off;
             import std.format : format;
             string wk = format("%u|%d|%d|%d", v,
                 cast(long)(p.x * 1e5f + (p.x >= 0 ? 0.5f : -0.5f)),

@@ -1113,3 +1113,75 @@ unittest {
     assert(isHoleFree(m), "cut-loop: result is not hole-free / has folded faces");
     assert(noCoincidentVerts(m), "cut-loop: coincident duplicate vertices present");
 }
+
+// ---------------------------------------------------------------------------
+// 13. WIDTH-INSET CLAMP — the face-aware free-end inset moves a dissolved
+//     corner ALONG its incident non-selected edge by `width`. When `width`
+//     EXCEEDS that edge's length the reference modeler bumps the inset into the
+//     far vertex and STOPS (clamps at the far vertex); it does NOT overshoot
+//     and self-intersect. Cube top-front edge: both endpoints are interior free
+//     ends; the +Y top face and +Z front face are 1×1, so the incident
+//     non-selected cube edges are length 1.0. With width=1.5 the top-face
+//     insets must clamp at the back-top edge (z = -0.5) and the front-face
+//     insets at the bottom-front edge (y = -0.5) — exactly on the back/bottom
+//     cube corners, NOT past them. Topology stays the same 12v/10f as the
+//     unclamped case; the clamped inset verts are KEPT as separate vertices
+//     coincident with the cube corners (the reference does NOT weld them away).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+
+    int va = vertAt(before, V3(-0.5, 0.5, 0.5));
+    int vb = vertAt(before, V3( 0.5, 0.5, 0.5));
+    assert(va >= 0 && vb >= 0, "clamp: cube top-front endpoints not found");
+    int ei = edgeIndex(before, va, vb);
+    assert(ei >= 0, "clamp: cube top-front edge not found");
+    postSelect("edges", [ei]);
+
+    // width = 1.5 ≫ the incident cube-edge length (1.0): inset must clamp.
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":0.1,"width":1.5}}`);
+    auto m = getModel();
+
+    // Same topology as the unclamped free-end cube case.
+    assert(m["vertexCount"].integer == 12,
+        "clamp: expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "clamp: expected 10 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // The four clamped inset verts land EXACTLY on the far cube corners — not
+    // beyond. Top-face insets clamp at the back-top edge (z = -0.5); front-face
+    // insets clamp at the bottom-front edge (y = -0.5).
+    immutable V3[4] clamped = [
+        V3( 0.5,  0.5, -0.5), V3(-0.5,  0.5, -0.5),   // top-face insets, z clamped
+        V3( 0.5, -0.5,  0.5), V3(-0.5, -0.5,  0.5),   // front-face insets, y clamped
+    ];
+    foreach (p; clamped)
+        assert(vertAt(m, p) >= 0,
+            "clamp: clamped inset vert missing at far corner " ~ p.to!string);
+
+    // The inset must NOT overshoot the far vertex. Pre-fix vibe3d ran the full
+    // width=1.5 and landed the top-face insets at z = -1.0 and the front-face
+    // insets at y = -1.0 (past the corners, self-intersecting). NONE may exist.
+    immutable V3[4] overshoot = [
+        V3( 0.5,  0.5, -1.0), V3(-0.5,  0.5, -1.0),
+        V3( 0.5, -1.0,  0.5), V3(-0.5, -1.0,  0.5),
+    ];
+    foreach (p; overshoot)
+        assert(vertAt(m, p) < 0,
+            "clamp: inset OVERSHOT the far vertex (present at " ~ p.to!string ~ ")");
+
+    // The clamped inset verts are coincident with the cube corners but KEPT
+    // separate (the reference does NOT weld them) — so each far corner position
+    // is occupied by exactly TWO vertices (the surviving cube corner + 1 inset).
+    foreach (p; clamped)
+        assert(countAt(m, p) == 2,
+            "clamp: expected the clamped inset to stay separate (2 verts) at " ~
+            p.to!string ~ ", got " ~ countAt(m, p).to!string);
+
+    // Hole-free, orientable, no orphans.
+    assert(orphanVerts(m).length == 0,
+        "clamp: orphan verts: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "clamp: result is not hole-free / has folded faces");
+}
