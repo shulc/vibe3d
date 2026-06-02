@@ -104,7 +104,8 @@ private:
     // selection. `gizmoValid` is false when there is no extrudable selection
     // (empty mesh) — the handles are then not drawn / not registered.
     bool gizmoValid;
-    Vec3 anchor;        // selection centroid
+    Vec3 anchor;        // selection centroid (analytic, updated each frame in draw())
+    Vec3 baseAnchor;    // ORIGINAL pre-extrude selected-edge centroid (fixed per frame from selection)
     Vec3 extrudeAxis;   // unit: averaged neighbour-polygon normal (ridge lift dir)
     Vec3 widthAxis;     // unit: in-plane inset direction (perpendicular to edge tangent)
     uint gizmoSelHash;  // selection signature the gizmo frame was built for
@@ -113,9 +114,15 @@ private:
     // base param + last mouse position for the axis-projected delta.
     enum int PART_EXTRUDE = 0;
     enum int PART_WIDTH    = 1;
-    int   dragPart = -1;           // -1 = none, PART_EXTRUDE / PART_WIDTH
-    int   dragLastMX, dragLastMY;
+    enum int PART_FREE     = 2;    // off-handle blind 2-axis screen drag
+    int   dragPart = -1;           // -1 = none, PART_EXTRUDE / PART_WIDTH / PART_FREE
+    int   dragLastMX, dragLastMY;  // last mouse pos (incremental on-handle drags)
+    int   dragStartMX, dragStartMY;// drag-start mouse pos (total-delta free drag)
     float dragBaseExtrude, dragBaseWidth;
+
+    // Pixel→param scale for the off-handle free drag (matches the tool's prior
+    // blind whole-screen 2-axis drag scale).
+    enum float FREE_SCALE = 0.01f;
 
     // Two registered, clickable gizmo handles + their arbiter.
     Arrow       extrudeArrow;      // BLUE — extrude (cone head)
@@ -259,26 +266,60 @@ public:
 
         // Ask the arbiter which handle (if any) the click landed on.
         int part = toolHandles.test(e.x, e.y, cachedVp);
-        if (part != PART_EXTRUDE && part != PART_WIDTH) return false;
 
-        dragPart        = part;
         dragLastMX      = e.x;
         dragLastMY      = e.y;
+        dragStartMX     = e.x;
+        dragStartMY     = e.y;
         dragBaseExtrude = extrude_;
         dragBaseWidth   = width_;
-        toolHandles.setHaul(part);
+
+        if (part == PART_EXTRUDE || part == PART_WIDTH) {
+            // On-handle: single-axis world-projected incremental drag.
+            dragPart = part;
+            toolHandles.setHaul(part);
+            return true;
+        }
+
+        // Off-handle (miss): begin a blind 2-axis screen-space free drag —
+        // up/down → extrude, left/right → width. No handle is captured, so we
+        // do NOT setHaul.
+        dragPart = PART_FREE;
         return true;
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0 || !gizmoValid) return false;
 
-        // Project the per-event mouse delta onto the screen-space direction of
-        // the dragged handle's WORLD axis to get a world-space distance, then
-        // map that distance directly to the param (1 world unit = 1 param unit,
-        // since both extrude and width are world-space offsets the kernel adds
-        // along these very axes). screenAxisDelta returns `axis * d`; the
-        // signed magnitude `d` along the unit axis IS the param delta.
+        if (dragPart == PART_FREE) {
+            // Off-handle blind 2-axis screen drag. Use the TOTAL delta from the
+            // drag start (not incremental) so the Ctrl axis-lock below can pin
+            // one axis cleanly without accumulating drift. Screen mapping (NOT
+            // world-axis): up (−dy) → +extrude, right (+dx) → +width.
+            int dx = e.x - dragStartMX;
+            int dy = e.y - dragStartMY;
+            extrude_ = dragBaseExtrude + (-dy) * FREE_SCALE;
+            width_   = dragBaseWidth   + ( dx) * FREE_SCALE;
+            // Ctrl locks to the dominant axis (by total-delta magnitude): a
+            // taller-than-wide drag is pure extrude, otherwise pure width.
+            if (SDL_GetModState() & KMOD_CTRL) {
+                if (abs(dy) >= abs(dx)) width_   = dragBaseWidth;    // EXTRUDE only
+                else                    extrude_ = dragBaseExtrude;  // WIDTH only
+            }
+            if (width_ < 0.0f) width_ = 0.0f;
+            rebuildPreview();
+            dragLastMX = e.x;
+            dragLastMY = e.y;
+            return true;
+        }
+
+        // On-handle: project the per-event mouse delta onto the screen-space
+        // direction of the dragged handle's WORLD axis to get a world-space
+        // distance, then map that distance directly to the param (1 world unit
+        // = 1 param unit, since both extrude and width are world-space offsets
+        // the kernel adds along these very axes). screenAxisDelta returns
+        // `axis * d`; the signed magnitude `d` along the unit axis IS the param
+        // delta.
         Vec3 axis = (dragPart == PART_EXTRUDE) ? extrudeAxis : widthAxis;
         bool skip;
         Vec3 delta = screenAxisDelta(e.x, e.y, dragLastMX, dragLastMY,
@@ -316,14 +357,17 @@ public:
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        // Anchor FOLLOWS the live edge: recompute the anchor from the CURRENT
-        // selected edges' centroid every frame (after the kernel reselects the
-        // lifted ridge edges, mesh.selectedEdges ARE those ridge edges, so the
-        // centroid tracks the ridge and the whole gizmo slides outward with the
-        // edge as extrude grows — exactly like the move gizmo following moved
-        // geometry). The AXES stay fixed (computed once at activate() from the
-        // ORIGINAL pre-extrude neighbour normals); only the position moves.
-        anchor = currentAnchor();
+        // Anchor is computed ANALYTICALLY from the extrude VALUE, not the live
+        // mesh: anchor = baseAnchor + extrude_ * extrudeAxis. This makes the
+        // gizmo slide outward with the extrude value even when width==0 (the
+        // kernel no-ops for width<1e-6, so no ridge is built and the live
+        // selection stays on the original edge — but the handle gives
+        // predictive feedback regardless). When width>0 the ridge centroid IS
+        // baseAnchor + extrude_*extrudeAxis (ridge = original + extrude*averaged
+        // normal), so this also reproduces the prior "follows the live edge"
+        // behaviour. The AXES stay fixed (computed once from the ORIGINAL
+        // pre-extrude neighbour normals); only the position moves.
+        anchor = baseAnchor + extrudeAxis * extrude_;
 
         // Position the two handles, screen-stable via gizmoSize(). The WIDTH
         // handle mirrors ScaleHandler's axis arrows: shaft from anchor+axis*
@@ -402,31 +446,6 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // currentAnchor — centroid of the CURRENT selected edges' endpoints
-    // (empty ⇒ whole mesh). Called every frame in draw() so the gizmo follows
-    // the live ridge as extrude grows: after the kernel reselects the lifted
-    // ridge edges, mesh.selectedEdges ARE those edges, so their centroid tracks
-    // the ridge outward. This is the anchor-only counterpart to
-    // computeGizmoFrame() (which also builds the FIXED axes); it never touches
-    // the axes. Falls back to the cached anchor if nothing is selectable.
-    // -----------------------------------------------------------------------
-    Vec3 currentAnchor() {
-        if (mesh.edges.length == 0) return anchor;
-        bool wholeMesh = mesh.nothingSelected(EditMode.Edges);
-        auto sel = mesh.selectedEdges;
-        Vec3 sum = Vec3(0, 0, 0);
-        size_t n = 0;
-        foreach (i; 0 .. mesh.edges.length) {
-            bool selected = wholeMesh || (i < sel.length && sel[i]);
-            if (!selected) continue;
-            sum = sum + mesh.vertices[mesh.edges[i][0]] + mesh.vertices[mesh.edges[i][1]];
-            n  += 2;
-        }
-        if (n == 0) return anchor;
-        return Vec3(sum.x / n, sum.y / n, sum.z / n);
-    }
-
-    // -----------------------------------------------------------------------
     // computeGizmoFrame — anchor + FIXED extrude/width axes from the CURRENT
     // edge selection (empty ⇒ whole mesh). Computed at activate() and whenever
     // the selection changes while idle. The AXES are the fixed part: they are
@@ -486,6 +505,11 @@ private:
 
         if (centN == 0) return;
         anchor = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);
+        // Freeze the ORIGINAL pre-extrude centroid. The per-frame gizmo anchor
+        // is computed analytically from this base + the extrude VALUE (see
+        // draw()), so the handle slides out predictively even when width==0
+        // (which makes the kernel a no-op, leaving the live selection put).
+        baseAnchor = anchor;
 
         // Extrude axis = averaged normal; fall back to world +Y if degenerate.
         float nl = sqrt(normSum.x*normSum.x + normSum.y*normSum.y + normSum.z*normSum.z);
