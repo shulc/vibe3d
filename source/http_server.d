@@ -121,6 +121,19 @@ class HttpServer {
     private JSONValue pendingXfParams;
     private string    pendingXfError;
 
+    // ----- /api/load-mesh synchronous bridge -------------------------------
+    // POST /api/load-mesh {"vertices":[[x,y,z],...],"faces":[[i,j,k,...],...]}
+    // replaces the live mesh with caller-supplied raw geometry. Test-only
+    // injection path (mirrors /api/reset's main-thread bridge): the handler
+    // builds a fresh Mesh, rebuilds derived data and refreshes GPU + caches
+    // on the main thread, leaving the same consistent post-load state.
+    private alias LoadMeshHandler = void delegate(JSONValue params);
+    private LoadMeshHandler loadMeshHandler;
+    private shared long lmSubmittedEpoch;
+    private shared long lmCompletedEpoch;
+    private JSONValue pendingLmParams;
+    private string    pendingLmError;
+
     // ----- /api/undo + /api/redo synchronous bridge ------------------------
     // The handler returns true on success (an entry was undone/redone) or
     // false on stack-empty / revert-failure. /api/history is a read-only
@@ -306,6 +319,15 @@ class HttpServer {
      */
     public void setTransformHandler(TransformHandler handler) {
         this.transformHandler = handler;
+    }
+
+    /**
+     * Set the load-mesh handler callback (POST /api/load-mesh). Same
+     * synchronous main-thread dispatch as setTransformHandler — see
+     * tickLoadMesh(). Test-only raw-mesh injection.
+     */
+    public void setLoadMeshHandler(LoadMeshHandler handler) {
+        this.loadMeshHandler = handler;
     }
 
     /**
@@ -848,6 +870,57 @@ class HttpServer {
                 }
             }
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/load-mesh" && request.method == "POST") {
+            // Test-only raw-mesh injection. Validate the JSON shape on the
+            // HTTP thread (so we can report counts), then dispatch to the
+            // main thread via the same epoch bridge as /api/transform. The
+            // main-thread handler re-validates index range / degree before
+            // touching the live mesh and throws on bad input.
+            if (loadMeshHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"load-mesh handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if (j.type != JSONType.object)
+                        throw new Exception("body must be a JSON object");
+                    if ("vertices" !in j || j["vertices"].type != JSONType.array)
+                        throw new Exception("missing 'vertices' array field");
+                    if ("faces" !in j || j["faces"].type != JSONType.array)
+                        throw new Exception("missing 'faces' array field");
+                    long vCount = cast(long)j["vertices"].array.length;
+                    long fCount = cast(long)j["faces"].array.length;
+
+                    pendingLmParams = j;
+                    pendingLmError  = "";
+                    long my = atomicOp!"+="(lmSubmittedEpoch, 1);
+                    enum int maxIters = 2500;
+                    int iters = 0;
+                    while (atomicLoad(lmCompletedEpoch) < my) {
+                        if (++iters > maxIters) {
+                            pendingLmError = "timeout waiting for main thread";
+                            break;
+                        }
+                        Thread.sleep(2.msecs);
+                    }
+                    if (pendingLmError.length == 0) {
+                        import std.format : format;
+                        response.statusCode = 200;
+                        response.body = format(
+                            `{"status":"ok","vertexCount":%d,"faceCount":%d}`,
+                            vCount, fCount);
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ pendingLmError.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/select" && request.method == "POST") {
             if (selectionHandler is null) {
                 response.statusCode = 200;
@@ -1380,6 +1453,28 @@ class HttpServer {
             }
         }
         atomicStore(xfCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick load-mesh — same pattern as tickTransform, for /api/load-mesh.
+     * Runs the raw-mesh injection on the main thread so GPU upload + cache
+     * refresh happen on the GL/main thread.
+     */
+    public void tickLoadMesh() {
+        long sub = atomicLoad(lmSubmittedEpoch);
+        long cmp = atomicLoad(lmCompletedEpoch);
+        if (sub <= cmp) return;
+        if (loadMeshHandler is null) {
+            pendingLmError = "load-mesh handler not set";
+        } else {
+            try {
+                loadMeshHandler(pendingLmParams);
+                pendingLmError = "";
+            } catch (Exception e) {
+                pendingLmError = e.msg;
+            }
+        }
+        atomicStore(lmCompletedEpoch, sub);
     }
 
     /// Tick GPU-surface — same pattern as tickCameraSet, for GET
