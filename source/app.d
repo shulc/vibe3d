@@ -2041,13 +2041,16 @@ void main(string[] args) {
             // effect = 1 entry per drag/edit cycle. Outside refire, fire()
             // falls through to plain apply()+record(), preserving Phase A
             // semantics.
-            if (history.refireActive) {
-                if (!history.fire(cmd))
-                    throw new Exception("command '" ~ id ~ "' did not apply");
-            } else {
-                if (!cmd.apply())
-                    throw new Exception("command '" ~ id ~ "' did not apply");
-                history.record(cmd);
+            {
+                auto zCmd = g_perf.scope_(Cat.commandApply);
+                if (history.refireActive) {
+                    if (!history.fire(cmd))
+                        throw new Exception("command '" ~ id ~ "' did not apply");
+                } else {
+                    if (!cmd.apply())
+                        throw new Exception("command '" ~ id ~ "' did not apply");
+                    history.record(cmd);
+                }
             }
         };
         httpServer.setCommandHandler(commandHandlerDelegate);

@@ -45,6 +45,11 @@ enum Cat {
     // SnapStage that publishes a config packet (~0); the heavy query
     // runs from the tools every motion event and is timed here.
     snapQuery,
+    // commandApply times a full command apply() at the dispatch site —
+    // used to bench one-shot discrete commands like mesh.delete /
+    // mesh.remove (interactive transform drags use kernelApply / pipeTotal
+    // instead). Must stay a TIMER (ordinal < firstCounter).
+    commandApply,
     // --- counters ---
     falloffEvalCount,
     vertsTouched,

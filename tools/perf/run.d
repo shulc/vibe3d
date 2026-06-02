@@ -268,6 +268,41 @@ bool selectVertices(int[] indices) {
     }
 }
 
+// Mode-aware selection. POST /api/select {"mode":mode,"indices":[...]}.
+// `mesh.select` sets the app's editMode to match `mode` as a side effect,
+// and an empty `indices` clears the selection (⇒ "whole mesh"). Returns
+// true on {"status":"ok"}.
+bool selectMode(string mode, int[] indices) {
+    auto a = appender!string();
+    a.put(`{"mode":"`);
+    a.put(mode);
+    a.put(`","indices":[`);
+    foreach (i, v; indices) {
+        if (i) a.put(",");
+        a.put(v.to!string);
+    }
+    a.put("]}");
+    try {
+        auto resp = post(g_baseUrl ~ "/api/select", a.data);
+        auto j = parseJSON(cast(string)resp);
+        return ("status" in j) && j["status"].str == "ok";
+    } catch (Exception) {
+        return false;
+    }
+}
+
+// POST a bare command-id argstring to /api/command (e.g. "mesh.delete").
+// Returns true on {"status":"ok"}.
+bool postCommand(string id) {
+    try {
+        auto resp = post(g_baseUrl ~ "/api/command", id);
+        auto j = parseJSON(cast(string)resp);
+        return ("status" in j) && j["status"].str == "ok";
+    } catch (Exception) {
+        return false;
+    }
+}
+
 void playAndWait(string log) {
     auto resp = post(g_baseUrl ~ "/api/play-events", log);
     auto j = parseJSON(cast(string)resp);
@@ -349,6 +384,19 @@ int[] selHalf(int n) {
 // "whole" — empty selection ⇒ the whole mesh moves (universal transform
 // rule, CLAUDE.md). We model it as NO selection call; the caller skips
 // /api/select for whole.
+
+// Grid faces are row-major: face(i,j) = i*n + j, for i,j in 0..n (n×n
+// faces). Mirrors selHalf's lower-half style but in face space.
+int gridFace(int n, int i, int j) { return i * n + j; }
+
+// Faces in the lower-Z half: rows i < n/2, all columns j in 0..n.
+int[] faceHalf(int n) {
+    int[] r;
+    foreach (i; 0 .. n / 2)
+        foreach (j; 0 .. n)
+            r ~= gridFace(n, i, j);
+    return r;
+}
 
 // ---------------------------------------------------------------------------
 // Matrix definition
@@ -548,6 +596,8 @@ struct CaseResult {
     long       vertsTouched;     // sum from the last repeat
     long       kernelInternalP95Ns;  // /api/perf's own per-sample p95
     JSONValue  lastBreakdown;    // full /api/perf from the last repeat
+    bool       isCommand;        // true for delete/remove command cases
+    long       commandApplyCount;// commandApply.count from last repeat (for I6)
 }
 
 // Apply the selection (or clear it for "whole").
@@ -717,6 +767,117 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     res.kernelInternalP95Ns = ("kernelApply" in last)
         ? last["kernelApply"]["p95_ns"].integer : 0;
     res.lastBreakdown = last;
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// One-shot command cases (mesh.delete / mesh.remove)
+//
+// Unlike the drag cases, these are discrete destructive /api/command calls.
+// Their whole cost lands in the new commandApply category (count==1 per
+// command); they never touch kernelApply. Because delete is destructive the
+// mesh is rebuilt every repeat, and the selection + perfReset happen OUTSIDE
+// the measured window (perfReset zeroes commandApply right before the single
+// command POST).
+// ---------------------------------------------------------------------------
+
+struct CmdCase {
+    string name;       // "delete/polygons/whole"
+    string commandId;  // "mesh.delete" | "mesh.remove"
+    string mode;       // "vertices" | "edges" | "polygons"
+    string selection;  // "whole" | "half"
+}
+
+// Selection indices for a command case. "whole" ⇒ empty (whole mesh).
+// "half" ⇒ selHalf for vertices, faceHalf for polygons. Edges only ever
+// use "whole" (no edge-index selection helper).
+int[] cmdIndices(ref CmdCase c, int n) {
+    if (c.selection == "whole") return [];
+    if (c.mode == "vertices")   return selHalf(n);
+    if (c.mode == "polygons")   return faceHalf(n);
+    return [];   // edges/half — unused (edges only uses whole)
+}
+
+// Matrix: for each of mesh.delete / mesh.remove, exercise vertices(whole,
+// half) / edges(whole) / polygons(whole, half) ⇒ 10 cases. Names use the
+// SHORT verb, e.g. "delete/vertices/whole".
+CmdCase[] commandCases() {
+    CmdCase[] cs;
+    struct Spec { string id, verb; }
+    foreach (s; [Spec("mesh.delete", "delete"), Spec("mesh.remove", "remove")]) {
+        cs ~= CmdCase(s.verb ~ "/vertices/whole", s.id, "vertices", "whole");
+        cs ~= CmdCase(s.verb ~ "/vertices/half",  s.id, "vertices", "half");
+        cs ~= CmdCase(s.verb ~ "/edges/whole",    s.id, "edges",    "whole");
+        cs ~= CmdCase(s.verb ~ "/polygons/whole", s.id, "polygons", "whole");
+        cs ~= CmdCase(s.verb ~ "/polygons/half",  s.id, "polygons", "half");
+    }
+    return cs;
+}
+
+CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
+    CaseResult res;
+    res.name = c.name;
+    res.isCommand = true;
+    res.note = c.mode ~ " " ~ c.selection;
+
+    double[] applyUs;
+    JSONValue last;
+    long lastCount = 0;
+    long beforeFaces = 0, afterFaces = 0;
+    long beforeVerts = 0, afterVerts = 0;
+
+    foreach (r; 0 .. repeats) {
+        // Rebuild the cage every repeat — delete is destructive.
+        resetMesh(meshType, n);
+        // Selection (+ edit mode side effect) is OUTSIDE the measured window.
+        if (!selectMode(c.mode, cmdIndices(c, n))) {
+            res.status = CaseStatus.ERROR;
+            res.detail = "selection failed";
+            return res;
+        }
+        auto mb = modelInfo();
+        beforeFaces = mb.faceCount;
+        beforeVerts = mb.vertexCount;
+        perfReset();
+        if (!postCommand(c.commandId)) {
+            res.status = CaseStatus.ERROR;
+            res.detail = "command failed";
+            return res;
+        }
+        auto perf = perfRead();
+        applyUs ~= cast(double)sumNs(perf, "commandApply") / 1000.0;
+        lastCount = ("commandApply" in perf)
+            ? perf["commandApply"]["count"].integer : 0;
+        auto ma = modelInfo();
+        afterFaces = ma.faceCount;
+        afterVerts = ma.vertexCount;
+        last = perf;
+    }
+
+    // Topology-change sanity: a delete/remove must actually alter the cage.
+    // Vertices/Polygons modes drop faces; whole-mesh Edges dissolve merges
+    // adjacent faces and cleans up degree-2 verts WITHOUT reducing the face
+    // count (the boundary walk reconstructs the same perimeter, only the 4
+    // corner verts dissolve). So accept a change in EITHER face OR vertex
+    // count, not a strict face reduction.
+    bool changed = beforeFaces > 0 &&
+                   (afterFaces < beforeFaces || afterVerts != beforeVerts);
+    if (!changed) {
+        res.status = CaseStatus.ERROR;
+        res.detail = format("no geometry changed (faces %d→%d, verts %d→%d)",
+                            beforeFaces, afterFaces, beforeVerts, afterVerts);
+        return res;
+    }
+
+    res.status = CaseStatus.OK;
+    // Reuse the kernel median/p95 fields to carry the commandApply cost so
+    // the existing table / results / baseline / absolute-compare code works
+    // unchanged.
+    res.kernelMedianUs    = medianOf(applyUs);
+    res.kernelP95Us       = p95Of(applyUs);
+    res.dominantStage     = "commandApply";
+    res.commandApplyCount = lastCount;
+    res.lastBreakdown     = last;
     return res;
 }
 
@@ -1116,6 +1277,18 @@ Invariant[] checkInvariants(CaseResult[] results) {
                    r.snapQueryCount, r.snapQuerySumUs, r.snapQueryMedianUs));
     }
 
+    // I6 — command apply is timed: for every one-shot command case
+    // (mesh.delete / mesh.remove), commandApply must have been recorded
+    // (count > 0). Analogous to I5's "snap engaged" count check — pins that
+    // the dispatch-site scope timer actually fired for the discrete command.
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK || !r.isCommand) continue;
+        bool ok = r.commandApplyCount > 0;
+        inv ~= Invariant("I6", format("%s commandApply timed", r.name), ok,
+            format("commandApply count=%d, median=%.1f µs",
+                   r.commandApplyCount, r.kernelMedianUs));
+    }
+
     return inv;
 }
 
@@ -1235,7 +1408,19 @@ int main(string[] args) {
         foreach (req; requested) if (c.name.canFind(req)) keepIt = true;
         if (keepIt) cases ~= c;
     }
-    if (cases.length == 0) {
+
+    // Filter the one-shot command cases with the SAME requested-substring
+    // logic, up front, so the "no cases matched" guard accounts for them too
+    // (the drag tokens "delete"/"remove" match no drag case but should still
+    // run the command cases).
+    CmdCase[] cmdCases;
+    foreach (cc; commandCases()) {
+        bool keepIt = requested.length == 0;
+        foreach (req; requested) if (cc.name.canFind(req)) keepIt = true;
+        if (keepIt) cmdCases ~= cc;
+    }
+
+    if (cases.length == 0 && cmdCases.length == 0) {
         writeln("no cases matched");
         return 0;
     }
@@ -1259,6 +1444,20 @@ int main(string[] args) {
         write("  running ", c.name, " ... ");
         stdout.flush();
         auto r = runCase(c, meshParam, meshType, repeats);
+        final switch (r.status) {
+            case CaseStatus.OK:    writeln("OK");                  break;
+            case CaseStatus.SKIP:  writeln("SKIP (", r.detail, ")"); break;
+            case CaseStatus.ERROR: writeln("ERROR (", r.detail, ")"); break;
+        }
+        results ~= r;
+    }
+
+    // One-shot command cases (mesh.delete / mesh.remove) — already filtered
+    // above with the same requested-substring logic as the drag cases.
+    foreach (cc; cmdCases) {
+        write("  running ", cc.name, " ... ");
+        stdout.flush();
+        auto r = runCommandCase(cc, meshParam, meshType, repeats);
         final switch (r.status) {
             case CaseStatus.OK:    writeln("OK");                  break;
             case CaseStatus.SKIP:  writeln("SKIP (", r.detail, ")"); break;
