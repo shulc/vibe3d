@@ -693,25 +693,36 @@ struct Mesh {
             if (rank_[a] == rank_[b]) ++rank_[a];
         }
 
-        // For each selected edge, find both adjacent faces and unite them.
-        // Boundary edges (only 1 adjacent face) leave their face alone.
-        size_t dissolved = 0;
-        foreach (key; selectedEdgeKeys.byKey) {
-            int fA = -1, fB = -1;
-            foreach (fi; 0 .. nFaces) {
-                auto f = faces[fi];
-                bool has = false;
-                foreach (k; 0 .. f.length) {
-                    if (edgeKeyOrdered(f[k], f[(k + 1) % f.length]) == key) {
-                        has = true; break;
-                    }
-                }
-                if (!has) continue;
-                if      (fA == -1) fA = cast(int)fi;
-                else if (fB == -1) { fB = cast(int)fi; break; }
+        // One-pass adjacency: map each edge key → up to its first two DISTINCT
+        // adjacent faces (by ascending face index). Reproduces the original
+        // "first two distinct faces" semantics: first occurrence → slot 0,
+        // second distinct face → slot 1; a 3rd+ face and a face that contains
+        // the edge twice are ignored.
+        int[2][ulong] edgeFaces;   // -1 = empty slot
+        foreach (fi; 0 .. nFaces) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeFaces;
+                if (p is null)
+                    edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
             }
+        }
+
+        // For each selected edge, look up both adjacent faces and unite them.
+        // Boundary edges (only 1 adjacent face) leave their face alone and are
+        // NOT recorded as dissolved.
+        size_t dissolved = 0;
+        bool[ulong] dissolvedEdgeKeys;   // edges ACTUALLY merged (interior, both faces)
+        foreach (key; selectedEdgeKeys.byKey) {
+            auto p = key in edgeFaces;
+            if (p is null) continue;
+            int fA = (*p)[0], fB = (*p)[1];
             if (fA != -1 && fB != -1) {
                 unite(fA, fB);
+                dissolvedEdgeKeys[key] = true;
                 ++dissolved;
             }
         }
@@ -734,14 +745,15 @@ struct Mesh {
         foreach (root, comp; componentFaces) {
             if (comp.length < 2) continue;
 
-            // Gather directed half-edges from the component, dropping any
-            // half-edge whose undirected key is in selectedEdgeKeys.
+            // Gather directed half-edges from the component, dropping
+            // half-edges whose edge was actually dissolved (interior); selected
+            // boundary edges survive on the merged boundary.
             uint[][uint] outAt;  // outAt[u] = list of `v` for each surviving u→v
             foreach (fi; comp) {
                 auto f = faces[fi];
                 foreach (k; 0 .. f.length) {
                     uint a = f[k], b = f[(k + 1) % f.length];
-                    if (edgeKeyOrdered(a, b) in selectedEdgeKeys) continue;
+                    if (edgeKeyOrdered(a, b) in dissolvedEdgeKeys) continue;
                     outAt[a] ~= b;
                 }
             }

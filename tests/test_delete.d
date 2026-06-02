@@ -23,6 +23,12 @@ void resetCube() {
         "/api/reset failed: " ~ resp);
 }
 
+void resetGrid(int n) {
+    auto resp = post("http://localhost:8080/api/reset?type=grid&n=" ~ n.to!string, "");
+    assert(parseJSON(resp)["status"].str == "ok",
+        "/api/reset grid failed: " ~ resp);
+}
+
 void postCommand(string body) {
     auto resp = post("http://localhost:8080/api/command", body);
     assert(parseJSON(resp)["status"].str == "ok",
@@ -275,4 +281,38 @@ unittest { // delete vs remove on a single edge produce IDENTICAL output
         "delete/remove edge should give the same face count");
     assert(deleted["vertexCount"].integer == removed["vertexCount"].integer,
         "delete/remove edge should give the same vertex count");
+}
+
+unittest { // Pin the boundary-survival fix: delete ALL edges on an OPEN grid.
+    // Regression for removeEdgesByMask dropping half-edges by "merely
+    // selected" instead of "actually dissolved". On an open mesh a selected
+    // *boundary* edge is NOT dissolved (only one adjacent face), so its
+    // half-edge must SURVIVE on the merged boundary. The old code dropped it,
+    // emptied the boundary walk, skipped the component, and left the mesh
+    // unchanged (n=2 grid stayed 4 faces / 9 verts).
+    //
+    // With the fix the four interior-merged quads collapse to the 8-vertex
+    // perimeter loop; every perimeter vertex is then 2-valent, so the
+    // follow-up dissolveDegree2Verts reduces the whole open patch to nothing.
+    // The load-bearing assertion is that the counts CHANGE (faceCount < 4),
+    // i.e. the component is no longer skipped.
+    resetGrid(2);
+    postSelect("edges", []);   // empty selection ⇒ whole mesh (all edges)
+    auto before = getModel();
+    assert(before["faceCount"].integer == 4,
+        "n=2 grid should start with 4 faces, got " ~ before["faceCount"].integer.to!string);
+    assert(before["vertexCount"].integer == 9,
+        "n=2 grid should start with 9 verts, got " ~ before["vertexCount"].integer.to!string);
+
+    postCommand(`{"id":"mesh.delete"}`);
+    auto after = getModel();
+    // Pre-fix bug: faceCount stayed at 4 (component skipped). Post-fix it drops.
+    assert(after["faceCount"].integer < before["faceCount"].integer,
+        "delete-all-edges must change the mesh (boundary-survival fix); faceCount stayed "
+        ~ after["faceCount"].integer.to!string);
+    // Observed post-fix result on the n=2 open grid: full collapse.
+    assert(after["faceCount"].integer == 0,
+        "expected 0 faces after whole-grid edge delete, got " ~ after["faceCount"].integer.to!string);
+    assert(after["vertexCount"].integer == 0,
+        "expected 0 verts after whole-grid edge delete, got " ~ after["vertexCount"].integer.to!string);
 }
