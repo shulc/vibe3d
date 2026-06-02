@@ -8,6 +8,14 @@ import editmode;
 import viewcache;
 import snapshot : MeshSnapshot;
 
+/// All-true selection mask of length `n`, used when nothing is selected
+/// (empty selection ⇒ whole mesh).
+private bool[] allTrue(size_t n) {
+    auto m = new bool[](n);
+    m[] = true;
+    return m;
+}
+
 /// Tier 1.1: delete the current selection. Dispatches by edit mode:
 ///   - Vertices: delete every face incident to a selected vert
 ///   - Edges:    delete every face incident to a selected edge
@@ -52,33 +60,33 @@ class MeshDelete : Command, Operator {
         snap = MeshSnapshot.capture(*mesh);
         size_t affected = 0;
 
+        // Empty selection ⇒ operate on the whole mesh: mesh.nothingSelected
+        // is the single source of truth for the "everything is selected"
+        // convention. In that case feed the *ByMask primitives an all-true
+        // mask instead of the (empty) selection.
+        const all = mesh.nothingSelected(editMode);
+
         final switch (editMode) {
             case EditMode.Vertices:
-                if (!mesh.hasAnySelectedVertices()) {
-                    snap = MeshSnapshot.init; return false;
-                }
                 // Delete-vertex dissolves the vert from every incident
                 // face's boundary (quad → triangle), and only kills faces
                 // that become degenerate (< 3 verts).
-                affected = mesh.dissolveVerticesByMask(mesh.selectedVertices);
+                affected = mesh.dissolveVerticesByMask(
+                    all ? allTrue(mesh.vertices.length) : mesh.selectedVertices);
                 break;
 
             case EditMode.Edges:
-                if (!mesh.hasAnySelectedEdges()) {
-                    snap = MeshSnapshot.init; return false;
-                }
                 // `select.delete` on an edge selection: dissolve the edge
                 // (merging adjacent faces) AND dissolve any vert that ends
                 // up 2-valent in the result.
-                affected = mesh.removeEdgesByMask(mesh.selectedEdges);
+                affected = mesh.removeEdgesByMask(
+                    all ? allTrue(mesh.edges.length) : mesh.selectedEdges);
                 if (affected > 0) mesh.dissolveDegree2Verts();
                 break;
 
             case EditMode.Polygons:
-                if (!mesh.hasAnySelectedFaces()) {
-                    snap = MeshSnapshot.init; return false;
-                }
-                affected = mesh.deleteFacesByMask(mesh.selectedFaces);
+                affected = mesh.deleteFacesByMask(
+                    all ? allTrue(mesh.faces.length) : mesh.selectedFaces);
                 break;
         }
 

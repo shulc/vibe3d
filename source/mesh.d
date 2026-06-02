@@ -6,6 +6,7 @@ import std.parallelism : parallel;
 import std.range : iota;
 import math;
 import shader;
+import editmode : EditMode;
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -1387,6 +1388,19 @@ struct Mesh {
     bool hasAnySubpatch() const {
         foreach (m; faceMarks) if (m & Marks.Subpatch) return true;
         return false;
+    }
+    /// True when the given edit mode has no active selection. By
+    /// convention an empty selection means "operate on the whole mesh",
+    /// so commands and tools treat this as "everything is selected"
+    /// (cf. selectedVertexIndices*, which return all indices when nothing
+    /// is selected). The check is per-element-type because selections are
+    /// kept independent across modes.
+    bool nothingSelected(EditMode mode) const {
+        final switch (mode) {
+            case EditMode.Vertices: return !hasAnySelectedVertices();
+            case EditMode.Edges:    return !hasAnySelectedEdges();
+            case EditMode.Polygons: return !hasAnySelectedFaces();
+        }
     }
     /// True iff every face is subpatch-marked AND there's at least one
     /// face. Gates the OSD-accelerated SubpatchPreview fast path:

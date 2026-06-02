@@ -179,17 +179,18 @@ unittest { // undo an edge delete restores cube
 // Errors / no-op
 // ---------------------------------------------------------------------------
 
-unittest { // delete with empty selection is a no-op (returns error from apply)
+unittest { // delete with empty selection ⇒ everything is selected (whole mesh)
     resetCube();
-    // Vertices mode, no selection.
-    auto resp = postCommandRaw(`{"id":"mesh.delete"}`);
-    auto j = parseJSON(resp);
-    assert(j["status"].str == "error",
-        "expected error on empty-selection delete, got: " ~ resp);
-    // Mesh unchanged.
+    // Vertices mode, no selection: by the "empty selection = everything"
+    // convention (mesh.nothingSelected), delete operates on all verts and
+    // leaves an empty mesh.
+    postCommand(`{"id":"mesh.delete"}`);
     auto m = getModel();
-    assert(m["vertexCount"].integer == 8);
-    assert(m["faceCount"].integer == 6);
+    assert(m["vertexCount"].integer == 0,
+        "expected empty mesh after empty-selection delete, got "
+        ~ m["vertexCount"].integer.to!string ~ " verts");
+    assert(m["faceCount"].integer == 0);
+    assert(m["edgeCount"].integer == 0);
 }
 
 unittest { // delete every face leaves an empty mesh
