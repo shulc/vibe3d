@@ -278,6 +278,73 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// 1b. CUBE interior edge, NEGATIVE (inward) extrude — same topology as test 1
+//     (12 verts, 10 faces) but the ridge is pushed INWARD. The free-end triangle
+//     caps must stay consistently wound with the bridge faces: when the ridge
+//     flips from outward (extrude>0) to inward (extrude<0) the cap's geometric
+//     normal flips too, so the cap winding must flip to match. Concretely, the
+//     positive case asserts cap normal · capCentroid > 0 (points away from the
+//     origin); for a negative extrude the same caps must point the opposite way,
+//     i.e. cap normal · capCentroid < 0. This mirrors test 1's cap-orientation
+//     check with extrude < 0 and guards the sign-aware cap reference.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    auto before = getModel();
+    assert(before["vertexCount"].integer == 8);
+    assert(before["faceCount"].integer == 6);
+
+    int va = vertAt(before, V3(-0.5, 0.5, 0.5));
+    int vb = vertAt(before, V3( 0.5, 0.5, 0.5));
+    assert(va >= 0 && vb >= 0, "cube(neg) top-front endpoints not found");
+    int ei = edgeIndex(before, va, vb);
+    assert(ei >= 0, "cube(neg) top-front edge not found");
+    postSelect("edges", [ei]);
+
+    enum extrude = -0.2, width = 0.1;
+    postCommand(`{"id":"mesh.edge_extrude","params":{"extrude":-0.2,"width":0.1}}`);
+    auto m = getModel();
+
+    // Same topology as the positive case — only the ridge moved inward.
+    assert(m["vertexCount"].integer == 12,
+        "cube(neg): expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 10,
+        "cube(neg): expected 10 faces, got " ~ m["faceCount"].integer.to!string);
+    auto fv = fvDist(m);
+    assert(fv == [4: 6, 5: 2, 3: 2],
+        "cube(neg): expected fv-dist {4:6,5:2,3:2}, got " ~ fv.to!string);
+    assert(orphanVerts(m).length == 0,
+        "cube(neg): orphan verts after compaction: " ~ orphanVerts(m).to!string);
+    assert(isHoleFree(m), "cube(neg): result is not hole-free / has folded faces");
+
+    // Ridge verts = endpoints displaced INWARD (extrude<0) along the averaged
+    // neighbor normal; both must be present (positions carry the sign).
+    V3 ne = avgNeighborNormal(before, va, vb);
+    auto expA = add3(vert(before, va), V3(ne.x*extrude, ne.y*extrude, ne.z*extrude));
+    auto expB = add3(vert(before, vb), V3(ne.x*extrude, ne.y*extrude, ne.z*extrude));
+    assert(vertAt(m, expA) >= 0, "cube(neg): ridge vert for va missing");
+    assert(vertAt(m, expB) >= 0, "cube(neg): ridge vert for vb missing");
+
+    // Sign-aware cap orientation: for a negative extrude the two triangle caps
+    // wind the OPPOSITE way vs the positive case, so cap normal · capCentroid < 0
+    // (they point back toward the origin, consistent with the inward bridges).
+    int tris = 0;
+    foreach (fi; 0 .. m["faces"].array.length) {
+        auto f = m["faces"].array[fi];
+        if (f.array.length != 3) continue;
+        ++tris;
+        auto c = faceCentroid(m, f);
+        auto n = faceNormal(m, f);
+        assert(dot3(n, c) < 0.0,
+            "cube(neg): triangle cap " ~ fi.to!string ~
+            " not oriented consistently with inward extrude (dot=" ~
+            dot3(n, c).to!string ~ ")");
+    }
+    assert(tris == 2, "cube(neg): expected exactly 2 triangle caps, got " ~ tris.to!string);
+}
+
+// ---------------------------------------------------------------------------
 // 2. Grid interior edge (3,4): boundary endpoint v3 (dissolved + capped) and
 //    center endpoint v4 (insets into its two side faces). Different valence than
 //    the cube, so a different — but still hole-free, orphan-free — topology.
