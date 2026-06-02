@@ -681,7 +681,40 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 7. No-op: extrude=0, width=0 leaves geometry unchanged.
+// 7. No-op: (near-)zero width is a whole-operation no-op, regardless of extrude.
+//    width<eps leaves the inset coincident with the original endpoints, so the
+//    reference modeler emits no topology change at all. extrude is irrelevant.
+// ---------------------------------------------------------------------------
+
+unittest {
+    // 7a. width=0 AND extrude=0 — total identity no-op.
+    resetGrid(2);
+    auto before = getModel();
+    int ei = edgeIndex(before, 3, 4);
+    postSelect("edges", [ei]);
+
+    postCommandRaw(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":0.0}}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer   == before["faceCount"].integer,   "no-op changed face count");
+    assert(m["vertexCount"].integer == before["vertexCount"].integer, "no-op changed vertex count");
+    assert(m["edgeCount"].integer   == before["edgeCount"].integer,   "no-op changed edge count");
+
+    // 7b. width=0 with a NONZERO extrude — STILL a no-op (no shrink room for the
+    //     bridge faces ⇒ the reference no-ops; we must not emit degenerate faces).
+    resetGrid(2);
+    auto before2 = getModel();
+    int ei2 = edgeIndex(before2, 3, 4);
+    postSelect("edges", [ei2]);
+
+    postCommandRaw(`{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.0}}`);
+    auto m2 = getModel();
+    assert(m2["faceCount"].integer   == before2["faceCount"].integer,   "width=0/extrude=0.2 changed face count");
+    assert(m2["vertexCount"].integer == before2["vertexCount"].integer, "width=0/extrude=0.2 changed vertex count");
+    assert(m2["edgeCount"].integer   == before2["edgeCount"].integer,   "width=0/extrude=0.2 changed edge count");
+}
+
+// 7c. extrude=0 with width>0 — pure inset MUST still produce topology change
+//     (this is NOT subsumed by the width guard; only width drives the no-op).
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -690,9 +723,11 @@ unittest {
     int ei = edgeIndex(before, 3, 4);
     postSelect("edges", [ei]);
 
-    auto raw = postCommandRaw(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":0.0}}`);
+    postCommandRaw(`{"id":"mesh.edge_extrude","params":{"extrude":0.0,"width":0.1}}`);
     auto m = getModel();
-    assert(m["faceCount"].integer   == before["faceCount"].integer,   "no-op changed face count");
-    assert(m["vertexCount"].integer == before["vertexCount"].integer, "no-op changed vertex count");
-    assert(m["edgeCount"].integer   == before["edgeCount"].integer,   "no-op changed edge count");
+    bool changed =
+        m["faceCount"].integer   != before["faceCount"].integer   ||
+        m["vertexCount"].integer != before["vertexCount"].integer ||
+        m["edgeCount"].integer   != before["edgeCount"].integer;
+    assert(changed, "pure inset (extrude=0, width=0.1) must change topology, not no-op");
 }

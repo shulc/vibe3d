@@ -842,8 +842,14 @@ struct Mesh {
     size_t extrudeEdgesByMask(in bool[] mask, float extrude, float width) {
         import math : Vec3, cross, dot, normalize;
         if (mask.length != edges.length) return 0;
-        // Identity parameters ⇒ no-op (matches PushTool dist==0 short-circuit).
-        if (extrude == 0.0f && width == 0.0f) return 0;
+        // (Near-)zero inset width ⇒ NO-OP for the whole operation, regardless of
+        // extrude: with no inset there is no shrink room for the bridge faces, so
+        // the inset vertices would coincide with the original endpoints and the
+        // kernel would emit degenerate faces (repeated/duplicate verts, zero-area
+        // sides). The reference modeler no-ops here. Guard EARLY, before any
+        // vertex/face construction, so nothing degenerate is ever emitted.
+        // (Subsumes the old extrude==0 && width==0 identity no-op.)
+        if (width < 1e-6f) return 0;
 
         // --- Edge → (≤2 faces) adjacency, one pass (no O(E×F) scan). Same idiom
         //     as removeEdgesByMask: first occurrence → slot 0, second distinct
