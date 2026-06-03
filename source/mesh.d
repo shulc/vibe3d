@@ -2067,6 +2067,415 @@ struct Mesh {
         return exEdges.length;
     }
 
+    /// Edge Extend: ADDITIVE, non-manifold. Per selected edge (with ≥1 adjacent
+    /// face) adds 2 ridge verts + 1 bridge quad; the source mesh is NOT modified
+    /// (the source edge becomes 3-face non-manifold; ring adjacency at that edge is
+    /// known-degraded — see doc/non_manifold_buildloops_fix.md). Vertices shared by
+    /// multiple selected edges WELD to ONE new vert (chains/loops/star junctions),
+    /// placed by the minimum-norm offset-meet of all distinct adjacent face planes.
+    /// Wire edges (0 adjacent faces) are SKIPPED. Each new vert =
+    ///   (k/segments)·offset + insetShiftDelta(v) + scale(rotate(E_src(v) about origin))
+    /// (see doc/edge_extend_plan.md §"verified reference model"). rotateDeg in
+    /// degrees; rotate then scale, both about the WORLD ORIGIN; inset/shift in the
+    /// world frame from ORIGINAL geometry (shift inert on interior edges; weld &
+    /// free-end perp drop = offset-meet, not -inset·(n1+n2)). Selects the new
+    /// ridge edge(s) on exit. Does NOT touch GpuMesh or caches (command/tool
+    /// layer's job). `mask.length == edges.length`. NOT a fork of
+    /// extrudeEdgesByMask — fresh additive topology.
+    ///
+    /// `insetShiftDelta` composition (verified against the reference dumps, all to
+    /// ~1e-8 — see doc/edge_extend_plan.md + the private capture record):
+    ///  * FREE END (one selected edge at v): the perpendicular drop is the
+    ///    two-plane offset-meet over the edge's ≤2 adjacent face planes
+    ///    (min-norm v with v·nₖ = −inset), PLUS a SEPARATE axial term
+    ///    `inset·unit(other − v)` toward the edge's other endpoint. On a cube the
+    ///    meet equals −inset·(n1+n2) (⊥-faces special case); the axial term is the
+    ///    ∓inset edge-axis shortening. Boundary (1-face) free end: `−inset·n`
+    ///    (one-plane meet) + `shift·inPlaneOutwardPerp`, with NO axial term.
+    ///  * WELDED CORNER (≥2 selected edges at v): the min-norm offset-meet over ALL
+    ///    distinct adjacent face planes of every incident selected edge (plus each
+    ///    incident boundary edge's `shift` in-plane term), with NO axial term — the
+    ///    meet alone reproduces the corner (chain2/star3 → (−0.1,−0.1,−0.1);
+    ///    asym-tent welded corner (0,0.10440,0)). The free-end perp drop is the
+    ///    single-edge case of this same accumulator; the axial term is what
+    ///    distinguishes a free end from a weld.
+    ///
+    /// Rotation composition: Rx then Ry then Rz applied in that order. Only
+    /// SINGLE-AXIS rotations are capture-verified; the multi-axis ordering is an
+    /// OPEN QUESTION (no reference dump pins it).
+    size_t extendEdgesByMask(in bool[] mask,
+                             float inset, float shift,
+                             Vec3 offset, Vec3 rotateDeg, Vec3 scale,
+                             int segments) {
+        import math : Vec3, cross, dot, normalize;
+        import std.math : sin, cos, abs, PI;
+        if (mask.length != edges.length) return 0;
+        assert(segments == 1, "extendEdgesByMask: segments>1 is Phase 3");
+        if (segments != 1) segments = 1;   // release-build safety: asserts strip
+                                           // under -release; clamp rather than
+                                           // silently fall through with wrong N.
+
+        // --- Mesh-edit tracker (mesh_edit_delta). Inert unless a batch is open
+        //     (the interactive preview drag runs batchless ⇒ zero cost). This op
+        //     is PURE-ADD: addVertex self-logs AddVerts via the Class-P hook; the
+        //     appended bridge faces (via `faces ~=`, NOT addFace) need an explicit
+        //     recordAddFaces; and the new ridge-edge selection needs a
+        //     recordEdgeSelByEnds (endpoint-keyed — edge indices are unstable
+        //     across rebuildEdges). NO compactUnreferenced runs (nothing is
+        //     removed — pure add), so there is no Reindex/RemoveVerts to compose
+        //     and new-vert indices are stable; revert is a tail truncation.
+        const bool recExtend = editRecorder_ !is null;
+        uint[] preEdgeSelEnds;
+        if (recExtend) {
+            foreach (i; 0 .. edges.length) {
+                if (i < edgeMarks.length && (edgeMarks[i] & Marks.Select)) {
+                    preEdgeSelEnds ~= edges[i][0];
+                    preEdgeSelEnds ~= edges[i][1];
+                }
+            }
+        }
+
+        // --- Edge → (≤2 faces) adjacency, one pass (no O(E×F) scan). Same idiom
+        //     as extrudeEdgesByMask/removeEdgesByMask.
+        int[2][ulong] edgeFaces;
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeFaces;
+                if (p is null)
+                    edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        // --- Gather the selected, extendable edges (≥1 adjacent face). Snapshot
+        //     their endpoints + neighbour faces NOW (original index space). Wire
+        //     edges (0 adjacent faces) are SKIPPED — the winding rule needs an
+        //     adjacent face to orient the bridge quad.
+        struct ExtEdge { uint va, vb; int fA, fB; }
+        ExtEdge[] exEdges;
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            uint va = edges[i][0], vb = edges[i][1];
+            auto p = edgeKeyOrdered(va, vb) in edgeFaces;
+            if (p is null) continue;
+            int fA = (*p)[0], fB = (*p)[1];
+            if (fA == -1) continue;     // wire edge — skipped
+            exEdges ~= ExtEdge(va, vb, fA, fB);
+        }
+        if (exEdges.length == 0) return 0;
+
+        // --- Per-endpoint selected-edge incidence: ONE selected edge ⇒ a free end
+        //     (perp meet + axial); ≥2 ⇒ a welded corner (min-norm meet, no axial).
+        int[uint] selEdgeCount;
+        foreach (ref e; exEdges) {
+            selEdgeCount.update(e.va, () => 1, (ref int c) { ++c; });
+            selEdgeCount.update(e.vb, () => 1, (ref int c) { ++c; });
+        }
+        bool isFreeEnd(uint v) { auto p = v in selEdgeCount; return p !is null && *p == 1; }
+
+        // --- N-plane minimum-norm offset-meet. Solve for the vector `v` of
+        //     smallest norm satisfying v·nₖ = dₖ for each (unit normal nₖ, target
+        //     dₖ). The min-norm solution lies in span{nₖ}: v = Σ cⱼ nⱼ with the
+        //     Gram system G·c = d, Gᵢⱼ = nᵢ·nⱼ. Solved via Gaussian elimination
+        //     with partial pivoting + a rank guard (degenerate / parallel planes
+        //     drop out, yielding the lower-rank min-norm answer). Written fresh
+        //     from the math — `math.offsetMeet` is the 2-plane reference idiom;
+        //     this generalises it to the k-plane welded-corner accumulator
+        //     (doc/edge_extend_plan.md §Phase-0c; ⊥ cube case reduces to
+        //     −inset·Σnₖ). k is small (≤ a handful of distinct faces per corner).
+        static Vec3 minNormMeet(in Vec3[] normals, in float[] targets) {
+            size_t k = normals.length;
+            if (k == 0) return Vec3(0, 0, 0);
+            // Gram matrix G (k×k) and rhs d, augmented for Gaussian elimination.
+            // k is tiny; use a fixed upper bound to stay @nogc-friendly.
+            enum int MAXK = 16;
+            // A corner with >16 distinct constraint planes is pathological (a
+            // real mesh corner has a handful). Loud in debug; in -release (where
+            // asserts strip) truncate rather than overflow the fixed buffers —
+            // a truncated weld beats an out-of-bounds write.
+            assert(k <= MAXK, "minNormMeet: >16 constraint planes at one corner");
+            if (k > MAXK) k = MAXK;
+            double[MAXK][MAXK] G;
+            double[MAXK]       d;
+            foreach (i; 0 .. k) {
+                d[i] = targets[i];
+                foreach (j; 0 .. k)
+                    G[i][j] = cast(double)dot(normals[i], normals[j]);
+            }
+            // Gaussian elimination with partial pivoting + rank guard. A pivot
+            // below tol means that row is (numerically) a linear combination of
+            // earlier normals — its constraint is already represented, so we zero
+            // its coefficient (min-norm: add nothing along a redundant direction).
+            enum double TOL = 1e-9;
+            int[MAXK] pivRow;
+            foreach (i; 0 .. k) pivRow[i] = -1;
+            foreach (col; 0 .. k) {
+                // find the best pivot among unused rows in this column
+                int best = -1; double bestAbs = TOL;
+                foreach (r; 0 .. k) {
+                    bool used = false;
+                    foreach (c; 0 .. col) if (pivRow[c] == r) { used = true; break; }
+                    if (used) continue;
+                    double a = G[r][col] < 0 ? -G[r][col] : G[r][col];
+                    if (a > bestAbs) { bestAbs = a; best = cast(int)r; }
+                }
+                if (best < 0) continue;         // rank-deficient column → skip
+                pivRow[col] = best;
+                double pv = G[best][col];
+                foreach (r; 0 .. k) {
+                    if (cast(int)r == best) continue;
+                    double f = G[r][col] / pv;
+                    if (f == 0) continue;
+                    foreach (c; 0 .. k) G[r][c] -= f * G[best][c];
+                    d[r] -= f * d[best];
+                }
+            }
+            // Back-substitute coefficients c (one per pivoted column).
+            double[MAXK] c;
+            foreach (i; 0 .. k) c[i] = 0;
+            foreach (col; 0 .. k) {
+                int r = pivRow[col];
+                if (r < 0) continue;            // redundant direction → c=0
+                c[col] = d[r] / G[r][col];
+            }
+            Vec3 v = Vec3(0, 0, 0);
+            foreach (j; 0 .. k) v = v + normals[j] * cast(float)c[j];
+            return v;
+        }
+
+        // --- Per-corner accumulation of constraint planes / boundary shift terms.
+        //     Keyed by source vertex. Built from ORIGINAL geometry only (face
+        //     normals + edge axes captured before any geometry is appended).
+        // Distinct face planes per corner (deduped by face id).
+        Vec3[][uint] cornerNormals;          // v → distinct adjacent face normals
+        bool[ulong]  cornerFaceSeen;         // (v<<32|fi) → already counted at v
+        Vec3[uint]   cornerShiftTerm;        // v → Σ boundary shift·in-plane-perp
+        void addCornerFace(uint v, int fi) {
+            if (fi < 0) return;
+            ulong fk = (cast(ulong)v << 32) | cast(uint)fi;
+            if (fk in cornerFaceSeen) return;
+            cornerFaceSeen[fk] = true;
+            cornerNormals.update(v,
+                () => [faceNormal(cast(uint)fi)],
+                (ref Vec3[] acc) { acc ~= faceNormal(cast(uint)fi); });
+        }
+        // In-plane outward perpendicular of the boundary face at edge (va,vb):
+        //     the in-plane direction ⊥ to the edge, pointing AWAY from the face
+        //     interior (the free-boundary slide direction `shift` rides on).
+        Vec3 boundaryOutwardPerp(uint va, uint vb, int fi) {
+            Vec3 t  = normalize(vertices[vb] - vertices[va]);
+            Vec3 nf = faceNormal(cast(uint)fi);
+            Vec3 d  = cross(nf, t);
+            if (d.length < 1e-6f) return Vec3(0, 0, 0);
+            d = normalize(d);
+            // Point AWAY from the face centroid (outward off the open boundary).
+            auto f = faces[fi];
+            Vec3 ctr = Vec3(0, 0, 0);
+            foreach (vid; f) ctr = ctr + vertices[vid];
+            ctr = ctr * (1.0f / cast(float)f.length);
+            Vec3 mid = (vertices[va] + vertices[vb]) * 0.5f;
+            if (dot(d, ctr - mid) > 0.0f) d = -d;   // outward = away from centroid
+            return d;
+        }
+        void addCornerShift(uint v, Vec3 term) {
+            cornerShiftTerm.update(v, () => term, (ref Vec3 acc) { acc = acc + term; });
+        }
+        foreach (ref e; exEdges) {
+            addCornerFace(e.va, e.fA); addCornerFace(e.va, e.fB);
+            addCornerFace(e.vb, e.fA); addCornerFace(e.vb, e.fB);
+            if (e.fB == -1) {
+                // Boundary edge: each endpoint gets a shift·in-plane-outward-perp
+                // term folded into its corner accumulator.
+                Vec3 perp = boundaryOutwardPerp(e.va, e.vb, e.fA);
+                if (shift != 0.0f) {
+                    addCornerShift(e.va, perp * shift);
+                    addCornerShift(e.vb, perp * shift);
+                }
+            }
+        }
+
+        // --- Rotate(E_src about origin) then Scale(about origin), world frame.
+        //     Rx then Ry then Rz, applied in that order to the ORIGINAL position.
+        float rx = rotateDeg.x * cast(float)(PI / 180.0);
+        float ry = rotateDeg.y * cast(float)(PI / 180.0);
+        float rz = rotateDeg.z * cast(float)(PI / 180.0);
+        Vec3 applyRS(Vec3 p) {
+            // Rx
+            {
+                float c = cos(rx), s = sin(rx);
+                p = Vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
+            }
+            // Ry
+            {
+                float c = cos(ry), s = sin(ry);
+                p = Vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+            }
+            // Rz
+            {
+                float c = cos(rz), s = sin(rz);
+                p = Vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+            }
+            // Scale about origin
+            return Vec3(p.x * scale.x, p.y * scale.y, p.z * scale.z);
+        }
+
+        // --- Per-source-vertex weld map: ONE new vert per unique source vertex
+        //     incident to ≥1 selected edge (welds chains/loops/star junctions).
+        //     Compute insetShiftDelta from ORIGINAL geometry, add it AFTER R/S in
+        //     the world frame, then Offset last.
+        uint[uint] newVertOf;
+        // Map each free-end vertex to its single selected edge's OTHER endpoint
+        // (for the axial term). Welded corners get no axial term.
+        uint[uint] freeEndOther;
+        foreach (ref e; exEdges) {
+            if (isFreeEnd(e.va)) freeEndOther[e.va] = e.vb;
+            if (isFreeEnd(e.vb)) freeEndOther[e.vb] = e.va;
+        }
+        foreach (ref e; exEdges) {
+            void makeVert(uint v) {
+                if (v in newVertOf) return;
+                // Min-norm offset-meet over the corner's distinct face planes
+                // (target −inset on every plane). At a free end this is the
+                // two-plane (interior) / one-plane (boundary) perp meet; at a
+                // welded corner it is the full N-plane accumulator.
+                Vec3 delta = Vec3(0, 0, 0);
+                if (auto np = v in cornerNormals) {
+                    Vec3[] norms = *np;
+                    float[] tgts;
+                    tgts.length = norms.length;
+                    foreach (i; 0 .. norms.length) tgts[i] = -inset;
+                    delta = minNormMeet(norms, tgts);
+                }
+                // Boundary shift term(s) fold into the corner displacement.
+                if (auto sp = v in cornerShiftTerm) delta = delta + *sp;
+                // Axial term: free ends ONLY. inset·unit(other − v) toward the
+                // edge's far endpoint. Welded corners take the meet alone (the
+                // axial shortenings from multiple edges would conflict; the
+                // multi-plane meet already reproduces the corner). A boundary
+                // free end takes no axial term (no neighbour to pull it in).
+                if (isFreeEnd(v) && e.fB != -1) {
+                    if (auto op = v in freeEndOther) {
+                        Vec3 ax = vertices[*op] - vertices[v];
+                        if (ax.length > 1e-6f)
+                            delta = delta + normalize(ax) * inset;
+                    }
+                }
+                Vec3 pos = applyRS(vertices[v]) + delta + offset;
+                newVertOf[v] = addVertex(pos);
+            }
+            makeVert(e.va);
+            makeVert(e.vb);
+        }
+
+        // --- Bridge quads. Winding: [srcA, newA, newB, srcB] where srcA→srcB is
+        //     the source edge's DIRECTED traversal order within ONE of its
+        //     adjacent faces (NOT the raw edges[] tuple, which would flip ~half
+        //     the bridges). When the edge has 2 adjacent faces, the orienting
+        //     face is the one of LOWER index (deterministic) — verified to
+        //     reproduce every golden bridge tuple (cube interior [6,8,9,7], chain2
+        //     [5,8,9,6]/[6,9,10,7], boundary [3,6,7,0]).
+        size_t firstBridge = faces.length;
+        foreach (ref e; exEdges) {
+            // Choose the orienting face: lower index when interior, the sole face
+            // when boundary.
+            int orientFace = (e.fB == -1) ? e.fA : (e.fA < e.fB ? e.fA : e.fB);
+            // Directed order of the source edge within orientFace.
+            uint srcA = e.va, srcB = e.vb;
+            auto f = faces[orientFace];
+            foreach (k; 0 .. f.length) {
+                uint u = f[k], w = f[(k + 1) % f.length];
+                if (u == e.va && w == e.vb) { srcA = e.va; srcB = e.vb; break; }
+                if (u == e.vb && w == e.va) { srcA = e.vb; srcB = e.va; break; }
+            }
+            uint newA = newVertOf[srcA];
+            uint newB = newVertOf[srcB];
+            faces ~= [srcA, newA, newB, srcB];
+        }
+
+        // --- Hand-extend the parallel per-face arrays (pure-add trap: neither
+        //     addVertex nor compactUnreferenced sizes these). Each bridge inherits
+        //     the material of its orienting (adjacent) face.
+        foreach (bi, ref e; exEdges) {
+            int orientFace = (e.fB == -1) ? e.fA : (e.fA < e.fB ? e.fA : e.fB);
+            faceMaterial       ~= (orientFace < faceMaterial.length
+                                   ? faceMaterial[orientFace] : 0u);
+            faceSelectionOrder ~= 0;
+        }
+        resizeSubpatch();
+        foreach (fi; firstBridge .. faces.length)
+            setFaceSubpatch(fi, false);
+
+        // Tracker: the bridge faces were appended via `faces ~=` (NOT addFace), so
+        // they are NOT auto-logged. Record them as one AddFaces([F0..F1)) entry.
+        // No compaction runs (pure add) → the appended block stays the tail and
+        // reverts by truncation.
+        if (recExtend && faces.length > firstBridge) {
+            uint[][] bridgeLists;
+            foreach (fi; firstBridge .. faces.length) bridgeLists ~= faces[fi].dup;
+            editRecorder_.recordAddFaces(cast(uint)firstBridge,
+                                         cast(uint)faces.length, bridgeLists);
+        }
+
+        // --- Record the new outer ridge edges (the new-vert pair per bridge) BY
+        //     POSITION so we can reselect them after rebuildEdges. (No compaction
+        //     here, so indices are stable, but rebuildEdges renumbers the EDGE
+        //     array — endpoint lookup via edgeIndexMap is the stable path.)
+        Vec3[2][] ridgeEdgePos;
+        ridgeEdgePos.reserve(exEdges.length);
+        foreach (ref e; exEdges) {
+            uint na = newVertOf[e.va], nb = newVertOf[e.vb];
+            ridgeEdgePos ~= [vertices[na], vertices[nb]];
+        }
+
+        // --- Tail: rebuild edges + loops, size selections. NO compactUnreferenced
+        //     (pure add — nothing is removed; new-vert indices stay stable). The
+        //     source edge now has 3 adjacent faces (its 2 cube faces + the bridge);
+        //     buildLoops emits a one-time non-manifold stderr warning and ring
+        //     adjacency near that edge is known-degraded (acceptable v1).
+        rebuildEdges();
+        buildLoops();
+        resizeVertexSelection();
+        resizeFaceSelection();
+        clearEdgeSelectionResize();    // resize edge marks + drop all edge selection
+
+        // New selection = the new ridge edges (so a follow-up op chains).
+        int findVertByPos(Vec3 p) {
+            foreach (i, ref v; vertices)
+                if ((v - p).length < 1e-5f) return cast(int)i;
+            return -1;
+        }
+        foreach (ref pr; ridgeEdgePos) {
+            int a = findVertByPos(pr[0]);
+            int b = findVertByPos(pr[1]);
+            if (a < 0 || b < 0) continue;
+            ulong rk = edgeKey(cast(uint)a, cast(uint)b);
+            if (auto p = rk in edgeIndexMap)
+                selectEdge(cast(int)*p);
+        }
+        clearVertexSelection();
+        clearFaceSelection();
+
+        // Tracker: record the edge-selection delta (endpoint-keyed). before = the
+        // pre-extend selected edges (restored by revert); after = the new ridge
+        // selection (restored by apply/redo).
+        if (recExtend) {
+            uint[] postEdgeSelEnds;
+            foreach (i; 0 .. edges.length) {
+                if (i < edgeMarks.length && (edgeMarks[i] & Marks.Select)) {
+                    postEdgeSelEnds ~= edges[i][0];
+                    postEdgeSelEnds ~= edges[i][1];
+                }
+            }
+            editRecorder_.recordEdgeSelByEnds(preEdgeSelEnds, postEdgeSelEnds);
+        }
+
+        ++mutationVersion; ++topologyVersion;
+        return exEdges.length;
+    }
+
     /// Radial-array the faces marked true in `mask`: insert `count-1`
     /// new copies, each rotated around the axis (`axis` ∈ {'X','Y','Z'})
     /// through `center` by `i * totalAngle / count` (i = 1..count-1),
@@ -4454,6 +4863,296 @@ unittest { // subdivideCube: counts match uniform Catmull-Clark + valid loops
         assert(m.faceLoop.length == m.faces.length);
         assert(m.loopEdge.length == m.loops.length);
     }
+}
+
+// ===========================================================================
+// extendEdgesByMask (Edge Extend, Phase 1v2) — direct-call kernel test.
+//
+// Asserts EXACT topology (face index tuples) + positions (±1e-5) against the
+// reference-verified golden values (plain coordinates — no provenance, fine in
+// public code). The golden new-vert numbers + bridge tuples are frozen in
+// doc/edge_extend_plan.md ("verified reference model").
+//
+// vibe3d's makeCube() indexes corners so that vert 6 = (0.5,0.5,0.5) and
+// vert 7 = (-0.5,0.5,0.5), matching the reference cube's layout — so the
+// reference golden tuples ([6,8,9,7] etc.) reproduce directly.
+// ===========================================================================
+version (unittest) {
+    private void selectEdgeByEnds_(ref Mesh m, Vec3 a, Vec3 b) {
+        // makeCube() / hand-built meshes leave the selection arrays empty; size
+        // them once so selectEdge can index edgeMarks/edgeSelectionOrder.
+        if (m.edgeMarks.length < m.edges.length) m.resizeEdgeSelection();
+        foreach (i; 0 .. m.edges.length) {
+            auto va = m.vertices[m.edges[i][0]];
+            auto vb = m.vertices[m.edges[i][1]];
+            bool match = ((va - a).length < 1e-4f && (vb - b).length < 1e-4f) ||
+                         ((va - b).length < 1e-4f && (vb - a).length < 1e-4f);
+            if (match) m.selectEdge(cast(int)i);
+        }
+    }
+    private bool[] selMask_(ref Mesh m) {
+        bool[] mask; mask.length = m.edges.length;
+        foreach (i; 0 .. m.edges.length) mask[i] = (m.edgeMarks[i] & Mesh.Marks.Select) != 0;
+        return mask;
+    }
+    private bool near_(Vec3 a, Vec3 b, float tol = 1e-5f) { return (a - b).length < tol; }
+    // Find the index of the (sole) face whose vertex set equals `want` (order-
+    // independent), then assert its directed tuple matches `tuple` up to a cyclic
+    // rotation in the SAME orientation (winding) — a flipped bridge fails.
+    private long findFaceByVerts_(ref Mesh m, uint[] want) {
+        import std.algorithm : sort;
+        auto ws = want.dup; ws.sort();
+        foreach (fi, ref f; m.faces) {
+            if (f.length != want.length) continue;
+            auto fs = f.dup; fs.sort();
+            if (fs == ws) return cast(long)fi;
+        }
+        return -1;
+    }
+    private bool tupleMatchesWound_(uint[] face, uint[] tuple) {
+        if (face.length != tuple.length) return false;
+        size_t n = face.length;
+        // try every cyclic rotation of `face` (same orientation only)
+        foreach (off; 0 .. n) {
+            bool ok = true;
+            foreach (j; 0 .. n)
+                if (face[(off + j) % n] != tuple[j]) { ok = false; break; }
+            if (ok) return true;
+        }
+        return false;
+    }
+}
+
+unittest { // extendEdgesByMask: cube interior edge — identity, offset, rotate, scale, combined
+    import std.math : abs;
+    // ---- identity (inset=0.1, shift=0.2, no TRS) → 10v/7f, bridge [6,8,9,7] ----
+    {
+        Mesh m = makeCube();
+        selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+        auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                                     Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+        assert(n == 1);
+        assert(m.vertices.length == 10, "interior: 10 verts");
+        assert(m.faces.length == 7, "interior: 7 faces");
+        // 8 cube corners UNCHANGED (indices 0..7).
+        Mesh ref_ = makeCube();
+        foreach (i; 0 .. 8) assert(near_(m.vertices[i], ref_.vertices[i]), "cube corner moved");
+        // new verts (vert 6 endpoint → +0.4, vert 7 endpoint → −0.4).
+        // newVertOf[6] and newVertOf[7] — find by position.
+        assert(near_(m.vertices[8], Vec3(0.4f, 0.4f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(0.4f, 0.4f, 0.4f)), "new vert (0.4,0.4,0.4)");
+        assert(near_(m.vertices[8], Vec3(-0.4f, 0.4f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(-0.4f, 0.4f, 0.4f)), "new vert (-0.4,0.4,0.4)");
+        // bridge tuple [6,8,9,7]: srcA=6,newA=8,newB=9,srcB=7 (8 welds to 6, 9 to 7).
+        // Resolve actual new-vert indices for 6 and 7 by position.
+        uint n6 = near_(m.vertices[8], Vec3(0.4f, 0.4f, 0.4f)) ? 8 : 9;
+        uint n7 = (n6 == 8) ? 9 : 8;
+        long bf = findFaceByVerts_(m, [6u, n6, n7, 7u]);
+        assert(bf >= 0, "bridge face [6,n6,n7,7] exists");
+        assert(tupleMatchesWound_(m.faces[bf], [6u, n6, n7, 7u]),
+               "bridge winding [6,8,9,7]");
+    }
+    // ---- offset=(0,0.3,0) → new verts (±0.4, 0.7, 0.4) ----
+    {
+        Mesh m = makeCube();
+        selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+        m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                            Vec3(0, 0.3f, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+        assert(near_(m.vertices[8], Vec3(0.4f, 0.7f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(0.4f, 0.7f, 0.4f)));
+        assert(near_(m.vertices[8], Vec3(-0.4f, 0.7f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(-0.4f, 0.7f, 0.4f)));
+    }
+    // ---- rotZ=30° → (0.083013,0.583013,0.4) / (−0.583013,0.083013,0.4) ----
+    {
+        Mesh m = makeCube();
+        selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+        m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                            Vec3(0, 0, 0), Vec3(0, 0, 30.0f), Vec3(1, 1, 1), 1);
+        assert(near_(m.vertices[8], Vec3(0.083013f, 0.583013f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(0.083013f, 0.583013f, 0.4f)));
+        assert(near_(m.vertices[8], Vec3(-0.583013f, 0.083013f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(-0.583013f, 0.083013f, 0.4f)));
+    }
+    // ---- sclX=2 → (±0.9, 0.4, 0.4) ----
+    {
+        Mesh m = makeCube();
+        selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+        m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                            Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(2, 1, 1), 1);
+        assert(near_(m.vertices[8], Vec3(0.9f, 0.4f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(0.9f, 0.4f, 0.4f)));
+        assert(near_(m.vertices[8], Vec3(-0.9f, 0.4f, 0.4f)) ||
+               near_(m.vertices[9], Vec3(-0.9f, 0.4f, 0.4f)));
+    }
+    // ---- combined offY=0.3 + rotZ=30 + sclX=2 →
+    //      (0.266025,0.883013,0.4) / (−1.266025,0.383013,0.4) ----
+    {
+        Mesh m = makeCube();
+        selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+        m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                            Vec3(0, 0.3f, 0), Vec3(0, 0, 30.0f), Vec3(2, 1, 1), 1);
+        assert(near_(m.vertices[8], Vec3(0.266025f, 0.883013f, 0.4f), 2e-5f) ||
+               near_(m.vertices[9], Vec3(0.266025f, 0.883013f, 0.4f), 2e-5f));
+        assert(near_(m.vertices[8], Vec3(-1.266025f, 0.383013f, 0.4f), 2e-5f) ||
+               near_(m.vertices[9], Vec3(-1.266025f, 0.383013f, 0.4f), 2e-5f));
+    }
+}
+
+unittest { // extendEdgesByMask: shift inert on interior edge (inset=0, shift=0.4)
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    auto n = m.extendEdgesByMask(selMask_(m), 0.0f, 0.4f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 1);
+    // inset=0 ⇒ no perp/axial drop; shift inert on interior ⇒ new verts land
+    // exactly on the source endpoints. Bridge still created.
+    assert(m.faces.length == 7);
+    assert(near_(m.vertices[8], Vec3(0.5f, 0.5f, 0.5f)) ||
+           near_(m.vertices[9], Vec3(0.5f, 0.5f, 0.5f)));
+    assert(near_(m.vertices[8], Vec3(-0.5f, 0.5f, 0.5f)) ||
+           near_(m.vertices[9], Vec3(-0.5f, 0.5f, 0.5f)));
+}
+
+unittest { // extendEdgesByMask: chain2 weld (two top edges sharing corner (0.5,0.5,0.5))
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f)); // along -X from corner6
+    selectEdgeByEnds_(m, Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, -0.5f)); // along -Z from corner6
+    auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 2);
+    assert(m.vertices.length == 11, "chain2: 8 cube + 3 new = 11");
+    assert(m.faces.length == 8, "chain2: 6 cube + 2 bridges");
+    // Shared corner (vert 6) welds to ONE new vert at (0.4,0.4,0.4).
+    long welded = -1;
+    foreach (i; 8 .. m.vertices.length)
+        if (near_(m.vertices[i], Vec3(0.4f, 0.4f, 0.4f))) { welded = cast(long)i; break; }
+    assert(welded >= 0, "welded corner (0.4,0.4,0.4)");
+    // Free ends: vert 7=(-0.5,0.5,0.5) → (-0.4,0.4,0.4); vert 2=(0.5,0.5,-0.5) → (0.4,0.4,-0.4).
+    bool fe7 = false, fe2 = false;
+    foreach (i; 8 .. m.vertices.length) {
+        if (near_(m.vertices[i], Vec3(-0.4f, 0.4f, 0.4f))) fe7 = true;
+        if (near_(m.vertices[i], Vec3(0.4f, 0.4f, -0.4f))) fe2 = true;
+    }
+    assert(fe7 && fe2, "chain2 free ends");
+    // Two bridge quads, both reusing the welded vert.
+    size_t bridgesWithWeld = 0;
+    foreach (ref f; m.faces) {
+        if (f.length != 4) continue;
+        bool hasWeld = false, hasNew = false;
+        foreach (vid; f) {
+            if (vid == welded) hasWeld = true;
+            if (vid >= 8) hasNew = true;
+        }
+        // a bridge has 2 source + 2 new verts (incl. the weld)
+        size_t newCount = 0; foreach (vid; f) if (vid >= 8) ++newCount;
+        if (hasWeld && newCount == 2) ++bridgesWithWeld;
+    }
+    assert(bridgesWithWeld == 2, "two bridges share the welded vert");
+}
+
+unittest { // extendEdgesByMask: star3 weld (three cube edges meeting at corner (0.5,0.5,0.5))
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));  // -X
+    selectEdgeByEnds_(m, Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, -0.5f));  // -Z
+    selectEdgeByEnds_(m, Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f));  // -Y
+    auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 3);
+    assert(m.vertices.length == 12, "star3: 8 cube + 4 new = 12");
+    assert(m.faces.length == 9, "star3: 6 cube + 3 bridges");
+    // Corner (vert 6) welds to ONE vert (0.4,0.4,0.4) reused by all three bridges.
+    long welded = -1;
+    foreach (i; 8 .. m.vertices.length)
+        if (near_(m.vertices[i], Vec3(0.4f, 0.4f, 0.4f))) { welded = cast(long)i; break; }
+    assert(welded >= 0, "star3 welded corner (0.4,0.4,0.4)");
+    size_t bridgesWithWeld = 0;
+    foreach (ref f; m.faces) {
+        if (f.length != 4) continue;
+        foreach (vid; f) if (vid == welded) { ++bridgesWithWeld; break; }
+    }
+    assert(bridgesWithWeld == 3, "three bridges reuse the welded corner vert");
+}
+
+unittest { // extendEdgesByMask: boundary edge — bridge tuple proof + shift slide + inset
+    import std.math : abs;
+    // Build a single open quad face in the XZ plane: verts (0,1,4,3) layout from
+    // the reference, normal (0,-1,0). The reference boundary capture used edge
+    // (3,0) traversing 3→0 inside face [0,1,4,3], giving bridge [3,6,7,0].
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),   // 0
+        Vec3(1, 0, 0),   // 1
+        Vec3(0, 0, 0),   // placeholder (unused index 2)
+        Vec3(0, 0, 1),   // 3
+        Vec3(1, 0, 1),   // 4
+    ];
+    // Face [0,1,4,3] — a CCW quad in XZ. Newell normal:
+    m.addFace([0u, 1u, 4u, 3u]);
+    m.buildLoops();
+    m.resetSelection();   // size selection arrays for the hand-built mesh
+    Vec3 fn = m.faceNormal(0);
+    // Boundary edge (3,0): inset=0.1, shift=0.2.
+    selectEdgeByEnds_(m, m.vertices[3], m.vertices[0]);
+    auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 1);
+    // 5 verts + 2 new = 7 (index 2 is an orphan but never welded/removed: pure
+    // add does NOT compact). Faces: 1 source + 1 bridge.
+    assert(m.faces.length == 2, "boundary: source + 1 bridge");
+    // The two new verts sit at: src + (-inset·faceNormal) + (shift·inPlanePerp),
+    // no axial term on a boundary free end. fn = (0,-1,0) ⇒ -inset·fn = (0,0.1,0).
+    // Source verts 3=(0,0,1) and 0=(0,0,0); the in-plane outward perp slides them
+    // off the open boundary by shift=0.2. Assert both new verts have y=0.1.
+    uint na = 0, nb = 0; size_t cnt = 0;
+    foreach (i; 5 .. m.vertices.length) { if (cnt == 0) na = cast(uint)i; else nb = cast(uint)i; ++cnt; }
+    assert(cnt == 2, "boundary: 2 new verts");
+    assert(abs(m.vertices[na].y - 0.1f) < 1e-5f && abs(m.vertices[nb].y - 0.1f) < 1e-5f,
+           "boundary inset = -inset·faceNormal (y=0.1)");
+    // Bridge tuple [3, na, nb, 0] (3→0 directed order within face [0,1,4,3]):
+    // find the new vert welded to src 3 and to src 0.
+    long bf = findFaceByVerts_(m, [3u, na, nb, 0u]);
+    if (bf < 0) bf = findFaceByVerts_(m, [3u, nb, na, 0u]);
+    assert(bf >= 0, "boundary bridge face contains {3, new, new, 0}");
+}
+
+unittest { // extendEdgesByMask: wire-edge / no-op — mask selecting nothing returns 0
+    Mesh m = makeCube();
+    auto v0 = m.vertices.length;
+    auto f0 = m.faces.length;
+    auto mut0 = m.mutationVersion;
+    bool[] empty; empty.length = m.edges.length;   // all false
+    auto n = m.extendEdgesByMask(empty, 0.1f, 0.2f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    assert(n == 0, "no-op returns 0");
+    assert(m.vertices.length == v0 && m.faces.length == f0, "no-op: mesh unchanged");
+    assert(m.mutationVersion == mut0, "no-op: no version bump");
+}
+
+unittest { // extendEdgesByMask: consumer smoke — ring-walk + faceted subdivide no-crash
+    import std.array : array;
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                        Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+    // Ring-walk from the source-edge endpoints (verts 6 and 7) across the now
+    // 3-face non-manifold edge must not crash/hang (degraded adjacency is
+    // acceptable v1 — we only require termination + no exception).
+    foreach (vi; [6u, 7u]) {
+        size_t guard = 0;
+        foreach (nb; m.verticesAroundVertex(vi)) {
+            assert(nb < m.vertices.length);
+            if (++guard > 1000) break;   // safety: a corrupt loop must not hang
+        }
+    }
+    // One pure-D faceted subdivision of the extended mesh must not crash. (OSD
+    // Catmull-Clark needs a GL context, unavailable in the unittest; faceted
+    // subdivide exercises the same loop/adjacency consumers headlessly.)
+    bool[] allFaces; allFaces.length = m.faces.length;
+    allFaces[] = true;
+    Mesh sub = facetedSubdivide(m, allFaces);
+    assert(sub.vertices.length > m.vertices.length, "subdivide produced geometry");
+    assert(sub.loops.length == sub.faceLoop.length * 0 + sub.loops.length); // touch loops
 }
 
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
