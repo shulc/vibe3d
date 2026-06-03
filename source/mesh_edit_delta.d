@@ -23,7 +23,7 @@ module mesh_edit_delta;
 
 import std.array : insertInPlace;
 
-import mesh;            // Mesh, Marks (mutual import — see note below)
+import mesh;            // Mesh, Marks, edgeKey (mutual import — see note below)
 import math : Vec3;
 
 // NOTE on the mesh <-> mesh_edit_delta mutual import: D handles mutual module
@@ -587,6 +587,11 @@ private void removeFacesForward(ref Mesh m, in uint[] idx) {
 
 private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
                                 in uint[] mat, in uint[] sub) {
+    // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
+    // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
+    // the face re-insertion inverse is load-bearing (without it the deleted
+    // faces never come back on undo → face count diverges from the pre-op mesh).
+    version (UndoNegControlRemoveFaces) return;
     // Insert ascending so later indices stay valid.
     foreach (i, fi; idx) {
         if (fi <= m.faces.length)
@@ -688,6 +693,41 @@ private void finalize(ref Mesh m, in uint[] edgeSelEnds = null, bool haveEdgeSel
 // with no matching edge (geometry diverged) is silently skipped.
 private void applyEdgeSelByEnds(ref Mesh m, in uint[] ends) {
     import mesh : edgeKey;
+    for (size_t i = 0; i + 1 < ends.length; i += 2) {
+        const a = ends[i], b = ends[i + 1];
+        if (auto p = edgeKey(a, b) in m.edgeIndexMap)
+            m.selectEdge(cast(int)*p);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint-keyed edge-selection capture/restore helpers, used by the delta-
+// backed destructive commands (delete / remove) to round-trip the pre-op EDGE
+// selection across a kernel that re-derives edges (doc §1.3). Edge indices are
+// unstable across rebuildEdges, so the selection is carried by vertex-index
+// endpoint pair and re-resolved through edgeIndexMap after the geometry is
+// restored. Vertex/face selection stays index-keyed (those index spaces ARE
+// restored exactly by the delta), so only edges need this.
+// ---------------------------------------------------------------------------
+
+// Flat [a0,b0, a1,b1, …] vertex-index endpoint pairs of the currently-selected
+// edges. Empty when no edges are selected.
+uint[] captureSelectedEdgeEnds(in Mesh m) {
+    uint[] ends;
+    auto sel = m.selectedEdges;            // bool[] indexed by edge
+    foreach (ei; 0 .. m.edges.length) {
+        if (ei < sel.length && sel[ei]) {
+            ends ~= m.edges[ei][0];
+            ends ~= m.edges[ei][1];
+        }
+    }
+    return ends;
+}
+
+// Re-select the edges named by the flat endpoint pairs through the live
+// edgeIndexMap. The caller is expected to have cleared the edge selection
+// first (so the result is exactly the recorded set).
+void restoreSelectedEdgeEnds(ref Mesh m, in uint[] ends) {
     for (size_t i = 0; i + 1 < ends.length; i += 2) {
         const a = ends[i], b = ends[i + 1];
         if (auto p = edgeKey(a, b) in m.edgeIndexMap)

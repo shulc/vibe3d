@@ -261,8 +261,9 @@ struct Mesh {
     // Nullable recorder. NULL unless an edit batch is open (the common case —
     // it is opened only around a committed topology op, never per drag frame).
     // While non-null, the hooked mutation primitives (addVertex, addFace,
-    // compactUnreferenced, deleteFacesByMask, dissolveVerticesByMask, …) append
-    // an operation-log entry. Every hook's FIRST line is
+    // compactUnreferenced, deleteFacesByMask, dissolveVerticesByMask,
+    // removeEdgesByMask, extrudeEdgesByMask, …) append an operation-log entry.
+    // Every hook's FIRST line is
     // `if (editRecorder_ is null) return;` — a single predictable branch — so
     // when no batch is open (always, in Phase 1) the tracker adds zero cost and
     // every existing behavior is byte-for-byte unchanged. See
@@ -907,22 +908,65 @@ struct Mesh {
         }
 
         // Compact: drop faces, append merged polygons.
+        //
+        // Class B tracker hook (Phase 3) — inert unless a batch is open. The
+        // face array is rebuilt as [kept faces, in original relative order]
+        // ++ [merged boundary polygons]. That is exactly a keep-filter drop
+        // (closing the gaps the dropped component faces leave) followed by a
+        // tail append, so the delta is a RemoveFaces (the dropped component
+        // faces, recorded in the POST-DROP face-index space — the same
+        // convention dissolveVerticesByMask uses, so RemoveFaces⁻¹ insertInPlace
+        // ascending reconstructs them) plus an AddFaces (the appended merged
+        // polys, a tail range). The tail compactUnreferenced then self-logs
+        // RemoveVerts + Reindex via the Class-R hook. Forward log for an edge
+        // dissolve = [RemoveFaces, AddFaces, RemoveVerts, Reindex].
+        const bool recRemoveEdges = editRecorder_ !is null;
+        uint[]   droppedFaceIdx;
+        uint[][] droppedFaceLists;
+        uint[]   droppedFaceMat;
+        uint[]   droppedFaceSub;
         uint[][] keptFaces;
         bool[]   keptSubpatch;
         int[]    keptOrder;
         uint[]   keptMaterial;
         foreach (fi; 0 .. nFaces) {
-            if (dropFace[fi]) continue;
+            if (dropFace[fi]) {
+                if (recRemoveEdges) {
+                    // Position in the POST-DROP array = current keptFaces.length
+                    // (the slot this face would occupy if it had survived; on
+                    // revert RemoveFaces⁻¹ re-inserts ascending into exactly
+                    // these positions, restoring the original relative order).
+                    droppedFaceIdx   ~= cast(uint)keptFaces.length;
+                    droppedFaceLists ~= faces[fi].dup;
+                    droppedFaceMat   ~= (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+                    droppedFaceSub   ~= (isFaceSubpatch(cast(uint)fi) ? 1u : 0u);
+                }
+                continue;
+            }
             keptFaces ~= faces[fi];
             keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
             keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             keptMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
         }
+        // Tail range start = number of kept (non-dropped) faces.
+        const size_t firstMerged = keptFaces.length;
         foreach (i; 0 .. newPolyList.length) {
             keptFaces    ~= newPolyList[i];
             keptSubpatch ~= newPolySubpatch[i];
             keptOrder    ~= newPolyOrder[i];
             keptMaterial ~= newPolyMaterial[i];
+        }
+        if (recRemoveEdges) {
+            // RemoveFaces FIRST, then AddFaces — on revert (LIFO) the appended
+            // merged polys truncate FIRST (restoring the kept-only array), then
+            // the dropped component faces re-insert into the post-drop space.
+            editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
+                                            droppedFaceMat, droppedFaceSub);
+            uint[][] mergedLists;
+            mergedLists.length = newPolyList.length;
+            foreach (i; 0 .. newPolyList.length) mergedLists[i] = newPolyList[i].dup;
+            editRecorder_.recordAddFaces(cast(uint)firstMerged,
+                                         cast(uint)keptFaces.length, mergedLists);
         }
         faces              = keptFaces;
         setFaceSubpatchFrom(keptSubpatch);

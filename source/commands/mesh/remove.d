@@ -6,7 +6,10 @@ import mesh;
 import view;
 import editmode;
 import viewcache;
-import snapshot : MeshSnapshot;
+import snapshot : MeshSnapshot, SelectionSnapshot;
+import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
+                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds;
+import tools.edge_extrude : undoTrackerEnabled;
 
 /// All-true selection mask of length `n`, used when nothing is selected
 /// (empty selection ⇒ whole mesh).
@@ -21,6 +24,12 @@ private bool[] allTrue(size_t n) {
 /// the same geometry as Delete (`select.delete`) for every selection
 /// mode. We keep both as separate commands so the menu structure and
 /// shortcut layout can distinguish them.
+///
+/// Revert: a full MeshSnapshot of the pre-op cage by default; when the
+/// VIBE3D_UNDO_TRACKER env toggle is on the kernel run is wrapped in a
+/// Mesh edit batch and the resulting operation-log MeshEditDelta drives
+/// undo (O(Δ) — doc/undo_change_tracker_plan.md Phase 3). Redo re-runs the
+/// kernel batchless from the restored pre-op selection.
 class MeshRemove : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*         gpu;
@@ -28,6 +37,14 @@ class MeshRemove : Command, Operator {
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private MeshSnapshot     snap;
+
+    // Phase 3 delta path — see MeshDelete for the rationale. Vertex/face
+    // selection is index-keyed (SelectionSnapshot); edge selection is endpoint-
+    // keyed (re-derived edge order is not index-stable across rebuildEdges).
+    private MeshEditDelta      delta_;
+    private SelectionSnapshot  preSel_;
+    private uint[]             preEdgeEnds_;
+    private bool               useDelta_;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
@@ -47,47 +64,60 @@ class MeshRemove : Command, Operator {
         }
     }
 
+    // The kernel mutation, shared by the first run and the redo re-run.
+    // Delete and Remove differ ONLY for edges (both dissolve there); for
+    // vertices and polygons they are identical. Selection is read live.
+    private size_t runKernel() {
+        const all = mesh.nothingSelected(editMode);
+        final switch (editMode) {
+            case EditMode.Vertices:
+                return mesh.dissolveVerticesByMask(
+                    all ? allTrue(mesh.vertices.length) : mesh.selectedVertices);
+            case EditMode.Edges:
+                auto n = mesh.removeEdgesByMask(
+                    all ? allTrue(mesh.edges.length) : mesh.selectedEdges);
+                if (n > 0) mesh.dissolveDegree2Verts();
+                return n;
+            case EditMode.Polygons:
+                return mesh.deleteFacesByMask(
+                    all ? allTrue(mesh.faces.length) : mesh.selectedFaces);
+        }
+    }
+
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (mesh.faces.length == 0) return false;
 
-        // For Verts and Polygons modes, Remove is identical to Delete:
-        // build a face mask, drop those faces. Only Edges mode dissolves
-        // (merges adjacent faces) instead of deleting them.
-        snap = MeshSnapshot.capture(*mesh);
-
-        size_t affected = 0;
-
-        // Empty selection ⇒ operate on the whole mesh: mesh.nothingSelected
-        // is the single source of truth for the "everything is selected"
-        // convention. Feed an all-true mask in that case.
-        const all = mesh.nothingSelected(editMode);
-
-        final switch (editMode) {
-            case EditMode.Vertices:
-                // Delete and Remove differ ONLY for edges. For vertices
-                // both dissolve the vert from incident faces.
-                affected = mesh.dissolveVerticesByMask(
-                    all ? allTrue(mesh.vertices.length) : mesh.selectedVertices);
-                break;
-
-            case EditMode.Edges:
-                // `edge.remove false`: dissolve edge + cleanup 2-valent
-                // verts. Equivalent to `select.delete` on the same
-                // selection — both produce identical geometry.
-                affected = mesh.removeEdgesByMask(
-                    all ? allTrue(mesh.edges.length) : mesh.selectedEdges);
-                if (affected > 0) mesh.dissolveDegree2Verts();
-                break;
-
-            case EditMode.Polygons:
-                affected = mesh.deleteFacesByMask(
-                    all ? allTrue(mesh.faces.length) : mesh.selectedFaces);
-                break;
+        // Redo: re-run the kernel BATCHLESS (no double record).
+        if (useDelta_) {
+            const affected = runKernel();
+            if (affected == 0) return false;
+            refreshCaches();
+            return true;
         }
 
+        if (undoTrackerEnabled()) {
+            preSel_      = SelectionSnapshot.capture(*mesh);
+            preEdgeEnds_ = captureSelectedEdgeEnds(*mesh);
+            auto rec = MeshEditTracker();
+            mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
+            const affected = runKernel();
+            delta_ = mesh.endEditBatch();
+            if (affected == 0 || delta_.isEmpty) {
+                delta_       = MeshEditDelta.init;
+                preSel_      = SelectionSnapshot.init;
+                preEdgeEnds_ = null;
+                return false;
+            }
+            useDelta_ = true;
+            refreshCaches();
+            return true;
+        }
+
+        snap = MeshSnapshot.capture(*mesh);
+        const affected = runKernel();
         if (affected == 0) {
             snap = MeshSnapshot.init;
             return false;
@@ -97,6 +127,17 @@ class MeshRemove : Command, Operator {
     }
 
     override bool revert() {
+        if (useDelta_) {
+            delta_.revert(*mesh);
+            // See MeshDelete.revert: preSel_ restores vertex/face by index;
+            // override the (index-unstable) edge selection with the endpoint
+            // capture.
+            preSel_.restore(*mesh);
+            mesh.clearEdgeSelection();
+            restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
+            refreshCaches();
+            return true;
+        }
         if (!snap.filled) return false;
         snap.restore(*mesh);
         refreshCaches();
