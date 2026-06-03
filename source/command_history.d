@@ -60,6 +60,11 @@ enum HistoryFlags : uint {
     Quiet      = 1 << 2,
     SideEffect = 1 << 3,
     Undoable   = 1 << 4,
+    UiUndo     = 1 << 5, // Entry is UI-undo class (selection / edit-mode
+                         // state) rather than Model-undo (geometry). Mirrors
+                         // Command.isUiUndo(). Surfaced per-entry so the
+                         // history panel + /api/history can distinguish the
+                         // two undoable classes.
 }
 
 struct HistoryEntry {
@@ -80,7 +85,10 @@ struct HistoryEntry {
 private uint historyFlagsFor(const Command cmd) {
     CmdFlags cf = cmd.cmdFlags();
     uint flags = HistoryFlags.Succeeded;
-    if (cf & CmdFlags.Model)      flags |= HistoryFlags.Undoable;
+    // Undoable mirrors "lands on the stack" — true for BOTH undo classes
+    // (Model-undo and UI-undo). The UiUndo bit then narrows which class it is.
+    if (cmd.isUndoable())         flags |= HistoryFlags.Undoable;
+    if (cmd.isUiUndo())           flags |= HistoryFlags.UiUndo;
     if (cf & CmdFlags.Quiet)      flags |= HistoryFlags.Quiet;
     if (cf & CmdFlags.SideEffect) flags |= HistoryFlags.SideEffect;
     return flags;
@@ -282,19 +290,17 @@ final class CommandHistory {
         // (no in-place coalesce — the block already collapses its children).
         if (blockDepth > 0) { record(cmd); return; }
 
-        // Try to merge into the current top entry.
+        // Try to merge into the current top entry. The merge is type-erased:
+        // compareOp() decides COMPATIBLE, then the top command's mergeFrom()
+        // folds `cmd`'s post-state in place (each coalescing command type —
+        // MeshVertexEdit, MeshSelectionEdit — implements its own downcast).
         if (undoStack.length > 0) {
             auto top = &undoStack[$ - 1];
             if (cmd.compareOp(top.cmd) == CompareResult.Compatible) {
-                import commands.mesh.vertex_edit : MeshVertexEdit;
-                auto topEdit = cast(MeshVertexEdit)top.cmd;
-                auto newEdit = cast(MeshVertexEdit)cmd;
-                if (topEdit !is null && newEdit !is null) {
-                    // The dispatcher already applied `cmd`, so the mesh holds
-                    // the merged post-state — do NOT re-apply. Fold the newer
-                    // after[] into the kept-older top entry.
-                    topEdit.mergeFrom(newEdit);
-
+                // The dispatcher already applied `cmd`, so the mesh holds the
+                // merged post-state — do NOT re-apply. Fold the newer post-state
+                // into the kept-older top entry via the type-erased hook.
+                if (top.cmd.mergeFrom(cmd)) {
                     // Refresh the top entry's args/label from the (now merged)
                     // top command so /api/history reflects the latest values.
                     top.args  = serializeParams(top.cmd.params());

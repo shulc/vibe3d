@@ -2126,8 +2126,11 @@ void main(string[] args) {
             return history.jumpTo(target);
         });
         httpServer.setHistoryProvider(() {
-            // JSON: { "undo": [{"label":..,"args":..,"command":..}, ...], "redo":[..] }
+            // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool}, ...], "redo":[..] }
+            // "ui" is true when the entry is UI-undo class (selection / edit-mode
+            // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
             import std.json : JSONValue;
+            import command_history : HistoryFlags;
             JSONValue[] undoArr;
             foreach (ref e; history.undoEntries()) {
                 auto obj = JSONValue.emptyObject;
@@ -2135,6 +2138,7 @@ void main(string[] args) {
                 obj["args"]    = JSONValue(e.args);
                 obj["command"] = JSONValue(e.commandName);
                 obj["flags"]   = JSONValue(cast(long)e.flags);
+                obj["ui"]      = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
                 undoArr ~= obj;
             }
             JSONValue[] redoArr;
@@ -2144,6 +2148,7 @@ void main(string[] args) {
                 obj["args"]    = JSONValue(e.args);
                 obj["command"] = JSONValue(e.commandName);
                 obj["flags"]   = JSONValue(cast(long)e.flags);
+                obj["ui"]      = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
                 redoArr ~= obj;
             }
             JSONValue payload = JSONValue.emptyObject;
@@ -2534,7 +2539,11 @@ void main(string[] args) {
         auto cmd = new MeshSelectionEdit(&mesh, cameraView, editMode, &editMode);
         cmd.setBefore(pendingSelBefore, pendingSelBeforeMode);
         cmd.setAfter (after,            editMode);
-        history.record(cmd);
+        // P5: coalesce consecutive interactive selects into one undo entry.
+        // An intervening geometry/non-selection edit becomes the top entry, so
+        // the next select's compareOp(top) = Different → new entry (automatic
+        // gesture boundary). Selection-undo stays in its own UI-undo class.
+        history.recordCoalescing(cmd);
     }
 
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
