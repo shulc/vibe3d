@@ -35,7 +35,7 @@ import math : Vec3;
 // ---------------------------------------------------------------------------
 // Change-scope bitfield — declared at beginEditBatch to describe the kinds of
 // mutation a batch covers. Advisory in Ph1 (the log is self-describing); kept
-// so commands can surface change scope (the LXf_MESHEDIT_* analog) later.
+// so commands can surface change scope later.
 // ---------------------------------------------------------------------------
 enum MeshEditScope : uint {
     None     = 0,

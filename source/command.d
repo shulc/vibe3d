@@ -145,9 +145,9 @@ class Command {
     // each coalescing command downcasts `newer` to its own type.)
     bool mergeFrom(Command newer) { return false; }
 
-    // Change-scope metadata (doc/undo_change_tracker_plan.md, Phase 4 §b — the
-    // analog of MODO's LXf_MESHEDIT_* scope bitfield, MIT-clean name). Declares
-    // which classes of mesh state an op touches. Default None — most commands do
+    // Change-scope metadata (doc/undo_change_tracker_plan.md, Phase 4 §b).
+    // Declares which classes of mesh state an op touches via a scope bitfield.
+    // Default None — most commands do
     // not carry topology-scope provenance. The delta-backed migrated commands
     // (edge extrude / delete / remove / dissolve) override it to Geometry|Marks.
     // Lightweight metadata only: no speculative consumer machinery is built — the
