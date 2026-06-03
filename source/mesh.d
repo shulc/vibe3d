@@ -967,6 +967,34 @@ struct Mesh {
         // (Subsumes the old extrude==0 && width==0 identity no-op.)
         if (width < 1e-6f) return 0;
 
+        // --- Mesh-edit tracker (mesh_edit_delta) — Phase 2 capture. Inert unless
+        //     a batch is open (commitEdit opens one around the committed re-run;
+        //     the interactive preview drag runs batchless ⇒ zero cost). The
+        //     addVertex appends (ridge/inset/chamfer/along) self-log AddVerts via
+        //     the Class-P hook, and the tail compactUnreferenced self-logs
+        //     RemoveVerts+Reindex via the Class-R hook. This kernel records the
+        //     parts NOT covered by those primitive hooks:
+        //       * the in-place ReshapeFaces of pre-existing neighbour/side faces
+        //         (the `faces[fi] = …` rewrites repoint corners at new insets),
+        //       * the bridge/cap AddFaces (appended via `faces ~=`, NOT addFace,
+        //         so not auto-logged),
+        //       * the edge-selection delta (endpoint-keyed): the kernel clears
+        //         edge selection in compaction and re-derives the ridge, so revert
+        //         must restore the ORIGINAL selected edges.
+        const bool recExtrude = editRecorder_ !is null;
+        // Pre-extrude selected edges captured BY VERTEX-INDEX ENDPOINT PAIR (edge
+        // indices are unstable across the rebuild; endpoints in pre-extrude space
+        // are what revert restores). Flat [a0,b0, a1,b1, …].
+        uint[] preEdgeSelEnds;
+        if (recExtrude) {
+            foreach (i; 0 .. edges.length) {
+                if (i < edgeMarks.length && (edgeMarks[i] & Marks.Select)) {
+                    preEdgeSelEnds ~= edges[i][0];
+                    preEdgeSelEnds ~= edges[i][1];
+                }
+            }
+        }
+
         // --- Edge → (≤2 faces) adjacency, one pass (no O(E×F) scan). Same idiom
         //     as removeEdgesByMask: first occurrence → slot 0, second distinct
         //     face → slot 1; a 3rd+ face / self-doubled edge is ignored.
@@ -1397,6 +1425,18 @@ struct Mesh {
             affectedFaces[e.fA] = true;
             if (e.fB != -1) affectedFaces[e.fB] = true;
         }
+        // Tracker: capture the BEFORE-image of every neighbour face this loop is
+        // about to rewrite in place, then the AFTER-image once rewritten. The
+        // affected-face set is computed here, inside the body (doc §2.1(c)); the
+        // capture is O(faces-touched). Recorded as a ReshapeFaces entry.
+        uint[]   nbrReshapeIdx;
+        uint[][] nbrReshapeBefore;
+        if (recExtrude) {
+            foreach (fi, _; affectedFaces) {
+                nbrReshapeIdx    ~= cast(uint)fi;
+                nbrReshapeBefore ~= faces[fi].dup;
+            }
+        }
         foreach (fi, _; affectedFaces) {
             auto f = faces[fi];
             foreach (k; 0 .. f.length) {
@@ -1404,6 +1444,11 @@ struct Mesh {
                 if (auto p = key in insetVert)
                     faces[fi][k] = *p;
             }
+        }
+        if (recExtrude && nbrReshapeIdx.length) {
+            uint[][] nbrReshapeAfter;
+            foreach (fi; nbrReshapeIdx) nbrReshapeAfter ~= faces[fi].dup;
+            editRecorder_.recordReshapeFaces(nbrReshapeIdx, nbrReshapeBefore, nbrReshapeAfter);
         }
 
         // --- Free-end side-corner rewrite (§5.a/§5.b — the fix). Each free-end
@@ -1547,6 +1592,15 @@ struct Mesh {
         // Rewrite each side face: any face containing a free-end vertex that is
         // NOT a neighbor face of that vertex. Replace the v corner with the two
         // insets ordered to preserve the face's original normal.
+        // Tracker: this loop ALSO rewrites pre-existing faces in place. Capture
+        // each touched face's before-image (the loop-top `f` dup, which is the
+        // exact pre-rewrite list) + after-image into a second ReshapeFaces entry,
+        // recorded AFTER the neighbour-face entry so LIFO revert undoes this loop
+        // first, then the neighbour loop (each `before` is the true pre-loop
+        // state, so the two compose even if a face is touched by both).
+        uint[]   sideReshapeIdx;
+        uint[][] sideReshapeBefore;
+        uint[][] sideReshapeAfter;
         foreach (fi; 0 .. faces.length) {
             auto f = faces[fi].dup;
             // Snapshot the pre-rewrite normal so we can preserve orientation.
@@ -1628,8 +1682,15 @@ struct Mesh {
                     auto r = faces[fi].dup;
                     foreach (j, vid; r) faces[fi][r.length - 1 - j] = vid;
                 }
+                if (recExtrude) {
+                    sideReshapeIdx    ~= cast(uint)fi;
+                    sideReshapeBefore ~= f;            // loop-top dup = pre-rewrite list
+                    sideReshapeAfter  ~= faces[fi].dup; // post-rewrite (incl. flip)
+                }
             }
         }
+        if (recExtrude && sideReshapeIdx.length)
+            editRecorder_.recordReshapeFaces(sideReshapeIdx, sideReshapeBefore, sideReshapeAfter);
 
         // --- Bridge faces. Helper: emit a quad, fixing winding so its normal
         //     points away from the neighbor-face interior (positive dot with ne).
@@ -1821,6 +1882,18 @@ struct Mesh {
         foreach (fi; firstBridge .. faces.length)
             setFaceSubpatch(fi, false);
 
+        // Tracker: the bridge/cap faces were appended via `faces ~=` (NOT addFace),
+        // so they are NOT auto-logged. Record them as one AddFaces([F0..F1)) entry
+        // now that the parallel arrays are sized and the appends are complete.
+        // (These index in the PRE-compaction face space; compaction touches only
+        // vertex indices inside faces — no face is dropped/reordered here — so the
+        // appended block stays the tail [F0..F1) and reverts by truncation.)
+        if (recExtrude && faces.length > firstBridge) {
+            uint[][] bridgeLists;
+            foreach (fi; firstBridge .. faces.length) bridgeLists ~= faces[fi].dup;
+            editRecorder_.recordAddFaces(cast(uint)firstBridge, cast(uint)faces.length, bridgeLists);
+        }
+
         // --- Record the ridge endpoints BY POSITION for each extruded edge so we
         //     can re-find the ridge edges AFTER compaction remaps vertex indices.
         //     Free-end endpoints are now wholly dissolved (no face references
@@ -1877,6 +1950,22 @@ struct Mesh {
         }
         clearVertexSelection();
         clearFaceSelection();
+
+        // Tracker: record the edge-selection delta. `before` = the pre-extrude
+        // selected edges (captured up top, pre-extrude vertex space, restored by
+        // revert); `after` = the post-extrude RIDGE selection (post-compaction
+        // vertex space, restored by apply/redo). Both keyed by endpoint pair —
+        // edge indices are unstable across the rebuild (doc §1.3 / §2.3 step 1).
+        if (recExtrude) {
+            uint[] postEdgeSelEnds;
+            foreach (i; 0 .. edges.length) {
+                if (i < edgeMarks.length && (edgeMarks[i] & Marks.Select)) {
+                    postEdgeSelEnds ~= edges[i][0];
+                    postEdgeSelEnds ~= edges[i][1];
+                }
+            }
+            editRecorder_.recordEdgeSelByEnds(preEdgeSelEnds, postEdgeSelEnds);
+        }
 
         ++mutationVersion; ++topologyVersion;
         return exEdges.length;

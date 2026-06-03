@@ -65,6 +65,12 @@ struct MeshOpEntry {
         SelectionDelta, // markIdx + markBefore / markAfter (Select bit, by element)
         SubpatchDelta,  // markIdx + markBefore / markAfter (Subpatch bit, by face)
         MaterialDelta,  // markIdx + markBefore / markAfter (faceMaterial[], by face)
+        EdgeSelByEnds,  // edge selection keyed by VERTEX-INDEX endpoint pairs,
+                        //   re-applied through edgeIndexMap AFTER finalize rebuilds
+                        //   edges (edge indices are unstable across rebuildEdges,
+                        //   so this is endpoint-keyed — doc §1.3). The vertex
+                        //   indices are in the space that finalize restores, so
+                        //   forward uses `edgeEndsAfter`, reverse `edgeEndsBefore`.
         MeshMapDelta,   // reserved — deferred (Q4)
     }
     Kind kind;
@@ -87,6 +93,11 @@ struct MeshOpEntry {
     // whole-array restore below, not folded here). For Subpatch/Material the
     // value is the bit / material id.
     uint[]    markIdx, markBefore, markAfter;
+
+    // EdgeSelByEnds: edge selection keyed by vertex-index endpoint pairs (flat
+    // [a0,b0, a1,b1, …]). Applied post-finalize via edgeIndexMap. before = the
+    // selection restored on revert; after = the selection restored on apply/redo.
+    uint[]    edgeEndsBefore, edgeEndsAfter;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +129,8 @@ struct MeshEditDelta {
             n += e.markIdx.length * uint.sizeof;
             n += e.markBefore.length * uint.sizeof;
             n += e.markAfter.length * uint.sizeof;
+            n += e.edgeEndsBefore.length * uint.sizeof;
+            n += e.edgeEndsAfter.length * uint.sizeof;
             n += MeshOpEntry.sizeof;
         }
         return n;
@@ -126,9 +139,31 @@ struct MeshEditDelta {
     // Forward replay — redo. Plays the log in execution order; each entry
     // re-applies its forward effect, then finalize() re-derives edges/loops.
     bool apply(ref Mesh m) const {
-        foreach (ref e; log)
+        foreach (i, ref e; log) {
+            // Compaction pair (RemoveVerts immediately followed by Reindex): the
+            // Reindex's perm carries the FULL old->new map INCLUDING the dropped
+            // (~0u) slots, so applyReindexForward both drops AND repacks. The
+            // preceding RemoveVerts forward must therefore be a NO-OP — otherwise
+            // it would drop the verts first, shifting indices out from under the
+            // perm (which is keyed in the pre-drop index space) → corruption.
+            // (RemoveVerts' positions are only needed on REVERSE, to re-insert.)
+            if (e.kind == MeshOpEntry.Kind.RemoveVerts
+                && i + 1 < log.length
+                && log[i + 1].kind == MeshOpEntry.Kind.Reindex)
+                continue;
             applyForward(m, e);
-        finalize(m);
+        }
+        // Edge selection is endpoint-keyed and must be re-applied AFTER finalize
+        // rebuilds the edge array + edgeIndexMap (edge indices are unstable
+        // across rebuildEdges). On apply/redo we want the post-op selection.
+        const(uint)[] edgeSel = null;
+        bool haveEdgeSel = false;
+        foreach (ref e; log)
+            if (e.kind == MeshOpEntry.Kind.EdgeSelByEnds) {
+                edgeSel = e.edgeEndsAfter;
+                haveEdgeSel = true;
+            }
+        finalize(m, edgeSel, haveEdgeSel);
         return true;
     }
 
@@ -138,7 +173,16 @@ struct MeshEditDelta {
     bool revert(ref Mesh m) const {
         foreach_reverse (ref e; log)
             applyReverse(m, e);
-        finalize(m);
+        // On revert we want the pre-op (before) edge selection, re-applied after
+        // finalize rebuilds edges (doc §1.3 / §2.3 step 1's endpoint-keyed part).
+        const(uint)[] edgeSel = null;
+        bool haveEdgeSel = false;
+        foreach (ref e; log)
+            if (e.kind == MeshOpEntry.Kind.EdgeSelByEnds) {
+                edgeSel = e.edgeEndsBefore;
+                haveEdgeSel = true;
+            }
+        finalize(m, edgeSel, haveEdgeSel);
         return true;
     }
 }
@@ -294,6 +338,21 @@ struct MeshEditTracker {
         log_ ~= e;
     }
 
+    // Edge selection delta keyed by VERTEX-INDEX endpoint pairs (flat arrays
+    // [a,b, a,b, …]). Edge indices are unstable across rebuildEdges, so the
+    // selection is carried by endpoint and re-resolved through edgeIndexMap in
+    // finalize. `before` = the edges to reselect on revert (the pre-op edge
+    // selection, in the vertex-index space the revert restores); `after` = the
+    // edges to reselect on apply/redo (the post-op selection, in the post-op
+    // vertex-index space). An empty list on a side is a valid "clear" target.
+    void recordEdgeSelByEnds(in uint[] before, in uint[] after) {
+        MeshOpEntry e;
+        e.kind           = MeshOpEntry.Kind.EdgeSelByEnds;
+        e.edgeEndsBefore = before.dup;
+        e.edgeEndsAfter  = after.dup;
+        log_ ~= e;
+    }
+
     bool isEmpty() const { return log_.length == 0; }
 
     // Move the accumulated log into a finished, invertible MeshEditDelta.
@@ -347,6 +406,8 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e) {
         case MeshOpEntry.Kind.MaterialDelta:
             patchMaterial(m, e.markIdx, e.markAfter);
             break;
+        case MeshOpEntry.Kind.EdgeSelByEnds:
+            break; // handled in finalize (post-rebuildEdges, endpoint-keyed)
         case MeshOpEntry.Kind.MeshMapDelta:
             break; // deferred (Q4)
     }
@@ -399,6 +460,8 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
         case MeshOpEntry.Kind.MaterialDelta:
             patchMaterial(m, e.markIdx, e.markBefore);
             break;
+        case MeshOpEntry.Kind.EdgeSelByEnds:
+            break; // handled in finalize (post-rebuildEdges, endpoint-keyed)
         case MeshOpEntry.Kind.MeshMapDelta:
             break; // deferred (Q4)
     }
@@ -586,7 +649,7 @@ private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
 // finalize — the byte-identical tail of MeshSnapshot.restore (snapshot.d:97).
 // Re-derive edges + loops + map lengths, bump both version counters ONCE.
 // ---------------------------------------------------------------------------
-private void finalize(ref Mesh m) {
+private void finalize(ref Mesh m, in uint[] edgeSelEnds = null, bool haveEdgeSel = false) {
     // buildLoops() reads `edges` (it does NOT re-derive it), so rebuild the
     // deduplicated edge array from the restored faces FIRST — the same triplet
     // the topology mutators run, and the same canonical edge order the kernels
@@ -606,8 +669,30 @@ private void finalize(ref Mesh m) {
     m.faceSelectionOrder.length   = m.faces.length;
     m.faceMaterial.length         = m.faces.length;
     m.resizeAllMeshMaps();
+    // Endpoint-keyed edge selection (doc §1.3). Applied here — AFTER rebuildEdges
+    // re-derived `edges` + edgeIndexMap — because edge indices are unstable
+    // across the rebuild. The vertex-index endpoints are in the space the replay
+    // just restored, so edgeIndexMap resolves them to the live edge indices.
+    if (haveEdgeSel) {
+        // Clear the (length-resized, possibly stale) edge selection first so the
+        // result is exactly the recorded set, not a superset.
+        m.clearEdgeSelection();
+        applyEdgeSelByEnds(m, edgeSelEnds);
+    }
     ++m.mutationVersion;
     ++m.topologyVersion;
+}
+
+// Re-select the edges named by the flat vertex-index endpoint pairs
+// [a0,b0, a1,b1, …] through the freshly-rebuilt edgeIndexMap. An endpoint pair
+// with no matching edge (geometry diverged) is silently skipped.
+private void applyEdgeSelByEnds(ref Mesh m, in uint[] ends) {
+    import mesh : edgeKey;
+    for (size_t i = 0; i + 1 < ends.length; i += 2) {
+        const a = ends[i], b = ends[i + 1];
+        if (auto p = edgeKey(a, b) in m.edgeIndexMap)
+            m.selectEdge(cast(int)*p);
+    }
 }
 
 // ---------------------------------------------------------------------------

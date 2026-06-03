@@ -186,7 +186,7 @@ unittest {
             case RemoveFaces:    sawRemoveFaces = true; break;
             case AddVerts: case SetPos: case AddFaces: case ReshapeFaces:
             case SelectionDelta: case SubpatchDelta: case MaterialDelta:
-            case MeshMapDelta:   break;
+            case EdgeSelByEnds:  case MeshMapDelta:   break;
         }
     }
     assert(sawReindex,     "(b) log must contain Reindex");
@@ -196,6 +196,11 @@ unittest {
     // Post-delete: 4 verts, 1 face, verts reindexed to 0..3.
     assert(m.vertices.length == 4, "(b) compaction dropped 4 verts");
     assert(m.faces.length == 1);
+    // Capture the post-compaction (forward) state so apply() can be re-checked —
+    // the compaction RemoveVerts+Reindex pair's FORWARD replay must drop+repack
+    // (the Reindex perm is the sole authority; the RemoveVerts forward no-ops so
+    // it does not shift indices out from under the perm).
+    auto post = capture(m);
 
     // revert → byte-identical pre-batch INDEXING + positions.
     delta.revert(m);
@@ -205,6 +210,12 @@ unittest {
     assert(m.vertices[4] == Vec3(3, 0, 0), "(b) vert 4 restored to original index");
     assert(m.vertices[7] == Vec3(3, 1, 0), "(b) vert 7 restored to original index");
     assert(m.faces[1] == [4u, 5u, 6u, 7u], "(b) face 1 references original indices");
+
+    // apply (redo) → byte-identical to the post-compaction state. This is the
+    // forward-replay-of-a-compaction lock (the latent bug Phase 2's redo found).
+    delta.apply(m);
+    assert(m.vertices.length == 4, "(b) apply restores post-compaction vert count");
+    assertGeoEq(m, post, "(b) apply (forward redo of compaction)");
 }
 
 // ---------------------------------------------------------------------------

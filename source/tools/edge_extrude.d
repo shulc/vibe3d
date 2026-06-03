@@ -17,6 +17,7 @@ import command_history : CommandHistory;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
 
 import std.math : abs, sqrt;
 
@@ -26,6 +27,35 @@ import std.math : abs, sqrt;
 /// A dedicated class (rather than reusing the bevel edit) keeps the undo label
 /// reading "Edge Extrude".
 alias EdgeExtrudeEditFactory = MeshEdgeExtrudeEdit delegate();
+
+// VIBE3D_UNDO_TRACKER toggle (doc/undo_change_tracker_plan.md, Phase 2 §D). When
+// set to a truthy value the interactive extrude commit records a MeshEditDelta
+// (operation-log undo) instead of a before/after MeshSnapshot pair. Unset/"off"
+// keeps the snapshot path byte-identical to pre-Phase-2 behavior. Read ONCE and
+// cached — it is the rollback safety net + the parity-test lever.
+private bool g_undoTrackerChecked = false;
+private bool g_undoTrackerOn      = false;
+bool undoTrackerEnabled() {
+    if (!g_undoTrackerChecked) {
+        import std.process : environment;
+        import std.uni : toLower;
+        g_undoTrackerChecked = true;
+        auto v = environment.get("VIBE3D_UNDO_TRACKER", "");
+        auto lv = v.toLower;
+        g_undoTrackerOn = (lv == "1" || lv == "on" || lv == "true" || lv == "yes");
+    }
+    return g_undoTrackerOn;
+}
+
+// Test-automation override (the parity-gate lever): flip the cached toggle so a
+// single running instance can run the SAME extrude+undo under both the snapshot
+// path and the delta path. Marks the env as already-checked so the env read
+// doesn't clobber the override on the next commit. Wired to the `undo.tracker`
+// command in app.d (test-automation only — not surfaced in the UI).
+void setUndoTrackerEnabled(bool on) {
+    g_undoTrackerChecked = true;
+    g_undoTrackerOn      = on;
+}
 
 // ---------------------------------------------------------------------------
 // EdgeExtrudeTool — interactive Edge Extrude (factory id `edge.extrude`).
@@ -481,7 +511,43 @@ private:
     void commitEdit() {
         if (history is null || factory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = factory();
+
+        if (undoTrackerEnabled()) {
+            // Phase 2 delta path. Re-run the kernel ONCE inside a Mesh edit batch
+            // so the committed extrude self-records an operation-log delta. This
+            // adds one extra kernel run per session (cheap, off the per-drag hot
+            // path); the interactive preview loop in rebuildPreview() stays
+            // batchless (HP5 — zero tracker cost per mouse-motion frame).
+            //
+            // before.restore MUST precede beginEditBatch: a built preview left the
+            // mesh as the lifted ridge AND reselected the post-extrude ridge edges.
+            // currentMask() reads mesh.selectedEdges, so without the rewind the
+            // batch would extrude the WRONG (ridge) edges. The restore rewinds the
+            // clean cage + the ORIGINAL edge selection; it is the un-tracked
+            // rewind, NOT part of the logged batch.
+            before.restore(*mesh);
+
+            auto rec = MeshEditTracker();
+            mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
+            auto mask = currentMask();
+            mesh.extrudeEdgesByMask(mask, extrude_, width_);
+            auto delta = mesh.endEditBatch();
+
+            // After the re-run the mesh is back in the post-extrude state the user
+            // was viewing; refresh the caches so the GPU/viewcaches reflect it.
+            refreshCaches();
+
+            if (!delta.isEmpty) {
+                cmd.setDelta(delta, "Edge Extrude");
+                history.record(cmd);
+                return;
+            }
+            // Degenerate delta (nothing recorded) — fall through to the snapshot
+            // path below so a no-op commit is still well-formed.
+        }
+
+        // Snapshot path (default / VIBE3D_UNDO_TRACKER=off / degenerate delta).
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Extrude");
         history.record(cmd);
