@@ -1261,6 +1261,19 @@ void main(string[] args) {
     reg.commandFactories["history.clear"] = () => cast(Command)
         new HistoryClear(&mesh, cameraView, editMode,
                          () { history.clear(); });
+    // Test-automation only: flip the interactive edge-extrude undo-tracker toggle
+    // (VIBE3D_UNDO_TRACKER) at runtime so the parity-gate test can run the same
+    // sequence under both the snapshot and the delta path in one instance.
+    // Reuses HistoryClear's closure wrapper (SideEffect, unrecorded). Not in any
+    // menu / UI; see doc/undo_change_tracker_plan.md Phase 2 §D.
+    reg.commandFactories["undo.tracker.on"] = () => cast(Command)
+        new HistoryClear(&mesh, cameraView, editMode,
+            () { import tools.edge_extrude : setUndoTrackerEnabled;
+                 setUndoTrackerEnabled(true); });
+    reg.commandFactories["undo.tracker.off"] = () => cast(Command)
+        new HistoryClear(&mesh, cameraView, editMode,
+            () { import tools.edge_extrude : setUndoTrackerEnabled;
+                 setUndoTrackerEnabled(false); });
     reg.commandFactories["history.saveAsScript"] = () => cast(Command)
         new HistorySaveAsScript(&mesh, cameraView, editMode,
             () {
