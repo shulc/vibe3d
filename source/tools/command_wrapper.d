@@ -91,6 +91,23 @@ abstract class CommandWrapperTool : Tool {
     private Vec3[] baseline;
     private bool   dirty;
 
+    // Refire bookkeeping (undo/redo migration P4). While a panel-param-edit
+    // refire session is driving this tool, the driver fires buildRefireCommand()
+    // each tick and the history's refireEnd() lands ONE undo entry. The tool's
+    // internal evaluate()/onParamChanged() preview is suppressed in that window
+    // (the fired command owns the mutation), and the eventual commitNow() at
+    // deactivate must NOT record a second entry for the same session.
+    //
+    //  refireDriving_   : true between the driver's first fire and refireEnd —
+    //                     suppresses the internal preview so the two paths can't
+    //                     both mutate the mesh in one tick.
+    //  refireCommitted_ : set when a refire session committed an entry (the
+    //                     driver called the tool back to mark it). Latched so the
+    //                     single commitNow() chokepoint skips its own record(),
+    //                     then cleared once consumed — the double-record guard.
+    private bool   refireDriving_;
+    private bool   refireCommitted_;
+
     // Click-point handle. Drawn ONLY while LMB is held — the gizmo
     // (sphere-with-rings at the click pixel) appears at click time and
     // disappears on release. Size is
@@ -172,6 +189,8 @@ abstract class CommandWrapperTool : Tool {
         if (meshPtr is null) return;
         baseline = meshPtr.vertices.dup;
         dirty    = false;
+        refireDriving_   = false;
+        refireCommitted_ = false;
     }
 
     override void deactivate() {
@@ -192,6 +211,8 @@ abstract class CommandWrapperTool : Tool {
         baseline.length = 0;
         dirty    = false;
         dragging = false;
+        refireDriving_   = false;
+        refireCommitted_ = false;
         lastAppliedFalloff = FalloffPacket.init;
     }
 
@@ -222,6 +243,83 @@ abstract class CommandWrapperTool : Tool {
     // is no open edit (hasUncommittedEdit()==false), so nothing live is lost.
     public override void resyncSession() {
         reinitSession();
+    }
+
+    // ----- Refire hooks (undo/redo migration P4) ---------------------------
+    //
+    // Opt in iff the undo plumbing is wired (history + vertex-edit factory).
+    // Tests / older callers that skip setUndoBindings() leave history null and
+    // fall back to the legacy preview-then-commit path.
+    public override bool wantsRefire() const {
+        return history !is null && vertexEditFactory !is null;
+    }
+
+    // Build the MeshVertexEdit representing the CURRENT param state. Re-runs the
+    // deform against the session baseline, captures the per-vertex before/after
+    // diff, and returns a fresh (unrecorded) command. The history's fire() then
+    // owns its apply()/revert() lifecycle: each fire reverts the previous live
+    // command back to `baseline`, then applies this one — so the mesh always
+    // walks baseline -> latest-params with no accumulation, and refireEnd lands
+    // the LAST one as a single entry. Returns null when the params produce a
+    // no-op (empty diff) so the driver skips the fire() for that tick.
+    public override Command buildRefireCommand() {
+        if (meshPtr is null || history is null || vertexEditFactory is null)
+            return null;
+        if (baseline.length != meshPtr.vertices.length) return null;
+
+        // Mark the session driving so the per-frame evaluate()/onParamChanged()
+        // preview stays inert while the fired command owns mutation.
+        refireDriving_ = true;
+
+        // Run the deform from the clean baseline using the inner Command's
+        // current attrs (same dispatch the drag/preview path uses). This leaves
+        // the mesh holding the post-deform positions; we snapshot the diff, then
+        // restore the baseline so fire()'s own apply() lays it down cleanly.
+        if (!applyWithLivePipeline()) {
+            meshPtr.vertices[] = baseline[];
+            refreshCaches();
+            return null;
+        }
+
+        uint[] indices;
+        Vec3[] before;
+        Vec3[] after_;
+        size_t n = meshPtr.vertices.length;
+        foreach (i; 0 .. n) {
+            auto a = baseline[i], b = meshPtr.vertices[i];
+            if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
+            indices ~= cast(uint)i;
+            before  ~= a;
+            after_  ~= b;
+        }
+
+        // Restore baseline — fire() applies the returned command itself.
+        meshPtr.vertices[] = baseline[];
+        refreshCaches();
+
+        if (indices.length == 0) return null;
+
+        auto cmd = vertexEditFactory();
+        cmd.setEdit(indices, before, after_, name());
+        return cast(Command)cmd;
+    }
+
+    // Driver sets this around a param injection so the per-frame preview stays
+    // inert while the fired command owns mutation (undo/redo migration P4).
+    public override void setRefireDriving(bool on) {
+        refireDriving_ = on;
+    }
+
+    // Called by the driver (app.d) once a refire session has committed its
+    // single entry via refireEnd(). Latches the double-record guard so the
+    // subsequent deactivate()->commitNow() skips recording, refreshes the
+    // baseline to the now-committed geometry, and clears the driving flag.
+    public override void onRefireCommitted() {
+        refireDriving_   = false;
+        refireCommitted_ = true;
+        if (meshPtr !is null && baseline.length == meshPtr.vertices.length)
+            baseline = meshPtr.vertices.dup;
+        dirty = false;
     }
 
     // ---- drag interaction --------------------------------------------
@@ -308,6 +406,11 @@ abstract class CommandWrapperTool : Tool {
     }
 
     override void onParamChanged(string name) {
+        // While a refire session is driving this tool the fired
+        // buildRefireCommand() owns the mutation — don't queue an internal
+        // preview (it would double-apply against the same baseline in the same
+        // tick). Outside refire this is the legacy preview path.
+        if (refireDriving_) return;
         // A schema widget changed — `evaluate()` will re-run the
         // preview next frame. Don't apply directly here: PropertyPanel
         // calls onParamChanged per-widget per-frame, evaluate() once
@@ -318,6 +421,9 @@ abstract class CommandWrapperTool : Tool {
 
     override void evaluate() {
         if (meshPtr is null) return;
+        // A refire session owns the mutation via fired commands; skip the
+        // internal preview re-run so the two paths never both touch the mesh.
+        if (refireDriving_) return;
         // Detect a live falloff change — the FalloffStage's panel
         // widgets fire onParamChanged on the stage (not on this
         // Tool), so the wrapper's `paramsDirty` flag stays false on
@@ -403,6 +509,16 @@ abstract class CommandWrapperTool : Tool {
     /// next drag composes on top. `label` is the human-readable
     /// history entry name; empty defaults to the tool's name().
     private void commitNow(string label) {
+        // Double-record guard (undo/redo migration P4 — the single commit
+        // chokepoint). A refire session already landed its single entry via
+        // refireEnd(); the deactivate()/Apply commitNow() that follows MUST NOT
+        // record a second entry for the same edit. Consume the latch and bail —
+        // the baseline was already advanced in onRefireCommitted().
+        if (refireCommitted_) {
+            refireCommitted_ = false;
+            dirty = false;
+            return;
+        }
         if (!dirty)              return;
         if (meshPtr is null)     return;
         if (history is null)     return;

@@ -64,6 +64,18 @@ JSONValue postUndo() {
     return parseJSON(post("http://localhost:8080/api/undo", ""));
 }
 
+JSONValue postRedo() {
+    return parseJSON(post("http://localhost:8080/api/redo", ""));
+}
+
+// Run an argstring command line through /api/command (the same main-thread
+// bridge the keyboard/UI command path uses). Asserts ok.
+void cmd(string line) {
+    auto resp = post("http://localhost:8080/api/command", line);
+    assert(parseJSON(resp)["status"].str == "ok",
+        "/api/command '" ~ line ~ "' failed: " ~ resp);
+}
+
 // Drain the undo stack so subsequent count-based asserts don't get
 // confused by maxDepth (50) trimming. Then re-reset the cube to put the
 // mesh back into a known state — that final reset is the only entry left
@@ -278,4 +290,121 @@ unittest { // refireBegin twice — middle commits, second block opens fresh
     auto u2 = postUndo();
     assert(u2["status"].str == "ok", "2nd undo failed: " ~ u2.toString);
     assertVertex(0, -0.5, -0.5, -0.5, "after 2nd undo: 1st block reverted");
+}
+
+// ===========================================================================
+// Phase 4 (refire) — panel-param-edit SESSION on an opted-in tool.
+//
+// The opted-in tool is xfrm.smooth (a CommandWrapperTool): it commits a
+// MeshVertexEdit (before/after per-vertex delta), which is cheap to revert /
+// re-apply each fire(), and its deform is DETERMINISTIC (Laplacian smoothing),
+// unlike jitter (random). A Tool-Properties strn slider drag is simulated as a
+// SEQUENCE of `tool.attr xfrm.smooth strn <v>` inside one refire window. The
+// whole session must land exactly ONE undo entry reflecting the LAST value, a
+// single undo must restore the pre-session geometry exactly, redo must
+// re-apply the last value, and the tool-deactivate that follows must NOT add a
+// second entry (the double-record guard).
+// ===========================================================================
+
+double maxVertDelta(JSONValue a, JSONValue b) {
+    import std.math : fabs, fmax;
+    auto va = a["vertices"].array;
+    auto vb = b["vertices"].array;
+    assert(va.length == vb.length, "vertex count changed");
+    double m = 0;
+    foreach (i; 0 .. va.length) {
+        auto pa = va[i].array, pb = vb[i].array;
+        foreach (k; 0 .. 3)
+            m = fmax(m, fabs(pa[k].floating - pb[k].floating));
+    }
+    return m;
+}
+
+void activateSmooth() {
+    cmd("tool.set xfrm.smooth on");
+}
+void deactivateSmooth() {
+    cmd("tool.set xfrm.smooth off");
+}
+
+unittest { // a refire param-edit session lands exactly ONE entry; last value wins
+    drainAndReset();
+    // No selection → smooth acts on the whole mesh (cube corners).
+    activateSmooth();
+
+    auto preModel = getModel();
+    int undoBefore = cast(int)getHistory()["undo"].array.length;
+
+    // Simulate a strn-slider drag: ramp 0.2 → 0.5 → 0.8.
+    refireBegin();
+    cmd("tool.attr xfrm.smooth strn 0.2");
+    cmd("tool.attr xfrm.smooth strn 0.5");
+    cmd("tool.attr xfrm.smooth strn 0.8");
+    refireEnd();
+
+    // Exactly one entry from the whole session.
+    int undoAfter = cast(int)getHistory()["undo"].array.length;
+    assert(undoAfter == undoBefore + 1,
+        "expected ONE entry from refire param session, got delta = "
+        ~ (undoAfter - undoBefore).to!string);
+
+    // Mesh moved (strn 0.8 smoothing is meaningful on a cube).
+    auto sessionModel = getModel();
+    assert(maxVertDelta(preModel, sessionModel) > 1e-3,
+        "smooth session should have moved geometry");
+
+    // Deactivating the tool must NOT add a second entry (double-record guard).
+    deactivateSmooth();
+    int undoAfterDeact = cast(int)getHistory()["undo"].array.length;
+    assert(undoAfterDeact == undoAfter,
+        "deactivate after refireEnd must add NO entry (got delta = "
+        ~ (undoAfterDeact - undoAfter).to!string ~ ")");
+
+    // One undo restores the exact pre-session geometry.
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    auto undoneModel = getModel();
+    assert(maxVertDelta(preModel, undoneModel) < 1e-6,
+        "single undo must restore pre-session geometry exactly, max delta = "
+        ~ maxVertDelta(preModel, undoneModel).to!string);
+
+    // Redo re-applies the LAST value (strn 0.8) — matches the session result.
+    auto r = postRedo();
+    assert(r["status"].str == "ok", "redo failed: " ~ r.toString);
+    auto redoneModel = getModel();
+    assert(maxVertDelta(sessionModel, redoneModel) < 1e-6,
+        "redo must re-apply the last param value, max delta = "
+        ~ maxVertDelta(sessionModel, redoneModel).to!string);
+}
+
+unittest { // last-value-wins: a multi-fire session reverts each earlier fire,
+           // so the result equals a single-fire session at the same final value.
+    // Reference: a fresh single-fire strn-0.3 session from a clean cube.
+    drainAndReset();
+    activateSmooth();
+    auto preRef = getModel();
+    refireBegin();
+    cmd("tool.attr xfrm.smooth strn 0.3");
+    refireEnd();
+    auto singleResult = getModel();
+    deactivateSmooth();
+
+    // Ramp session from an identical clean cube: 0.8 → 0.3. The LAST value is
+    // 0.3, so — because each fire reverts the previous one to the session
+    // baseline (no accumulation) — the result must match the single-fire 0.3.
+    drainAndReset();
+    activateSmooth();
+    auto preRamp = getModel();
+    assert(maxVertDelta(preRef, preRamp) < 1e-6, "two resets must match");
+    refireBegin();
+    cmd("tool.attr xfrm.smooth strn 0.8");
+    cmd("tool.attr xfrm.smooth strn 0.3");
+    refireEnd();
+    auto rampResult = getModel();
+    assert(maxVertDelta(singleResult, rampResult) < 1e-6,
+        "refire result must reflect ONLY the last value (0.3), no accumulation; "
+        ~ "max delta vs single-fire 0.3 = "
+        ~ maxVertDelta(singleResult, rampResult).to!string);
+
+    deactivateSmooth();
 }
