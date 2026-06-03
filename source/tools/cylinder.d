@@ -811,6 +811,10 @@ private:
     }
     public override void cancelUncommittedEdit() { state = CylinderState.Idle; }
 
+    // Resync (undo/redo P1): preview rebuilds from `state` each frame and no
+    // scene-mesh baseline is cached, so drop a half-drawn primitive to Idle.
+    public override void resyncSession() { state = CylinderState.Idle; }
+
     void commitCylinderEdit(MeshSnapshot pre) {
         if (history is null || factory is null) return;
         if (!pre.filled) return;

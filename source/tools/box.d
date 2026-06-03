@@ -1953,6 +1953,15 @@ public:
         state = BoxState.Idle;
     }
 
+    // Resync after a committed undo/redo moved geometry beneath the active tool
+    // (undo/redo migration P1). Box builds a SEPARATE previewMesh from `state`
+    // each frame and caches no scene-mesh baseline, so nothing needs re-capture;
+    // the only safe action is to drop a half-drawn primitive (an in-progress
+    // draw can't survive an external topology change), so reset to Idle.
+    public override void resyncSession() {
+        state = BoxState.Idle;
+    }
+
     private void commitBoxEdit(MeshSnapshot pre) {
         if (history is null || boxEditFactory is null) return;
         if (!pre.filled) return;

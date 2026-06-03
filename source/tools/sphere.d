@@ -1232,6 +1232,10 @@ private:
     }
     public override void cancelUncommittedEdit() { state = SphereState.Idle; }
 
+    // Resync (undo/redo P1): preview rebuilds from `state` each frame and no
+    // scene-mesh baseline is cached, so drop a half-drawn primitive to Idle.
+    public override void resyncSession() { state = SphereState.Idle; }
+
     void commitSphereEdit(MeshSnapshot pre) {
         if (history is null || factory is null) return;
         if (!pre.filled) return;

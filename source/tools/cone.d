@@ -739,6 +739,10 @@ private:
     }
     public override void cancelUncommittedEdit() { state = ConeState.Idle; }
 
+    // Resync (undo/redo P1): preview rebuilds from `state` each frame and no
+    // scene-mesh baseline is cached, so drop a half-drawn primitive to Idle.
+    public override void resyncSession() { state = ConeState.Idle; }
+
     void commitConeEdit(MeshSnapshot pre) {
         if (history is null || factory is null) return;
         if (!pre.filled) return;

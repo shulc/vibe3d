@@ -178,6 +178,18 @@ public:
 
     override void activate() {
         active   = true;
+        reinitSession();
+    }
+
+    // (Re)initialise the edit session against the CURRENT mesh — shared by
+    // activate() and resyncSession() (undo/redo migration P1) so the two can't
+    // drift. Deliberately does NOT set `active` (resyncSession keeps the tool
+    // active; activate() owns the flag): re-snapshots the cage + selection,
+    // clears any built preview + params, and re-derives the gizmo/edge-selection
+    // frame. Re-capturing `before` here is the selection-index liveness fix —
+    // after a topology-changing undo the stored edge selection is re-derived
+    // live from the now-current mesh (Objection 5).
+    private void reinitSession() {
         built    = false;
         dragPart = -1;
         extrude_ = 0.0f;
@@ -218,14 +230,11 @@ public:
 
     // Resync after a committed undo/redo moved geometry beneath the active
     // tool: re-capture the session baseline + rebuild the gizmo from the now-
-    // current mesh, and clear any (now invalid) built preview state.
+    // current mesh, and clear any (now invalid) built preview state. Shares the
+    // one (re)init body with activate() so the two can't drift.
     public override void resyncSession() {
         if (!active) return;
-        before    = MeshSnapshot.capture(*mesh);
-        built     = false;
-        extrude_  = 0.0f;
-        width_    = 0.0f;
-        computeGizmoFrame();
+        reinitSession();
     }
 
     // A parameter changed. Two callers, distinguished by `interactiveParamEdit`

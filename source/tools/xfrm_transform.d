@@ -193,16 +193,28 @@ public:
     }
 
     override void activate() {
-        super.activate();
-        headlessTranslate = Vec3(0, 0, 0);
-        headlessRotate    = Vec3(0, 0, 0);
-        headlessScale     = Vec3(1, 1, 1);
+        super.activate();   // sets active=true, runs resetTransientState()
+        // One-time activation wiring (NOT part of resyncSession): bring the
+        // composed sub-tools online and back-link them to this wrapper.
         if (flagT) moveSub.activate();
         if (flagR) rotateSub.activate();
         if (flagS) scaleSub.activate();
         moveSub.wrapperRef = this;
         rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         scaleSub.wrapperRef = this;    // scale single-source plumbing
+    }
+
+    // Wrapper-level transient reset (undo/redo migration P1). Extends the base
+    // TransformTool.resetTransientState() with the wrapper-owned headless TRS
+    // accumulators and per-drag fast-path state. Shared by activate() and
+    // resyncSession() so the two can't drift. Touches only drag-invariant
+    // bookkeeping (no open edit exists when resyncSession() runs); the one-time
+    // sub-tool activation + wrapperRef wiring stays in activate().
+    protected override void resetTransientState() {
+        super.resetTransientState();
+        headlessTranslate         = Vec3(0, 0, 0);
+        headlessRotate            = Vec3(0, 0, 0);
+        headlessScale             = Vec3(1, 1, 1);
         activeDrag                = null;
         dragBaseline.length       = 0;
         moveDragFastPath          = false;
@@ -212,8 +224,6 @@ public:
         scaleDragActive           = false;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
-        lastSelectionHash         = uint.max;
-        lastMutationVersion       = ulong.max;
     }
 
     override void deactivate() {
@@ -1375,14 +1385,11 @@ public:
         // tool is active app.d invalidates them every frame (app.d :4574).
     }
 
-    // P0 minimal resync after a committed undo/redo moved geometry beneath the
-    // active tool: force the gizmo + vertex cache to recompute from the now-
-    // current mesh next update(). Mirrors the reset fields activate() uses.
-    override void resyncSession() {
-        vertexCacheDirty    = true;
-        lastSelectionHash   = uint.max;
-        lastMutationVersion = ulong.max;
-    }
+    // resyncSession() is inherited from TransformTool: it runs the shared
+    // resetTransientState() (overridden above to also clear the wrapper's
+    // headless-TRS + per-drag fast-path state), so the gizmo + vertex cache
+    // recompute from the now-current mesh on the next update() after a
+    // committed history pop. No wrapper-specific override is needed.
 
 private:
     // Element-falloff click-pick. Reads the GPU-resolved hover state
