@@ -2074,7 +2074,14 @@ void main(string[] args) {
                 } else {
                     if (!cmd.apply())
                         throw new Exception("command '" ~ id ~ "' did not apply");
-                    history.record(cmd);
+                    // Programmatic command-dispatch path: route through
+                    // recordCoalescing() so consecutive COMPATIBLE delta edits
+                    // (same targets, same edit label) collapse into a single
+                    // undo entry. compareOp() defaults to Different for every
+                    // command except the opted-in delta edit, so every other
+                    // command appends exactly as record() would. Interactive
+                    // tool commits stay on record() (one entry per gesture).
+                    history.recordCoalescing(cmd);
                 }
             }
         };

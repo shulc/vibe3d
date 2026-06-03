@@ -81,6 +81,39 @@ class MeshVertexEdit : Command, Operator {
 
     bool isEmpty() const { return indices.length == 0; }
 
+    /// Coalescing predicate (Phase 2 op-merge). A new MeshVertexEdit is a
+    /// CONTINUATION of the previous one — and therefore mergeable into a single
+    /// undo entry — iff the previous command is ALSO a MeshVertexEdit acting on
+    /// the SAME index set in the SAME order AND carrying the SAME edit label
+    /// (so e.g. a run of "Move" nudges on the same verts collapses, but a Move
+    /// followed by a Scale, or a Move on a different vertex set, stays a
+    /// separate step). Anything else → Different (append normally).
+    override CompareResult compareOp(const Command prev) const {
+        auto p = cast(const(MeshVertexEdit))prev;
+        if (p is null) return CompareResult.Different;
+        if (p.editLabel != this.editLabel) return CompareResult.Different;
+        if (p.indices.length != this.indices.length)
+            return CompareResult.Different;
+        foreach (i, vid; this.indices)
+            if (p.indices[i] != vid) return CompareResult.Different;
+        return CompareResult.Compatible;
+    }
+
+    /// In-place merge of a newer, COMPATIBLE edit into this (the existing top
+    /// undo entry). KEEPS this entry's `before[]` (the state before the FIRST
+    /// edit of the run) and ADOPTS the newer edit's `after[]` (the latest
+    /// post-state). Net effect: the single coalesced entry's revert() restores
+    /// the original pre-first-edit geometry, and its apply()/redo lands the
+    /// most recent positions. The mesh already holds `newer`'s post-state (the
+    /// dispatcher applied it before calling this), so no mesh mutation happens
+    /// here. `indices`/label are identical by compareOp()'s contract, so only
+    /// `after[]` needs adopting.
+    void mergeFrom(MeshVertexEdit newer) {
+        assert(newer.indices.length == this.indices.length,
+            "mergeFrom: index-set length mismatch (compareOp contract broken)");
+        this.after = newer.after.dup;
+    }
+
     /// Optional callbacks that fire after the vert mutation in apply() /
     /// revert() — used by tools to restore their Tool Properties state
     /// (propDeg, scaleAccum, dragDelta) and origVertices/activationVertices

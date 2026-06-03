@@ -260,6 +260,67 @@ final class CommandHistory {
         }
     }
 
+    // Coalescing record (Phase 2 op-merge). Used by the PROGRAMMATIC command
+    // dispatcher (HTTP /api/command, keyboard/UI command shortcuts, scripted
+    // commands) — NOT by interactive tool commits, which call record()
+    // directly so each gesture is its own entry.
+    //
+    // If the freshly-applied `cmd` reports compareOp(top) == Compatible against
+    // the command currently on top of the undo stack, the two are merged in
+    // place: the existing top entry adopts `cmd`'s post-state while keeping its
+    // own pre-state, so the run collapses to ONE undo step. Otherwise this
+    // falls through to record() for a normal append.
+    //
+    // Honors the SAME guards record() honors: dropped while not Active
+    // (Suspend), and routed into the open command block while blockDepth > 0
+    // (coalescing is bypassed inside a block — the block IS the grouping).
+    void recordCoalescing(Command cmd) {
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+        // Inside an open command block, defer to record()'s block-child path
+        // (no in-place coalesce — the block already collapses its children).
+        if (blockDepth > 0) { record(cmd); return; }
+
+        // Try to merge into the current top entry.
+        if (undoStack.length > 0) {
+            auto top = &undoStack[$ - 1];
+            if (cmd.compareOp(top.cmd) == CompareResult.Compatible) {
+                import commands.mesh.vertex_edit : MeshVertexEdit;
+                auto topEdit = cast(MeshVertexEdit)top.cmd;
+                auto newEdit = cast(MeshVertexEdit)cmd;
+                if (topEdit !is null && newEdit !is null) {
+                    // The dispatcher already applied `cmd`, so the mesh holds
+                    // the merged post-state — do NOT re-apply. Fold the newer
+                    // after[] into the kept-older top entry.
+                    topEdit.mergeFrom(newEdit);
+
+                    // Refresh the top entry's args/label from the (now merged)
+                    // top command so /api/history reflects the latest values.
+                    top.args  = serializeParams(top.cmd.params());
+                    top.label = top.cmd.label;
+
+                    // MANDATORY invariant 1: a merge diverges the mesh from any
+                    // redo entry, so the redo timeline MUST be cleared.
+                    redoStack.length = 0;
+
+                    // Fire the macro hook exactly as record() does, so a
+                    // running macro still observes coalesced edits.
+                    if (onRecord !is null) {
+                        string line = top.args.length > 0
+                            ? (top.cmd.name ~ " " ~ top.args) : top.cmd.name;
+                        onRecord(line, historyFlagsFor(top.cmd));
+                    }
+                    return;
+                }
+            }
+        }
+
+        // No compatible top entry → normal append (record() clears redo +
+        // fires onRecord).
+        record(cmd);
+    }
+
     // ----- navigation ------------------------------------------------------
 
     bool canUndo() const { return undoStack.length > 0; }
