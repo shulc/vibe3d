@@ -7,6 +7,7 @@ import std.range : iota;
 import math;
 import shader;
 import editmode : EditMode;
+import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -256,6 +257,42 @@ struct Mesh {
     // own `uint[]`. Mesh maps are for CONTINUOUS float attributes only.
     MeshMap[] meshMaps;
 
+    // --- Mesh-edit change tracker (mesh_edit_delta) -----------------------
+    // Nullable recorder. NULL unless an edit batch is open (the common case —
+    // it is opened only around a committed topology op, never per drag frame).
+    // While non-null, the hooked mutation primitives (addVertex, addFace,
+    // compactUnreferenced, deleteFacesByMask, dissolveVerticesByMask, …) append
+    // an operation-log entry. Every hook's FIRST line is
+    // `if (editRecorder_ is null) return;` — a single predictable branch — so
+    // when no batch is open (always, in Phase 1) the tracker adds zero cost and
+    // every existing behavior is byte-for-byte unchanged. See
+    // doc/undo_change_tracker_plan.md.
+    private MeshEditTracker* editRecorder_;
+
+    // Open an edit batch: install the recorder so the mutation hooks start
+    // logging. `declared` is the advisory change scope. The pointer must
+    // out-live the batch (callers stack-allocate a MeshEditTracker and pass its
+    // address, then call endEditBatch before it leaves scope).
+    void beginEditBatch(MeshEditTracker* rec, MeshEditScope declared) {
+        editRecorder_ = rec;
+        if (rec !is null) rec.declare(declared);
+    }
+
+    // Close the batch and return the finished, invertible delta. Detaches the
+    // recorder so subsequent mutations are untracked again.
+    import mesh_edit_delta : MeshEditDelta;
+    MeshEditDelta endEditBatch() {
+        MeshEditDelta d;
+        if (editRecorder_ !is null) {
+            d = editRecorder_.finish();
+            editRecorder_ = null;
+        }
+        return d;
+    }
+
+    // True while a batch is open (test/introspection helper).
+    bool isRecordingEdits() const { return editRecorder_ !is null; }
+
     // Resize selection arrays to match geometry and clear them.
     // Call after catmullClark / importLWO / reset.
     void resetSelection() {
@@ -330,7 +367,10 @@ struct Mesh {
     uint addVertex(Vec3 v) {
         vertices ~= v;
         ++mutationVersion; ++topologyVersion;
-        return cast(uint)(vertices.length - 1);
+        const idx = cast(uint)(vertices.length - 1);
+        // Class P tracker hook — inert unless a batch is open.
+        if (editRecorder_ !is null) editRecorder_.recordAddVert(idx, v);
+        return idx;
     }
 
     /// Merge coincident vertices (within `epsSq` squared distance) by
@@ -505,6 +545,25 @@ struct Mesh {
             }
         }
         if (removed == 0) return 0;
+        // Class R tracker hook — inert unless a batch is open. Record the
+        // dropped verts (their pre-compaction indices + positions) THEN the
+        // index permutation, in drop-before-permute order. LIFO revert inverts
+        // permute-before-undrop (doc §2.3 steps 2–3): Reindex^-1 restores the
+        // pre-compaction index space, then RemoveVerts^-1 re-inserts the
+        // dropped verts into the re-opened gaps. Captured here, BEFORE
+        // `vertices = newVerts`, so the dropped positions are still live.
+        if (editRecorder_ !is null) {
+            uint[] droppedIdx;
+            Vec3[] droppedPos;
+            foreach (i, p; remap) {
+                if (p == cast(uint)~0u) {
+                    droppedIdx ~= cast(uint)i;
+                    droppedPos ~= vertices[i];
+                }
+            }
+            editRecorder_.recordRemoveVerts(droppedIdx, droppedPos);
+            editRecorder_.recordReindex(remap);
+        }
         // Rewrite face vertex IDs
         foreach (ref face; faces)
             foreach (ref vid; face)
@@ -542,14 +601,35 @@ struct Mesh {
         keptSubpatch.reserve(faces.length);
         keptOrder.reserve(faces.length);
         keptMaterial.reserve(faces.length);
+        // Class B tracker hook — accumulate the dropped (filtered-out) faces so
+        // a RemoveFaces entry can re-insert them on revert. Inert unless a batch
+        // is open. Indices are the PRE-filter face indices (the space the entry
+        // is inverted in, before the tail compactUnreferenced reindexes verts).
+        uint[]   droppedFaceIdx;
+        uint[][] droppedFaceLists;
+        uint[]   droppedFaceMat;
+        uint[]   droppedFaceSub;
+        const bool recDelete = editRecorder_ !is null;
         foreach (i, ref f; faces) {
-            if (mask[i]) { ++removed; continue; }
+            if (mask[i]) {
+                ++removed;
+                if (recDelete) {
+                    droppedFaceIdx   ~= cast(uint)i;
+                    droppedFaceLists ~= f.dup;
+                    droppedFaceMat   ~= (i < faceMaterial.length ? faceMaterial[i] : 0u);
+                    droppedFaceSub   ~= (isFaceSubpatch(i) ? 1u : 0u);
+                }
+                continue;
+            }
             keptFaces ~= f;
             keptSubpatch ~= (i < isSubpatch.length        ? isSubpatch[i]        : false);
             keptOrder    ~= (i < faceSelectionOrder.length ? faceSelectionOrder[i] : 0);
             keptMaterial ~= (i < faceMaterial.length      ? faceMaterial[i]      : 0u);
         }
         if (removed == 0) return 0;
+        if (recDelete)
+            editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
+                                            droppedFaceMat, droppedFaceSub);
         faces              = keptFaces;
         setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
@@ -599,6 +679,19 @@ struct Mesh {
         newSubpatch.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
+        // Class B tracker hook accumulators — inert unless a batch is open.
+        // A face whose boundary shrinks (but stays >= 3) is a ReshapeFaces; a
+        // face that becomes degenerate (< 3) and is dropped is a RemoveFaces.
+        // Both index in the NEW (post-rebuild) face-index space so they invert
+        // before the tail compactUnreferenced's vert reindex (LIFO).
+        const bool recDis = editRecorder_ !is null;
+        uint[]   reshapeIdx;
+        uint[][] reshapeBefore;
+        uint[][] reshapeAfter;
+        uint[]   removedFaceIdx;
+        uint[][] removedFaceLists;
+        uint[]   removedFaceMat;
+        uint[]   removedFaceSub;
         foreach (fi, ref f; faces) {
             uint[] kept;
             foreach (vid; f) {
@@ -606,11 +699,31 @@ struct Mesh {
                 kept ~= vid;
             }
             if (kept.length >= 3) {
+                if (recDis && kept.length != f.length) {
+                    reshapeIdx    ~= cast(uint)newFaces.length;
+                    reshapeBefore ~= f.dup;
+                    reshapeAfter  ~= kept.dup;
+                }
                 newFaces    ~= kept;
                 newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
                 newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                 newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+            } else if (recDis) {
+                // Degenerate face dropped — reconstruct it on revert at its
+                // post-shrink position in the new face array.
+                removedFaceIdx   ~= cast(uint)newFaces.length;
+                removedFaceLists ~= f.dup;
+                removedFaceMat   ~= (fi < faceMaterial.length ? faceMaterial[fi] : 0u);
+                removedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
             }
+        }
+        if (recDis) {
+            // Reshape first, then RemoveFaces — on revert (LIFO) the dropped
+            // faces are re-inserted FIRST, then the reshape lists are restored,
+            // matching the post-shrink index space both were recorded in.
+            editRecorder_.recordReshapeFaces(reshapeIdx, reshapeBefore, reshapeAfter);
+            editRecorder_.recordRemoveFaces(removedFaceIdx, removedFaceLists,
+                                            removedFaceMat, removedFaceSub);
         }
         faces              = newFaces;
         setFaceSubpatchFrom(newSubpatch);
@@ -2296,7 +2409,11 @@ struct Mesh {
     /// afterwards. This helper does NOT touch selection arrays; the caller
     /// owns those. (Distinct from `rebuildEdgesFromFaces`, which rebuilds
     /// `edges` only and leaves `edgeIndexMap` / the version counters alone.)
-    private void rebuildEdges() {
+    // Re-derive the deduplicated edge array (+ edgeIndexMap) from faces. Used
+    // internally by every topology mutator and by mesh_edit_delta's replay
+    // finalize so a delta apply/revert produces the same canonical edge order
+    // the kernels do.
+    void rebuildEdges() {
         edges.length = 0;
         edgeIndexMap.clear();
         foreach (ref f; faces)
@@ -2308,6 +2425,9 @@ struct Mesh {
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
         ++mutationVersion; ++topologyVersion;
+        // Class P tracker hook — inert unless a batch is open.
+        if (editRecorder_ !is null)
+            editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
     }
     // Fast version using hash lookup for duplicate checking
     void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
@@ -2322,6 +2442,9 @@ struct Mesh {
             }
         }
         ++mutationVersion; ++topologyVersion;
+        // Class P tracker hook — inert unless a batch is open.
+        if (editRecorder_ !is null)
+            editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
     }
     // Non-allocating "any bit set?" scans straight over the marks arrays.
     // These run per-frame / per-drag-event from the toolpipe stages and
