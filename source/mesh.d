@@ -997,38 +997,6 @@ struct Mesh {
     /// in-plane directions), then do ONE rewrite pass per affected face so two
     /// selected edges that share a corner cannot race on faces[fi].
     size_t extrudeEdgesByMask(in bool[] mask, float extrude, float width) {
-        return extrudeImpl(mask, extrude, width, false,
-                           Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
-    }
-
-    /// Edge Extend — a FORK of edge extrude (NOT a wrapper). Builds the same
-    /// Inset/Shift topology (localShift == extrude `extrude`, localInset ==
-    /// extrude `width`), then — inside the kernel body, off the core's own
-    /// post-compaction ridge handle — applies a WORLD-AXIS Extend-only TRS to
-    /// EXACTLY the ridge verts (chamfer/inset excluded) before the single shared
-    /// rebuild/compact/version-bump tail. Phase 1 honors `offset` ONLY: under
-    /// `rotateDeg == 0`, `scale == (1,1,1)`, `segments == 1` the result is
-    /// byte-identical to extrudeEdgesByMask(mask, localShift, localInset).
-    /// Rotate/Scale (RSI model about the bare source-edge pivot P) land in
-    /// Phase 2; Segments rings in Phase 3. Caller refreshes GPU + caches.
-    /// `mask.length == edges.length`.
-    size_t extendEdgesByMask(in bool[] mask,
-                             float localInset, float localShift,
-                             Vec3 offset, Vec3 rotateDeg, Vec3 scale,
-                             int segments) {
-        // NB extrude arg order: extrude<-localShift, width<-localInset.
-        return extrudeImpl(mask, localShift, localInset, true,
-                           offset, rotateDeg, scale, segments);
-    }
-
-    // Shared topology core for both edge extrude and edge extend. When
-    // `extend` is false this is the verbatim former `extrudeEdgesByMask` body
-    // (the Extend `if (extend)` block is never entered ⇒ byte-for-byte extrude).
-    // When `extend` is true the world-axis Extend TRS is injected off the
-    // post-compaction ridge handle, before the single shared tail.
-    private size_t extrudeImpl(in bool[] mask, float extrude, float width,
-                               bool extend, Vec3 offset, Vec3 rotateDeg,
-                               Vec3 scale, int segments) {
         import math : Vec3, cross, dot, normalize;
         import std.math : acos, sin;
         import std.algorithm : clamp;
@@ -2068,56 +2036,14 @@ struct Mesh {
                 if ((v - p).length < 1e-5f) return cast(int)i;
             return -1;
         }
-        // The ONLY durable ridge handle is the a/b indices produced here —
-        // post-compaction vertex space, matched by the pre-Offset positions
-        // recorded in ridgeEdgePos. Collect the unique set of ridge verts so the
-        // Extend TRS (below) translates each exactly once (a chain shares a ridge
-        // vert between two ridge edges). This set is EXACTLY the ridge verts; it
-        // never contains chamfer/inset verts — the byte-identity guarantee.
-        bool[uint] ridgeVertSet;
         foreach (ref pr; ridgeEdgePos) {
             int a = findVertByPos(pr[0]);
             int b = findVertByPos(pr[1]);
             if (a < 0 || b < 0) continue;
-            if (extend) { ridgeVertSet[cast(uint)a] = true; ridgeVertSet[cast(uint)b] = true; }
             ulong rk = edgeKey(cast(uint)a, cast(uint)b);
             if (auto p = rk in edgeIndexMap)
                 selectEdge(cast(int)*p);
         }
-
-        // --- Edge Extend TRS — runs AFTER findVertByPos has matched the ridge by
-        //     its pre-Offset positions and BEFORE clearVertexSelection / the
-        //     version bump. Phase 1: world-axis Offset only, applied once per
-        //     unique ridge vert. (Phase 2 replaces the translate below with the
-        //     RSI model from doc/edge_extend_plan.md §1.2: Rotate then Scale about
-        //     the bare source-edge pivot P, then re-inset along world-X, then add
-        //     world Offset. Phase 3 adds the Segments ring subdivision.)
-        if (extend) {
-            // Phase 3: only segments == 1 is implemented. Fail loudly until then
-            // rather than silently treating segments>1 as 1. (segments is accepted
-            // now so the signature does not churn later.)
-            assert(segments == 1,
-                "extendEdgesByMask: segments > 1 not implemented (Phase 3)");
-            // [Phase 2 RSI rotate/scale slot in HERE — before the Offset add.]
-            const bool moveRidge = (offset.x != 0 || offset.y != 0 || offset.z != 0);
-            uint[] ridgeIdx;
-            Vec3[] ridgeBefore, ridgeAfter;
-            if (moveRidge) {
-                foreach (vi; ridgeVertSet.byKey) {
-                    if (recExtrude) { ridgeIdx ~= vi; ridgeBefore ~= vertices[vi]; }
-                    vertices[vi] = vertices[vi] + offset;   // Phase 1: world-axis Offset
-                    if (recExtrude) ridgeAfter ~= vertices[vi];
-                }
-            }
-            // Tracker: the ridge verts were self-logged as AddVerts at their
-            // PRE-Offset positions (the addVertex Class-P hook). When recording,
-            // capture the in-place move as a ReshapeVerts (SetPos) in the SAME
-            // combined batch so redo replays the moved positions. The non-recording
-            // (direct-unittest) path needs nothing — the move is already applied.
-            if (recExtrude && ridgeIdx.length)
-                editRecorder_.recordSetPos(ridgeIdx, ridgeBefore, ridgeAfter);
-        }
-
         clearVertexSelection();
         clearFaceSelection();
 
@@ -4528,70 +4454,6 @@ unittest { // subdivideCube: counts match uniform Catmull-Clark + valid loops
         assert(m.faceLoop.length == m.faces.length);
         assert(m.loopEdge.length == m.loops.length);
     }
-}
-
-version (unittest) unittest { // extendEdgesByMask Phase 1: fork == extrude; Offset moves exactly the ridge
-    import std.math : abs;
-
-    // Build the bool[] mask selecting the top-front interior edge of the unit
-    // cube — endpoints (-0.5, 0.5, 0.5) and (0.5, 0.5, 0.5). Returned mask is
-    // sized edges.length with exactly that edge set.
-    bool[] topFrontEdgeMask(ref Mesh m) {
-        bool[] mask;
-        mask.length = m.edges.length;
-        foreach (i, e; m.edges) {
-            auto p = m.vertices[e[0]];
-            auto q = m.vertices[e[1]];
-            bool isFront(Vec3 v) {
-                return abs(v.y - 0.5f) < 1e-5f && abs(v.z - 0.5f) < 1e-5f;
-            }
-            if (isFront(p) && isFront(q)) mask[i] = true;
-        }
-        return mask;
-    }
-
-    enum float kInset = 0.1f;
-    enum float kShift = 0.2f;
-
-    // (a) Identity Extend params == extrude, byte-for-byte. The fork cross-check:
-    //     proves the Offset path touched nothing under identity.
-    Mesh me = makeCube();
-    Mesh mx = makeCube();
-    auto maskE = topFrontEdgeMask(me);
-    auto maskX = topFrontEdgeMask(mx);
-    // extrude arg order is (mask, extrude, width) == (shift, inset).
-    size_t nx = mx.extrudeEdgesByMask(maskX, kShift, kInset);
-    size_t ne = me.extendEdgesByMask(maskE, kInset, kShift,
-                                     Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
-    assert(nx == ne, "edge count mismatch fork vs extrude");
-    assert(me.vertices.length == mx.vertices.length, "vertex count mismatch");
-    assert(me.faces.length    == mx.faces.length,    "face count mismatch");
-    foreach (i; 0 .. me.vertices.length) {
-        assert((me.vertices[i] - mx.vertices[i]).length < 1e-6f,
-               "ridge vert position diverged under identity Extend");
-    }
-
-    // (b) A nonzero world Offset displaces EXACTLY the ridge verts, each by the
-    //     Offset, leaving every other vert untouched. Reference geometry = the
-    //     identity result mx (== extrude). Ridge verts are identified by the
-    //     positions that changed — indices are not hardcoded.
-    Mesh mo = makeCube();
-    auto maskO = topFrontEdgeMask(mo);
-    immutable Vec3 off = Vec3(0, 0.3f, 0);
-    size_t no = mo.extendEdgesByMask(maskO, kInset, kShift,
-                                     off, Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
-    assert(no == ne);
-    assert(mo.vertices.length == mx.vertices.length);
-    assert(mo.faces.length    == mx.faces.length);
-    int moved = 0;
-    foreach (i; 0 .. mo.vertices.length) {
-        Vec3 d = mo.vertices[i] - mx.vertices[i];
-        if (d.length < 1e-6f) continue;             // unchanged vert
-        ++moved;
-        // Changed verts must have moved by exactly the Offset.
-        assert((d - off).length < 1e-6f, "non-ridge vert moved or ridge moved wrong");
-    }
-    assert(moved == 2, "Offset must displace exactly the two ridge verts");
 }
 
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
