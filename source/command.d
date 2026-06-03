@@ -35,6 +35,16 @@ enum CmdFlags : uint {
     SideEffect = 1 << 3, // Transient session/tool-pipe change — no undo entry.
 }
 
+// Result of comparing a freshly-applied command against the command that
+// currently sits on top of the undo stack. `Compatible` means the new command
+// is a CONTINUATION of the previous one (same logical edit, same targets) and
+// should be MERGED into the existing top entry rather than appended as a new
+// step — so a run of repeated identical-target edits collapses to one undo.
+// `Different` (the default for every command) means "append normally". Only
+// commands that explicitly opt in by overriding compareOp() ever coalesce; the
+// merge mechanism is driven by CommandHistory.recordCoalescing().
+enum CompareResult { Different, Compatible }
+
 class Command {
     // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
     string name() const { return "Command"; }
@@ -86,6 +96,18 @@ class Command {
     // Short human-readable label. Defaults to name() — override for a
     // friendlier menu / history-viewer string.
     string label() const { return name(); }
+
+    // Coalescing predicate (op-merge analog). Called by
+    // CommandHistory.recordCoalescing() with `prev` = the command on top of
+    // the undo stack. Return Compatible iff `this` is a continuation of `prev`
+    // that should merge into the existing top entry (so consecutive compatible
+    // edits become ONE undo step). Default: Different — no command coalesces
+    // unless it overrides this. A Compatible verdict obliges the command to
+    // also implement an in-place merge (e.g. mergeFrom()) that the history
+    // invokes on `prev`.
+    CompareResult compareOp(const Command prev) const {
+        return CompareResult.Different;
+    }
 
     // Schema: list of parameters. Default: none. Commands that surface
     // an args dialog or accept JSON params via /api/command override this.
