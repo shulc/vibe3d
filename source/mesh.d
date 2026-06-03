@@ -1434,15 +1434,70 @@ struct Mesh {
             insetVert[k] = nv;
         }
 
-        // --- Anti-normal inset vert per boundary chamfer end. The second chamfer
-        //     inset is the endpoint pushed back along the NEGATIVE face normal of
-        //     its sole neighbour face F by `width`. (The in-plane topInset is
-        //     insetVert[(v,F)], already made above.) This vert sits on the open
-        //     boundary; the side-face rewrite below pairs it with the topInset.
-        uint[uint] chamferAntiInset;       // boundary chamfer end v → anti-normal inset vert
+        // --- Per-edge chamfer inset verts. A boundary chamfer end v is DISSOLVED
+        //     into ONE inset per incident face, but the insets live on the EDGES of
+        //     v's fan: every boundary fan edge (v,far) — i.e. every edge at v EXCEPT
+        //     the extruded edge (v,other) — gets a single inset vert
+        //         v + width · normalize(vertices[far] − vertices[v])
+        //     shared by the (≤2) faces flanking that edge. Each incident face then
+        //     replaces its v corner with the two insets of ITS two boundary fan
+        //     edges (winding order); the sole extruded-edge face F has only one
+        //     boundary fan edge per endpoint, so it stays a quad (that single inset
+        //     is F's topInset, already materialised as insetVert[(v,F)] in Pass 2 —
+        //     we reuse it so F's edge weld is byte-stable). This generalises the old
+        //     fixed topInset+antiNormal pair: on a flat axis-aligned chamfer the side
+        //     face's outer fan edge runs along −normal(F), so its inset coincides
+        //     with the former anti-normal vert and that case stays byte-identical;
+        //     on a curved / multi-incident-face corner each face folds onto its own
+        //     fan edge instead of all welding to one anti-normal point.
+        //     Key = (v<<32)|far → inset vert id.
+        uint[uint] chamferEndOther;        // chamfer end v → its extruded edge's other endpoint
+        foreach (ref e; exEdges) {
+            if (e.fB != -1) continue;
+            if (isFreeEnd(e.va)) chamferEndOther[e.va] = e.vb;
+            if (isFreeEnd(e.vb)) chamferEndOther[e.vb] = e.va;
+        }
+        uint[ulong] chamferEdgeInset;      // (v<<32)|far → inset vert
         foreach (v, fF; chamferNeighborFace) {
-            Vec3 nf = faceNormal(cast(uint)fF);
-            chamferAntiInset[v] = addVertex(vertices[v] - nf * width);
+            uint other = chamferEndOther[v];
+            // SEED the F-edge inset FIRST: F's single non-extruded boundary edge at v
+            // already has its topInset materialised in Pass 2 (insetVert[(v,F)]). The
+            // far vertex of that edge is the one boundaryEdgeDir used. Map it now so
+            // the seam edge shared by F and a flanking side face reuses the topInset
+            // (one vert, byte-stable weld) instead of spawning a coincident duplicate.
+            {
+                auto f = faces[fF];
+                foreach (k; 0 .. f.length) {
+                    if (f[k] != v) continue;
+                    uint prev = f[(k + f.length - 1) % f.length];
+                    uint next = f[(k + 1) % f.length];
+                    uint farF = (prev == other) ? next : prev;
+                    ulong fk = (cast(ulong)v << 32) | cast(uint)fF;
+                    if (fk in insetVert)
+                        chamferEdgeInset[(cast(ulong)v << 32) | farF] = insetVert[fk];
+                    break;
+                }
+            }
+            // Gather the distinct boundary fan edges at v (far ≠ other), across all
+            // incident faces; the seam edge between two adjacent fan faces appears
+            // twice but maps to one far vertex ⇒ one inset. The F seam edge is
+            // already seeded above, so it is skipped here.
+            foreach (fi; 0 .. faces.length) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    if (f[k] != v) continue;
+                    uint prev = f[(k + f.length - 1) % f.length];
+                    uint next = f[(k + 1) % f.length];
+                    foreach (far; [prev, next]) {
+                        if (far == other) continue;       // the extruded edge — no inset
+                        ulong ek = (cast(ulong)v << 32) | far;
+                        if (ek in chamferEdgeInset) continue;
+                        Vec3 dir = vertices[far] - vertices[v];
+                        if (dir.length < 1e-6f) continue;
+                        chamferEdgeInset[ek] = addVertex(vertices[v] + normalize(dir) * width);
+                    }
+                }
+            }
         }
 
         // --- Free-end classification (§5). selEdgeCount / isFreeEnd / isShared
@@ -1655,28 +1710,25 @@ struct Mesh {
             foreach (k; 0 .. f.length) {
                 uint c = f[k];
                 // Boundary chamfer end in a SIDE face (any face that is not its
-                // sole neighbour face F): dissolve the corner into its two chamfer
-                // insets [topInset, antiNormalInset]. The incident edge that is
-                // ALSO an edge of F carries the in-plane topInset; the open-boundary
-                // edge carries the anti-normal inset, so the pair is ordered to keep
-                // F's inset adjacent to the F-shared edge. F itself keeps just the
-                // topInset (the affected-face rewrite handled that above) → quad.
+                // sole neighbour face F): dissolve the corner into the two per-edge
+                // insets of THIS face's two boundary fan edges at c (the edges
+                // toward prevB and nextB). Each fan edge owns one shared inset
+                // (chamferEdgeInset), so adjacent fan faces meet seamlessly on their
+                // common seam edge's inset; F (handled by the affected-face rewrite)
+                // keeps just its single fan-edge inset → stays a quad. The pair is
+                // emitted [prev-side inset, next-side inset] to preserve winding (a
+                // faceNormal backstop below flips the whole face if it inverted).
                 if (isChamferEnd(c) && chamferNeighborFace[c] != cast(int)fi) {
                     uint prevB = f[(k + f.length - 1) % f.length];
                     uint nextB = f[(k + 1) % f.length];
-                    int fF = chamferNeighborFace[c];
-                    bool edgeInF(uint a, uint b) {
-                        auto p = edgeKeyOrdered(a, b) in edgeFaces;
-                        if (p is null) return false;
-                        return (*p)[0] == fF || (*p)[1] == fF;
-                    }
-                    uint top  = insetVert[(cast(ulong)c << 32) | cast(uint)fF];
-                    uint anti = chamferAntiInset[c];
-                    // If the incoming edge (prev,c) is shared with F, top goes
-                    // first (adjacent to prev); otherwise the outgoing edge is the
-                    // F-shared one and top goes last (adjacent to next).
-                    if (edgeInF(prevB, c)) { rebuilt ~= top; rebuilt ~= anti; }
-                    else                    { rebuilt ~= anti; rebuilt ~= top; }
+                    ulong ekPrev = (cast(ulong)c << 32) | prevB;
+                    ulong ekNext = (cast(ulong)c << 32) | nextB;
+                    auto ip = ekPrev in chamferEdgeInset;
+                    auto iq = ekNext in chamferEdgeInset;
+                    // Defensive: a fan edge with no inset (degenerate / the extruded
+                    // edge itself) keeps the original corner on that side.
+                    rebuilt ~= (ip !is null) ? *ip : c;
+                    rebuilt ~= (iq !is null) ? *iq : c;
                     touched = true;
                     continue;
                 }
