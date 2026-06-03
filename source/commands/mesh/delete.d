@@ -52,9 +52,21 @@ class MeshDelete : Command, Operator {
     // re-derived by rebuildEdges on revert and their ORDER is not guaranteed to
     // match the pre-op array, so an index-keyed restore would select the wrong
     // edges (doc §1.3, the same reason extrude uses EdgeSelByEnds).
+    //
+    // SUBPATCH (POL_TYPE) plane is ALSO captured by face index and re-overlaid on
+    // revert. The op-log delta's RemoveFaces only carries the subpatch bit for the
+    // faces it DROPS; surviving-but-shifted faces have their Subpatch bit scrambled
+    // by the face re-insertion (faces.insertInPlace shifts `faces` but not the
+    // faceMarks word). The snapshot path restores the whole faceMarks word
+    // (Select+Subpatch together) and so never had this gap. Capturing the full
+    // pre-op subpatch plane here, index-keyed (the delta revert restores the exact
+    // pre-op face index space), re-establishes it bit-identically — mirroring how
+    // preSel_ re-overlays the Select plane. (Found by the Phase 4 burn-in gate:
+    // test_marks_authority B4 failed only under the delta path.)
     private MeshEditDelta      delta_;
     private SelectionSnapshot  preSel_;     // vertex/face index-keyed
     private uint[]             preEdgeEnds_; // flat [a,b, a,b, …] for edge mode
+    private bool[]             preSubpatch_; // face Subpatch (POL_TYPE) plane, by pre-op face index
     private bool               useDelta_;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
@@ -67,6 +79,16 @@ class MeshDelete : Command, Operator {
     }
 
     override string name()  const { return "mesh.delete"; }
+
+    // Change-scope metadata (Phase 4 §b). Delete touches topology (faces removed,
+    // verts dropped via compaction) + marks (selection cleared/re-derived).
+    override MeshEditScope editScope() const {
+        return MeshEditScope.Geometry | MeshEditScope.Marks;
+    }
+    // True iff this instance actually stored an operation-log delta (tracker on);
+    // the snapshot escape hatch (VIBE3D_UNDO_TRACKER=off) reports false honestly.
+    override bool isOperationInverse() const { return useDelta_; }
+
     override string label() const {
         final switch (editMode) {
             case EditMode.Vertices: return "Delete Vertices";
@@ -119,6 +141,7 @@ class MeshDelete : Command, Operator {
             // Mesh edit batch so it self-records an operation-log delta.
             preSel_      = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_ = captureSelectedEdgeEnds(*mesh);
+            preSubpatch_ = mesh.isSubpatch.dup;   // full POL_TYPE plane, by face index
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             const affected = runKernel();
@@ -129,6 +152,7 @@ class MeshDelete : Command, Operator {
                 delta_       = MeshEditDelta.init;
                 preSel_      = SelectionSnapshot.init;
                 preEdgeEnds_ = null;
+                preSubpatch_ = null;
                 return false;
             }
             useDelta_ = true;
@@ -157,6 +181,12 @@ class MeshDelete : Command, Operator {
             // the endpoint-keyed capture (clear the index-keyed edges first,
             // then re-resolve the recorded endpoints through edgeIndexMap).
             preSel_.restore(*mesh);
+            // Re-overlay the Subpatch (POL_TYPE) plane: the delta revert restored
+            // the pre-op face index space, so the index-keyed capture re-aligns.
+            // setFaceSubpatchFrom touches only the Subpatch bit, leaving the Select
+            // bits preSel_ just restored intact (different bit in the same word).
+            if (preSubpatch_.length)
+                mesh.setFaceSubpatchFrom(preSubpatch_);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
             refreshCaches();

@@ -40,10 +40,14 @@ class MeshRemove : Command, Operator {
 
     // Phase 3 delta path — see MeshDelete for the rationale. Vertex/face
     // selection is index-keyed (SelectionSnapshot); edge selection is endpoint-
-    // keyed (re-derived edge order is not index-stable across rebuildEdges).
+    // keyed (re-derived edge order is not index-stable across rebuildEdges); the
+    // Subpatch (POL_TYPE) plane is index-keyed (re-overlaid on revert — the delta
+    // only carries the subpatch bit for DROPPED faces, see MeshDelete + the
+    // Phase 4 burn-in finding in test_marks_authority).
     private MeshEditDelta      delta_;
     private SelectionSnapshot  preSel_;
     private uint[]             preEdgeEnds_;
+    private bool[]             preSubpatch_;
     private bool               useDelta_;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
@@ -56,6 +60,13 @@ class MeshRemove : Command, Operator {
     }
 
     override string name()  const { return "mesh.remove"; }
+
+    // Change-scope metadata (Phase 4 §b) — see MeshDelete.
+    override MeshEditScope editScope() const {
+        return MeshEditScope.Geometry | MeshEditScope.Marks;
+    }
+    override bool isOperationInverse() const { return useDelta_; }
+
     override string label() const {
         final switch (editMode) {
             case EditMode.Vertices: return "Remove Vertices";
@@ -101,6 +112,7 @@ class MeshRemove : Command, Operator {
         if (undoTrackerEnabled()) {
             preSel_      = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_ = captureSelectedEdgeEnds(*mesh);
+            preSubpatch_ = mesh.isSubpatch.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             const affected = runKernel();
@@ -109,6 +121,7 @@ class MeshRemove : Command, Operator {
                 delta_       = MeshEditDelta.init;
                 preSel_      = SelectionSnapshot.init;
                 preEdgeEnds_ = null;
+                preSubpatch_ = null;
                 return false;
             }
             useDelta_ = true;
@@ -133,6 +146,8 @@ class MeshRemove : Command, Operator {
             // override the (index-unstable) edge selection with the endpoint
             // capture.
             preSel_.restore(*mesh);
+            if (preSubpatch_.length)
+                mesh.setFaceSubpatchFrom(preSubpatch_);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
             refreshCaches();

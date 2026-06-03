@@ -7,6 +7,9 @@
  *   3. rdmd tools/local/modo_diff/run.d
  *   4. ./tools/local/modo_diff/run_acen_drag.py -j N
  *   5. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
+ *   6. snapshot: the key undo tests forced onto the legacy MeshSnapshot
+ *      path (VIBE3D_UNDO_TRACKER=off) — anti-rot coverage for the escape
+ *      hatch now that the change-tracker is default-on (Phase 4).
  *
  * Opt-in (NOT in the default set, runs only via --only perf-abs):
  *   perf-abs: rdmd tools/perf/run.d --n 316 — the FULL ~100K-face matrix
@@ -30,9 +33,9 @@
  *                 their own -j today — they boot a single MODO/Blender
  *                 instance.) default = 4.
  *   --no-build    forwarded to suites that accept it.
- *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf}.
+ *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf, snapshot}.
  *   --only-X      run ONLY suite X (mutually exclusive with --skip-X).
- *                 X ∈ {unit, blender, modo, acen, perf, perf-abs};
+ *                 X ∈ {unit, blender, modo, acen, perf, snapshot, perf-abs};
  *                 perf-abs is opt-in (n=316, ~5 min, absolute vs the
  *                 committed baseline) and runs ONLY via --only perf-abs.
  *
@@ -64,15 +67,27 @@ struct Suite {
     string name;
     string label;
     string[] cmd;
+    string[string] env;   // extra env vars layered over the parent env (empty = inherit)
 }
 
 int runSuite(ref Suite s) {
     writeln();
     writeln(blue("══════════════════════════════════════════════════════════"));
     writeln(blue("  " ~ s.label));
-    writeln(blue("  $ " ~ s.cmd.join(" ")));
+    string envPrefix;
+    foreach (k, v; s.env) envPrefix ~= k ~ "=" ~ v ~ " ";
+    writeln(blue("  $ " ~ envPrefix ~ s.cmd.join(" ")));
     writeln(blue("══════════════════════════════════════════════════════════"));
-    auto p = spawnProcess(s.cmd);
+    if (s.env.length == 0) {
+        auto p = spawnProcess(s.cmd);
+        return wait(p);
+    }
+    // Layer the suite's env over the inherited environment.
+    string[string] env;
+    foreach (k, v; environment.toAA) env[k] = v;
+    foreach (k, v; s.env) env[k] = v;
+    auto p = spawnProcess(s.cmd, std.stdio.stdin, std.stdio.stdout,
+                          std.stdio.stderr, env);
     return wait(p);
 }
 
@@ -94,8 +109,8 @@ int main(string[] args) {
     auto info = getopt(args,
         "j|jobs",     "worker count for unit + ACEN drag suites (default 4)", &j,
         "no-build",   "skip dub build in unit + Blender + MODO suites", &noBuild,
-        "only",       "run only one suite (unit | blender | modo | acen | perf | perf-abs)", &only,
-        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf)", &skip);
+        "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | perf-abs)", &only,
+        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot)", &skip);
 
     if (info.helpWanted) {
         writeln("usage: ./run_all.d [options]");
@@ -170,7 +185,27 @@ int main(string[] args) {
         string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "64",
                         "--no-absolute"];
         if (noBuild) cmd ~= "--no-build";
-        suites ~= Suite("perf", "5/5 perf relative invariants (n=64)", cmd);
+        suites ~= Suite("perf", "5/6 perf relative invariants (n=64)", cmd);
+    }
+
+    // Snapshot-fallback lane (anti-rot). As of Phase 4 the undo change-tracker
+    // (doc/undo_change_tracker_plan.md) is DEFAULT-ON, so the whole unit suite now
+    // exercises the operation-log delta path for every extrude/delete/remove/
+    // dissolve. The legacy whole-mesh MeshSnapshot path is RETAINED as the escape
+    // hatch (VIBE3D_UNDO_TRACKER=off) but would otherwise stop being tested. This
+    // lane re-runs the key undo tests with the env var forced OFF so the snapshot
+    // path keeps regression coverage. Cheap (six small tests, -j 1 for the drag-
+    // sensitive ones), included in the DEFAULT set; --skip snapshot / --only
+    // snapshot both work.
+    if (include("snapshot")) {
+        string[] cmd = ["./run_test.d", "-j", "1",
+                        "test_undo_redo", "test_delete", "test_edge_extrude_tool",
+                        "test_undo_tracker_extrude", "test_undo_tracker_delete",
+                        "test_history_jump"];
+        if (noBuild) cmd ~= "--no-build";
+        suites ~= Suite("snapshot",
+                        "6/6 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
+                        cmd, ["VIBE3D_UNDO_TRACKER": "off"]);
     }
 
     // perf-abs lane — OPT-IN, NEVER in the default set. Runs the full n=316

@@ -7,7 +7,7 @@ import view;
 import editmode;
 import viewcache;
 import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditDelta;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
 /// Record-flavor command for an interactive Edge Extrude session (see
 /// EdgeExtrudeTool, Phase 3). The tool captures a full MeshSnapshot at the
@@ -52,6 +52,15 @@ class MeshEdgeExtrudeEdit : Command, Operator {
     override string label() const {
         return editLabel.length ? editLabel : "Edge Extrude";
     }
+
+    // Change-scope metadata (Phase 4 §b). Extrude appends ridge/inset verts +
+    // bridge faces, reshapes neighbour faces, and re-derives the ridge selection.
+    override MeshEditScope editScope() const {
+        return MeshEditScope.Geometry | MeshEditScope.Marks;
+    }
+    // True iff this instance is delta-backed (setDelta was called). The snapshot
+    // path (setSnapshots / escape hatch) reports false honestly.
+    override bool isOperationInverse() const { return useDelta_; }
 
     void setSnapshots(MeshSnapshot before_, MeshSnapshot after_, string label_ = "Edge Extrude") {
         this.before    = before_;
