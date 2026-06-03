@@ -26,7 +26,33 @@ import std.conv : to;
 import core.thread : Thread;
 import core.time   : dur;
 
+import drag_helpers; // fetchCamera / viewportFromCamera / projectToWindow /
+                     // buildDragLog / playAndWait / vertexPos / Vec3
+
 void main() {}
+
+// Interactive single-click select of vertex `vid`, aimed PROGRAMMATICALLY at
+// the vertex's CURRENT position (projected through the live camera) rather than
+// a frozen pixel log. Frozen event logs bake in pixels captured for the
+// original cube; after a transform moves the geometry those pixels miss, so a
+// post-transform select must re-aim at runtime (the drag-test / perf-harness
+// pattern). `vid` should be a currently-visible (front-facing) vertex — pass an
+// already-selected one, which is guaranteed pickable. A plain click changes the
+// selection, so it records a fresh MeshSelectionEdit through the same
+// down(begin)/up(commit) interactive path the logs drive.
+void clickSelectVertex(uint vid) {
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    auto p   = vertexPos(cast(int)vid);
+    float px, py;
+    assert(projectToWindow(Vec3(cast(float)p[0], cast(float)p[1], cast(float)p[2]),
+                           vp, px, py),
+        "vertex " ~ vid.to!string ~ " projects off-camera");
+    // DOWN+UP at one pixel = a click (steps=1 ⇒ a single zero-delta motion).
+    string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              cast(int)px, cast(int)py, cast(int)px, cast(int)py, 1);
+    playAndWait(log);
+}
 
 // /api/reset rebuilds the mesh but does NOT clear the undo history, and these
 // tests assert on entry COUNTS. Clear the history after each reset so leftover
@@ -163,10 +189,15 @@ unittest { // select → geometry edit → select ⇒ THREE entries (edit breaks
     assert(t["status"].str == "ok", "transform failed: " ~ t.toString);
     assert(countUndo("mesh.transform") == 1, "transform recorded");
 
-    // Second select run. Its compareOp(top = mesh.transform) is Different
-    // (not a MeshSelectionEdit) ⇒ a NEW entry. No cross-coalesce across the
-    // geometry edit.
-    playEvents("tests/events/selection_add.log");
+    // Second select run, aimed programmatically at a now-moved vertex (the
+    // frozen log's pixels miss after the translate). Its compareOp(top =
+    // mesh.transform) is Different (not a MeshSelectionEdit) ⇒ a NEW entry. No
+    // cross-coalesce across the geometry edit.
+    {
+        auto sv = getSelection()["selectedVertices"].array;
+        assert(sv.length > 0, "expected a live selection to re-click after transform");
+        clickSelectVertex(cast(uint)sv[0].integer);
+    }
     assert(countUndo("mesh.selection_edit") == 2,
         "select→edit→select must yield TWO selection entries (no "
         ~ "cross-coalesce), got " ~ countUndo("mesh.selection_edit").to!string);
@@ -205,8 +236,13 @@ unittest { // An intervening NON-selection command between two selects breaks
     // Intervening non-selection command (geometry translate).
     assert(translate(0.1)["status"].str == "ok", "intervening transform");
 
-    // Next select can NOT merge into the transform on top ⇒ new entry.
-    playEvents("tests/events/selection_add.log");
+    // Next select (programmatic re-aim — the cube moved under the frozen log's
+    // pixels) can NOT merge into the transform on top ⇒ new entry.
+    {
+        auto sv = getSelection()["selectedVertices"].array;
+        assert(sv.length > 0, "expected a live selection to re-click after transform");
+        clickSelectVertex(cast(uint)sv[0].integer);
+    }
     assert(countUndo("mesh.selection_edit") == 2,
         "an intervening non-selection command must break coalescing, got "
         ~ countUndo("mesh.selection_edit").to!string ~ " selection entries");
