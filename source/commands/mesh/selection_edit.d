@@ -31,6 +31,39 @@ class MeshSelectionEdit : Command, Operator {
     override string name()  const { return "mesh.selection_edit"; }
     override string label() const { return "Select"; }
 
+    // Selection is undoable but in the UI-undo class, NOT Model-undo: it lands
+    // on the same stack and Ctrl+Z reverts it, but history/panel/tests can tell
+    // it apart from geometry edits (migration P5 — supersedes the earlier Model
+    // classification).
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+
+    /// Coalescing predicate (P5): consecutive selection edits of the SAME
+    /// gesture chain collapse into ONE undo entry. `prev` is COMPATIBLE iff it
+    /// is also a MeshSelectionEdit whose AFTER edit mode matches THIS edit's
+    /// BEFORE mode (the links are contiguous and in the same mode). A mode flip
+    /// between them, or any non-selection top entry, breaks the run → Different
+    /// → a fresh entry (the automatic gesture boundary, like P2's vertex-edit
+    /// coalescing).
+    override CompareResult compareOp(const Command prev) const {
+        auto p = cast(const(MeshSelectionEdit))prev;
+        if (p is null) return CompareResult.Different;
+        if (p.afterMode != this.beforeMode) return CompareResult.Different;
+        return CompareResult.Compatible;
+    }
+
+    /// In-place merge of a newer, COMPATIBLE selection edit into this (the
+    /// existing top entry): KEEP this entry's older `before`/`beforeMode` (the
+    /// selection before the FIRST click of the run) and ADOPT `newer`'s
+    /// `after`/`afterMode` (the latest selection). One undo then unwinds the
+    /// whole run back to the pre-run selection.
+    override bool mergeFrom(Command newer) {
+        auto n = cast(MeshSelectionEdit)newer;
+        if (n is null) return false;
+        this.after     = n.after;
+        this.afterMode = n.afterMode;
+        return true;
+    }
+
     void setBefore(SelectionSnapshot s, EditMode m) {
         this.before     = s;
         this.beforeMode = m;

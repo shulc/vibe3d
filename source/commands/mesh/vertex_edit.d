@@ -114,6 +114,17 @@ class MeshVertexEdit : Command, Operator {
         this.after = newer.after.dup;
     }
 
+    /// Type-erased merge hook (base Command.mergeFrom) used by
+    /// CommandHistory.recordCoalescing(). Downcasts `newer` to MeshVertexEdit
+    /// and defers to the typed mergeFrom above. Returns false if `newer` is not
+    /// a MeshVertexEdit (compareOp() guarantees it is when this is reached).
+    override bool mergeFrom(Command newer) {
+        auto n = cast(MeshVertexEdit)newer;
+        if (n is null) return false;
+        mergeFrom(n);
+        return true;
+    }
+
     /// Optional callbacks that fire after the vert mutation in apply() /
     /// revert() — used by tools to restore their Tool Properties state
     /// (propDeg, scaleAccum, dragDelta) and origVertices/activationVertices

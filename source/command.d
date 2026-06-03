@@ -30,10 +30,16 @@ import mesh_edit_delta : MeshEditScope;
 // single command is determined entirely by which bits are set.
 enum CmdFlags : uint {
     None       = 0,
-    Model      = 1 << 0, // Alters scene/document (mesh) state → undoable.
+    Model      = 1 << 0, // Alters scene/document (mesh) state → undoable (Model-undo class).
     UI         = 1 << 1, // Alters UI/view state only (camera, panels) — no undo entry.
     Quiet      = 1 << 2, // Suppress logging / notification for this command.
     SideEffect = 1 << 3, // Transient session/tool-pipe change — no undo entry.
+    UiState    = 1 << 4, // Alters undoable UI state (selection / edit mode) →
+                         // undoable, but in the UI-undo class (distinct from
+                         // Model-undo). Lands on the same stack and Ctrl+Z
+                         // undoes it; the class bit lets history/panel/tests
+                         // tell selection-undo apart from geometry-undo. This
+                         // is the vibe3d-native analog of a UI-undo command.
 }
 
 // Result of comparing a freshly-applied command against the command that
@@ -90,9 +96,25 @@ class Command {
 
     // Whether this command should land on the undo stack after a
     // successful apply(). Derived from cmdFlags(): a command is undoable
-    // iff it alters scene/document state (carries CmdFlags.Model). Kept
-    // as a final accessor so existing call sites need not change.
-    final bool isUndoable() const { return (cmdFlags() & CmdFlags.Model) != 0; }
+    // iff it alters either scene/document state (CmdFlags.Model, the
+    // Model-undo class) OR undoable UI state (CmdFlags.UiState, the
+    // UI-undo class — selection / edit mode). SideEffect / UI-only / read
+    // commands carry neither bit and are skipped. Kept as a final accessor
+    // so existing call sites need not change.
+    final bool isUndoable() const {
+        return (cmdFlags() & (CmdFlags.Model | CmdFlags.UiState)) != 0;
+    }
+
+    // Which undo CLASS this command belongs to once it lands on the stack.
+    // UI-undo (selection / edit-mode state) is undoable but distinct from
+    // Model-undo (geometry). A command is UI-undo iff it carries UiState and
+    // NOT Model (a command touching real geometry stays Model-class even if it
+    // also nudges selection — Model dominates). History/panel/tests read this
+    // to tell the two classes apart; Ctrl+Z behavior is identical for both.
+    final bool isUiUndo() const {
+        CmdFlags cf = cmdFlags();
+        return (cf & CmdFlags.UiState) != 0 && (cf & CmdFlags.Model) == 0;
+    }
 
     // Short human-readable label. Defaults to name() — override for a
     // friendlier menu / history-viewer string.
@@ -109,6 +131,19 @@ class Command {
     CompareResult compareOp(const Command prev) const {
         return CompareResult.Different;
     }
+
+    // In-place merge of a newer, COMPATIBLE command into THIS (the existing
+    // top undo entry), invoked by CommandHistory.recordCoalescing() right after
+    // compareOp() returned Compatible. The contract: keep THIS entry's pre-state
+    // (the state before the FIRST command of the run) and adopt `newer`'s
+    // post-state, so the coalesced entry's revert() unwinds the whole run and
+    // its apply()/redo lands the latest result. The dispatcher has ALREADY
+    // applied `newer`, so the mesh holds the merged post-state — do not mutate
+    // here. Return true on a successful merge. Default false: a command that
+    // never returns Compatible from compareOp() never needs to override this.
+    // (Type-erased base hook so the history module stays command-type-agnostic;
+    // each coalescing command downcasts `newer` to its own type.)
+    bool mergeFrom(Command newer) { return false; }
 
     // Change-scope metadata (doc/undo_change_tracker_plan.md, Phase 4 §b — the
     // analog of MODO's LXf_MESHEDIT_* scope bitfield, MIT-clean name). Declares
