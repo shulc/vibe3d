@@ -62,6 +62,14 @@ bool posEq(double[3] a, double[3] b, double eps = 1e-4) {
 
 void resetCube() {
     post(baseUrl ~ "/api/reset", "");
+    // Wipe the worker-global undo stack. The undo history is shared across
+    // every test that runs against this worker's long-lived vibe3d, and
+    // /api/reset does NOT clear it (it records a scene.reset entry instead).
+    // The stack is capped at maxDepth, so once prior tests saturate it a
+    // fresh append evicts the oldest entry and the length stops growing —
+    // which breaks the absolute +N length assertions below. Mirrors the
+    // clearHistory() convention in test_history_jump.d.
+    post(baseUrl ~ "/api/command", "history.clear");
 }
 
 // Dispatch a mesh.vertex_edit through /api/command (JSON form) — the
