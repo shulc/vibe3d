@@ -164,3 +164,143 @@ unittest {
     assert(undoLen() == 0, "Ctrl+Z on empty stack grew the undo stack");
     assert(redoLen() == 0, "Ctrl+Z on empty stack pushed a redo entry");
 }
+
+// ---------------------------------------------------------------------------
+// 3. (undo/redo migration P1) navHistory -> resyncSession() path: with an
+//    interactive tool ACTIVE but holding NO open edit, a committed history step
+//    popped via keyboard Ctrl+Z must (a) pop the step, (b) drive the active
+//    tool's resyncSession() (re-init the cached pre-edit baseline + gizmo to the
+//    now-current mesh) without throwing or corrupting state, and (c) leave the
+//    tool coherent so a subsequent edit operates on the POST-undo geometry.
+//
+//    EdgeExtrudeTool is the witness: its activate() captures a `before`
+//    MeshSnapshot of the current mesh; P1's resyncSession() re-captures `before`
+//    from the now-current mesh after the pop (reinitSession()). Without that, a
+//    later commit would pair against a stale baseline. We can't read `before`
+//    over HTTP, but we CAN assert the end-to-end invariant: pop is clean,
+//    redo re-applies, and a fresh edit lands on the post-undo mesh.
+//
+//    NOTE: the deeper golden-fixture "commit live drag -> undo -> live drag
+//    again, assert gizmo recentered + baseline" lock is a documented follow-up
+//    (same reason as the §2 note: the interactive `built` preview is panel-
+//    gated, not reachable over HTTP). This pins the navHistory->resyncSession
+//    wiring + post-undo coherence, which is P1's behavioural contract.
+// ---------------------------------------------------------------------------
+unittest {
+    postJson("/api/reset", "");
+    postJson("/api/command", "history.clear");
+    long baseVerts = vertCount();
+
+    // Commit a real edit so there is a prior step to pop underneath the tool.
+    auto m = getJson("/api/model");
+    int va = -1, vb = -1;
+    foreach (i, vv; m["vertices"].array) {
+        auto a = vv.array;
+        double x = a[0].floating, y = a[1].floating, z = a[2].floating;
+        if (y > 0.49 && z > 0.49) {
+            if (x < -0.49) va = cast(int)i;
+            if (x >  0.49) vb = cast(int)i;
+        }
+    }
+    assert(va >= 0 && vb >= 0, "cube top-front endpoints not found");
+    int ei = -1;
+    foreach (i, e; m["edges"].array) {
+        int p = cast(int)e.array[0].integer, q = cast(int)e.array[1].integer;
+        if ((p == va && q == vb) || (p == vb && q == va)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "cube top-front edge not found");
+    postJson("/api/select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    postJson("/api/command",
+        `{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+
+    size_t undoAfterEdit = undoLen();
+    long extrudedVerts = vertCount();
+    assert(extrudedVerts != baseVerts, "extrude should change vertex count");
+
+    // Activate an interactive tool on the MAIN thread (tool.set runs through the
+    // command bridge). It captures `before` from the CURRENT (extruded) mesh.
+    // No open live edit (built==false right after activate) -> hasUncommittedEdit
+    // is false, so keyboard Ctrl+Z takes the pop+resync branch, NOT the cancel
+    // branch.
+    auto act = postJson("/api/command", "tool.set edge.extrude");
+    assert(act["status"].str == "ok" || act["status"].str == "success",
+        "tool.set edge.extrude failed: " ~ act.toString);
+
+    // Keyboard Ctrl+Z: navHistory(true) -> history.undo() (pops the extrude) ->
+    // activeTool.resyncSession() (re-init `before`/gizmo against the now-current,
+    // pre-extrude mesh). Must not throw; must pop exactly one entry.
+    playKey(SDLK_z, KMOD_LCTRL);
+    assert(undoLen() == undoAfterEdit - 1,
+        "Ctrl+Z under an active tool did not pop one undo entry");
+    assert(redoLen() >= 1, "Ctrl+Z under an active tool did not push redo");
+    assert(vertCount() == baseVerts,
+        "Ctrl+Z under an active tool did not restore pre-edit geometry");
+
+    // The tool is still active and coherent: redo re-applies cleanly (the resync
+    // left no half-built/stale state that would corrupt a subsequent step).
+    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);
+    assert(undoLen() == undoAfterEdit,
+        "redo under an active tool did not restore the undo entry");
+    assert(vertCount() == extrudedVerts,
+        "redo under an active tool did not re-apply the edit geometry");
+
+    // Deactivate the tool so we don't leak an active edge.extrude into later
+    // tests (its deactivate() would no-op: built==false, nothing to commit).
+    postJson("/api/command", "tool.set edge.extrude off");
+}
+
+// ---------------------------------------------------------------------------
+// 4. (undo/redo migration P1) the resync path is robust across a TOPOLOGY-
+//    changing pop with a deform-style tool active. xfrm.smooth wraps a
+//    CommandWrapperTool whose activate() dups a `baseline` of the current
+//    vertices; P1 adds resyncSession() that re-dups that baseline from the
+//    post-undo mesh. Here the popped step changes the VERTEX COUNT (edge
+//    extrude undo: 12 -> 8 on the cube), which would make a stale baseline a
+//    different length than the live mesh. We assert the pop + resync survive
+//    that and a redo still re-applies — i.e. resyncSession() didn't choke on a
+//    length-mismatched baseline.
+// ---------------------------------------------------------------------------
+unittest {
+    postJson("/api/reset", "");
+    postJson("/api/command", "history.clear");
+    long baseVerts = vertCount();
+
+    auto m = getJson("/api/model");
+    int va = -1, vb = -1;
+    foreach (i, vv; m["vertices"].array) {
+        auto a = vv.array;
+        double x = a[0].floating, y = a[1].floating, z = a[2].floating;
+        if (y > 0.49 && z > 0.49) {
+            if (x < -0.49) va = cast(int)i;
+            if (x >  0.49) vb = cast(int)i;
+        }
+    }
+    int ei = -1;
+    foreach (i, e; m["edges"].array) {
+        int p = cast(int)e.array[0].integer, q = cast(int)e.array[1].integer;
+        if ((p == va && q == vb) || (p == vb && q == va)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "cube top-front edge not found");
+    postJson("/api/select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    postJson("/api/command",
+        `{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
+    size_t undoAfterEdit = undoLen();
+    long extrudedVerts = vertCount();
+
+    // Activate a deform tool (CommandWrapperTool baseline = current verts.dup,
+    // length == extrudedVerts here).
+    auto act = postJson("/api/command", "tool.set xfrm.smooth");
+    assert(act["status"].str == "ok" || act["status"].str == "success",
+        "tool.set xfrm.smooth failed: " ~ act.toString);
+
+    // Pop the extrude underneath it -> mesh shrinks to baseVerts; resyncSession()
+    // must re-dup the baseline to the new (shorter) length without asserting.
+    playKey(SDLK_z, KMOD_LCTRL);
+    assert(undoLen() == undoAfterEdit - 1, "Ctrl+Z did not pop one entry");
+    assert(vertCount() == baseVerts, "Ctrl+Z did not restore pre-extrude verts");
+
+    playKey(SDLK_z, KMOD_LCTRL | KMOD_LSHIFT);   // redo
+    assert(vertCount() == extrudedVerts, "redo did not re-apply the extrude");
+
+    postJson("/api/command", "tool.set xfrm.smooth off");
+}

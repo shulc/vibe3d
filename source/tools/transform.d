@@ -225,6 +225,19 @@ protected:
 
     override void activate() {
         active = true;
+        resetTransientState();
+    }
+
+    // Transient cache/gizmo reset shared by activate() and resyncSession()
+    // (undo/redo migration P1). Factored out so the two paths can never drift:
+    // activate() runs it on tool entry, resyncSession() re-runs it after a
+    // committed history pop moved geometry beneath the still-active tool so the
+    // gizmo + vertex cache recompute from the now-current mesh on the next
+    // update(). Deliberately does NOT touch `active` (resync keeps the tool
+    // active) nor any open edit session (resync is only called when there is
+    // none) — it resets only the drag-invariant cache/gizmo bookkeeping that
+    // activate() also clears, to the same values.
+    protected void resetTransientState() {
         vertexCacheDirty = true;
         lastSelectionHash = uint.max;
         lastMutationVersion = ulong.max;
@@ -234,6 +247,13 @@ protected:
         propsDragging = false;
         dragAxis = -1;
         gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    }
+
+    // Re-init the tool session against the now-current mesh after history
+    // navigation popped a committed step beneath it (undo/redo P1). Only called
+    // when there is NO open edit (the live-edit case is cancelUncommittedEdit).
+    override void resyncSession() {
+        resetTransientState();
     }
 
     override void deactivate() {

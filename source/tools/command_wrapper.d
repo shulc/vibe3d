@@ -157,9 +157,21 @@ abstract class CommandWrapperTool : Tool {
 
     override void activate() {
         if (meshPtr is null) return;
+        reinitSession();
+        clickHandle = new ClickPointHandler();
+    }
+
+    // (Re)capture the session baseline from the CURRENT mesh — shared by
+    // activate() and resyncSession() (undo/redo migration P1) so the two can't
+    // drift. The deform drag reverts to `baseline` every motion event, so after
+    // a committed history pop moved geometry beneath the active tool the stale
+    // baseline would restore the pre-undo mesh on the next LMB-down; re-dup'ing
+    // here pins it to the now-current mesh. Does NOT create clickHandle (that is
+    // one-time activation wiring).
+    private void reinitSession() {
+        if (meshPtr is null) return;
         baseline = meshPtr.vertices.dup;
         dirty    = false;
-        clickHandle = new ClickPointHandler();
     }
 
     override void deactivate() {
@@ -201,6 +213,15 @@ abstract class CommandWrapperTool : Tool {
         refreshCaches();
         dirty    = false;
         dragging = false;
+    }
+
+    // Resync after a committed undo/redo moved geometry beneath the active
+    // tool (undo/redo migration P1): re-dup the deform baseline from the now-
+    // current mesh and clear `dirty`, so the next drag reverts to the post-undo
+    // geometry rather than the stale pre-undo snapshot. Only called when there
+    // is no open edit (hasUncommittedEdit()==false), so nothing live is lost.
+    public override void resyncSession() {
+        reinitSession();
     }
 
     // ---- drag interaction --------------------------------------------

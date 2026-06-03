@@ -643,6 +643,14 @@ private:
     // the preview / vert handlers, records nothing).
     public override void cancelUncommittedEdit() { cancelPolygon(); }
 
+    // resyncSession() (undo/redo P1) is intentionally a JUSTIFIED NO-OP here:
+    // PenTool caches no scene-mesh baseline. Its only session state is the
+    // in-progress `vertices_` buffer, which holds LOCAL workplane positions
+    // (world coords, not mesh vertex/edge indices). A committed undo/redo that
+    // moves geometry beneath the active tool changes neither those world points
+    // nor anything Pen would re-derive from the mesh, so the default base no-op
+    // leaves the tool coherent for the next click. No override needed.
+
     void cancelPolygon() {
         clearVertHandlers();
         vertices_.length = 0;
