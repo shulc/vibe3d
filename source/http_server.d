@@ -163,6 +163,12 @@ class HttpServer {
     private alias HistoryProvider = string delegate();   // returns JSON
     private HistoryProvider historyProvider;
 
+    // ----- /api/undo/status provider ---------------------------------------
+    // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
+    // the history service — runs on the HTTP thread like historyProvider.
+    private alias UndoStatusProvider = string delegate();
+    private UndoStatusProvider undoStatusProvider;
+
     // ----- /api/history/replay provider ------------------------------------
     // Returns the canonical argstring line for undoStack[index], or "" when
     // the index is out of range. Runs on the HTTP thread (read-only snapshot).
@@ -350,6 +356,15 @@ class HttpServer {
      */
     public void setHistoryProvider(HistoryProvider provider) {
         this.historyProvider = provider;
+    }
+
+    /**
+     * Set the /api/undo/status JSON provider. Read-only snapshot of the
+     * history service ({state, lockout, canUndo, canRedo}); runs on the HTTP
+     * thread like the history provider.
+     */
+    public void setUndoStatusProvider(UndoStatusProvider provider) {
+        this.undoStatusProvider = provider;
     }
 
     /**
@@ -1223,6 +1238,19 @@ class HttpServer {
                     response.body = `{"status":"error","message":"`
                                     ~ e.msg.replace("\"", "\\\"") ~ `"}`;
                 }
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/undo/status" && request.method == "GET") {
+            // Read-only undo-service status: {state, lockout, canUndo, canRedo}.
+            // Snapshot at request time on the HTTP thread (same safety contract
+            // as /api/history GET — read-only access to the history service).
+            if (undoStatusProvider is null) {
+                response.statusCode = 200;
+                response.body = `{"state":"invalid","lockout":false,`
+                              ~ `"canUndo":false,"canRedo":false}`;
+            } else {
+                response.statusCode = 200;
+                response.body = undoStatusProvider();
             }
             response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/history" && request.method == "GET") {

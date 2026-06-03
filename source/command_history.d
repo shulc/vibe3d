@@ -65,6 +65,11 @@ enum HistoryFlags : uint {
                          // Command.isUiUndo(). Surfaced per-entry so the
                          // history panel + /api/history can distinguish the
                          // two undoable classes.
+    UndoForced = 1 << 6, // Entry landed because the command carried
+                         // CmdFlags.UndoForce (explicit opt-IN overriding the
+                         // derived rule). Provenance only — surfaced for the
+                         // panel / api; behaviour is identical to any other
+                         // undoable entry once it is on the stack.
 }
 
 struct HistoryEntry {
@@ -87,10 +92,11 @@ private uint historyFlagsFor(const Command cmd) {
     uint flags = HistoryFlags.Succeeded;
     // Undoable mirrors "lands on the stack" — true for BOTH undo classes
     // (Model-undo and UI-undo). The UiUndo bit then narrows which class it is.
-    if (cmd.isUndoable())         flags |= HistoryFlags.Undoable;
-    if (cmd.isUiUndo())           flags |= HistoryFlags.UiUndo;
-    if (cf & CmdFlags.Quiet)      flags |= HistoryFlags.Quiet;
-    if (cf & CmdFlags.SideEffect) flags |= HistoryFlags.SideEffect;
+    if (cmd.isUndoable())          flags |= HistoryFlags.Undoable;
+    if (cmd.isUiUndo())            flags |= HistoryFlags.UiUndo;
+    if (cf & CmdFlags.Quiet)       flags |= HistoryFlags.Quiet;
+    if (cf & CmdFlags.SideEffect)  flags |= HistoryFlags.SideEffect;
+    if (cf & CmdFlags.UndoForce)   flags |= HistoryFlags.UndoForced;
     return flags;
 }
 
@@ -170,6 +176,16 @@ final class CommandHistory {
     private size_t maxDepth = 50;
     private UndoState _state = UndoState.Active;
 
+    // Lockout — a hard, queryable gate over the WHOLE history service, DISTINCT
+    // from Suspend. While locked out, record / recordCoalescing / undo / redo /
+    // fire and the block/refire commit paths all early-return as no-ops: the
+    // stacks are frozen and navigation is refused. Suspend, by contrast, only
+    // silently drops new RECORDS during an internal revert (undo/redo still
+    // work). Lockout is the switch automation flips to assert "no history
+    // mutation may happen right now" — e.g. while a non-undoable external
+    // operation owns the document — and to query that state via /api/undo/status.
+    private bool _lockout = false;
+
     // Refire block state. One slot — refire blocks don't nest. fire()
     // checks `refireOpen` to decide whether to revert the previous live
     // command before applying the new one.
@@ -212,11 +228,39 @@ final class CommandHistory {
         return s;
     }
 
+    // ----- lockout ---------------------------------------------------------
+
+    /// Whether the history is currently locked out (all mutation / navigation
+    /// refused). Read-only — safe to call from the HTTP server thread for
+    /// /api/undo/status alongside state() / canUndo() / canRedo().
+    bool lockedOut() const { return _lockout; }
+
+    /// Engage or release the lockout. Direct setter for callers that pair
+    /// set(true)/set(false) themselves; prefer locked() for RAII scoping so a
+    /// lockout can never stick if an exception unwinds the scope.
+    void setLockout(bool on) { _lockout = on; }
+
+    // RAII helper mirroring Suspend: "lock out for this scope, restore on exit".
+    // Restores the PRIOR value (not unconditionally false) so nested scopes
+    // compose. Use as: `auto g = history.locked();`.
+    struct Lockout {
+        private CommandHistory h;
+        private bool prev;
+        @disable this(this);
+        ~this() { h._lockout = prev; }
+    }
+    Lockout locked() {
+        Lockout g = { h: this, prev: _lockout };
+        _lockout = true;
+        return g;
+    }
+
     // ----- recording -------------------------------------------------------
 
     // Called by the HTTP dispatcher AFTER a successful apply(). The command
     // must already be holding its pre-apply snapshot in instance fields.
     void record(Command cmd) {
+        if (_lockout) return;
         if (cmd is null) return;
         if (!cmd.isUndoable) return;
         if (_state != UndoState.Active) return;
@@ -283,6 +327,7 @@ final class CommandHistory {
     // (Suspend), and routed into the open command block while blockDepth > 0
     // (coalescing is bypassed inside a block — the block IS the grouping).
     void recordCoalescing(Command cmd) {
+        if (_lockout) return;
         if (cmd is null) return;
         if (!cmd.isUndoable) return;
         if (_state != UndoState.Active) return;
@@ -333,6 +378,7 @@ final class CommandHistory {
     bool canRedo() const { return redoStack.length > 0; }
 
     bool undo() {
+        if (_lockout) return false;
         if (undoStack.length == 0) return false;
         auto e = undoStack[$ - 1];
         undoStack.length -= 1;
@@ -352,6 +398,7 @@ final class CommandHistory {
     }
 
     bool redo() {
+        if (_lockout) return false;
         if (redoStack.length == 0) return false;
         auto e = redoStack[$ - 1];
         redoStack.length -= 1;
@@ -401,6 +448,10 @@ final class CommandHistory {
     }
 
     void clear() {
+        // Empties BOTH stacks deliberately: leaving redoStack populated would
+        // let jumpTo()'s maxTarget (= undoStack.length + redoStack.length) point
+        // into an orphaned redo timeline with no matching undo entries. Both
+        // must go together so the jump range stays well-formed after a clear.
         undoStack.length = 0;
         redoStack.length = 0;
     }
@@ -444,6 +495,7 @@ final class CommandHistory {
     bool refireActive() const { return refireOpen; }
 
     void refireBegin() {
+        if (_lockout) return;
         // Defensive: if a prior refire block was left dangling (e.g. tool
         // crashed mid-drag), commit it first so we don't lose the entry.
         if (refireOpen && liveCmd !is null) {
@@ -477,6 +529,7 @@ final class CommandHistory {
     // before the new command lays down its mutation. Sub-commands fired
     // during apply()/revert() are suspended so they don't pollute history.
     bool fire(Command cmd) {
+        if (_lockout) return false;
         if (cmd is null) return false;
         if (!refireOpen) {
             // Caller forgot refireBegin(); treat as a plain apply+record.
@@ -503,6 +556,7 @@ final class CommandHistory {
     // the undo stack as ONE entry. record()'s flag-and-state checks
     // (isUndoable, _state) apply: a non-undoable live command is dropped.
     void refireEnd() {
+        if (_lockout) return;
         if (!refireOpen) return;
         Command final_ = liveCmd;
         refireOpen = false;
@@ -536,6 +590,7 @@ final class CommandHistory {
     /// Open a command block. `label` names the resulting composite entry; for
     /// nested calls only the outermost label is used.
     void blockBegin(string label) {
+        if (_lockout) return;
         if (blockDepth == 0) {
             blockChildren.length = 0;
             blockLabel = label;
@@ -548,6 +603,7 @@ final class CommandHistory {
     /// entry. An empty block (no children collected) records nothing.
     /// Calling blockEnd() with no open block is a harmless no-op.
     void blockEnd() {
+        if (_lockout) return;
         if (blockDepth == 0) return;
         blockDepth--;
         if (blockDepth > 0) return;   // inner end of a nested block — defer.

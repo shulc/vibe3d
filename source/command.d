@@ -40,6 +40,16 @@ enum CmdFlags : uint {
                          // undoes it; the class bit lets history/panel/tests
                          // tell selection-undo apart from geometry-undo. This
                          // is the vibe3d-native analog of a UI-undo command.
+    UndoForce    = 1 << 5, // Explicit opt-IN to undoability, OVERRIDING the
+                           // derived (Model | UiState) rule. Lets a command that
+                           // carries neither Model nor UiState (e.g. a transient
+                           // SideEffect-flavored op the author still wants on the
+                           // stack) land an undo entry. Loses to UndoSuppress.
+    UndoSuppress = 1 << 6, // Explicit opt-OUT of undoability, OVERRIDING both the
+                           // derived rule AND UndoForce. A Model-mutating command
+                           // that sets this records NO undo entry — the author
+                           // takes responsibility for the state change being
+                           // unrecoverable / handled elsewhere. Highest priority.
 }
 
 // Result of comparing a freshly-applied command against the command that
@@ -95,14 +105,25 @@ class Command {
     CmdFlags cmdFlags() const { return CmdFlags.Model; }
 
     // Whether this command should land on the undo stack after a
-    // successful apply(). Derived from cmdFlags(): a command is undoable
-    // iff it alters either scene/document state (CmdFlags.Model, the
-    // Model-undo class) OR undoable UI state (CmdFlags.UiState, the
-    // UI-undo class — selection / edit mode). SideEffect / UI-only / read
-    // commands carry neither bit and are skipped. Kept as a final accessor
+    // successful apply(). Layered, in priority order:
+    //
+    //   1. UndoSuppress  → false (explicit opt-OUT always wins, even over a
+    //                      Model bit — author takes responsibility).
+    //   2. UndoForce     → true  (explicit opt-IN; lands a command that carries
+    //                      neither Model nor UiState).
+    //   3. derived       → (Model | UiState) != 0 — the default from P5: a
+    //                      command is undoable iff it alters scene/document
+    //                      state (Model-undo class) OR undoable UI state
+    //                      (UiState, the UI-undo class).
+    //
+    // Backward-compatible: no existing command sets UndoForce / UndoSuppress,
+    // so the derived rule governs exactly as before. Kept as a final accessor
     // so existing call sites need not change.
     final bool isUndoable() const {
-        return (cmdFlags() & (CmdFlags.Model | CmdFlags.UiState)) != 0;
+        CmdFlags cf = cmdFlags();
+        if (cf & CmdFlags.UndoSuppress) return false;
+        if (cf & CmdFlags.UndoForce)    return true;
+        return (cf & (CmdFlags.Model | CmdFlags.UiState)) != 0;
     }
 
     // Which undo CLASS this command belongs to once it lands on the stack.

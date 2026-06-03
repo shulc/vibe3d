@@ -99,6 +99,7 @@ import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
 import commands.history.show : HistoryShow;
 import commands.history.clear : HistoryClear;
+import commands.test_undo_flags : UndoSuppressNoop, UndoForceNoop;
 import commands.history.save_as_script : HistorySaveAsScript;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
@@ -1274,6 +1275,25 @@ void main(string[] args) {
         new HistoryClear(&mesh, cameraView, editMode,
             () { import tools.edge_extrude : setUndoTrackerEnabled;
                  setUndoTrackerEnabled(false); });
+    // Test-automation only: engage / release the history-service lockout (the
+    // hard gate that freezes record/undo/redo/fire — distinct from Suspend) so
+    // a test can assert that locked-out recording is a no-op and /api/undo/status
+    // reports lockout:true. Reuses HistoryClear's closure wrapper (SideEffect,
+    // unrecorded); not in any menu / UI. Mirrors the undo.tracker.* commands.
+    reg.commandFactories["undo.lockout.on"] = () => cast(Command)
+        new HistoryClear(&mesh, cameraView, editMode,
+            () { history.setLockout(true); });
+    reg.commandFactories["undo.lockout.off"] = () => cast(Command)
+        new HistoryClear(&mesh, cameraView, editMode,
+            () { history.setLockout(false); });
+    // Test-automation only: explicit undoability-override probes. The first is a
+    // Model command that opts OUT (UndoSuppress) → no undo entry; the second is a
+    // SideEffect command that opts IN (UndoForce) → entry lands. Drives both
+    // override branches of isUndoable() through the normal dispatch path.
+    reg.commandFactories["undo.test.suppress"] = () => cast(Command)
+        new UndoSuppressNoop(&mesh, cameraView, editMode);
+    reg.commandFactories["undo.test.force"] = () => cast(Command)
+        new UndoForceNoop(&mesh, cameraView, editMode);
     reg.commandFactories["history.saveAsScript"] = () => cast(Command)
         new HistorySaveAsScript(&mesh, cameraView, editMode,
             () {
@@ -2154,6 +2174,27 @@ void main(string[] args) {
             JSONValue payload = JSONValue.emptyObject;
             payload["undo"] = JSONValue(undoArr);
             payload["redo"] = JSONValue(redoArr);
+            return payload.toString();
+        });
+
+        // Read-only undo-service status for automation: {state, lockout,
+        // canUndo, canRedo}. Reuses history.state()/lockedOut()/canUndo()/
+        // canRedo() — pure reads, safe on the HTTP server thread (mirrors the
+        // history provider above).
+        httpServer.setUndoStatusProvider(() {
+            import std.json : JSONValue;
+            import command_history : UndoState;
+            string stateStr;
+            final switch (history.state()) {
+                case UndoState.Active:  stateStr = "active";  break;
+                case UndoState.Suspend: stateStr = "suspend"; break;
+                case UndoState.Invalid: stateStr = "invalid"; break;
+            }
+            JSONValue payload = JSONValue.emptyObject;
+            payload["state"]   = JSONValue(stateStr);
+            payload["lockout"] = JSONValue(history.lockedOut());
+            payload["canUndo"] = JSONValue(history.canUndo());
+            payload["canRedo"] = JSONValue(history.canRedo());
             return payload.toString();
         });
 
