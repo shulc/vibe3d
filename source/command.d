@@ -4,6 +4,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param, ParamHints;
+import mesh_edit_delta : MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // Command — base class for every user-visible action.
@@ -108,6 +109,21 @@ class Command {
     CompareResult compareOp(const Command prev) const {
         return CompareResult.Different;
     }
+
+    // Change-scope metadata (doc/undo_change_tracker_plan.md, Phase 4 §b — the
+    // analog of MODO's LXf_MESHEDIT_* scope bitfield, MIT-clean name). Declares
+    // which classes of mesh state an op touches. Default None — most commands do
+    // not carry topology-scope provenance. The delta-backed migrated commands
+    // (edge extrude / delete / remove / dissolve) override it to Geometry|Marks.
+    // Lightweight metadata only: no speculative consumer machinery is built — the
+    // history panel may surface it, but nothing depends on it yet.
+    MeshEditScope editScope() const { return MeshEditScope.None; }
+
+    // Whether this command's undo is stored as an OPERATION INVERSE (a per-mutation
+    // MeshEditDelta / op-log replayed LIFO) rather than a whole-mesh MeshSnapshot
+    // pair (parent plan P3 formalization). Default false — snapshot-backed. The
+    // delta-backed commands override → true. Marker/metadata only.
+    bool isOperationInverse() const { return false; }
 
     // Schema: list of parameters. Default: none. Commands that surface
     // an args dialog or accept JSON params via /api/command override this.

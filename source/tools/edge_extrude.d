@@ -28,13 +28,15 @@ import std.math : abs, sqrt;
 /// reading "Edge Extrude".
 alias EdgeExtrudeEditFactory = MeshEdgeExtrudeEdit delegate();
 
-// VIBE3D_UNDO_TRACKER toggle (doc/undo_change_tracker_plan.md, Phase 2 §D). When
-// set to a truthy value the interactive extrude commit records a MeshEditDelta
-// (operation-log undo) instead of a before/after MeshSnapshot pair. Unset/"off"
-// keeps the snapshot path byte-identical to pre-Phase-2 behavior. Read ONCE and
-// cached — it is the rollback safety net + the parity-test lever.
+// VIBE3D_UNDO_TRACKER toggle (doc/undo_change_tracker_plan.md, Phase 4 §D). When
+// truthy (the DEFAULT as of Phase 4) the interactive extrude commit records a
+// MeshEditDelta (operation-log undo) instead of a before/after MeshSnapshot pair.
+// `VIBE3D_UNDO_TRACKER=off` (and the other falsey values) is the ESCAPE HATCH that
+// forces the snapshot path — byte-identical to pre-Phase-2 behavior. Read ONCE and
+// cached — it is the rollback safety net + the parity-test lever. The snapshot path
+// is retained (one burn-in cycle) for every migrated op; only the default flipped.
 private bool g_undoTrackerChecked = false;
-private bool g_undoTrackerOn      = false;
+private bool g_undoTrackerOn      = true;
 bool undoTrackerEnabled() {
     if (!g_undoTrackerChecked) {
         import std.process : environment;
@@ -42,7 +44,9 @@ bool undoTrackerEnabled() {
         g_undoTrackerChecked = true;
         auto v = environment.get("VIBE3D_UNDO_TRACKER", "");
         auto lv = v.toLower;
-        g_undoTrackerOn = (lv == "1" || lv == "on" || lv == "true" || lv == "yes");
+        // Default ON: unset ⇒ tracker. Only an explicit falsey value forces the
+        // snapshot escape hatch. (Anything unrecognised stays ON.)
+        g_undoTrackerOn = !(lv == "0" || lv == "off" || lv == "false" || lv == "no");
     }
     return g_undoTrackerOn;
 }
