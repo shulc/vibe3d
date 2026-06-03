@@ -253,6 +253,7 @@ public:
     }
 
     protected override void commitEdit(string label) {
+        if (suppressCommit) { cancelEdit(); return; }
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
 

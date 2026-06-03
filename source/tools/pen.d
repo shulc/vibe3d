@@ -632,6 +632,17 @@ private:
         vertHandlers.length = 0;
     }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    // Commit guard mirror (deactivate() :225): a pending polygon commits only
+    // while Drawing with enough verts to close (>= minCommitVerts). A short
+    // in-progress stroke would be discarded, not committed, so it reports false.
+    public override bool hasUncommittedEdit() const {
+        return state == PenState.Drawing && vertices_.length >= minCommitVerts();
+    }
+    // Cancel: drop the in-progress sequence (cancelPolygon resets state + clears
+    // the preview / vert handlers, records nothing).
+    public override void cancelUncommittedEdit() { cancelPolygon(); }
+
     void cancelPolygon() {
         clearVertHandlers();
         vertices_.length = 0;

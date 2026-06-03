@@ -1935,6 +1935,24 @@ public:
         clearLastSnap();
     }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    //
+    // Commit guard mirror: deactivate() commits exactly when `willCommit`
+    // (:1918) is true. The compound guard is NOT `state != Idle` — a height
+    // drag with sub-epsilon height (|currentHeight()| <= 1e-5) commits nothing
+    // even though state != Idle, so it must report no uncommitted edit.
+    public override bool hasUncommittedEdit() const {
+        return (state == BoxState.BaseSet)
+            || (state >= BoxState.DrawingHeight && abs(currentHeight()) > 1e-5f);
+    }
+
+    // Category B cancel — preview-only reset (the RMB body :1948). Box builds a
+    // separate previewMesh/previewGpu; the scene mesh is never touched until
+    // commit, so dropping back to Idle discards the whole live edit.
+    public override void cancelUncommittedEdit() {
+        state = BoxState.Idle;
+    }
+
     private void commitBoxEdit(MeshSnapshot pre) {
         if (history is null || boxEditFactory is null) return;
         if (!pre.filled) return;

@@ -191,6 +191,31 @@ class Tool : ParamProvider {
     // Currently unused; renderer in phase 4.4+ will start dispatching to it.
     bool applyHeadless() { return false; }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    //
+    // INVARIANT: hasUncommittedEdit() <=> a commit would fire if the tool's
+    // session ended *right now*. This is deliberately NOT "state != Idle" and
+    // NOT a single bool reused by every tool — it must equal the tool's REAL
+    // commit guard, including any epsilon terms (e.g. a primitive whose height
+    // is sub-epsilon has a live state but would commit nothing, so it must
+    // return false). Each interactive tool overrides this to mirror the exact
+    // predicate its deactivate()/commit path tests.
+    bool hasUncommittedEdit() const { return false; }
+
+    // Abort the tool's open live edit, restoring the mesh to the session's
+    // pre-edit baseline WITHOUT recording anything to history. Postcondition:
+    // hasUncommittedEdit() == false and the mesh is coherent. Cancel bodies are
+    // heterogeneous across tools (live-mesh restore / preview-only reset / new
+    // transform-cancel code) — this is not uniformly "reuse the RMB handler".
+    void cancelUncommittedEdit() {}
+
+    // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
+    // after history navigation moved geometry underneath an active tool. P0
+    // ships a minimal stub (default no-op; transform marks its caches dirty,
+    // EdgeExtrude re-captures its `before` snapshot). Promoted to a first-class
+    // post-mode re-init in P1.
+    void resyncSession() {}
+
     // Whether `params()` should be rendered by the inline PropertyPanel.
     // Tools that expose params() purely for the headless tool.attr path,
     // while drawProperties() handles the interactive UI (e.g. BevelTool

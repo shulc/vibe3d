@@ -1222,6 +1222,16 @@ private:
         return 24;
     }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    // Commit guard mirror (deactivate() :630); compound, NOT `state != Idle`
+    // (a sub-epsilon height drag commits nothing). Category B preview-only
+    // cancel: the scene mesh is untouched until commit, so reset to Idle.
+    public override bool hasUncommittedEdit() const {
+        return (state == SphereState.BaseSet)
+            || (state >= SphereState.DrawingHeight && currentHeight() > 1e-5f);
+    }
+    public override void cancelUncommittedEdit() { state = SphereState.Idle; }
+
     void commitSphereEdit(MeshSnapshot pre) {
         if (history is null || factory is null) return;
         if (!pre.filled) return;

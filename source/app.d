@@ -2374,6 +2374,23 @@ void main(string[] args) {
             g_pipeCtx.pipeline.evaluate(vts);
     }
 
+    // Interactive history-navigation chokepoint (undo/redo migration P0).
+    // MAIN-THREAD ONLY — never call from the HTTP server thread (it touches
+    // activeTool). If the active tool holds an uncommitted live edit, the
+    // first Ctrl+Z cancels that edit (no history pop, tool stays active);
+    // otherwise it pops/pushes the history stack and re-syncs the tool's
+    // cached baseline to the now-current mesh. Returns true if anything
+    // happened (edit cancelled OR stack moved).
+    bool navHistory(bool isUndo) {
+        if (activeTool !is null && activeTool.hasUncommittedEdit()) {
+            activeTool.cancelUncommittedEdit();
+            return true;
+        }
+        bool ok = isUndo ? history.undo() : history.redo();
+        if (ok && activeTool !is null) activeTool.resyncSession();
+        return ok;
+    }
+
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // Active tool gets first dibs on key events. Tools that handle keys
         // (e.g. PenTool's Enter/Backspace/Esc) return true to consume; tools
@@ -2390,6 +2407,14 @@ void main(string[] args) {
                 return;
             }
             if (auto id = canon in shortcuts.commandIdByCanon) {
+                // Interactive history nav (Ctrl+Z / Ctrl+Shift+Z) goes through
+                // the navHistory chokepoint so an active tool with an open live
+                // edit gets a chance to cancel it (instead of popping a prior
+                // committed step underneath the live preview). The command
+                // FACTORIES stay raw — they are shared with macro/replay/
+                // scripted history nav and must remain tool-agnostic.
+                if (*id == "history.undo") { navHistory(true);  return; }
+                if (*id == "history.redo") { navHistory(false); return; }
                 if (!tryOpenArgsDialog(*id))
                     runCommand(reg.commandFactories[*id]());
                 return;
@@ -4098,12 +4123,12 @@ void main(string[] args) {
                         int steps = cast(int)(dd.y / rowH);
                         if (steps > 0) {
                             foreach (_; 0 .. steps)
-                                if (!history.redo()) break;
+                                if (!navHistory(false)) break;
                             ImGui.ResetMouseDragDelta(
                                 ImGuiMouseButton.Left);
                         } else if (steps < 0) {
                             foreach (_; 0 .. -steps)
-                                if (!history.undo()) break;
+                                if (!navHistory(true)) break;
                             ImGui.ResetMouseDragDelta(
                                 ImGuiMouseButton.Left);
                         }

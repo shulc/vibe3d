@@ -202,9 +202,22 @@ protected:
         return cmd;
     }
 
+    // Undo/redo migration P0 — single-chokepoint commit latch. The wrapper
+    // (XfrmTransformTool) commits from THREE sites (deactivate :225,
+    // update :254 on selection/mutation change, and BrushReset :887), all
+    // resolving to THIS method. cancelUncommittedEdit() restores the open
+    // session's baseline by hand and must guarantee none of those three sites
+    // re-records a commit while it does so. Rather than guard each caller, the
+    // suppression gates here: cancelUncommittedEdit() sets the latch around its
+    // teardown, and commitEdit() honours it by closing the capture WITHOUT
+    // recording. (cancelEdit() already discards the open snapshot, so once the
+    // latch is set there is also nothing left to record.)
+    protected bool suppressCommit = false;
+
     // Default commit: build cmd, record on history. Subclasses override to
     // attach hooks before recording (RotateTool, ScaleTool, MoveTool).
     protected void commitEdit(string label) {
+        if (suppressCommit) { cancelEdit(); return; }
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
         history.record(cmd);

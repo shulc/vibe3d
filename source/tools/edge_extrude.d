@@ -202,6 +202,32 @@ public:
         toolHandles.clearHaul();
     }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    //
+    // Commit guard mirror: deactivate() (:196) records exactly when
+    // `active && built && (extrude_ != 0 || width_ != 0)`, so that IS the
+    // "would a commit fire now" predicate.
+    public override bool hasUncommittedEdit() const {
+        return active && built && (extrude_ != 0.0f || width_ != 0.0f);
+    }
+
+    // Category A cancel — restore the clean cage via the shared helper.
+    public override void cancelUncommittedEdit() {
+        cancelLiveEdit();
+    }
+
+    // Resync after a committed undo/redo moved geometry beneath the active
+    // tool: re-capture the session baseline + rebuild the gizmo from the now-
+    // current mesh, and clear any (now invalid) built preview state.
+    public override void resyncSession() {
+        if (!active) return;
+        before    = MeshSnapshot.capture(*mesh);
+        built     = false;
+        extrude_  = 0.0f;
+        width_    = 0.0f;
+        computeGizmoFrame();
+    }
+
     // A parameter changed. Two callers, distinguished by `interactiveParamEdit`
     // (set by PropertyPanel only):
     //   - Interactive Tool Properties edit → rebuild the live preview from the
@@ -252,13 +278,7 @@ public:
         if (!active) return false;
         if (e.button == SDL_BUTTON_RIGHT) {
             // Cancel: drop any built topology, restore the original cage.
-            before.restore(*mesh);
-            refreshCaches();
-            extrude_ = 0.0f;
-            width_   = 0.0f;
-            built    = false;
-            dragPart = -1;
-            toolHandles.clearHaul();
+            cancelLiveEdit();
             return true;
         }
         if (e.button != SDL_BUTTON_LEFT) return false;
@@ -466,6 +486,20 @@ private:
         fc.invalidate();
         ec.resize(mesh.edges.length);
         ec.invalidate();
+    }
+
+    // Category A live-edit cancel — the former RMB body, factored out so both
+    // the RMB handler and cancelUncommittedEdit() (undo/redo P0) share one
+    // restore path: drop any built topology, restore the original cage, reset
+    // params + drag state, and clear the gizmo haul. Records nothing.
+    void cancelLiveEdit() {
+        before.restore(*mesh);
+        refreshCaches();
+        extrude_ = 0.0f;
+        width_   = 0.0f;
+        built    = false;
+        dragPart = -1;
+        toolHandles.clearHaul();
     }
 
     // -----------------------------------------------------------------------
