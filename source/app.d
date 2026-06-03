@@ -2101,7 +2101,31 @@ void main(string[] args) {
             // semantics.
             {
                 auto zCmd = g_perf.scope_(Cat.commandApply);
-                if (history.refireActive) {
+                // Refire (undo/redo migration P4): a panel-param-edit session on
+                // an opted-in tool routes a tool.attr through the tool's own
+                // buildRefireCommand() rather than firing the (non-undoable)
+                // tool.attr command itself. Each tick reverts the previous live
+                // command and applies the freshly-evaluated one, so refireEnd
+                // lands ONE entry reflecting the LAST param value. The attr is
+                // injected onto the tool first (with the tool marked refire-
+                // driving so its internal preview stays inert), then the rebuilt
+                // command is fired. Non-tool.attr commands inside a refire window
+                // (and non-opted-in tools) keep the plain fire(cmd) path.
+                if (history.refireActive
+                    && id == "tool.attr"
+                    && activeTool !is null
+                    && activeTool.wantsRefire()) {
+                    activeTool.setRefireDriving(true);
+                    scope(exit) activeTool.setRefireDriving(false);
+                    if (!cmd.apply())   // inject attr onto the tool's inner cmd
+                        throw new Exception("command '" ~ id ~ "' did not apply");
+                    auto refireCmd = activeTool.buildRefireCommand();
+                    if (refireCmd !is null) {
+                        if (!history.fire(refireCmd))
+                            throw new Exception(
+                                "refire command did not apply");
+                    }
+                } else if (history.refireActive) {
                     if (!history.fire(cmd))
                         throw new Exception("command '" ~ id ~ "' did not apply");
                 } else {
@@ -2211,7 +2235,14 @@ void main(string[] args) {
         // behavior without going through SDL.
         httpServer.setRefireHandler((string action) {
             if (action == "begin")     history.refireBegin();
-            else if (action == "end")  history.refireEnd();
+            else if (action == "end") {
+                history.refireEnd();
+                // P4: if a refire session was driving an opted-in tool, tell it
+                // the single entry has landed so its commit chokepoint
+                // (deactivate/Apply) records nothing for the same edit.
+                if (activeTool !is null && activeTool.wantsRefire())
+                    activeTool.onRefireCommitted();
+            }
             else throw new Exception("invalid refire action '" ~ action ~ "'");
         });
 
