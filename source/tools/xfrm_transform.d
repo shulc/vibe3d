@@ -1327,6 +1327,63 @@ public:
     // the edit-session API.
     public bool publicEditIsOpen() const { return editIsOpen(); }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    //
+    // Commit guard: the wrapper-owned edit session commits from deactivate()
+    // (:225), update() on selection/mutation change (:254) and BrushReset
+    // mouse-up (:887) — every one gated by editIsOpen(). So the exact "a
+    // commit would fire if the session ended now" predicate IS editIsOpen().
+    override bool hasUncommittedEdit() const { return editIsOpen(); }
+
+    // Category C (NEW code — there is no RMB handler in the transform family).
+    // Abort the open edit: write the session's pre-edit baseline (the same
+    // editBefore[]/editIndices() pair commitEdit() reads) back into the mesh,
+    // refresh GPU + caches, clear the open capture via cancelEdit(), and drop
+    // any in-flight drag. The suppressCommit latch (honoured at the single
+    // commitEdit() chokepoint on TransformTool) prevents deactivate()/update()/
+    // BrushReset from re-firing a commit while we tear the session down.
+    override void cancelUncommittedEdit() {
+        if (!editIsOpen()) return;
+        suppressCommit = true;
+        scope(exit) suppressCommit = false;
+
+        // Restore the moving set to its pre-edit positions. editIndices() /
+        // editBaseline() are the per-selected-vertex snapshot beginEdit()
+        // captured; restoring them is exactly what an undo of this session
+        // would do, but without recording anything.
+        uint[] idx  = editIndices();
+        Vec3[] base = editBaseline();
+        foreach (i, vid; idx) {
+            if (vid < mesh.vertices.length)
+                mesh.vertices[vid] = base[i];
+        }
+        ++mesh.mutationVersion;
+        gpu.upload(*mesh);
+        gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        needsGpuUpdate = false;
+
+        // Close the capture session WITHOUT recording, and drop any live drag.
+        cancelEdit();
+        activeDrag          = null;
+        dragBaseline.length = 0;
+        moveDragFastPath    = false;
+        rotDragFastPath     = false;
+        rotDragAxisIdx      = -1;
+        scaleDragFastPath   = false;
+        scaleDragActive     = false;
+        // Caches (ViewCache vertex/edge/face) re-validate next frame: while a
+        // tool is active app.d invalidates them every frame (app.d :4574).
+    }
+
+    // P0 minimal resync after a committed undo/redo moved geometry beneath the
+    // active tool: force the gizmo + vertex cache to recompute from the now-
+    // current mesh next update(). Mirrors the reset fields activate() uses.
+    override void resyncSession() {
+        vertexCacheDirty    = true;
+        lastSelectionHash   = uint.max;
+        lastMutationVersion = ulong.max;
+    }
+
 private:
     // Element-falloff click-pick. Reads the GPU-resolved hover state
     // (g_hoveredVertex/Edge/Face — published by app.d after each

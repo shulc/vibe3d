@@ -730,6 +730,15 @@ private:
         meshChanged = true;
     }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    // Commit guard mirror (deactivate() :286); compound, NOT `state != Idle`.
+    // Category B preview-only cancel: scene mesh untouched until commit.
+    public override bool hasUncommittedEdit() const {
+        return (state == ConeState.BaseSet)
+            || (state >= ConeState.DrawingHeight && currentHeight() > 1e-5f);
+    }
+    public override void cancelUncommittedEdit() { state = ConeState.Idle; }
+
     void commitConeEdit(MeshSnapshot pre) {
         if (history is null || factory is null) return;
         if (!pre.filled) return;

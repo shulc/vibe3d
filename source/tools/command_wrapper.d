@@ -183,6 +183,26 @@ abstract class CommandWrapperTool : Tool {
         lastAppliedFalloff = FalloffPacket.init;
     }
 
+    // ----- History-coordination hooks (undo/redo migration P0) -------------
+    //
+    // Commit guard mirror: commitNow() early-returns unless `dirty` (:365), and
+    // deactivate() is the only commit site, so `dirty` IS the "would commit now"
+    // predicate.
+    public override bool hasUncommittedEdit() const { return dirty; }
+
+    // Category A cancel — restore the session baseline into the live mesh (the
+    // same restore the new-drag LMB-down body does at :207) and clear `dirty`.
+    // With dirty cleared, the subsequent deactivate()->commitNow() is a no-op,
+    // so nothing is recorded.
+    public override void cancelUncommittedEdit() {
+        if (!dirty || meshPtr is null) return;
+        if (baseline.length == meshPtr.vertices.length)
+            meshPtr.vertices[] = baseline[];
+        refreshCaches();
+        dirty    = false;
+        dragging = false;
+    }
+
     // ---- drag interaction --------------------------------------------
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
