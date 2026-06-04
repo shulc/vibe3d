@@ -299,6 +299,25 @@ class FalloffStage : Stage, Operator {
         return ok;
     }
 
+    // Full static attr universe for forms-engine startup validation.
+    // FalloffStage.params() is FILTERED per active falloff type (only
+    // Linear exposes start/end, only Radial exposes center/size, …) and
+    // `applySetAttr` (~line 810) is a non-enumerable switch, so the base
+    // Stage.knownAttrs() default (params() names) would reject perfectly
+    // valid cross-type attrs at startup. This is the authoritative list of
+    // every attr `applySetAttr` accepts regardless of active type.
+    //
+    // KEEP IN SYNC with the `applySetAttr` switch (~line 810) AND with
+    // `listAttrs()` below — all three must enumerate the same attr set.
+    override string[] knownAttrs() {
+        return [
+            "type", "shape", "start", "end", "center", "size", "axis",
+            "dist", "anchorRing", "connect", "mode", "screenCx", "screenCy",
+            "screenSize", "transparent", "lassoStyle", "lassoPoly",
+            "softBorder", "in", "out",
+        ];
+    }
+
     override string[2][] listAttrs() const {
         return [
             ["type",         typeLabel()],
