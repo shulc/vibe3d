@@ -131,6 +131,21 @@ class HttpServer {
     private string pendingCmdId;
     private string pendingCmdParams;
     private string pendingCmdError;
+    // Forms-engine query (read-back) result. The command handler runs on the
+    // main thread inside tickCommand() and, for a `?`-query command, stashes the
+    // boxed JSON value here via setCmdResult() BEFORE tickCommand bumps
+    // completedEpoch. The blocked HTTP thread reads it once completedEpoch
+    // catches up and emits it as the response body. tickCommand clears it at
+    // entry, so write commands leave it empty (fully backward-compatible).
+    //
+    // Single-flight precondition: like pendingCmdError, this is a plain
+    // unguarded string protected only by the same happens-before the epoch
+    // handshake establishes (written before the completedEpoch store, read
+    // after the spin observes it) AND by /api/command requests being serialized
+    // — each request's spin-wait blocks its connection until completedEpoch
+    // catches up. Concurrent /api/command queries would race this single slot;
+    // any future parallel-request work must revisit (per-epoch slot or a lock).
+    private string pendingCmdResult;
 
     // ----- /api/select synchronous bridge ----------------------------------
     private alias SelectionHandler = void delegate(string mode, int[] indices);
@@ -338,6 +353,17 @@ class HttpServer {
      */
     public void setCommandHandler(CommandHandler handler) {
         this.commandHandler = handler;
+    }
+
+    /**
+     * Stash a forms-engine query (`?` read-back) result. Called by the command
+     * handler — which runs on the main thread inside tickCommand() — when the
+     * dispatched command was a query. The blocked HTTP thread reads it back via
+     * the same epoch handshake once completedEpoch catches up. Has the same
+     * single-flight precondition documented on the pendingCmdResult field.
+     */
+    public void setCmdResult(string json) {
+        this.pendingCmdResult = json;
     }
 
     /**
@@ -1070,7 +1096,15 @@ class HttpServer {
                     }
                     if (pendingCmdError.length == 0) {
                         response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
+                        // Forms-engine `?` query: when the handler stashed a
+                        // read-back value, surface it under "value"; otherwise
+                        // the plain ok body (byte-compatible with every
+                        // existing write test, which never sets the slot).
+                        if (pendingCmdResult.length > 0)
+                            response.body = `{"status":"ok","value":`
+                                            ~ pendingCmdResult ~ `}`;
+                        else
+                            response.body = `{"status":"ok"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
@@ -1540,6 +1574,12 @@ class HttpServer {
         long sub = atomicLoad(submittedEpoch);
         long cmp = atomicLoad(completedEpoch);
         if (sub <= cmp) return;
+        // Clear the query-result slot at entry: a write command leaves it empty
+        // so the HTTP thread emits the plain {"status":"ok"} body. A query
+        // command's handler calls setCmdResult() to repopulate it. Written
+        // before the completedEpoch store below, read after the HTTP thread's
+        // spin observes completion (the same happens-before as pendingCmdError).
+        pendingCmdResult = "";
         if (commandHandler is null) {
             pendingCmdError = "command handler not set";
         } else {
