@@ -1368,6 +1368,22 @@ public:
         buildVertexCacheIfNeeded();
         beginEdit();   // idempotent
 
+        // Pin the wrapper-owned selection/mutation tracking to the CURRENT mesh
+        // state at the moment the session opens. activate() seeds these to
+        // uint.max/ulong.max ("everything changed") so the first update() rebuilds
+        // the gizmo/cache. For a gizmo drag that's harmless — the session opens at
+        // mouse-down AFTER update() has already run and synced the tracking. But a
+        // headless panel/attr edit (openLiveSessionForTest / reEvaluate) opens the
+        // session BETWEEN frames, so without this the very next update() would see
+        // curMutVer != ulong.max, treat the just-opened session as a user
+        // selection/topology change, and commitEdit() it shut — leaving
+        // hasLiveEval()==false so the following tool.attr moves nothing. Under
+        // heavy -j the frame timing makes this fire intermittently (the residual
+        // test_reevaluate Test-4 flake). Opening the session is NOT a user change,
+        // so seed the tracking exactly as the post-commit branch of update() would.
+        lastSelectionHash   = computeSelectionHash();
+        lastMutationVersion = mesh.mutationVersion;
+
         // Panel/attr baseline: when no gizmo drag is open the panel/attr edit is
         // the only active write path, so we capture a fresh dragBaseline at the
         // first-active-frame. A subsequent edit re-uses this baseline

@@ -91,6 +91,35 @@ class HttpServer {
     private string      gpuSurfResult;
     private string      gpuSurfError;
 
+    // ----- /api/model synchronous read bridge ------------------------------
+    // The model provider walks mesh.vertices / edges / faces to serialise the
+    // current geometry. If it runs on the HTTP thread while the main thread is
+    // mutating the mesh (a reset rebuild, an applyTRS write, an undo restore),
+    // the walk sees a TORN read — half-updated vertex positions — which surfaces
+    // as a flaky "wrong geometry" assertion in tests that read /api/model right
+    // after a mutating command (e.g. test_reevaluate under heavy -j parallelism,
+    // where CPU contention widens the race window). Marshal the read onto the
+    // main thread via the same epoch handshake the mutating endpoints use, so
+    // the provider runs at a frame-tick point where the mesh is consistent.
+    private shared long modelSubmittedEpoch;
+    private shared long modelCompletedEpoch;
+    private bool   pendingModelDetailed;  // which provider to invoke
+    private string pendingModelResult;
+    private string pendingModelError;
+
+    // ----- /api/toolpipe/eval synchronous read bridge ----------------------
+    // Same hazard as /api/model, one level deeper: the eval provider RUNS
+    // g_pipeCtx.pipeline.evaluate over the live mesh + selection on the HTTP
+    // thread. That both reads mesh/selection mid-mutation AND re-runs the pipe
+    // (mutating shared cluster caches in g_pipeCtx) concurrently with the main
+    // thread's own per-frame evaluate() — surfacing as a flaky cluster count
+    // (e.g. test_acen_local_rotate_parity "expected 2 clusters, got 3" under
+    // heavy -j). Marshal it onto the main thread via the same epoch handshake.
+    private shared long pipeEvalSubmittedEpoch;
+    private shared long pipeEvalCompletedEpoch;
+    private string pendingPipeEvalResult;
+    private string pendingPipeEvalError;
+
     // ----- /api/command synchronous bridge ---------------------------------
     // The HTTP thread fills pendingCmdId/Params, bumps submittedEpoch, and
     // spins on completedEpoch. The main thread runs the command via
@@ -585,32 +614,36 @@ class HttpServer {
             response.body = `{"status": "ok"}`;
             response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/model") {
-            if (useDetailedProvider && detailedModelDataProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = detailedModelDataProvider();
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve detailed model data\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else if (modelDataProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = modelDataProvider();
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
+            bool haveProvider = (useDetailedProvider && detailedModelDataProvider !is null)
+                             || (modelDataProvider !is null);
+            response.headers["Content-Type"] = "application/json";
+            if (!haveProvider) {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Model data provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
+            } else {
+                // Marshal the serialisation onto the main thread (tickModel) so
+                // the provider never walks the mesh mid-mutation (torn read).
+                pendingModelDetailed = useDetailedProvider;
+                pendingModelResult   = "";
+                pendingModelError    = "";
+                long my = atomicOp!"+="(modelSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(modelCompletedEpoch) < my) {
+                    if (++iters > maxIters) {
+                        pendingModelError = "timeout waiting for main thread";
+                        break;
+                    }
+                    Thread.sleep(2.msecs);
+                }
+                if (pendingModelError.length == 0) {
+                    response.statusCode = 200;
+                    response.body = pendingModelResult;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \""
+                                   ~ pendingModelError.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path == "/api/selection") {
             if (selectionDataProvider !is null) {
@@ -653,21 +686,33 @@ class HttpServer {
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/toolpipe/eval") {
-            if (toolpipeEvalProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = toolpipeEvalProvider();
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
+            response.headers["Content-Type"] = "application/json";
+            if (toolpipeEvalProvider is null) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"toolpipe eval provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
+            } else {
+                // Marshal the pipe evaluation onto the main thread (tickPipeEval)
+                // so it never races the main thread's own evaluate().
+                pendingPipeEvalResult = "";
+                pendingPipeEvalError  = "";
+                long my = atomicOp!"+="(pipeEvalSubmittedEpoch, 1);
+                enum int maxIters = 2500;
+                int iters = 0;
+                while (atomicLoad(pipeEvalCompletedEpoch) < my) {
+                    if (++iters > maxIters) {
+                        pendingPipeEvalError = "timeout waiting for main thread";
+                        break;
+                    }
+                    Thread.sleep(2.msecs);
+                }
+                if (pendingPipeEvalError.length == 0) {
+                    response.statusCode = 200;
+                    response.body = pendingPipeEvalResult;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\""
+                                   ~ pendingPipeEvalError.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path == "/api/toolpipe") {
             if (toolpipeProvider !is null) {
@@ -1438,6 +1483,51 @@ class HttpServer {
         if (sub <= cmp) return;
         if (resetHandler !is null) resetHandler(resetPendingType, resetPendingEmpty, resetPendingParam);
         atomicStore(resetCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick model — call once per frame from the main loop.
+     * Drains a pending /api/model read: invokes the model provider HERE (on the
+     * main thread, at a consistent frame-tick point) and stashes the JSON, so
+     * the HTTP thread never serialises the mesh while the main thread is
+     * mutating it. Bumps modelCompletedEpoch so the waiting HTTP thread returns.
+     */
+    public void tickModel() {
+        long sub = atomicLoad(modelSubmittedEpoch);
+        long cmp = atomicLoad(modelCompletedEpoch);
+        if (sub <= cmp) return;
+        try {
+            if (pendingModelDetailed && detailedModelDataProvider !is null)
+                pendingModelResult = detailedModelDataProvider();
+            else if (modelDataProvider !is null)
+                pendingModelResult = modelDataProvider();
+            else
+                pendingModelError = "model data provider not set";
+        } catch (Exception e) {
+            pendingModelError = e.msg;
+        }
+        atomicStore(modelCompletedEpoch, sub);
+    }
+
+    /**
+     * Tick toolpipe eval — call once per frame from the main loop.
+     * Runs the pipe-evaluation provider on the main thread so it never races
+     * the main thread's own per-frame pipeline.evaluate() (shared cluster
+     * caches in g_pipeCtx) or reads mesh/selection mid-mutation.
+     */
+    public void tickPipeEval() {
+        long sub = atomicLoad(pipeEvalSubmittedEpoch);
+        long cmp = atomicLoad(pipeEvalCompletedEpoch);
+        if (sub <= cmp) return;
+        try {
+            if (toolpipeEvalProvider !is null)
+                pendingPipeEvalResult = toolpipeEvalProvider();
+            else
+                pendingPipeEvalError = "toolpipe eval provider not set";
+        } catch (Exception e) {
+            pendingPipeEvalError = e.msg;
+        }
+        atomicStore(pipeEvalCompletedEpoch, sub);
     }
 
     /**
