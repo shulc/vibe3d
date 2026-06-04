@@ -578,9 +578,112 @@ bool prepareWorker(ref Worker w) {
     return true;
 }
 
+// Re-establish a known-clean baseline on a worker's shared vibe3d BEFORE each
+// test binary runs. The runner reuses ONE `vibe3d --test` per worker across
+// that worker's whole slice of tests, so a preceding test can leave global
+// state dirty for the next one in three ways:
+//   1. an event-log replay (/api/play-events) is still DRAINING on the
+//      background event player when the test process exits — its queued
+//      mouse-move events keep firing into the next test's freshly-reset mesh;
+//   2. a tool was left active (a stray interactive session);
+//   3. the undo stack carries the prior test's entries (command_history caps
+//      at 50, which would pin any count-delta assertion).
+// This is the documented cross-test state-bleed flake family (test_http_endpoint
+// asserting the pristine startup cube, test_selection's "expected 2 got 0",
+// etc.). Resetting at the RUNNER level — between every binary — kills the whole
+// class at the source: each test now starts from a guaranteed-pristine cube,
+// idle player, no active tool, empty undo stack. Tests that need a different
+// baseline (empty mesh, a loaded LWO, a fixture, an empty-undo start) all
+// establish it themselves at the top of their first unittest, so this reset is
+// belt-and-suspenders for them and load-bearing for the state-asserting ones.
+//
+// Driven over HTTP with curl (already this runner's transport). Best-effort:
+// any failure here is non-fatal (the per-test reset, if present, still runs).
+void resetBetweenTests(ushort port) {
+    string base = format("http://localhost:%d", port);
+    string curl(string verb, string path, string data = "") {
+        // -s silent, -m short timeout so a wedged server never stalls the run.
+        string cmd = data.length
+            ? format("curl -s -m 5 -X %s -d '%s' '%s%s'", verb, data, base, path)
+            : format("curl -s -m 5 -X %s '%s%s'",          verb,       base, path);
+        auto r = executeShell(cmd);
+        return r.status == 0 ? r.output : "";
+    }
+    // Mirror tests/test_reevaluate.d's drainAndReset: deactivate + drain-replay
+    // + reset + drain-undo, then VERIFY the cube is actually pristine, retrying
+    // the whole sequence a few times if not. A still-queued replay can briefly
+    // report finished BETWEEN its events, so a single drain pass is not enough;
+    // the verify-and-retry closes that window — a transient bleed clears on
+    // re-reset while a genuine regression would persist (reset always restores
+    // the cube), so this defends against the flake without masking real bugs.
+    bool cubePristine() {
+        // /api/model's v6 of the startup cube is (0.5, 0.5, 0.5).
+        auto m = curl("GET", "/api/model");
+        // Cheap structural check first: 8 verts. Then v6 ≈ (0.5,0.5,0.5).
+        if (m.length == 0) return false;
+        try {
+            auto j = parseJSON(m);
+            if (j["vertices"].array.length != 8) return false;
+            auto v = j["vertices"].array[6].array;
+            import std.math : fabs;
+            return fabs(v[0].floating - 0.5) < 1e-4
+                && fabs(v[1].floating - 0.5) < 1e-4
+                && fabs(v[2].floating - 0.5) < 1e-4;
+        } catch (Exception) { return false; }
+    }
+    foreach (attempt; 0 .. 8) {
+        // 1. Deactivate any tool the previous test left active (idempotent).
+        curl("POST", "/api/command", "tool.set move off");
+        // 2. Drain any in-flight event-log replay so its leftover mouse events
+        //    cannot perturb the reset. /api/play-events/status reports
+        //    {"finished":true} when idle (absent ⇒ never played ⇒ idle).
+        foreach (_; 0 .. 200) {
+            auto s = curl("GET", "/api/play-events/status");
+            if (s.length == 0 || !s.canFind("\"finished\":false")) break;
+            Thread.sleep(10.msecs);
+        }
+        // 2b. Settle. The event player reports "finished" once all its events
+        //     are DISPATCHED, but /api/play-events pushes them onto the SDL
+        //     queue (g_directDispatch is null) — the LAST few are still in the
+        //     queue, unprocessed, when the player goes idle. They drain on the
+        //     next 1–2 main-loop frames. If we reset before they drain, those
+        //     queued mouse events (e.g. a drag's final mouse-up) fire AFTER the
+        //     reset, landing on the next test's freshly-reset mesh + active
+        //     tool — exactly the test_property_panel_drag "got (-1,0,1)" bleed.
+        //     A short settle lets the queue drain onto the OLD mesh first; the
+        //     reset below then wipes whatever they did.
+        Thread.sleep(120.msecs);
+        // 3. Reset to the pristine startup cube.
+        curl("POST", "/api/reset");
+        // 3b. Normalize the edit mode back to Vertices. scene.reset rebuilds the
+        //     mesh but does NOT reset editMode, so a prior test that switched to
+        //     Edges/Polygons leaves it there — and a test like test_selection
+        //     that plays clicks assuming Vertices mode (its log carries no mode
+        //     key) then picks the wrong element type ("expected 2 selected
+        //     vertices, got 0"). An empty vertices-mode /api/select switches the
+        //     mode without selecting anything (MeshSelect sets editMode to match).
+        curl("POST", "/api/select", `{"mode":"vertices","indices":[]}`);
+        // 4. Drain the undo stack so count-delta assertions start from zero.
+        //    (The select above records a UI-undo entry; this drains it too.)
+        foreach (_; 0 .. 100) {
+            auto h = curl("GET", "/api/undo/status");
+            if (h.length == 0 || !h.canFind("\"canUndo\":true")) break;
+            curl("POST", "/api/undo");
+        }
+        if (cubePristine()) return;
+        Thread.sleep(20.msecs);
+    }
+    // Last reset stands; the test's own preamble (if any) gets the final word.
+    curl("POST", "/api/reset");
+}
+
 TestResult[] runWorker(ref Worker w, bool verbose) {
     TestResult[] out_;
     foreach (b; w.bins) {
+        // Re-baseline the shared instance before each test so a prior test's
+        // leftover state (draining replay, active tool, undo entries, mutated
+        // mesh) cannot bleed in. Kills the cross-test state-bleed flake family.
+        resetBetweenTests(w.port);
         auto r = runOne(b, verbose);
         synchronized {
             writeln("  ", r.passed ? green("PASS") : red("FAIL"),

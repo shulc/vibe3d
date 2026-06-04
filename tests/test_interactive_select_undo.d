@@ -80,6 +80,14 @@ void playEvents(string logPath) {
         if (statusJson["finished"].type == JSONType.TRUE) break;
         Thread.sleep(dur!"msecs"(100));
     }
+    // The player reports "finished" once its events are DISPATCHED, but the
+    // HTTP play-events path pushes them onto the SDL queue (g_directDispatch is
+    // null) — the LAST gesture's MOUSEBUTTONUP is still queued, unprocessed,
+    // when the player goes idle. It drains over the next 1–2 main-loop frames.
+    // Reading the selection before it drains sees only the prior gesture's
+    // verts (the "expected 3 ... got 2" flake on selection_add.log). Settle so
+    // the trailing click is processed before any post-playback assertion.
+    Thread.sleep(dur!"msecs"(120));
 }
 
 JSONValue postUndo() {
