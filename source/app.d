@@ -3971,6 +3971,8 @@ void main(string[] args) {
         if (httpServer !is null) {
             httpServer.tickEventPlayer();
             httpServer.tickReset();
+            httpServer.tickModel();
+            httpServer.tickPipeEval();
             httpServer.tickCommand();
             httpServer.tickSelection();
             httpServer.tickTransform();
