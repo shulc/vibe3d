@@ -1406,6 +1406,25 @@ public:
         replayTranslateFromBaseline();
     }
 
+    // ----- Schema panel suppression (re-eval plan B2) -----------------------
+    //
+    // Hide the WHOLE schema panel (all 12 params: the T/R/S bools plus
+    // TX..TZ / RX..RZ / SX..SZ, :361-376) so the legacy drawProperties()
+    // X/Y/Z sliders remain the SINGLE live widget driving headlessTranslate.
+    // Without this, app.d would render BOTH the schema panel (writing the TX
+    // pointer directly) AND drawProperties() every frame for the transform
+    // tool — two live widgets bound to the same translate state, a same-frame
+    // double-apply. PropertyPanel.draw early-returns for
+    // renderParamsAsPanel()==false, so the transform tool's params are owned
+    // solely by drawProperties().
+    //
+    // Acceptable to hide the whole panel: the T/R/S bools are preset-driven
+    // (config/tool_presets.yaml), not user-edited via the panel, and the
+    // translate sliders live in drawProperties(). If a future non-TRS param
+    // ever needs the schema panel, switch from whole-panel suppression to a
+    // per-row filter.
+    override bool renderParamsAsPanel() const { return false; }
+
     // Category C (NEW code — there is no RMB handler in the transform family).
     // Abort the open edit: write the session's pre-edit baseline (the same
     // editBefore[]/editIndices() pair commitEdit() reads) back into the mesh,
