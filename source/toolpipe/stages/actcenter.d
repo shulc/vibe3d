@@ -231,6 +231,9 @@ public:
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
         userLocked       = false;
+        snapFrozen       = false;
+        snapPlaced       = false;
+        snapPlacedCenter = Vec3(0, 0, 0);
         invalidateClusterCache();
         publishState();
     }
@@ -313,6 +316,15 @@ public:
     /// is harmless but the userPlaced flag is never read by their
     /// `computeCenter` branches.
     void setUserPlaced(Vec3 worldHit) {
+        // Stage the PRIOR pin state for the in-session cancel baseline, but
+        // only while no session snapshot is frozen — this captures the
+        // pre-relocate state on the mouse-down relocate that precedes the
+        // session's beginEdit (which then freezes whatever was last staged).
+        // Relocates during an open session leave the frozen baseline alone.
+        if (!snapFrozen) {
+            snapPlaced       = userPlaced;
+            snapPlacedCenter = userPlacedCenter;
+        }
         userPlacedCenter = worldHit;
         userPlaced       = true;
         publishState();
@@ -321,6 +333,53 @@ public:
     /// True iff a sticky click-outside pin is active (set via
     /// `setUserPlaced`, cleared by `resetAuto` or a mode switch).
     bool isUserPlaced() const { return userPlaced; }
+
+    // ----- In-session cancel snapshot (transform Ctrl+Z coordination) -------
+    //
+    // A click-away / element-pick relocate fires setUserPlaced() on mouse-DOWN,
+    // BEFORE the transform tool opens its edit session (beginEdit at drag start
+    // / first apply). An in-session Ctrl+Z (cancelUncommittedEdit) restores the
+    // session-baseline vertices + attrs but must ALSO restore the action center
+    // to its pre-gesture state — otherwise the gizmo sticks at the click point
+    // while geometry snaps back. The pin lives here, so the pin baseline does
+    // too, mirroring the wrapper's attrBase* snapshot.
+    //
+    // Lifecycle (driven by the transform wrapper):
+    //   - Every relocate that happens while NO snapshot is frozen stashes the
+    //     PRIOR pin state into `snapPlaced`/`snapPlacedCenter`. This catches the
+    //     relocate-before-beginEdit ordering: the latest pre-relocate state is
+    //     always staged, even though setUserPlaced runs first.
+    //   - `freezeUserPlacedSnapshot()` (called on the closed->open session
+    //     transition in beginEdit) freezes the staged state as the session
+    //     baseline. Relocates DURING the open session no longer re-stash.
+    //   - `restoreUserPlacedSnapshot()` (called from cancelUncommittedEdit)
+    //     restores the frozen baseline and clears the freeze.
+    //   - `discardUserPlacedSnapshot()` (called from a COMMIT path) clears the
+    //     freeze WITHOUT restoring — committed relocates persist, as today.
+    private bool snapFrozen        = false;
+    private bool snapPlaced        = false;
+    private Vec3 snapPlacedCenter  = Vec3(0, 0, 0);
+
+    /// Freeze the currently-staged pre-relocate pin state as the cancel
+    /// baseline for an opening edit session. Called once per session on the
+    /// closed->open transition; subsequent relocates within the session do not
+    /// disturb the frozen baseline.
+    void freezeUserPlacedSnapshot() { snapFrozen = true; }
+
+    /// Restore the action-center pin to its frozen session-start state and
+    /// clear the freeze. Called from the transform wrapper's
+    /// cancelUncommittedEdit() alongside the vertex / attr restore.
+    void restoreUserPlacedSnapshot() {
+        if (!snapFrozen) return;
+        userPlaced       = snapPlaced;
+        userPlacedCenter = snapPlacedCenter;
+        snapFrozen       = false;
+        publishState();
+    }
+
+    /// Drop the frozen snapshot WITHOUT restoring. Called from the commit
+    /// (tool-drop / guard-trip) path so a committed relocate stays put.
+    void discardUserPlacedSnapshot() { snapFrozen = false; }
 
     /// Switch into Manual mode and pin the center. Mirror of
     /// `setAutoUserPlaced` for callers that want strict "stay here"
@@ -1087,17 +1146,22 @@ private:
             }
             case "userPlacedCenter": {
                 // Vec3 convenience: "x,y,z" pushes all three components
-                // + sets userPlaced=true in one HTTP call.
+                // + sets userPlaced=true in one HTTP call. Routed through
+                // setUserPlaced() so it stages the in-session-cancel pin
+                // baseline exactly like the real click-pick / click-away
+                // relocate does — this is the headless counterpart of that
+                // mouse-down relocate and tests rely on it staging.
                 import std.string : split, strip;
                 import std.conv   : to;
                 auto parts = value.split(",");
                 if (parts.length != 3) return false;
+                Vec3 hit;
                 try {
-                    userPlacedCenter.x = parts[0].strip.to!float;
-                    userPlacedCenter.y = parts[1].strip.to!float;
-                    userPlacedCenter.z = parts[2].strip.to!float;
+                    hit.x = parts[0].strip.to!float;
+                    hit.y = parts[1].strip.to!float;
+                    hit.z = parts[2].strip.to!float;
                 } catch (Exception) { return false; }
-                userPlaced = true;
+                setUserPlaced(hit);
                 return true;
             }
             case "userPlacedX": case "userPlacedY": case "userPlacedZ": {

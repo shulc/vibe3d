@@ -112,6 +112,15 @@ double attrValue(string toolId, string name) {
     return r["value"].floating;
 }
 
+// Authoritative gizmo pivot: /api/toolpipe/eval runs the pipeline once and
+// returns the evaluated ActionCenterPacket.center — the exact point the gizmo
+// renders at (mirrors tools/perf/run.d's pivot read). Returns the X component
+// (sufficient for the §6 single-axis relocate assertion).
+double pivotX() {
+    auto j = getJson("/api/toolpipe/eval");
+    return j["actionCenter"]["center"].array[0].floating;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Keyboard Ctrl+Z routes through navHistory -> history.undo() when no tool
 //    holds a live edit, and Ctrl+Shift+Z redoes. Pins the canon-id special
@@ -396,6 +405,88 @@ unittest {
     assert(approxEqual(attrValue("move", "TX"), 0.0),
         "in-session Ctrl+Z restored geometry but left TX stale; expected 0, got "
         ~ attrValue("move", "TX").to!string);
+
+    postJson("/api/command", "tool.set move off");
+}
+
+// ---------------------------------------------------------------------------
+// 6. (action-center consistency) An in-session Ctrl+Z on a transform edit that
+//    was opened by a click-away RELOCATE must restore the action-center pin too
+//    — not just geometry + attrs.
+//
+//    The bug: click-away relocates the gizmo (ACEN userPlaced pin) on
+//    mouse-DOWN, BEFORE the edit session opens. cancelUncommittedEdit() restored
+//    the vertices + attrs but left the pin at the click point, so the gizmo
+//    stuck at the relocated position while the geometry snapped back.
+//
+//    Fix: setUserPlaced() stages the PRE-relocate pin state whenever no session
+//    snapshot is frozen; beginEdit() freezes it as the session baseline on the
+//    closed->open transition; cancelUncommittedEdit() restores it. A COMMIT
+//    discards the snapshot WITHOUT restoring, so committed relocates persist.
+//
+//    Headless reproduction: the real click-pick reads GPU hover state, which is
+//    unreachable over HTTP. We drive the SAME setUserPlaced() entry point via
+//    `tool.pipe.attr actionCenter userPlacedCenter` (the documented headless
+//    counterpart of the mouse-down relocate — it now routes through
+//    setUserPlaced so it stages the cancel baseline exactly like a real click).
+//    The ordering (relocate BEFORE beginSession) matches production.
+// ---------------------------------------------------------------------------
+unittest {
+    postJson("/api/reset", "");
+    postJson("/api/command", "history.clear");
+
+    // Select the +++ corner so the Auto action center sits at that vertex
+    // (single-vertex selection => centroid == the vertex). v6 = (0.5,0.5,0.5).
+    int v6 = -1;
+    auto m = getJson("/api/model");
+    foreach (i, vv; m["vertices"].array) {
+        auto a = vv.array;
+        if (a[0].floating > 0.49 && a[1].floating > 0.49 && a[2].floating > 0.49) {
+            v6 = cast(int)i; break;
+        }
+    }
+    assert(v6 >= 0, "cube +++ corner not found");
+    postJson("/api/select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`);
+
+    cmd("tool.set move");
+    // Auto mode allows click-away relocate (Select/Element/Local refuse it).
+    cmd("tool.pipe.attr actionCenter mode auto");
+
+    // Pre-gesture pivot: Auto centroid of the single selected vertex = 0.5 in X.
+    double pivot0 = pivotX();
+    assert(approxEqual(pivot0, 0.5),
+        "pre-relocate Auto pivot should be the selected vertex X 0.5, got "
+        ~ pivot0.to!string);
+
+    // RELOCATE (mouse-down stage in production): push a user-placed pin far from
+    // the selection. The gizmo pivot now reads the relocated X.
+    cmd(`tool.pipe.attr actionCenter userPlacedCenter "5,0,0"`);
+    assert(approxEqual(pivotX(), 5.0),
+        "relocate did not move the pivot to the click point; got "
+        ~ pivotX().to!string);
+
+    // Now open the live session (beginEdit freezes the pre-relocate pin
+    // baseline) and drive an attr write so geometry moves.
+    double x0 = vertX(v6);
+    cmd("tool.beginSession");
+    cmd("tool.attr move TX 0.2");
+    assert(vertX(v6) > x0 + 0.19, "live attr write did not move geometry");
+
+    size_t undoBefore = undoLen();
+
+    // In-session Ctrl+Z -> cancelUncommittedEdit(): geometry, attr AND the
+    // action-center pin must all snap back to their session-start state.
+    playKey(SDLK_z, KMOD_LCTRL);
+
+    assert(undoLen() == undoBefore,
+        "in-session Ctrl+Z must NOT pop history; before=" ~ undoBefore.to!string
+        ~ " after=" ~ undoLen().to!string);
+    assert(approxEqual(vertX(v6), x0),
+        "in-session Ctrl+Z did not restore the geometry");
+    assert(approxEqual(pivotX(), pivot0),
+        "in-session Ctrl+Z restored geometry but left the gizmo at the relocated "
+        ~ "click point; expected pivot X " ~ pivot0.to!string
+        ~ ", got " ~ pivotX().to!string);
 
     postJson("/api/command", "tool.set move off");
 }

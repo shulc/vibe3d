@@ -96,6 +96,7 @@ import perf_probe : g_perf, Cat;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
+import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket;
 import falloff_render    : drawFalloffOverlay;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
@@ -1468,6 +1469,15 @@ public:
             attrBaseTranslate = headlessTranslate;
             attrBaseRotate    = headlessRotate;
             attrBaseScale     = headlessScale;
+            // Freeze the action-center pin baseline alongside the attr/vertex
+            // baseline. A click-away / element-pick relocate fired
+            // setUserPlaced() on the preceding mouse-down (BEFORE this session
+            // opened) and staged the PRE-relocate pin state there; freezing it
+            // now adopts that staged state as the cancel baseline. Relocates
+            // during this open session no longer re-stash. Idempotent re-opens
+            // skip this — the first freeze of the session wins, like attrBase*.
+            if (auto ac = activeAcenStage())
+                ac.freezeUserPlacedSnapshot();
         }
     }
 
@@ -1636,6 +1646,17 @@ public:
         headlessTranslate = attrBaseTranslate;
         headlessRotate    = attrBaseRotate;
         headlessScale     = attrBaseScale;
+
+        // Restore the action-center pin to its session-start state. A
+        // click-away / element-pick relocate that opened this gesture moved the
+        // ACEN userPlaced pin on mouse-down; without this the gizmo would stick
+        // at the click point while the geometry snaps back. The pre-gesture pin
+        // state was staged at the relocate site and frozen as the session
+        // baseline by beginEdit() above. No-op when nothing relocated (no frozen
+        // snapshot). The commit (tool-drop) path never reaches here, so a
+        // committed relocate persists, as today.
+        if (auto ac = activeAcenStage())
+            ac.restoreUserPlacedSnapshot();
 
         // Close the capture session WITHOUT recording, and drop any live drag.
         cancelEdit();
@@ -1988,6 +2009,15 @@ private:
         if (g_pipeCtx is null) return null;
         return cast(FalloffStage)
                g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+    }
+
+    // The single ACEN stage — source of truth for the gizmo pivot. Used to
+    // freeze / restore the user-placed pin across an in-session edit cancel
+    // (see beginEdit() / cancelUncommittedEdit()).
+    ActionCenterStage activeAcenStage() const {
+        if (g_pipeCtx is null) return null;
+        return cast(ActionCenterStage)
+               g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
     }
 
     MoveTool   moveSub;

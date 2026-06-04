@@ -233,9 +233,31 @@ protected:
     // attach hooks before recording (RotateTool, ScaleTool, MoveTool).
     protected void commitEdit(string label) {
         if (suppressCommit) { cancelEdit(); return; }
+        // A genuine commit (tool-drop / selection-change / BrushReset) makes any
+        // click-away relocate that happened during this session PERMANENT, so
+        // drop the in-session-cancel pin snapshot WITHOUT restoring it. The
+        // cancel path never reaches here (it sets suppressCommit and restores
+        // the pin itself); leaving a stale frozen snapshot behind would let a
+        // LATER cancel revert a relocate that was already committed.
+        discardAcenUserPlacedSnapshot();
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
         history.record(cmd);
+    }
+
+    // Drop the action-center stage's frozen in-session-cancel pin snapshot
+    // (commit path — committed relocates persist). Counterpart of the freeze /
+    // restore the transform wrapper drives across an edit session. No-op when
+    // no ACEN stage is registered or no snapshot is frozen.
+    protected void discardAcenUserPlacedSnapshot() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.discardUserPlacedSnapshot();
     }
 
     override void activate() {
