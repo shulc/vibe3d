@@ -381,6 +381,31 @@ public:
         if (flagS) scaleSub.drawProperties();
     }
 
+    // ----- Embed seam (Edge Extend Phase 4a, doc/edge_extend_plan.md §4.1
+    //       option (b)) ---------------------------------------------------
+    //
+    // A HOST tool (EdgeExtendTool) embeds an XfrmTransformTool purely for its
+    // gizmo banks + the shared ToolHandles arbiter, and routes the Move gesture
+    // into its OWN op params (re-evaluating a kernel each tick) WITHOUT ever
+    // letting this wrapper own the geometry. These thin accessors expose state
+    // the wrapper already holds; they touch no apply path.
+    //
+    // The Move bank's gizmo center — the host uses it to anchor the haul drag
+    // and (in 4b) as the action-center pivot.
+    public Vec3 moveGizmoCenter() const { return moveSub.handler.center; }
+    // Direct handle to the embedded Move sub-tool so the host can drive the Move
+    // GESTURE without routing through the wrapper's drain+applyTRS. MoveTool is a
+    // pure gesture-scalar producer: its onMouseButtonDown / onMouseMotion /
+    // onMouseButtonUp set dragAxis + write pendingTranslateDelta and NEVER mutate
+    // mesh.vertices or open the wrapper's edit session (those moved to the
+    // wrapper). So the host forwards the gesture events here, drains the scalar,
+    // and applies geometry through ITS OWN kernel re-run.
+    public MoveTool moveBank() { return moveSub; }
+    // Public forwarder to the protected TransformTool.queryActionCenter so the
+    // host can read the ACEN center to FREEZE as the kernel pivot at drag-start
+    // (§4.4). Pivot-agnostic for 4a's Offset path; the seam R/S needs in 4b.
+    public Vec3 actionCenter(ref VectorStack vts) { return queryActionCenter(vts); }
+
     // consumesFalloff is inherited from TransformTool (NeedsFalloff flag).
 
     // Element-falloff hover gating — DYNAMIC, depends on the active

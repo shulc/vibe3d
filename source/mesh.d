@@ -2122,10 +2122,19 @@ struct Mesh {
     /// OUTERMOST ring (k=N) supplies the post-op edge selection. Identity TRS ⇒
     /// all rings coincide (stacked coincident verts — faithful to the reference;
     /// rings are NOT deduped/welded to each other).
+    /// PIVOT (Phase 4a). Rotate/Scale apply about `pivot` (default = world
+    /// origin ⇒ every existing call site / golden output is BYTE-UNCHANGED: the
+    /// conjugation `pivot + RS(p − pivot)` reduces to `RS(p)` at pivot=origin).
+    /// The interactive tool passes the ActionCenterStage center so the live
+    /// gizmo pivots at the selection/action center (the conjugated law); Offset
+    /// and inset/shift are pivot-AGNOSTIC (world-axis / world-frame, unaffected).
+    /// With a non-origin pivot the per-ring law becomes
+    ///   ringVert_k(v) = (k/N)·offset + insetShiftDelta(v)
+    ///                 + pivot + Scale_k( Rotate_k( E_src(v) − pivot ) ).
     size_t extendEdgesByMask(in bool[] mask,
                              float inset, float shift,
                              Vec3 offset, Vec3 rotateDeg, Vec3 scale,
-                             int segments) {
+                             int segments, Vec3 pivot = Vec3(0, 0, 0)) {
         import math : Vec3, cross, dot, normalize;
         import std.math : sin, cos, abs, PI;
         if (mask.length != edges.length) return 0;
@@ -2413,7 +2422,11 @@ struct Mesh {
             float t = cast(float)k / cast(float)N;
             void makeRingVert(uint v) {
                 if (v in ringVertOf[k]) return;
-                Vec3 pos = applyRS(vertices[v], t) + insetShiftOf[v] + offset * t;
+                // Pivot-conjugated R/S: pivot + RS(E_src − pivot). At pivot=origin
+                // (the default / command path) this is exactly applyRS(E_src) —
+                // byte-unchanged. Offset + inset/shift are pivot-agnostic.
+                Vec3 pos = pivot + applyRS(vertices[v] - pivot, t)
+                         + insetShiftOf[v] + offset * t;
                 ringVertOf[k][v] = addVertex(pos);
             }
             foreach (ref e; exEdges) { makeRingVert(e.va); makeRingVert(e.vb); }
@@ -5100,6 +5113,52 @@ unittest { // extendEdgesByMask: cube interior edge — identity, offset, rotate
         assert(near_(m.vertices[8], Vec3(-1.266025f, 0.383013f, 0.4f), 2e-5f) ||
                near_(m.vertices[9], Vec3(-1.266025f, 0.383013f, 0.4f), 2e-5f));
     }
+}
+
+unittest { // extendEdgesByMask: pivot arg — rotZ=30 about a NONZERO pivot equals
+           // the manually-conjugated expectation pivot + Rz(E_src − pivot) + delta.
+    import std.math : sin, cos, PI;
+    // The interior-edge inset delta (inset=0.1, shift=0.2 inert on interior) is
+    // the cube min-norm meet (−0.1,−0.1,−0.1) for BOTH endpoints — reused from the
+    // identity case above. We conjugate Rz(30) about pivot P and compare.
+    Vec3 P = Vec3(0.2f, 0.1f, 0.0f);
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.2f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 30.0f), Vec3(1, 1, 1),
+                                 1, /*pivot=*/P);
+    assert(n == 1);
+    assert(m.vertices.length == 10 && m.faces.length == 7);
+
+    // Manual conjugation: for E_src, expect P + Rz(E_src − P) + insetShiftDelta.
+    // The insetShiftDelta is the min-norm meet over the corner's faces and is
+    // PIVOT-INDEPENDENT (computed from original geometry). Read it off the
+    // identity golden: endpoint 6 (0.5,0.5,0.5)→(0.4,0.4,0.4) ⇒ delta6 =
+    // (−0.1,−0.1,−0.1); endpoint 7 (−0.5,0.5,0.5)→(−0.4,0.4,0.4) ⇒ delta7 =
+    // (+0.1,−0.1,−0.1) (its X meet points the other way).
+    float a = cast(float)(30.0 * PI / 180.0);
+    float cs = cos(a), sn = sin(a);
+    Vec3 rzAbout(Vec3 src, Vec3 delta) {
+        Vec3 q = src - P;
+        Vec3 r = Vec3(cs * q.x - sn * q.y, sn * q.x + cs * q.y, q.z);
+        return P + r + delta;
+    }
+    Vec3 want6 = rzAbout(Vec3(0.5f, 0.5f, 0.5f),  Vec3(-0.1f, -0.1f, -0.1f));
+    Vec3 want7 = rzAbout(Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.1f, -0.1f, -0.1f));
+    assert(near_(m.vertices[8], want6, 2e-5f) || near_(m.vertices[9], want6, 2e-5f),
+           "pivot: new vert matches Rz about P at endpoint 6");
+    assert(near_(m.vertices[8], want7, 2e-5f) || near_(m.vertices[9], want7, 2e-5f),
+           "pivot: new vert matches Rz about P at endpoint 7");
+
+    // Pivot=origin must reproduce the world-origin golden (byte-compat witness).
+    Mesh m0 = makeCube();
+    selectEdgeByEnds_(m0, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    m0.extendEdgesByMask(selMask_(m0), 0.1f, 0.2f,
+                         Vec3(0, 0, 0), Vec3(0, 0, 30.0f), Vec3(1, 1, 1),
+                         1, /*pivot=*/Vec3(0, 0, 0));
+    assert(near_(m0.vertices[8], Vec3(0.083013f, 0.583013f, 0.4f)) ||
+           near_(m0.vertices[9], Vec3(0.083013f, 0.583013f, 0.4f)),
+           "pivot=origin reproduces world-origin golden");
 }
 
 unittest { // extendEdgesByMask: shift inert on interior edge (inset=0, shift=0.4)

@@ -48,6 +48,7 @@ import tools.capsule;
 import tools.torus;
 import tools.pen;
 import tools.edge_extrude : EdgeExtrudeTool;
+import tools.edge_extend : EdgeExtendTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -847,7 +848,6 @@ void main(string[] args) {
     // edgeExtrudeEditFactory.
     auto edgeExtendEditFactory = () => new MeshEdgeExtendEdit(&mesh, cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
-    cast(void) edgeExtendEditFactory;   // no tool consumer until Phase 4
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -1023,6 +1023,17 @@ void main(string[] args) {
         auto t = new EdgeExtrudeTool(&mesh, &gpu, &editMode, litShader,
                                      &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, edgeExtrudeEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Edge Extend — interactive (drag → world-axis Offset via the embedded
+    // transform gizmo's Move bank) + headless (tool.attr edge.extend offsetX...;
+    // tool.doApply). Topology-creating tool: own typed edit factory
+    // (MeshEdgeExtendEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
+    reg.toolFactories["edge.extend"] = () {
+        auto t = new EdgeExtendTool(&mesh, &gpu, &editMode, litShader,
+                                    &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, edgeExtendEditFactory);
         return cast(Tool)t;
     };
 
@@ -1281,12 +1292,16 @@ void main(string[] args) {
     // menu / UI; see doc/undo_change_tracker_plan.md Phase 2 §D.
     reg.commandFactories["undo.tracker.on"] = () => cast(Command)
         new HistoryClear(&mesh, cameraView, editMode,
-            () { import tools.edge_extrude : setUndoTrackerEnabled;
-                 setUndoTrackerEnabled(true); });
+            () { import exTracker = tools.edge_extrude;
+                 import enTracker = tools.edge_extend;
+                 exTracker.setUndoTrackerEnabled(true);
+                 enTracker.setUndoTrackerEnabled(true); });
     reg.commandFactories["undo.tracker.off"] = () => cast(Command)
         new HistoryClear(&mesh, cameraView, editMode,
-            () { import tools.edge_extrude : setUndoTrackerEnabled;
-                 setUndoTrackerEnabled(false); });
+            () { import exTracker = tools.edge_extrude;
+                 import enTracker = tools.edge_extend;
+                 exTracker.setUndoTrackerEnabled(false);
+                 enTracker.setUndoTrackerEnabled(false); });
     // Test-automation only: engage / release the history-service lockout (the
     // hard gate that freezes record/undo/redo/fire — distinct from Suspend) so
     // a test can assert that locked-out recording is a no-op and /api/undo/status
