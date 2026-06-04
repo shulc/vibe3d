@@ -477,6 +477,97 @@ private WidgetKind decideWidget(const ref Param p, ControlStyle styleOverride,
 }
 
 // ===========================================================================
+// Write-path serialization (Phase 4)
+//
+// The renderer (forms_render.d) writes an edited value by substituting it for
+// the `?` token in the control's command line and dispatching the result. These
+// helpers do the value->token formatting + the line reconstruction. They live
+// HERE (not in forms_render.d) so they stay ImGui-free and headless-unit-
+// testable: a test can import `forms` and exercise them without linking d_imgui.
+//
+// Float formatting uses %g to match argstring._fmtFloat (forms_engine_plan.md
+// Phase 2 review TODO), so a UI-originated write argstring is byte-identical to
+// what serializeParams() would emit for the same value — the existing
+// `tool.attr` write tests stay valid for forms-originated writes.
+// ===========================================================================
+
+/// Format a value JSON as the argstring token it should occupy in the `?` slot.
+/// Floats use %g (argstring._fmtFloat's strategy); bools/ints/strings pass
+/// through as their canonical token text.
+string valueToArgToken(JSONValue v)
+{
+    import std.conv : to;
+    final switch (v.type) {
+        case JSONType.true_:    return "true";
+        case JSONType.false_:   return "false";
+        case JSONType.integer:  return v.integer.to!string;
+        case JSONType.uinteger: return v.uinteger.to!string;
+        case JSONType.float_:   return fmtFloatG(v.floating);
+        case JSONType.string:   return v.str;
+        case JSONType.null_:    return "null";
+        case JSONType.object:
+        case JSONType.array:    return v.toString();
+    }
+}
+
+/// %g float formatting, matching argstring._fmtFloat's [1e-4,1e5] strategy
+/// (NaN/Inf emit textual sentinels rather than the platform default).
+private string fmtFloatG(double f)
+{
+    import std.math : isNaN, isInfinity;
+    if (isNaN(f))      return "nan";
+    if (isInfinity(f)) return f > 0 ? "inf" : "-inf";
+    return format("%g", f);
+}
+
+/// Reconstruct a `<cmd> <targetId> <attr> <value>` argstring from a parsed
+/// Binding by substituting `value` into the `?` slot. Tokens that would break
+/// argstring tokenization (whitespace / structural chars) are quoted so the
+/// reconstructed line re-parses to the same positionals.
+string substituteQuery(const ref Binding b, JSONValue value)
+{
+    import std.array : join;
+    string[] toks;
+    toks ~= b.commandId;
+    foreach (i, p; b.positionals) {
+        if (cast(long) i == b.queryIdx)
+            toks ~= quoteIfNeeded(valueToArgToken(value));
+        else
+            toks ~= quoteIfNeeded(p);
+    }
+    return toks.join(" ");
+}
+
+/// Quote a token iff it contains whitespace or argstring-significant chars.
+/// Numbers / bools / simple identifiers pass through unquoted (matching
+/// serializeParams() output, so forms writes stay byte-identical).
+private string quoteIfNeeded(string s)
+{
+    if (s.length == 0) return `""`;
+    foreach (c; s)
+        if (c == ' ' || c == '\t' || c == '"' || c == '{' || c == '}'
+            || c == ',' || c == ':')
+            return `"` ~ s ~ `"`;
+    return s;
+}
+
+/// Read the current enum / intEnum tag string from a Param (what a combo
+/// matches its choices against). Enum => `*sptr`; IntEnum => the wireTag of the
+/// entry whose value equals `*iePtr`.
+string currentEnumTag(const ref Param p)
+{
+    import std.conv : to;
+    if (p.kind == Param.Kind.Enum)
+        return *p.sptr;
+    if (p.kind == Param.Kind.IntEnum) {
+        foreach (ref e; p.intEnumValues)
+            if (e.value == *p.iePtr) return e.wireTag;
+        return (*p.iePtr).to!string;
+    }
+    return "";
+}
+
+// ===========================================================================
 // YAML loader  (Phase 3)
 //
 // loadForms parses `config/forms/*.yaml` into the Form/Row tree above. It is a
@@ -948,6 +1039,22 @@ private bool hasName(string[] names, string n) {
 
 __gshared Form[] g_forms;
 
+/// Phase-4 enablement gate. When FALSE (the default), the Tool Properties
+/// window keeps every tool on its existing PropertyPanel / drawProperties()
+/// path — the loaded forms are validated but NOT rendered live. When TRUE
+/// (opt-in via `VIBE3D_FORMS=1`), the window renders a matching form through
+/// FormsPanel instead of the legacy panel.
+///
+/// Rationale (forms_engine_plan.md staging): the transform tool sets
+/// renderParamsAsPanel()==false and owns its translate sliders in
+/// drawProperties(); the transform form's interactive write path
+/// (setInteractive → reEvaluate seam) is only fully wired in Phase 5. Rendering
+/// the transform form alongside the legacy sliders before then would put two
+/// live widgets on one state. The gate keeps Phase 4 (renderer) decoupled from
+/// Phase 5 (transform adoption): the renderer ships + is exercised behind the
+/// flag without flipping transform's primary UI.
+__gshared bool g_formsPanelEnabled = false;
+
 /// Forms whose `whenTool` filter matches `activeToolId` (empty filter => always
 /// shown). Caller renders these in `category`/`ordinal` order.
 Form[] formsForTool(string activeToolId)
@@ -1193,6 +1300,66 @@ version (unittest)
         assert(!resolveControl(Row.makeCmd("actr.auto", "Auto"), prov).found);
         // a divider is not a value bind
         assert(!resolveControl(Row.makeDivider(), prov).found);
+    }
+
+    // --- write-path serialization (Phase 4) ------------------------------
+
+    unittest { // float token uses %g (byte-identical to argstring._fmtFloat)
+        assert(valueToArgToken(JSONValue(1.5))   == "1.5");
+        assert(valueToArgToken(JSONValue(1.0))   == "1");      // %g drops .0
+        assert(valueToArgToken(JSONValue(0.001)) == "0.001");
+    }
+
+    unittest { // bool / int / string tokens
+        assert(valueToArgToken(JSONValue(true))  == "true");
+        assert(valueToArgToken(JSONValue(false)) == "false");
+        assert(valueToArgToken(JSONValue(42))    == "42");
+        assert(valueToArgToken(JSONValue("offset")) == "offset");
+    }
+
+    unittest { // substituteQuery reconstructs a tool.attr write line
+        auto b = parseBinding("tool.attr xfrm.transform TX ?");
+        auto line = substituteQuery(b, JSONValue(1.5));
+        assert(line == "tool.attr xfrm.transform TX 1.5", line);
+    }
+
+    unittest { // substituteQuery: bool checkbox write
+        auto b = parseBinding("tool.attr xfrm.transform T ?");
+        assert(substituteQuery(b, JSONValue(true))
+               == "tool.attr xfrm.transform T true");
+    }
+
+    unittest { // substituteQuery: stage namespace round-trip
+        auto b = parseBinding("tool.pipe.attr falloff start ?");
+        assert(substituteQuery(b, JSONValue(0.25))
+               == "tool.pipe.attr falloff start 0.25");
+    }
+
+    unittest { // substituteQuery: an enum tag that needs no quoting
+        auto b = parseBinding("tool.attr prim.sphere axis ?");
+        assert(substituteQuery(b, JSONValue("x"))
+               == "tool.attr prim.sphere axis x");
+    }
+
+    unittest { // round-trip: the substituted line re-parses to the same args
+        auto b = parseBinding("tool.attr xfrm.transform TX ?");
+        auto line = substituteQuery(b, JSONValue(2.75));
+        auto p = parseArgstring(line);
+        assert(p.commandId == "tool.attr");
+        auto pos = p.params["_positional"].array;
+        assert(pos.length == 3);
+        assert(pos[0].str == "xfrm.transform");
+        assert(pos[1].str == "TX");
+        double n = pos[2].type == JSONType.float_ ? pos[2].floating
+                 : cast(double) pos[2].integer;
+        assert(n > 2.74 && n < 2.76);
+    }
+
+    unittest { // currentEnumTag reads the live Enum tag through *sptr
+        string mode = "width";
+        auto p = Param.enum_("mode", "Mode", &mode,
+                             [["offset","Offset"], ["width","Width"]], "offset");
+        assert(currentEnumTag(p) == "width");
     }
 
     unittest { // stage-namespace binding resolves against a stage's params()
