@@ -36,6 +36,7 @@ import argstring : parseArgstring;
 
 import std.json : JSONValue, JSONType;
 import std.string : strip, splitLines;
+import std.format : format;
 
 // ---------------------------------------------------------------------------
 // Row kinds
@@ -473,6 +474,489 @@ private WidgetKind decideWidget(const ref Param p, ControlStyle styleOverride,
             break;
     }
     return w;
+}
+
+// ===========================================================================
+// YAML loader  (Phase 3)
+//
+// loadForms parses `config/forms/*.yaml` into the Form/Row tree above. It is a
+// cousin of buttonset.loadButtons / tool_presets.loadToolPresets: dyaml-based,
+// strict (explicit containsKey checks, descriptive throws carrying the file
+// path + form/row context), fails loud at startup on a malformed file.
+//
+// The YAML shape is the schema spec'd in doc/forms_engine_plan.md:
+//
+//   forms:
+//     - id: transform.main
+//       label: Transform
+//       showLabel: false
+//       whenTool: xfrm.transform        # scalar OR a list
+//       category: toolprops/main
+//       ordinal: 150.45
+//       rows:
+//         - { control: "tool.attr xfrm.transform T ?", label: Translate,
+//             booleanStyle: checkbox }
+//         - { divider: true }
+//         - group: Position
+//           style: inline
+//           rows:
+//             - { control: "tool.attr xfrm.transform TX ?", label: X }
+//         - choice: "Action Center"
+//           entries:
+//             - { label: Auto, cmd: "actr.auto" }
+//         - { cmd: "mesh.flip", label: Flip }
+//         - { sub: transform.aux }
+//         - { ref: toolprops.falloff }
+//         - { label: "Some text" }
+//
+// A row is exactly one kind, detected by which discriminator key it carries:
+// control / cmd / choice / group / sub / ref / divider / label. Parsing throws
+// if a row carries zero or more than one discriminator key.
+//
+// Loading is decoupled from validation. loadForms does PURELY structural work
+// (parse + shape checks + exactly-one-`?` per control line) so it stays
+// app-free and unit-testable from a YAML string. The startup-strict ATTR
+// validation (resolve every binding against the live tool/stage/command
+// universe, throw on a typo) lives in validateForms below, which takes the
+// universe as caller-supplied delegates so this module never imports the
+// registry or the live pipeline.
+// ===========================================================================
+
+/// Thrown by loadForms on a malformed form file (missing keys, bad row shape,
+/// a control line without exactly one `?`, etc.). Carries the file path.
+class FormLoadException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) {
+        super(msg, file, line);
+    }
+}
+
+/// Parse a forms YAML file into a Form[] tree. Structural validation only;
+/// call validateForms afterwards for the startup-strict attr universe pass.
+Form[] loadForms(string path)
+{
+    import dyaml;
+    Node root;
+    try {
+        root = Loader.fromFile(path).load();
+    } catch (Exception e) {
+        throw new FormLoadException(
+            format("forms: failed to load '%s': %s", path, e.msg));
+    }
+    return parseFormsRoot(root, path);
+}
+
+/// Parse a forms YAML document already loaded into a dyaml Node. Split out so
+/// tests can drive it from `Loader.fromString` without touching the disk.
+Form[] loadFormsFromString(string yaml, string ctx = "<string>")
+{
+    import dyaml;
+    Node root;
+    try {
+        root = Loader.fromString(yaml).load();
+    } catch (Exception e) {
+        throw new FormLoadException(
+            format("forms: failed to parse %s: %s", ctx, e.msg));
+    }
+    return parseFormsRoot(root, ctx);
+}
+
+private Form[] parseFormsRoot(ref /*dyaml.*/ DyamlNodeT root, string ctx)
+{
+    import dyaml : Node, NodeID;
+    if (!root.containsKey("forms"))
+        throw new FormLoadException(
+            format("forms: '%s' missing top-level 'forms' key", ctx));
+
+    Form[] forms;
+    foreach (DyamlNodeT node; root["forms"])
+        forms ~= parseForm(node, ctx);
+    return forms;
+}
+
+private Form parseForm(ref /*dyaml.*/ DyamlNodeT node, string ctx)
+{
+    import dyaml : Node, NodeID;
+    if (!node.containsKey("id"))
+        throw new FormLoadException(
+            format("forms: a form in '%s' is missing its 'id'", ctx));
+
+    Form f;
+    f.id = node["id"].as!string;
+
+    if (node.containsKey("label"))     f.label     = node["label"].as!string;
+    if (node.containsKey("showLabel")) f.showLabel = node["showLabel"].as!bool;
+    if (node.containsKey("category"))  f.category  = node["category"].as!string;
+    if (node.containsKey("ordinal")) {
+        f.ordinal    = node["ordinal"].as!double;
+        f.hasOrdinal = true;
+    }
+
+    // whenTool: scalar id OR a list of ids. Absent => always shown.
+    if (node.containsKey("whenTool")) {
+        Node wt = node["whenTool"];
+        if (wt.nodeID == NodeID.sequence) {
+            foreach (Node w; wt) f.whenTool ~= w.as!string;
+        } else if (wt.nodeID == NodeID.scalar) {
+            f.whenTool ~= wt.as!string;
+        } else {
+            throw new FormLoadException(format(
+                "forms: form '%s' in '%s' has a non-scalar/sequence 'whenTool'",
+                f.id, ctx));
+        }
+    }
+
+    if (node.containsKey("rows"))
+        foreach (Node r; node["rows"])
+            f.rows ~= parseRow(r, f.id, ctx);
+
+    return f;
+}
+
+private Row parseRow(ref /*dyaml.*/ DyamlNodeT node, string formId, string ctx)
+{
+    import dyaml : Node, NodeID;
+
+    // Detect the single active discriminator key. Exactly one of these must
+    // be present (label-only static text counts as the `label` discriminator,
+    // but only when no other discriminator is present — see below).
+    static immutable string[] discriminators = [
+        "control", "cmd", "choice", "group", "sub", "ref", "divider",
+    ];
+    string kind;
+    int kindCount = 0;
+    foreach (d; discriminators)
+        if (node.containsKey(d)) { kind = d; kindCount++; }
+
+    // A row carrying `label:` and nothing else is a static text row. When a
+    // discriminator IS present, `label:` is that row's presentation label.
+    if (kindCount == 0 && node.containsKey("label"))
+        kind = "label";
+
+    if (kindCount > 1)
+        throw new FormLoadException(format(
+            "forms: a row in form '%s' (%s) carries more than one row-kind key "
+            ~ "(%s) — a row is exactly one kind", formId, ctx, kind));
+    if (kind.length == 0)
+        throw new FormLoadException(format(
+            "forms: a row in form '%s' (%s) has no recognised row-kind key "
+            ~ "(control/cmd/choice/group/sub/ref/divider/label)", formId, ctx));
+
+    Row row;
+    switch (kind) {
+        case "control":
+            row.kind    = RowKind.control;
+            row.command = node["control"].as!string;
+            applyControlFields(row, node, formId, ctx);
+            // Structural: a control line must carry exactly one `?`. parseBinding
+            // throws on 0 or >1, surfacing the file context.
+            try {
+                parseBinding(row.command);
+            } catch (BindingException e) {
+                throw new FormLoadException(format(
+                    "forms: form '%s' (%s) control '%s': %s",
+                    formId, ctx, row.command, e.msg));
+            }
+            break;
+
+        case "cmd":
+            row.kind    = RowKind.cmd;
+            row.command = node["cmd"].as!string;
+            applyControlFields(row, node, formId, ctx);
+            break;
+
+        case "choice":
+            row.kind  = RowKind.choice;
+            row.label = node["choice"].as!string;
+            if (!node.containsKey("entries"))
+                throw new FormLoadException(format(
+                    "forms: choice row '%s' in form '%s' (%s) has no 'entries'",
+                    row.label, formId, ctx));
+            foreach (Node e; node["entries"]) {
+                if (!e.containsKey("cmd"))
+                    throw new FormLoadException(format(
+                        "forms: a choice entry under '%s' in form '%s' (%s) "
+                        ~ "is missing its 'cmd'", row.label, formId, ctx));
+                ChoiceEntry ce;
+                ce.cmd   = e["cmd"].as!string;
+                ce.label = e.containsKey("label") ? e["label"].as!string : ce.cmd;
+                row.entries ~= ce;
+            }
+            applyControlFields(row, node, formId, ctx);
+            break;
+
+        case "group":
+            row.kind  = RowKind.group;
+            row.label = node["group"].as!string;
+            row.groupStyle = parseGroupStyle(node, formId, ctx);
+            if (node.containsKey("rows"))
+                foreach (Node r; node["rows"])
+                    row.rows ~= parseRow(r, formId, ctx);
+            break;
+
+        case "sub":
+            row.kind   = RowKind.sub;
+            row.formId = node["sub"].as!string;
+            applyControlFields(row, node, formId, ctx);
+            break;
+
+        case "ref":
+            row.kind   = RowKind.ref_;
+            row.formId = node["ref"].as!string;
+            break;
+
+        case "divider":
+            row.kind = RowKind.divider;
+            break;
+
+        case "label":
+            row.kind  = RowKind.label;
+            row.label = node["label"].as!string;
+            break;
+
+        default:
+            assert(false, "unreachable row kind");
+    }
+    return row;
+}
+
+/// Parse the shared presentation fields (label / id / style / booleanStyle /
+/// align / showLabel / tooltip) onto a row that carries them.
+private void applyControlFields(ref Row row, ref /*dyaml.*/ DyamlNodeT node,
+                                string formId, string ctx)
+{
+    if (node.containsKey("label"))    row.label    = node["label"].as!string;
+    if (node.containsKey("id"))       row.id       = node["id"].as!string;
+    if (node.containsKey("tooltip"))  row.tooltip  = node["tooltip"].as!string;
+    if (node.containsKey("showLabel"))row.showLabel= node["showLabel"].as!bool;
+
+    if (node.containsKey("style"))
+        row.style = parseControlStyle(node["style"].as!string, formId, ctx);
+    if (node.containsKey("booleanStyle"))
+        row.booleanStyle =
+            parseBooleanStyle(node["booleanStyle"].as!string, formId, ctx);
+    if (node.containsKey("align"))
+        row.align_ = parseAlign(node["align"].as!string, formId, ctx);
+}
+
+private ControlStyle parseControlStyle(string s, string formId, string ctx) {
+    switch (s.strip) {
+        case "default": case "":  return ControlStyle.default_;
+        case "popup":             return ControlStyle.popup;
+        case "slider":            return ControlStyle.slider;
+        case "drag":              return ControlStyle.drag;
+        default: throw new FormLoadException(format(
+            "forms: form '%s' (%s) has unknown control style '%s' "
+            ~ "(default/popup/slider/drag)", formId, ctx, s));
+    }
+}
+
+private BooleanStyle parseBooleanStyle(string s, string formId, string ctx) {
+    switch (s.strip) {
+        case "checkbox": case "": return BooleanStyle.checkbox;
+        case "button":            return BooleanStyle.button;
+        default: throw new FormLoadException(format(
+            "forms: form '%s' (%s) has unknown booleanStyle '%s' "
+            ~ "(checkbox/button)", formId, ctx, s));
+    }
+}
+
+private AlignHint parseAlign(string s, string formId, string ctx) {
+    switch (s.strip) {
+        case "default": case "": return AlignHint.default_;
+        case "sameline":         return AlignHint.sameline;
+        case "wide":             return AlignHint.wide;
+        case "full":             return AlignHint.full;
+        default: throw new FormLoadException(format(
+            "forms: form '%s' (%s) has unknown align '%s' "
+            ~ "(default/sameline/wide/full)", formId, ctx, s));
+    }
+}
+
+private GroupStyle parseGroupStyle(ref /*dyaml.*/ DyamlNodeT node,
+                                   string formId, string ctx) {
+    if (!node.containsKey("style")) return GroupStyle.inline_;
+    string s = node["style"].as!string.strip;
+    switch (s) {
+        case "inline": case "": return GroupStyle.inline_;
+        case "block":           return GroupStyle.block;
+        default: throw new FormLoadException(format(
+            "forms: form '%s' (%s) group has unknown style '%s' (inline/block)",
+            formId, ctx, s));
+    }
+}
+
+// dyaml's Node type, aliased once so the parse helpers above read cleanly and
+// the dyaml import stays scoped to this section.
+private alias DyamlNodeT = imported!"dyaml".Node;
+
+// ===========================================================================
+// Startup-strict attr validation  (Phase 3 step 4)
+//
+// The runtime resolver (resolveControl above) reports a clean found=false for
+// an attr that is dynamically absent from the CURRENT params() — the renderer
+// hides that row. That is the RUNTIME layer. The STARTUP-strict layer below
+// rejects a YAML typo against the full STATIC universe so a misspelt attr or
+// an unknown command id fails LOUD at load, exactly like tool_presets.d does.
+//
+// The two namespaces resolve their universe differently because the registry
+// holds only tool + command factories (no stage-factory map): a tool's
+// universe is its params() names; a stage's universe is its knownAttrs()
+// (the static union — see Stage.knownAttrs()); a cmd/choice command id must
+// exist in the command registry. This module never imports the registry or
+// the live pipeline — the caller (app.d) supplies these three universes as
+// delegates, keeping forms.d unit-testable in isolation.
+// ===========================================================================
+
+/// Resolvers the caller supplies so validateForms can reach the live
+/// tool/stage/command universe without forms.d importing the registry.
+struct FormValidators {
+    /// Full static attr names for a tool id (its params() names). Returns
+    /// null if the tool id is unknown to the registry.
+    string[] delegate(string toolId)  toolAttrs;
+    /// Full static attr names for a pipe-stage id (its knownAttrs()). Returns
+    /// null if the stage id is not in the live pipeline.
+    string[] delegate(string stageId) stageAttrs;
+    /// True iff a plain command id exists in the command registry.
+    bool     delegate(string cmdId)   commandExists;
+}
+
+/// Thrown by validateForms when a binding references an attr / stage / tool /
+/// command that does not exist in the static universe. Carries form + binding
+/// context, mirroring tool_presets.d's "sets unknown attr '%s' on '%s'".
+class FormValidationException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) {
+        super(msg, file, line);
+    }
+}
+
+/// Strict-validate every binding in `forms` against the static universe the
+/// `v` delegates expose. Throws FormValidationException on the first typo.
+/// `ctx` is the source path/string, threaded into every message.
+void validateForms(Form[] forms, FormValidators v, string ctx)
+{
+    foreach (ref f; forms)
+        foreach (ref r; f.rows)
+            validateRow(r, f.id, v, ctx);
+}
+
+private void validateRow(ref Row r, string formId, FormValidators v, string ctx)
+{
+    final switch (r.kind) {
+        case RowKind.control:
+            validateControlBinding(r.command, formId, v, ctx);
+            break;
+
+        case RowKind.cmd:
+            validateCommandLine(r.command, formId, v, ctx);
+            break;
+
+        case RowKind.choice:
+            foreach (ref e; r.entries)
+                validateCommandLine(e.cmd, formId, v, ctx);
+            break;
+
+        case RowKind.group:
+            foreach (ref child; r.rows)
+                validateRow(child, formId, v, ctx);
+            break;
+
+        // sub / ref / divider / label carry no command binding to validate
+        // here (cross-form reference resolution is a renderer/assembly concern,
+        // out of scope for the strict attr pass).
+        case RowKind.sub:
+        case RowKind.ref_:
+        case RowKind.divider:
+        case RowKind.label:
+            break;
+    }
+}
+
+/// Resolve a `control:` binding's attr against its namespace's static universe.
+private void validateControlBinding(string line, string formId,
+                                    FormValidators v, string ctx)
+{
+    auto b = parseBinding(line);   // already structurally OK from the loader
+    final switch (b.namespace) {
+        case Namespace.tool:
+            if (v.toolAttrs is null) break;
+            auto universe = v.toolAttrs(b.targetId);
+            if (universe is null)
+                throw new FormValidationException(format(
+                    "forms: form '%s' (%s) binds to unknown tool '%s' "
+                    ~ "in '%s'", formId, ctx, b.targetId, line));
+            if (!hasName(universe, b.attr))
+                throw new FormValidationException(format(
+                    "forms: form '%s' (%s) sets unknown attr '%s' on tool "
+                    ~ "'%s' (binding '%s')", formId, ctx, b.attr,
+                    b.targetId, line));
+            break;
+
+        case Namespace.stage:
+            if (v.stageAttrs is null) break;
+            auto universe = v.stageAttrs(b.targetId);
+            if (universe is null)
+                throw new FormValidationException(format(
+                    "forms: form '%s' (%s) binds to unknown pipe stage '%s' "
+                    ~ "in '%s'", formId, ctx, b.targetId, line));
+            if (!hasName(universe, b.attr))
+                throw new FormValidationException(format(
+                    "forms: form '%s' (%s) sets unknown attr '%s' on stage "
+                    ~ "'%s' (binding '%s')", formId, ctx, b.attr,
+                    b.targetId, line));
+            break;
+
+        case Namespace.command:
+            // A `control:` line in the plain-command namespace is malformed —
+            // a value bind must be tool.attr / tool.pipe.attr. parseBinding
+            // already rejects a `?`-less tool/stage line; a `?`-bearing plain
+            // command (e.g. "actr.auto ?") is nonsensical as a value bind.
+            throw new FormValidationException(format(
+                "forms: form '%s' (%s) control binds to plain command '%s' — "
+                ~ "value controls must use tool.attr / tool.pipe.attr "
+                ~ "(binding '%s')", formId, ctx, b.commandId, line));
+    }
+}
+
+/// Validate a fire-only `cmd:` / choice-entry command id against the registry.
+private void validateCommandLine(string line, string formId,
+                                 FormValidators v, string ctx)
+{
+    auto b = parseBinding(line);
+    if (b.hasQuery)
+        throw new FormValidationException(format(
+            "forms: form '%s' (%s) cmd/choice line carries a '?' value slot "
+            ~ "(fire-only commands take no query): '%s'", formId, ctx, line));
+    if (v.commandExists !is null && !v.commandExists(b.commandId))
+        throw new FormValidationException(format(
+            "forms: form '%s' (%s) references unknown command '%s' "
+            ~ "(binding '%s')", formId, ctx, b.commandId, line));
+}
+
+private bool hasName(string[] names, string n) {
+    foreach (x; names) if (x == n) return true;
+    return false;
+}
+
+// ===========================================================================
+// Loaded-forms registry
+//
+// The startup-loaded, strict-validated Form[] live here so the Phase-4 renderer
+// (FormsPanel, main thread) can look up the form(s) matching the active tool.
+// Populated once at app startup (see app.d) AFTER the pipeline + registry are
+// constructed. Main-thread only — no locking.
+// ===========================================================================
+
+__gshared Form[] g_forms;
+
+/// Forms whose `whenTool` filter matches `activeToolId` (empty filter => always
+/// shown). Caller renders these in `category`/`ordinal` order.
+Form[] formsForTool(string activeToolId)
+{
+    Form[] hits;
+    foreach (ref f; g_forms)
+        if (f.matchesTool(activeToolId))
+            hits ~= f;
+    return hits;
 }
 
 // ===========================================================================
