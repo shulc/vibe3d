@@ -124,6 +124,12 @@ protected:
     // active frame of a slider drag, not on subsequent frames.
     protected bool editIsOpen() const { return editCapturing; }
 
+    // Public read-only mirror of editIsOpen(), so the composing wrapper
+    // (XfrmTransformTool) can ask a sub-tool whether ITS edit session is open
+    // (rotate/scale own their own sessions — MS-5). Forms Phase 5b reads this to
+    // fold the sub-tool sessions into the wrapper's hasLiveEval()/commit gates.
+    public bool publicEditIsOpen() const { return editCapturing; }
+
     // Phase 7.5h: read-only accessors for the in-flight edit snapshot.
     // MoveTool's "absolute-from-baseline" path rebuilds mesh.vertices
     // each motion event from these arrays + the running dragDelta, so

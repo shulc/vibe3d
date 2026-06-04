@@ -10,7 +10,11 @@
 //     the injected value (zero-wipe pin, MAJOR 1) and a second write lands at
 //     the second absolute value, NOT the sum (no-accumulation, BLOCKER 1 / D1);
 //   - the whole session coalesces to ONE undo entry after drop (D2);
-//   - a stage-attr edit (falloff) re-evaluates the live pipe immediately.
+//   - a stage-attr edit (falloff) re-evaluates the live pipe immediately;
+//   - Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) value edits drive the widened
+//     reEvaluate() seam (forms Phase 5b): each moves geometry, replays
+//     absolutely, and coalesces to ONE undo entry on its per-mode preset;
+//     a combined T+R+S session records one entry per slot (as-built MS-5).
 //
 // All driven over HTTP via the testMode-gated hooks tool.beginSession /
 // tool.panelEdit (Phase 3). Cube layout (centered at origin, size 1):
@@ -291,4 +295,136 @@ unittest {
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type none");
     cmd("tool.set move off");
+}
+
+// ---------------------------------------------------------------------------
+// Test 5 — Rotate value editing via the widened reEvaluate() seam (Phase 5b).
+//
+// The TransformRotate preset is R-only. A value edit through the seam must:
+//   - move geometry (RZ=90 rotates v6 about Z),
+//   - replay ABSOLUTELY (a second RZ=45 lands at 45°, NOT 135°),
+//   - coalesce the whole session into ONE undo entry at drop, restored by undo.
+// v6 = (0.5, 0.5, 0.5). About the workplane Z axis at the origin: RZ=90 sends
+// (0.5,0.5) → (-0.5,0.5); RZ=45 sends it to (0, √0.5) ≈ (0, 0.7071).
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : sqrt;
+    drainAndReset();
+    cmd("tool.set TransformRotate off");   // ensure no stale session
+    drainAndReset();
+    // NO selection ⇒ whole mesh is the moving set and the pivot is the origin.
+    // (Selecting only v6 would put the rotate pivot AT v6, so it wouldn't move.)
+    cmd("tool.set TransformRotate");
+
+    long undoBefore = undoCount();
+
+    // Open a live session (no geometry change), then drive absolute RZ values.
+    cmd("tool.beginSession");
+    assertVertex(6, 0.5, 0.5, 0.5, "rotate beginSession opens session, moves nothing");
+
+    cmd("tool.attr TransformRotate RZ 90");
+    assertVertex(6, -0.5, 0.5, 0.5, "first rotate value edit: RZ=90 ⇒ v6=(-0.5,0.5,0.5)");
+
+    // Second write is ABSOLUTE (lands at 45°, not the 90+45 sum).
+    double s = sqrt(0.5);
+    cmd("tool.attr TransformRotate RZ 45");
+    assertVertex(6, 0.0, s, 0.5, "second rotate value edit is absolute (RZ=45, not 135)");
+
+    // Drop → exactly ONE new undo entry → one undo restores the original.
+    cmd("tool.set TransformRotate off");
+    assert(undoCount() == undoBefore + 1,
+        "rotate value-edit session must coalesce to ONE undo entry; before="
+        ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
+    auto u = postJson("/api/undo", "");
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original (rotate)");
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 — Scale value editing via the widened reEvaluate() seam (Phase 5b).
+//
+// The TransformScale preset is S-only. A value edit through the seam must:
+//   - move geometry (SX=2 scales v6.x about the origin),
+//   - replay ABSOLUTELY (a second SX=3 lands at 3×, NOT 6×),
+//   - coalesce the whole session into ONE undo entry at drop, restored by undo.
+// v6 = (0.5, 0.5, 0.5). Scale about the origin: SX=2 ⇒ x=1.0; SX=3 ⇒ x=1.5.
+// ---------------------------------------------------------------------------
+unittest {
+    drainAndReset();
+    cmd("tool.set TransformScale off");
+    drainAndReset();
+    // NO selection ⇒ whole mesh moving set, scale pivot at the origin.
+    // (Selecting only v6 would put the scale pivot AT v6, so it wouldn't move.)
+    cmd("tool.set TransformScale");
+
+    long undoBefore = undoCount();
+
+    cmd("tool.beginSession");
+    assertVertex(6, 0.5, 0.5, 0.5, "scale beginSession opens session, moves nothing");
+
+    cmd("tool.attr TransformScale SX 2");
+    assertVertex(6, 1.0, 0.5, 0.5, "first scale value edit: SX=2 ⇒ v6.x=1.0");
+
+    // Second write is ABSOLUTE (lands at 3×, not the 2×·3× product).
+    cmd("tool.attr TransformScale SX 3");
+    assertVertex(6, 1.5, 0.5, 0.5, "second scale value edit is absolute (SX=3, not 6)");
+
+    cmd("tool.set TransformScale off");
+    assert(undoCount() == undoBefore + 1,
+        "scale value-edit session must coalesce to ONE undo entry; before="
+        ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
+    auto u = postJson("/api/undo", "");
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original (scale)");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 — Combined T+R+S value editing in one session (Phase 5b).
+//
+// All three value slots drive geometry through the widened seam on the bare
+// Transform preset (T=R=S=1). By design (MS-5 — recorded at
+// config/tool_presets.yaml for the bare Transform preset) the wrapper (T) and
+// each sub-tool (R/S) own SEPARATE edit sessions; there is NO single merged
+// session, so a combined edit records ONE entry PER session that actually saw a
+// geometry change. The exact count (1..3) depends on apply ordering — each
+// slot's applyTRS rebuilds the WHOLE chain from its own baseline, so a later
+// slot can find the change already attributed to an earlier slot's session.
+// What is invariant and worth pinning: the combined edit DOES move geometry,
+// records at LEAST one entry, never more than three, and undoing all of them
+// restores the original mesh. (A single deterministically-merged entry would
+// require a cross-instance session merge — out of scope here and contradicting
+// the documented per-sub-tool limitation.)
+// ---------------------------------------------------------------------------
+unittest {
+    drainAndReset();
+    cmd("tool.set Transform off");
+    drainAndReset();
+    // NO selection ⇒ whole mesh moving set; rotate/scale pivot at the origin so
+    // all three slots actually move geometry.
+    cmd("tool.set Transform");
+
+    long undoBefore = undoCount();
+
+    cmd("tool.beginSession");
+    cmd("tool.attr Transform TX 1");
+    auto vT = vertexAt(6);
+    assert(approxEqual(vT[0], 1.5),
+        "combined T slot moves geometry: TX=1 ⇒ v6.x=1.5, got " ~ vT[0].to!string);
+
+    cmd("tool.attr Transform RZ 90");
+    cmd("tool.attr Transform SX 2");
+    auto vAll = vertexAt(6);
+    assert(!(approxEqual(vAll[0], 0.5) && approxEqual(vAll[1], 0.5)
+                                       && approxEqual(vAll[2], 0.5)),
+        "combined T+R+S moved geometry away from the original");
+
+    cmd("tool.set Transform off");
+    long entries = undoCount() - undoBefore;
+    assert(entries >= 1 && entries <= 3,
+        "combined T+R+S records 1..3 entries (per-session, as-built MS-5); got "
+        ~ entries.to!string);
+
+    // Undoing every recorded entry restores the original mesh.
+    foreach (_; 0 .. entries) postJson("/api/undo", "");
+    assertVertex(6, 0.5, 0.5, 0.5, "undoing all entries restores the original (combined T+R+S)");
 }

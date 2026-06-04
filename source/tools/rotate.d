@@ -644,6 +644,77 @@ public:
         }
     }
 
+    // Open a bare edit session with NO geometry change (forms-engine Phase 5b /
+    // re-eval plan D5 test opener). Mirrors the FIRST-active-frame gating of
+    // drawProperties: snapshot the Tool-Properties state then beginEdit() so a
+    // subsequent applyRotatePanelValue() lands inside the same coalesced session.
+    void openEditForValue() {
+        buildVertexCacheIfNeeded();
+        if (!editIsOpen()) {
+            snapshotEditState();
+            beginEdit();
+        }
+    }
+
+    // Value-driven panel entry point (forms-engine Phase 5b). The forms panel
+    // dispatches an absolute `RX`/`RY`/`RZ` value (degrees) through the
+    // `reEvaluate()` seam, which calls this once per edit. It mirrors the
+    // ABSOLUTE arm of `drawProperties` above WITHOUT any ImGui calls: the
+    // caller already holds the value, so there is no `DragFloat` / `IsItemActive`
+    // gating — every call is treated as an active edit (the wrapper's commit
+    // guards close the session, exactly as for a gizmo drag). The geometry apply,
+    // session/snapshot gating, per-edit falloff/symmetry re-capture and the
+    // `propsDragging` whole-mesh GPU bypass are kept identical to the inline path
+    // so a panel value edit blends through falloff and uses the fast path the
+    // same way a slider drag does.
+    void applyRotatePanelValue(Vec3 deg) {
+        import std.math : PI;
+
+        // Absolute value-driven: the panel value IS angleAccum (no accumulation).
+        propDeg = deg;
+        angleAccum.x = deg.x * PI / 180.0f;
+        angleAccum.y = deg.y * PI / 180.0f;
+        angleAccum.z = deg.z * PI / 180.0f;
+
+        buildVertexCacheIfNeeded();
+        // Re-capture falloff/symmetry each edit (mirrors drawProperties); gates
+        // the whole-mesh GPU bypass off when a per-vertex weight breaks the
+        // single-uniform fast path. No dispatcher vts here — build a local one.
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket propSubj;
+        VectorStack propVts;
+        buildLocalVts(propSubj, propVts);
+        bool falloffActive = captureFalloffForDrag(propVts);
+        bool symmActive    = captureSymmetryForDrag(propVts);
+        bool wholeMesh = !falloffActive && !symmActive
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
+
+        // Snapshot pre-edit Tool-Properties state on the FIRST edit of the
+        // session (before beginEdit opens it); beginEdit is idempotent after.
+        if (!editIsOpen()) {
+            snapshotEditState();
+            beginEdit();
+        } else {
+            beginEdit();   // idempotent
+        }
+
+        // Rebuild CPU vertices from origVertices via the shared apply path
+        // (delegates to the wrapper's applyRotateAbsolute → applyTRS).
+        applyAbsoluteFromOrigCpuOnly(propVts);
+
+        if (wholeMesh) {
+            // Whole-mesh: GPU bypass — upload base once, then only update matrix.
+            if (!propsDragging) {
+                uploadPropsBase(origVertices);
+                propsDragging = true;
+            }
+            gpuMatrix = computePropsRotationMatrix();
+        } else {
+            // Partial selection / falloff: deferred GPU upload in draw().
+            needsGpuUpdate = true;
+        }
+    }
+
 private:
 
     Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
