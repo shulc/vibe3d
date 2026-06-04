@@ -2097,9 +2097,31 @@ struct Mesh {
     ///  * SHIFT: each incident BOUNDARY edge adds `shift·inPlaneOutwardPerp` on top
     ///    (inert on interior edges).
     ///
-    /// Rotation composition: Rx then Ry then Rz applied in that order. Only
-    /// SINGLE-AXIS rotations are capture-verified; the multi-axis ordering is an
-    /// OPEN QUESTION (no reference dump pins it).
+    /// Rotation composition: Rx then Ry then Rz applied in that order.
+    /// Single-axis rotations are capture-verified; the multi-axis Rx→Ry→Rz order
+    /// is confirmed by the parity harness (rotX+rotY case). For segments>1 each
+    /// axis angle is independently scaled by k/N before the same Rx→Ry→Rz
+    /// composition — only single-axis fractional rotation is capture-verified;
+    /// the fractional MULTI-axis euler (per-axis k/N scaling then Rx→Ry→Rz) is
+    /// the natural model, assumed here (no reference dump pins it).
+    ///
+    /// SEGMENTS (rings). For `segments = N` (N ≥ 1) each selected edge spawns N
+    /// stacked ring levels (each level welds per-corner exactly like N=1) + N
+    /// stacked bridge quads (src→ring1, ring1→ring2, …, ring(N−1)→ringN). Per
+    /// ring k (k = 1..N) for source vertex v (E_src = original position):
+    ///   ringVert_k(v) = (k/N)·offset + insetShiftDelta(v)
+    ///                 + Scale_k( Rotate_k( E_src(v) ) )
+    ///   Rotate_k = rotate by (k/N)·rotateDeg (about world origin)
+    ///   Scale_k  = componentwise LINEAR lerp 1 + (k/N)·(scale − 1) (about origin)
+    ///   insetShiftDelta applied FULLY on every ring (NOT fractional).
+    /// The geometric scale s^(k/N) is RULED OUT by capture (linear lerp wins).
+    /// Ring N's formula coincides with the N=1 law (continuity): rotate/offset
+    /// are exact IEEE identities at t=1; scale goes through the lerp
+    /// 1+(s−1), exact for the golden values and within a sub-ulp rounding of
+    /// the direct multiply for arbitrary s. Topology/order are identical. The
+    /// OUTERMOST ring (k=N) supplies the post-op edge selection. Identity TRS ⇒
+    /// all rings coincide (stacked coincident verts — faithful to the reference;
+    /// rings are NOT deduped/welded to each other).
     size_t extendEdgesByMask(in bool[] mask,
                              float inset, float shift,
                              Vec3 offset, Vec3 rotateDeg, Vec3 scale,
@@ -2107,10 +2129,9 @@ struct Mesh {
         import math : Vec3, cross, dot, normalize;
         import std.math : sin, cos, abs, PI;
         if (mask.length != edges.length) return 0;
-        assert(segments == 1, "extendEdgesByMask: segments>1 is Phase 3");
-        if (segments != 1) segments = 1;   // release-build safety: asserts strip
-                                           // under -release; clamp rather than
-                                           // silently fall through with wrong N.
+        if (segments < 1) segments = 1;    // clamp: N≥1. N=1 is the base ring of
+                                           // the general loop (same topology/
+                                           // order as pre-Phase-3; see doc above).
 
         // --- Mesh-edit tracker (mesh_edit_delta). Inert unless a batch is open
         //     (the interactive preview drag runs batchless ⇒ zero cost). This op
@@ -2322,12 +2343,16 @@ struct Mesh {
             }
         }
 
-        // --- Rotate(E_src about origin) then Scale(about origin), world frame.
-        //     Rx then Ry then Rz, applied in that order to the ORIGINAL position.
-        float rx = rotateDeg.x * cast(float)(PI / 180.0);
-        float ry = rotateDeg.y * cast(float)(PI / 180.0);
-        float rz = rotateDeg.z * cast(float)(PI / 180.0);
-        Vec3 applyRS(Vec3 p) {
+        // --- Rotate(E_src about origin) then Scale(about origin), world frame,
+        //     parameterised by the ring fraction t = k/N (t=1 = full TRS = the
+        //     N=1 law). Rx then Ry then Rz applied in that order to the ORIGINAL
+        //     position; each axis angle scaled by t. Scale is the componentwise
+        //     LINEAR lerp 1 + t·(scale−1) (geometric s^t ruled out by capture).
+        float rxFull = rotateDeg.x * cast(float)(PI / 180.0);
+        float ryFull = rotateDeg.y * cast(float)(PI / 180.0);
+        float rzFull = rotateDeg.z * cast(float)(PI / 180.0);
+        Vec3 applyRS(Vec3 p, float t) {
+            float rx = rxFull * t, ry = ryFull * t, rz = rzFull * t;
             // Rx
             {
                 float c = cos(rx), s = sin(rx);
@@ -2343,40 +2368,58 @@ struct Mesh {
                 float c = cos(rz), s = sin(rz);
                 p = Vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
             }
-            // Scale about origin
-            return Vec3(p.x * scale.x, p.y * scale.y, p.z * scale.z);
+            // Scale (linear lerp toward `scale`) about origin.
+            float sx = 1.0f + t * (scale.x - 1.0f);
+            float sy = 1.0f + t * (scale.y - 1.0f);
+            float sz = 1.0f + t * (scale.z - 1.0f);
+            return Vec3(p.x * sx, p.y * sy, p.z * sz);
         }
 
-        // --- Per-source-vertex weld map: ONE new vert per unique source vertex
-        //     incident to ≥1 selected edge (welds chains/loops/star junctions).
-        //     Compute insetShiftDelta from ORIGINAL geometry, add it AFTER R/S in
-        //     the world frame, then Offset last.
-        uint[uint] newVertOf;
-        foreach (ref e; exEdges) {
-            void makeVert(uint v) {
-                if (v in newVertOf) return;
-                // Inset = min-norm offset-meet (target −inset on every plane) over
-                // ALL distinct faces incident at v — free end, weld, interior,
-                // boundary alike (see INSET LAW above). One law, no axial term: the
-                // corner's own incident faces (incl. the perpendicular third face on
-                // a cube) reproduce the edge-axis component that earlier looked
-                // axial.
-                Vec3 delta = Vec3(0, 0, 0);
-                if (auto np = v in cornerNormals) {
-                    Vec3[] norms = *np;
-                    float[] tgts;
-                    tgts.length = norms.length;
-                    foreach (i; 0 .. norms.length) tgts[i] = -inset;
-                    delta = minNormMeet(norms, tgts);
-                }
-                // Boundary shift term(s) fold into the corner displacement.
-                if (auto sp = v in cornerShiftTerm) delta = delta + *sp;
-                Vec3 pos = applyRS(vertices[v]) + delta + offset;
-                newVertOf[v] = addVertex(pos);
+        // --- Per-source-vertex inset/shift displacement (ring-independent: full
+        //     on every ring). Computed once from ORIGINAL geometry, keyed by
+        //     source vertex. INSET = min-norm offset-meet over ALL distinct faces
+        //     incident at v (free end, weld, interior, boundary alike — see INSET
+        //     LAW above). One law, no axial term. SHIFT = each incident boundary
+        //     edge's in-plane slide, already accumulated into cornerShiftTerm.
+        Vec3[uint] insetShiftOf;
+        void computeDelta(uint v) {
+            if (v in insetShiftOf) return;
+            Vec3 delta = Vec3(0, 0, 0);
+            if (auto np = v in cornerNormals) {
+                Vec3[] norms = *np;
+                float[] tgts;
+                tgts.length = norms.length;
+                foreach (i; 0 .. norms.length) tgts[i] = -inset;
+                delta = minNormMeet(norms, tgts);
             }
-            makeVert(e.va);
-            makeVert(e.vb);
+            if (auto sp = v in cornerShiftTerm) delta = delta + *sp;
+            insetShiftOf[v] = delta;
         }
+        foreach (ref e; exEdges) { computeDelta(e.va); computeDelta(e.vb); }
+
+        // --- Per-ring weld maps: ONE new vert per (ring level k, unique source
+        //     vertex) incident to ≥1 selected edge (welds chains/loops/star
+        //     junctions per ring level). ring 0 is the SOURCE vertex itself (the
+        //     inner side of the first bridge); rings 1..N are the new verts.
+        //     ringVert_k(v) = (k/N)·offset + insetShiftDelta(v) + applyRS(E_src,k/N).
+        //     N=1 ⇒ one ring, t=1, fully reproducing the pre-segments law.
+        const int N = segments;
+        // ringVertOf[k] maps source vertex → its index in `vertices` for ring k.
+        // ring 0 = identity map onto the source vertex (no new geometry); rings
+        // 1..N hold the appended new verts.
+        uint[uint][] ringVertOf;
+        ringVertOf.length = N + 1;
+        foreach (k; 1 .. N + 1) {
+            float t = cast(float)k / cast(float)N;
+            void makeRingVert(uint v) {
+                if (v in ringVertOf[k]) return;
+                Vec3 pos = applyRS(vertices[v], t) + insetShiftOf[v] + offset * t;
+                ringVertOf[k][v] = addVertex(pos);
+            }
+            foreach (ref e; exEdges) { makeRingVert(e.va); makeRingVert(e.vb); }
+        }
+        // ring 0 maps each source vertex to itself (the inner side of bridge 1).
+        foreach (ref e; exEdges) { ringVertOf[0][e.va] = e.va; ringVertOf[0][e.vb] = e.vb; }
 
         // --- Orienting-face selection for the bridge winding.
         //
@@ -2429,7 +2472,11 @@ struct Mesh {
             return e.fA < e.fB ? e.fA : e.fB;     // coplanar tie → lower index
         }
 
-        // --- Bridge quads.
+        // --- Bridge quads. N stacked quads per edge: src→ring1, ring1→ring2, …,
+        //     ring(N−1)→ringN. Each stacked quad keeps the SAME orientation as
+        //     the single N=1 bridge: [innerA, outerA, outerB, innerB] where
+        //     inner = ring k−1's pair, outer = ring k's pair, and A/B follow the
+        //     source edge's DIRECTED traversal order within the orienting face.
         size_t firstBridge = faces.length;
         foreach (ref e; exEdges) {
             int orientFace = orientFaceOf(e);
@@ -2441,19 +2488,27 @@ struct Mesh {
                 if (u == e.va && w == e.vb) { srcA = e.va; srcB = e.vb; break; }
                 if (u == e.vb && w == e.va) { srcA = e.vb; srcB = e.va; break; }
             }
-            uint newA = newVertOf[srcA];
-            uint newB = newVertOf[srcB];
-            faces ~= [srcA, newA, newB, srcB];
+            foreach (k; 1 .. N + 1) {
+                uint innerA = ringVertOf[k - 1][srcA];
+                uint innerB = ringVertOf[k - 1][srcB];
+                uint outerA = ringVertOf[k][srcA];
+                uint outerB = ringVertOf[k][srcB];
+                faces ~= [innerA, outerA, outerB, innerB];
+            }
         }
 
         // --- Hand-extend the parallel per-face arrays (pure-add trap: neither
         //     addVertex nor compactUnreferenced sizes these). Each bridge inherits
-        //     the material of its orienting (adjacent) face.
+        //     the material of its orienting (adjacent) face. N stacked bridges per
+        //     edge, all inheriting the same orienting-face material.
         foreach (bi, ref e; exEdges) {
             int orientFace = orientFaceOf(e);
-            faceMaterial       ~= (orientFace < faceMaterial.length
-                                   ? faceMaterial[orientFace] : 0u);
-            faceSelectionOrder ~= 0;
+            uint mat = (orientFace < faceMaterial.length
+                        ? faceMaterial[orientFace] : 0u);
+            foreach (k; 1 .. N + 1) {
+                faceMaterial       ~= mat;
+                faceSelectionOrder ~= 0;
+            }
         }
         resizeSubpatch();
         foreach (fi; firstBridge .. faces.length)
@@ -2470,15 +2525,19 @@ struct Mesh {
                                          cast(uint)faces.length, bridgeLists);
         }
 
-        // --- Record the new outer ridge edges (the new-vert pair per bridge) BY
-        //     POSITION so we can reselect them after rebuildEdges. (No compaction
-        //     here, so indices are stable, but rebuildEdges renumbers the EDGE
-        //     array — endpoint lookup via edgeIndexMap is the stable path.)
-        Vec3[2][] ridgeEdgePos;
-        ridgeEdgePos.reserve(exEdges.length);
+        // --- Record the new OUTER ridge edges (the outermost ring k=N vert pair
+        //     per bridge) BY INDEX so we can reselect them after rebuildEdges. No
+        //     compaction runs (pure add), so vert indices are STABLE; recording
+        //     indices (not positions) avoids the stacked-coincident-ring ambiguity
+        //     under identity TRS (where every ring shares a position and a
+        //     position lookup would land on an inner ring). rebuildEdges renumbers
+        //     the EDGE array, so the edgeKey→index lookup via edgeIndexMap is the
+        //     stable path.
+        uint[2][] ridgeEdgeIdx;
+        ridgeEdgeIdx.reserve(exEdges.length);
         foreach (ref e; exEdges) {
-            uint na = newVertOf[e.va], nb = newVertOf[e.vb];
-            ridgeEdgePos ~= [vertices[na], vertices[nb]];
+            uint na = ringVertOf[N][e.va], nb = ringVertOf[N][e.vb];
+            ridgeEdgeIdx ~= [na, nb];
         }
 
         // --- Tail: rebuild edges + loops, size selections. NO compactUnreferenced
@@ -2492,17 +2551,10 @@ struct Mesh {
         resizeFaceSelection();
         clearEdgeSelectionResize();    // resize edge marks + drop all edge selection
 
-        // New selection = the new ridge edges (so a follow-up op chains).
-        int findVertByPos(Vec3 p) {
-            foreach (i, ref v; vertices)
-                if ((v - p).length < 1e-5f) return cast(int)i;
-            return -1;
-        }
-        foreach (ref pr; ridgeEdgePos) {
-            int a = findVertByPos(pr[0]);
-            int b = findVertByPos(pr[1]);
-            if (a < 0 || b < 0) continue;
-            ulong rk = edgeKey(cast(uint)a, cast(uint)b);
+        // New selection = the new OUTERMOST-ring ridge edges (so a follow-up op
+        // chains off the outer ridge).
+        foreach (ref pr; ridgeEdgeIdx) {
+            ulong rk = edgeKey(pr[0], pr[1]);
             if (auto p = rk in edgeIndexMap)
                 selectEdge(cast(int)*p);
         }
@@ -5249,6 +5301,175 @@ unittest { // extendEdgesByMask: consumer smoke — ring-walk + faceted subdivid
     Mesh sub = facetedSubdivide(m, allFaces);
     assert(sub.vertices.length > m.vertices.length, "subdivide produced geometry");
     assert(sub.loops.length == sub.faceLoop.length * 0 + sub.loops.length); // touch loops
+}
+
+// ===========================================================================
+// extendEdgesByMask — SEGMENTS (Phase 3). N stacked ring levels + N stacked
+// bridge quads per edge. Per-ring law (verified against the reference dumps to
+// ~1e-7, frozen golden numbers — no provenance):
+//   ringVert_k(v) = (k/N)·offset + insetShiftDelta(FULL) + Scale_k(Rotate_k(E_src))
+//     Rotate_k = (k/N)·rotateDeg (about origin); Scale_k = 1+(k/N)·(scale−1)
+// segments=1 = the N=1 case of the same loop (regression-covered by the
+// non-segments unittests above, which stay byte-identical).
+// ===========================================================================
+version (unittest) {
+    // Find the source-edge ridge ring verts on a cube interior-edge extend and
+    // return them ordered [ring1+x, ring1−x, ring2+x, ring2−x, …]. The +x ring
+    // vert welds source vert 6=(0.5,0.5,0.5); −x welds vert 7=(-0.5,0.5,0.5).
+    // Rings appear in append order (ring1 first), so for the cube interior edge
+    // new verts are laid out as pairs [8,9],[10,11],…
+    private bool extSegStackedWinding_(ref Mesh m, int N) {
+        // Verify the N stacked bridge quads exist with the [innerA,outerA,outerB,
+        // innerB] winding: bridge k = [ringVert(k-1,6), ringVert(k,6),
+        // ringVert(k,7), ringVert(k-1,7)] with ring0 = the source verts 6/7.
+        // New verts are appended ring-major, +x then −x per ring → ring k's
+        // +x vert = 8+2*(k-1), −x vert = 9+2*(k-1).
+        uint ringPlusX(int k)  { return (k == 0) ? 6u : cast(uint)(8 + 2 * (k - 1)); }
+        uint ringMinusX(int k) { return (k == 0) ? 7u : cast(uint)(9 + 2 * (k - 1)); }
+        foreach (k; 1 .. N + 1) {
+            uint inA = ringPlusX(k - 1), outA = ringPlusX(k);
+            uint outB = ringMinusX(k), inB = ringMinusX(k - 1);
+            long bf = findFaceByVerts_(m, [inA, outA, outB, inB]);
+            if (bf < 0 || !tupleMatchesWound_(m.faces[bf], [inA, outA, outB, inB]))
+                return false;
+        }
+        return true;
+    }
+}
+
+unittest { // extendEdgesByMask seg3 IDENTITY — 14v/9f, 3 coincident ring pairs, stacked quads
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 3);
+    assert(n == 1);
+    assert(m.vertices.length == 14, "seg3: 8 cube + 3 ring pairs = 14");
+    assert(m.faces.length == 9, "seg3: 6 cube + 3 stacked bridges = 9");
+    // Identity TRS ⇒ all 3 rings coincide at the full-inset ridge (±0.4,0.4,0.4).
+    foreach (k; 0 .. 3) {
+        assert(near_(m.vertices[8 + 2 * k], Vec3(0.4f, 0.4f, 0.4f)),
+               "seg3 identity +x ring coincident at (0.4,0.4,0.4)");
+        assert(near_(m.vertices[9 + 2 * k], Vec3(-0.4f, 0.4f, 0.4f)),
+               "seg3 identity -x ring coincident at (-0.4,0.4,0.4)");
+    }
+    // 3 stacked quads with the correct winding (src→ring1→ring2→ring3).
+    assert(extSegStackedWinding_(m, 3), "seg3 stacked quad winding");
+}
+
+unittest { // extendEdgesByMask seg3 offY=0.3 — ring Y = 0.4 + k/3·0.3 (0.5/0.6/0.7)
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                        Vec3(0, 0.3f, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 3);
+    assert(m.vertices.length == 14 && m.faces.length == 9);
+    // ring k: X/Z at ±0.4/0.4 (full inset every ring), Y = 0.4 + k/3·0.3.
+    float[3] ringY = [0.5f, 0.6f, 0.7f];
+    foreach (k; 0 .. 3) {
+        assert(near_(m.vertices[8 + 2 * k], Vec3(0.4f, ringY[k], 0.4f)),
+               "seg3 offY +x ring");
+        assert(near_(m.vertices[9 + 2 * k], Vec3(-0.4f, ringY[k], 0.4f)),
+               "seg3 offY -x ring");
+    }
+    assert(extSegStackedWinding_(m, 3), "seg3 offY stacked winding");
+}
+
+unittest { // extendEdgesByMask seg3 rotZ=30 — fractional rotation 10/20/30° (h_seg3_rotz30.json)
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                        Vec3(0, 0, 0), Vec3(0, 0, 30.0f), Vec3(1, 1, 1), 3);
+    assert(m.vertices.length == 14 && m.faces.length == 9);
+    // Golden ring verts (verbatim h_seg3_rotz30.json verts 8..13), +x then −x.
+    Vec3[3] plusX = [Vec3(0.30557978f, 0.47922796f, 0.4f),
+                     Vec3(0.19883624f, 0.54085636f, 0.4f),
+                     Vec3(0.08301270f, 0.58301270f, 0.4f)];
+    Vec3[3] minusX = [Vec3(-0.47922796f, 0.30557978f, 0.4f),
+                      Vec3(-0.54085636f, 0.19883624f, 0.4f),
+                      Vec3(-0.58301270f, 0.08301270f, 0.4f)];
+    foreach (k; 0 .. 3) {
+        assert(near_(m.vertices[8 + 2 * k], plusX[k], 2e-5f), "seg3 rotZ +x ring");
+        assert(near_(m.vertices[9 + 2 * k], minusX[k], 2e-5f), "seg3 rotZ -x ring");
+    }
+    assert(extSegStackedWinding_(m, 3), "seg3 rotZ stacked winding");
+}
+
+unittest { // extendEdgesByMask seg3 sclX=2 — LINEAR-lerp scale 1.333/1.667/2.0 (h_seg3_sclx2.json)
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                        Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(2, 1, 1), 3);
+    assert(m.vertices.length == 14 && m.faces.length == 9);
+    // ring k scale = 1 + k/3·(2−1) = 1.333/1.667/2.0 → +x X = 0.5·scale − 0.1.
+    // Golden verbatim (h_seg3_sclx2.json): ±0.5667 / ±0.7333 / ±0.9.
+    float[3] plusXx  = [0.56666666f, 0.73333335f, 0.9f];
+    foreach (k; 0 .. 3) {
+        assert(near_(m.vertices[8 + 2 * k], Vec3(plusXx[k], 0.4f, 0.4f), 2e-5f),
+               "seg3 sclX +x ring");
+        assert(near_(m.vertices[9 + 2 * k], Vec3(-plusXx[k], 0.4f, 0.4f), 2e-5f),
+               "seg3 sclX -x ring");
+    }
+    assert(extSegStackedWinding_(m, 3), "seg3 sclX stacked winding");
+}
+
+unittest { // extendEdgesByMask seg2 combined offY=0.3 + rotZ=30 (h_seg2_trs.json)
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                        Vec3(0, 0.3f, 0), Vec3(0, 0, 30.0f), Vec3(1, 1, 1), 2);
+    assert(m.vertices.length == 12, "seg2: 8 cube + 2 ring pairs = 12");
+    assert(m.faces.length == 8, "seg2: 6 cube + 2 stacked bridges = 8");
+    // Golden verbatim (h_seg2_trs.json verts 8..11): +x then −x per ring.
+    Vec3[2] plusX = [Vec3(0.25355339f, 0.66237241f, 0.4f),
+                     Vec3(0.08301270f, 0.88301271f, 0.4f)];
+    Vec3[2] minusX = [Vec3(-0.51237243f, 0.40355340f, 0.4f),
+                      Vec3(-0.58301270f, 0.38301271f, 0.4f)];
+    foreach (k; 0 .. 2) {
+        assert(near_(m.vertices[8 + 2 * k], plusX[k], 2e-5f), "seg2 TRS +x ring");
+        assert(near_(m.vertices[9 + 2 * k], minusX[k], 2e-5f), "seg2 TRS -x ring");
+    }
+    assert(extSegStackedWinding_(m, 2), "seg2 TRS stacked winding");
+}
+
+unittest { // extendEdgesByMask seg2 chain2 weld — 2 levels × 3 welded verts, 4 quads
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f)); // -X from corner6
+    selectEdgeByEnds_(m, Vec3(0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, -0.5f)); // -Z from corner6
+    auto n = m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                                 Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 2);
+    assert(n == 2);
+    // 8 cube + 2 ring levels × 3 welded verts (shared corner welds per level) = 14.
+    assert(m.vertices.length == 14, "chain2 seg2: 8 + 2×3 = 14");
+    // 6 cube + 2 edges × 2 stacked bridges = 10 faces.
+    assert(m.faces.length == 10, "chain2 seg2: 6 + 4 bridges = 10");
+    // Identity TRS ⇒ both ring levels coincide at the welded/free positions.
+    // Welded corner (0.4,0.4,0.4) appears once per level (2 stacked welds).
+    size_t weldCount = 0, freeCount = 0;
+    foreach (i; 8 .. m.vertices.length) {
+        if (near_(m.vertices[i], Vec3(0.4f, 0.4f, 0.4f))) ++weldCount;
+        if (near_(m.vertices[i], Vec3(-0.4f, 0.4f, 0.4f)) ||
+            near_(m.vertices[i], Vec3(0.4f, 0.4f, -0.4f))) ++freeCount;
+    }
+    assert(weldCount == 2, "chain2 seg2: welded corner once per ring level");
+    assert(freeCount == 4, "chain2 seg2: 2 free ends × 2 levels");
+}
+
+unittest { // extendEdgesByMask seg3 — outermost ring selected on exit
+    Mesh m = makeCube();
+    selectEdgeByEnds_(m, Vec3(-0.5f, 0.5f, 0.5f), Vec3(0.5f, 0.5f, 0.5f));
+    // offY makes the rings DISTINCT so the outermost-ring edge is unambiguous.
+    m.extendEdgesByMask(selMask_(m), 0.1f, 0.0f,
+                        Vec3(0, 0.3f, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 3);
+    // The post-op selection must be EXACTLY the outermost ring's edge: endpoints
+    // (±0.4, 0.7, 0.4) (ring 3, Y=0.7). Exactly one edge selected.
+    size_t sel = 0; long selIdx = -1;
+    foreach (i; 0 .. m.edges.length)
+        if (m.edgeMarks[i] & Mesh.Marks.Select) { ++sel; selIdx = cast(long)i; }
+    assert(sel == 1, "seg3: exactly the outermost ridge edge selected");
+    auto va = m.vertices[m.edges[selIdx][0]];
+    auto vb = m.vertices[m.edges[selIdx][1]];
+    bool isOuter = (near_(va, Vec3(0.4f, 0.7f, 0.4f)) && near_(vb, Vec3(-0.4f, 0.7f, 0.4f))) ||
+                   (near_(va, Vec3(-0.4f, 0.7f, 0.4f)) && near_(vb, Vec3(0.4f, 0.7f, 0.4f)));
+    assert(isOuter, "seg3: selected edge is the OUTERMOST ring (Y=0.7)");
 }
 
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
