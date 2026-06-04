@@ -165,6 +165,14 @@ panels:
       - title: Commands
         buttons:
           - { label: Extrude, action: { kind: tool, id: edge.extrude } }
+          - label: Extend
+            action: { kind: command, id: mesh.edge_extend }
+            ctrl:
+              label: "Extend +Y"
+              action:
+                kind: script
+                lines:
+                  - "mesh.edge_extend inset:0.1 shift:0 offsetX:0 offsetY:0.3 offsetZ:0 rotateX:0 rotateY:0 rotateZ:0 scaleX:1 scaleY:1 scaleZ:1 segments:1"
   - title: Selection
     items:
       - title: Grow / Shrink
