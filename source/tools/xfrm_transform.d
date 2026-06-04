@@ -401,6 +401,15 @@ public:
     // wrapper). So the host forwards the gesture events here, drains the scalar,
     // and applies geometry through ITS OWN kernel re-run.
     public MoveTool moveBank() { return moveSub; }
+    // Rotate / Scale bank handles (Edge Extend Phase 4b, §4.1 option (b)). Same
+    // contract as moveBank(): thin accessors so the host can forward the gesture
+    // events to whichever bank the shared arbiter selected and drain the pending
+    // gesture scalars (rotateSub.pendingRotate* / scaleSub.pendingScale*) WITHOUT
+    // routing through the wrapper's drain+applyTRS. RotateTool / ScaleTool are
+    // pure gesture-scalar producers (no geometry mutation, no wrapper edit
+    // session) exactly like MoveTool. No apply-path change.
+    public RotateTool rotateBank() { return rotateSub; }
+    public ScaleTool  scaleBank()  { return scaleSub; }
     // Public forwarder to the protected TransformTool.queryActionCenter so the
     // host can read the ACEN center to FREEZE as the kernel pivot at drag-start
     // (§4.4). Pivot-agnostic for 4a's Offset path; the seam R/S needs in 4b.

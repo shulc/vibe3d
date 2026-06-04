@@ -17,6 +17,8 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
 import tools.xfrm_transform : XfrmTransformTool;
 import tools.move : MoveTool;
+import tools.rotate : RotateTool;
+import tools.scale : ScaleTool;
 
 /// The interactive tool reuses the dedicated MeshEdgeExtendEdit record command
 /// (a before/after MeshSnapshot pair OR an operation-log MeshEditDelta) — the
@@ -130,12 +132,26 @@ private:
     MeshSnapshot before;           // captured at activate() (geometry + selection)
     Viewport     cachedVp;
 
-    // Move-gesture drag state. While a Move drag is captured the host freezes the
-    // kernel-fed pivot (§4.4) and the per-drag base offset; each motion sets
-    // offset = dragBaseOffset + (move world delta since drag start).
-    bool dragging;                 // a Move-bank gesture is captured
-    Vec3 dragBaseOffset;           // `offset` at drag start
-    Vec3 frozenPivot = Vec3(0, 0, 0);  // ACEN center frozen at drag start (R/S in 4b)
+    // Which gizmo bank the shared arbiter handed this drag (mirrors how
+    // XfrmTransformTool's onMouseButtonDown picks the hot bank: try Move, then
+    // Rotate, then Scale, first real-handle grab wins). DragBank.None = no drag.
+    enum DragBank { None, Move, Rotate, Scale }
+    DragBank dragBank = DragBank.None;
+
+    // Move-gesture drag state. While a drag is captured the host freezes the
+    // kernel-fed pivot (§4.4, used by R/S) and, for Move, the per-drag base
+    // offset; each motion sets offset = dragBaseOffset + (move world delta since
+    // drag start).
+    Vec3 dragBaseOffset;           // `offset` at drag start (Move bank)
+    Vec3 frozenPivot = Vec3(0, 0, 0);  // ACEN center frozen at drag start (R/S pivot)
+
+    // Test-only override for the headless apply pivot. Backed by the HIDDEN
+    // `_dragPivot` param (set via tool.attr): writing it arms `.active`; the next
+    // applyHeadless consumes it (one-shot). Lets a parity test pin the sel-center
+    // R/S pivot the interactive drag would freeze, without a synthesized viewport
+    // drag. `.value` IS the param's storage so injectParamsInto writes it directly.
+    struct PivotOverride { bool active; Vec3 value = Vec3(0, 0, 0); }
+    PivotOverride dragPivotOverride_;
 
 public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
@@ -184,6 +200,12 @@ public:
             Param.float_("scaleY",  "Scale Y",     &scaleY_,  1.0f),
             Param.float_("scaleZ",  "Scale Z",     &scaleZ_,  1.0f),
             Param.int_  ("segments","Segments",    &segments_, 1),
+            // HIDDEN test-automation hook (Phase 4b): the sel-center R/S pivot the
+            // interactive drag would freeze. Setting it via tool.attr arms a
+            // one-shot override consumed by the next applyHeadless (see
+            // dragPivotOverride_ / onParamChanged). Not shown in the panel.
+            Param.vec3_ ("_dragPivot", "Drag Pivot (test)",
+                         &dragPivotOverride_.value, Vec3(0, 0, 0)).hidden(),
         ];
     }
 
@@ -210,7 +232,7 @@ public:
     // extrude tool's ridge appears on the first drag.
     private void reinitSession() {
         built    = false;
-        dragging = false;
+        dragBank = DragBank.None;
         before   = MeshSnapshot.capture(*mesh);
     }
 
@@ -221,7 +243,7 @@ public:
         xfrm.deactivate();
         active   = false;
         built    = false;
-        dragging = false;
+        dragBank = DragBank.None;
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
@@ -237,6 +259,17 @@ public:
     }
 
     override void onParamChanged(string name) {
+        // HIDDEN test hook: writing a NON-default _dragPivot arms the one-shot
+        // headless pivot override (consumed by the next applyHeadless). It must
+        // NOT rebuild a preview (it is not a geometry param) and is a no-op in
+        // the panel (property_panel/args_dialog skip hidden params). Arming only
+        // on a non-zero value keeps a default write inert so the override can
+        // never be latched accidentally.
+        if (name == "_dragPivot") {
+            Vec3 p = dragPivotOverride_.value;
+            dragPivotOverride_.active = (p.x != 0 || p.y != 0 || p.z != 0);
+            return;
+        }
         // Interactive Tool Properties edit → rebuild the live preview from the
         // clean cage. Headless `tool.attr ...; tool.doApply` leaves the mesh
         // untouched (applyHeadless owns the single apply), matching the extrude
@@ -268,21 +301,48 @@ public:
         }
         if (mesh.edges.length == 0) return false;
         auto mask = currentMask();
+        // Headless pivot policy. The headless `tool.attr ...; tool.doApply` path
+        // uses the world ORIGIN by default — the SAME pivot the one-shot
+        // mesh.edge_extend command uses — so the headless tool path and the command
+        // path stay byte-identical (the 4a command-parity test pins this; the ACEN
+        // sel-center would diverge even on an origin cube because an edge's ACEN is
+        // its centroid, not the origin). The sel-center R/S pivot is an
+        // INTERACTIVE-drag property (frozenPivot, captured at drag-start, fed via
+        // livePivot() into rebuildPreview) reached through the gizmo bank drain,
+        // NOT this attr path. The HIDDEN test-automation param `_dragPivot` (set via
+        // tool.attr) pins that drag pivot for ONE doApply so a parity test can
+        // reproduce the captured off-origin R/S numbers — which depend on the
+        // sel-center pivot — without a synthesized viewport drag.
+        Vec3 pivot = dragPivotOverride_.active
+                   ? dragPivotOverride_.value : Vec3(0, 0, 0);
+        dragPivotOverride_.active = false;   // one-shot: never leak into a later apply
         size_t n = mesh.extendEdgesByMask(mask, inset_, shift_,
                                           offsetVec(), rotateVec(), scaleVec(),
-                                          segments_);
+                                          segments_, pivot);
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
     }
 
     // -----------------------------------------------------------------------
-    // Interactive drag — driven by the embedded Move bank (§4.1 option (b)).
+    // Interactive drag — driven by the three embedded gizmo banks (§4.1/§4.2/
+    // §4.3, option (b)). The host forwards the down/motion/up events to whichever
+    // bank the shared ToolHandles arbiter selected and drains that bank's pending
+    // gesture scalar into the matching Extend op param, then re-runs the kernel.
     //
-    // LMB-down: forward to the Move sub-tool's hit-test. On an arrow/plane
-    // handle (dragAxis>=0) begin the drag directly; on a miss begin a haul via
-    // the Move bank's screen-plane drag (dragAxis==3). Either way the gesture
-    // feeds the same `offset` param.
+    // Bank selection mirrors XfrmTransformTool.onMouseButtonDown: try Move, then
+    // Rotate, then Scale; the first bank whose hit-test grabs a REAL handle
+    // (dragAxis>=0) owns the drag. The banks' screen radii are disjoint (move
+    // arrows vs rotate rings vs scale handles) so in practice exactly one grabs.
+    // On a total miss, the Move bank begins a HAUL (screen-plane Offset drag),
+    // matching 4a.
+    //   - Move   → Offset (world-axis, pivot-agnostic; haul + on-arrow share it).
+    //   - Rotate → rotateDeg component (principal ring axis → X/Y/Z), about the
+    //              FROZEN sel-center pivot.
+    //   - Scale  → scale component (handle axis → X/Y/Z), about the FROZEN pivot.
+    // R/S are absolute-since-drag-start (the sub-tools publish the accumulated
+    // factor/angle), so the host SETS the component (not +=); Move accumulates a
+    // world delta. The frozen pivot is captured at drag-start for ALL banks.
     // -----------------------------------------------------------------------
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
@@ -297,20 +357,50 @@ public:
         if (*editMode != EditMode.Edges) return false;
         if (mesh.edges.length == 0) return false;
 
-        MoveTool mv = xfrm.moveBank();
-        bool onHandle = mv.onMouseButtonDown(e, vts);   // sets dragAxis on a hit
-        if (!onHandle) {
-            // Off-handle: begin a HAUL — the Move bank's screen-plane drag,
-            // anchored at the gizmo center, accumulating into world-axis Offset
-            // via the SAME work-plane projection MoveTool uses for free-move.
+        MoveTool   mv = xfrm.moveBank();
+        RotateTool rt = xfrm.rotateBank();
+        ScaleTool  sc = xfrm.scaleBank();
+
+        // Bank dispatch — same try-in-order priority the wrapper uses (T→R→S).
+        // A bank "owns" the drag only when it consumed the click AND landed on a
+        // real handle (dragAxis>=0); a click-relocate (dragAxis<0) does not start
+        // a host drag. Rotate/Scale onMouseButtonDown return true even on a
+        // relocate-miss, so gate on dragAxis, not the bool.
+        //
+        // NOTE the chain does NOT short-circuit on first-consumed (unlike the
+        // wrapper): Rotate/Scale CONSUME a relocate-miss, so stopping there would
+        // swallow the total-miss click before it can become a haul. On a total
+        // miss all three banks' onMouseButtonDown run, so their click-side
+        // effects (screen-falloff disc recenter, Move/Rotate ACEN click-relocate)
+        // fire more than once — but all are IDEMPOTENT at the same click point
+        // (same e.x,e.y → same projected ACEN, same disc center), so the observed
+        // result is unchanged. Revisit if a bank's miss-handler ever gains
+        // non-idempotent state; once a bank OWNS (dragAxis>=0) the `else if`
+        // short-circuits and later banks never run.
+        DragBank picked = DragBank.None;
+        if (mv.onMouseButtonDown(e, vts) && mv.dragAxisPublic() >= 0) {
+            picked = DragBank.Move;
+        } else if (rt.onMouseButtonDown(e, vts)
+                   && rt.dragAxisPublic() >= 0 && rt.dragAxisPublic() <= 2) {
+            // Principal rings only (0/1/2 → X/Y/Z Euler component). The view-ring
+            // (3) maps to no single rotateDeg component; defer it (the command's
+            // rotateDeg has no arbitrary-axis slot). Leave it unowned.
+            picked = DragBank.Rotate;
+        } else if (sc.onMouseButtonDown(e, vts) && sc.dragAxisPublic() >= 0) {
+            picked = DragBank.Scale;
+        } else {
+            // Total miss across every bank → HAUL via the Move bank's screen-plane
+            // drag (world-axis Offset), anchored at the gizmo center.
             bool ctrl = (mods & KMOD_CTRL) != 0;
             mv.beginScreenPlaneDragAt(e.x, e.y, xfrm.moveGizmoCenter(),
                                       ctrl, /*notifyAcen=*/false, vts);
+            picked = DragBank.Move;
         }
-        // Begin the host-owned drag. Freeze the kernel-fed pivot at drag-start
-        // (§4.4) — inert for pure Offset (Offset is pivot-agnostic), but the seam
-        // R/S needs in 4b. Snapshot the per-drag base offset.
-        dragging       = true;
+
+        // Begin the host-owned drag. Freeze the kernel-fed pivot for ALL banks
+        // (§4.4): R/S conjugate about it; Offset is pivot-agnostic so it is inert
+        // for a pure Move drag but harmless to freeze.
+        dragBank       = picked;
         dragBaseOffset = offsetVec();
         frozenPivot    = xfrm.actionCenter(vts);
         accumLocal_    = Vec3(0, 0, 0);   // fresh basis-local accumulator per drag
@@ -318,18 +408,23 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (!active || !dragging) return false;
+        if (!active || dragBank == DragBank.None) return false;
+        final switch (dragBank) {
+            case DragBank.None: return false;   // unreachable (guarded above)
+            case DragBank.Move:   return motionMove(e, vts);
+            case DragBank.Rotate: return motionRotate(e, vts);
+            case DragBank.Scale:  return motionScale(e, vts);
+        }
+    }
+
+    private bool motionMove(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         MoveTool mv = xfrm.moveBank();
         bool consumed = mv.onMouseMotion(e, vts);   // writes pendingTranslateDelta
         if (!consumed) return true;
-        // Drain the Move bank's basis-local scalar into the wrapper's running
-        // headlessTranslate so moveWorldDeltaSinceDragStart() reflects the full
-        // drag. (We drain via the wrapper accessor: read the per-event scalar
-        // here, fold it into the wrapper's accumulator, then zero it — matching
-        // how the wrapper itself drains in onMouseMotion.)
+        // Drain the Move bank's basis-local scalar, project through the move
+        // handler axes, accumulate, and fold into `offset` (ABSOLUTE delta since
+        // drag start). Offset is world-axis → identical to the command path.
         Vec3 worldDelta = drainMoveWorldDelta();
-        // offset = base + accumulated world delta since drag start. (worldDelta
-        // here is the ABSOLUTE accumulated delta, not the per-event step.)
         offsetX_ = dragBaseOffset.x + worldDelta.x;
         offsetY_ = dragBaseOffset.y + worldDelta.y;
         offsetZ_ = dragBaseOffset.z + worldDelta.z;
@@ -337,11 +432,71 @@ public:
         return true;
     }
 
+    private bool motionRotate(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        RotateTool rt = xfrm.rotateBank();
+        bool consumed = rt.onMouseMotion(e, vts);   // publishes pendingRotate*
+        if (!consumed) return true;
+        // Drain the absolute accumulated ring angle (radians, since drag start).
+        // Principal ring 0/1/2 → the matching rotateDeg X/Y/Z component. Like the
+        // wrapper (xfrm_transform.d ~777): only the dragged axis is SET (absolute,
+        // not accumulated) — the ring publishes its total angle every motion, and
+        // the other two components stay at whatever the panel/numeric path holds.
+        int   ax  = rt.pendingRotateAxis;
+        float ang = rt.pendingRotateAngle;
+        rt.pendingRotateAxis = -1;   // zero after draining (wrapper precedent)
+        if (ax >= 0 && ax <= 2) {
+            import std.math : PI;
+            float deg = ang * 180.0f / cast(float)PI;
+            // Single-axis-per-drag, matching the wrapper (xfrm_transform.d
+            // ~777 zeroes the whole Euler then sets the dragged axis). Only the
+            // sel-center INTERACTIVE single-axis rotation is reference-captured;
+            // letting a prior axis (a numeric edit, or a previous ring drag in
+            // this session) survive would silently feed the kernel the
+            // multi-axis Rx→Ry→Rz regime about the sel-center pivot, which is
+            // uncaptured. Zero the other two so every ring drag stays in the
+            // validated single-axis law. (The command/numeric path keeps its
+            // own multi-axis behaviour — that one is parity-tested at world
+            // origin, rot_multiaxis.)
+            rotateX_ = rotateY_ = rotateZ_ = 0.0f;
+            if      (ax == 0) rotateX_ = deg;
+            else if (ax == 1) rotateY_ = deg;
+            else              rotateZ_ = deg;
+            rebuildPreview();   // re-run about frozenPivot (livePivot())
+        }
+        return true;
+    }
+
+    private bool motionScale(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        ScaleTool sc = xfrm.scaleBank();
+        bool consumed = sc.onMouseMotion(e, vts);   // publishes pendingScale*
+        if (!consumed) return true;
+        // Drain the absolute within-drag per-axis factor (since drag start). Every
+        // scale gizmo mode (single-axis arrow, uniform disc, plane circle) reports
+        // a full Vec3 of factors, so — mirroring the wrapper (xfrm_transform.d
+        // ~828) — the host SETS `scale` to the published Vec3 (absolute, not
+        // multiplied): the final `scale` param equals what the gizmo shows.
+        if (sc.pendingScaleValid) {
+            sc.pendingScaleValid = false;
+            Vec3 f = sc.pendingScale;
+            scaleX_ = f.x;
+            scaleY_ = f.y;
+            scaleZ_ = f.z;
+            rebuildPreview();   // re-run about frozenPivot (livePivot())
+        }
+        return true;
+    }
+
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || !dragging) return false;
+        if (!active || dragBank == DragBank.None) return false;
         if (e.button != SDL_BUTTON_LEFT) return false;
-        xfrm.moveBank().onMouseButtonUp(e, vts);   // clears the sub-tool dragAxis
-        dragging = false;
+        // Forward LMB-up to the bank that owned the drag so it clears its dragAxis.
+        final switch (dragBank) {
+            case DragBank.None:   break;
+            case DragBank.Move:   xfrm.moveBank().onMouseButtonUp(e, vts);   break;
+            case DragBank.Rotate: xfrm.rotateBank().onMouseButtonUp(e, vts); break;
+            case DragBank.Scale:  xfrm.scaleBank().onMouseButtonUp(e, vts);  break;
+        }
+        dragBank = DragBank.None;
         return true;
     }
 
@@ -359,12 +514,14 @@ private:
     Vec3 rotateVec() const { return Vec3(rotateX_, rotateY_, rotateZ_); }
     Vec3 scaleVec()  const { return Vec3(scaleX_,  scaleY_,  scaleZ_); }
 
-    // Pivot fed to the kernel for the live preview. 4a drives Offset only, which
-    // is pivot-agnostic, so this is inert (origin == frozenPivot gives identical
-    // output for translate). The seam is wired now: 4b's R/S drag conjugates R/S
-    // about frozenPivot (the ACEN center frozen at drag start).
+    // Pivot fed to the kernel for the live preview. During a drag (any bank) the
+    // R/S factors conjugate about `frozenPivot` (the ACEN sel-center frozen at
+    // drag-start); Offset is pivot-agnostic so a pure Move drag is unaffected.
+    // Outside a drag (numeric param edits via the panel/onParamChanged) the pivot
+    // is the world ORIGIN — matching the one-shot command path, which is the
+    // distinction the off-origin pivot test pins.
     Vec3 livePivot() const {
-        return dragging ? frozenPivot : Vec3(0, 0, 0);
+        return (dragBank != DragBank.None) ? frozenPivot : Vec3(0, 0, 0);
     }
 
     // Drain the per-event Move scalar the sub-tool just produced, fold it into a
@@ -467,7 +624,7 @@ private:
         before.restore(*mesh);
         refreshCaches();
         built       = false;
-        dragging    = false;
+        dragBank    = DragBank.None;
         accumLocal_ = Vec3(0, 0, 0);
     }
 }
