@@ -74,6 +74,8 @@ import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
+import commands.mesh.edge_extend : MeshEdgeExtend;
+import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
@@ -839,6 +841,13 @@ void main(string[] args) {
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
     auto edgeExtrudeEditFactory = () => new MeshEdgeExtrudeEdit(&mesh, cameraView, editMode,
                                                      &gpu, &vertexCache, &edgeCache, &faceCache);
+    // Edge Extend's typed edit factory (Phase 4 interactive tool consumer). The
+    // one-shot mesh.edge_extend command undoes via its own MeshSnapshot; this
+    // factory exists now so the Phase-4 EdgeExtendTool can bind it, mirroring
+    // edgeExtrudeEditFactory.
+    auto edgeExtendEditFactory = () => new MeshEdgeExtendEdit(&mesh, cameraView, editMode,
+                                                     &gpu, &vertexCache, &edgeCache, &faceCache);
+    cast(void) edgeExtendEditFactory;   // no tool consumer until Phase 4
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
@@ -1169,6 +1178,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.edge_extrude"] = () => cast(Command)
         new MeshEdgeExtrude(&mesh, cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
+        new MeshEdgeExtend(&mesh, cameraView, editMode, &gpu,
+                           &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.move_vertex"] = () => cast(Command)
         new MeshMoveVertex(&mesh, cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
