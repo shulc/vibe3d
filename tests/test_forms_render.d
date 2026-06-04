@@ -65,6 +65,31 @@ void resetCube() {
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
 }
 
+void selectVerts(int[] idx) {
+    string s = "[";
+    foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
+    s ~= "]";
+    auto r = postJson("/api/select", `{"mode":"vertices","indices":` ~ s ~ `}`);
+    assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
+}
+
+double[3] vertexAt(int idx) {
+    auto v = getJson("/api/model")["vertices"].array[idx].array;
+    return [v[0].floating, v[1].floating, v[2].floating];
+}
+
+void assertVertex(int idx, double x, double y, double z, string label) {
+    auto v = vertexAt(idx);
+    assert(approxEqual(v[0], x) && approxEqual(v[1], y) && approxEqual(v[2], z),
+        label ~ ": v" ~ idx.to!string ~ " expected (" ~ x.to!string ~ ","
+        ~ y.to!string ~ "," ~ z.to!string ~ "), got (" ~ v[0].to!string ~ ","
+        ~ v[1].to!string ~ "," ~ v[2].to!string ~ ")");
+}
+
+long undoCount() {
+    return getJson("/api/history")["undo"].array.length;
+}
+
 // Reproduce a FormsPanel control-row write end-to-end: parse the row's `control`
 // binding, substitute the edited value into the `?` slot exactly as the renderer
 // does, parse the resulting argstring, and dispatch it via /api/command.
@@ -163,4 +188,57 @@ unittest {
         "non-interactive forms write records no undo entry: before="
         ~ undoBefore.to!string ~ " after=" ~ undoAfter.to!string);
     cmd("tool.set prim.sphere off");
+}
+
+// ---------------------------------------------------------------------------
+// 6. Phase 5 end-to-end — the SHIPPED transform form's Position-X (TX) control
+//    line, built by the renderer's OWN substituteQuery, drives the reEvaluate()
+//    seam on a live transform session: absolute apply (no accumulation) +
+//    exactly ONE coalesced undo entry at drop.
+//
+//    This is the bridge between FormsPanel and the re-eval seam for the first
+//    adopter (xfrm.transform). The interactive latch FormsPanel raises is UI-only
+//    (no HTTP wire path), so — exactly as test_reevaluate does — we open the live
+//    session with the testMode `tool.beginSession` hook so hasLiveEval() is true
+//    and a dispatched `tool.attr` re-evaluates. The value-row write LINE is built
+//    here by the renderer's substituteQuery from the exact `control:` string the
+//    shipped transform.yaml uses, so this pins that the form's emitted line is the
+//    one the seam consumes (absolute, one entry). The latch itself is covered by
+//    the renderer code path; this asserts the contract it relies on.
+// ---------------------------------------------------------------------------
+unittest {
+    // The transform form binds TX to this control line (config/forms/transform.yaml,
+    // Position group). Build the write line via the renderer's own substituteQuery.
+    enum txControl = "tool.attr xfrm.transform TX ?";
+
+    resetCube();
+    selectVerts([6]);                 // v6 = (0.5, 0.5, 0.5)
+    cmd("tool.set xfrm.transform");
+
+    long undoBefore = undoCount();
+
+    // Open a live session (testMode hook) so the seam's hasLiveEval() branch fires
+    // for the form-dispatched tool.attr — the headless proxy for FormsPanel's
+    // interactive latch.
+    cmd("tool.beginSession");
+    assertVertex(6, 0.5, 0.5, 0.5, "beginSession opens session, moves nothing");
+
+    // First form write (absolute): v6.x -> 0.5 + 0.05.
+    formsWrite(txControl, JSONValue(0.05));
+    assertVertex(6, 0.55, 0.5, 0.5, "first form TX write lands at +0.05 (seam absolute)");
+
+    // Second form write: absolute, lands at +0.10 (NOT 0.15 — no accumulation).
+    formsWrite(txControl, JSONValue(0.10));
+    assertVertex(6, 0.60, 0.5, 0.5, "second form TX write is absolute (+0.10, not 0.15)");
+
+    // Drop the tool → the whole session coalesces to exactly ONE undo entry.
+    cmd("tool.set xfrm.transform off");
+    assert(undoCount() == undoBefore + 1,
+        "form value edits coalesce to ONE undo entry; before="
+        ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
+
+    // One undo restores the original geometry.
+    auto u = postJson("/api/undo", "");
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original");
 }
