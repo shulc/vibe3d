@@ -1394,6 +1394,51 @@ void main(string[] args) {
     // the cache covers every registered id.
     reg.cacheSupportedModes();
 
+    // Config-driven Tool Properties forms (config/forms/*.yaml). Loaded AFTER
+    // the pipeline (g_pipeCtx) AND every tool/command factory are in place so
+    // the startup-strict validator can resolve each binding against the live
+    // static universe: a tool's params() (via its registered factory — the same
+    // instantiation cacheSupportedModes just did), a pipe stage's knownAttrs()
+    // (off the live pipeline; there is no stage-factory map), and the command
+    // registry. A YAML typo (unknown attr / stage / tool / command) throws here
+    // and aborts startup, exactly like a stale tool preset does.
+    {
+        import forms : loadForms, validateForms, FormValidators, g_forms;
+        import toolpipe.pipeline : g_pipeCtx;
+        import std.file : dirEntries, SpanMode, exists;
+        import std.algorithm : sort;
+
+        FormValidators fv;
+        fv.toolAttrs = (string toolId) {
+            auto factory = toolId in reg.toolFactories;
+            if (factory is null) return null;
+            string[] names;
+            foreach (ref p; (*factory)().params())
+                names ~= p.name;
+            return names;
+        };
+        fv.stageAttrs = (string stageId) {
+            if (g_pipeCtx is null) return null;
+            auto stage = g_pipeCtx.pipeline.findById(stageId);
+            if (stage is null) return null;
+            return stage.knownAttrs();
+        };
+        fv.commandExists = (string cmdId) =>
+            (cmdId in reg.commandFactories) !is null;
+
+        if (exists("config/forms")) {
+            string[] files;
+            foreach (e; dirEntries("config/forms", "*.yaml", SpanMode.shallow))
+                files ~= e.name;
+            files.sort();   // deterministic load order across filesystems
+            foreach (path; files) {
+                auto loaded = loadForms(path);
+                validateForms(loaded, fv, path);
+                g_forms ~= loaded;
+            }
+        }
+    }
+
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
     ShortcutTable shortcuts         = loadShortcuts("config/shortcuts.yaml");

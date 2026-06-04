@@ -1,0 +1,54 @@
+# Tool Properties form for the transform tool family (xfrm.transform).
+#
+# Config-driven Tool Properties: each value control binds to a command line
+# carrying exactly one `?` placeholder — reading queries the command, writing
+# executes it with `?` substituted. Loaded at startup by source/forms.d
+# (loadForms) and strict-validated against the live tool / stage / command
+# universe (validateForms) — a misspelt attr or unknown command id fails loud
+# at boot.
+#
+# v1 scope (see doc/forms_engine_plan.md Phase 5): the T/R/S enable
+# checkboxes, the Position (TX/TY/TZ) value group, and an Action Center
+# choice row firing actr.* commands. The Rotate (RX/RY/RZ) and Scale
+# (SX/SY/SZ) value groups are deferred until the panel value-apply path
+# covers R/S; emitting them now would silently no-op.
+
+forms:
+  - id: transform.main
+    label: Transform
+    showLabel: false
+    whenTool: xfrm.transform
+    category: toolprops/main
+    ordinal: 150.45
+    rows:
+      # ---- T/R/S enable flags -> checkboxes (real bool attrs) ----
+      - { control: "tool.attr xfrm.transform T ?", label: Translate,
+          booleanStyle: checkbox }
+      - { control: "tool.attr xfrm.transform R ?", label: Rotate,
+          booleanStyle: checkbox }
+      - { control: "tool.attr xfrm.transform S ?", label: Scale,
+          booleanStyle: checkbox }
+
+      - { divider: true }
+
+      # ---- Position value group (TX/TY/TZ) ----
+      - group: Position
+        style: inline
+        rows:
+          - { control: "tool.attr xfrm.transform TX ?", label: X }
+          - { control: "tool.attr xfrm.transform TY ?", label: Y }
+          - { control: "tool.attr xfrm.transform TZ ?", label: Z }
+
+      - { divider: true }
+
+      # ---- Action Center: a choice row firing actr.* commands (no `?`) ----
+      - choice: "Action Center"
+        entries:
+          - { label: Auto,    cmd: "actr.auto" }
+          - { label: Select,  cmd: "actr.select" }
+          - { label: Element, cmd: "actr.element" }
+          - { label: Local,   cmd: "actr.local" }
+          - { label: Origin,  cmd: "actr.origin" }
+
+      # ---- shared falloff sub-form, assembled by id (future phase) ----
+      - { ref: toolprops.falloff }
