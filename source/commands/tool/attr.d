@@ -4,7 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
-import params : Param, injectParamsInto;
+import params : Param, injectParamsInto, paramToJson;
 import commands.tool.host : ToolHost;
 
 import std.json : JSONValue, JSONType;
@@ -33,11 +33,22 @@ class ToolAttrCommand : Command {
     // wire path to set it. That absence is the guarantee raw HTTP stays inert:
     // a fresh tool with interactive_==false stores the value and moves nothing.
     private bool      interactive_;
+    // Query (read-back) mode — forms-engine `?` idiom. When set, apply()
+    // RESOLVES attrName_ against the active tool's params() and boxes the live
+    // value into queryResult_ instead of writing anything. A query mutates
+    // nothing (no injectParamsInto / onParamChanged / evaluate / reEvaluate),
+    // so the command stays a pure read even though it remains
+    // CmdFlags.SideEffect. Set ONLY via setQuery() — like setInteractive() it
+    // has no argstring wiring; app.d flips it when the value positional is the
+    // literal "?" token.
+    private bool      query_;
+    private JSONValue queryResult_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
         super(mesh, view, editMode);
         this.toolHost  = host;
         this.attrValue_ = JSONValue(null);
+        this.queryResult_ = JSONValue(null);
     }
 
     override string name()  const { return "tool.attr"; }
@@ -52,6 +63,17 @@ class ToolAttrCommand : Command {
     // interactive panel/form so the FIRST edit OPENS a live session via
     // reEvaluate() (D4). Deliberately has no argstring wiring.
     void setInteractive(bool v)     { interactive_ = v; }
+    // Forms-engine query (read-back) mode. Programmatic-only; see query_ above.
+    void setQuery(bool v)           { query_ = v; }
+    bool isQuery() const            { return query_; }
+    // Boxed live value of the queried attr, valid after a query-mode apply().
+    JSONValue queryResult() const   { return queryResult_; }
+    // Serialised query result for the HTTP marshal (empty if not a query).
+    string queryResultJsonOrEmpty() const {
+        import std.json : JSONType;
+        if (!query_ || queryResult_.type == JSONType.null_) return "";
+        return queryResult_.toString();
+    }
 
     override bool apply() {
         if (toolId_.length == 0)
@@ -68,6 +90,24 @@ class ToolAttrCommand : Command {
         auto t = toolHost.getActiveTool();
         if (t is null)
             throw new Exception("tool.attr: no active tool");
+
+        // Query (read-back) mode: resolve attrName_ in the active tool's
+        // params() schema, box the live typed-pointer value, and return WITHOUT
+        // mutating. Crucially this never touches injectParamsInto /
+        // onParamChanged / evaluate / reEvaluate — a query is a pure read, so
+        // it moves no geometry and opens no live session (guarding the
+        // reEvaluate trigger path).
+        if (query_) {
+            foreach (ref p; t.params()) {
+                if (p.name == attrName_) {
+                    queryResult_ = paramToJson(p);
+                    return true;
+                }
+            }
+            throw new Exception(
+                "tool.attr: unknown attribute '" ~ attrName_ ~
+                "' on tool '" ~ toolId_ ~ "'");
+        }
 
         // Build a single-key object and inject it.
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
