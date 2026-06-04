@@ -440,6 +440,154 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// paramToJson — read the live typed-pointer value of a Param and box it as a
+// JSONValue. The dual of injectParamsInto's per-kind write: this is the READ
+// side used by the forms-engine query path (`tool.attr <id> <attr> ?`).
+//
+// Boxing convention (matches what injectParamsInto ACCEPTS on the write side so
+// a query→write round-trips):
+//   Bool      → JSON true/false
+//   Int       → JSON integer
+//   Float     → JSON float
+//   String    → JSON string
+//   Enum      → JSON string (the internal tag stored in *sptr)
+//   Vec3_     → JSON array [x, y, z]
+//   IntEnum   → JSON string (the wireTag of the matching entry; falls back to
+//               the raw integer if no entry matches the live value)
+//   IntArray  → JSON array of integers
+//   Vec3Array → JSON array of [x, y, z] arrays
+//
+// Pure (no allocation beyond the returned JSONValue); never mutates the Param.
+// ---------------------------------------------------------------------------
+
+JSONValue paramToJson(const ref Param p)
+{
+    final switch (p.kind) {
+        case Param.Kind.Bool:
+            return JSONValue(*p.bptr);
+        case Param.Kind.Int:
+            return JSONValue(*p.iptr);
+        case Param.Kind.Float:
+            return JSONValue(cast(double)*p.fptr);
+        case Param.Kind.String:
+            return JSONValue(*p.sptr);
+        case Param.Kind.Enum:
+            return JSONValue(*p.sptr);
+        case Param.Kind.Vec3_: {
+            JSONValue[] a = [
+                JSONValue(cast(double)p.vptr.x),
+                JSONValue(cast(double)p.vptr.y),
+                JSONValue(cast(double)p.vptr.z),
+            ];
+            return JSONValue(a);
+        }
+        case Param.Kind.IntEnum: {
+            foreach (ref e; p.intEnumValues)
+                if (e.value == *p.iePtr)
+                    return JSONValue(e.wireTag);
+            return JSONValue(*p.iePtr);   // unmatched: raw int fallback
+        }
+        case Param.Kind.IntArray: {
+            JSONValue[] a;
+            a.length = (*p.uiaPtr).length;
+            foreach (i, v; *p.uiaPtr) a[i] = JSONValue(cast(int)v);
+            return JSONValue(a);
+        }
+        case Param.Kind.Vec3Array: {
+            JSONValue[] a;
+            a.length = (*p.v3aPtr).length;
+            foreach (i, ref v; *p.v3aPtr)
+                a[i] = JSONValue([
+                    JSONValue(cast(double)v.x),
+                    JSONValue(cast(double)v.y),
+                    JSONValue(cast(double)v.z),
+                ]);
+            return JSONValue(a);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// choicesOf — return the [internalTag, userLabel] choice list of an Enum /
+// IntEnum Param so the forms renderer can build a combo. Empty for every
+// other kind. Additive; used by the forms-engine popup sourcing.
+// ---------------------------------------------------------------------------
+
+string[2][] choicesOf(const ref Param p)
+{
+    final switch (p.kind) {
+        case Param.Kind.Enum:
+            return p.enumValues.dup;
+        case Param.Kind.IntEnum: {
+            string[2][] r;
+            r.length = p.intEnumValues.length;
+            foreach (i, ref e; p.intEnumValues)
+                r[i] = [e.wireTag, e.userLabel];
+            return r;
+        }
+        case Param.Kind.Bool:
+        case Param.Kind.Int:
+        case Param.Kind.Float:
+        case Param.Kind.String:
+        case Param.Kind.Vec3_:
+        case Param.Kind.IntArray:
+        case Param.Kind.Vec3Array:
+            return [];
+    }
+}
+
+unittest {
+    // paramToJson round-trips each scalar kind through injectParamsInto.
+    import std.math : fabs;
+
+    bool b = true;
+    auto pb = Param.bool_("flag", "F", &b, false);
+    assert(paramToJson(pb).type == JSONType.true_);
+
+    int i = 7;
+    auto pi = Param.int_("segs", "S", &i, 0);
+    assert(paramToJson(pi).integer == 7);
+
+    float f = 1.5f;
+    auto pf = Param.float_("w", "W", &f, 0.0f);
+    assert(fabs(paramToJson(pf).floating - 1.5) < 1e-6);
+
+    string s = "hi";
+    auto ps = Param.string_("lbl", "L", &s, "");
+    assert(paramToJson(ps).str == "hi");
+
+    string mode = "width";
+    auto pe = Param.enum_("mode", "M", &mode,
+                          [["offset","Offset"],["width","Width"]], "offset");
+    assert(paramToJson(pe).str == "width");
+    auto ch = choicesOf(pe);
+    assert(ch.length == 2 && ch[1][0] == "width" && ch[1][1] == "Width");
+
+    Vec3 v = Vec3(1, 2, 3);
+    auto pv = Param.vec3_("c", "C", &v, Vec3(0, 0, 0));
+    auto jv = paramToJson(pv);
+    assert(jv.type == JSONType.array && jv.array.length == 3);
+    assert(fabs(jv.array[0].floating - 1) < 1e-6);
+    assert(fabs(jv.array[2].floating - 3) < 1e-6);
+
+    int ie = 1;
+    auto pie = Param.intEnum_("k", "K", &ie,
+        [IntEnumEntry(0, "off", "Off"), IntEnumEntry(1, "width", "Width")], 0);
+    assert(paramToJson(pie).str == "width");
+    auto iech = choicesOf(pie);
+    assert(iech.length == 2 && iech[0][0] == "off" && iech[0][1] == "Off");
+
+    // Round-trip: box then inject into a fresh field.
+    float f2 = 0.0f;
+    auto pf2 = Param.float_("w", "W", &f2, 0.0f);
+    JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+    pj["w"] = paramToJson(pf);   // box live 1.5
+    auto arr = [pf2];
+    injectParamsInto(arr, pj);
+    assert(fabs(f2 - 1.5) < 1e-6);
+}
+
+// ---------------------------------------------------------------------------
 // injectParamsInto — generic JSON → Param[] injector.
 //
 // For each Param in `params`:
