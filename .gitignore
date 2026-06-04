@@ -35,6 +35,10 @@ vibe3d-windows-render/
 vibe3d-linux-render/
 vibe3d-macos-render/
 
+# Per-test wall-clock timing cache used by run_test.d's LPT scheduler.
+# Machine-specific (durations depend on the host), so not published.
+.test_timings.json
+
 # perf harness generated output (results.json is a transient per-run dump;
 # baseline.json is committed as the reference — see tools/perf/README.md)
 tools/perf/results.json
