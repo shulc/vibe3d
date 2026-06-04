@@ -34,8 +34,13 @@ import std.string : format;
 import std.conv : to;
 import core.thread : Thread;
 import core.time : msecs;
+import std.math : fabs;
 
 void main() {}
+
+bool approxEqual(double a, double b, double eps = 1e-4) {
+    return fabs(a - b) < eps;
+}
 
 // --- SDL constants (standard values; bindbc-sdl mirrors libSDL2) -----------
 enum int SDLK_z       = 122;       // 'z'
@@ -85,6 +90,27 @@ void playKey(int sym, int mod) {
 size_t undoLen() { return getJson("/api/history")["undo"].array.length; }
 size_t redoLen() { return getJson("/api/history")["redo"].array.length; }
 long   vertCount() { return getJson("/api/model")["vertexCount"].integer; }
+
+// Run an argstring command through /api/command and assert ok. Used by the
+// live-edit-cancel test (§5), which drives the testMode session hooks.
+void cmd(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok" || r["status"].str == "success",
+        "/api/command '" ~ line ~ "' failed: " ~ r.toString);
+}
+
+double vertX(int idx) {
+    return getJson("/api/model")["vertices"].array[idx].array[0].floating;
+}
+
+// Read back a live tool attr via the forms-engine `?` query idiom. The handler
+// boxes the live value under "value" in the /api/command response.
+double attrValue(string toolId, string name) {
+    auto r = postJson("/api/command", "tool.attr " ~ toolId ~ " " ~ name ~ " ?");
+    assert(r["status"].str == "ok",
+        "tool.attr query failed: " ~ r.toString);
+    return r["value"].floating;
+}
 
 // ---------------------------------------------------------------------------
 // 1. Keyboard Ctrl+Z routes through navHistory -> history.undo() when no tool
@@ -303,4 +329,73 @@ unittest {
     assert(vertCount() == extrudedVerts, "redo did not re-apply the extrude");
 
     postJson("/api/command", "tool.set xfrm.smooth off");
+}
+
+// ---------------------------------------------------------------------------
+// 5. (forms-panel consistency) In-session keyboard Ctrl+Z on a live transform
+//    edit must restore BOTH the geometry AND the tool's Tool-Properties attrs.
+//
+//    This closes the §2 follow-up: an open transform session, an in-session
+//    Ctrl+Z, assert the live edit is cancelled. The testMode session hooks
+//    (tool.beginSession / live tool.attr) — which did not exist at P0 — let us
+//    open the session over HTTP without a frozen gizmo log.
+//
+//    The bug: cancelUncommittedEdit() restored the vertices (from the session
+//    baseline) but left headlessTranslate at its edited value. The config form
+//    / legacy sliders read the live &headlessTranslate.x pointer (params() ->
+//    TX/TY/TZ) every frame, so the Position fields kept the stale number while
+//    the geometry snapped back — gizmo, mesh, and panel out of sync.
+//
+//    Fix: beginEdit() snapshots the headless TRS attrs on the closed->open
+//    transition; cancelUncommittedEdit() restores them with the vertices. We
+//    assert the attr read-back (tool.attr move TX ?) returns the session-start
+//    value 0, not the edited 0.2.
+// ---------------------------------------------------------------------------
+unittest {
+    postJson("/api/reset", "");
+    postJson("/api/command", "history.clear");
+
+    // Select a single corner vertex so the move has an unambiguous observable.
+    // v6 = (0.5, 0.5, 0.5) on the fresh cube.
+    int v6 = -1;
+    auto m = getJson("/api/model");
+    foreach (i, vv; m["vertices"].array) {
+        auto a = vv.array;
+        if (a[0].floating > 0.49 && a[1].floating > 0.49 && a[2].floating > 0.49) {
+            v6 = cast(int)i; break;
+        }
+    }
+    assert(v6 >= 0, "cube +++ corner not found");
+    postJson("/api/select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`);
+
+    cmd("tool.set move");
+
+    // Session-start state: attr TX is 0, geometry pristine.
+    assert(approxEqual(attrValue("move", "TX"), 0.0), "TX should start at 0");
+    double x0 = vertX(v6);
+
+    // Open a live session and drive an ABSOLUTE attr write (the same path a
+    // form-field edit takes). Geometry moves and TX now reads 0.2.
+    cmd("tool.beginSession");
+    cmd("tool.attr move TX 0.2");
+    assert(vertX(v6) > x0 + 0.19, "live attr write did not move geometry");
+    assert(approxEqual(attrValue("move", "TX"), 0.2), "TX should read the edited 0.2");
+
+    size_t undoBefore = undoLen();
+
+    // In-session keyboard Ctrl+Z -> navHistory(true) -> hasUncommittedEdit()
+    // (true) -> cancelUncommittedEdit(): the FIRST Ctrl+Z cancels the live edit
+    // (no history pop). Geometry AND the attr must both snap back.
+    playKey(SDLK_z, KMOD_LCTRL);
+
+    assert(undoLen() == undoBefore,
+        "in-session Ctrl+Z must NOT pop history (cancels the live edit instead); "
+        ~ "before=" ~ undoBefore.to!string ~ " after=" ~ undoLen().to!string);
+    assert(approxEqual(vertX(v6), x0),
+        "in-session Ctrl+Z did not restore the geometry");
+    assert(approxEqual(attrValue("move", "TX"), 0.0),
+        "in-session Ctrl+Z restored geometry but left TX stale; expected 0, got "
+        ~ attrValue("move", "TX").to!string);
+
+    postJson("/api/command", "tool.set move off");
 }
