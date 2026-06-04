@@ -59,7 +59,7 @@ import std.getopt;
 import core.stdc.stdlib : exit;
 
 // Machine-aware default worker count, mirroring run_test.d's defaultJobs():
-// clamp(totalCPUs/4, 4, 12). Each worker boots its own vibe3d / MODO, so we
+// clamp(totalCPUs/4, 4, 12). Each worker boots its own engine instance, so we
 // scale with the host without going 1:1 with cores. CI pins -j 4 explicitly.
 int defaultJobs() { return clamp(cast(int)totalCPUs / 4, 4, 12); }
 
