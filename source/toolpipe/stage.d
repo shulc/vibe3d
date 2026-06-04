@@ -117,6 +117,26 @@ abstract class Stage : ParamProvider {
     bool    paramEnabled(string name) const { return true; }
     void    onParamChanged(string name)      {}
 
+    /// Full STATIC universe of attribute names this stage can accept via
+    /// setAttr / tool.pipe.attr — used by the forms-engine startup-strict
+    /// validator (`source/forms.d`) to reject a YAML typo against the union
+    /// of everything a stage can EVER expose, not the currently-filtered
+    /// `params()` list.
+    ///
+    /// Default: derive from the live `params()` names. That suffices for a
+    /// stage whose `params()` is a stable, type-independent list. A stage
+    /// whose `params()` is filtered by an active mode (so it under-reports
+    /// its full attr set) — and/or whose `setAttr` is a non-enumerable
+    /// switch — MUST override this to return its authoritative full list.
+    /// See FalloffStage.knownAttrs(): its params() is filtered per active
+    /// falloff type, so the default would reject valid cross-type attrs.
+    string[] knownAttrs() {
+        string[] names;
+        foreach (ref p; params())
+            names ~= p.name;
+        return names;
+    }
+
     /// Header label for the stage's section in Tool Properties. Default
     /// = `id()` (wire key, e.g. "falloff"); concrete stages override
     /// for richer dynamic labels (e.g. "Linear Falloff" with the
