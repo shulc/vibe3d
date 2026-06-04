@@ -500,10 +500,20 @@ void main(string[] args) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
     int winW = cliWinW, winH = cliWinH;
+    // In --test mode create the window HIDDEN. The GL context, ImGui rendering,
+    // ViewCache/picking (all projection-matrix driven) and recorded-event
+    // playback (mouse pos is overridden) are visibility-independent, so nothing
+    // the tests exercise needs a mapped window. Keeping it hidden takes the
+    // instance off the compositor entirely: under -j8 the test runner spins up
+    // 8 vsynced visible windows on one Wayland compositor, and the resulting
+    // Mesa/EGL/compositor lock contention occasionally parks one instance's
+    // main thread forever in SDL_GL_SwapWindow (HTTP thread alive, main loop
+    // dead ⇒ the worker hangs). HIDDEN + vsync-off (below) removes that.
+    auto visFlag = command.g_testMode ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
     SDL_Window* window = SDL_CreateWindow(
         "Vibe3d",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        SDL_WINDOW_OPENGL | visFlag | SDL_WINDOW_RESIZABLE
     );
     if (!window) { writefln("SDL_CreateWindow: %s", SDL_GetError()); return; }
     scope(exit) SDL_DestroyWindow(window);
@@ -529,8 +539,10 @@ void main(string[] args) {
     SDL_GL_GetDrawableSize(window, &fbW, &fbH);
 
     // --perf disables vsync so the benchmark isn't capped at the display
-    // refresh rate; normal runs keep vsync on to avoid tearing.
-    SDL_GL_SetSwapInterval(perfMode ? 0 : 1);
+    // refresh rate; --test disables it too so a hidden test window never blocks
+    // in SwapWindow waiting on a compositor vblank it isn't even presenting to
+    // (the -j8 swap-park hang). Normal runs keep vsync on to avoid tearing.
+    SDL_GL_SetSwapInterval((perfMode || command.g_testMode) ? 0 : 1);
     glEnable(GL_DEPTH_TEST);
     glViewport(0, 0, fbW, fbH);
 
@@ -4948,5 +4960,13 @@ void main(string[] args) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
 
         SDL_GL_SwapWindow(window);
+
+        // --test runs with vsync off (hidden window, no compositor vblank to
+        // pace against), so the main loop would otherwise spin at uncapped FPS
+        // and burn a full core. Under -j8 that is 8 cores pinned on busy-render.
+        // A 4ms floor caps the test loop at ~250 FPS — far faster than any
+        // event-replay or HTTP poll needs, while leaving the CPU free for the
+        // sibling workers. --perf deliberately stays uncapped (it benchmarks).
+        if (testMode && !perfMode) SDL_Delay(4);
     }
 }
