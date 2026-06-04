@@ -2,7 +2,7 @@
 /* Unified test runner — fans out to every verification suite the
  * project has and prints a single summary at the end:
  *
- *   1. ./run_test.d -j N (--exclude flake'y)
+ *   1. ./run_test.d -j N (no default excludes — see flake note below)
  *   2. rdmd tools/local/blender_diff/run.d
  *   3. rdmd tools/local/modo_diff/run.d
  *   4. ./tools/local/modo_diff/run_acen_drag.py -j N
@@ -39,31 +39,35 @@
  *                 perf-abs is opt-in (n=316, ~5 min, absolute vs the
  *                 committed baseline) and runs ONLY via --only perf-abs.
  *
- * Excluded by default (pre-existing flakes that pass in isolation / at -j 1
- * but race under parallel workers). The e15e0bf race-free /api/model read fix
- * REDUCED but did not eliminate this family — across a 16-run -j 8 audit each
- * still tripped at least once, and rate climbs with host load (one run that
- * normally takes ~45s ran 144s and flaked two of them). They all pass 5/5 in
- * isolation. Kept excluded so a green run still means "no regressions":
- *   test_http_endpoint     — ~7/10 at -j 8. NOT the torn-read race: reads
- *                            /api/model expecting the pristine startup cube
- *                            but never calls /api/reset. A worker runs many
- *                            tests serially against one shared instance, so a
- *                            co-worker test that mutated the mesh leaves it
- *                            non-cube ("Expected 8 vertices for a cube", d:32).
- *                            Real fix is a one-line /api/reset in the test.
- *   test_selection         — ~1/16 at -j 8 ("expected 2 selected vertices,
- *                            got 0", d:28). Same shared-instance state bleed.
- *   test_property_panel_drag — ~1/16 at -j 8 ("undo of drag should restore v6
- *                            to (0.5,0.5,0.5); got (-1,0,1)", d:123).
- *   test_toolpipe_axis     — 0/16 in this audit but historically the same
- *                            family; left excluded as it shares the cause.
+ * Flake note (NO default exclusions as of the -j8 hardening pass). The
+ * historical -j8 flakes had two distinct root causes, both now fixed:
  *
- * Not excluded but seen flaking ~1/16 at -j 8 under load (pass in isolation):
- *   test_reevaluate ("v6 expected (1.5,0.5,0.5), got (0.5,0.5,0.5)", d:73),
- *   test_primitive_pen. Same cross-test shared-instance state-bleed shape.
+ *   (a) cross-test state bleed — a worker reuses ONE shared `vibe3d --test`
+ *       across its whole slice of tests, so a preceding test could leave the
+ *       mesh / selection / undo stack / a draining event-replay dirty for the
+ *       next one (test_http_endpoint "Expected 8 vertices for a cube",
+ *       test_selection "expected 2 ... got 0", test_property_panel_drag "got
+ *       (-1,0,1)"). FIXED by a runner-level reset between every test binary
+ *       (run_test.d resetBetweenTests) plus per-test reset preambles and a
+ *       post-play-events settle that lets the SDL queue drain before the read.
  *
- * Override via $RUN_ALL_EXCLUDE (comma-separated, replaces default).
+ *   (b) compositor swap-park — in --test the app used to create a VISIBLE
+ *       vsynced GL window; 8 of them on one compositor contended on
+ *       Mesa/EGL locks and ~1-in-6 runs parked a worker's main thread forever
+ *       in SDL_GL_SwapWindow. FIXED by creating the --test window HIDDEN with
+ *       vsync OFF (app.d), so a test instance never blocks on a vblank it
+ *       isn't presenting to. A 4ms per-frame floor keeps 8 uncapped workers
+ *       civil on CPU.
+ *
+ * Evidence for dropping the excludes: 10 consecutive full
+ * `./run_test.d --no-build -j 8` runs with NO excludes ran 10/10 green
+ * (129/129 each, 51-73s/run, zero hangs, zero failures) — including the four
+ * formerly-excluded tests (test_selection, test_toolpipe_axis,
+ * test_http_endpoint, test_property_panel_drag) and the two formerly-watched
+ * ones (test_reevaluate, test_primitive_pen).
+ *
+ * Override via $RUN_ALL_EXCLUDE (comma-separated) to re-quarantine a test if a
+ * new flake ever surfaces.
  */
 import std.algorithm : canFind, clamp;
 import std.array     : array, split;
@@ -143,8 +147,13 @@ int main(string[] args) {
         return 0;
     }
 
-    string excludeEnv = environment.get("RUN_ALL_EXCLUDE",
-        "test_selection,test_toolpipe_axis,test_http_endpoint,test_property_panel_drag");
+    // No default exclusions: the cross-test state-bleed flake family is fixed
+    // (between-test reset + per-test reset preambles + post-playback settle) and
+    // the -j8 compositor swap-park hang is gone (hidden window + vsync-off in
+    // --test). A 10× consecutive full `./run_test.d --no-build -j 8` matrix with
+    // NO excludes ran 10/10 green (129/129 each, 51-73s, zero hangs). Override
+    // via $RUN_ALL_EXCLUDE if a new flake ever needs quarantining.
+    string excludeEnv = environment.get("RUN_ALL_EXCLUDE", "");
     string[] excluded = excludeEnv.split(",");
 
     Suite[] suites;
