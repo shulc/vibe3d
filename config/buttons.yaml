@@ -14,9 +14,10 @@ panels:
           - { label: History, action: { kind: command, id: history.show } }
       - title: Transform
         buttons:
-          - { label: Move,   action: { kind: tool, id: move } }
-          - { label: Rotate, action: { kind: tool, id: rotate } }
-          - { label: Scale,  action: { kind: tool, id: scale } }
+          - { label: Move,      action: { kind: tool, id: move } }
+          - { label: Rotate,    action: { kind: tool, id: rotate } }
+          - { label: Scale,     action: { kind: tool, id: scale } }
+          - { label: Transform, action: { kind: tool, id: xfrm.transform } }
       - title: Create
         buttons:
           - label: Box

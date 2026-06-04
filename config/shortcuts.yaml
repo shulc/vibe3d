@@ -2,6 +2,7 @@ tools:
   move:   W
   rotate: E
   scale:  R
+  xfrm.transform: Y
   prim.cube: ""
 
 commands:
