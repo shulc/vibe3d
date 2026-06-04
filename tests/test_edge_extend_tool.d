@@ -64,6 +64,52 @@ void postSelect(string mode, int[] indices) {
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
+void postLoadMesh(string body) {
+    auto resp = post("http://localhost:8080/api/load-mesh", body);
+    assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
+}
+
+// Load a unit cube centred at (cx,0,0) using the SAME vertex order + face winding
+// as the built-in makeCube() (so face normals — and thus the inset perpendicular
+// drop — point the captured-number way). The off-origin centre proves the
+// interactive R/S pivot (sel-center) is distinct from the command pivot (origin).
+void loadCubeAt(double cx) {
+    string v(double x, double y, double z) {
+        return "[" ~ x.to!string ~ "," ~ y.to!string ~ "," ~ z.to!string ~ "]";
+    }
+    string verts =
+        "[" ~ v(cx-0.5,-0.5,-0.5) ~ "," ~ v(cx+0.5,-0.5,-0.5) ~ ","
+            ~ v(cx+0.5, 0.5,-0.5) ~ "," ~ v(cx-0.5, 0.5,-0.5) ~ ","
+            ~ v(cx-0.5,-0.5, 0.5) ~ "," ~ v(cx+0.5,-0.5, 0.5) ~ ","
+            ~ v(cx+0.5, 0.5, 0.5) ~ "," ~ v(cx-0.5, 0.5, 0.5) ~ "]";
+    // makeCube() winding: [0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4].
+    string faces =
+        "[[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[3,7,6,2],[0,1,5,4]]";
+    postLoadMesh(`{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`);
+}
+
+// Arm the hidden one-shot drag-pivot override on the active EdgeExtendTool, so the
+// next tool.doApply runs the kernel about `p` (the sel-center the interactive R/S
+// drag would freeze) instead of the world origin. JSON-array form (no argstring
+// vec quoting). Consumed by applyHeadless; clears itself after one apply.
+void setDragPivot(V3 p) {
+    auto body = `{"id":"tool.attr","params":{"_positional":["edge.extend","_dragPivot",`
+        ~ `[` ~ p.x.to!string ~ `,` ~ p.y.to!string ~ `,` ~ p.z.to!string ~ `]]}}`;
+    auto resp = post("http://localhost:8080/api/command", body);
+    assert(parseJSON(resp)["status"].str == "ok", "_dragPivot set failed: " ~ resp);
+}
+
+// Find the top-front edge (cx-0.5,.5,.5)-(cx+0.5,.5,.5) of a cube centred at cx
+// and select it (edge mode).
+void selectTopFrontAt(JSONValue m, double cx) {
+    int va = vertAt(m, V3(cx-0.5, 0.5, 0.5));
+    int vb = vertAt(m, V3(cx+0.5, 0.5, 0.5));
+    assert(va >= 0 && vb >= 0, "off-origin top-front endpoints not found");
+    int ei = edgeIndex(m, va, vb);
+    assert(ei >= 0, "off-origin top-front edge not found");
+    postSelect("edges", [ei]);
+}
+
 JSONValue postUndo()    { return parseJSON(post("http://localhost:8080/api/undo", "")); }
 JSONValue getModel()    { return parseJSON(get("http://localhost:8080/api/model")); }
 JSONValue getHistory()  { return parseJSON(get("http://localhost:8080/api/history")); }
@@ -268,4 +314,151 @@ unittest {
         "parity: edge counts differ");
     assert(sameVertexSet(cmdModel, toolModel) && sameVertexSet(toolModel, cmdModel),
         "parity: tool vertex positions differ from the command's");
+}
+
+// ===========================================================================
+// Phase 4b — interactive Rotate / Scale banks drive rotateDeg / scale about the
+// FROZEN selection-center pivot. A real viewport gizmo drag needs a camera +
+// screen projection out of scope for an HTTP test, so — exactly like the 4a
+// move-drag test above — these drive the SAME effect deterministically through
+// the headless path (tool.attr writes rotateZ/scaleX; the hidden `_dragPivot`
+// param arms the one-shot sel-center pivot the drag would freeze; tool.doApply
+// re-runs the kernel). The frozen numbers are captured reference values.
+// ===========================================================================
+
+// 6. Rotate-bank drag (off-origin cube): rotateZ≈55.4° about the sel-center
+//    (2,0.5,0.5) → the two new verts at the captured positions.
+unittest {
+    loadCubeAt(2.0);
+    auto m0 = getModel();
+    selectTopFrontAt(m0, 2.0);
+    cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend rotateZ 55.4");
+    setDragPivot(V3(2.0, 0.5, 0.5));   // sel-center the drag freezes
+    cmd("tool.doApply");
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 10, "rotate 4b: expected 10 verts");
+    // Captured ridge verts for rotZ=55.4°, inset=0.1, sel-center pivot.
+    assert(vertAt(m, V3( 2.18392,  0.81157, 0.4)) >= 0,
+        "rotate 4b: ridge vert (2.18392,0.81157,0.4) missing");
+    assert(vertAt(m, V3( 1.81608, -0.01157, 0.4)) >= 0,
+        "rotate 4b: ridge vert (1.81608,-0.01157,0.4) missing");
+    cmd("tool.set edge.extend off");
+}
+
+// 7. Scale-bank drag (off-origin cube): scaleX≈6.434 about the sel-center
+//    (2,0.5,0.5) → the two new verts at the captured positions.
+unittest {
+    loadCubeAt(2.0);
+    auto m0 = getModel();
+    selectTopFrontAt(m0, 2.0);
+    cmd("tool.set edge.extend on");
+    // sclX=6.43376 reproduces the captured ridge X = 1.9 + 0.5·s = 5.11688.
+    cmd("tool.attr edge.extend scaleX 6.43376");
+    setDragPivot(V3(2.0, 0.5, 0.5));
+    cmd("tool.doApply");
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 10, "scale 4b: expected 10 verts");
+    // Captured ridge verts for sclX≈6.434, inset=0.1, sel-center pivot.
+    assert(vertAt(m, V3( 5.11688, 0.4, 0.4)) >= 0,
+        "scale 4b: ridge vert (5.11688,0.4,0.4) missing");
+    assert(vertAt(m, V3(-1.11688, 0.4, 0.4)) >= 0,
+        "scale 4b: ridge vert (-1.11688,0.4,0.4) missing");
+    cmd("tool.set edge.extend off");
+}
+
+// 8. PIVOT DISTINCTION: the SAME rotateZ via the tool (sel-center pivot) vs via
+//    the one-shot mesh.edge_extend command (world origin) produce DIFFERENT
+//    geometry on an off-origin cube — proving the tool's interactive R/S pivots
+//    at the sel-center while the command pivots at the origin.
+unittest {
+    // Tool path (sel-center pivot (2,0.5,0.5)).
+    loadCubeAt(2.0);
+    auto mt0 = getModel();
+    selectTopFrontAt(mt0, 2.0);
+    cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend rotateZ 55.4");
+    setDragPivot(V3(2.0, 0.5, 0.5));
+    cmd("tool.doApply");
+    cmd("tool.set edge.extend off");
+    auto toolM = getModel();
+
+    // Command path (world-origin pivot), same selection + same rotateZ + inset.
+    loadCubeAt(2.0);
+    auto mc0 = getModel();
+    selectTopFrontAt(mc0, 2.0);
+    postCommand(`{"id":"mesh.edge_extend","params":{"inset":0.1,"rotateZ":55.4}}`);
+    auto cmdM = getModel();
+
+    // Same topology (10v/7f), DIFFERENT positions: the sel-center ridge verts
+    // (captured above) must be ABSENT from the origin-pivot command result.
+    assert(toolM["vertexCount"].integer == cmdM["vertexCount"].integer,
+        "pivot distinction: counts should still match (only positions differ)");
+    assert(vertAt(cmdM, V3(2.18392,  0.81157, 0.4)) < 0
+        && vertAt(cmdM, V3(1.81608, -0.01157, 0.4)) < 0,
+        "pivot distinction: command (origin pivot) produced the tool's sel-center "
+        ~ "ridge verts — the tool is NOT using the sel-center pivot");
+    assert(!sameVertexSet(toolM, cmdM),
+        "pivot distinction: tool (sel-center) and command (origin) geometry are "
+        ~ "identical — the pivot distinction collapsed");
+}
+
+// 9. segments>1 with a rotate drag: each ring rotates fractionally (k/N angle)
+//    about the FROZEN pivot. segs=2, rotZ=30 about the origin-cube sel-center
+//    (0,0.5,0.5) → ring 1 at 15°, ring 2 at 30°, both at the captured positions.
+unittest {
+    resetCube();
+    auto before = getModel();
+    selectCubeTopFront(before);
+    cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend segments 2");
+    cmd("tool.attr edge.extend rotateZ 30");
+    setDragPivot(V3(0.0, 0.5, 0.5));   // origin-cube top-front sel-center
+    cmd("tool.doApply");
+    auto m = getModel();
+    // 2 rings × 2 endpoints = 4 new verts + 8 cube = 12.
+    assert(m["vertexCount"].integer == 12, "seg2 rotate 4b: expected 12 verts, got "
+        ~ m["vertexCount"].integer.to!string);
+    // Ring 1 (k=1, 15° about (0,0.5,0.5)).
+    assert(vertAt(m, V3( 0.38296, 0.52941, 0.4)) >= 0,
+        "seg2 rotate: ring1 vert (0.38296,0.52941,0.4) missing");
+    assert(vertAt(m, V3(-0.38296, 0.27059, 0.4)) >= 0,
+        "seg2 rotate: ring1 vert (-0.38296,0.27059,0.4) missing");
+    // Ring 2 (k=2, full 30°).
+    assert(vertAt(m, V3( 0.33301, 0.65, 0.4)) >= 0,
+        "seg2 rotate: ring2 vert (0.33301,0.65,0.4) missing");
+    assert(vertAt(m, V3(-0.33301, 0.15, 0.4)) >= 0,
+        "seg2 rotate: ring2 vert (-0.33301,0.15,0.4) missing");
+    cmd("tool.set edge.extend off");
+}
+
+// 10. ONE undo entry per session for an R/S tool apply; undo restores the
+//     pre-activation mesh exactly (off-origin cube, rotate path).
+unittest {
+    loadCubeAt(2.0);
+    auto before = getModel();
+    selectTopFrontAt(before, 2.0);
+    cmd("history.clear");                 // drop the /api/select + load-mesh entries
+    cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend rotateZ 55.4");
+    setDragPivot(V3(2.0, 0.5, 0.5));
+    cmd("tool.doApply");
+    auto afterApply = getHistory();
+    assert(afterApply["undo"].array.length == 1,
+        "rotate 4b undo: expected ONE undo entry after doApply, got "
+        ~ afterApply["undo"].array.length.to!string);
+    cmd("tool.set edge.extend off");
+    auto afterOff = getHistory();
+    assert(afterOff["undo"].array.length == 1,
+        "rotate 4b undo: tool.set off double-committed");
+
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "rotate 4b undo failed: " ~ u.toString);
+    auto m = getModel();
+    assert(m["vertexCount"].integer == before["vertexCount"].integer,
+        "rotate 4b undo: verts not restored");
+    assert(m["faceCount"].integer == before["faceCount"].integer,
+        "rotate 4b undo: faces not restored");
+    assert(sameVertexSet(before, m) && sameVertexSet(m, before),
+        "rotate 4b undo: positions differ from pre-activation mesh");
 }

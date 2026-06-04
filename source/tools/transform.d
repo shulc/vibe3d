@@ -23,6 +23,15 @@ public:
     // Reset to identity when not in a whole-mesh drag.
     float[16] gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
+    // Public read of the protected `dragAxis` (0/1/2/… = a grabbed gizmo handle,
+    // -1 = none/relocate). A host tool that EMBEDS the gizmo banks (EdgeExtendTool,
+    // doc/edge_extend_plan.md §4) but does NOT derive from TransformTool needs to
+    // know whether a forwarded onMouseButtonDown landed on a REAL handle (so it can
+    // mirror the wrapper's try-Move-then-Rotate-then-Scale bank dispatch). The
+    // value is the bank's own drag-axis convention (varies per tool); the host only
+    // checks >= 0 (and the principal-ring 0..2 range for Rotate).
+    final int dragAxisPublic() const { return dragAxis; }
+
 protected:
     bool          active;
 
