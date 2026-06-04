@@ -149,6 +149,18 @@ public:
     Vec3 headlessRotate    = Vec3(0, 0, 0);
     Vec3 headlessScale     = Vec3(1, 1, 1);
 
+    // Attr-state baseline captured at session OPEN (the closed->open
+    // transition in beginEdit() below). cancelUncommittedEdit() restores these
+    // alongside the vertices so the Tool-Properties values the panel/form read
+    // (TX/TY/TZ etc. via params(), :361) snap back to their session-start state
+    // on an in-session Ctrl+Z — without this the geometry reverts but the
+    // numeric fields keep the stale edited values. Only meaningful while a
+    // wrapper edit session is open; resetTransientState() zeroes the live attrs
+    // on activate / resyncSession, so the commit (tool-drop) path is unaffected.
+    private Vec3 attrBaseTranslate = Vec3(0, 0, 0);
+    private Vec3 attrBaseRotate    = Vec3(0, 0, 0);
+    private Vec3 attrBaseScale     = Vec3(1, 1, 1);
+
     // MS-4.5 — the composed pivot-relative matrix the GLOBAL fold built on the
     // last applyGlobalFold (origin-fixing) plus the pivot it used. The GPU
     // fast-path (whole-mesh / no-falloff, which always takes the fold) reuses
@@ -1441,6 +1453,24 @@ public:
         return rotateSub.publicEditIsOpen() || scaleSub.publicEditIsOpen();
     }
 
+    // Session-open chokepoint override: every path that opens the wrapper edit
+    // session funnels through beginEdit() (gizmo drag via beginMoveDragSession,
+    // panel slider / numeric attr via captureDragBaselineIfStale, test opener).
+    // On the closed->open transition we snapshot the current headless TRS attrs
+    // so cancelUncommittedEdit() can restore the exact values the panel/form was
+    // displaying when the session started. Idempotent re-opens (editIsOpen()
+    // already true) must NOT re-snapshot — that would capture mid-edit values
+    // and defeat the restore. super.beginEdit() is itself idempotent.
+    protected override void beginEdit() {
+        bool wasOpen = editIsOpen();
+        super.beginEdit();
+        if (!wasOpen && editIsOpen()) {
+            attrBaseTranslate = headlessTranslate;
+            attrBaseRotate    = headlessRotate;
+            attrBaseScale     = headlessScale;
+        }
+    }
+
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //
     // Commit guard: the wrapper-owned edit session commits from deactivate()
@@ -1596,6 +1626,16 @@ public:
         gpu.upload(*mesh);
         gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
         needsGpuUpdate = false;
+
+        // Restore the headless TRS attrs to their session-start values so the
+        // Tool-Properties panel / config form (which read params() — the live
+        // &headlessTranslate.x etc. pointers — per frame) snap back in lockstep
+        // with the geometry. Without this the verts revert but the numeric
+        // fields keep the stale edited numbers. Captured on the closed->open
+        // transition in beginEdit() above.
+        headlessTranslate = attrBaseTranslate;
+        headlessRotate    = attrBaseRotate;
+        headlessScale     = attrBaseScale;
 
         // Close the capture session WITHOUT recording, and drop any live drag.
         cancelEdit();
