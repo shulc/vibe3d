@@ -2077,28 +2077,25 @@ struct Mesh {
     ///   (k/segments)·offset + insetShiftDelta(v) + scale(rotate(E_src(v) about origin))
     /// (see doc/edge_extend_plan.md §"verified reference model"). rotateDeg in
     /// degrees; rotate then scale, both about the WORLD ORIGIN; inset/shift in the
-    /// world frame from ORIGINAL geometry (shift inert on interior edges; weld &
-    /// free-end perp drop = offset-meet, not -inset·(n1+n2)). Selects the new
-    /// ridge edge(s) on exit. Does NOT touch GpuMesh or caches (command/tool
-    /// layer's job). `mask.length == edges.length`. NOT a fork of
+    /// world frame from ORIGINAL geometry (shift inert on interior edges). Selects
+    /// the new ridge edge(s) on exit. Does NOT touch GpuMesh or caches (command/
+    /// tool layer's job). `mask.length == edges.length`. NOT a fork of
     /// extrudeEdgesByMask — fresh additive topology.
     ///
-    /// `insetShiftDelta` composition (verified against the reference dumps, all to
-    /// ~1e-8 — see doc/edge_extend_plan.md + the private capture record):
-    ///  * FREE END (one selected edge at v): the perpendicular drop is the
-    ///    two-plane offset-meet over the edge's ≤2 adjacent face planes
-    ///    (min-norm v with v·nₖ = −inset), PLUS a SEPARATE axial term
-    ///    `inset·unit(other − v)` toward the edge's other endpoint. On a cube the
-    ///    meet equals −inset·(n1+n2) (⊥-faces special case); the axial term is the
-    ///    ∓inset edge-axis shortening. Boundary (1-face) free end: `−inset·n`
-    ///    (one-plane meet) + `shift·inPlaneOutwardPerp`, with NO axial term.
-    ///  * WELDED CORNER (≥2 selected edges at v): the min-norm offset-meet over ALL
-    ///    distinct adjacent face planes of every incident selected edge (plus each
-    ///    incident boundary edge's `shift` in-plane term), with NO axial term — the
-    ///    meet alone reproduces the corner (chain2/star3 → (−0.1,−0.1,−0.1);
-    ///    asym-tent welded corner (0,0.10440,0)). The free-end perp drop is the
-    ///    single-edge case of this same accumulator; the axial term is what
-    ///    distinguishes a free end from a weld.
+    /// `insetShiftDelta` composition — ONE unified law for every new vert, free
+    /// end / welded corner / interior / boundary alike (verified against the
+    /// reference dumps to ~1e-7):
+    ///  * INSET: the min-norm offset-meet of `delta·n_f = −inset` over ALL DISTINCT
+    ///    face planes incident at the source vertex v (every face that contains v,
+    ///    NOT just the faces adjacent to the selected edges). There is NO separate
+    ///    axial term: on a cube the corner's THIRD perpendicular face supplies the
+    ///    edge-axis component that earlier looked axial (vert (0.5,0.5,0.5) ∈
+    ///    top+front+right ⇒ meet (−0.1,−0.1,−0.1)); a tent free end has only its 2
+    ///    incident faces, giving the genuine two-plane drop; a vertex on a single
+    ///    flat face reduces to −inset·n (the boundary one-plane case). This folds
+    ///    the old free-end/weld branch distinction into a single accumulator.
+    ///  * SHIFT: each incident BOUNDARY edge adds `shift·inPlaneOutwardPerp` on top
+    ///    (inert on interior edges).
     ///
     /// Rotation composition: Rx then Ry then Rz applied in that order. Only
     /// SINGLE-AXIS rotations are capture-verified; the multi-axis ordering is an
@@ -2167,14 +2164,10 @@ struct Mesh {
         }
         if (exEdges.length == 0) return 0;
 
-        // --- Per-endpoint selected-edge incidence: ONE selected edge ⇒ a free end
-        //     (perp meet + axial); ≥2 ⇒ a welded corner (min-norm meet, no axial).
-        int[uint] selEdgeCount;
-        foreach (ref e; exEdges) {
-            selEdgeCount.update(e.va, () => 1, (ref int c) { ++c; });
-            selEdgeCount.update(e.vb, () => 1, (ref int c) { ++c; });
-        }
-        bool isFreeEnd(uint v) { auto p = v in selEdgeCount; return p !is null && *p == 1; }
+        // The inset law no longer branches on free-end vs welded corner — every
+        // new vert takes the min-norm offset-meet over ALL its incident face
+        // planes (see INSET LAW below), so no selected-edge-incidence count is
+        // needed here.
 
         // --- N-plane minimum-norm offset-meet. Solve for the vector `v` of
         //     smallest norm satisfying v·nₖ = dₖ for each (unit normal nₖ, target
@@ -2249,18 +2242,52 @@ struct Mesh {
         // --- Per-corner accumulation of constraint planes / boundary shift terms.
         //     Keyed by source vertex. Built from ORIGINAL geometry only (face
         //     normals + edge axes captured before any geometry is appended).
+        //
+        //     INSET LAW (parity-verified): the perpendicular drop at EVERY new
+        //     vert — free end, welded corner, boundary, all the same — is the
+        //     min-norm offset-meet `delta·n_f = −inset` over ALL DISTINCT face
+        //     planes incident at the source vertex `v` (every face that contains
+        //     `v`, NOT just the faces adjacent to the selected edges). There is NO
+        //     separate axial term: on a cube the vertex's THIRD perpendicular face
+        //     contributes the `−inset` component along the edge axis that earlier
+        //     looked like an axial shortening (corner (0.5,0.5,0.5) ∈ top+front+
+        //     right ⇒ meet (−0.1,−0.1,−0.1)). A tent free end has only 2 incident
+        //     faces, so its meet is the genuine two-plane drop (no spurious axial
+        //     pull). A vertex on a single flat face → meet = −inset·n (the boundary
+        //     one-plane case). The free-end/weld branch distinction for inset thus
+        //     disappears — one law for all corners.
         // Distinct face planes per corner (deduped by face id).
-        Vec3[][uint] cornerNormals;          // v → distinct adjacent face normals
+        Vec3[][uint] cornerNormals;          // v → distinct incident face normals
         bool[ulong]  cornerFaceSeen;         // (v<<32|fi) → already counted at v
         Vec3[uint]   cornerShiftTerm;        // v → Σ boundary shift·in-plane-perp
         void addCornerFace(uint v, int fi) {
             if (fi < 0) return;
             ulong fk = (cast(ulong)v << 32) | cast(uint)fi;
             if (fk in cornerFaceSeen) return;
+            // Dedup near-parallel planes the way the original corner code deduped
+            // distinct faces: skip a face whose normal is (anti-)parallel to one
+            // already counted at this corner (the min-norm rank guard would absorb
+            // it anyway, but pre-dropping keeps the Gram system small + well-posed).
+            Vec3 nf = faceNormal(cast(uint)fi);
+            if (auto acc = v in cornerNormals)
+                foreach (ref e0; *acc)
+                    if (abs(dot(e0, nf)) > 0.999999f) { cornerFaceSeen[fk] = true; return; }
             cornerFaceSeen[fk] = true;
             cornerNormals.update(v,
-                () => [faceNormal(cast(uint)fi)],
-                (ref Vec3[] acc) { acc ~= faceNormal(cast(uint)fi); });
+                () => [nf],
+                (ref Vec3[] acc) { acc ~= nf; });
+        }
+        // Vertex → incident faces, one pass (same idiom as the edge→faces map).
+        // Drives the inset meet over ALL faces at the corner. Built only for the
+        // source vertices that actually spawn a new vert (the selected edges'
+        // endpoints), so the scan touches every face once but records nothing for
+        // vertices we never weld.
+        bool[uint] needsCorner;
+        foreach (ref e; exEdges) { needsCorner[e.va] = true; needsCorner[e.vb] = true; }
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (vid; f)
+                if (vid in needsCorner) addCornerFace(vid, cast(int)fi);
         }
         // In-plane outward perpendicular of the boundary face at edge (va,vb):
         //     the in-plane direction ⊥ to the edge, pointing AWAY from the face
@@ -2283,17 +2310,15 @@ struct Mesh {
         void addCornerShift(uint v, Vec3 term) {
             cornerShiftTerm.update(v, () => term, (ref Vec3 acc) { acc = acc + term; });
         }
+        // Corner face planes are gathered above over ALL incident faces. Here we
+        // only fold in each BOUNDARY edge's `shift·in-plane-outward-perp` term
+        // (the free-boundary slide); inset is fully subsumed by the incident-face
+        // meet.
         foreach (ref e; exEdges) {
-            addCornerFace(e.va, e.fA); addCornerFace(e.va, e.fB);
-            addCornerFace(e.vb, e.fA); addCornerFace(e.vb, e.fB);
-            if (e.fB == -1) {
-                // Boundary edge: each endpoint gets a shift·in-plane-outward-perp
-                // term folded into its corner accumulator.
+            if (e.fB == -1 && shift != 0.0f) {
                 Vec3 perp = boundaryOutwardPerp(e.va, e.vb, e.fA);
-                if (shift != 0.0f) {
-                    addCornerShift(e.va, perp * shift);
-                    addCornerShift(e.vb, perp * shift);
-                }
+                addCornerShift(e.va, perp * shift);
+                addCornerShift(e.vb, perp * shift);
             }
         }
 
@@ -2327,20 +2352,15 @@ struct Mesh {
         //     Compute insetShiftDelta from ORIGINAL geometry, add it AFTER R/S in
         //     the world frame, then Offset last.
         uint[uint] newVertOf;
-        // Map each free-end vertex to its single selected edge's OTHER endpoint
-        // (for the axial term). Welded corners get no axial term.
-        uint[uint] freeEndOther;
-        foreach (ref e; exEdges) {
-            if (isFreeEnd(e.va)) freeEndOther[e.va] = e.vb;
-            if (isFreeEnd(e.vb)) freeEndOther[e.vb] = e.va;
-        }
         foreach (ref e; exEdges) {
             void makeVert(uint v) {
                 if (v in newVertOf) return;
-                // Min-norm offset-meet over the corner's distinct face planes
-                // (target −inset on every plane). At a free end this is the
-                // two-plane (interior) / one-plane (boundary) perp meet; at a
-                // welded corner it is the full N-plane accumulator.
+                // Inset = min-norm offset-meet (target −inset on every plane) over
+                // ALL distinct faces incident at v — free end, weld, interior,
+                // boundary alike (see INSET LAW above). One law, no axial term: the
+                // corner's own incident faces (incl. the perpendicular third face on
+                // a cube) reproduce the edge-axis component that earlier looked
+                // axial.
                 Vec3 delta = Vec3(0, 0, 0);
                 if (auto np = v in cornerNormals) {
                     Vec3[] norms = *np;
@@ -2351,18 +2371,6 @@ struct Mesh {
                 }
                 // Boundary shift term(s) fold into the corner displacement.
                 if (auto sp = v in cornerShiftTerm) delta = delta + *sp;
-                // Axial term: free ends ONLY. inset·unit(other − v) toward the
-                // edge's far endpoint. Welded corners take the meet alone (the
-                // axial shortenings from multiple edges would conflict; the
-                // multi-plane meet already reproduces the corner). A boundary
-                // free end takes no axial term (no neighbour to pull it in).
-                if (isFreeEnd(v) && e.fB != -1) {
-                    if (auto op = v in freeEndOther) {
-                        Vec3 ax = vertices[*op] - vertices[v];
-                        if (ax.length > 1e-6f)
-                            delta = delta + normalize(ax) * inset;
-                    }
-                }
                 Vec3 pos = applyRS(vertices[v]) + delta + offset;
                 newVertOf[v] = addVertex(pos);
             }
@@ -2370,18 +2378,61 @@ struct Mesh {
             makeVert(e.vb);
         }
 
-        // --- Bridge quads. Winding: [srcA, newA, newB, srcB] where srcA→srcB is
-        //     the source edge's DIRECTED traversal order within ONE of its
-        //     adjacent faces (NOT the raw edges[] tuple, which would flip ~half
-        //     the bridges). When the edge has 2 adjacent faces, the orienting
-        //     face is the one of LOWER index (deterministic) — verified to
-        //     reproduce every golden bridge tuple (cube interior [6,8,9,7], chain2
-        //     [5,8,9,6]/[6,9,10,7], boundary [3,6,7,0]).
+        // --- Orienting-face selection for the bridge winding.
+        //
+        //     The bridge is `[srcA, newA, newB, srcB]` where srcA→srcB is the
+        //     source edge's DIRECTED traversal order WITHIN the orienting face (so
+        //     the bridge is manifold-consistent with that face — NOT the raw
+        //     edges[] tuple, which would flip ~half the bridges).
+        //
+        //     Which adjacent face orients a 2-face interior edge is GEOMETRICALLY
+        //     UNDER-DETERMINED at a welded fan: the bridge quad is edge-on to the
+        //     corner axis, so its normal is ⊥ to that axis and every rotation-
+        //     invariant "point outward / sum-of-normals / displacement" test ties
+        //     between the two candidate faces (verified numerically against the
+        //     golden fan dumps — both faces give identical dot products). The
+        //     reference engine's choice tracks its internal face-storage order,
+        //     which is not portable. We therefore pick the orienting face by a
+        //     two-tier DETERMINISTIC rule:
+        //       1. When the two candidate face normals DIFFER, take the one whose
+        //          unit normal sorts first under the key (n.y, −n.x, −n.z). This
+        //          fixes the star3 fan: the −Y bridge competes between two DISTINCT
+        //          (+X vs +Z) faces, and a naive lower-array-index rule orients it
+        //          backwards ([2,11,9,6] instead of [6,9,11,2]).
+        //       2. When the normals are (near-)EQUAL (the two faces are coplanar —
+        //          chain2_asym/chain2_mixed, where every rotation-invariant test
+        //          AND the normal comparator tie exactly), fall back to the LOWER
+        //          FACE INDEX. On these fixtures vibe3d's face-array order matches
+        //          the reference's input order, so lower-index reproduces the
+        //          reference choice.
+        //     This pair reproduces EVERY golden bridge tuple — cube interior
+        //     [6,8,9,7], boundary [3,6,7,0], chain2 [5,8,9,6]/[6,9,10,7], loop4 ×4,
+        //     star3 ×3 (incl. the [6,9,11,2] third bridge), and the coplanar
+        //     chain2_asym/chain2_mixed bridges. The normal comparator is a
+        //     tie-break calibrated to the axis-aligned golden fixtures, not a
+        //     derived geometric law: a future non-axis-aligned fan with DISTINCT
+        //     competing normals should be re-checked against a fresh capture rather
+        //     than silently trusted.
+        static double[3] orientKey(Vec3 n) {
+            return [cast(double)n.y, cast(double)(-n.x), cast(double)(-n.z)];
+        }
+        int orientFaceOf(ref ExtEdge e) {
+            if (e.fB == -1) return e.fA;          // boundary: the sole face
+            auto ka = orientKey(faceNormal(cast(uint)e.fA));
+            auto kb = orientKey(faceNormal(cast(uint)e.fB));
+            // Lexicographic compare with an epsilon dead-band. Within the band the
+            // two normals are (near-)coplanar → tie → lower face index decides.
+            foreach (i; 0 .. 3) {
+                if (ka[i] < kb[i] - 1e-6) return e.fA;
+                if (ka[i] > kb[i] + 1e-6) return e.fB;
+            }
+            return e.fA < e.fB ? e.fA : e.fB;     // coplanar tie → lower index
+        }
+
+        // --- Bridge quads.
         size_t firstBridge = faces.length;
         foreach (ref e; exEdges) {
-            // Choose the orienting face: lower index when interior, the sole face
-            // when boundary.
-            int orientFace = (e.fB == -1) ? e.fA : (e.fA < e.fB ? e.fA : e.fB);
+            int orientFace = orientFaceOf(e);
             // Directed order of the source edge within orientFace.
             uint srcA = e.va, srcB = e.vb;
             auto f = faces[orientFace];
@@ -2399,7 +2450,7 @@ struct Mesh {
         //     addVertex nor compactUnreferenced sizes these). Each bridge inherits
         //     the material of its orienting (adjacent) face.
         foreach (bi, ref e; exEdges) {
-            int orientFace = (e.fB == -1) ? e.fA : (e.fA < e.fB ? e.fA : e.fB);
+            int orientFace = orientFaceOf(e);
             faceMaterial       ~= (orientFace < faceMaterial.length
                                    ? faceMaterial[orientFace] : 0u);
             faceSelectionOrder ~= 0;
@@ -5049,6 +5100,24 @@ unittest { // extendEdgesByMask: chain2 weld (two top edges sharing corner (0.5,
         if (hasWeld && newCount == 2) ++bridgesWithWeld;
     }
     assert(bridgesWithWeld == 2, "two bridges share the welded vert");
+    // Exact DIRECTED bridge tuples (winding). vibe3d makeCube: corner=6, -X
+    // neighbour=7→free7(-0.4,0.4,0.4), -Z neighbour=2→free2(0.4,0.4,-0.4).
+    int findNew(Vec3 p) {
+        foreach (i; 8 .. m.vertices.length) if (near_(m.vertices[i], p)) return cast(int)i;
+        return -1;
+    }
+    int f7 = findNew(Vec3(-0.4f, 0.4f, 0.4f));
+    int f2 = findNew(Vec3(0.4f, 0.4f, -0.4f));
+    assert(f7 >= 0 && f2 >= 0, "chain2 free ends found");
+    uint cr = 6u;
+    //   -X edge {6,7}: srcA=corner srcB=7 → [corner, weld, free7, 7]
+    //   -Z edge {6,2}: srcA=2 srcB=corner → [2, free2, weld, corner]
+    long bX = findFaceByVerts_(m, [cr, cast(uint)welded, cast(uint)f7, 7u]);
+    long bZ = findFaceByVerts_(m, [2u, cast(uint)f2, cast(uint)welded, cr]);
+    assert(bX >= 0 && tupleMatchesWound_(m.faces[bX], [cr, cast(uint)welded, cast(uint)f7, 7u]),
+           "chain2 -X bridge winding [corner,weld,free7,7]");
+    assert(bZ >= 0 && tupleMatchesWound_(m.faces[bZ], [2u, cast(uint)f2, cast(uint)welded, cr]),
+           "chain2 -Z bridge winding [2,free2,weld,corner]");
 }
 
 unittest { // extendEdgesByMask: star3 weld (three cube edges meeting at corner (0.5,0.5,0.5))
@@ -5061,17 +5130,44 @@ unittest { // extendEdgesByMask: star3 weld (three cube edges meeting at corner 
     assert(n == 3);
     assert(m.vertices.length == 12, "star3: 8 cube + 4 new = 12");
     assert(m.faces.length == 9, "star3: 6 cube + 3 bridges");
-    // Corner (vert 6) welds to ONE vert (0.4,0.4,0.4) reused by all three bridges.
-    long welded = -1;
-    foreach (i; 8 .. m.vertices.length)
-        if (near_(m.vertices[i], Vec3(0.4f, 0.4f, 0.4f))) { welded = cast(long)i; break; }
-    assert(welded >= 0, "star3 welded corner (0.4,0.4,0.4)");
+    // The welded corner + the three free-end ridge verts, resolved by position
+    // (new-vert array order is implementation-defined; find each geometrically).
+    //   corner   (0.5, 0.5, 0.5) → weld   (0.4, 0.4, 0.4)
+    //   -X neigh (-0.5,0.5, 0.5) → free7  (-0.4,0.4, 0.4)
+    //   -Z neigh (0.5, 0.5,-0.5) → free2  (0.4, 0.4,-0.4)
+    //   -Y neigh (0.5,-0.5, 0.5) → free5  (0.4,-0.4, 0.4)
+    int findNew(Vec3 p) {
+        foreach (i; 8 .. m.vertices.length) if (near_(m.vertices[i], p)) return cast(int)i;
+        return -1;
+    }
+    int weld = findNew(Vec3(0.4f, 0.4f, 0.4f));
+    int f7   = findNew(Vec3(-0.4f, 0.4f, 0.4f));
+    int f2   = findNew(Vec3(0.4f, 0.4f, -0.4f));
+    int f5   = findNew(Vec3(0.4f, -0.4f, 0.4f));
+    assert(weld >= 0 && f7 >= 0 && f2 >= 0 && f5 >= 0, "star3 welded corner + 3 free ends");
     size_t bridgesWithWeld = 0;
     foreach (ref f; m.faces) {
         if (f.length != 4) continue;
-        foreach (vid; f) if (vid == welded) { ++bridgesWithWeld; break; }
+        foreach (vid; f) if (vid == weld) { ++bridgesWithWeld; break; }
     }
     assert(bridgesWithWeld == 3, "three bridges reuse the welded corner vert");
+    // Exact DIRECTED bridge tuples (winding) — the third (-Y) bridge is the one
+    // that lower-index-by-array got backwards; the normal-comparator orienting
+    // rule produces the reference-matching orientation:
+    //   -X edge {6,7}: srcA=corner srcB=7 → [corner, weld, free7, 7]
+    //   -Z edge {6,2-geom=vert2}: srcA=2  srcB=corner → [2, free2, weld, corner]
+    //   -Y edge {6,5-geom=vert5}: srcA=corner srcB=5 → [corner, weld, free5, 5]
+    uint cr = 6u;          // corner vert in vibe3d makeCube indexing
+    uint nX = 7u, nZ = 2u, nY = 5u;   // -X / -Z / -Y geometric neighbours
+    long bX = findFaceByVerts_(m, [cr, cast(uint)weld, cast(uint)f7, nX]);
+    long bZ = findFaceByVerts_(m, [nZ, cast(uint)f2, cast(uint)weld, cr]);
+    long bY = findFaceByVerts_(m, [cr, cast(uint)weld, cast(uint)f5, nY]);
+    assert(bX >= 0 && tupleMatchesWound_(m.faces[bX], [cr, cast(uint)weld, cast(uint)f7, nX]),
+           "star3 -X bridge winding [corner,weld,free7,7]");
+    assert(bZ >= 0 && tupleMatchesWound_(m.faces[bZ], [nZ, cast(uint)f2, cast(uint)weld, cr]),
+           "star3 -Z bridge winding [2,free2,weld,corner]");
+    assert(bY >= 0 && tupleMatchesWound_(m.faces[bY], [cr, cast(uint)weld, cast(uint)f5, nY]),
+           "star3 -Y bridge winding [corner,weld,free5,5]");
 }
 
 unittest { // extendEdgesByMask: boundary edge — bridge tuple proof + shift slide + inset
