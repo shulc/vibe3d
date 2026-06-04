@@ -255,6 +255,31 @@ class Tool : ParamProvider {
     // no-op.
     void onRefireCommitted() {}
 
+    // ----- Live re-evaluation hooks (attr edit re-runs a live tool) ---------
+    //
+    // Whether this tool has an OPEN live-evaluation session that an attribute
+    // edit should re-run. While false, a `tool.attr` edit just stores the new
+    // value into the tool's attribute store and changes no geometry — the
+    // faithful "fresh-tool inertness" semantics. While true, the attr-command
+    // driver may call reEvaluate() to re-run the tool's apply with the freshly
+    // written attribute values.
+    //
+    // INVARIANT: no tool may BOTH override evaluate() to mutate geometry AND
+    // return hasLiveEval()==true. The attr-command path already calls
+    // onParamChanged()+evaluate() before the re-eval trigger, so a tool doing
+    // both would apply twice on one attr write. Tools whose preview runs through
+    // evaluate() (primitives) keep hasLiveEval()==false; tools whose geometry
+    // runs through a session replay (the transform tool) keep evaluate() a no-op.
+    bool hasLiveEval() const { return false; }
+
+    // Re-run this tool's apply from its open live-evaluation session baseline
+    // using the tool's CURRENT attribute values (ABSOLUTE — read the value
+    // straight from the baseline, never accumulate a per-call delta). Only
+    // meaningful when hasLiveEval() is true; calling it otherwise is a no-op.
+    // The result coalesces into the session's single undo entry, committed when
+    // the session ends. Default no-op — only tools with a live session override.
+    void reEvaluate() {}
+
     // Whether `params()` should be rendered by the inline PropertyPanel.
     // Tools that expose params() purely for the headless tool.attr path,
     // while drawProperties() handles the interactive UI (e.g. BevelTool

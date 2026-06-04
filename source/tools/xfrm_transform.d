@@ -1326,35 +1326,71 @@ public:
         if (basisLocalDelta.x == 0 && basisLocalDelta.y == 0
             && basisLocalDelta.z == 0) return;
 
+        // Delta path: capture/open the session, accumulate the slider's
+        // per-frame diff onto the live translate, then replay from the session
+        // baseline. captureDragBaselineIfStale() reports whether it captured a
+        // fresh `dragBaseline` this call; we zero `headlessTranslate` ONLY then
+        // (the first-active-frame — accumulation starts from zero). Zeroing on
+        // every call would wipe the prior cumulative. The += sits between the
+        // capture and applyTRS, so we can't reuse replayTranslateFromBaseline()
+        // (which does capture-then-apply with nothing in between).
+        bool freshBaseline = captureDragBaselineIfStale();
+        if (freshBaseline)
+            headlessTranslate = Vec3(0, 0, 0);
+        headlessTranslate = headlessTranslate + basisLocalDelta;
+        applyTRS(dragBaseline);
+        needsGpuUpdate = true;
+    }
+
+    // Shared session-setup + capture step for the panel-delta and value-driven
+    // (reEvaluate) replay paths. Builds the local vector stack, captures the
+    // live falloff / symmetry, builds the vertex cache, opens the edit session
+    // (idempotent), and captures a fresh full-mesh `dragBaseline` IFF the
+    // current one is stale (length mismatch). Returns true when it captured a
+    // fresh baseline this call.
+    //
+    // CRITICAL: this body does NOT zero `headlessTranslate`. The zeroing is
+    // coupled to the delta accumulation and lives in applyMovePanelDelta()'s
+    // prologue (gated on the returned bool). If it lived here, reEvaluate()
+    // acting as a session-opener would wipe the just-injected absolute
+    // translate before applyTRS, applying 0.0 on the first edit.
+    private bool captureDragBaselineIfStale() {
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
         buildLocalVts(subj, vts);
 
-        // First-active-frame setup. captureFalloffForDrag /
-        // captureSymmetryForDrag overwrite `dragFalloff` /
-        // `dragSymmetry` every call; that's fine — for slider
-        // edits we want the live falloff to take effect
-        // immediately.
+        // captureFalloffForDrag / captureSymmetryForDrag overwrite `dragFalloff`
+        // / `dragSymmetry` every call; that's fine — for slider / attr edits we
+        // want the live falloff to take effect immediately.
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
         buildVertexCacheIfNeeded();
         beginEdit();   // idempotent
 
-        // Panel-drag baseline: when no gizmo drag is open the panel
-        // is the only active write path, so we capture a fresh
-        // dragBaseline at the first-active-frame. A subsequent panel
-        // edit re-uses this baseline (length-equal check below).
-        // Refreshing the baseline at every panel frame would zero
-        // out the prior cumulative — keep stale ones.
+        // Panel/attr baseline: when no gizmo drag is open the panel/attr edit is
+        // the only active write path, so we capture a fresh dragBaseline at the
+        // first-active-frame. A subsequent edit re-uses this baseline
+        // (length-equal check). Refreshing it every frame would zero out the
+        // prior cumulative — keep stale ones.
         if (dragBaseline.length != mesh.vertices.length) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
-            headlessTranslate = Vec3(0, 0, 0);
+            return true;
         }
+        return false;
+    }
 
-        headlessTranslate = headlessTranslate + basisLocalDelta;
+    // Value-driven replay (Decision D1): open the session if needed, capture a
+    // fresh baseline if stale, then re-run applyTRS from `dragBaseline` reading
+    // the CURRENT (already-injected) `headlessTranslate` ABSOLUTELY — no delta
+    // accumulation, no zeroing of `headlessTranslate`. Keys off `dragBaseline`
+    // (full-mesh, length-equal to mesh.vertices), NOT editBaseline() which is
+    // partial and reordered (see :277-282) and would trip applyTRS's length
+    // assert. Shared by reEvaluate() and the panel-delta path's setup.
+    private void replayTranslateFromBaseline() {
+        captureDragBaselineIfStale();
         applyTRS(dragBaseline);
         needsGpuUpdate = true;
     }
@@ -1378,6 +1414,67 @@ public:
     // mouse-up (:887) — every one gated by editIsOpen(). So the exact "a
     // commit would fire if the session ended now" predicate IS editIsOpen().
     override bool hasUncommittedEdit() const { return editIsOpen(); }
+
+    // ----- Live re-evaluation hooks (attr edit re-runs a live tool) ---------
+    //
+    // hasLiveEval() is an alias of the existing publicEditIsOpen() /
+    // hasUncommittedEdit() family (both editIsOpen()): a transform session is
+    // "live" exactly when an edit session is open. An attr edit on a fresh tool
+    // (no open session) therefore stores the value and moves nothing (faithful).
+    override bool hasLiveEval() const { return hasUncommittedEdit(); }
+
+    // Re-run the live translate from the session baseline using the CURRENT
+    // (already-injected) headlessTranslate, ABSOLUTELY (Decision D1) — equivalent
+    // to applyMovePanelDelta minus the delta accumulation and minus the
+    // headlessTranslate zeroing. T-only for now: Rotate/Scale have no
+    // value-driven apply entry point yet, so their re-eval is deferred to the
+    // forms plan's Phase 5b (Decision D3) — only headlessTranslate is replayed.
+    //
+    // NOTE: do NOT early-return on !editIsOpen(). reEvaluate() must also be able
+    // to OPEN the session for the forms command-trigger path; the embedded
+    // beginEdit() + capture-if-stale (in replayTranslateFromBaseline) does that.
+    // The "fire only when already-live OR forms-interactive" gate lives in the
+    // attr command, not here.
+    override void reEvaluate() {
+        if (!flagT) return;
+        replayTranslateFromBaseline();
+    }
+
+    // ----- Test-only headless session opener (re-eval plan D5, Phase 3) -----
+    //
+    // Open a live edit session with NO geometry change, leaving
+    // hasUncommittedEdit()==true so a subsequent `tool.attr` write hits the
+    // already-live reEvaluate() branch (test 1b-absolute / test 2). Runs the
+    // same beginEdit() + dragBaseline capture as the panel/attr replay path but
+    // applies nothing: headlessTranslate stays at its current value (0 on a
+    // fresh tool), so captureDragBaselineIfStale() snapshots the mesh and opens
+    // the session without moving a vertex. Reached only via the testMode-gated
+    // `tool.beginSession` command; production opens the session via a gizmo drag
+    // or the panel slider path (applyMovePanelDelta).
+    public void openLiveSessionForTest() {
+        if (!flagT) return;
+        captureDragBaselineIfStale();
+        // Deliberately NO applyTRS / needsGpuUpdate — bare session, no geometry.
+    }
+
+    // ----- Schema panel suppression (re-eval plan B2) -----------------------
+    //
+    // Hide the WHOLE schema panel (all 12 params: the T/R/S bools plus
+    // TX..TZ / RX..RZ / SX..SZ, :361-376) so the legacy drawProperties()
+    // X/Y/Z sliders remain the SINGLE live widget driving headlessTranslate.
+    // Without this, app.d would render BOTH the schema panel (writing the TX
+    // pointer directly) AND drawProperties() every frame for the transform
+    // tool — two live widgets bound to the same translate state, a same-frame
+    // double-apply. PropertyPanel.draw early-returns for
+    // renderParamsAsPanel()==false, so the transform tool's params are owned
+    // solely by drawProperties().
+    //
+    // Acceptable to hide the whole panel: the T/R/S bools are preset-driven
+    // (config/tool_presets.yaml), not user-edited via the panel, and the
+    // translate sliders live in drawProperties(). If a future non-TRS param
+    // ever needs the schema panel, switch from whole-panel suppression to a
+    // per-row filter.
+    override bool renderParamsAsPanel() const { return false; }
 
     // Category C (NEW code — there is no RMB handler in the transform family).
     // Abort the open edit: write the session's pre-edit baseline (the same

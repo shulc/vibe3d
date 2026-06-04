@@ -115,6 +115,8 @@ import commands.tool.attr     : ToolAttrCommand;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
+import commands.tool.begin_session : ToolBeginSessionCommand;
+import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneRotateCommand, WorkplaneOffsetCommand,
@@ -327,6 +329,7 @@ void main(string[] args) {
             playbackFile = args[++i];
         } else if (args[i] == "--test") {
             testMode = true;
+            command.g_testMode = true;  // gate testMode-only commands (re-eval D5)
         } else if (args[i] == "--perf") {
             perfMode = true;
         } else if (args[i] == "--no-http") {
@@ -1074,7 +1077,13 @@ void main(string[] args) {
     reg.commandFactories["tool.reset"] = () => cast(Command)
         new ToolResetCommand(&mesh, cameraView, editMode, toolHost);
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
-        new ToolPipeAttrCommand(&mesh, cameraView, editMode);
+        new ToolPipeAttrCommand(&mesh, cameraView, editMode, toolHost);
+    // Test-only headless hooks (re-eval plan D5, Phase 3). Both reject
+    // themselves unless g_testMode (set by --test); inert in a normal run.
+    reg.commandFactories["tool.beginSession"] = () => cast(Command)
+        new ToolBeginSessionCommand(&mesh, cameraView, editMode, toolHost);
+    reg.commandFactories["tool.panelEdit"] = () => cast(Command)
+        new ToolPanelEditCommand(&mesh, cameraView, editMode, toolHost);
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
     // in the global tool pipe.
@@ -1958,6 +1967,26 @@ void main(string[] args) {
                             else if (pos[2].type == JSONType.false_)   sval = "false";
                             tpa.setAttrValue(sval);
                         }
+                    }
+                }
+            } else if (auto tpe = cast(ToolPanelEditCommand)cmd) {
+                // tool.panelEdit <dx> <dy> <dz> (test-only). Accept int / float
+                // / string scalar forms for each component.
+                import math : Vec3;
+                float comp(JSONValue v) {
+                    if      (v.type == JSONType.integer)  return cast(float)v.integer;
+                    else if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
+                    else if (v.type == JSONType.float_)   return cast(float)v.floating;
+                    else if (v.type == JSONType.string)   { try { return v.str.to!float; } catch (Exception) {} }
+                    return 0.0f;
+                }
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        float dx = pos.length >= 1 ? comp(pos[0]) : 0.0f;
+                        float dy = pos.length >= 2 ? comp(pos[1]) : 0.0f;
+                        float dz = pos.length >= 3 ? comp(pos[2]) : 0.0f;
+                        tpe.setDelta(Vec3(dx, dy, dz));
                     }
                 }
             } else if (auto stt = cast(SnapToggleTypeCommand)cmd) {

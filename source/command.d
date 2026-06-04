@@ -6,6 +6,13 @@ import editmode;
 import params : Param, ParamHints;
 import mesh_edit_delta : MeshEditScope;
 
+// Test-automation gate (re-eval plan D5). Set true ONLY when the editor is
+// launched with --test (app.d), mirroring the HttpServer.setTestMode flag the
+// /api/play-events machinery uses. testMode-gated commands (tool.beginSession,
+// tool.panelEdit) reject themselves unless this is set, so they are inert and
+// unreachable in a normal build/run.
+__gshared bool g_testMode = false;
+
 // ---------------------------------------------------------------------------
 // Command — base class for every user-visible action.
 //
