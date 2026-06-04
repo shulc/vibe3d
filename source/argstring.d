@@ -637,9 +637,14 @@ private struct Parser
     JSONValue parseBoolOrBareword()
     {
         size_t start = pos;
-        // Bareword chars: [a-zA-Z0-9_./-]
+        // Bareword chars: [a-zA-Z0-9_./?-]
+        // '?' is admitted so the forms-engine query idiom
+        // `tool.attr <id> <attr> ?` parses the trailing token as the literal
+        // string "?" (the query sentinel) instead of throwing. No existing
+        // command, preset, or test passes a bareword containing '?', so this
+        // is backward-compatible.
         while (!atEnd && (isAlphaNum(cur) || cur == '_' || cur == '.' ||
-                          cur == '/' || cur == '-'))
+                          cur == '/' || cur == '-' || cur == '?'))
             advance();
 
         string word = src[start .. pos].idup;

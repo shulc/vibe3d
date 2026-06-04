@@ -8,6 +8,9 @@ import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : Stage;
+import params            : paramToJson;
+
+import std.json : JSONValue;
 
 // ---------------------------------------------------------------------------
 // ToolPipeAttrCommand — `tool.pipe.attr <stageId> <name> <value>`.
@@ -30,10 +33,17 @@ class ToolPipeAttrCommand : Command {
     private string stageId_;
     private string attrName_;
     private string attrValue_;
+    // Query (read-back) mode — forms-engine `?` idiom, mirroring
+    // ToolAttrCommand. When set, apply() resolves attrName_ against the named
+    // stage's params() and boxes the live value into queryResult_ instead of
+    // calling setAttr / reEvaluate. A query mutates nothing.
+    private bool      query_;
+    private JSONValue queryResult_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
         super(mesh, view, editMode);
         this.toolHost = host;
+        this.queryResult_ = JSONValue(null);
     }
 
     override string name()  const { return "tool.pipe.attr"; }
@@ -45,6 +55,15 @@ class ToolPipeAttrCommand : Command {
     void setStageId(string id)    { stageId_   = id; }
     void setAttrName(string n)    { attrName_  = n; }
     void setAttrValue(string v)   { attrValue_ = v; }
+    // Forms-engine query (read-back) mode. Programmatic-only; see query_ above.
+    void setQuery(bool v)         { query_ = v; }
+    bool isQuery() const          { return query_; }
+    JSONValue queryResult() const { return queryResult_; }
+    string queryResultJsonOrEmpty() const {
+        import std.json : JSONType;
+        if (!query_ || queryResult_.type == JSONType.null_) return "";
+        return queryResult_.toString();
+    }
 
     override bool apply() {
         if (g_pipeCtx is null)
@@ -61,6 +80,23 @@ class ToolPipeAttrCommand : Command {
         if (matched is null)
             throw new Exception(
                 "tool.pipe.attr: stage '" ~ stageId_ ~ "' not registered");
+
+        // Query (read-back) mode: resolve attrName_ in the stage's params()
+        // and box the live value WITHOUT mutating (no setAttr / reEvaluate).
+        // params() is type-filtered for some stages (e.g. falloff), so an attr
+        // not exposed by the CURRENT state resolves as unknown — that matches
+        // the runtime-visibility model and is fine for Phase 1's read-back.
+        if (query_) {
+            foreach (ref p; matched.params()) {
+                if (p.name == attrName_) {
+                    queryResult_ = paramToJson(p);
+                    return true;
+                }
+            }
+            throw new Exception(
+                "tool.pipe.attr: unknown attribute '" ~ attrName_ ~
+                "' on stage '" ~ stageId_ ~ "'");
+        }
 
         if (!matched.setAttr(attrName_, attrValue_))
             throw new Exception(
