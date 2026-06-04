@@ -547,3 +547,112 @@ unittest {
     assert(m["faceCount"].integer   == before["faceCount"].integer,   "no-op changed face count");
     assert(m["edgeCount"].integer   == before["edgeCount"].integer,   "no-op changed edge count");
 }
+
+// ---------------------------------------------------------------------------
+// 11. SEGMENTS (Phase 3). segs=N stacks N ring levels + N stacked bridge quads
+//     per edge. Ring k (k=1..N) = (k/N)·offset + insetShiftDelta(FULL) +
+//     Scale_k(Rotate_k(E_src)); Rotate_k=(k/N)·angle, Scale_k=1+(k/N)·(scale−1),
+//     inset FULL on every ring. The OUTERMOST ring (k=N) is selected on exit.
+// ---------------------------------------------------------------------------
+
+// 11a. segs=3 + offY=0.3 — cube interior edge → 14v/9f, ring Y = 0.4 + k/3·0.3
+//      (0.5/0.6/0.7), X/Z held at the full-inset ±0.4/0.4. Asserts counts, all
+//      three ring positions, and the FIRST stacked bridge tuple (src→ring1).
+unittest {
+    resetCube();
+    auto before = getModel();
+    auto ends = selectCubeTopFront(before);
+    int va = ends[0], vb = ends[1];   // vb=(0.5,..)=6, va=(-0.5,..)=7
+
+    postCommand(`{"id":"mesh.edge_extend","params":` ~
+        `{"inset":0.1,"shift":0.0,"offsetY":0.3,"segments":3}}`);
+    auto m = getModel();
+
+    assert(m["vertexCount"].integer == 14,
+        "seg3 offY: expected 14 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 9,
+        "seg3 offY: expected 9 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // Ring positions: +x ring welds vb=6, −x ring welds va=7. Y = 0.4 + k/3·0.3.
+    double[3] ringY = [0.5, 0.6, 0.7];
+    foreach (k; 0 .. 3) {
+        assert(vertAt(m, V3( 0.4, ringY[k], 0.4)) >= 0,
+            "seg3 offY: +x ring " ~ k.to!string ~ " (0.4," ~ ringY[k].to!string ~ ",0.4) missing");
+        assert(vertAt(m, V3(-0.4, ringY[k], 0.4)) >= 0,
+            "seg3 offY: -x ring " ~ k.to!string ~ " (-0.4," ~ ringY[k].to!string ~ ",0.4) missing");
+    }
+
+    // FIRST stacked bridge tuple [vb, ring1+x, ring1−x, va] (src→ring1), wound
+    // like the N=1 bridge ([6,8,9,7]). ring1 +x = (0.4,0.5,0.4), −x = (-0.4,0.5,0.4).
+    int r1p = vertAt(m, V3( 0.4, 0.5, 0.4));
+    int r1m = vertAt(m, V3(-0.4, 0.5, 0.4));
+    assert(r1p >= 0 && r1m >= 0, "seg3 offY: ring1 verts not found");
+    auto b1 = faceByVerts(m, [vb, r1p, r1m, va]);
+    assert(b1 !is null, "seg3 offY: first stacked bridge {vb,r1+,r1-,va} not found");
+    assert(tupleMatchesWound(b1, [cast(uint)vb, cast(uint)r1p, cast(uint)r1m, cast(uint)va]),
+        "seg3 offY: first stacked bridge winding [vb,r1+,r1-,va] wrong, got " ~ b1.to!string);
+
+    // The OUTERMOST ring (Y=0.7) edge is selected on exit. selectedEdges is a
+    // list of EDGE INDICES; resolve the index against the model's edge list.
+    auto sel = getSelection();
+    assert(sel["selectedEdges"].array.length == 1,
+        "seg3 offY: exactly the outermost ridge edge selected");
+    int selEi = cast(int)sel["selectedEdges"].array[0].integer;
+    auto se = m["edges"].array[selEi];
+    int sa = cast(int)se.array[0].integer, sbi = cast(int)se.array[1].integer;
+    auto pa = vert(m, sa), pb = vert(m, sbi);
+    bool outer = (len3(sub3(pa, V3( 0.4, 0.7, 0.4))) < 1e-4 && len3(sub3(pb, V3(-0.4, 0.7, 0.4))) < 1e-4) ||
+                 (len3(sub3(pa, V3(-0.4, 0.7, 0.4))) < 1e-4 && len3(sub3(pb, V3( 0.4, 0.7, 0.4))) < 1e-4);
+    assert(outer, "seg3 offY: selected edge must be the OUTERMOST ring (Y=0.7)");
+
+    assert(orphanVerts(m).length == 0, "seg3 offY: orphan verts");
+}
+
+// 11b. segs=2 + offY=0.3 + rotZ=30 — combined per-ring TRS. 12v/8f. Golden ring
+//      positions (verbatim h_seg2_trs equivalent): ring1/ring2 +x and −x.
+unittest {
+    resetCube();
+    auto before = getModel();
+    selectCubeTopFront(before);
+    postCommand(`{"id":"mesh.edge_extend","params":` ~
+        `{"inset":0.1,"shift":0.0,"offsetY":0.3,"rotateZ":30.0,"segments":2}}`);
+    auto m = getModel();
+
+    assert(m["vertexCount"].integer == 12,
+        "seg2 TRS: expected 12 verts, got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 8,
+        "seg2 TRS: expected 8 faces, got " ~ m["faceCount"].integer.to!string);
+
+    // Golden ring verts (h_seg2_trs.json): +x then −x per ring.
+    assert(vertAt(m, V3( 0.253553, 0.662372, 0.4), 2e-5) >= 0, "seg2 TRS: ring1 +x missing");
+    assert(vertAt(m, V3(-0.512372, 0.403553, 0.4), 2e-5) >= 0, "seg2 TRS: ring1 -x missing");
+    assert(vertAt(m, V3( 0.083013, 0.883013, 0.4), 2e-5) >= 0, "seg2 TRS: ring2 +x missing");
+    assert(vertAt(m, V3(-0.583013, 0.383013, 0.4), 2e-5) >= 0, "seg2 TRS: ring2 -x missing");
+
+    assert(orphanVerts(m).length == 0, "seg2 TRS: orphan verts");
+}
+
+// 11c. Undo / redo round-trip with segs=3 (snapshot path must restore 8v/6f).
+unittest {
+    resetCube();
+    auto before = getModel();
+    selectCubeTopFront(before);
+    postCommand(`{"id":"mesh.edge_extend","params":{"inset":0.1,"shift":0.2,"segments":3}}`);
+    auto after = getModel();
+    assert(after["vertexCount"].integer == 14, "seg3 undo: extended to 14v");
+    assert(after["faceCount"].integer   == 9,  "seg3 undo: extended to 9f");
+
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "seg3 undo failed: " ~ u.toString);
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
+        "seg3 undo: original 8v/6f cube restored");
+    assert(m["edgeCount"].integer == before["edgeCount"].integer,
+        "seg3 undo: edges restored");
+
+    auto r = postRedo();
+    assert(r["status"].str == "ok", "seg3 redo failed: " ~ r.toString);
+    auto m2 = getModel();
+    assert(m2["vertexCount"].integer == 14 && m2["faceCount"].integer == 9,
+        "seg3 redo: extended 14v/9f restored");
+}
