@@ -4959,14 +4959,33 @@ void main(string[] args) {
         glViewport(0, 0, fbW, fbH);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
 
-        SDL_GL_SwapWindow(window);
+        // In --test mode the window is HIDDEN and nothing reads back a
+        // presented frame (picking / ViewCache are projection-matrix math;
+        // ImGui still renders into the GL backbuffer for any test that probes
+        // draw state — it just never reaches the compositor). SwapWindow is the
+        // LAST entry point into the Mesa/EGL/compositor swap path, and under
+        // -j8 that path's process-/driver-global locks occasionally park one
+        // instance's main thread forever in futex_do_wait (HTTP thread alive,
+        // main loop dead ⇒ the worker hangs; the race-free /api/model read
+        // spins on a completedEpoch the dead loop never bumps). HIDDEN +
+        // vsync-off only REDUCED the rate — a hidden Wayland surface still
+        // drives Mesa's swap/buffer-management locks. Skipping the swap removes
+        // the contention point entirely. --perf still presents (it benchmarks
+        // the real frame path on a single, non-contended instance).
+        if (!(testMode && !perfMode))
+            SDL_GL_SwapWindow(window);
+        else
+            // No present, but still flush this frame's GL commands to the
+            // driver so the command buffer doesn't grow unbounded across the
+            // uncapped test loop. glFlush is a local driver call — it does NOT
+            // touch the compositor/swap locks that SwapWindow does.
+            glFlush();
 
-        // --test runs with vsync off (hidden window, no compositor vblank to
-        // pace against), so the main loop would otherwise spin at uncapped FPS
-        // and burn a full core. Under -j8 that is 8 cores pinned on busy-render.
-        // A 4ms floor caps the test loop at ~250 FPS — far faster than any
-        // event-replay or HTTP poll needs, while leaving the CPU free for the
-        // sibling workers. --perf deliberately stays uncapped (it benchmarks).
+        // --test runs with vsync off and no swap, so the main loop would
+        // otherwise spin at uncapped FPS and burn a full core. Under -j8 that is
+        // 8 cores pinned on busy-render. A 4ms floor caps the test loop at
+        // ~250 FPS — far faster than any event-replay or HTTP poll needs, while
+        // leaving the CPU free for the sibling workers. --perf stays uncapped.
         if (testMode && !perfMode) SDL_Delay(4);
     }
 }
