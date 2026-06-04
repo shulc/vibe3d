@@ -129,6 +129,7 @@ import shortcuts;
 import buttonset;
 import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
+import forms_render;
 
 version (WithRender) import render.render_mvp   : drawIPRPanel, shutdownIPR;
 version (WithRender) import render.render_diff  : runRenderDiff;
@@ -858,6 +859,7 @@ void main(string[] args) {
     // gets a dialog — no further app.d changes needed for new commands.
     auto argsDialog    = new ArgsDialog();
     auto propertyPanel = new PropertyPanel();
+    auto formsPanel    = new forms_render.FormsPanel();
 
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to
@@ -1403,8 +1405,19 @@ void main(string[] args) {
     // registry. A YAML typo (unknown attr / stage / tool / command) throws here
     // and aborts startup, exactly like a stale tool preset does.
     {
-        import forms : loadForms, validateForms, FormValidators, g_forms;
+        import forms : loadForms, validateForms, FormValidators, g_forms,
+                       g_formsPanelEnabled;
         import toolpipe.pipeline : g_pipeCtx;
+
+        // Phase-4 enablement gate (opt-in). Default OFF keeps every tool on its
+        // legacy PropertyPanel / drawProperties() path; VIBE3D_FORMS=1 routes a
+        // tool with a matching form through FormsPanel. Transform's full
+        // interactive write path lands in Phase 5; until then the gate avoids a
+        // double-live-widget on its translate state.
+        {
+            import std.process : environment;
+            g_formsPanelEnabled = environment.get("VIBE3D_FORMS", "") == "1";
+        }
         import std.file : dirEntries, SpanMode, exists;
         import std.algorithm : sort;
 
@@ -1542,6 +1555,17 @@ void main(string[] args) {
     // when httpServer is null they remain null and the replay path is a no-op.
     void delegate(string, string) commandHandlerDelegate;
     void delegate(size_t) replayUndoEntry;
+    // FormsPanel write path: dispatches a `tool.attr` exactly like
+    // commandHandlerDelegate but marks the built ToolAttrCommand `interactive`
+    // (an in-process setInteractive(true)) so the universal reEvaluate() seam
+    // opens the tool's live session on the first edit. Never sets the flag via
+    // an argstring — see commands/tool/attr.d. Null when httpServer is null.
+    void delegate(string, string) formsInteractiveDispatch;
+    // Closure-captured latch the command handler reads to decide whether a
+    // `tool.attr` it is about to build should be marked interactive. Set ONLY
+    // by formsInteractiveDispatch around a single dispatch; never touched by
+    // the HTTP path, so raw `/api/command` writes stay non-interactive.
+    bool formsInteractiveLatch = false;
 
     // Set up HTTP server model data provider
     if (httpServer !is null) {
@@ -2199,6 +2223,15 @@ void main(string[] args) {
                 throw new Exception("unknown command id '" ~ id ~ "'");
             auto cmd = (*factory)();
 
+            // FormsPanel interactive write: mark a `tool.attr` interactive so
+            // the reEvaluate() seam opens the tool's live session on the first
+            // edit. The latch is set ONLY by formsInteractiveDispatch around one
+            // dispatch — the raw HTTP path never sets it, so wire `tool.attr`
+            // stays inert (faithful). Programmatic-only, never an argstring arg.
+            if (formsInteractiveLatch)
+                if (auto ta = cast(ToolAttrCommand)cmd)
+                    ta.setInteractive(true);
+
             if (paramsJson.length > 0) {
                 auto pj = parseJSON(paramsJson);
                 if (pj.type == JSONType.object) {
@@ -2317,6 +2350,16 @@ void main(string[] args) {
             }
         };
         httpServer.setCommandHandler(commandHandlerDelegate);
+
+        // FormsPanel value writes go through here: raise the latch, dispatch the
+        // ordinary `tool.attr` via the same handler, lower the latch. The handler
+        // marks the built ToolAttrCommand interactive while the latch is up, so
+        // the first forms edit opens the tool's live session (reEvaluate seam).
+        formsInteractiveDispatch = (string id, string paramsJson) {
+            formsInteractiveLatch = true;
+            scope(exit) formsInteractiveLatch = false;
+            commandHandlerDelegate(id, paramsJson);
+        };
 
         // Phase 5.6: assign the outer-scope replayUndoEntry delegate so the
         // History panel replay button can call it from the main-loop render.
@@ -4129,8 +4172,26 @@ void main(string[] args) {
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties")) {
-                propertyPanel.draw(activeTool);   // schema-driven params first
-                activeTool.drawProperties();      // tool-specific custom UI after
+                // Config-driven forms (Phase 4/5): when the forms panel is
+                // enabled (VIBE3D_FORMS=1) AND a loaded form matches the active
+                // tool, render it through FormsPanel — which queries the live
+                // params() per frame and dispatches writes through the same
+                // command path the HTTP API uses (value rows marked interactive
+                // so the reEvaluate() seam opens a coalesced undo session).
+                // Otherwise fall back to the unchanged PropertyPanel +
+                // drawProperties() path for every un-migrated tool.
+                import forms : g_formsPanelEnabled, formsForTool;
+                auto matchingForms = g_formsPanelEnabled
+                                   ? formsForTool(activeToolId) : null;
+                if (matchingForms.length) {
+                    foreach (ref fm; matchingForms)
+                        formsPanel.draw(fm, activeTool,
+                                        commandHandlerDelegate,
+                                        formsInteractiveDispatch);
+                } else {
+                    propertyPanel.draw(activeTool);   // schema-driven params first
+                    activeTool.drawProperties();      // tool-specific custom UI after
+                }
 
                 // Phase 7.9: each enabled tool-pipe stage with a params()
                 // schema gets its own collapsible section below the
