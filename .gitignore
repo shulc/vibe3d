@@ -42,3 +42,7 @@ vibe3d-macos-render/
 # perf harness generated output (results.json is a transient per-run dump;
 # baseline.json is committed as the reference — see tools/perf/README.md)
 tools/perf/results.json
+
+# dyaml 0.10.0 unittests (compiled into -unittest test binaries via
+# test_forms_loader) write a scratch example.yaml into cwd (loader.d:248)
+/example.yaml
