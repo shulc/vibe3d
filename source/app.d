@@ -1416,7 +1416,7 @@ void main(string[] args) {
         // debugging / A-B comparison.
         {
             import std.process : environment;
-            g_formsPanelEnabled = environment.get("VIBE3D_FORMS", "1") != "0";
+            g_formsPanelEnabled = environment.get("VIBE3D_FORMS", "1") != "0"; // read once at startup; runtime changes need a relaunch
         }
         import std.file : dirEntries, SpanMode, exists;
         import std.algorithm : sort;
@@ -4173,7 +4173,7 @@ void main(string[] args) {
             ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties")) {
                 // Config-driven forms (Phase 4/5): when the forms panel is
-                // enabled (VIBE3D_FORMS=1) AND a loaded form matches the active
+                // enabled (default; disable with VIBE3D_FORMS=0) AND a loaded form matches the active
                 // tool, render it through FormsPanel — which queries the live
                 // params() per frame and dispatches writes through the same
                 // command path the HTTP API uses (value rows marked interactive
@@ -4204,6 +4204,8 @@ void main(string[] args) {
                     if (auto xf = cast(XfrmTransformTool) activeTool) {
                         xf.suppressTranslateProperties = true;
                         scope(exit) xf.suppressTranslateProperties = false;
+                    // Phase 5b: R/S sliders below still commit their own sessions
+                    // (separate undo entries) until reEvaluate covers R/S.
                         xf.drawProperties();
                     }
                 } else {
