@@ -1947,8 +1947,17 @@ void main(string[] args) {
                             ta.setToolId(pos[0].str);
                         if (pos.length >= 2 && pos[1].type == JSONType.string)
                             ta.setAttrName(pos[1].str);
-                        if (pos.length >= 3)
-                            ta.setAttrValue(pos[2]);
+                        if (pos.length >= 3) {
+                            // Forms-engine query idiom: a literal "?" in the
+                            // value slot flips the command into read-back mode
+                            // (resolve + box the live value, mutate nothing)
+                            // instead of writing. Any other value writes as
+                            // before — backward-compatible.
+                            if (pos[2].type == JSONType.string && pos[2].str == "?")
+                                ta.setQuery(true);
+                            else
+                                ta.setAttrValue(pos[2]);
+                        }
                     }
                 }
             } else if (auto tr = cast(ToolResetCommand)cmd) {
@@ -1968,7 +1977,11 @@ void main(string[] args) {
                             tpa.setStageId(pos[0].str);
                         if (pos.length >= 2 && pos[1].type == JSONType.string)
                             tpa.setAttrName(pos[1].str);
-                        if (pos.length >= 3) {
+                        if (pos.length >= 3 && pos[2].type == JSONType.string
+                            && pos[2].str == "?") {
+                            // Forms-engine query idiom (stage namespace).
+                            tpa.setQuery(true);
+                        } else if (pos.length >= 3) {
                             // Value is whatever scalar form was passed —
                             // stringify so the stage's setAttr can parse it.
                             import std.conv : to;
@@ -2180,6 +2193,31 @@ void main(string[] args) {
             // semantics.
             {
                 auto zCmd = g_perf.scope_(Cat.commandApply);
+                // Forms-engine query (`?` read-back) short-circuit. A query
+                // command resolves + boxes the live value WITHOUT mutating;
+                // it records no history and bypasses the refire/coalesce path
+                // entirely (a pure read). The boxed JSON is stashed for the
+                // HTTP thread via setCmdResult(); the in-process renderer reads
+                // queryResult() directly. A non-query (write) tool.attr /
+                // tool.pipe.attr falls through to the normal paths below.
+                if (auto taq = cast(ToolAttrCommand)cmd) {
+                    if (taq.isQuery()) {
+                        if (!taq.apply())
+                            throw new Exception("command '" ~ id ~ "' did not apply");
+                        if (httpServer !is null)
+                            httpServer.setCmdResult(taq.queryResultJsonOrEmpty());
+                        return;
+                    }
+                }
+                if (auto tpaq = cast(ToolPipeAttrCommand)cmd) {
+                    if (tpaq.isQuery()) {
+                        if (!tpaq.apply())
+                            throw new Exception("command '" ~ id ~ "' did not apply");
+                        if (httpServer !is null)
+                            httpServer.setCmdResult(tpaq.queryResultJsonOrEmpty());
+                        return;
+                    }
+                }
                 // Refire (undo/redo migration P4): a panel-param-edit session on
                 // an opted-in tool routes a tool.attr through the tool's own
                 // buildRefireCommand() rather than firing the (non-undoable)
