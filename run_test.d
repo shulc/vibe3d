@@ -13,9 +13,12 @@
 
 module run_test;
 
-import std.algorithm : canFind, sort, each;
+import std.algorithm : canFind, sort, each, map, sum, minIndex;
 import std.array     : array, appender, replace, join;
 import std.conv      : to, octal;
+import std.datetime.stopwatch : StopWatch, AutoStart;
+import std.json      : JSONValue, parseJSON, JSONType;
+import std.math      : isNaN;
 // Import std.file fully so the per-worker scratch source-write can call
 // `std.file.write` without colliding with the `write` from std.stdio.
 static import std.file;
@@ -56,6 +59,13 @@ __gshared string scratchDir;
 __gshared bool   keepVibe;
 __gshared bool   useColor;
 __gshared int    runLockFd = -1;  // held for the whole run; see acquireRunLock
+
+// Machine-aware default worker count. See the call site in main() for the
+// rationale; kept as a free function so run_all.d can mirror the same formula.
+int defaultJobs() {
+    import std.algorithm : clamp;
+    return clamp(cast(int)totalCPUs / 4, 4, 12);
+}
 
 string col(string code, string s) {
     return useColor ? "\033[" ~ code ~ "m" ~ s ~ "\033[0m" : s;
@@ -196,6 +206,77 @@ string[] resolveTests(string[] args) {
         paths ~= p;
     }
     return paths;
+}
+
+// ---------------------------------------------------------------------------
+// Per-test timing persistence (machine-specific; gitignored)
+// ---------------------------------------------------------------------------
+//
+// We record each test's wall-clock duration after every run and persist it to
+// `.test_timings.json` in the repo root. Durations are smoothed across runs
+// with an exponential moving average (EMA, alpha = 0.3): a run's fresh sample
+// counts 30%, the prior history 70%. EMA was chosen over "median of last 5"
+// because it needs no per-test sample ring (one float per test), still damps
+// one-off spikes (a loaded host on a single run barely moves the estimate),
+// and adapts smoothly when a test's real cost shifts (e.g. a test grows). The
+// estimates feed the LPT scheduler (longest-processing-time-first) so workers
+// finish nearly together instead of one dragging the long tail.
+//
+// The file is keyed by the bare test name (e.g. "test_bevel") so it is stable
+// across the per-worker scratch copies and across worktrees/checkouts.
+
+enum double EMA_ALPHA = 0.3;
+
+string timingsPath() { return ".test_timings.json"; }
+
+// Load smoothed per-test durations (seconds), keyed by bare test name. Missing
+// or malformed file → empty map (every test then falls back to a default).
+double[string] loadTimings() {
+    double[string] m;
+    auto p = timingsPath();
+    if (!exists(p)) return m;
+    try {
+        auto j = parseJSON(readText(p));
+        if (j.type != JSONType.object) return m;
+        foreach (k, v; j.object) {
+            if (v.type == JSONType.float_)        m[k] = v.floating;
+            else if (v.type == JSONType.integer)  m[k] = cast(double)v.integer;
+        }
+    } catch (Exception) { /* corrupt cache — ignore, rebuild from scratch */ }
+    return m;
+}
+
+// Fold this run's fresh samples into the prior estimates (EMA) and write back.
+// `samples` is keyed by bare test name → wall-clock seconds for THIS run.
+void saveTimings(double[string] prior, double[string] samples) {
+    double[string] merged;
+    foreach (k, v; prior) merged[k] = v;
+    foreach (k, v; samples) {
+        if (auto old = k in merged) *old = EMA_ALPHA * v + (1 - EMA_ALPHA) * (*old);
+        else                        merged[k] = v;  // first observation
+    }
+    JSONValue[string] obj;
+    foreach (k, v; merged) obj[k] = JSONValue(v);
+    JSONValue j = JSONValue(obj);
+    try { std.file.write(timingsPath(), j.toPrettyString); }
+    catch (Exception e) { stderr.writeln(yellow("warning: could not write "
+        ~ timingsPath() ~ ": " ~ e.msg)); }
+}
+
+// Best estimate (seconds) for a test path, given the loaded timings. Unknown
+// tests get the median of known timings (robust to outliers), or a constant
+// when the cache is empty.
+double estimateFor(string path, double[string] timings, double defaultEst) {
+    auto name = baseName(path).stripExtension;
+    if (auto t = name in timings) return *t;
+    return defaultEst;
+}
+
+double medianOf(double[] xs, double fallback) {
+    if (xs.empty) return fallback;
+    auto s = xs.dup;
+    s.sort();
+    return s[s.length / 2];
 }
 
 // ---------------------------------------------------------------------------
@@ -440,12 +521,14 @@ bool waitForHttpReady(string logPath, ushort port) {
 struct TestResult {
     string name;
     bool   passed;
-    string output;   // captured stdout+stderr (only kept on failure)
+    string output;     // captured stdout+stderr (only kept on failure)
+    double seconds;    // wall-clock duration of this test (for timing cache)
 }
 
 TestResult runOne(string bin, bool verbose) {
     TestResult r;
     r.name = baseName(bin);
+    auto sw = StopWatch(AutoStart.yes);
     if (verbose) {
         auto pid = spawnProcess([bin]);
         r.passed = (wait(pid) == 0);
@@ -460,6 +543,7 @@ TestResult runOne(string bin, bool verbose) {
             try { r.output = readText(outPath); } catch (Exception) {}
         }
     }
+    r.seconds = sw.peek.total!"msecs" / 1000.0;
     return r;
 }
 
@@ -551,7 +635,12 @@ void printSummary(TestResult[] results) {
 int main(string[] args) {
     bool verbose, noBuild, keep;
     ushort port = 8080;
-    int j = 1;
+    // Machine-aware default worker count: scale with the host but stay sane.
+    // Each worker boots its OWN vibe3d (a GL app), so we don't go 1:1 with
+    // cores — clamp(totalCPUs/4, 4, 12). On a 32-core host that's 8; small
+    // hosts still get 4; huge hosts cap at 12 so we don't spawn a swarm of
+    // GL instances. An explicit `-j N` always overrides this default.
+    int j = defaultJobs();
     string[] exclude;
     auto helpInfo = getopt(args,
         config.bundling,
@@ -560,7 +649,7 @@ int main(string[] args) {
         "no-build",   "skip `dub build`",                                     &noBuild,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
-                    ~ "private port (default 1)",                             &j,
+                    ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
         "exclude",    "skip a test by name (repeatable). Same name forms as "
                     ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude);
 
@@ -619,7 +708,17 @@ int main(string[] args) {
     // Cap workers at # of tests so we don't spin up empty vibe3d instances.
     if (j > cast(int)tests.length) j = cast(int)tests.length;
 
-    // Build N workers, distribute tests round-robin.
+    // Build N workers and distribute tests by LONGEST-PROCESSING-TIME-FIRST:
+    // sort tests by expected duration DESCENDING, then greedily assign each to
+    // the currently least-loaded worker. This packs the long tests early and
+    // backfills the short ones, so all workers finish at nearly the same time
+    // instead of one worker dragging a long test at the very end. Expected
+    // durations come from the smoothed timing cache (.test_timings.json);
+    // unknown tests get the median of known timings (or a 2s constant when the
+    // cache is empty / cold).
+    auto timings   = loadTimings();
+    double defaultEst = medianOf(timings.values, 2.0);
+
     Worker[] workers;
     workers.length = j;
     foreach (i, ref w; workers) {
@@ -627,7 +726,27 @@ int main(string[] args) {
         w.port    = cast(ushort)(port + i);
         w.scratch = buildPath(scratchDir, format("worker_%d", i));
     }
-    foreach (i, t; tests) workers[i % j].tests ~= t;
+
+    // Sort a working copy of the test paths by descending estimate.
+    auto ordered = tests.dup;
+    ordered.sort!((a, b) =>
+        estimateFor(a, timings, defaultEst) > estimateFor(b, timings, defaultEst));
+
+    auto load = new double[j];   // expected accumulated load per worker
+    load[] = 0;                  // double[].init is NaN in D — zero it first
+    foreach (t; ordered) {
+        size_t target = load[].minIndex;   // least-loaded worker
+        workers[target].tests ~= t;
+        load[target] += estimateFor(t, timings, defaultEst);
+    }
+
+    if (verbose && j > 1) {
+        writeln(dim("LPT schedule (expected load per worker):"));
+        foreach (i, ref w; workers)
+            writefln(dim("  w%d: %5.1fs  (%d test%s)"),
+                i, load[i], w.tests.length, w.tests.length == 1 ? "" : "s");
+        writeln();
+    }
 
     // Prepare workers in parallel — compile tests + boot vibe3d. Each
     // worker's compile/boot is independent.
@@ -656,6 +775,15 @@ int main(string[] args) {
     TestResult[] results;
     foreach (slice; perWorker) results ~= slice;
     results.sort!((a, b) => a.name < b.name);
+
+    // Fold this run's wall-clock durations into the smoothed timing cache so
+    // the next run schedules better. Key by bare test name (drop ".out"/path).
+    double[string] samples;
+    foreach (ref r; results) {
+        auto name = baseName(r.name).stripExtension;
+        if (r.seconds > 0 && !r.seconds.isNaN) samples[name] = r.seconds;
+    }
+    if (samples.length) saveTimings(timings, samples);
 
     printSummary(results);
     int failed = 0;

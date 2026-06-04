@@ -48,14 +48,20 @@
  *
  * Override via $RUN_ALL_EXCLUDE (comma-separated, replaces default).
  */
-import std.algorithm : canFind;
+import std.algorithm : canFind, clamp;
 import std.array     : array, split;
 import std.format    : format;
+import std.parallelism : totalCPUs;
 import std.process   : environment, spawnProcess, wait;
 import std.file      : exists;
 import std.stdio;
 import std.getopt;
 import core.stdc.stdlib : exit;
+
+// Machine-aware default worker count, mirroring run_test.d's defaultJobs():
+// clamp(totalCPUs/4, 4, 12). Each worker boots its own vibe3d / MODO, so we
+// scale with the host without going 1:1 with cores. CI pins -j 4 explicitly.
+int defaultJobs() { return clamp(cast(int)totalCPUs / 4, 4, 12); }
 
 bool useColor = true;
 string red(string s)    => useColor ? "\033[31m" ~ s ~ "\033[0m" : s;
@@ -101,13 +107,14 @@ string join(string[] parts, string sep) {
 }
 
 int main(string[] args) {
-    int j = 4;
+    int j = defaultJobs();
     bool noBuild = false;
     string only;
     string[] skip;
 
     auto info = getopt(args,
-        "j|jobs",     "worker count for unit + ACEN drag suites (default 4)", &j,
+        "j|jobs",     "worker count for unit + ACEN drag suites "
+                    ~ "(default = clamp(cpus/4, 4, 12))", &j,
         "no-build",   "skip dub build in unit + Blender + MODO suites", &noBuild,
         "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | perf-abs)", &only,
         "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot)", &skip);
