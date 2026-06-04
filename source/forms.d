@@ -544,6 +544,9 @@ string substituteQuery(const ref Binding b, JSONValue value)
 private string quoteIfNeeded(string s)
 {
     if (s.length == 0) return `""`;
+    // Quote a literal "?" so a written string value can never morph into the
+    // query sentinel if the line is ever re-parsed by parseBinding.
+    if (s == "?") return `"?"`;
     foreach (c; s)
         if (c == ' ' || c == '\t' || c == '"' || c == '{' || c == '}'
             || c == ',' || c == ':')
