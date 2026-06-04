@@ -1409,14 +1409,14 @@ void main(string[] args) {
                        g_formsPanelEnabled;
         import toolpipe.pipeline : g_pipeCtx;
 
-        // Phase-4 enablement gate (opt-in). Default OFF keeps every tool on its
-        // legacy PropertyPanel / drawProperties() path; VIBE3D_FORMS=1 routes a
-        // tool with a matching form through FormsPanel. Transform's full
-        // interactive write path lands in Phase 5; until then the gate avoids a
-        // double-live-widget on its translate state.
+        // Phase-5 enablement: FormsPanel is the PRIMARY Tool Properties UI by
+        // default — a tool with a matching loaded form renders through it, every
+        // other tool keeps the legacy PropertyPanel / drawProperties() fallback.
+        // VIBE3D_FORMS=0 is the kill-switch (legacy panel for ALL tools) for
+        // debugging / A-B comparison.
         {
             import std.process : environment;
-            g_formsPanelEnabled = environment.get("VIBE3D_FORMS", "") == "1";
+            g_formsPanelEnabled = environment.get("VIBE3D_FORMS", "1") != "0";
         }
         import std.file : dirEntries, SpanMode, exists;
         import std.algorithm : sort;
@@ -4188,6 +4188,24 @@ void main(string[] args) {
                         formsPanel.draw(fm, activeTool,
                                         commandHandlerDelegate,
                                         formsInteractiveDispatch);
+
+                    // The transform form owns the translate value rows (Position
+                    // TX/TY/TZ) and the T/R/S checkboxes, but Rotate/Scale value
+                    // editing has no form rows yet (deferred Phase 5b) and lives
+                    // ONLY in the legacy rotateSub/scaleSub sliders. So still call
+                    // drawProperties() AFTER the form, with the translate section
+                    // suppressed — no double-live-widget on headlessTranslate, R/S
+                    // sliders still editable. For any other formed tool the latch
+                    // is harmless (it only gates the transform tool's translate
+                    // sliders). The schema panel is NOT drawn: the transform tool
+                    // sets renderParamsAsPanel()==false (PropertyPanel.draw
+                    // early-returns), and formed tools render values via the form.
+                    import tools.xfrm_transform : XfrmTransformTool;
+                    if (auto xf = cast(XfrmTransformTool) activeTool) {
+                        xf.suppressTranslateProperties = true;
+                        scope(exit) xf.suppressTranslateProperties = false;
+                        xf.drawProperties();
+                    }
                 } else {
                     propertyPanel.draw(activeTool);   // schema-driven params first
                     activeTool.drawProperties();      // tool-specific custom UI after
