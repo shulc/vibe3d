@@ -15,7 +15,7 @@ module run_test;
 
 import std.algorithm : canFind, sort, each;
 import std.array     : array, appender, replace, join;
-import std.conv      : to;
+import std.conv      : to, octal;
 // Import std.file fully so the per-worker scratch source-write can call
 // `std.file.write` without colliding with the `write` from std.stdio.
 static import std.file;
@@ -35,7 +35,17 @@ import core.thread        : Thread;
 import core.time          : msecs, seconds, dur;
 import core.stdc.stdlib   : exit;
 import core.sys.posix.signal : signal, kill, SIGINT, SIGTERM, SIGKILL;
-import core.sys.posix.unistd : isatty, STDOUT_FILENO;
+import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate;
+import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT;
+import core.sys.posix.sys.types : ssize_t;
+
+// flock(2) is not surfaced by this druntime's posix bindings; declare it.
+extern(C) int flock(int fd, int operation) nothrow @nogc;
+pragma(mangle, "write")
+extern(C) ssize_t c_write(int fd, const(void)* buf, size_t count) nothrow @nogc;
+enum LOCK_EX = 2;   // exclusive lock
+enum LOCK_NB = 4;   // non-blocking
+enum LOCK_UN = 8;   // unlock
 
 // ---------------------------------------------------------------------------
 // Lifecycle state — accessed by signal handler
@@ -45,6 +55,7 @@ __gshared int[]  vibePids;     // worker PIDs to kill on signal / cleanup
 __gshared string scratchDir;
 __gshared bool   keepVibe;
 __gshared bool   useColor;
+__gshared int    runLockFd = -1;  // held for the whole run; see acquireRunLock
 
 string col(string code, string s) {
     return useColor ? "\033[" ~ code ~ "m" ~ s ~ "\033[0m" : s;
@@ -56,8 +67,78 @@ string yellow(string s) { return col("33", s); }
 string dim   (string s) { return col("2",  s); }
 string bold  (string s) { return col("1",  s); }
 
+// ---------------------------------------------------------------------------
+// Cross-process run lock
+// ---------------------------------------------------------------------------
+//
+// Two test runs MUST NOT overlap on one host: the runner boots `vibe3d --test`
+// on ports `port + worker` and uses a shared `vibe3d-tests-<PPID>` scratch dir,
+// and `killStaleVibe` clears stale instances by port — two concurrent runs
+// (e.g. two agents) fight over the same ports + scratch and mutually kill each
+// other's vibe3d, producing "No such file" / "Could not connect" flakes. A
+// host-wide advisory flock serialises runs: the second runner blocks (printing
+// a notice) until the first releases, or times out and bails without stomping.
+//
+// The lock is on a fixed file in tempDir so it is shared across worktrees /
+// checkouts. flock is released automatically when the fd closes (process exit),
+// so a crashed runner never leaks the lock.
+string runLockPath() { return buildPath(tempDir(), "vibe3d-run-test.lock"); }
+
+// Acquire the host-wide run lock, waiting up to `timeoutSec` for any other
+// runner to finish. Returns true on success; false if the wait timed out.
+bool acquireRunLock(int timeoutSec) {
+    import std.string : toStringz;
+    runLockFd = open(runLockPath().toStringz, O_RDWR | O_CREAT, octal!"644");
+    if (runLockFd < 0) {
+        // Can't create the lockfile — degrade to no-lock rather than block CI.
+        stderr.writeln(yellow("warning: could not open run lock; "
+            ~ "running without cross-run serialisation"));
+        return true;
+    }
+    // Fast path: grab it immediately if free.
+    if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) return recordLockHolder();
+
+    writeln(yellow("another test run is in progress on this host — waiting "
+        ~ "(another agent may be running ./run_test.d)..."));
+    int waited = 0;
+    while (waited < timeoutSec) {
+        Thread.sleep(1.seconds);
+        waited += 1;
+        if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) {
+            writeln(green(format("  acquired run lock after %ds", waited)));
+            return recordLockHolder();
+        }
+        if (waited % 15 == 0)
+            writefln(yellow("  still waiting for the other run (%ds)..."), waited);
+    }
+    stderr.writeln(red(format("timed out after %ds waiting for the in-progress "
+        ~ "test run to finish; not starting (re-run later, or kill the stale "
+        ~ "runner). Lock: %s", timeoutSec, runLockPath())));
+    close(runLockFd);
+    runLockFd = -1;
+    return false;
+}
+
+// Stamp our PID into the lockfile for diagnostics ("who holds it?").
+bool recordLockHolder() {
+    import std.string : toStringz;
+    ftruncate(runLockFd, 0);
+    string stamp = format("pid %d\n", getpid());
+    c_write(runLockFd, stamp.ptr, stamp.length);
+    return true;
+}
+
+void releaseRunLock() {
+    if (runLockFd >= 0) {
+        flock(runLockFd, LOCK_UN);
+        close(runLockFd);
+        runLockFd = -1;
+    }
+}
+
 extern(C) void onSignal(int sig) nothrow @nogc @system {
     foreach (p; vibePids) if (p != 0) kill(p, SIGKILL);
+    if (runLockFd >= 0) { flock(runLockFd, LOCK_UN); close(runLockFd); }
     import core.stdc.stdio : fputs, stderr;
     fputs("\ninterrupted\n", stderr);
     exit(130);
@@ -85,6 +166,7 @@ void cleanup() {
     if (scratchDir.length && exists(scratchDir)) {
         try { rmdirRecurse(scratchDir); } catch (Exception) {}
     }
+    releaseRunLock();
 }
 
 // ---------------------------------------------------------------------------
@@ -523,6 +605,12 @@ int main(string[] args) {
     }
 
     if (!noBuild && !dubBuild()) return 1;
+
+    // Serialise with any other runner on this host BEFORE we touch ports /
+    // scratch / vibe3d — concurrent runs mutually kill each other's instances
+    // (killStaleVibe by port) and share the scratch dir, causing spurious
+    // "Could not connect" / "No such file" failures. Wait up to 10 min.
+    if (!acquireRunLock(600)) return 1;
 
     scratchDir = buildPath(tempDir(), "vibe3d-tests-" ~ environment.get("PPID", "0"));
     if (exists(scratchDir)) rmdirRecurse(scratchDir);
