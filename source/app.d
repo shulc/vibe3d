@@ -116,6 +116,7 @@ import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
+import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
@@ -538,6 +539,17 @@ void main(string[] args) {
     ImGui.CreateContext();
     ImGuiIO* io = &ImGui.GetIO();
     io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
+    // In --test mode, disable ImGui's on-disk layout persistence. The .ini
+    // is written relative to the current working directory, and each parallel
+    // test worker runs in its own scratch cwd — so without this every worker
+    // would load a different (or fresh) panel layout, making synthetic mouse
+    // drags over the viewport non-deterministic (a drag can cross a panel that
+    // is present in one worker's layout and absent in another's, where ImGui
+    // would capture it). Setting IniFilename = null before the first NewFrame
+    // means windows always open at their programmatic default positions,
+    // independent of cwd. Must run before any window is created/loaded.
+    if (command.g_testMode)
+        io.IniFilename = null;
     ImGui.StyleColorsDark();
     ImGui_ImplSDL2_Init(window);
     ImGui_ImplOpenGL3_Init("#version 330 core");
@@ -1084,6 +1096,8 @@ void main(string[] args) {
         new ToolBeginSessionCommand(&mesh, cameraView, editMode, toolHost);
     reg.commandFactories["tool.panelEdit"] = () => cast(Command)
         new ToolPanelEditCommand(&mesh, cameraView, editMode, toolHost);
+    reg.commandFactories["ui.toolProperties"] = () => cast(Command)
+        new UiToolPropertiesCommand(&mesh, cameraView, editMode);
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
     // in the global tool pipe.
@@ -1996,6 +2010,15 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             stt.setTypeName(pos[0].str);
+                    }
+                }
+            } else if (auto utp = cast(UiToolPropertiesCommand)cmd) {
+                // ui.toolProperties <show|hide> (test-only).
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            utp.setVisible(pos[0].str);
                     }
                 }
             }
@@ -4000,7 +4023,11 @@ void main(string[] args) {
         version (WithRender) drawIPRPanel(&mesh, cameraView);
 
         // ---- Tool Properties (floating) ----
-        if (activeTool !is null) {
+        // In --test mode this window is hidden by default so synthetic mouse
+        // drags over the viewport are never captured by it; a test enables it
+        // explicitly via `ui.toolProperties show`. In a normal run it is always
+        // rendered while a tool is active (g_testMode false ⇒ guard passes).
+        if (activeTool !is null && (!command.g_testMode || g_toolPropertiesShown)) {
             pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
