@@ -1042,21 +1042,22 @@ private bool hasName(string[] names, string n) {
 
 __gshared Form[] g_forms;
 
-/// Phase-4 enablement gate. When FALSE (the default), the Tool Properties
-/// window keeps every tool on its existing PropertyPanel / drawProperties()
-/// path — the loaded forms are validated but NOT rendered live. When TRUE
-/// (opt-in via `VIBE3D_FORMS=1`), the window renders a matching form through
-/// FormsPanel instead of the legacy panel.
+/// Forms enablement gate. As of Phase 5 (forms_engine_plan.md) FormsPanel is the
+/// PRIMARY Tool Properties UI: when TRUE (the default), a tool that has a matching
+/// loaded form renders through FormsPanel; a tool WITHOUT a form keeps the
+/// unchanged PropertyPanel / drawProperties() fallback. The `VIBE3D_FORMS=0`
+/// kill-switch flips this back OFF (every tool on the legacy panel) for
+/// debugging / A-B comparison.
 ///
-/// Rationale (forms_engine_plan.md staging): the transform tool sets
-/// renderParamsAsPanel()==false and owns its translate sliders in
-/// drawProperties(); the transform form's interactive write path
-/// (setInteractive → reEvaluate seam) is only fully wired in Phase 5. Rendering
-/// the transform form alongside the legacy sliders before then would put two
-/// live widgets on one state. The gate keeps Phase 4 (renderer) decoupled from
-/// Phase 5 (transform adoption): the renderer ships + is exercised behind the
-/// flag without flipping transform's primary UI.
-__gshared bool g_formsPanelEnabled = false;
+/// Two-live-widget resolution (forms_engine_plan.md Phase 5 step 2): the
+/// transform tool's form owns the translate value rows (Position TX/TY/TZ) plus
+/// the T/R/S checkboxes, so when its form renders, app.d suppresses the legacy
+/// translate sliders (`moveSub.drawProperties()`) while still drawing the Rotate
+/// / Scale sliders (R/S value editing has no form rows until Phase 5b and lives
+/// ONLY in those legacy sliders). The transform tool already sets
+/// renderParamsAsPanel()==false, so PropertyPanel.draw early-returns for it and
+/// there is no schema-panel double-edit either.
+__gshared bool g_formsPanelEnabled = true;
 
 /// Forms whose `whenTool` filter matches `activeToolId` (empty filter => always
 /// shown). Caller renders these in `category`/`ordinal` order.
