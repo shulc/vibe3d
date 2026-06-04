@@ -51,17 +51,28 @@
  *       (run_test.d resetBetweenTests) plus per-test reset preambles and a
  *       post-play-events settle that lets the SDL queue drain before the read.
  *
- *   (b) compositor swap-park — in --test the app used to create a VISIBLE
- *       vsynced GL window; 8 of them on one compositor contended on
- *       Mesa/EGL locks and ~1-in-6 runs parked a worker's main thread forever
- *       in SDL_GL_SwapWindow. FIXED by creating the --test window HIDDEN with
- *       vsync OFF (app.d), so a test instance never blocks on a vblank it
- *       isn't presenting to. A 4ms per-frame floor keeps 8 uncapped workers
- *       civil on CPU.
+ *   (b) post-playback drain race — a test polled /api/play-events/status
+ *       for "finished" then read the selection IMMEDIATELY, but "finished"
+ *       fires once events are DISPATCHED onto the SDL queue, not processed;
+ *       the last gesture's click drained a frame or two later, so the read
+ *       saw a stale selection (test_selection / test_interactive_select_undo
+ *       "expected 3 ... got 2" on selection_add.log). FIXED by a settle after
+ *       the finished-poll, before the read.
+ *
+ *   (c) compositor swap-park — in --test the app used to create a VISIBLE
+ *       vsynced GL window; 8 of them on one compositor contended on Mesa/EGL
+ *       locks and ~1-in-6 runs parked a worker's main thread forever in the
+ *       GL swap path (HTTP thread alive, main loop dead ⇒ the race-free
+ *       /api/model read spins on a completedEpoch the dead loop never bumps).
+ *       HIDDEN + vsync-off only REDUCED the rate (a hidden Wayland surface
+ *       still drives the driver's swap/buffer locks). FIXED by skipping
+ *       SDL_GL_SwapWindow entirely in --test (nothing reads back a presented
+ *       frame; a local glFlush keeps the command buffer bounded). --perf still
+ *       presents. A 4ms per-frame floor keeps 8 uncapped workers civil on CPU.
  *
  * Evidence for dropping the excludes: 10 consecutive full
  * `./run_test.d --no-build -j 8` runs with NO excludes ran 10/10 green
- * (129/129 each, 51-73s/run, zero hangs, zero failures) — including the four
+ * (130/130 each, ~66-84s/run, zero hangs, zero failures) — including the four
  * formerly-excluded tests (test_selection, test_toolpipe_axis,
  * test_http_endpoint, test_property_panel_drag) and the two formerly-watched
  * ones (test_reevaluate, test_primitive_pen).
