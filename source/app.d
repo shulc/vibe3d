@@ -1054,7 +1054,7 @@ void main(string[] args) {
     reg.commandFactories["tool.reset"] = () => cast(Command)
         new ToolResetCommand(&mesh, cameraView, editMode, toolHost);
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)
-        new ToolPipeAttrCommand(&mesh, cameraView, editMode);
+        new ToolPipeAttrCommand(&mesh, cameraView, editMode, toolHost);
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
     // in the global tool pipe.

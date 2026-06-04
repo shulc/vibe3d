@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : Stage;
@@ -25,12 +26,14 @@ import toolpipe.stage    : Stage;
 // rather than the active Tool's params.
 // ---------------------------------------------------------------------------
 class ToolPipeAttrCommand : Command {
+    private ToolHost toolHost;
     private string stageId_;
     private string attrName_;
     private string attrValue_;
 
-    this(Mesh* mesh, ref View view, EditMode editMode) {
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
         super(mesh, view, editMode);
+        this.toolHost = host;
     }
 
     override string name()  const { return "tool.pipe.attr"; }
@@ -63,6 +66,18 @@ class ToolPipeAttrCommand : Command {
             throw new Exception(
                 "tool.pipe.attr: stage '" ~ stageId_ ~ "' rejected attr '"
                 ~ attrName_ ~ "' = '" ~ attrValue_ ~ "'");
+
+        // Stage-attr edits (falloff/ACEN/AXIS/snap) gain mid-session
+        // immediacy: when a tool ALREADY has a live evaluation session, re-run
+        // its apply now so the new stage state takes effect this edit instead
+        // of on the next update() tick (re-eval plan, stage re-eval). setAttr
+        // above has already published the new stage state, so reEvaluate()
+        // reads the new packet. Stage edits never carry the forms `interactive`
+        // opener — a falloff edit with no live session stays inert.
+        if (toolHost.getActiveTool !is null) {
+            auto t = toolHost.getActiveTool();
+            if (t !is null && t.hasLiveEval()) t.reEvaluate();
+        }
         return true;
     }
 
