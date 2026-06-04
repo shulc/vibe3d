@@ -54,6 +54,17 @@ void drainHistory() {
     }
 }
 
+// NOTE on the Tool Properties window: this test does NOT drive panel
+// widgets with synthetic mouse — it drives the Move gizmo's X-arrow as a
+// behaviour proxy for the slider's begin/commit history-coalescing (see the
+// file header). Because the drag travels across the viewport, the Tool
+// Properties window must stay OUT of the drag path. In --test mode that
+// window is hidden by default (commands.ui.tool_properties), so we
+// deliberately do NOT issue `ui.toolProperties show` here: keeping it hidden
+// is exactly what keeps the synthetic drag deterministic. (A future test that
+// genuinely clicks panel widgets would enable it with `ui.toolProperties
+// show` and pick coordinates from the window's deterministic default pos.)
+
 unittest { // a 20-step move-tool drag produces ONE undo entry
     // Setup mirrors test_tool_move_drag.d so the pin is on the same
     // code path: select v6, activate Move, drag X-arrow.
