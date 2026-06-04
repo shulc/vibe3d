@@ -32,7 +32,9 @@ module forms;
 // ===========================================================================
 
 import params : Param, ParamHints, choicesOf;
+import argstring : parseArgstring;
 
+import std.json : JSONValue, JSONType;
 import std.string : strip, splitLines;
 
 // ---------------------------------------------------------------------------
@@ -176,8 +178,145 @@ struct Form {
 }
 
 // ===========================================================================
-// Inline unit tests — schema construction (no parse / resolve yet; those are
-// covered further down once parseBinding / resolveControl exist).
+// Binding grammar
+//
+// A `control:` line is a full command line with EXACTLY one `?` placeholder.
+// parseBinding splits it into the command id, the namespace (tool vs stage),
+// the target id, the bound attr name, and the index of the `?` token among the
+// positional args. It reuses argstring.parseArgstring so the form engine and
+// the wire protocol agree byte-for-byte on tokenisation (the trailing `?` is
+// admitted as a bareword by argstring's parser — Phase 1).
+//
+// Two namespaces, distinguished purely by the command id:
+//   tool.attr      <toolId>  <attr> ?   -> Namespace.tool   (active tool)
+//   tool.pipe.attr <stageId> <attr> ?   -> Namespace.stage  (named pipe stage)
+//
+// `cmd:` / `choice:` lines carry NO `?` and are fire-only; parseBinding still
+// parses them (found via hasQuery=false) so the caller can validate the
+// command id and dispatch on click without a value read.
+// ===========================================================================
+
+enum Namespace { tool, stage, command }
+
+/// Parsed shape of a control / cmd binding line.
+struct Binding {
+    string    commandId;     // e.g. "tool.attr" / "tool.pipe.attr" / "actr.auto"
+    Namespace namespace;
+    string    targetId;      // toolId or stageId; empty for plain commands
+    string    attr;          // bound attribute name; empty when hasQuery=false
+    bool      hasQuery;      // true iff the line carried exactly one `?`
+    long      queryIdx;      // index of `?` in the positional list; -1 if none
+    string[]  positionals;   // all positional tokens as raw strings
+}
+
+/// The query sentinel token. A control line marks its value slot with this.
+enum string kQuerySentinel = "?";
+
+/// Thrown by parseBinding on a malformed binding line (empty, >1 `?`, or a
+/// namespaced attr line missing its target/attr operands).
+class BindingException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) {
+        super(msg, file, line);
+    }
+}
+
+/// Parse a binding command line into its structured form.
+///
+/// Throws BindingException on:
+///   * empty / comment-only line,
+///   * more than one `?` placeholder,
+///   * a `tool.attr` / `tool.pipe.attr` line that does not carry exactly
+///     target + attr + `?` (a value-bound row must name what it binds to).
+///
+/// A `?`-less line (cmd / choice / plain command) parses with hasQuery=false
+/// and leaves attr empty; the namespace is still classified from the command
+/// id so the resolver / dispatcher can route it.
+Binding parseBinding(string line)
+{
+    auto parsed = parseArgstring(line);
+    if (parsed.isEmpty)
+        throw new BindingException(
+            "forms: empty/blank binding line: '" ~ line ~ "'");
+
+    Binding b;
+    b.commandId = parsed.commandId;
+    b.queryIdx  = -1;
+    b.namespace = classifyNamespace(parsed.commandId);
+
+    // Collect positionals (argstring stores them under "_positional" as a JSON
+    // array, omitting the key when there are none).
+    string[] pos;
+    if (parsed.params.type == JSONType.object &&
+        ("_positional" in parsed.params)) {
+        foreach (v; parsed.params["_positional"].array)
+            pos ~= jsonToToken(v);
+    }
+    b.positionals = pos;
+
+    // Count `?` sentinels and record the (single) index.
+    size_t qCount = 0;
+    foreach (i, t; pos) {
+        if (t == kQuerySentinel) { qCount++; b.queryIdx = cast(long) i; }
+    }
+    if (qCount > 1)
+        throw new BindingException(
+            "forms: binding line has more than one '?' placeholder: '"
+            ~ line ~ "'");
+    b.hasQuery = (qCount == 1);
+
+    // For the two attr namespaces, a value-bound line MUST be
+    // `<cmd> <targetId> <attr> ?` — extract target + attr. A `?`-less line in
+    // these namespaces is a malformed value bind (a control row needs its `?`,
+    // a cmd/choice row should not use a tool.attr line at all).
+    if (b.namespace == Namespace.tool || b.namespace == Namespace.stage) {
+        if (!b.hasQuery)
+            throw new BindingException(
+                "forms: '" ~ b.commandId ~ "' binding has no '?' value slot: '"
+                ~ line ~ "'");
+        // Expect exactly: [targetId, attr, "?"] with the "?" last.
+        if (pos.length != 3 || b.queryIdx != 2)
+            throw new BindingException(
+                "forms: '" ~ b.commandId ~
+                "' binding must be '<id> <attr> ?' (got '" ~ line ~ "')");
+        b.targetId = pos[0];
+        b.attr     = pos[1];
+    }
+    return b;
+}
+
+/// Classify a command id into a resolution namespace. Only the two attr
+/// commands carry a queryable namespace; everything else is a plain command
+/// (cmd / choice entries — fire-only, validated against the command registry
+/// in a later phase).
+Namespace classifyNamespace(string commandId)
+{
+    if (commandId == "tool.attr")       return Namespace.tool;
+    if (commandId == "tool.pipe.attr")  return Namespace.stage;
+    return Namespace.command;
+}
+
+/// Render a parsed positional JSON value back to its source token string.
+/// argstring already typed numbers/bools/strings; we re-stringify so the
+/// binding can be substituted and re-dispatched (the write path replaces the
+/// `?` token with the edited value and re-serialises the whole line).
+private string jsonToToken(JSONValue v)
+{
+    import std.conv : to;
+    final switch (v.type) {
+        case JSONType.string:        return v.str;
+        case JSONType.integer:       return v.integer.to!string;
+        case JSONType.uinteger:      return v.uinteger.to!string;
+        case JSONType.float_:        return v.floating.to!string;
+        case JSONType.true_:         return "true";
+        case JSONType.false_:        return "false";
+        case JSONType.null_:         return "null";
+        case JSONType.object:
+        case JSONType.array:         return v.toString();
+    }
+}
+
+// ===========================================================================
+// Inline unit tests — schema construction + binding parse + resolver.
 // ===========================================================================
 
 version (unittest)
@@ -227,5 +366,69 @@ version (unittest)
         assert(f.matchesTool("xfrm.transform"));
         assert(f.matchesTool("move"));
         assert(!f.matchesTool("scale"));
+    }
+
+    // --- binding parse ----------------------------------------------------
+
+    unittest { // tool.attr round-trip: namespace + target + attr + query idx
+        auto b = parseBinding("tool.attr xfrm.transform TX ?");
+        assert(b.commandId == "tool.attr");
+        assert(b.namespace == Namespace.tool);
+        assert(b.targetId  == "xfrm.transform");
+        assert(b.attr      == "TX");
+        assert(b.hasQuery);
+        assert(b.queryIdx  == 2);
+        assert(b.positionals == ["xfrm.transform", "TX", "?"]);
+    }
+
+    unittest { // tool.pipe.attr -> stage namespace
+        auto b = parseBinding("tool.pipe.attr falloff start ?");
+        assert(b.namespace == Namespace.stage);
+        assert(b.targetId  == "falloff");
+        assert(b.attr      == "start");
+        assert(b.hasQuery);
+    }
+
+    unittest { // bool attr binds the same way as a float attr
+        auto b = parseBinding("tool.attr xfrm.transform T ?");
+        assert(b.namespace == Namespace.tool);
+        assert(b.attr == "T");
+        assert(b.hasQuery);
+    }
+
+    unittest { // plain command (choice/cmd entry) -> command namespace, no query
+        auto b = parseBinding("actr.auto");
+        assert(b.commandId == "actr.auto");
+        assert(b.namespace == Namespace.command);
+        assert(!b.hasQuery);
+        assert(b.queryIdx == -1);
+        assert(b.attr.length == 0);
+    }
+
+    unittest { // malformed: empty / blank line throws
+        bool threw = false;
+        try parseBinding("   "); catch (BindingException) threw = true;
+        assert(threw);
+    }
+
+    unittest { // malformed: two '?' placeholders throws
+        bool threw = false;
+        try parseBinding("tool.attr xfrm.transform ? ?");
+        catch (BindingException) threw = true;
+        assert(threw);
+    }
+
+    unittest { // malformed: tool.attr value bind missing its '?' throws
+        bool threw = false;
+        try parseBinding("tool.attr xfrm.transform TX");
+        catch (BindingException) threw = true;
+        assert(threw);
+    }
+
+    unittest { // malformed: tool.attr with the '?' not in the value slot throws
+        bool threw = false;
+        try parseBinding("tool.attr xfrm.transform ? TX");
+        catch (BindingException) threw = true;
+        assert(threw);
     }
 }
