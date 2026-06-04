@@ -316,6 +316,166 @@ private string jsonToToken(JSONValue v)
 }
 
 // ===========================================================================
+// Widget-class decision (datatype pass-through)
+//
+// The widget for a value-bound control is derived from the RESOLVED Param's
+// Kind + ParamHints — NEVER authored in YAML. This is the datatype-pass-through
+// analog: a binding whose attr resolves to an Enum renders a combo
+// automatically; the YAML never lists the choices (they come from the Param).
+//
+// A control row MAY override the derived widget with an explicit `style:`
+// (popup / slider / drag); resolveControl applies that override on top of the
+// datatype-derived default, so the renderer reads exactly one WidgetKind.
+// ===========================================================================
+
+enum WidgetKind {
+    none,        // unresolved / non-value row
+    checkbox,    // Bool, default boolean style
+    button,      // Bool, booleanStyle == button (momentary toggle button)
+    dragInt,     // Int
+    sliderInt,   // Int with a Slider hint or forced slider style
+    dragFloat,   // Float
+    sliderFloat, // Float with a Slider hint or forced slider style
+    combo,       // Enum / IntEnum  (choices come from the Param)
+    text,        // String
+    vec3,        // Vec3_ (three-drag, or expanded into a group by the renderer)
+}
+
+/// Map a resolved Param's datatype + hints to a default widget class. Pure;
+/// the `style`/`booleanStyle` overrides from the row are applied by
+/// resolveControl on top of this.
+WidgetKind widgetForKind(Param.Kind kind, ParamHints hints)
+{
+    final switch (kind) {
+        case Param.Kind.Bool:
+            // Bool default is a checkbox; the booleanStyle override (button) is
+            // applied by resolveControl, not here.
+            return WidgetKind.checkbox;
+        case Param.Kind.Int:
+            return (hints.widget == ParamHints.Widget.Slider)
+                 ? WidgetKind.sliderInt : WidgetKind.dragInt;
+        case Param.Kind.Float:
+            return (hints.widget == ParamHints.Widget.Slider)
+                 ? WidgetKind.sliderFloat : WidgetKind.dragFloat;
+        case Param.Kind.Enum:
+        case Param.Kind.IntEnum:
+            return WidgetKind.combo;
+        case Param.Kind.String:
+            return WidgetKind.text;
+        case Param.Kind.Vec3_:
+            return WidgetKind.vec3;
+        // Array kinds are never form-bound value controls (they carry parallel
+        // index/before/after arrays for headless commands, not a single
+        // editable value). Treat as unrenderable.
+        case Param.Kind.IntArray:
+        case Param.Kind.Vec3Array:
+            return WidgetKind.none;
+    }
+}
+
+// ===========================================================================
+// Resolver
+//
+// resolveControl takes a parsed control Binding and a SNAPSHOT of the active
+// provider's params() (the caller takes that snapshot once per frame — see the
+// plan's per-frame-cost mitigation) and resolves the bound attr to a Param.
+//
+//   found == false  -> the attr is absent from the CURRENT params(). The
+//                       renderer hides the row this frame (runtime visibility).
+//                       The STARTUP-strict layer (throw on a YAML typo) is a
+//                       loader concern resolved against the full static
+//                       universe; this resolver only reports presence, leaving
+//                       the loader free to promote a false to a throw.
+//   found == true   -> param holds a COPY of the matched Param (so the renderer
+//                       reads its typed pointer + hints + label), choices holds
+//                       the enum/intEnum choice list (empty otherwise), and
+//                       widget is the final WidgetKind after applying the row's
+//                       style / booleanStyle overrides.
+// ===========================================================================
+
+struct ResolvedControl {
+    bool       found;
+    Param      param;        // valid iff found; a copy of the matched Param
+    string[2][] choices;     // enum/intEnum [tag,label] pairs; empty otherwise
+    WidgetKind widget = WidgetKind.none;
+}
+
+/// Resolve a control row against a provider's params() snapshot. `row` supplies
+/// the binding line (row.command) plus the style / booleanStyle overrides;
+/// `providerParams` is the live schema of the active tool or stage.
+///
+/// Only RowKind.control rows are value-resolvable; passing any other kind
+/// returns found=false (cmd / choice rows fire commands and read no value).
+ResolvedControl resolveControl(Row row, Param[] providerParams)
+{
+    ResolvedControl rc;
+    if (row.kind != RowKind.control)
+        return rc;                       // not a value bind
+
+    auto b = parseBinding(row.command);  // throws on a malformed line
+    return resolveBinding(b, providerParams, row.style, row.booleanStyle);
+}
+
+/// Resolve a parsed Binding directly (used by resolveControl and by tests that
+/// build a Binding by hand). `styleOverride` / `boolStyle` come from the row.
+ResolvedControl resolveBinding(const ref Binding b, Param[] providerParams,
+                               ControlStyle styleOverride = ControlStyle.default_,
+                               BooleanStyle boolStyle = BooleanStyle.checkbox)
+{
+    ResolvedControl rc;
+    if (!b.hasQuery)
+        return rc;                       // fire-only line, nothing to read
+
+    foreach (ref p; providerParams) {
+        if (p.name == b.attr) {
+            rc.found   = true;
+            rc.param   = p;
+            rc.choices = choicesOf(p);
+            rc.widget  = decideWidget(p, styleOverride, boolStyle);
+            return rc;
+        }
+    }
+    // Absent from the CURRENT params() — runtime-hidden. The loader's
+    // startup-strict pass resolves against the full static universe and may
+    // promote this to a throw; the resolver itself stays non-throwing.
+    return rc;
+}
+
+/// Apply the row's style / booleanStyle overrides on top of the
+/// datatype-derived widget.
+private WidgetKind decideWidget(const ref Param p, ControlStyle styleOverride,
+                                BooleanStyle boolStyle)
+{
+    WidgetKind w = widgetForKind(p.kind, p.hints);
+
+    // Bool: the row chooses checkbox vs momentary button.
+    if (p.kind == Param.Kind.Bool)
+        return (boolStyle == BooleanStyle.button)
+             ? WidgetKind.button : WidgetKind.checkbox;
+
+    // Explicit style override (popup / slider / drag) wins over the
+    // datatype default for the numeric / enum kinds it applies to.
+    final switch (styleOverride) {
+        case ControlStyle.default_:
+            break;
+        case ControlStyle.popup:
+            // Force a dropdown — only meaningful for enum-backed kinds.
+            if (p.kind == Param.Kind.Enum || p.kind == Param.Kind.IntEnum)
+                w = WidgetKind.combo;
+            break;
+        case ControlStyle.slider:
+            if (p.kind == Param.Kind.Int)   w = WidgetKind.sliderInt;
+            if (p.kind == Param.Kind.Float) w = WidgetKind.sliderFloat;
+            break;
+        case ControlStyle.drag:
+            if (p.kind == Param.Kind.Int)   w = WidgetKind.dragInt;
+            if (p.kind == Param.Kind.Float) w = WidgetKind.dragFloat;
+            break;
+    }
+    return w;
+}
+
+// ===========================================================================
 // Inline unit tests — schema construction + binding parse + resolver.
 // ===========================================================================
 
@@ -430,5 +590,140 @@ version (unittest)
         try parseBinding("tool.attr xfrm.transform ? TX");
         catch (BindingException) threw = true;
         assert(threw);
+    }
+
+    // --- widget-class decision -------------------------------------------
+
+    unittest { // datatype -> widget table (no overrides)
+        ParamHints none;
+        assert(widgetForKind(Param.Kind.Bool,    none) == WidgetKind.checkbox);
+        assert(widgetForKind(Param.Kind.Int,     none) == WidgetKind.dragInt);
+        assert(widgetForKind(Param.Kind.Float,   none) == WidgetKind.dragFloat);
+        assert(widgetForKind(Param.Kind.Enum,    none) == WidgetKind.combo);
+        assert(widgetForKind(Param.Kind.IntEnum, none) == WidgetKind.combo);
+        assert(widgetForKind(Param.Kind.String,  none) == WidgetKind.text);
+        assert(widgetForKind(Param.Kind.Vec3_,   none) == WidgetKind.vec3);
+        assert(widgetForKind(Param.Kind.IntArray, none) == WidgetKind.none);
+
+        ParamHints sl; sl.widget = ParamHints.Widget.Slider;
+        assert(widgetForKind(Param.Kind.Int,   sl) == WidgetKind.sliderInt);
+        assert(widgetForKind(Param.Kind.Float, sl) == WidgetKind.sliderFloat);
+    }
+
+    // --- resolver against a synthetic provider ---------------------------
+
+    // Build a small fake provider universe by hand (no running app). Mirrors
+    // the real XfrmTransformTool attr names so the test reads naturally.
+    version (unittest)
+    private Param[] fakeTransformParams(ref bool flagT, ref float tx,
+                                        ref float ty, ref int seg,
+                                        ref string mode, ref float dist)
+    {
+        import params : IntEnumEntry;
+        return [
+            Param.bool_  ("T",  "Translate",   &flagT, true),
+            Param.float_ ("TX", "Translate X", &tx, 0.0f),
+            Param.float_ ("TY", "Translate Y", &ty, 0.0f),
+            Param.int_   ("seg","Segments",    &seg, 1),
+            Param.enum_  ("mode", "Mode", &mode,
+                          [["offset","Offset"], ["width","Width"]], "offset"),
+            Param.float_ ("dist", "Distance", &dist, 0.5f),
+        ];
+    }
+
+    unittest { // a control line resolves to the right attr, kind, widget
+        bool flagT = true; float tx = 1.5f, ty = 0; int seg = 2;
+        string mode = "width"; float dist = 0.5f;
+        auto prov = fakeTransformParams(flagT, tx, ty, seg, mode, dist);
+
+        auto rc = resolveControl(
+            Row.makeControl("tool.attr xfrm.transform TX ?"), prov);
+        assert(rc.found);
+        assert(rc.param.name == "TX");
+        assert(rc.param.kind == Param.Kind.Float);
+        assert(rc.widget == WidgetKind.dragFloat);
+        assert(rc.choices.length == 0);
+    }
+
+    unittest { // bool attr -> checkbox by default, button under booleanStyle
+        bool flagT = true; float tx = 0, ty = 0; int seg = 1;
+        string mode = "offset"; float dist = 0.5f;
+        auto prov = fakeTransformParams(flagT, tx, ty, seg, mode, dist);
+
+        auto cb = resolveControl(
+            Row.makeControl("tool.attr xfrm.transform T ?"), prov);
+        assert(cb.found);
+        assert(cb.widget == WidgetKind.checkbox);
+
+        auto r = Row.makeControl("tool.attr xfrm.transform T ?");
+        r.booleanStyle = BooleanStyle.button;
+        auto bt = resolveControl(r, prov);
+        assert(bt.widget == WidgetKind.button);
+    }
+
+    unittest { // enum attr -> combo + choices come from the Param, not YAML
+        bool flagT = true; float tx = 0, ty = 0; int seg = 1;
+        string mode = "width"; float dist = 0.5f;
+        auto prov = fakeTransformParams(flagT, tx, ty, seg, mode, dist);
+
+        auto rc = resolveControl(
+            Row.makeControl("tool.attr xfrm.transform mode ?"), prov);
+        assert(rc.found);
+        assert(rc.widget == WidgetKind.combo);
+        assert(rc.choices.length == 2);
+        assert(rc.choices[0] == ["offset", "Offset"]);
+        assert(rc.choices[1] == ["width", "Width"]);
+    }
+
+    unittest { // absent attr -> found=false (runtime-hidden, no throw)
+        bool flagT = true; float tx = 0, ty = 0; int seg = 1;
+        string mode = "offset"; float dist = 0.5f;
+        auto prov = fakeTransformParams(flagT, tx, ty, seg, mode, dist);
+
+        auto rc = resolveControl(
+            Row.makeControl("tool.attr xfrm.transform NOPE ?"), prov);
+        assert(!rc.found);
+        assert(rc.widget == WidgetKind.none);
+    }
+
+    unittest { // style override: force slider / drag on a Float
+        bool flagT = true; float tx = 0, ty = 0; int seg = 1;
+        string mode = "offset"; float dist = 0.5f;
+        auto prov = fakeTransformParams(flagT, tx, ty, seg, mode, dist);
+
+        auto sl = Row.makeControl("tool.attr xfrm.transform dist ?");
+        sl.style = ControlStyle.slider;
+        assert(resolveControl(sl, prov).widget == WidgetKind.sliderFloat);
+
+        auto dr = Row.makeControl("tool.attr xfrm.transform seg ?");
+        dr.style = ControlStyle.slider;
+        assert(resolveControl(dr, prov).widget == WidgetKind.sliderInt);
+    }
+
+    unittest { // non-control rows do not resolve a value
+        bool flagT = true; float tx = 0, ty = 0; int seg = 1;
+        string mode = "offset"; float dist = 0.5f;
+        auto prov = fakeTransformParams(flagT, tx, ty, seg, mode, dist);
+
+        // a cmd row carries no '?' — resolveControl returns not-found
+        assert(!resolveControl(Row.makeCmd("actr.auto", "Auto"), prov).found);
+        // a divider is not a value bind
+        assert(!resolveControl(Row.makeDivider(), prov).found);
+    }
+
+    unittest { // stage-namespace binding resolves against a stage's params()
+        // The resolver is namespace-agnostic: it takes whatever Param[] the
+        // caller hands it. Here we stand in for a falloff stage's params().
+        float start = 0.1f, end_ = 0.9f;
+        Param[] stageParams = [
+            Param.float_("start", "Start", &start, 0.0f),
+            Param.float_("end",   "End",   &end_,  1.0f),
+        ];
+        auto b = parseBinding("tool.pipe.attr falloff start ?");
+        assert(b.namespace == Namespace.stage);
+        auto rc = resolveBinding(b, stageParams);
+        assert(rc.found);
+        assert(rc.param.name == "start");
+        assert(rc.widget == WidgetKind.dragFloat);
     }
 }
