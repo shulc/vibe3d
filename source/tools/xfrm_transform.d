@@ -1406,6 +1406,23 @@ public:
         replayTranslateFromBaseline();
     }
 
+    // ----- Test-only headless session opener (re-eval plan D5, Phase 3) -----
+    //
+    // Open a live edit session with NO geometry change, leaving
+    // hasUncommittedEdit()==true so a subsequent `tool.attr` write hits the
+    // already-live reEvaluate() branch (test 1b-absolute / test 2). Runs the
+    // same beginEdit() + dragBaseline capture as the panel/attr replay path but
+    // applies nothing: headlessTranslate stays at its current value (0 on a
+    // fresh tool), so captureDragBaselineIfStale() snapshots the mesh and opens
+    // the session without moving a vertex. Reached only via the testMode-gated
+    // `tool.beginSession` command; production opens the session via a gizmo drag
+    // or the panel slider path (applyMovePanelDelta).
+    public void openLiveSessionForTest() {
+        if (!flagT) return;
+        captureDragBaselineIfStale();
+        // Deliberately NO applyTRS / needsGpuUpdate — bare session, no geometry.
+    }
+
     // ----- Schema panel suppression (re-eval plan B2) -----------------------
     //
     // Hide the WHOLE schema panel (all 12 params: the T/R/S bools plus
