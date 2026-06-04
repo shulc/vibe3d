@@ -11,6 +11,12 @@ bool approxEqual(double a, double b, double epsilon = 1e-6) {
 }
 
 unittest { // Test the /api/model endpoint
+    // Reset to the pristine startup cube first. The runner reuses ONE shared
+    // vibe3d per worker across many tests, so without this the mesh asserted
+    // below could be whatever a co-worker test left behind (the documented
+    // cross-test state-bleed flake — "Expected 8 vertices for a cube").
+    post("http://localhost:8080/api/reset", "");
+
     auto response = get("http://localhost:8080/api/model");
 
     // Parse the response as JSON

@@ -54,6 +54,52 @@ void drainHistory() {
     }
 }
 
+// Establish a known-pristine baseline before a drag test. The runner reuses
+// ONE vibe3d per worker across many tests; a preceding test's /api/play-events
+// replay can still be DRAINING on the background event player when this test
+// starts, and its queued mouse-move events would land on our freshly-reset
+// mesh AFTER we reset — making the drag's begin-snapshot capture a corrupted
+// v6 (the documented "got (-1,0,1)" flake). Wait for the player to go idle
+// FIRST, then reset + drain undo, then verify v6 is the pristine cube corner,
+// retrying if a late event slipped in. A transient bleed clears on re-reset;
+// a real regression would persist (reset always restores the cube).
+void establishCubeBaseline() {
+    import core.thread : Thread;
+    import core.time   : msecs;
+    bool playerIdle() {
+        auto s = getJson("/api/play-events/status");
+        auto f = "finished" in s;
+        return f is null || f.type != JSONType.false_;
+    }
+    foreach (attempt; 0 .. 8) {
+        postJson("/api/script", "tool.set move off");
+        foreach (_; 0 .. 200) {
+            if (playerIdle()) break;
+            Thread.sleep(10.msecs);
+        }
+        // The player reports "finished" once events are DISPATCHED, but
+        // /api/play-events pushes them onto the SDL queue — the last few are
+        // still queued (unprocessed) when the player goes idle, and drain over
+        // the next 1–2 frames. Settle so they land BEFORE our reset (which then
+        // wipes them) instead of bleeding into our drag's begin-snapshot (the
+        // "got (-1,0,1)" flake — a prior drag's queued mouse-up moving v6).
+        Thread.sleep(120.msecs);
+        postJson("/api/reset", "");
+        drainHistory();
+        auto v = getJson("/api/model")["vertices"].array;
+        if (v.length == 8) {
+            auto v6 = v[6].array;
+            if (fabs(v6[0].floating - 0.5) < 1e-4
+                && fabs(v6[1].floating - 0.5) < 1e-4
+                && fabs(v6[2].floating - 0.5) < 1e-4)
+                return;
+        }
+        Thread.sleep(20.msecs);
+    }
+    postJson("/api/reset", "");
+    drainHistory();
+}
+
 // NOTE on the Tool Properties window: this test does NOT drive panel
 // widgets with synthetic mouse — it drives the Move gizmo's X-arrow as a
 // behaviour proxy for the slider's begin/commit history-coalescing (see the
@@ -68,8 +114,7 @@ void drainHistory() {
 unittest { // a 20-step move-tool drag produces ONE undo entry
     // Setup mirrors test_tool_move_drag.d so the pin is on the same
     // code path: select v6, activate Move, drag X-arrow.
-    postJson("/api/reset", "");
-    drainHistory();   // start from a known-empty undo stack
+    establishCubeBaseline();   // drain any in-flight replay, reset, verify cube
     auto sel = postJson("/api/select",
         `{"mode":"vertices","indices":[6]}`);
     assert(sel["status"].str == "ok", "select failed");
@@ -133,10 +178,7 @@ unittest { // 2 separate move-tool drags in one tool session = 1 entry
     // Phase 7.5h: as long as the tool stays active, both drags + any
     // intermediate falloff / slider tweaks coalesce into a single
     // history entry at tool.deactivate (or selection change) time.
-    postJson("/api/reset", "");
-    drainHistory();   // command_history caps the undo stack at 50; drain
-                      // so this test's count-delta assertion holds even
-                      // when an earlier test has filled the buffer
+    establishCubeBaseline();   // drain any in-flight replay, reset, verify cube
     postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
     postJson("/api/script", "tool.set move");
     long stackBefore = undoCount();
