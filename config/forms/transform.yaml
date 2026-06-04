@@ -7,11 +7,12 @@
 # universe (validateForms) — a misspelt attr or unknown command id fails loud
 # at boot.
 #
-# v1 scope (see doc/forms_engine_plan.md Phase 5): the T/R/S enable
-# checkboxes, the Position (TX/TY/TZ) value group, and an Action Center
-# choice row firing actr.* commands. The Rotate (RX/RY/RZ) and Scale
-# (SX/SY/SZ) value groups are deferred until the panel value-apply path
-# covers R/S; emitting them now would silently no-op.
+# Scope (see doc/forms_engine_plan.md Phase 5 + 5b): the T/R/S enable
+# checkboxes, the Position (TX/TY/TZ) value group, an Action Center choice row
+# firing actr.* commands, plus the Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) value
+# groups. Phase 5b widened the panel value-apply path to cover R/S, so those
+# rows drive geometry through the reEvaluate() seam exactly like the Position
+# rows (a plain `interactive` tool.attr — no per-axis routing).
 
 forms:
   - id: transform.main
@@ -38,6 +39,22 @@ forms:
           - { control: "tool.attr xfrm.transform TX ?", label: X }
           - { control: "tool.attr xfrm.transform TY ?", label: Y }
           - { control: "tool.attr xfrm.transform TZ ?", label: Z }
+
+      # ---- Rotate value group (RX/RY/RZ, degrees) — Phase 5b ----
+      - group: Rotate
+        style: inline
+        rows:
+          - { control: "tool.attr xfrm.transform RX ?", label: X }
+          - { control: "tool.attr xfrm.transform RY ?", label: Y }
+          - { control: "tool.attr xfrm.transform RZ ?", label: Z }
+
+      # ---- Scale value group (SX/SY/SZ, factors) — Phase 5b ----
+      - group: Scale
+        style: inline
+        rows:
+          - { control: "tool.attr xfrm.transform SX ?", label: X }
+          - { control: "tool.attr xfrm.transform SY ?", label: Y }
+          - { control: "tool.attr xfrm.transform SZ ?", label: Z }
 
       - { divider: true }
 

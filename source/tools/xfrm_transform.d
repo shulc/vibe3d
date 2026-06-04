@@ -1432,7 +1432,14 @@ public:
     // session. `editIsOpen()` is protected on `TransformTool`;
     // exposing this read-only wrapper avoids leaking the rest of
     // the edit-session API.
-    public bool publicEditIsOpen() const { return editIsOpen(); }
+    override public bool publicEditIsOpen() const { return editIsOpen(); }
+
+    // True iff any R/S sub-tool owns an open edit session. Rotate/Scale keep
+    // their geometry sessions on the sub-tools (MS-5), so the wrapper's own
+    // editIsOpen() does NOT see them — this folds them in.
+    private bool subToolEditOpen() const {
+        return rotateSub.publicEditIsOpen() || scaleSub.publicEditIsOpen();
+    }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
     //
@@ -1440,31 +1447,67 @@ public:
     // (:225), update() on selection/mutation change (:254) and BrushReset
     // mouse-up (:887) — every one gated by editIsOpen(). So the exact "a
     // commit would fire if the session ended now" predicate IS editIsOpen().
+    // KEPT wrapper-only (NOT widened to the sub-tools): this drives the P0
+    // Ctrl+Z chokepoint (app.d:2699 → cancelUncommittedEdit(), which restores
+    // only the WRAPPER baseline), and the R/S gizmo-drag path already commits
+    // its session via the sub-tools' own deactivate/update guards. Widening it
+    // would change mid-gizmo-drag Ctrl+Z semantics for rotate/scale.
     override bool hasUncommittedEdit() const { return editIsOpen(); }
 
     // ----- Live re-evaluation hooks (attr edit re-runs a live tool) ---------
     //
-    // hasLiveEval() is an alias of the existing publicEditIsOpen() /
-    // hasUncommittedEdit() family (both editIsOpen()): a transform session is
-    // "live" exactly when an edit session is open. An attr edit on a fresh tool
-    // (no open session) therefore stores the value and moves nothing (faithful).
-    override bool hasLiveEval() const { return hasUncommittedEdit(); }
+    // "live" exactly when a transform edit session is open — on the WRAPPER (T)
+    // OR on a sub-tool (R/S, MS-5). This drives the attr/pipe re-eval trigger
+    // (attr.d / pipe.d): a value edit re-runs the apply only when a session is
+    // already open. An attr edit on a fresh tool (no open session) therefore
+    // stores the value and moves nothing (faithful). Widened in forms Phase 5b
+    // to include the sub-tool sessions so an R/S value edit re-evaluates.
+    override bool hasLiveEval() const {
+        return editIsOpen() || subToolEditOpen();
+    }
 
-    // Re-run the live translate from the session baseline using the CURRENT
-    // (already-injected) headlessTranslate, ABSOLUTELY (Decision D1) — equivalent
-    // to applyMovePanelDelta minus the delta accumulation and minus the
-    // headlessTranslate zeroing. T-only for now: Rotate/Scale have no
-    // value-driven apply entry point yet, so their re-eval is deferred to the
-    // forms plan's Phase 5b (Decision D3) — only headlessTranslate is replayed.
+    // Re-run the live transform from the session baseline using the CURRENT
+    // (already-injected) headless attrs, ABSOLUTELY (Decision D1). Per active
+    // flag:
+    //   - flagT → replayTranslateFromBaseline() (equivalent to applyMovePanelDelta
+    //     minus the delta accumulation / headlessTranslate zeroing).
+    //   - flagR → rotateSub.applyRotatePanelValue(headlessRotate) — re-runs the
+    //     absolute rotate from RotateTool's origVertices baseline.
+    //   - flagS → scaleSub.applyScalePanelValue(headlessScale) — re-runs the
+    //     absolute scale from ScaleTool's activationVertices baseline.
+    // (forms plan Phase 5b widened this body from the prior T-only seam — the
+    // gate, trigger sites and the `interactive` discriminator are unchanged.)
     //
     // NOTE: do NOT early-return on !editIsOpen(). reEvaluate() must also be able
     // to OPEN the session for the forms command-trigger path; the embedded
-    // beginEdit() + capture-if-stale (in replayTranslateFromBaseline) does that.
-    // The "fire only when already-live OR forms-interactive" gate lives in the
-    // attr command, not here.
+    // beginEdit() + capture-if-stale (in replayTranslateFromBaseline) / each
+    // sub-tool's beginEdit() does that. The "fire only when already-live OR
+    // forms-interactive" gate lives in the attr command, not here.
     override void reEvaluate() {
-        if (!flagT) return;
-        replayTranslateFromBaseline();
+        // Foot-gun retired (was a silent `if (!flagT) return;`): a re-eval against
+        // a preset whose every relevant flag is off would silently no-op, looking
+        // like the seam is broken when it is simply out of scope. Surface it.
+        if (!flagT && !flagR && !flagS) {
+            import std.stdio : stderr;
+            stderr.writeln("[xfrm.transform] reEvaluate(): no T/R/S flag set — "
+                ~ "value edit is inert (out of scope, not an error).");
+            return;
+        }
+        // T always re-runs (its baseline replay is harmless at zero translate
+        // and the wrapper session is the all-flags preset's "is-live" primer).
+        if (flagT) replayTranslateFromBaseline();
+        // Only DRIVE R/S when their value is actually non-identity. Each apply
+        // opens the sub-tool's edit session via beginEdit(); doing so for an
+        // IDENTITY rotate/scale (e.g. the user only edited TX on an all-flags
+        // preset) would open an idle session that the OTHER slot's geometry then
+        // dirties, recording a spurious "Rotate"/"Scale" entry. Mirrors the
+        // hasT/hasS guards inside applyTRS.
+        bool hasR = flagR && (headlessRotate.x != 0 || headlessRotate.y != 0
+                                                     || headlessRotate.z != 0);
+        bool hasS = flagS && (headlessScale.x != 1 || headlessScale.y != 1
+                                                    || headlessScale.z != 1);
+        if (hasR) rotateSub.applyRotatePanelValue(headlessRotate);
+        if (hasS) scaleSub.applyScalePanelValue(headlessScale);
     }
 
     // ----- Test-only headless session opener (re-eval plan D5, Phase 3) -----
@@ -1479,8 +1522,32 @@ public:
     // `tool.beginSession` command; production opens the session via a gizmo drag
     // or the panel slider path (applyMovePanelDelta).
     public void openLiveSessionForTest() {
-        if (!flagT) return;
-        captureDragBaselineIfStale();
+        // Foot-gun retired (forms Phase 5b): was `if (!flagT) return;`, which
+        // silently no-opped against a Rotate/Scale preset. Open the matching
+        // session per active flag, mirroring how each path opens it in
+        // production: the WRAPPER session for T (captureDragBaselineIfStale →
+        // beginEdit), the SUB-TOOL session for R/S (their own beginEdit, exactly
+        // as the gizmo path does in beginRotateDragSession/beginScaleDragSession,
+        // which deliberately leave the session on the sub-tool — MS-5). Opening
+        // the wrapper session for an R/S preset would make its commitEdit record
+        // a spurious "Move" entry for geometry the sub-tool actually applied.
+        if (!flagT && !flagR && !flagS) {
+            import std.stdio : stderr;
+            stderr.writeln("[xfrm.transform] openLiveSessionForTest(): no T/R/S "
+                ~ "flag set — session opener is inert (out of scope, not an error).");
+            return;
+        }
+        // Open exactly ONE bare session — the one for the FIRST enabled slot, in
+        // T→R→S priority. This is only a "hasLiveEval() is true" primer so the
+        // first subsequent tool.attr reaches the already-live reEvaluate() branch.
+        // The R/S sub-tool sessions for the OTHER enabled slots open LAZILY, when
+        // their applyRotatePanelValue/applyScalePanelValue is actually driven —
+        // eagerly opening all three would pollute the idle sub-tool sessions:
+        // editing only T would move verts the open (but undriven) rotate/scale
+        // sessions are watching, recording spurious "Rotate"/"Scale" entries.
+        if      (flagT) captureDragBaselineIfStale();   // WRAPPER session (translate)
+        else if (flagR) rotateSub.openEditForValue();   // SUB-TOOL session (rotate)
+        else if (flagS) scaleSub.openEditForValue();    // SUB-TOOL session (scale)
         // Deliberately NO applyTRS / needsGpuUpdate — bare session, no geometry.
     }
 
