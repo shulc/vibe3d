@@ -434,6 +434,40 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
+    // Re-stage the CURRENT action-center pin as the in-session-cancel
+    // baseline after a relocate-boundary commit has cleared the frozen
+    // snapshot. Used by the element-falloff pick+haul boundary (Phase 1b):
+    // there the element pick fires `setUserPlaced` on mouse-DOWN while the
+    // prior session's snapshot is still frozen (`snapFrozen == true`), so
+    // that stage call does NOT stash the picked pin; `commitEdit` then
+    // discards the frozen snapshot WITHOUT restoring. Re-firing the
+    // notification with the stage's LIVE center (`currentCenter()` —
+    // which, in Element mode, IS the picked element's anchor that the
+    // pick wrote) AFTER the commit lands the stage with `snapFrozen ==
+    // false`, so the fresh session's `beginEdit` freezes the PICKED pin
+    // as its cancel baseline. Reading `currentCenter()` (not the move
+    // handler / `vts` packet) is deliberate: the picked anchor is already
+    // resident on the ACEN stage by this point, whereas the handler
+    // position is only set later by `beginScreenPlaneDragAt` and the
+    // `vts` packet still reflects the pre-pick evaluation. No-op when no
+    // ACEN stage is registered.
+    //
+    // PUBLIC (not protected like its `notifyAcenUserPlaced` neighbour):
+    // the wrapper (`XfrmTransformTool`) calls it on its `moveSub` —
+    // a SIBLING instance, which D `protected` does not grant
+    // cross-instance access to. Mirrors `MoveTool.restageRelocatePin`'s
+    // public visibility for the same wrapper→sub-tool reason.
+    public void restageActionCenterPin() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        notifyAcenUserPlaced(ac.currentCenter());
+    }
+
     /// Live falloff packet for rendering the viewport overlay. Walks
     /// the toolpipe each call — fine because draw() runs at most once
     /// per frame and the upstream stages (WORK / ACEN / etc.) are all
