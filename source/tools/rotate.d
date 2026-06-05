@@ -272,6 +272,19 @@ public:
         history.record(cmd);
     }
 
+    // Phase 2 cross-slot relocate boundary — PUBLIC mirror of the protected
+    // commitEdit, so the composing wrapper can close THIS sub-tool's open
+    // session when a relocate fires on a DIFFERENT slot (a Move relocate in a
+    // composed T+R+S preset). The wrapper is a sibling class and D `protected`
+    // does not grant sibling cross-instance access to commitEdit()/editIsOpen()
+    // — this method calls its OWN protected members, which is legal. Mirrors
+    // the public `publicEditIsOpen()` read accessor for the same reason. No-op
+    // when no session is open (single-mode preset, or no prior R drag).
+    public void commitSessionIfOpen() {
+        if (editIsOpen())
+            commitEdit("Rotate");
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
     {
         if (!active) return;
@@ -345,6 +358,19 @@ public:
             // one undo entry first, then start fresh.
             if (editIsOpen())
                 commitEdit("Rotate");
+            // Phase 2 cross-slot: in a composed T+R+S preset the WRAPPER's
+            // Move session may also be open (a prior move drag). A relocate
+            // commits EVERY open session, so close the wrapper's Move run too
+            // (its own editIsOpen() is independent of this rotate session —
+            // committing both yields two distinct runs, which is correct).
+            // Reached via the base-typed wrapperRef cast to the wrapper, which
+            // owns the public commitMoveSessionIfOpen(). Null / non-wrapper
+            // (standalone unit-test) instance → skipped.
+            if (wrapperRef !is null) {
+                import tools.xfrm_transform : XfrmTransformTool;
+                if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                    wrap.commitMoveSessionIfOpen();
+            }
             handler.setPosition(hit);
             centerManual = true;
             notifyAcenUserPlaced(hit);
