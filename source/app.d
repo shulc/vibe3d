@@ -279,6 +279,23 @@ version (WithRender) private void ensureRuntimeLibPath()
     }
 }
 
+/// Set the window/taskbar icon from the RGBA blob embedded at compile time
+/// (assets/icon/icon_64.rgba: 8-byte LE width/height header + RGBA8 pixels;
+/// regenerate with tools/icon/gen_icons.py). Covers X11 and Windows — on
+/// Wayland the compositor takes the icon from the .desktop entry instead.
+void setWindowIcon(SDL_Window* window) {
+    static immutable ubyte[] blob = cast(immutable ubyte[]) import("icon_64.rgba");
+    static assert(blob.length >= 8, "icon_64.rgba missing or truncated");
+    const uint w = blob[0] | (blob[1] << 8) | (blob[2] << 16) | (blob[3] << 24);
+    const uint h = blob[4] | (blob[5] << 8) | (blob[6] << 16) | (blob[7] << 24);
+    if (blob.length < 8 + cast(size_t) w * h * 4) return;
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
+        cast(void*) (blob.ptr + 8), w, h, 32, w * 4, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) return;
+    SDL_SetWindowIcon(window, surf); // SDL copies the pixels; surface can go
+    SDL_FreeSurface(surf);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -518,6 +535,7 @@ void main(string[] args) {
     );
     if (!window) { writefln("SDL_CreateWindow: %s", SDL_GetError()); return; }
     scope(exit) SDL_DestroyWindow(window);
+    setWindowIcon(window);
 
     version (OSX) {
         // Make the app appear in the Dock and Command-Tab switcher when launched from terminal.
