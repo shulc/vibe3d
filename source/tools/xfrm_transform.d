@@ -567,6 +567,32 @@ public:
         // Requires the T flag: with T off (TransformRotate /
         // TransformScale) there's no moveSub.handler to anchor on.
         if (picked && flagT) {
+            // The element pick IS a relocate (it re-anchored ACEN to the
+            // picked element's centroid via tryPickElement →
+            // notifyAcenUserPlaced at the top of this method). If a Move
+            // run is already open (prior haul drags accumulated), this
+            // pick is an in-session relocate boundary: commit the prior
+            // run before the haul opens a new session, mirroring the
+            // common Move relocate boundary (Phase 1a) — except here the
+            // relocate condition is `picked && flagT`, not
+            // `moveSub.lastClickWasRelocate` (this branch never routes
+            // through moveSub.onMouseButtonDown).
+            //
+            // Ordering is load-bearing (same snapFrozen trap as Phase 1a):
+            //   pick → setUserPlaced (no stage while snapFrozen, BEFORE this) →
+            //   commitEdit (discards frozen snapshot, clears snapFrozen) →
+            //   restageActionCenterPin (re-fires the picked anchor, now stages) →
+            //   beginScreenPlaneDragAt(notifyAcen=false) (does NOT re-push the
+            //     pin — the pick already owns it, so without the restage above
+            //     the new session would freeze a STALE pre-pick baseline) →
+            //   beginMoveDragSession → beginEdit (freezes the PICKED pin).
+            // commitEdit keeps the picked element anchor permanent, so the
+            // element-falloff sphere anchor (state.actionCenter.center) is
+            // unchanged across the boundary.
+            if (editIsOpen()) {
+                commitEdit("Move");
+                moveSub.restageActionCenterPin();
+            }
             Vec3 pivot = queryActionCenter(vts);
             // notifyAcen=false because tryPickElement already wrote
             // userPlaced (notifyAcenUserPlaced) — don't overwrite it
