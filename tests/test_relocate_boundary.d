@@ -60,10 +60,23 @@ void drainHistory() {
     }
 }
 
-// Wait for the background event player to go idle, then reset + drain undo,
-// retrying if a late replay event slipped in (mirrors the
-// test_property_panel_drag.d preamble — the runner reuses ONE vibe3d per
-// worker, so a preceding test's replay can still be draining).
+// Establish a pristine cube + (near-)empty undo stack, retrying if a preceding
+// test left the shared per-worker vibe3d dirty (the runner reuses ONE vibe3d
+// per worker across its whole test slice). Mirrors test_reevaluate.d's proven
+// `drainAndReset` discipline; the load-bearing detail is draining the undo
+// stack BEFORE the reset, not only after.
+//
+// Why drain-before-reset matters: /api/reset is recorded on the undo stack
+// (SceneReset is undoable, snapshotting the PRE-reset mesh). A preamble that
+// only drains AFTER the reset therefore UNDOES its own reset — restoring
+// whatever dirty mesh the previous test left (observed under -j4: a 9-vertex
+// non-cube mesh surviving all 8 attempts, every reset immediately undone back
+// to it). Draining BEFORE the reset pops the previous tool's own commands
+// first, so the pre-reset mesh is already clean; the reset then yields a clean
+// cube and the after-reset drain pops only the reset (and the select's
+// UI-undo entry) back to that clean state. We verify GEOMETRY (v6 == the cube
+// corner), not merely the vertex count, and retry — a transient bleed clears,
+// a genuine regression would persist (reset always restores the cube).
 void establishCubeBaseline() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -72,19 +85,39 @@ void establishCubeBaseline() {
         auto f = "finished" in s;
         return f is null || f.type != JSONType.false_;
     }
+    bool cubePristine() {
+        auto v = getJson("/api/model")["vertices"].array;
+        if (v.length != 8) return false;
+        auto c = v[6].array;   // startup cube v6 = (0.5, 0.5, 0.5)
+        return fabs(c[0].floating - 0.5) < 1e-3
+            && fabs(c[1].floating - 0.5) < 1e-3
+            && fabs(c[2].floating - 0.5) < 1e-3;
+    }
     foreach (attempt; 0 .. 8) {
+        // Close any tool the previous test left active (idempotent).
         postJson("/api/script", "tool.set move off");
+        // Let a lingering replay drain so its queued mouse events cannot
+        // perturb the reset.
         foreach (_; 0 .. 200) {
             if (playerIdle()) break;
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        postJson("/api/reset", "");
+        // Drain BEFORE the reset: pop the previous test's own commands so the
+        // pre-reset mesh is clean (see header — without this we'd just undo
+        // our own reset back to the dirty mesh).
         drainHistory();
-        auto v = getJson("/api/model")["vertices"].array;
-        if (v.length == 8) return;
+        postJson("/api/reset", "");
+        // Drain the reset (+ any select UI-undo) so count-delta asserts start
+        // from a known floor; the pre-reset mesh is already clean.
+        drainHistory();
+        if (cubePristine()) return;
+        Thread.sleep(20.msecs);
     }
-    assert(false, "could not establish pristine cube baseline");
+    // Last reset stands (NOT undone) so a genuinely unrestorable prior state
+    // still leaves a clean cube for the test's own assertions to run against.
+    postJson("/api/reset", "");
+    assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
 // Authoritative gizmo pivot: /api/toolpipe/eval returns the evaluated

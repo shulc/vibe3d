@@ -86,6 +86,12 @@ void drainHistory() {
     }
 }
 
+// Establish a pristine cube + (near-)empty undo stack, retrying if a preceding
+// test left the shared per-worker vibe3d dirty. See the detailed rationale in
+// test_relocate_boundary.d: the load-bearing detail is draining the undo stack
+// BEFORE the reset (/api/reset is itself undoable; draining only AFTER it would
+// undo our own reset and restore the prior test's dirty mesh), and verifying
+// GEOMETRY (not just vertex count).
 void establishCubeBaseline() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -94,6 +100,14 @@ void establishCubeBaseline() {
         auto f = "finished" in s;
         return f is null || f.type != JSONType.false_;
     }
+    bool cubePristine() {
+        auto v = getJson("/api/model")["vertices"].array;
+        if (v.length != 8) return false;
+        auto c = v[6].array;   // startup cube v6 = (0.5, 0.5, 0.5)
+        return fabs(c[0].floating - 0.5) < 1e-3
+            && fabs(c[1].floating - 0.5) < 1e-3
+            && fabs(c[2].floating - 0.5) < 1e-3;
+    }
     foreach (attempt; 0 .. 8) {
         postJson("/api/script", "tool.set Transform off");
         foreach (_; 0 .. 200) {
@@ -101,12 +115,14 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
+        drainHistory();              // pop the prior test's commands FIRST
         postJson("/api/reset", "");
-        drainHistory();
-        auto v = getJson("/api/model")["vertices"].array;
-        if (v.length == 8) return;
+        drainHistory();              // pop the reset (+ select UI-undo)
+        if (cubePristine()) return;
+        Thread.sleep(20.msecs);
     }
-    assert(false, "could not establish pristine cube baseline");
+    postJson("/api/reset", "");      // last reset stands (not undone)
+    assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
 Vec3 evalPivot() {

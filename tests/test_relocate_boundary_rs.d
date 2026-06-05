@@ -86,9 +86,13 @@ void drainHistory() {
     }
 }
 
-// Establish a pristine cube + empty undo stack, retrying if a preceding
-// test's replay is still draining (the runner reuses ONE vibe3d per worker).
-// `toolId` is dropped first so a stale live session can't bleed in.
+// Establish a pristine cube + (near-)empty undo stack, retrying if a preceding
+// test left the shared per-worker vibe3d dirty. `toolId` is dropped first so a
+// stale live session can't bleed in. See test_relocate_boundary.d for the full
+// rationale: the load-bearing detail is draining the undo stack BEFORE the
+// reset (/api/reset is itself undoable; draining only AFTER it would undo our
+// own reset and restore the prior test's dirty mesh), and verifying GEOMETRY
+// (not just vertex count).
 void establishCubeBaseline(string toolId) {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -97,6 +101,14 @@ void establishCubeBaseline(string toolId) {
         auto f = "finished" in s;
         return f is null || f.type != JSONType.false_;
     }
+    bool cubePristine() {
+        auto v = getJson("/api/model")["vertices"].array;
+        if (v.length != 8) return false;
+        auto c = v[6].array;   // startup cube v6 = (0.5, 0.5, 0.5)
+        return fabs(c[0].floating - 0.5) < 1e-3
+            && fabs(c[1].floating - 0.5) < 1e-3
+            && fabs(c[2].floating - 0.5) < 1e-3;
+    }
     foreach (attempt; 0 .. 8) {
         postJson("/api/script", "tool.set " ~ toolId ~ " off");
         foreach (_; 0 .. 200) {
@@ -104,12 +116,14 @@ void establishCubeBaseline(string toolId) {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
+        drainHistory();              // pop the prior test's commands FIRST
         postJson("/api/reset", "");
-        drainHistory();
-        auto v = getJson("/api/model")["vertices"].array;
-        if (v.length == 8) return;
+        drainHistory();              // pop the reset (+ select UI-undo)
+        if (cubePristine()) return;
+        Thread.sleep(20.msecs);
     }
-    assert(false, "could not establish pristine cube baseline");
+    postJson("/api/reset", "");      // last reset stands (not undone)
+    assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
 Vec3 evalPivot() {
