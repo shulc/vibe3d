@@ -60,6 +60,21 @@ class MoveTool : TransformTool {
     // a friend-class dance.
     Vec3 pendingTranslateDelta = Vec3(0, 0, 0);
 
+    // Set true on the off-gizmo click-relocate branch of
+    // `onMouseButtonDown` (the gizmo is re-anchored to the click
+    // projection), false on every axis/handle grab. A relocate during a
+    // live tool session is a new logical run, so the wrapper (which owns
+    // the move edit session) reads + clears this immediately after
+    // `onMouseButtonDown` returns true to decide whether to commit the
+    // prior run before opening the next.
+    //
+    // Why a dedicated flag and not `dragAxis`: the relocate path leaves
+    // `dragAxis = 3` (see `beginScreenPlaneDragAt`) — byte-identical to a
+    // most-facing-plane center grab — so `dragAxis` cannot distinguish
+    // the two. `centerManual` is the "update() must not recompute center"
+    // latch, not a relocate marker, so it can't discriminate either.
+    bool lastClickWasRelocate = false;
+
     // Phase 4 — property-panel back-pointer. Set by the wrapper at
     // `activate()` (the only path that constructs MoveTool); read
     // by `drawProperties` to route slider edits through
@@ -296,6 +311,7 @@ public:
         }
 
         ctrlConstrain = false;
+        lastClickWasRelocate = false;
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
@@ -334,6 +350,9 @@ public:
         Vec3 hit;
         if (!computeClickRelocateHit(e.x, e.y, hit, vts))
             return false;
+        // Off-gizmo relocate: mark so the wrapper commits the prior run
+        // and re-stages this relocated pin before the new session opens.
+        lastClickWasRelocate = true;
         beginScreenPlaneDragAt(e.x, e.y, hit, ctrl, /*notifyAcen=*/true, vts);
         return true;
     }
@@ -377,6 +396,21 @@ public:
             ctrlConstrain = true;
             constrainStartMX = mx; constrainStartMY = my;
         }
+    }
+
+    // Re-push the (relocated) gizmo pivot into the ACEN stage after the
+    // wrapper has committed the prior run. At an in-session relocate the
+    // relocate's own `notifyAcenUserPlaced` (fired from
+    // `beginScreenPlaneDragAt`) ran while the prior session's snapshot was
+    // still frozen, so it did NOT stage the new pin as a cancel baseline.
+    // `commitEdit` then clears the freeze WITHOUT restoring (a committed
+    // relocate is permanent). Re-firing the notification now — after the
+    // freeze is cleared and before the new session's `beginEdit` re-freezes
+    // — makes the relocated pin the fresh run's in-session-cancel baseline.
+    // `handler.center` holds the relocated pivot (set by
+    // `beginScreenPlaneDragAt`'s `handler.setPosition(hit)`).
+    public void restageRelocatePin() {
+        notifyAcenUserPlaced(handler.center);
     }
 
     // Phase 7.3a/c: route the would-be gizmo position through

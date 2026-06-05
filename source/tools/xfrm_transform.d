@@ -507,6 +507,22 @@ public:
         // this click lands on its handler bank or falls through to
         // ACEN click-relocate.
         if (flagT && moveSub.onMouseButtonDown(e, vts)) {
+            // An off-gizmo click-relocate during a live session is a new
+            // logical run: commit the prior run, then re-stage the
+            // relocated pin so the fresh session freezes IT (not the stale
+            // pre-relocate pin) as its in-session-cancel baseline. The
+            // move edit session lives on the wrapper, so the commit must
+            // run here, not on moveSub. Ordering is load-bearing:
+            // setUserPlaced (in moveSub.onMouseButtonDown, no stage while
+            // frozen) → commitEdit (discards snapshot, clears freeze) →
+            // restageRelocatePin (stages relocated pin) →
+            // beginMoveDragSession → beginEdit (re-freezes relocated pin).
+            bool wasRelocate = moveSub.lastClickWasRelocate;
+            moveSub.lastClickWasRelocate = false;   // consume
+            if (wasRelocate && editIsOpen()) {
+                commitEdit("Move");
+                moveSub.restageRelocatePin();
+            }
             beginMoveDragSession(vts);
             activeDrag = moveSub;  return true;
         }
