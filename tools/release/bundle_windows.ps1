@@ -108,6 +108,7 @@ try {
     }
 
     if (Test-Path "config")    { Copy-Item -Recurse config "$stage\config" }
+    if (Test-Path "assets")    { Copy-Item -Recurse assets "$stage\assets" }  # app icon set
 
     # Licenses: own MIT + attribution / full texts for bundled deps
     if (Test-Path "LICENSE")                  { Copy-Item LICENSE                  "$stage\LICENSE" }

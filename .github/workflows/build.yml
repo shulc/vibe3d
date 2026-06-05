@@ -236,12 +236,12 @@ jobs:
 
       - name: Zip artifact (Linux / macOS)
         if: runner.os != 'Windows'
-        run: zip -r vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }} config
+        run: zip -r vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }} config assets
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, config -DestinationPath vibe3d-${{ matrix.name }}.zip
+        run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, config, assets -DestinationPath vibe3d-${{ matrix.name }}.zip
 
       # ---- Upload zip as artifact for the release job ----
 

@@ -147,6 +147,7 @@ cp -P ./vibe3d "$STAGE/vibe3d"
 if [[ -d config ]]; then
     cp -r config "$STAGE/config"
 fi
+[[ -d assets ]] && cp -r assets "$STAGE/assets"   # app icon set + .desktop
 [[ -f LICENSE ]]                 && cp LICENSE                 "$STAGE/LICENSE"
 [[ -f THIRD_PARTY_LICENSES.md ]] && cp THIRD_PARTY_LICENSES.md "$STAGE/THIRD_PARTY_LICENSES.md"
 
