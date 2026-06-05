@@ -724,6 +724,19 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
         Vec3 d = probeAfter - probeBefore;
         moved = sqrt(dot(d, d)) > 1e-5f;
     }
+    // FAIL-FAST on an uninstrumented binary: geometry moved but the PerfProbe
+    // counters saw nothing → ./vibe3d was not built with --build=perf (only
+    // that buildType defines versions=["PerfProbe"]; every other build
+    // compiles the g_perf calls to no-ops). Every later case + invariant
+    // would emit meaningless zeros (the historical `run_all --no-build`
+    // failure mode), so abort the whole run naming the actual cause.
+    if (moved && warmTouched == 0 && sumNs(warmupPerf, "kernelApply") == 0)
+        throw new Exception(
+            "./vibe3d lacks PerfProbe instrumentation (counters stayed 0 "
+            ~ "through a real warmup drag) — it was not built with "
+            ~ "--build=perf. Re-run without --no-build so the runner builds "
+            ~ "the perf binary, or build it yourself: dub build --build=perf "
+            ~ "--compiler=" ~ LDC2);
     if (!moved) {
         res.status = CaseStatus.ERROR;
         res.detail = "drag moved no geometry (vertsTouched=0) — handle miss?";
@@ -1553,6 +1566,13 @@ int main(string[] args) {
     if (absFail > 0)
         writefln("  absolute regressions: %d", absFail);
     writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
+
+    // The perf build replaced ./vibe3d with the ldc-release perf binary; a
+    // later `./run_test.d --no-build` would silently reuse it. Remind.
+    if (!noBuild)
+        writeln("\nNOTE: ./vibe3d is now the perf buildType binary — run "
+                ~ "`dub build` to restore the modeling debug binary before "
+                ~ "reusing it with --no-build test runs.");
 
     return failures == 0 ? 0 : failures;
 }

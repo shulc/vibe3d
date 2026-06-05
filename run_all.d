@@ -217,21 +217,6 @@ int main(string[] args) {
         }
     }
 
-    // Perf lane — RELATIVE INVARIANTS ONLY on a small (n=64) mesh. A full
-    // 100K × 36 × R run is slow and absolute timing is machine-bound, so the
-    // run_all lane skips the absolute baseline comparison (--no-absolute) and
-    // relies on the hardware-stable ratio invariants (I1–I4), which are
-    // designed to tolerate the noise of a loaded parallel suite. Included in
-    // the DEFAULT set: the invariants are cheap (~25s at n=64) and noise-robust;
-    // --skip perf / --only perf both work. Uses the perf buildType (ldc2),
-    // built by the runner itself unless --no-build is forwarded.
-    if (include("perf")) {
-        string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "64",
-                        "--no-absolute"];
-        if (noBuild) cmd ~= "--no-build";
-        suites ~= Suite("perf", "5/6 perf relative invariants (n=64)", cmd);
-    }
-
     // Snapshot-fallback lane (anti-rot). As of Phase 4 the undo change-tracker
     // (doc/undo_change_tracker_plan.md) is DEFAULT-ON, so the whole unit suite now
     // exercises the operation-log delta path for every extrude/delete/remove/
@@ -240,7 +225,9 @@ int main(string[] args) {
     // lane re-runs the key undo tests with the env var forced OFF so the snapshot
     // path keeps regression coverage. Cheap (six small tests, -j 1 for the drag-
     // sensitive ones), included in the DEFAULT set; --skip snapshot / --only
-    // snapshot both work.
+    // snapshot both work. Runs BEFORE the perf lane: the perf runner rebuilds
+    // ./vibe3d as the ldc-release perf buildType, and any run_test lane placed
+    // after it would silently reuse that binary instead of the modeling one.
     if (include("snapshot")) {
         string[] cmd = ["./run_test.d", "-j", "1",
                         "test_undo_redo", "test_delete", "test_edge_extrude_tool",
@@ -248,8 +235,38 @@ int main(string[] args) {
                         "test_history_jump"];
         if (noBuild) cmd ~= "--no-build";
         suites ~= Suite("snapshot",
-                        "6/6 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
+                        "5/6 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
                         cmd, ["VIBE3D_UNDO_TRACKER": "off"]);
+    }
+
+    // Perf lane — RELATIVE INVARIANTS ONLY on a small (n=64) mesh. A full
+    // 100K × 36 × R run is slow and absolute timing is machine-bound, so the
+    // run_all lane skips the absolute baseline comparison (--no-absolute) and
+    // relies on the hardware-stable ratio invariants (I1–I4), which are
+    // designed to tolerate the noise of a loaded parallel suite. Included in
+    // the DEFAULT set: the invariants are cheap (~25s at n=64) and noise-robust;
+    // --skip perf / --only perf both work.
+    //
+    // --no-build SKIPS this lane entirely: the invariants are only meaningful
+    // on the perf buildType (versions=["PerfProbe"] — every other build
+    // compiles the probes to no-ops and the counters stay 0), and ./vibe3d on
+    // disk after a normal build is the modeling debug binary. Forwarding
+    // --no-build used to fail the lane with meaningless zero-count invariant
+    // errors. The lane is LAST in the default set because its build replaces
+    // ./vibe3d with the perf binary.
+    // (An explicit `--only perf` still runs it — building the perf binary —
+    // since the user asked for exactly this lane; --no-build is never
+    // forwarded to the perf runner, whose own dub build is incremental.)
+    if (include("perf")) {
+        if (noBuild && only != "perf") {
+            writeln(yellow("- skipped perf lane (--no-build: invariants need "
+                ~ "the perf buildType; run `./run_all.d --only perf` or "
+                ~ "`rdmd tools/perf/run.d --n 64 --no-absolute`)"));
+        } else {
+            string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "64",
+                            "--no-absolute"];
+            suites ~= Suite("perf", "6/6 perf relative invariants (n=64)", cmd);
+        }
     }
 
     // perf-abs lane — OPT-IN, NEVER in the default set. Runs the full n=316
