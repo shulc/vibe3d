@@ -6,6 +6,9 @@
 		"Imm32",
 		"User32"
 	],
+	"sourceFiles-windows": [
+		"assets/icon/vibe3d.res"
+	],
 	"mainSourceFile": "source/app.d",
 	"versions": [
 		"SDL_2020",
@@ -17,6 +20,9 @@
 	"name": "vibe3d",
 	"sourcePaths": [
 		"source"
+	],
+	"stringImportPaths": [
+		"assets/icon"
 	],
 	"libs-linux": [
 		"pthread",

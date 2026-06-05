@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Vibe3D
+Comment=Polygon mesh editor
+Exec=vibe3d
+Icon=vibe3d
+Terminal=false
+Categories=Graphics;3DGraphics;
+StartupWMClass=vibe3d
