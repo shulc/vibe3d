@@ -39,7 +39,7 @@
 		"bindbc-opengl": "~>1.1.1",
 		"bindbc-common": "~>1.0.5",
 		"d_imgui": {
-			"version": "b67c6bf0b3f9474d3a783051ced6ff9acdd620bf",
+			"version": "2965bbaf9b9661f48c2cb779cee5d71688c4f219",
 			"repository": "git+https://github.com/shulc/imgui.git"
 		},
 		"bindbc-sdl": "~>1.5.2",
@@ -57,13 +57,25 @@
 	"buildTypes": {
 		"profile-fp": {
 			"_comment": "Profiling build: -gs forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`.",
-			"buildOptions": ["debugMode", "debugInfo", "optimize"],
-			"dflags": ["-gs"]
+			"buildOptions": [
+				"debugMode",
+				"debugInfo",
+				"optimize"
+			],
+			"dflags": [
+				"-gs"
+			]
 		},
 		"perf": {
 			"_comment": "Perf-harness build: optimized + inlined release with PerfProbe instrumentation active. releaseMode strips bounds-checks/asserts off the hot per-vertex loops so the timers measure the tool, not bounds-checking. The default build defines no PerfProbe version, so g_perf calls compile to no-ops. Use: `dub build --build=perf --compiler=ldc2`.",
-			"buildOptions": ["releaseMode", "optimize", "inline"],
-			"versions": ["PerfProbe"]
+			"buildOptions": [
+				"releaseMode",
+				"optimize",
+				"inline"
+			],
+			"versions": [
+				"PerfProbe"
+			]
 		}
 	},
 	"configurations": [
@@ -73,7 +85,9 @@
 		},
 		{
 			"name": "with-render",
-			"versions": ["WithRender"],
+			"versions": [
+				"WithRender"
+			],
 			"dependencies": {
 				"bindbc-rpr": {
 					"version": "~master",
