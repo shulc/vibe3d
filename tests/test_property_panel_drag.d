@@ -94,6 +94,12 @@ void establishCubeBaseline() {
         // wipes them) instead of bleeding into our drag's begin-snapshot (the
         // "got (-1,0,1)" flake — a prior drag's queued mouse-up moving v6).
         Thread.sleep(120.msecs);
+        // Drain BEFORE the reset: /api/reset (SceneReset) is itself recorded
+        // on the undo stack, so a drain placed AFTER it pops the reset and
+        // restores the previous test's dirty mesh (THE root cause of the
+        // documented "got (-1,0,1)" flake). Pop the previous test's commands
+        // first, then reset, then drain only to floor the entry counters.
+        drainHistory();
         postJson("/api/reset", "");
         drainHistory();
         auto v = getJson("/api/model")["vertices"].array;
@@ -106,8 +112,9 @@ void establishCubeBaseline() {
         }
         Thread.sleep(20.msecs);
     }
+    // Last reset stands (NOT undone) so even a genuinely unrestorable prior
+    // state leaves a clean cube for the test's own assertions.
     postJson("/api/reset", "");
-    drainHistory();
 }
 
 // NOTE on the Tool Properties window: this test does NOT drive panel
