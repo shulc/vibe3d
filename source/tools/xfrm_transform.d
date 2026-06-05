@@ -523,6 +523,17 @@ public:
                 commitEdit("Move");
                 moveSub.restageRelocatePin();
             }
+            // Phase 2 cross-slot (symmetric): in a composed T+R+S preset an
+            // R/S session may ALSO be open (a prior rotate/scale ring drag).
+            // A Move relocate is a new run for EVERY open session, so close
+            // the R/S sub-tool sessions too before the fresh Move session
+            // opens. commitSessionIfOpen() is a public mirror on the sub-tool
+            // (the wrapper cannot call their protected commitEdit cross-
+            // instance). No-op in single-mode presets (no R/S session open).
+            if (wasRelocate) {
+                rotateSub.commitSessionIfOpen();
+                scaleSub.commitSessionIfOpen();
+            }
             beginMoveDragSession(vts);
             activeDrag = moveSub;  return true;
         }
@@ -593,6 +604,11 @@ public:
                 commitEdit("Move");
                 moveSub.restageActionCenterPin();
             }
+            // Phase 2 cross-slot (symmetric): an element-pick relocate, like
+            // any relocate, commits EVERY open session — close any open R/S
+            // sub-tool session too (composed preset). No-op in single-mode.
+            rotateSub.commitSessionIfOpen();
+            scaleSub.commitSessionIfOpen();
             Vec3 pivot = queryActionCenter(vts);
             // notifyAcen=false because tryPickElement already wrote
             // userPlaced (notifyAcenUserPlaced) — don't overwrite it
@@ -1494,6 +1510,27 @@ public:
     // editIsOpen() does NOT see them — this folds them in.
     private bool subToolEditOpen() const {
         return rotateSub.publicEditIsOpen() || scaleSub.publicEditIsOpen();
+    }
+
+    // Phase 2 — cross-slot relocate boundary. In a composed T+R+S preset
+    // (Transform / xfrm.transform) two sessions can be open at once: the Move
+    // session on this wrapper, the R/S sessions on the sub-tool instances. A
+    // relocate on ANY slot is a new logical run and must commit EVERY open
+    // session, not just the clicked slot's — otherwise the wrapper's open Move
+    // run leaks across the boundary into the next gesture.
+    //
+    // This is the WRAPPER side: called from the R/S sub-tools' click-relocate
+    // branches (via their `wrapperRef` cast) so an off-axis ring/handle click
+    // that commits the R/S session ALSO closes any open Move run. Public so the
+    // sibling sub-tools can reach it (D `protected` does not grant sibling
+    // cross-instance access; `editIsOpen()` / `commitEdit()` are protected on
+    // TransformTool). The Move side (a Move relocate committing open R/S
+    // sessions) is symmetric and lives in onMouseButtonDown via the sub-tools'
+    // own public `commitSessionIfOpen()` mirrors. In a single-mode preset the
+    // wrapper Move session is never open here → no-op.
+    public void commitMoveSessionIfOpen() {
+        if (editIsOpen())
+            commitEdit("Move");
     }
 
     // Session-open chokepoint override: every path that opens the wrapper edit

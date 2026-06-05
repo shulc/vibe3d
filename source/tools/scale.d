@@ -259,6 +259,18 @@ public:
         history.record(cmd);
     }
 
+    // Phase 2 cross-slot relocate boundary — PUBLIC mirror of the protected
+    // commitEdit, so the composing wrapper can close THIS sub-tool's open
+    // session when a relocate fires on a DIFFERENT slot (a Move relocate in a
+    // composed T+R+S preset). Sibling cross-instance access to the protected
+    // commitEdit()/editIsOpen() is not granted by D `protected`; this method
+    // calls its OWN protected members (legal), mirroring `publicEditIsOpen()`.
+    // No-op when no session is open (single-mode preset, or no prior S drag).
+    public void commitSessionIfOpen() {
+        if (editIsOpen())
+            commitEdit("Scale");
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
     {
         if (!active) return;
@@ -343,6 +355,16 @@ public:
         // then capture a fresh baseline at the new pivot.
         if (editIsOpen())
             commitEdit("Scale");
+        // Phase 2 cross-slot: in a composed T+R+S preset the WRAPPER's Move
+        // session may also be open. A relocate commits EVERY open session, so
+        // close the wrapper's Move run too (independent of this scale session
+        // → two distinct runs, correct). Reached via the base-typed wrapperRef
+        // cast. Null / standalone unit-test instance → skipped.
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                wrap.commitMoveSessionIfOpen();
+        }
         handler.setPosition(hit);
         centerManual = true;
         notifyAcenUserPlaced(hit);
