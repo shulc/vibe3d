@@ -354,7 +354,7 @@ class FormsPanel {
     }
 
     // -----------------------------------------------------------------------
-    // group rows — the framed field cluster ("gang box"). Channel-split idiom
+    // group rows — the framed field cluster (group box). Channel-split idiom
     // (the plan's recommended z-order-safe approach): draw the member widgets
     // on a foreground channel and the highlighted background rect + border on a
     // background channel, then merge so the rect paints BEHIND the widgets.
