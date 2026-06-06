@@ -92,7 +92,8 @@ import core.stdc.stdlib : exit;
 
 // Machine-aware default worker count, mirroring run_test.d's defaultJobs():
 // clamp(totalCPUs/4, 4, 12). Each worker boots its own engine instance, so we
-// scale with the host without going 1:1 with cores. CI pins -j 4 explicitly.
+// scale with the host without going 1:1 with cores. CI pins -j 1 explicitly
+// (the ~4 GiB runner VM OOMs under parallel `dmd -i` test compiles).
 int defaultJobs() { return clamp(cast(int)totalCPUs / 4, 4, 12); }
 
 bool useColor = true;
