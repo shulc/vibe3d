@@ -468,6 +468,32 @@ protected:
         notifyAcenUserPlaced(ac.currentCenter());
     }
 
+    // Re-stage the CURRENT action-center pin VERBATIM as the in-session-cancel
+    // baseline after a relocate-boundary commit cleared the frozen snapshot —
+    // WITHOUT relocating the pin. Used by the Phase 5 boundary (an off-gizmo
+    // plain LMB-down in a relocate-DISALLOWED mode while a session is open:
+    // Select/SelectAuto/Element/Local/Origin/Manual/Border). That boundary
+    // commits every open session to split the undo run but must NOT move the
+    // pivot, so unlike `restageActionCenterPin` it CANNOT re-fire
+    // `notifyAcenUserPlaced` (which calls `setUserPlaced` → `userPlaced = true`
+    // and would force-place the pivot — wrong in Select mode). It re-stages the
+    // pin state exactly as it stands via `ActionCenterStage.stageCurrentPinState`
+    // (no publish, no pin mutation), so the next session's `beginEdit` freezes
+    // the current (un-mutated) pin as its cancel baseline instead of a stale
+    // `snapPlaced`. Matters in Element mode, where `userPlaced` is genuinely
+    // set from a prior pick. No-op when no ACEN stage is registered. PUBLIC for
+    // the wrapper→sub-tool reason, like `restageActionCenterPin`.
+    public void stageCurrentActionCenterPin() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.stageCurrentPinState();
+    }
+
     /// Live falloff packet for rendering the viewport overlay. Walks
     /// the toolpipe each call — fine because draw() runs at most once
     /// per frame and the upstream stages (WORK / ACEN / etc.) are all

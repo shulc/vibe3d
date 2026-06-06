@@ -381,6 +381,41 @@ public:
     /// (tool-drop / guard-trip) path so a committed relocate stays put.
     void discardUserPlacedSnapshot() { snapFrozen = false; }
 
+    /// Re-stage the CURRENT pin state VERBATIM as the in-session-cancel
+    /// baseline, WITHOUT mutating the pin or publishing. Phase 5 boundary
+    /// helper.
+    ///
+    /// The Phase 5 boundary (an off-gizmo plain LMB-down in a relocate-
+    /// DISALLOWED mode while a session is open) commits every open session to
+    /// split the undo run, but it must NOT relocate anything — so it cannot
+    /// use `notifyAcenUserPlaced(...)` / `restageActionCenterPin()` (those call
+    /// `setUserPlaced`, which sets `userPlaced = true` and would force-place
+    /// the pivot — wrong in Select mode, where the off-gizmo click is inert by
+    /// rule). It still hits the SAME `setUserPlaced`/`commitEdit` staging trap
+    /// as Phases 1a/1b, though:
+    ///
+    ///   [prior run open: snapFrozen == true]
+    ///   commitEdit (boundary) → discardUserPlacedSnapshot() → snapFrozen = false
+    ///                           (clears the freeze WITHOUT restoring snapPlaced)
+    ///   stageCurrentPinState() → snapPlaced = userPlaced;
+    ///                            snapPlacedCenter = userPlacedCenter   (no publish)
+    ///   beginEdit (next drag)  → freezeUserPlacedSnapshot() freezes THIS staged
+    ///                            (current, un-mutated) pin as the new baseline
+    ///
+    /// Without this, the next `beginEdit` would freeze whatever STALE value
+    /// `snapPlaced` last held (from a relocate two sessions ago — matters in
+    /// Element mode, where `userPlaced` is genuinely set from a prior pick and
+    /// an off-gizmo NON-element click there takes the Phase 5 path); a later
+    /// in-session cancel would then restore the WRONG pin. Re-staging the
+    /// current pin verbatim keeps the cancel baseline equal to the (unchanged)
+    /// pin. Only stages while `!snapFrozen` (the commit cleared it just above);
+    /// a stray call mid-session is a no-op, mirroring `setUserPlaced`'s guard.
+    void stageCurrentPinState() {
+        if (snapFrozen) return;
+        snapPlaced       = userPlaced;
+        snapPlacedCenter = userPlacedCenter;
+    }
+
     /// Switch into Manual mode and pin the center. Mirror of
     /// `setAutoUserPlaced` for callers that want strict "stay here"
     /// semantics regardless of selection changes.

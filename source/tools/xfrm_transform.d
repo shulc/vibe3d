@@ -620,6 +620,56 @@ public:
             syncGpuMatrix();
             return true;
         }
+
+        // Phase 5 — off-gizmo commit boundary in relocate-DISALLOWED modes.
+        // The click landed OFF every gizmo bank AND was not an element pick.
+        // In a relocate-PERMITTED mode (Auto/None/Screen) the move bank above
+        // would have consumed it as a relocate (Phase 1a); reaching here on a
+        // plain LMB-down means the action center mode is relocate-DISALLOWED
+        // (Select/SelectAuto/Element/Local/Origin/Manual/Border) — the click
+        // is inert as far as the pivot goes (moveSub declined it). The
+        // reference still SPLITS the undo run on such a click even though
+        // nothing visibly relocates: the trigger is the off-gizmo mouse-DOWN
+        // itself. Match it by committing EVERY open session (the cross-slot
+        // rule, Phase 2) WITHOUT relocating — the next drag then opens a fresh
+        // session = a separate undo entry.
+        //
+        // Gates:
+        //  - LEFT button only, with NO camera-nav modifiers. app.d dispatches
+        //    Alt+LMB (orbit) / Alt+Shift+LMB (pan) / Ctrl+Alt+LMB (zoom) to the
+        //    tool FIRST (handleMouseButtonDown:2899-2902, before the
+        //    DragMode branch at :2914), so a modified click DOES reach here;
+        //    excluding modifiers keeps camera navigation between drags from
+        //    splitting the run. (ImGui-panel clicks never reach the tool at
+        //    all: processSdlEvent:4094-4099 returns early on WantCaptureMouse
+        //    in interactive use, so panel-edit coalescing is safe.) This is the
+        //    same `plain` filter the element-pick PRE-step uses (:489-491).
+        //  - At least one open session (wrapper Move OR an R/S sub-tool). No
+        //    open session ⇒ fully inert: no commit, no empty undo entry.
+        // The commit set MIRRORS the Phase 1a cross-slot commit (Move on the
+        // wrapper, R/S on the sub-tools). After the commit, re-stage the
+        // current pin VERBATIM (stageCurrentActionCenterPin — no relocate, no
+        // userPlaced mutation) so the next session's beginEdit freezes the
+        // un-changed pin as its cancel baseline rather than a stale snapPlaced
+        // (the commit's discardUserPlacedSnapshot cleared the freeze; without
+        // the re-stage an in-session cancel in Element mode would yank the
+        // pivot to a pin two sessions old). NB the next drag's beginEdit is
+        // NOT opened here — this is a no-relocate, no-drag boundary; the
+        // subsequent gizmo grab opens the fresh session on its own mouse-down.
+        if (e.button == SDL_BUTTON_LEFT) {
+            SDL_Keymod mods2 = SDL_GetModState();
+            bool plain2 = (mods2 & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
+            if (plain2 &&
+                (editIsOpen() || rotateSub.publicEditIsOpen()
+                              || scaleSub.publicEditIsOpen())) {
+                if (editIsOpen()) {
+                    commitEdit("Move");
+                    moveSub.stageCurrentActionCenterPin();
+                }
+                rotateSub.commitSessionIfOpen();
+                scaleSub.commitSessionIfOpen();
+            }
+        }
         return false;
     }
 
