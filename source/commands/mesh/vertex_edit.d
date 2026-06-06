@@ -134,6 +134,87 @@ class MeshVertexEdit : Command, Operator {
         this.onRevertHook = onRevert;
     }
 
+    /// Read access to the apply/revert hooks. onApplyHook/onRevertHook are
+    /// MODULE-private fields, and D `private` is module-scoped, so a consumer
+    /// in another module (the run-consolidation primitive in command_history)
+    /// cannot read them off a gathered command object. This pair accessor is
+    /// the public surface it splices the first/last gesture's hooks from.
+    struct Hooks { void delegate() apply; void delegate() revert; }
+    Hooks getHooks() const {
+        return Hooks(cast(void delegate())onApplyHook,
+                     cast(void delegate())onRevertHook);
+    }
+
+    /// Read access to the edit payload — needed by the run-consolidation
+    /// primitive (a different module) to union-merge several gathered edits.
+    /// Returned as const slices; callers must .dup if they keep them.
+    const(uint)[] editIndices() const { return indices; }
+    const(Vec3)[] editBefore()  const { return before; }
+    const(Vec3)[] editAfter()   const { return after; }
+
+    /// Union-merge a CONTIGUOUS run of edits into ONE new MeshVertexEdit.
+    /// `entries` is in stack order (oldest → newest). The merged edit's:
+    ///   - indices = sorted union of every entry's indices
+    ///   - before[vid] = the EARLIEST gathered entry's before for vid
+    ///     (first-touch-wins → the run-start state of that vert)
+    ///   - after[vid]  = the LATEST gathered entry's after for vid
+    ///   - label = the first (oldest) entry's label (runs are single-bank by
+    ///     construction, so all labels agree; the first is canonical)
+    ///   - hooks = first.onRevertHook (restore to run-start) +
+    ///     last.onApplyHook  (run-end)
+    /// Context (mesh/view/editMode + gpu/caches) is cloned from the first
+    /// entry so the merged edit's apply()/revert() route through the same
+    /// mesh + GPU upload the gathered entries did.
+    ///
+    /// Lives HERE (not in command_history) because it reads each entry's
+    /// private indices/before/after and the merged entry's private gpu/cache
+    /// pointers, all module-scoped to vertex_edit. Pure: it does NOT mutate
+    /// any mesh — it only builds a fresh command object.
+    static MeshVertexEdit mergeRun(MeshVertexEdit[] entries) {
+        assert(entries.length > 0, "mergeRun requires at least one entry");
+        auto first = entries[0];
+        auto last  = entries[$ - 1];
+
+        // Build the union map. Walk oldest → newest: afterLatest always
+        // adopts the newest after; beforeEarliest takes the first-touch before.
+        Vec3[uint]   beforeEarliest;
+        Vec3[uint]   afterLatest;
+        foreach (e; entries) {
+            auto idx = e.indices;
+            foreach (i, vid; idx) {
+                afterLatest[vid] = e.after[i];
+                if (vid !in beforeEarliest)
+                    beforeEarliest[vid] = e.before[i];
+            }
+        }
+
+        // Sorted union of indices for a deterministic payload.
+        import std.algorithm : sort;
+        uint[] outIdx = beforeEarliest.keys;
+        outIdx.sort();
+
+        Vec3[] outBefore;
+        Vec3[] outAfter;
+        outBefore.reserve(outIdx.length);
+        outAfter.reserve(outIdx.length);
+        foreach (vid; outIdx) {
+            outBefore ~= beforeEarliest[vid];
+            outAfter  ~= afterLatest[vid];
+        }
+
+        // Clone context + GPU/cache pointers from the first entry.
+        auto merged = new MeshVertexEdit(
+            first.meshPtr, first.viewRef, first.editModeVal,
+            first.gpu, first.vc, first.ec, first.fc);
+        merged.setEdit(outIdx, outBefore, outAfter,
+                       first.editLabel.length ? first.editLabel : "Edit");
+        // Hooks: revert to run-start (first), redo to run-end (last).
+        auto fh = first.getHooks();
+        auto lh = last.getHooks();
+        merged.setHooks(lh.apply, fh.revert);
+        return merged;
+    }
+
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
