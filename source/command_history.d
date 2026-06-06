@@ -522,6 +522,21 @@ final class CommandHistory {
     /// (Q1 risk 6): if the run-start entry already fell off maxDepth, the gather
     /// merges only the SURVIVING tail, so before[] anchors to the earliest
     /// surviving gesture — graceful degradation, not a crash.
+    ///
+    /// Redo-split safety (the in-session-undo-then-boundary case). undo() POPS
+    /// an entry off undoStack ONTO redoStack — it does NOT keep a cursor with
+    /// entries straddling a single stack. So if the user steps in-session
+    /// Ctrl+Z over some of a run's gestures and THEN a boundary fires, the
+    /// undone gestures live entirely on redoStack and only the still-applied
+    /// gestures remain as a contiguous undoStack tail. consolidate() gathers
+    /// ONLY that undo tail; it never merges across the undo/redo split. The
+    /// merge preserves continuity: merged.after = the LAST gathered (undo-tail)
+    /// gesture's after = exactly the `before` state of the first still-pending
+    /// redo entry, so a later redo() re-applies that entry coherently on top of
+    /// the consolidated entry. Stale tagged redo entries are therefore never
+    /// re-applied against a wrong baseline; and any NEW gesture clears the redo
+    /// stack via recordInSession()/record() (N1) before it could matter. No
+    /// explicit redo-stack scrub is needed here.
     void consolidate(ulong runId) {
         scope(exit) _runOpen = false;
         if (undoStack.length == 0) return;
@@ -550,11 +565,18 @@ final class CommandHistory {
             gathered ~= mve;
         }
 
-        // Single-entry run: nothing to merge, but it IS the consolidated form
-        // already. Leave it on the stack untouched (just clears _runOpen via
-        // scope(exit)). Stripping the InSession tag is deferred to the consumer
-        // (a future panel) and is not required for navigation correctness.
-        if (n == 1) return;
+        // Single-entry run: nothing to merge, but the run HAS ended, so the
+        // lone gesture entry IS the surviving consolidated form. Strip its
+        // InSession tag + runId in place so it presents as an ordinary
+        // surviving entry: /api/history no longer reports a closed run's
+        // entry as inSession, and a per-gesture-count consumer (test / panel)
+        // sees exactly the OPEN run's tagged steps. Navigation is unaffected
+        // (the entry's command + before/after are untouched).
+        if (n == 1) {
+            undoStack[start].flags &= ~cast(uint)HistoryFlags.InSession;
+            undoStack[start].runId  = 0;
+            return;
+        }
 
         auto merged = MeshVertexEdit.mergeRun(gathered);
 

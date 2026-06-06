@@ -162,6 +162,25 @@ public:
     private Vec3 attrBaseRotate    = Vec3(0, 0, 0);
     private Vec3 attrBaseScale     = Vec3(1, 1, 1);
 
+    // Per-gesture action-center pin START, captured from the LIVE pin at session
+    // OPEN (the closed->open transition in beginEdit() below) — the gesture-START
+    // value the Move commitEdit pin-revert hook restores (W1 fix). The frozen
+    // snapshot (snapPlaced/snapPlacedCenter) holds the PRE-relocate pin staged at
+    // the LAST relocate, which is the right in-flight cancel baseline but the
+    // WRONG gesture-START for the 2nd+ plain on-gizmo gesture within one
+    // userPlaced run (no boundary → no re-stage → the frozen value is stale, from
+    // a relocate possibly a prior run). The live pin AT beginEdit IS this
+    // gesture's true start: for a plain gesture it equals the previous gesture's
+    // sticky-follow end; for a relocate-opened gesture beginEdit fires AFTER
+    // setUserPlaced+restage so it captures the relocated pin (correct stepping —
+    // undoing the haul returns to the relocate point, undoing further pops the
+    // prior entry whose hooks restore the pre-relocate pin). gesturePinStartKnown
+    // gates the capture so commitEdit can fall back to inert hooks when no
+    // beginEdit-open preceded it (e.g. a relocate-boundary no-op commit).
+    private bool gesturePinStartKnown   = false;
+    private bool gesturePinStartPlaced  = false;
+    private Vec3 gesturePinStartCenter  = Vec3(0, 0, 0);
+
     // MS-4.5 — the composed pivot-relative matrix the GLOBAL fold built on the
     // last applyGlobalFold (origin-fixing) plus the pivot it used. The GPU
     // fast-path (whole-mesh / no-falloff, which always takes the fold) reuses
@@ -215,6 +234,17 @@ public:
         moveSub.wrapperRef = this;
         rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         scaleSub.wrapperRef = this;    // scale single-source plumbing
+
+        // Record+consolidate (Phase 1): a fresh run opens for this tool session.
+        // Allocate a run id so this session's gestures are tagged distinctly from
+        // any prior session's, and route the wrapper's own (Move) commits through
+        // recordInSession while the tool is live — each per-gesture commitEdit
+        // then lands as a tagged in-session entry that consolidate() collapses at
+        // a boundary / drop. The R/S sub-tools keep plain routing (their own
+        // recordViaInSession stays false) until R/S per-gesture recording lands.
+        if (history !is null) history.nextRun();
+        recordViaInSession = true;
+        currentRunBank     = DragBank.None;
     }
 
     // Wrapper-level transient reset (undo/redo migration P1). Extends the base
@@ -237,6 +267,7 @@ public:
         scaleDragActive           = false;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
+        gesturePinStartKnown      = false;
     }
 
     override void deactivate() {
@@ -249,6 +280,17 @@ public:
         if (flagT) moveSub.deactivate();
         if (flagR) rotateSub.deactivate();
         if (flagS) scaleSub.deactivate();
+        // Tool drop (record+consolidate, Phase 1): consolidate the FINAL run's
+        // in-session tail into one surviving entry. A clean multi-gesture run
+        // therefore collapses to ONE undo entry at the drop (one post-drop
+        // Ctrl+Z reverts the whole run); a session that already consolidated at
+        // a boundary leaves that surviving entry untouched (no-op gather). Done
+        // AFTER the sub-tool deactivate commits (those land their own R/S
+        // entries via plain routing this phase) so the final consolidate sees
+        // only this run's tagged Move tail. Stop in-session routing afterwards.
+        if (history !is null) history.consolidate(history.currentRunId);
+        recordViaInSession   = false;
+        currentRunBank       = DragBank.None;
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
@@ -273,8 +315,28 @@ public:
             ulong curMutVer = mesh.mutationVersion;
             if (curHash != lastSelectionHash
              || curMutVer != lastMutationVersion) {
+                // Session-close work stays editIsOpen()-gated (harmless no-op
+                // once gestures self-commit on mouse-up). Run-close work gates
+                // on history.runOpen() — the single source of truth for "is
+                // there a run to close?" — so the run still splits at a
+                // selection/mutation boundary even when the prior gesture
+                // already closed its session per-gesture.
                 if (editIsOpen())
                     commitEdit("Move");
+                // Selection / mutation change is a run boundary
+                // (record+consolidate, Phase 1 addendum A4): consolidate the
+                // open run + bump the run id so the next gesture is tagged
+                // distinctly. (The foreign select/edit record that drove this
+                // change would also consolidate the open run via the
+                // command_history layer-A guard; doing it here keeps the
+                // boundary explicit and resets the bank.) Defensive tidy — no
+                // test depends on this site (selection-change mid-run is forced
+                // before any in-run record).
+                if (history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                    currentRunBank = DragBank.None;
+                }
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
             }
@@ -519,21 +581,61 @@ public:
             // beginMoveDragSession → beginEdit (re-freezes relocated pin).
             bool wasRelocate = moveSub.lastClickWasRelocate;
             moveSub.lastClickWasRelocate = false;   // consume
-            if (wasRelocate && editIsOpen()) {
-                commitEdit("Move");
-                moveSub.restageRelocatePin();
-            }
-            // Phase 2 cross-slot (symmetric): in a composed T+R+S preset an
-            // R/S session may ALSO be open (a prior rotate/scale ring drag).
-            // A Move relocate is a new run for EVERY open session, so close
-            // the R/S sub-tool sessions too before the fresh Move session
-            // opens. commitSessionIfOpen() is a public mirror on the sub-tool
-            // (the wrapper cannot call their protected commitEdit cross-
-            // instance). No-op in single-mode presets (no R/S session open).
+            // Phase 1 addendum A1 — split session-close vs run-close at the
+            // Move-arm relocate boundary. The three landed `if (wasRelocate ...)`
+            // blocks merge into one, with each action gated on what it actually
+            // depends on:
+            //   - commitEdit("Move") + the R/S commitSessionIfOpen mirrors stay
+            //     SESSION-close work (gated on editIsOpen()/an open R/S session).
+            //     Under per-gesture commit the Move session is normally already
+            //     closed at this boundary, so commitEdit is a harmless no-op
+            //     (buildEditCmd returns null when !editCapturing).
+            //   - restageRelocatePin() is RUN-close work that must fire on the
+            //     RELOCATE itself, UNCONDITIONAL on wasRelocate (NOT session-
+            //     open): the pin was just moved by this relocate and the next
+            //     gesture's beginEdit freezes it. Lifting it out of the
+            //     editIsOpen() guard is the load-bearing addendum fix — after a
+            //     per-gesture commit editIsOpen() is false, so the old gate
+            //     never re-staged the relocated pin.
+            //   - consolidate + nextRun is RUN-close work gated on
+            //     history.runOpen() (the single source of truth) so the run
+            //     splits even when the gesture already self-committed.
+            // Ordering is load-bearing: commitEdit (discards the prior session's
+            // snapshot, clears freeze) → restageRelocatePin (stages the relocated
+            // pin) → beginMoveDragSession → beginEdit (re-freezes the relocated
+            // pin). A-RISK-2: when wasRelocate fires as the very first
+            // interaction (no session, no run), restageRelocatePin only stages
+            // the ACEN pin from the already-staged userPlaced state — a safe,
+            // idempotent stage that does not require a session — and runOpen() is
+            // false so the consolidate/nextRun is skipped.
             if (wasRelocate) {
+                if (editIsOpen()) commitEdit("Move");   // session-close (no-op once self-committed)
+                moveSub.restageRelocatePin();           // run-close: UNCONDITIONAL on relocate
+                // Cross-slot (symmetric): in a composed T+R+S preset an R/S
+                // session may ALSO be open (a prior rotate/scale ring drag). A
+                // Move relocate is a new run for EVERY open session, so close the
+                // R/S sub-tool sessions too. commitSessionIfOpen() is a public
+                // mirror on the sub-tool (the wrapper cannot call their protected
+                // commitEdit cross-instance). No-op in single-mode presets.
                 rotateSub.commitSessionIfOpen();
                 scaleSub.commitSessionIfOpen();
+                // Hard run boundary: collapse the open run's tagged in-session
+                // entries into ONE surviving entry, then open a fresh run id so
+                // the next gesture is tagged distinctly.
+                if (history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                }
             }
+            // Bank-switch run boundary (Q-c): a switch INTO Move from a prior
+            // R/S run consolidates that run first. After a Move relocate above,
+            // currentRunBank is INTENTIONALLY left at Move (the wasRelocate block
+            // does NOT reset it): the gesture this relocate opens IS the
+            // relocate's own screen-plane Move drag, so the run stays a Move run.
+            // noteRunBank(Move) is therefore a same-bank no-op here (the prior run
+            // was already consolidated by the wasRelocate block above), and the
+            // relocated-pin Move gesture extends the freshly-opened Move run.
+            noteRunBank(DragBank.Move);
             beginMoveDragSession(vts);
             activeDrag = moveSub;  return true;
         }
@@ -544,6 +646,13 @@ public:
             // transient applyTRS view-axis/angle params. A relocate / no-axis click
             // (dragAxis == -1) starts no drag session.
             if (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3) {
+                // Bank-switch run boundary (Q-c): a switch INTO Rotate from a
+                // prior Move/Scale run consolidates that run first, before the
+                // fresh single-bank rotate run opens. No-op when the prior run
+                // was already Rotate. In this phase R/S commits stay on plain
+                // routing (no per-gesture in-session record yet), so the run
+                // being consolidated here is the just-ended MOVE run's tail.
+                noteRunBank(DragBank.Rotate);
                 beginRotateDragSession(vts);
             } else {
                 rotDragAxisIdx = -1;
@@ -557,6 +666,12 @@ public:
             // state). A falloff-handle grab or click-relocate leaves
             // dragAxis == -1 and starts no scale session.
             if (scaleSub.dragAxis >= 0) {
+                // Bank-switch run boundary (Q-c): a switch INTO Scale from a
+                // prior Move/Rotate run consolidates that run first. No-op when
+                // the prior run was already Scale. As with the rotate arm, R/S
+                // commits stay on plain routing this phase, so the consolidated
+                // run is the just-ended MOVE run.
+                noteRunBank(DragBank.Scale);
                 beginScaleDragSession(vts);
             } else {
                 scaleDragActive = false;
@@ -600,15 +715,35 @@ public:
             // commitEdit keeps the picked element anchor permanent, so the
             // element-falloff sphere anchor (state.actionCenter.center) is
             // unchanged across the boundary.
-            if (editIsOpen()) {
-                commitEdit("Move");
-                moveSub.restageActionCenterPin();
-            }
-            // Phase 2 cross-slot (symmetric): an element-pick relocate, like
-            // any relocate, commits EVERY open session — close any open R/S
-            // sub-tool session too (composed preset). No-op in single-mode.
+            // Phase 1 addendum A2 — split session-close vs run-close at the
+            // element-pick boundary, mirroring A1:
+            //   - commitEdit("Move") stays SESSION-close (editIsOpen()-gated;
+            //     no-op once the prior gesture self-committed).
+            //   - restageActionCenterPin() is RUN-close work tied to the pick
+            //     (the relocate here), UNCONDITIONAL — the pick just moved the
+            //     pin and the next session's beginEdit freezes it. Lifting it
+            //     out of the editIsOpen() guard is the load-bearing fix (after a
+            //     per-gesture commit editIsOpen() is false, so the old gate
+            //     never re-staged the picked anchor).
+            if (editIsOpen()) commitEdit("Move");   // session-close (no-op once self-committed)
+            moveSub.restageActionCenterPin();       // run-close: UNCONDITIONAL on pick
+            // Cross-slot (symmetric): an element-pick relocate, like any
+            // relocate, commits EVERY open session — close any open R/S sub-tool
+            // session too (composed preset). No-op in single-mode.
             rotateSub.commitSessionIfOpen();
             scaleSub.commitSessionIfOpen();
+            // Hard run boundary (addendum A2): the element-pick relocate ends the
+            // open run — consolidate its in-session tail into one surviving
+            // entry, then open a fresh run id. Gated on history.runOpen() (the
+            // single source of truth) so the run splits even when the prior
+            // gesture already self-committed its session.
+            if (history !is null && history.runOpen()) {
+                history.consolidate(history.currentRunId);
+                history.nextRun();
+            }
+            // The fresh screen-plane drag below is a Move gesture; record its
+            // bank (no-op switch when the prior run was also Move).
+            noteRunBank(DragBank.Move);
             Vec3 pivot = queryActionCenter(vts);
             // notifyAcen=false because tryPickElement already wrote
             // userPlaced (notifyAcenUserPlaced) — don't overwrite it
@@ -659,15 +794,43 @@ public:
         if (e.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mods2 = SDL_GetModState();
             bool plain2 = (mods2 & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
+            // Phase 1 addendum A3 — split session-close vs run-close at the P5
+            // off-gizmo-in-relocate-DISALLOWED boundary.
+            //   - commitEdit("Move") + the R/S commitSessionIfOpen mirrors stay
+            //     SESSION-close work (editIsOpen()/open-R/S-gated); harmless
+            //     no-op once the gesture self-committed on mouse-up.
+            //   - the verbatim stageCurrentActionCenterPin() is RUN-close work
+            //     (the P5 analog of A1/A2's relocate restages): it re-stages the
+            //     CURRENT pin (in Element mode, the picked anchor) as the NEXT
+            //     gesture's in-session-cancel baseline. Under per-gesture commit
+            //     editIsOpen() is FALSE at this boundary (gesture 1 already
+            //     self-committed its haul), so leaving the re-stage inside the
+            //     editIsOpen() arm would never fire it ⇒ the next gesture freezes
+            //     a STALE pin and an in-session cancel yanks the pivot. So it
+            //     LIFTS OUT of the editIsOpen() arm, gated on the boundary
+            //     actually firing (plain2 + an open run) — pin behavior stays
+            //     observably identical to the old open-session flow.
+            //   - the run-close work (consolidate + nextRun + bank reset) gates
+            //     on history.runOpen() so the run SPLITS even when the prior
+            //     gesture already self-committed.
+            bool p5Boundary = plain2 && history !is null && history.runOpen();
             if (plain2 &&
                 (editIsOpen() || rotateSub.publicEditIsOpen()
                               || scaleSub.publicEditIsOpen())) {
-                if (editIsOpen()) {
-                    commitEdit("Move");
-                    moveSub.stageCurrentActionCenterPin();
-                }
+                if (editIsOpen()) commitEdit("Move");   // session-close (no-op once self-committed)
                 rotateSub.commitSessionIfOpen();
                 scaleSub.commitSessionIfOpen();
+            }
+            // Run-close: verbatim re-stage of the current pin (NOT a relocate —
+            // pin unchanged) so the next gesture freezes the picked anchor, plus
+            // the consolidate/nextRun/bank-reset that SPLITS the run. p5Boundary
+            // gates on plain2 + runOpen() (a modified nav click does not split;
+            // runOpen() is the single source of truth for "a run to close").
+            if (p5Boundary) {
+                moveSub.stageCurrentActionCenterPin();
+                history.consolidate(history.currentRunId);
+                history.nextRun();
+                currentRunBank = DragBank.None;
             }
         }
         return false;
@@ -1043,23 +1206,30 @@ public:
         // Phase 3 — wrapper owns the GPU upload + gpuMatrix reset
         // that MoveTool's mouseUp used to handle. One upload per
         // drag end; the next drag opens its own dragBaseline at the
-        // refreshed mesh state. Edit session STAYS open (7.5h
-        // semantics — commit fires at deactivate / selection
-        // change / BrushReset preset).
+        // refreshed mesh state.
         if (wasMoveDrag && e.button == SDL_BUTTON_LEFT) {
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate   = false;
             moveDragFastPath = false;
 
-            // BrushReset opt-out (xfrm.softDrag etc.): each LMB drag
-            // is one atomic stroke. Bake the drag to history at
-            // release; next LMB-down starts a fresh baseline at the
-            // grab point. Without this the falloff weights would
-            // re-apply onto stale baseline verts on subsequent
-            // pulls.
-            import tool : ToolFlag;
-            if (hasFlag(ToolFlag.BrushReset) && editIsOpen())
+            // Per-gesture commit (record+consolidate, Phase 1): each move drag
+            // is its own atomic gesture, baked to history at mouse-up as a
+            // tagged in-session entry (recordViaInSession is true while the tool
+            // is live). The next LMB-down reopens a fresh edit session (beginEdit
+            // via beginMoveDragSession) at the grab point, so two consecutive
+            // drags land as TWO in-session entries — one Ctrl+Z steps each — that
+            // consolidate into ONE surviving entry at the run boundary / drop.
+            // Within a single drag the per-pixel increments already coalesce
+            // structurally (one applyTRS(baseline) per motion → one commitEdit
+            // here). Committing on mouse-up also means there is NO open gizmo
+            // session at idle, which keeps the in-session Ctrl+Z contract clean
+            // (navHistory pops one gesture, tool stays live). The panel/forms
+            // path is untouched: it opens its session via reEvaluate /
+            // applyMovePanelDelta (never this gizmo mouse-up) and stays coalesced
+            // until drop. discardAcenUserPlacedSnapshot stays on commitEdit
+            // (Q-b): the next gesture's beginEdit re-freezes the pin.
+            if (editIsOpen())
                 commitEdit("Move");
         }
 
@@ -1605,9 +1775,101 @@ public:
             // now adopts that staged state as the cancel baseline. Relocates
             // during this open session no longer re-stash. Idempotent re-opens
             // skip this — the first freeze of the session wins, like attrBase*.
-            if (auto ac = activeAcenStage())
+            if (auto ac = activeAcenStage()) {
                 ac.freezeUserPlacedSnapshot();
+                // W1 fix: capture this gesture's pin-START from the LIVE pin NOW,
+                // not from the frozen snapshot at commit time. The frozen snapshot
+                // is the PRE-relocate pin (correct in-flight cancel baseline) but
+                // is stale as a gesture-START for the 2nd+ plain gesture in a
+                // userPlaced run (no boundary re-stages it). The live pin here IS
+                // this gesture's true start — for a relocate-opened gesture this
+                // fires AFTER setUserPlaced+restage, so it captures the relocated
+                // pin (the correct START for stepping; see the field comment).
+                gesturePinStartPlaced = ac.isUserPlaced();
+                gesturePinStartCenter = ac.currentPinCenter();
+                gesturePinStartKnown  = true;
+            }
         }
+    }
+
+    // Per-gesture Move commit (record+consolidate, addendum-2): attach PIN HOOKS
+    // to the recorded entry, exactly as RotateTool/ScaleTool attach their
+    // accumulator hooks (rotate.d:264-271 verbatim shape: build cmd → setHooks →
+    // recordCommit). The wrapper only ever commits the MOVE slot (R/S gestures
+    // self-commit through their own sub-tool commitEdit via commitSessionIfOpen),
+    // so this override is Move-exclusive and leaves R/S routing untouched.
+    //
+    // Under per-gesture commit each Move mouse-up records a tagged in-session
+    // entry and DISCARDS the frozen pin snapshot (no open session at idle). The
+    // in-session Ctrl+Z is now a plain history.undo()/redo() — so the pin must
+    // ride the ENTRY: revert restores the gesture-START pin (the LIVE pin this
+    // gesture's beginEdit captured into gesturePinStart* — W1 fix, NOT the frozen
+    // snapshot), apply restores the gesture-END pin (the current pin at mouse-up,
+    // post sticky-follow). A plain history step then snaps the action center
+    // per-step for free; consolidate()'s first.revert + last.apply splice gives
+    // the merged run entry run-START / run-END pin semantics for free.
+    //
+    // The gesture-START is the LIVE pin captured at beginEdit (gesturePinStart*),
+    // so commit no longer needs to read it before the base commit's
+    // discardUserPlacedSnapshot(). When no gesture-START was captured (a commit
+    // with no preceding beginEdit-open —
+    // e.g. a relocate-boundary commit on an already-closed session: a no-op cmd)
+    // fall back to the current pin for BOTH endpoints, making the hooks inert.
+    protected override void commitEdit(string label) {
+        if (suppressCommit) { cancelEdit(); return; }
+
+        // pin-START — the LIVE pin captured at this gesture's beginEdit
+        // (closed->open), NOT the frozen snapshot (W1 fix). The frozen snapshot
+        // holds the PRE-relocate pin staged at the last relocate, which is stale
+        // as a gesture-START for the 2nd+ plain gesture in a userPlaced run (no
+        // boundary re-stages it). gesturePinStart* was captured from
+        // isUserPlaced()/currentPinCenter() at beginEdit, so it equals this
+        // gesture's true start in every case (plain = prior gesture's
+        // sticky-follow end; relocate-opened = the relocated pin). Consume the
+        // capture (clear known) so a follow-on commit with no preceding
+        // beginEdit-open (e.g. a relocate-boundary no-op) falls back to inert.
+        bool startPlaced = false;
+        Vec3 startCenter = Vec3(0, 0, 0);
+        bool startKnown  = gesturePinStartKnown;
+        if (startKnown) {
+            startPlaced = gesturePinStartPlaced;
+            startCenter = gesturePinStartCenter;
+        }
+        gesturePinStartKnown = false;
+
+        // Base commit discards the frozen pin snapshot, then builds + records the
+        // cmd via recordCommit. We replicate the body so we can splice setHooks
+        // between buildEditCmd and recordCommit (buildEditCmd returns null on a
+        // no-op gesture — nothing to hook).
+        discardAcenUserPlacedSnapshot();
+        auto cmd = buildEditCmd(label);
+        if (cmd is null) return;
+
+        // pin-END — current pin at mouse-up. If the gesture-START pin was never
+        // captured (no preceding beginEdit-open), use the current pin for START
+        // too so the hooks are inert (no pin jump on undo of a gesture that never
+        // moved the pin).
+        bool endPlaced = false;
+        Vec3 endCenter = Vec3(0, 0, 0);
+        if (auto ac = activeAcenStage()) {
+            endPlaced = ac.isUserPlaced();
+            endCenter = ac.currentPinCenter();
+        }
+        if (!startKnown) { startPlaced = endPlaced; startCenter = endCenter; }
+
+        cmd.setHooks(
+            // apply (redo): restore the gesture-END pin + publish.
+            () {
+                if (auto ac = activeAcenStage())
+                    ac.restorePinState(endPlaced, endCenter);
+            },
+            // revert (undo): restore the gesture-START pin + publish.
+            () {
+                if (auto ac = activeAcenStage())
+                    ac.restorePinState(startPlaced, startCenter);
+            },
+        );
+        recordCommit(cmd);
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
@@ -2219,6 +2481,34 @@ private:
     // active; in that state mouse motion goes to every enabled
     // sub-tool for hover-preview updates.
     TransformTool activeDrag;
+
+    // In-session run bank (record+consolidate, Q-c). A RUN is a sequence of
+    // consecutive same-bank gizmo gestures that share one history runId and
+    // consolidate into ONE surviving entry at the run boundary / tool drop. A
+    // bank SWITCH within a live run is itself a run boundary, so every surviving
+    // consolidated entry is single-bank. `currentRunBank` records the bank of
+    // the run currently open (None before any gesture this session). The
+    // bank-switch detect lives inside the three mouse-down consume arms: after a
+    // sub-tool confirms the click landed on ITS bank, but before the arm opens
+    // the drag session, a differing bank consolidates the prior run + bumps the
+    // run id. None at session start makes the first gesture's check a harmless
+    // empty-run consolidate (no-op) that just sets the bank.
+    enum DragBank { None, Move, Rotate, Scale }
+    DragBank currentRunBank = DragBank.None;
+
+    // Detect a bank switch at gizmo mouse-down and consolidate the prior run.
+    // Called from each mouse-down consume arm AFTER the sub-tool confirmed the
+    // click landed on its bank, BEFORE begin*DragSession. An empty/not-yet-open
+    // run consolidates to nothing (safe no-op) — the gather finds no matching
+    // in-session tail. Always (re)sets currentRunBank to this arm's bank so the
+    // next gesture extends the same single-bank run.
+    private void noteRunBank(DragBank thisBank) {
+        if (currentRunBank != DragBank.None && currentRunBank != thisBank) {
+            history.consolidate(history.currentRunId);
+            history.nextRun();
+        }
+        currentRunBank = thisBank;
+    }
 
     // Phase 3 — wrapper-owned drag state.
     //

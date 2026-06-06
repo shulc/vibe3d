@@ -224,8 +224,11 @@ unittest {
 
     auto v6AfterRun1 = vert(6);
     long stackAfterRun1 = undoCount();
-    assert(stackAfterRun1 == stackBefore,
-        "gesture 1 keeps the run OPEN (no commit yet); got " ~
+    // record+consolidate (Phase 1): gesture 1 commits a TAGGED in-session entry
+    // on mouse-up (+1 mid-run); the element-pick boundary below consolidates the
+    // run to ONE surviving entry. Flipped from the old open-run observable.
+    assert(stackAfterRun1 == stackBefore + 1,
+        "gesture 1 records ONE in-session entry on mouse-up; got " ~
         (stackAfterRun1 - stackBefore).to!string ~ " new entries");
 
     // Gesture 2: element-pick the +Z face (well clear of the gizmo) and
@@ -241,8 +244,16 @@ unittest {
     settle();
 
     long stackAfterPick = undoCount();
-    assert(stackAfterPick == stackBefore + 1,
-        "the element pick should COMMIT run 1 (one new entry); got " ~
+    // Timeline (per-gesture record+consolidate, addendum-2): the element pick is
+    // run 1's boundary -> run 1's in-session tail CONSOLIDATES into ONE surviving
+    // entry (+1). The pick+haul is run 2's FIRST gesture; its drag mouse-up has
+    // already SELF-COMMITTED a tagged in-session entry by this assert point (+1).
+    // So mid-run we observe TWO entries: consolidated run 1 + run 2's open
+    // gesture. (Run 2 has NOT yet consolidated -- that happens at the drop /
+    // in-session cancel below.)
+    assert(stackAfterPick == stackBefore + 2,
+        "element pick consolidates run 1 (+1) and run 2's first gesture has " ~
+        "already self-committed (+1); got " ~
         (stackAfterPick - stackBefore).to!string);
 
     auto v6AfterRun2 = vert(6);
@@ -333,14 +344,25 @@ unittest {
     settle();
 
     long stackAfterPick = undoCount();
-    assert(stackAfterPick == stackBefore + 1,
-        "the element pick should COMMIT run 1 (one new entry); got " ~
+    // Timeline (per-gesture record+consolidate, addendum-2): the element pick is
+    // run 1's boundary -> run 1's in-session tail CONSOLIDATES into ONE surviving
+    // entry (+1). The pick+haul is run 2's FIRST gesture; its drag mouse-up has
+    // already SELF-COMMITTED a tagged in-session entry by this assert point (+1).
+    // So mid-run we observe TWO entries: consolidated run 1 + run 2's open
+    // gesture. (Run 2 has NOT yet consolidated -- that happens at the drop /
+    // in-session cancel below.)
+    assert(stackAfterPick == stackBefore + 2,
+        "element pick consolidates run 1 (+1) and run 2's first gesture has " ~
+        "already self-committed (+1); got " ~
         (stackAfterPick - stackBefore).to!string);
 
-    // In-session Ctrl+Z (tool still live): navHistory sees the wrapper's OPEN
-    // run -> cancelUncommittedEdit -> reverts run 2 geometry AND restores the
-    // pivot to the run-2 frozen baseline, which restageActionCenterPin set to
-    // the PICKED element anchor (NOT the pre-pick corner pivot).
+    // In-session Ctrl+Z (tool still live, record+consolidate Phase 1): the
+    // run-2 gesture committed its own TAGGED in-session entry on mouse-up, so
+    // navHistory does a PLAIN history.undo() that pops it (geometry back to
+    // post-run-1) and resyncSession re-baselines. The pivot stays on the PICKED
+    // element anchor: restageActionCenterPin committed it permanently at the
+    // element-pick boundary, so reverting run 2's mesh edit does not move it.
+    // Same observable as the old whole-run cancel. (Q-b pin gate.)
     playAndWait(ctrlZ(50.0));
     settle();
 

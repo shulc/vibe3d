@@ -2488,29 +2488,38 @@ void main(string[] args) {
             return history.jumpTo(target);
         });
         httpServer.setHistoryProvider(() {
-            // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool}, ...], "redo":[..] }
+            // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
+            //                   "inSession":bool,"runId":N}, ...], "redo":[..] }
             // "ui" is true when the entry is UI-undo class (selection / edit-mode
             // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
+            // "inSession" is true when the entry is one step of an open tool RUN
+            // (a per-gesture in-session entry, tagged HistoryFlags.InSession);
+            // "runId" groups the gestures of one run. Both surface the
+            // record+consolidate structure for a future command-history panel.
             import std.json : JSONValue;
             import command_history : HistoryFlags;
             JSONValue[] undoArr;
             foreach (ref e; history.undoEntries()) {
                 auto obj = JSONValue.emptyObject;
-                obj["label"]   = JSONValue(e.label);
-                obj["args"]    = JSONValue(e.args);
-                obj["command"] = JSONValue(e.commandName);
-                obj["flags"]   = JSONValue(cast(long)e.flags);
-                obj["ui"]      = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
+                obj["label"]     = JSONValue(e.label);
+                obj["args"]      = JSONValue(e.args);
+                obj["command"]   = JSONValue(e.commandName);
+                obj["flags"]     = JSONValue(cast(long)e.flags);
+                obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
+                obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
+                obj["runId"]     = JSONValue(cast(long)e.runId);
                 undoArr ~= obj;
             }
             JSONValue[] redoArr;
             foreach (ref e; history.redoEntries()) {
                 auto obj = JSONValue.emptyObject;
-                obj["label"]   = JSONValue(e.label);
-                obj["args"]    = JSONValue(e.args);
-                obj["command"] = JSONValue(e.commandName);
-                obj["flags"]   = JSONValue(cast(long)e.flags);
-                obj["ui"]      = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
+                obj["label"]     = JSONValue(e.label);
+                obj["args"]      = JSONValue(e.args);
+                obj["command"]   = JSONValue(e.commandName);
+                obj["flags"]     = JSONValue(cast(long)e.flags);
+                obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
+                obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
+                obj["runId"]     = JSONValue(cast(long)e.runId);
                 redoArr ~= obj;
             }
             JSONValue payload = JSONValue.emptyObject;
@@ -2789,15 +2798,25 @@ void main(string[] args) {
             g_pipeCtx.pipeline.evaluate(vts);
     }
 
-    // Interactive history-navigation chokepoint (undo/redo migration P0).
-    // MAIN-THREAD ONLY — never call from the HTTP server thread (it touches
-    // activeTool). If the active tool holds an uncommitted live edit, the
-    // first Ctrl+Z cancels that edit (no history pop, tool stays active);
-    // otherwise it pops/pushes the history stack and re-syncs the tool's
-    // cached baseline to the now-current mesh. Returns true if anything
-    // happened (edit cancelled OR stack moved).
+    // Interactive history-navigation chokepoint (undo/redo migration P0;
+    // in-session record+consolidate Phase 1). MAIN-THREAD ONLY — never call
+    // from the HTTP server thread (it touches activeTool).
+    //
+    // Gizmo gestures no longer hold an open session at idle: each Move drag
+    // commits its own tagged in-session entry on mouse-up (record+consolidate
+    // Phase 1), so an idle Move run leaves NOTHING to "cancel" — a Ctrl+Z just
+    // pops the last in-session gesture entry via the plain history.undo() path
+    // and resyncSession() re-baselines the still-live tool against the now-
+    // current mesh. The residual cancel branch survives ONLY for an open PANEL
+    // session (coalesce-until-drop value edits) and an open R/S gizmo session
+    // (R/S per-gesture recording lands in a later phase) — both reported by
+    // hasUncommittedEdit() ONLY when activeDrag is null, so a mid-gizmo-drag
+    // Ctrl+Z still falls through to history.undo() and never aborts the live
+    // drag. The cancel is gated to the UNDO direction: a redo never cancels an
+    // open session (there is nothing to redo into one).
+    // Returns true if anything happened (edit cancelled OR stack moved).
     bool navHistory(bool isUndo) {
-        if (activeTool !is null && activeTool.hasUncommittedEdit()) {
+        if (isUndo && activeTool !is null && activeTool.hasUncommittedEdit()) {
             activeTool.cancelUncommittedEdit();
             return true;
         }

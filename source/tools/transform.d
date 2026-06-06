@@ -229,20 +229,44 @@ protected:
     // latch is set there is also nothing left to record.)
     protected bool suppressCommit = false;
 
+    // In-session routing flag (record+consolidate). When the composing wrapper
+    // has a live gizmo run open it sets this true, so a per-gesture commitEdit
+    // lands as a TAGGED in-session entry (one step of the run) via
+    // recordInSession; consolidate() collapses the run into one surviving entry
+    // at the boundary / tool drop. Plain (false) routing is the ordinary
+    // record() append — used for panel/forms commits and any path with no open
+    // run. The base + R/S sub-tools all inherit this; the wrapper drives it
+    // (only Move sets it while a run is open in this phase — R/S keep plain
+    // routing until their own per-gesture recording lands).
+    protected bool recordViaInSession = false;
+
+    // Single routing chokepoint for every commitEdit override. All three
+    // commitEdit bodies (base + RotateTool + ScaleTool) funnel their terminal
+    // record through here so ONE flag (recordViaInSession) routes all three.
+    // In-session: stamp the entry with the history's current run id; plain:
+    // ordinary append. Keeps the rotate/scale per-gesture accumulator hooks
+    // (set on `cmd` before this call) intact — only the terminal record changes.
+    protected void recordCommit(MeshVertexEdit cmd) {
+        if (recordViaInSession)
+            history.recordInSession(cmd, history.currentRunId);
+        else
+            history.record(cmd);
+    }
+
     // Default commit: build cmd, record on history. Subclasses override to
     // attach hooks before recording (RotateTool, ScaleTool, MoveTool).
     protected void commitEdit(string label) {
         if (suppressCommit) { cancelEdit(); return; }
-        // A genuine commit (tool-drop / selection-change / BrushReset) makes any
-        // click-away relocate that happened during this session PERMANENT, so
-        // drop the in-session-cancel pin snapshot WITHOUT restoring it. The
-        // cancel path never reaches here (it sets suppressCommit and restores
-        // the pin itself); leaving a stale frozen snapshot behind would let a
-        // LATER cancel revert a relocate that was already committed.
+        // A genuine commit (tool-drop / selection-change / per-gesture mouse-up)
+        // makes any click-away relocate that happened during this session
+        // PERMANENT, so drop the in-session-cancel pin snapshot WITHOUT restoring
+        // it. The cancel path never reaches here (it sets suppressCommit and
+        // restores the pin itself); leaving a stale frozen snapshot behind would
+        // let a LATER cancel revert a relocate that was already committed.
         discardAcenUserPlacedSnapshot();
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
-        history.record(cmd);
+        recordCommit(cmd);
     }
 
     // Drop the action-center stage's frozen in-session-cancel pin snapshot

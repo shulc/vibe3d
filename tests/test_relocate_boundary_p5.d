@@ -465,10 +465,13 @@ unittest {
                               xc, yc, xd, yd, 8));
     settle();
 
-    // In-session Ctrl+Z: reverts the open post-click run's geometry AND the
-    // pivot to its frozen baseline — which stageCurrentActionCenterPin set to
-    // the picked +Z anchor (constraint 5). A stale re-stage would land the
-    // pivot somewhere else.
+    // In-session Ctrl+Z (record+consolidate Phase 1): gesture 2 committed its
+    // own TAGGED in-session entry on mouse-up, so navHistory does a PLAIN
+    // history.undo() that pops it (geometry back to post-run-1) and
+    // resyncSession re-baselines. The pivot stays on the picked +Z anchor: the
+    // Phase 5 boundary re-staged it verbatim (stageCurrentActionCenterPin) and
+    // the pin is permanent, so reverting gesture 2's mesh edit does not move it
+    // (constraint 5). Same observable as the old whole-run cancel. (Q-b gate.)
     playAndWait(ctrlZ(50.0));
     settle();
 
