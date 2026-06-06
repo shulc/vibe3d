@@ -209,7 +209,24 @@ public:
         // Scale's existing applyScaleFromActivationCpuOnly rebuilds
         // verts from activationVertices using the captured dragFalloff;
         // trigger it on packet change.
-        if (editIsOpen() && scaleAccum != Vec3(1, 1, 1)) {
+        //
+        // Phase 2 (Q5 / brief item 5): idle-time gate + reachability note —
+        // identical to the rotate falloff site (rotate.d update()). For a GIZMO
+        // scale run the session self-closes at every handle mouse-up, so this
+        // site is DEAD at idle; it is reachable only for an OPEN PANEL scale
+        // session (tool.attr SX … with scaleAccum != identity), where the
+        // existing in-place mutation IS the correct coalesce-until-drop behavior
+        // (scenario C, out of scope). The OBJ-4 wrap (record-as-tagged-entry) is
+        // therefore NOT applied — its target idle gizmo-run re-apply no longer
+        // exists post-Phase-2. Only the idle-time gate below lands; flagged for
+        // the plan owner. (See the rotate site for the full rationale.)
+        bool dragLive = false;
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                dragLive = wrap.dragInFlight();
+        }
+        if (editIsOpen() && !dragLive && scaleAccum != Vec3(1, 1, 1)) {
             FalloffPacket live = currentFalloff(vts);
             if (!falloffPacketsEqual(live, dragFalloff)) {
                 dragFalloff = live;
@@ -267,6 +284,31 @@ public:
     // calls its OWN protected members (legal), mirroring `publicEditIsOpen()`.
     // No-op when no session is open (single-mode preset, or no prior S drag).
     public void commitSessionIfOpen() {
+        if (!editIsOpen()) return;
+        // Cross-slot boundary commit (Phase 2) — route PLAIN, same rationale as
+        // RotateTool.commitSessionIfOpen: this closes a separate-bank session at
+        // another bank's boundary and must land as its OWN surviving entry, not
+        // join that bank's in-session run (which consolidate would then merge
+        // across banks). A plain record() trips the layer-A foreign-record guard
+        // to consolidate the boundary-bank's open run first.
+        bool wasInSession = recordViaInSession;
+        recordViaInSession = false;
+        scope(exit) recordViaInSession = wasInSession;
+        commitEdit("Scale");
+    }
+
+    // Per-gesture commit (record+consolidate, Phase 2): the wrapper calls this
+    // from its onMouseButtonUp when a wrapper-owned scale drag ends, so each
+    // scale gesture bakes a TAGGED in-session entry (recordViaInSession is set
+    // on this sub-tool while the tool is live). The next handle grab reopens a
+    // fresh session (beginEdit in onMouseButtonDown), so two consecutive scale
+    // drags land as TWO in-session entries — one Ctrl+Z steps each — that
+    // consolidate into ONE surviving entry at the run boundary / drop. commitEdit
+    // attaches the scaleAccum/propScale accumulator hooks BEFORE the terminal
+    // recordCommit, so stepping a per-gesture entry restores the accumulator for
+    // free. Public for the same sibling-cross-instance reason as
+    // commitSessionIfOpen. No-op when no session is open (no scale drag happened).
+    public void commitGesture() {
         if (editIsOpen())
             commitEdit("Scale");
     }

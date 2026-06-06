@@ -23,10 +23,11 @@
 //   (b) Scale: same via SX.
 //   (c) Combined T (wrapper) + R (sub-tool) open in ONE live session ⇒ a single
 //       in-session Ctrl+Z reverts BOTH (whole-open-run).
-//   (d) Post-gizmo-R-drag (mouse RELEASED, ring run still open — gizmo mouse-up
-//       does not commit, per coalescing): in-session Ctrl+Z now CANCELS that
-//       open run (geometry reverted, NO history pop) — the documented behavior
-//       change. A second Ctrl+Z then pops the prior committed entry.
+//   (d) Post-gizmo-R-drag (mouse RELEASED): Phase 2 per-gesture recording — the
+//       ring gesture SELF-COMMITS a tagged in-session entry on mouse-up, so an
+//       in-session Ctrl+Z is plain history stepping: #1 pops that gesture
+//       (geometry reverts, count -1), #2 pops the prior committed entry. (This
+//       flips the pre-Phase-2 cancel-the-open-run behavior; (a)-(c) stay.)
 //
 // IMPORTANT — the Ctrl+Z MUST go through the keyboard/navHistory chokepoint, so
 // it is injected as an SDL keystroke via /api/play-events. The /api/undo HTTP
@@ -307,15 +308,22 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (d) Post-gizmo-R-drag idle: documented BEHAVIOR CHANGE.
+// (d) Post-gizmo-R-drag idle: Phase 2 per-gesture recording FLIP.
 //
-//     An R ring gizmo drag leaves the rotate run OPEN after mouse-UP (gizmo
-//     mouse-up does NOT commit — per-gesture coalescing). With the fix, an
-//     in-session Ctrl+Z at THAT point (mouse released ⇒ activeDrag is null)
-//     CANCELS the open run: geometry reverts, NO history pop. A SECOND Ctrl+Z
-//     then pops the prior committed entry. (Today, pre-fix, the first Ctrl+Z
-//     would have popped the prior entry instead — this asserts the new, D6-
-//     consistent behavior.)
+//     An R ring gizmo drag now SELF-COMMITS on mouse-UP as a tagged in-session
+//     entry (record+consolidate, Phase 2). With the mouse RELEASED (activeDrag
+//     is null), the run is CLOSED + recorded, so an in-session Ctrl+Z is plain
+//     history stepping: Ctrl+Z #1 POPS that one ring gesture (geometry reverts
+//     to post-run-A, count drops by one in-session entry, tool stays live);
+//     Ctrl+Z #2 then pops the prior committed run A.
+//
+//     This is the case-(d) flip the plan pins to Phase 2 (the same
+//     flip-in-one-phase lesson as Phase 1's Move contract): the behavior change
+//     (recording closes the R/S session at mouse-up, so navHistory's whole-run
+//     cancel clause no longer fires for an R/S gizmo run) and its test rewrite
+//     land together. Cases (a)/(b)/(c) are PANEL paths (tool.beginSession +
+//     tool.attr, no mouse-up) — their session stays OPEN at idle, so
+//     cancelUncommittedEdit still aborts them: they SURVIVE UNCHANGED above.
 //
 //     NO selection ⇒ whole-mesh moving set, pivot at the origin so the ring
 //     drag rotates v6.
@@ -344,7 +352,9 @@ unittest {
         ~ committedFloor.to!string);
 
     // --- Run B: re-activate and do ONE ring drag, then RELEASE the mouse but
-    //     do NOT drop the tool. The run stays OPEN (no commit on mouse-up). ---
+    //     do NOT drop the tool. Under Phase 2 the gizmo mouse-up SELF-COMMITS
+    //     gesture B as a tagged in-session entry, so the run is CLOSED + on the
+    //     history stack (one new entry above the floor). ---
     cmd("tool.set TransformRotate");
     cam = fetchCamera();
     vp  = viewportFromCamera(cam);
@@ -359,24 +369,24 @@ unittest {
     assert(fabs(v6RunB[0] - v6AfterRunA[0]) + fabs(v6RunB[1] - v6AfterRunA[1])
                                             + fabs(v6RunB[2] - v6AfterRunA[2]) > 1e-2,
         "run B's ring drag should displace v6 from its post-run-A position");
-    // The open run B is not yet on history.
-    assert(undoCount() == committedFloor,
-        "an OPEN (uncommitted) rotate run must not appear on history; floor="
-        ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
+    // FLIP: gesture B self-committed an in-session entry on mouse-up.
+    assert(undoCount() == committedFloor + 1,
+        "Phase 2: the ring gesture self-commits an in-session entry on mouse-up; "
+        ~ "floor=" ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
-    // Ctrl+Z #1 (mouse released ⇒ activeDrag null) CANCELS the open run B:
-    // geometry back to post-run-A, NO history pop. (THE BEHAVIOR CHANGE.)
+    // Ctrl+Z #1 (mouse released ⇒ activeDrag null) is plain in-session stepping:
+    // POP gesture B — geometry back to post-run-A, count drops by one. (FLIP.)
     playAndWait(ctrlZ(50.0));
     settle();
-    auto v6AfterCancel = vert(6);
-    assert(fabs(v6AfterCancel[0] - v6AfterRunA[0]) < 1e-3 &&
-           fabs(v6AfterCancel[1] - v6AfterRunA[1]) < 1e-3 &&
-           fabs(v6AfterCancel[2] - v6AfterRunA[2]) < 1e-3,
-        "post-gizmo-drag in-session Ctrl+Z must cancel the open run B (back to "
-        ~ "post-run-A); got (" ~ v6AfterCancel[0].to!string ~ ","
-        ~ v6AfterCancel[1].to!string ~ "," ~ v6AfterCancel[2].to!string ~ ")");
+    auto v6AfterStep = vert(6);
+    assert(fabs(v6AfterStep[0] - v6AfterRunA[0]) < 1e-3 &&
+           fabs(v6AfterStep[1] - v6AfterRunA[1]) < 1e-3 &&
+           fabs(v6AfterStep[2] - v6AfterRunA[2]) < 1e-3,
+        "post-gizmo-drag in-session Ctrl+Z must STEP gesture B back (to post-run-A); "
+        ~ "got (" ~ v6AfterStep[0].to!string ~ ","
+        ~ v6AfterStep[1].to!string ~ "," ~ v6AfterStep[2].to!string ~ ")");
     assert(undoCount() == committedFloor,
-        "cancelling the open run pops NOTHING from history; floor="
+        "stepping gesture B pops exactly one in-session entry; floor="
         ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
     // Ctrl+Z #2 now pops the prior committed run A: v6 back to the cube corner.
@@ -390,5 +400,146 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (e) Phase 2 R-run of TWO ring gestures → step → consolidate.
+//
+//     TWO consecutive ring drags in ONE live session (NO relocate between them)
+//     land as TWO tagged in-session entries sharing one run id. DROPPING the
+//     tool then CONSOLIDATES the run into ONE surviving entry — a single
+//     post-drop Ctrl+Z reverts the WHOLE run back to the cube. This is the
+//     headline record+consolidate behavior for R/S: per-gesture recording mid-
+//     run + run consolidation at the drop.
+//
+//     A SECOND pass exercises per-gesture STEPPING: two gestures, then an
+//     in-session Ctrl+Z steps ONE gesture back. Geometry reverts to
+//     post-gesture-1, which is itself the accumulator-restore proof — the
+//     per-gesture angleAccum hook restored the rotate accumulator (it drives the
+//     reverted mesh; the panel `RX ?` attr reads the wrapper's transient
+//     headless slot, which resyncSession zeroes after a pop, so the accumulator
+//     is observable through GEOMETRY, not the live attr — see
+//     test_relocate_boundary_rs's note). The in-session undo bumps mutationVersion
+//     + resyncSession re-baselines, so the wrapper's selection/mutation boundary
+//     CLOSES the run on the step (the remaining gesture becomes a consolidated
+//     surviving entry) — the drop is then a no-op consolidate and the post-drop
+//     Ctrl+Z still reverts the survivor.
+//
+//     NO selection ⇒ whole-mesh moving set, pivot at the origin (X-ring keeps
+//     v6.x = 0.5).
+// ---------------------------------------------------------------------------
+unittest {
+    // --- Pass 1: 2 gestures → 2 in-session entries → DROP consolidates to 1. ---
+    establishCubeBaseline();
+    cmd("tool.set TransformRotate");
+    long floor = undoCount();
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    {
+        int x1, y1;
+        ringGrabPx(evalPivot(), vp, x1, y1);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  x1, y1, x1 + 25, y1 + 25, 10));
+        settle();
+    }
+    auto v6Gesture1 = vert(6);
+    assert(undoCount() == floor + 1,
+        "ring gesture 1 self-commits ONE in-session entry; floor="
+        ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+
+    cam = fetchCamera();
+    vp  = viewportFromCamera(cam);
+    {
+        int x2, y2;
+        ringGrabPx(evalPivot(), vp, x2, y2);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  x2, y2, x2 + 25, y2 + 25, 10));
+        settle();
+    }
+    auto v6Gesture2 = vert(6);
+    assert(undoCount() == floor + 2,
+        "ring gesture 2 self-commits a SECOND in-session entry in the same run; "
+        ~ "floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+    assert(fabs(v6Gesture2[1] - v6Gesture1[1]) + fabs(v6Gesture2[2] - v6Gesture1[2]) > 1e-2,
+        "gesture 2 should rotate v6 further from its post-gesture-1 position");
+
+    // DROP consolidates the two-gesture run into ONE surviving entry.
+    cmd("tool.set TransformRotate off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "drop consolidates the two-gesture run into ONE surviving entry; floor="
+        ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+
+    // A single post-drop Ctrl+Z reverts the WHOLE run back to the cube.
+    playAndWait(ctrlZ(60.0));
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one post-drop Ctrl+Z reverts the consolidated run back to the cube");
+    assert(undoCount() == floor,
+        "post-drop Ctrl+Z pops the single consolidated entry; floor="
+        ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+    drainHistory();
+
+    // --- Pass 2: 2 gestures → in-session Ctrl+Z steps ONE gesture back. ---
+    establishCubeBaseline();
+    cmd("tool.set TransformRotate");
+    long floor2 = undoCount();
+
+    cam = fetchCamera();
+    vp  = viewportFromCamera(cam);
+    {
+        int x1, y1;
+        ringGrabPx(evalPivot(), vp, x1, y1);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  x1, y1, x1 + 25, y1 + 25, 10));
+        settle();
+    }
+    auto v6G1 = vert(6);
+
+    cam = fetchCamera();
+    vp  = viewportFromCamera(cam);
+    {
+        int x2, y2;
+        ringGrabPx(evalPivot(), vp, x2, y2);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  x2, y2, x2 + 25, y2 + 25, 10));
+        settle();
+    }
+    assert(undoCount() == floor2 + 2,
+        "two ring gestures record two in-session entries; floor="
+        ~ floor2.to!string ~ " now=" ~ undoCount().to!string);
+
+    // In-session Ctrl+Z steps gesture 2 back: geometry to post-gesture-1 (the
+    // restored accumulator drives the reverted mesh — the GEOMETRY proof of the
+    // per-gesture hook). One in-session entry pops.
+    playAndWait(ctrlZ(50.0));
+    settle();
+    auto v6Step = vert(6);
+    assert(fabs(v6Step[0] - v6G1[0]) < 1e-3 &&
+           fabs(v6Step[1] - v6G1[1]) < 1e-3 &&
+           fabs(v6Step[2] - v6G1[2]) < 1e-3,
+        "in-session Ctrl+Z must step gesture 2 back to post-gesture-1; got ("
+        ~ v6Step[0].to!string ~ "," ~ v6Step[1].to!string ~ ","
+        ~ v6Step[2].to!string ~ ")");
+    assert(undoCount() == floor2 + 1,
+        "stepping gesture 2 pops exactly one in-session entry; floor="
+        ~ floor2.to!string ~ " now=" ~ undoCount().to!string);
+
+    // Drop (the step already closed the run, so this is a no-op consolidate);
+    // the surviving gesture-1 entry is reverted by one more Ctrl+Z.
+    cmd("tool.set TransformRotate off");
+    settle();
+    assert(undoCount() == floor2 + 1,
+        "after the step the run is already one surviving entry; the drop adds "
+        ~ "nothing; floor=" ~ floor2.to!string ~ " now=" ~ undoCount().to!string);
+    playAndWait(ctrlZ(70.0));
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "the final Ctrl+Z reverts the surviving gesture-1 entry back to the cube");
+    assert(undoCount() == floor2,
+        "the final Ctrl+Z pops the last entry; floor="
+        ~ floor2.to!string ~ " now=" ~ undoCount().to!string);
     drainHistory();
 }

@@ -216,7 +216,41 @@ public:
         // Rotate's existing applyAbsoluteFromOrigCpuOnly already
         // rebuilds verts from origVertices using the captured
         // dragFalloff; just need to trigger it on packet change.
-        if (editIsOpen() && angleAccum != Vec3(0, 0, 0)) {
+        //
+        // Phase 2 (Q5 / brief item 5): gate on idle-time — never fire under an
+        // in-flight gizmo drag on ANY bank. This sub-tool's own dragAxis is
+        // already < 0 here (the update() early-return at the top bails while THIS
+        // ring is dragging), but in a composed preset a DIFFERENT bank (Move)
+        // could be mid-drag with this rotate session open; the per-frame drag
+        // path re-captures falloff itself there (captureFalloffForDrag), so this
+        // update()-driven re-apply is redundant — and recording one underneath
+        // an in-flight gesture would create an entry below the live drag.
+        //
+        // Reachability note (Phase 2 as-implemented): the OBJ-4 plan asked to
+        // WRAP this re-apply in its own beginEdit/commitEdit so it records as a
+        // tagged in-session entry. Under per-gesture R/S commit the gizmo session
+        // CLOSES at every ring mouse-up, so for a GIZMO run editIsOpen() is false
+        // at idle and this site is DEAD — exactly as the Move falloff site is
+        // dead post-Phase-1. It is reachable ONLY for an OPEN PANEL rotate session
+        // (tool.attr RZ … keeps the session open at idle with angleAccum != 0).
+        // For that case the EXISTING in-place mutation is the correct
+        // coalesce-until-drop behavior (scenario C, OUT OF SCOPE per the plan):
+        // the open panel session's editBefore already anchors the session
+        // baseline, the re-apply mutates within it, and the single drop commit
+        // captures the final result as ONE entry. Wrapping it in a nested
+        // beginEdit/commitEdit would either no-op (beginEdit is idempotent while
+        // the session is open) or split the panel session into two entries,
+        // breaking the panel-coalescing contract. So the OBJ-4 wrap is NOT applied
+        // — the prescribed target (an idle gizmo-run re-apply) does not exist
+        // post-Phase-1/2. Only the idle-time gate below lands. (Flagged for the
+        // plan owner: OBJ-4's wrap premise is moot once gizmo sessions self-close.)
+        bool dragLive = false;
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                dragLive = wrap.dragInFlight();
+        }
+        if (editIsOpen() && !dragLive && angleAccum != Vec3(0, 0, 0)) {
             FalloffPacket live = currentFalloff(vts);
             if (!falloffPacketsEqual(live, dragFalloff)) {
                 dragFalloff = live;
@@ -281,6 +315,37 @@ public:
     // the public `publicEditIsOpen()` read accessor for the same reason. No-op
     // when no session is open (single-mode preset, or no prior R drag).
     public void commitSessionIfOpen() {
+        if (!editIsOpen()) return;
+        // Cross-slot boundary commit (Phase 2): this closes a SEPARATE-bank
+        // session (e.g. an open rotate PANEL session when a MOVE relocate fires)
+        // at the boundary-triggering bank's run boundary. It is NOT part of that
+        // bank's gizmo run, so it must NOT join that run's in-session tail —
+        // otherwise consolidate() at the boundary would merge it across banks
+        // (violating single-bank-per-run, Q-c) and collapse two distinct
+        // surviving entries into one. Route it PLAIN: a plain record() trips the
+        // command_history layer-A foreign-record guard, which consolidates the
+        // boundary-bank's open run FIRST, so this rotate entry lands as its OWN
+        // surviving entry on top of the consolidated run. Restore the routing
+        // flag afterwards (the gizmo per-gesture commitGesture path keeps using
+        // in-session routing). buildEditCmd attaches the accum hooks regardless.
+        bool wasInSession = recordViaInSession;
+        recordViaInSession = false;
+        scope(exit) recordViaInSession = wasInSession;
+        commitEdit("Rotate");
+    }
+
+    // Per-gesture commit (record+consolidate, Phase 2): the wrapper calls this
+    // from its onMouseButtonUp when a wrapper-owned ring drag ends, so each
+    // ring gesture bakes a TAGGED in-session entry (recordViaInSession is set on
+    // this sub-tool while the tool is live). The next ring grab reopens a fresh
+    // session (beginEdit in onMouseButtonDown), so two consecutive ring drags
+    // land as TWO in-session entries — one Ctrl+Z steps each — that consolidate
+    // into ONE surviving entry at the run boundary / drop. commitEdit attaches
+    // the angleAccum/propDeg accumulator hooks BEFORE the terminal recordCommit,
+    // so stepping a per-gesture entry restores the accumulator for free. Public
+    // for the same sibling-cross-instance reason as commitSessionIfOpen. No-op
+    // when no session is open (no ring drag happened).
+    public void commitGesture() {
         if (editIsOpen())
             commitEdit("Rotate");
     }

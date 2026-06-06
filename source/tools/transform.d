@@ -235,10 +235,20 @@ protected:
     // recordInSession; consolidate() collapses the run into one surviving entry
     // at the boundary / tool drop. Plain (false) routing is the ordinary
     // record() append — used for panel/forms commits and any path with no open
-    // run. The base + R/S sub-tools all inherit this; the wrapper drives it
-    // (only Move sets it while a run is open in this phase — R/S keep plain
-    // routing until their own per-gesture recording lands).
+    // run. The base + R/S sub-tools all inherit this; the wrapper drives it —
+    // it sets its OWN flag (Move commits) AND, via setRecordViaInSession() below,
+    // the R/S sub-tools' flags, so an R/S per-gesture commit also lands in-session
+    // and consolidate() collapses the R/S run at the boundary / drop.
     protected bool recordViaInSession = false;
+
+    // PUBLIC mirror so the composing wrapper can route a SUB-TOOL's commits
+    // in-session too. `recordViaInSession` is protected, and D `protected` does
+    // not grant sibling (wrapper→sub-tool) cross-instance access, so the wrapper
+    // cannot write `rotateSub.recordViaInSession` directly. This setter (calling
+    // its OWN protected field — legal) lets the wrapper flip the R/S sub-tools'
+    // routing at activate/deactivate, mirroring the public commitSessionIfOpen
+    // pattern. Same shape as the wrapper setting its own flag in activate().
+    public void setRecordViaInSession(bool on) { recordViaInSession = on; }
 
     // Single routing chokepoint for every commitEdit override. All three
     // commitEdit bodies (base + RotateTool + ScaleTool) funnel their terminal

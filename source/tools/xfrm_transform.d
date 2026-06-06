@@ -235,15 +235,22 @@ public:
         rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         scaleSub.wrapperRef = this;    // scale single-source plumbing
 
-        // Record+consolidate (Phase 1): a fresh run opens for this tool session.
-        // Allocate a run id so this session's gestures are tagged distinctly from
-        // any prior session's, and route the wrapper's own (Move) commits through
-        // recordInSession while the tool is live — each per-gesture commitEdit
-        // then lands as a tagged in-session entry that consolidate() collapses at
-        // a boundary / drop. The R/S sub-tools keep plain routing (their own
-        // recordViaInSession stays false) until R/S per-gesture recording lands.
+        // Record+consolidate: a fresh run opens for this tool session. Allocate a
+        // run id so this session's gestures are tagged distinctly from any prior
+        // session's, and route per-gesture commits through recordInSession while
+        // the tool is live — each commitEdit then lands as a tagged in-session
+        // entry that consolidate() collapses at a boundary / drop.
+        //   - the WRAPPER's own (Move) commits route via this.recordViaInSession.
+        //   - the R/S sub-tools' commits route via THEIR recordViaInSession
+        //     (Phase 2): set them here so a per-gesture ring/scale commit and the
+        //     R/S session's drop/boundary commit both land in-session, sharing the
+        //     same history.currentRunId. recordViaInSession is protected (no
+        //     sibling cross-instance write), so flip it through the public
+        //     setRecordViaInSession() mirror.
         if (history !is null) history.nextRun();
         recordViaInSession = true;
+        if (flagR) rotateSub.setRecordViaInSession(true);
+        if (flagS) scaleSub.setRecordViaInSession(true);
         currentRunBank     = DragBank.None;
     }
 
@@ -280,16 +287,19 @@ public:
         if (flagT) moveSub.deactivate();
         if (flagR) rotateSub.deactivate();
         if (flagS) scaleSub.deactivate();
-        // Tool drop (record+consolidate, Phase 1): consolidate the FINAL run's
-        // in-session tail into one surviving entry. A clean multi-gesture run
-        // therefore collapses to ONE undo entry at the drop (one post-drop
-        // Ctrl+Z reverts the whole run); a session that already consolidated at
-        // a boundary leaves that surviving entry untouched (no-op gather). Done
-        // AFTER the sub-tool deactivate commits (those land their own R/S
-        // entries via plain routing this phase) so the final consolidate sees
-        // only this run's tagged Move tail. Stop in-session routing afterwards.
+        // Tool drop (record+consolidate): consolidate the FINAL run's in-session
+        // tail into one surviving entry. A clean multi-gesture run therefore
+        // collapses to ONE undo entry at the drop (one post-drop Ctrl+Z reverts
+        // the whole run); a session that already consolidated at a boundary
+        // leaves that surviving entry untouched (no-op gather). Done AFTER the
+        // sub-tool deactivate commits so the final consolidate sees this run's
+        // whole tagged tail — including any R/S drop commit those deactivates
+        // just landed in-session (Phase 2). Stop in-session routing afterwards
+        // (wrapper + R/S sub-tools, the symmetric clear of the activate() set).
         if (history !is null) history.consolidate(history.currentRunId);
         recordViaInSession   = false;
+        if (flagR) rotateSub.setRecordViaInSession(false);
+        if (flagS) scaleSub.setRecordViaInSession(false);
         currentRunBank       = DragBank.None;
         super.deactivate();
         activeDrag           = null;
@@ -649,13 +659,28 @@ public:
                 // Bank-switch run boundary (Q-c): a switch INTO Rotate from a
                 // prior Move/Scale run consolidates that run first, before the
                 // fresh single-bank rotate run opens. No-op when the prior run
-                // was already Rotate. In this phase R/S commits stay on plain
-                // routing (no per-gesture in-session record yet), so the run
-                // being consolidated here is the just-ended MOVE run's tail.
+                // was already Rotate. With Phase 2 R/S recording live, the run
+                // being consolidated here is whatever bank's tagged tail just
+                // ended (Move, or a prior Rotate/Scale run after a relocate).
                 noteRunBank(DragBank.Rotate);
                 beginRotateDragSession(vts);
             } else {
                 rotDragAxisIdx = -1;
+                // Relocate / no-axis click run boundary (Phase 2). rotateSub's
+                // own onMouseButtonDown relocate branch already committed any
+                // OPEN rotate session (in-session now) and mirrored the wrapper's
+                // Move commit, but it does NOT close the RUN. After a per-gesture
+                // ring commit the session is already closed yet the run is still
+                // open (the self-committed entry), so consolidate it into one
+                // surviving entry + open a fresh run id here — mirroring the
+                // Move-arm relocate boundary (A1). Gated on history.runOpen() (the
+                // single source of truth) so it splits even when the gesture
+                // already self-committed; a safe no-op on an empty/closed run.
+                if (history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                    currentRunBank = DragBank.None;
+                }
             }
             activeDrag = rotateSub; return true;
         }
@@ -668,13 +693,23 @@ public:
             if (scaleSub.dragAxis >= 0) {
                 // Bank-switch run boundary (Q-c): a switch INTO Scale from a
                 // prior Move/Rotate run consolidates that run first. No-op when
-                // the prior run was already Scale. As with the rotate arm, R/S
-                // commits stay on plain routing this phase, so the consolidated
-                // run is the just-ended MOVE run.
+                // the prior run was already Scale. With Phase 2 R/S recording
+                // live, the consolidated run is whatever bank's tagged tail just
+                // ended.
                 noteRunBank(DragBank.Scale);
                 beginScaleDragSession(vts);
             } else {
                 scaleDragActive = false;
+                // Relocate / no-axis click run boundary (Phase 2), mirroring the
+                // rotate arm: scaleSub's relocate branch committed any open scale
+                // session + the wrapper's Move mirror, but does NOT close the RUN.
+                // After a per-gesture scale commit the session is closed yet the
+                // run is still open, so consolidate + open a fresh run here.
+                if (history !is null && history.runOpen()) {
+                    history.consolidate(history.currentRunId);
+                    history.nextRun();
+                    currentRunBank = DragBank.None;
+                }
             }
             activeDrag = scaleSub;  return true;
         }
@@ -1239,27 +1274,44 @@ public:
         // MS-3.4: the view-ring rotation was a transient applyTRS parameter,
         // not a persistent slot, so there is nothing to clear here — a later
         // panel/falloff re-apply drives applyTRS with the default (zero) view
-        // rotation. The edit SESSION is still committed by rotateSub (its
-        // deactivate / update selection-change guard).
+        // rotation. The edit SESSION lives on rotateSub.
         if (rotWrapperOwned && e.button == SDL_BUTTON_LEFT) {
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate  = false;
             rotDragFastPath = false;
             rotDragAxisIdx  = -1;
+
+            // Per-gesture commit (record+consolidate, Phase 2): each ring drag
+            // bakes a tagged in-session entry on mouse-up (rotateSub's commitEdit
+            // attaches the angleAccum/propDeg hooks + routes via recordCommit,
+            // which is in-session because the wrapper set rotateSub's routing flag
+            // at activate). The next ring grab reopens a fresh rotateSub session,
+            // so two consecutive ring drags are two in-session entries that
+            // consolidate into one at the boundary / drop — mirroring the Move
+            // mouse-up commit above. Committing here also CLOSES the rotate
+            // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
+            // now pops one gesture rather than cancelling the whole open run.
+            rotateSub.commitGesture();
         }
 
         // Scale single-source — wrapper owns the final upload + gpuMatrix
         // reset (CPU verts were rebuilt by applyTRS every frame, so this
         // uploads the already-scaled mesh; no stale-CPU). The edit SESSION
-        // is still committed by scaleSub (its deactivate / update
-        // selection-change guard).
+        // lives on scaleSub.
         if (wasScaleDrag && e.button == SDL_BUTTON_LEFT) {
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate    = false;
             scaleDragFastPath = false;
             scaleDragActive   = false;
+
+            // Per-gesture commit (record+consolidate, Phase 2): mirrors the
+            // rotate path above — each scale drag bakes a tagged in-session entry
+            // on mouse-up (scaleSub's commitEdit attaches the scaleAccum/propScale
+            // hooks + routes in-session), the next handle grab reopens a fresh
+            // scaleSub session, and the run consolidates at the boundary / drop.
+            scaleSub.commitGesture();
         }
 
         // moveSub + all rotate rings + scale are wrapper-owned. Anything else
@@ -1732,6 +1784,15 @@ public:
         return rotateSub.publicEditIsOpen() || scaleSub.publicEditIsOpen();
     }
 
+    // True while ANY gizmo bank's drag is in flight (mouse held). The R/S
+    // sub-tools read this through their wrapperRef to gate their idle-time
+    // falloff re-apply (Q5 / brief item 5): an R/S sub-tool's own dragAxis
+    // already guards ITS bank, but in a composed preset a DIFFERENT bank (Move)
+    // could be mid-drag while the R/S session sits open — recording a falloff
+    // re-apply entry underneath that in-flight gesture must not happen. Public
+    // so the sub-tools (siblings) can query it cross-instance.
+    public bool dragInFlight() const { return activeDrag !is null; }
+
     // Phase 2 — cross-slot relocate boundary. In a composed T+R+S preset
     // (Transform / xfrm.transform) two sessions can be open at once: the Move
     // session on this wrapper, the R/S sessions on the sub-tool instances. A
@@ -1749,8 +1810,19 @@ public:
     // own public `commitSessionIfOpen()` mirrors. In a single-mode preset the
     // wrapper Move session is never open here → no-op.
     public void commitMoveSessionIfOpen() {
-        if (editIsOpen())
-            commitEdit("Move");
+        if (!editIsOpen()) return;
+        // Cross-slot boundary commit (Phase 2) — symmetric to the R/S
+        // commitSessionIfOpen mirrors: this closes the wrapper's open Move
+        // session when an R/S relocate fires on a DIFFERENT slot. The Move
+        // session is NOT part of the R/S bank's run, so route it PLAIN — a plain
+        // record() trips the layer-A foreign-record guard to consolidate any open
+        // run first, landing this Move entry as its OWN surviving entry rather
+        // than merged into the R/S bank's in-session tail (which would violate
+        // single-bank-per-run and collapse two surviving entries into one).
+        bool wasInSession = recordViaInSession;
+        recordViaInSession = false;
+        scope(exit) recordViaInSession = wasInSession;
+        commitEdit("Move");
     }
 
     // Session-open chokepoint override: every path that opens the wrapper edit
