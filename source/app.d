@@ -341,6 +341,10 @@ void main(string[] args) {
     int  cliWinW = 800, cliWinH = 600;   // overridable via --window WxH
                                           // (also via --viewport WxH which
                                           // sets the window to vp+chrome)
+    bool cliSizeExplicit = false;        // true when --window/--viewport was
+                                          // passed — suppresses DPI scaling of
+                                          // the default window size so external
+                                          // harnesses get exact pixel sizes
 
     // --render-diff <case.json> --render-backend cycles|rpr
     //     --render-output <out.ppm>
@@ -392,6 +396,7 @@ void main(string[] args) {
             }
             cliWinW = parts[0].to!int;
             cliWinH = parts[1].to!int;
+            cliSizeExplicit = true;
         } else if (args[i] == "--viewport") {
             // --viewport WxH — request the CAMERA viewport (3D area)
             // be exactly WxH. Implementation: size the SDL window so
@@ -422,6 +427,7 @@ void main(string[] args) {
             // the constants in struct Layout.resize.
             cliWinW = parts[0].to!int + 150;       // + sideW
             cliWinH = parts[1].to!int + 2 * 28;    // + 2 × statusH
+            cliSizeExplicit = true;
         } else if (args[i] == "--render-diff") {
             if (i + 1 >= args.length) {
                 writeln("Error: --render-diff requires a case.json path");
@@ -472,6 +478,16 @@ void main(string[] args) {
     bool playbackMode = playbackFile.length > 0;
 
     if (loadSDL() != sdlSupport) { writeln("Failed to load SDL2"); return; }
+    // Declare per-monitor DPI awareness on Windows (no-op elsewhere and on
+    // SDL < 2.24). Without it, a display scale above 100% makes DWM render
+    // the window at 96 DPI and bitmap-stretch the result — the whole UI
+    // (fonts included) comes out blurry. With the hint the window gets true
+    // physical pixels; UI elements are smaller on scaled displays until a
+    // DPI-scaled font/style pass is added on top.
+    // (string literal: the SDL_HINT_WINDOWS_DPI_AWARENESS constant is only
+    // exposed by bindbc-sdl at sdl2240+, but SDL_SetHint takes the name as
+    // a plain string and pre-2.24 SDL runtimes just ignore unknown hints)
+    SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
 
     // Cycles' Metal device holds a *process-global* ShaderCache singleton
@@ -539,7 +555,33 @@ void main(string[] args) {
     // 24-bit explicitly.
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
+    // UI scale from the primary display's DPI (96 = 100%). With the DPI
+    // awareness hint above, a Windows display at 125% reports ddpi=120 and
+    // the window is in true physical pixels — so the UI must compensate by
+    // scaling fonts/style/window itself. Quantized to 0.25 steps so X11
+    // hosts with slightly-off xrandr DPI (e.g. 95.4) stay at exactly 1.0.
+    // Pinned to 1.0 in --test mode: recorded event logs carry absolute
+    // pixel coordinates, and a host-dependent scale would shift panel
+    // layout under them.
+    float uiScale = 1.0f;
+    if (!command.g_testMode) {
+        float ddpi;
+        if (SDL_GetDisplayDPI(0, &ddpi, null, null) == 0 && ddpi > 0) {
+            import std.algorithm : clamp;
+            import std.math : round;
+            uiScale = clamp(round(ddpi / 96.0f * 4.0f) / 4.0f, 1.0f, 3.0f);
+        }
+    }
+
     int winW = cliWinW, winH = cliWinH;
+    // Grow the default window with the UI scale so the app opens at the
+    // same apparent size on a 125%/150% display. Explicit --window /
+    // --viewport sizes are exact pixel requests (external-harness
+    // contracts) and are never scaled.
+    if (!cliSizeExplicit && uiScale != 1.0f) {
+        winW = cast(int)(winW * uiScale);
+        winH = cast(int)(winH * uiScale);
+    }
     // In --test mode create the window HIDDEN. The GL context, ImGui rendering,
     // ViewCache/picking (all projection-matrix driven) and recorded-event
     // playback (mouse pos is overridden) are visibility-independent, so nothing
@@ -603,6 +645,25 @@ void main(string[] args) {
     // independent of cwd. Must run before any window is created/loaded.
     if (command.g_testMode)
         io.IniFilename = null;
+    // UI font: Inter (embedded vector TTF, SIL OFL — see assets/fonts/) at
+    // 14px × uiScale with Cyrillic coverage. Replaces ImGui's built-in 13px
+    // bitmap font, which cannot scale fractionally without blurring.
+    // --test keeps the built-in font and scale 1.0 so widget metrics (and
+    // therefore recorded-event hit positions) stay identical across hosts.
+    if (!command.g_testMode) {
+        static immutable ubyte[] interTtf =
+            cast(immutable ubyte[]) import("Inter-Regular.ttf");
+        // FontDataOwnedByAtlas=false: the atlas memcpy's the TTF into its
+        // own IM_ALLOC buffer and frees THAT. With the default (true) it
+        // would IM_FREE (libc free) the slice we pass — a static array
+        // here — corrupting the heap ("free(): invalid size").
+        ImFontConfig fontCfg = ImFontConfig(false);
+        fontCfg.FontDataOwnedByAtlas = false;
+        io.Fonts.AddFontFromMemoryTTF(cast(ubyte[]) interTtf, 14.0f * uiScale,
+                                      &fontCfg,
+                                      io.Fonts.GetGlyphRangesCyrillic());
+        ImGui.GetStyle().ScaleAllSizes(uiScale);
+    }
     ImGui.StyleColorsDark();
     ImGui_ImplSDL2_Init(window);
     ImGui_ImplOpenGL3_Init("#version 330 core");
