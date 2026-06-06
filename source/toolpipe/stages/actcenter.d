@@ -381,6 +381,43 @@ public:
     /// (tool-drop / guard-trip) path so a committed relocate stays put.
     void discardUserPlacedSnapshot() { snapFrozen = false; }
 
+    // ----- Per-gesture undo-hook pin accessors (record+consolidate, addendum-2)
+    //
+    // Under per-gesture commit each Move mouse-up records a tagged in-session
+    // entry and DISCARDS the frozen snapshot (no open session at idle), so the
+    // session-cancel restore path no longer covers a plain history.undo(). The
+    // wrapper's Move commitEdit instead attaches PIN HOOKS to the recorded entry
+    // (mirroring the R/S accumulator hooks): revert restores the gesture-START
+    // pin, apply restores the gesture-END pin (the current pin at mouse-up).
+    //
+    // W1 fix: the gesture-START is NOT read from the frozen snapshot
+    // (snapPlaced/snapPlacedCenter). That snapshot holds the PRE-relocate pin
+    // staged at the last relocate — the right in-flight cancel baseline, but the
+    // WRONG gesture-START for the 2nd+ plain gesture in a userPlaced run (no
+    // boundary re-stages it, so the frozen value is stale, from a relocate
+    // possibly a prior run). The wrapper instead captures the LIVE pin
+    // (isUserPlaced()/currentPinCenter()) at each gesture's beginEdit. These two
+    // accessors expose the live pin endpoints (placed flag + center) so the
+    // wrapper can capture the gesture-START at beginEdit and the gesture-END at
+    // commit, and restore either one from a hook.
+
+    /// The current (live) pin endpoints — the gesture-START pin captured at
+    /// beginEdit, and the gesture-END pin captured at mouse-up after any
+    /// sticky-follow has settled. (isUserPlaced(), above, supplies the placed
+    /// flag for the same endpoint.)
+    Vec3 currentPinCenter() const { return userPlacedCenter; }
+
+    /// Restore the pin to an explicit (placed, center) endpoint and publish so
+    /// the visible gizmo follows. Used by the wrapper's Move undo/redo hooks to
+    /// snap the action center to the gesture-START (revert) or gesture-END
+    /// (apply) pin in lockstep with the geometry. Does NOT touch the frozen
+    /// snapshot — hooks run outside any open session.
+    void restorePinState(bool placed, Vec3 center) {
+        userPlaced       = placed;
+        userPlacedCenter = center;
+        publishState();
+    }
+
     /// Re-stage the CURRENT pin state VERBATIM as the in-session-cancel
     /// baseline, WITHOUT mutating the pin or publishing. Phase 5 boundary
     /// helper.

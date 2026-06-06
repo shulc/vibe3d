@@ -1,40 +1,45 @@
-// In-session Ctrl+Z contract + forms/panel non-interference (Phase 3 of
-// doc/transform_per_gesture_commit_plan.md §3, §6).
+// In-session Ctrl+Z contract + forms/panel non-interference
+// (record+consolidate, Phase 1).
 //
-// CONTRACT (vibe3d DECISION, consistent with the long-standing in-session
-// cancel semantics — NOT reference-derived for the in-session case; the
-// reference captures only cover the post-drop grammar):
+// CONTRACT (record+consolidate model — per-gesture in-session recording with
+// run consolidation at the boundary / tool drop):
 //
-//   * While the tool is LIVE with an OPEN run, a Ctrl+Z reverts the WHOLE
-//     open run via cancelUncommittedEdit() — one keystroke = the entire open
-//     session (all drags since the last boundary), and it pops NOTHING from
-//     history (the open run was never committed).
-//   * Once a run is committed (relocate boundary / tool-drop), Ctrl+Z is a
-//     plain history pop — one committed run per keystroke.
+//   * While the tool is LIVE, EACH completed move gizmo gesture commits its
+//     own TAGGED in-session history entry on mouse-up. A run of consecutive
+//     same-bank gestures therefore appears mid-run as N separate in-session
+//     entries on the undo stack (count grows +1 per gesture).
+//   * An in-session Ctrl+Z is a PLAIN history pop: one press steps back ONE
+//     gesture (geometry to the prior gesture's end state) and the tool stays
+//     LIVE; it does NOT cancel the whole run.
+//   * At a run boundary (relocate / element-pick / bank-switch) or tool drop
+//     the run's tagged in-session entries CONSOLIDATE into ONE surviving
+//     entry. A clean N-gesture run that is dropped collapses to ONE entry (one
+//     post-drop Ctrl+Z reverts the whole run); a hard boundary yields a
+//     SEPARATE surviving entry.
 //
-// Existing coverage (audited, kept green — this file only ADDS the gaps):
-//   * test_property_panel_drag.d:216 — 2 ON-handle drags coalesce to 1 entry,
-//     then the tool is DROPPED and a post-drop Ctrl+Z reverts both. That is
-//     the committed-history path, NOT the in-session cancelUncommittedEdit
-//     path.
-//   * test_relocate_boundary.d (a)/(b) — relocate-split ⇒ 2 entries; in-session
-//     Ctrl+Z AFTER a relocate boundary lands on the relocated pin.
-//   * test_reevaluate.d — pure-panel/beginSession coalescing ⇒ 1 entry on drop.
+// Related coverage (audited, stays green):
+//   * test_property_panel_drag.d:266 — 2 ON-handle drags then DROP: the two
+//     in-session entries consolidate to ONE at the drop (+1 unchanged).
+//   * test_relocate_boundary.d — relocate-split surviving-entry counts
+//     unchanged (boundaries consolidate); open-mid-run counts grow per gesture.
+//   * test_reevaluate.d — pure-panel/beginSession coalescing: 1 entry on drop.
 //
-// The two GAPS this file pins:
+// The two cases this file pins:
 //
-//  (1) In-session Ctrl+Z with NO boundary yet — a single open run spanning
-//      TWO ON-handle drags, tool STILL LIVE: ONE Ctrl+Z cancels BOTH drags
-//      (geometry back to the run's frozen baseline) and pops NOTHING from
-//      history. A SECOND Ctrl+Z then pops the PREVIOUS committed entry (a
-//      run committed before the open session was opened).
+//  (1) In-session per-gesture stepping — a single OPEN run spanning TWO
+//      ON-handle drags, tool STILL LIVE: the undo stack shows +2 in-session
+//      entries (each tagged inSession, sharing one runId); ONE Ctrl+Z steps
+//      back the LAST gesture (geometry to post-drag-1, count -> +1); a SECOND
+//      Ctrl+Z steps the first gesture (geometry to the run baseline ==
+//      post-run-A, count -> floor); a THIRD Ctrl+Z pops the committed run A.
+//      The tool stays LIVE throughout.
 //
 //  (2) Mixed gizmo + panel/forms non-interference — a gizmo drag, then an
-//      off-gizmo relocate boundary (commits the gizmo run), then SEVERAL
-//      `interactive` panel value edits (the tool.panelEdit testMode path),
-//      then drop. The panel edits coalesce into the SAME post-boundary run;
-//      total entries == 2 (the relocate machinery does not perturb panel
-//      coalescing).
+//      off-gizmo relocate boundary (consolidates the gizmo run to one surviving
+//      entry), then SEVERAL `interactive` panel value edits (the tool.panelEdit
+//      testMode path), then drop. The panel edits coalesce into the SAME
+//      post-boundary run; total surviving entries == 2 (the relocate machinery
+//      does not perturb panel coalescing).
 //
 // All gizmo gestures drive the MAIN loop via drag_helpers.buildDragLog +
 // /api/play-events. The testMode panel hooks (tool.panelEdit) dispatch via
@@ -63,6 +68,16 @@ JSONValue getJson(string path) {
 
 long undoCount() {
     return getJson("/api/history")["undo"].array.length;
+}
+
+// Count of TAGGED in-session entries currently on the undo stack — the
+// per-gesture steps of an open run before consolidation. Reads the new
+// /api/history `inSession` field.
+long inSessionCount() {
+    long n = 0;
+    foreach (e; getJson("/api/history")["undo"].array)
+        if (("inSession" in e.object) !is null && e["inSession"].boolean) ++n;
+    return n;
 }
 
 // Post-playback / post-command settle: /api/play-events/status reports
@@ -176,18 +191,22 @@ void cmd(string line) {
 }
 
 // ---------------------------------------------------------------------------
-// (1) In-session Ctrl+Z with NO boundary yet.
+// (1) In-session per-gesture stepping (record+consolidate, Phase 1).
 //
 //     One v6 selection used for BOTH a pre-committed run AND the open run (so
 //     no select-entry noise lands between them — /api/select is itself an
 //     undoable UI-undo entry, which would otherwise sit on top of the committed
-//     geometry run and steal the SECOND Ctrl+Z). Sequence:
-//       select v6 -> tool.set move -> drag (run A) -> DROP (commit run A) ->
-//       tool.set move AGAIN -> two ON-handle drags (open run B, tool LIVE).
-//     A single in-session Ctrl+Z (navHistory sees the open wrapper run ->
-//     cancelUncommittedEdit) reverts BOTH of run B's drags AND pops NOTHING
-//     from history (count stays at the post-commit floor). A SECOND Ctrl+Z
-//     then pops the previously committed run A (geometry back to the cube).
+//     geometry run and steal a later Ctrl+Z). Sequence:
+//       select v6 -> tool.set move -> drag (run A) -> DROP (commit+consolidate
+//       run A to ONE entry) -> tool.set move AGAIN -> two ON-handle drags
+//       (open run B, tool LIVE — each gesture records a tagged in-session entry,
+//       so the stack grows +2).
+//     Stepping:
+//       Ctrl+Z #1 pops the LAST gesture (v6 back to post-drag-1, count +2 -> +1,
+//                 tool LIVE);
+//       Ctrl+Z #2 pops the first gesture (v6 back to the run baseline ==
+//                 post-run-A, count +1 -> floor, tool LIVE);
+//       Ctrl+Z #3 pops the committed run A (v6 back to the pristine cube).
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -197,7 +216,7 @@ unittest {
     // it is NOT after a reset — see establishCubeBaseline()).
     drainHistory();
 
-    // --- Run A: a committed gizmo drag on v6 (the entry the 2nd Ctrl+Z pops). ---
+    // --- Run A: a committed gizmo drag on v6 (the entry the 3rd Ctrl+Z pops). ---
     postJson("/api/script", "tool.set move");   // default ACEN = None
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
@@ -212,13 +231,13 @@ unittest {
                                   xa, ya, xb, yb, 10));
         settle();
     }
-    postJson("/api/script", "tool.set move off");   // commit run A
+    postJson("/api/script", "tool.set move off");   // commit + consolidate run A
     settle();
-    auto v6AfterRunA = vert(6);   // run A's displacement; popped by 2nd Ctrl+Z
+    auto v6AfterRunA = vert(6);   // run A's displacement; popped by 3rd Ctrl+Z
     long committedFloor = undoCount();
     assert(committedFloor >= 1,
-        "run A should have committed one entry as the history floor; got " ~
-        committedFloor.to!string);
+        "run A should have committed+consolidated to one entry as the history " ~
+        "floor; got " ~ committedFloor.to!string);
 
     // --- Run B: re-activate (same v6 selection — no select entry) and open a
     //     single run of two ON-handle drags, tool STILL LIVE. ---
@@ -227,15 +246,20 @@ unittest {
     vp  = viewportFromCamera(cam);
     arrowDirPx(evalPivot(), vp, ux, uy);
 
-    auto v6BaselineB = vert(6);   // run B's frozen baseline (== post-run-A)
+    auto v6BaselineB = vert(6);   // run B's baseline (== post-run-A)
 
-    // Drag 1: on-handle +X haul. VERIFY-AND-RETRY: under a loaded -j run the
-    // pivot/camera read right after re-activation can be a frame stale, so the
-    // derived grab pixel misses the arrow and the drag silently moves nothing
-    // (the run-B-not-displaced flake). One retry with freshly re-derived
-    // camera + pivot absorbs the staleness; a genuine regression (a drag that
-    // never moves geometry) still fails the post-loop assert below.
-    foreach (attempt; 0 .. 2) {
+    // Drag 1: on-handle +X haul. VERIFY-AND-RETRY keyed on the UNDO COUNT (not a
+    // geometry delta): under a loaded -j run the pivot/camera read right after
+    // re-activation can be a frame stale, so the derived grab pixel misses the
+    // arrow and the drag records nothing (the run-B-not-recorded flake). Keying
+    // on the count makes single-commit DETERMINISTIC: a MISSED attempt has no
+    // on-handle grab => no commit => count unchanged (retry); a SUCCESSFUL
+    // attempt records EXACTLY ONE in-session entry => +1 (stop). The old
+    // geometry-delta heuristic (>1e-3 from baseline) raced the post-drag
+    // geometry read under load — a lagged read looked like "didn't move", so it
+    // retried and recorded a SECOND gesture (the floor+2 double-commit flake).
+    foreach (attempt; 0 .. 6) {
+        settle();
         cam = fetchCamera();
         vp  = viewportFromCamera(cam);
         arrowDirPx(evalPivot(), vp, ux, uy);
@@ -246,19 +270,22 @@ unittest {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xa, ya, xb, yb, 10));
         settle();
-        auto now = vert(6);
-        if (fabs(now[0] - v6BaselineB[0]) + fabs(now[1] - v6BaselineB[1])
-            + fabs(now[2] - v6BaselineB[2]) > 1e-3) break;
-        settle();   // extra quiesce before the re-derived retry
+        if (undoCount() == committedFloor + 1) break;
     }
     auto v6AfterDrag1 = vert(6);
+    // Gesture 1 recorded its own in-session entry on mouse-up.
+    assert(undoCount() == committedFloor + 1,
+        "gesture 1 should record ONE in-session entry; floor=" ~
+        committedFloor.to!string ~ " now=" ~ undoCount().to!string);
+
     // Drag 2: RE-DERIVE the handle from the moved pivot (ON-handle re-grab, so
     // dragAxis >= 0 and NO relocate boundary fires) and haul back -X. Hauling
     // BACK (the proven test_property_panel_drag.d pattern) keeps the second
-    // mouse-DOWN cleanly on the re-derived handle so the two drags coalesce
-    // into ONE open run rather than tripping the relocate boundary.
-    // Same verify-and-retry discipline as drag 1.
-    foreach (attempt; 0 .. 2) {
+    // mouse-DOWN cleanly on the re-derived handle so the two drags stay one
+    // open run rather than tripping the relocate boundary.
+    // Same undo-count-keyed verify-and-retry as drag 1.
+    foreach (attempt; 0 .. 6) {
+        settle();
         cam = fetchCamera();
         vp  = viewportFromCamera(cam);
         arrowDirPx(evalPivot(), vp, ux, uy);
@@ -269,10 +296,7 @@ unittest {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xc, yc, xd, yd, 10));
         settle();
-        auto now = vert(6);
-        if (fabs(now[0] - v6AfterDrag1[0]) + fabs(now[1] - v6AfterDrag1[1])
-            + fabs(now[2] - v6AfterDrag1[2]) > 1e-3) break;
-        settle();
+        if (undoCount() == committedFloor + 2) break;
     }
 
     auto v6BothDrags = vert(6);
@@ -282,46 +306,64 @@ unittest {
          + fabs(v6BothDrags[2] - v6BaselineB[2]) > 1e-2,
         "run B's two drags should leave v6 displaced from its baseline");
 
-    // Run B is OPEN (uncommitted): history count is still the floor.
-    assert(undoCount() == committedFloor,
-        "an OPEN (uncommitted) run must not appear in history yet; floor=" ~
+    // Run B is OPEN: each gesture recorded its own TAGGED in-session entry, so
+    // the stack now sits at floor + 2 and both new entries are inSession.
+    assert(undoCount() == committedFloor + 2,
+        "two open gizmo gestures must record TWO in-session entries; floor=" ~
         committedFloor.to!string ~ " now=" ~ undoCount().to!string);
+    assert(inSessionCount() == 2,
+        "both open-run entries must be tagged inSession; got " ~
+        inSessionCount().to!string);
 
-    // ONE in-session Ctrl+Z (tool still LIVE) -> cancelUncommittedEdit reverts
-    // the WHOLE open run B (both drags) and pops NOTHING from history.
+    // Ctrl+Z #1 (tool still LIVE) -> plain history pop of the LAST gesture:
+    // v6 back to the post-drag-1 value, NOT the run baseline. Count +2 -> +1.
     playAndWait(ctrlZ(50.0));
     settle();
+    auto v6Step1 = vert(6);
+    assert(fabs(v6Step1[0] - v6AfterDrag1[0]) < 1e-3 &&
+           fabs(v6Step1[1] - v6AfterDrag1[1]) < 1e-3 &&
+           fabs(v6Step1[2] - v6AfterDrag1[2]) < 1e-3,
+        "in-session Ctrl+Z #1 must step back ONLY the last gesture (v6 -> " ~
+        "post-drag-1); got (" ~ v6Step1[0].to!string ~ "," ~
+        v6Step1[1].to!string ~ "," ~ v6Step1[2].to!string ~ ")");
+    assert(undoCount() == committedFloor + 1,
+        "Ctrl+Z #1 pops exactly one in-session gesture entry; floor=" ~
+        committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
-    auto v6AfterCancel = vert(6);
-    assert(fabs(v6AfterCancel[0] - v6BaselineB[0]) < 1e-3 &&
-           fabs(v6AfterCancel[1] - v6BaselineB[1]) < 1e-3 &&
-           fabs(v6AfterCancel[2] - v6BaselineB[2]) < 1e-3,
-        "one in-session Ctrl+Z must revert BOTH of run B's drags to its " ~
-        "baseline (== post-run-A); got (" ~ v6AfterCancel[0].to!string ~ "," ~
-        v6AfterCancel[1].to!string ~ "," ~ v6AfterCancel[2].to!string ~ ")");
-    assert(undoCount() == committedFloor,
-        "in-session cancel of an uncommitted run pops NOTHING from history; " ~
-        "floor=" ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
-
-    // Run A is still applied (the cancel only touched open run B).
-    assert(fabs(v6AfterCancel[0] - v6AfterRunA[0]) < 1e-3 &&
-           fabs(v6AfterCancel[1] - v6AfterRunA[1]) < 1e-3 &&
-           fabs(v6AfterCancel[2] - v6AfterRunA[2]) < 1e-3,
-        "the committed run A must survive the in-session cancel of run B");
-
-    // A SECOND Ctrl+Z now pops the PREVIOUS committed run A: v6 back to its
-    // pristine cube corner (0.5, 0.5, 0.5).
+    // Ctrl+Z #2 (tool still LIVE) -> pops the first gesture: v6 back to the run
+    // baseline (== post-run-A). Count +1 -> floor.
     playAndWait(ctrlZ(60.0));
+    settle();
+    auto v6Step2 = vert(6);
+    assert(fabs(v6Step2[0] - v6BaselineB[0]) < 1e-3 &&
+           fabs(v6Step2[1] - v6BaselineB[1]) < 1e-3 &&
+           fabs(v6Step2[2] - v6BaselineB[2]) < 1e-3,
+        "in-session Ctrl+Z #2 must step back the first gesture (v6 -> the run " ~
+        "baseline == post-run-A); got (" ~ v6Step2[0].to!string ~ "," ~
+        v6Step2[1].to!string ~ "," ~ v6Step2[2].to!string ~ ")");
+    assert(undoCount() == committedFloor,
+        "Ctrl+Z #2 pops the run back to the committed floor; floor=" ~
+        committedFloor.to!string ~ " now=" ~ undoCount().to!string);
+
+    // Run A is still applied (the two steps only touched run B's entries).
+    assert(fabs(v6Step2[0] - v6AfterRunA[0]) < 1e-3 &&
+           fabs(v6Step2[1] - v6AfterRunA[1]) < 1e-3 &&
+           fabs(v6Step2[2] - v6AfterRunA[2]) < 1e-3,
+        "the committed run A must survive stepping run B's gestures back");
+
+    // Ctrl+Z #3 now pops the committed run A: v6 back to its pristine cube
+    // corner (0.5, 0.5, 0.5).
+    playAndWait(ctrlZ(70.0));
     settle();
     auto v6Popped = vert(6);
     assert(fabs(v6Popped[0] - 0.5) < 1e-3 &&
            fabs(v6Popped[1] - 0.5) < 1e-3 &&
            fabs(v6Popped[2] - 0.5) < 1e-3,
-        "the SECOND Ctrl+Z must pop the previously committed run A (v6 back to "
-        ~ "(0.5,0.5,0.5)); got (" ~ v6Popped[0].to!string ~ "," ~
-        v6Popped[1].to!string ~ "," ~ v6Popped[2].to!string ~ ")");
+        "Ctrl+Z #3 must pop the committed run A (v6 back to (0.5,0.5,0.5)); got ("
+        ~ v6Popped[0].to!string ~ "," ~ v6Popped[1].to!string ~ "," ~
+        v6Popped[2].to!string ~ ")");
     assert(undoCount() == committedFloor - 1,
-        "the second Ctrl+Z pops exactly one committed entry; expected " ~
+        "Ctrl+Z #3 pops exactly one committed entry; expected " ~
         (committedFloor - 1).to!string ~ " got " ~ undoCount().to!string);
 
     postJson("/api/script", "tool.set move off");
@@ -331,11 +373,11 @@ unittest {
 // ---------------------------------------------------------------------------
 // (2) Mixed gizmo + panel/forms non-interference.
 //
-//     A gizmo drag (run 1) -> off-gizmo relocate boundary (commits run 1) ->
-//     SEVERAL panel value edits (the interactive tool.panelEdit path) -> drop.
-//     The panel edits coalesce into the SAME post-boundary run, so the total
-//     is exactly TWO entries: the relocate machinery does NOT perturb panel
-//     coalescing (plan §4 R3 / §6 test 6).
+//     A gizmo drag (run 1) -> off-gizmo relocate boundary (consolidates run 1
+//     to one surviving entry) -> SEVERAL panel value edits (the interactive
+//     tool.panelEdit path) -> drop. The panel edits coalesce into the SAME
+//     post-boundary run, so the total surviving entries == 2: the relocate
+//     machinery does NOT perturb panel coalescing.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -359,15 +401,16 @@ unittest {
     auto v6AfterRun1 = vert(6);
 
     // Off-gizmo relocate: a discrete click well off every handle, in None mode
-    // -> click-relocate that COMMITS run 1 and opens a fresh session.
+    // -> click-relocate that COMMITS+CONSOLIDATES run 1 and opens a fresh
+    // session. The single-gesture run consolidates to ONE surviving entry.
     int xoff = cast(int)(xb + 220.0 * uy);
     int yoff = cast(int)(yb - 220.0 * ux);
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               xoff, yoff, xoff, yoff, 1));
     settle();
     assert(undoCount() == stackBefore + 1,
-        "the relocate click should commit run 1 (one new entry); got " ~
-        (undoCount() - stackBefore).to!string);
+        "the relocate click should commit+consolidate run 1 (one surviving " ~
+        "entry); got " ~ (undoCount() - stackBefore).to!string);
 
     // Several panel value edits via the interactive tool.panelEdit path. They
     // REUSE the open post-boundary session (idempotent beginEdit) and must

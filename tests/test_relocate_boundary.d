@@ -9,12 +9,21 @@
 // run, opening a fresh session for the subsequent drag. So
 //   drag -> off-gizmo relocate -> drag -> drop  =>  TWO entries.
 //
-// Two scenarios:
+// Three scenarios:
 //  (a) relocate-split count + post-drop Ctrl+Z grammar (2 entries, 2 undos).
 //  (b) in-session Ctrl+Z (tool still live) restores geometry AND the pivot
 //      to the RELOCATED point (run 2's start), NOT pre-relocate — the
 //      restageRelocatePin() correctness pin. A SECOND Ctrl+Z then pops the
 //      committed first run and lands on the pre-relocate pivot.
+//  (c) W1 regression — TWO on-gizmo gestures WITHIN one userPlaced run (NO
+//      boundary between them): per-gesture in-session undo returns the pin to
+//      EACH gesture's true start. The Phase-1 pin-revert hook read gesture-START
+//      from the FROZEN snapshot (the PRE-relocate pin); for the 2nd+ plain
+//      gesture in a run nothing re-stages it, so that value was stale and undo
+//      snapped the pin too far back. The fix captures gesture-START from the
+//      LIVE pin at beginEdit. This case asserts the ACTUAL pin values at each
+//      in-session step (gesture B start == gesture A's sticky-follow end;
+//      gesture A start == the relocate point).
 //
 // All gestures drive the MAIN loop via drag_helpers.buildDragLog +
 // /api/play-events (never an /api/command gesture — that races update() /
@@ -319,10 +328,15 @@ unittest {
                               xc, yc, xd, yd, 8));
     settle();
 
-    // In-session Ctrl+Z (tool still active): navHistory sees the wrapper's
-    // OPEN run -> cancelUncommittedEdit -> reverts run 2 geometry AND restores
-    // the pivot to the RELOCATED point (the open run's frozen baseline), NOT
-    // pre-relocate.
+    // In-session Ctrl+Z (tool still active, record+consolidate Phase 1): the
+    // drag-2 gesture committed its own TAGGED in-session entry on mouse-up, so
+    // navHistory does a PLAIN history.undo() that pops that one gesture entry
+    // (geometry back to post-run-1) and resyncSession re-baselines the live
+    // tool. The pivot stays on the RELOCATED point: the relocate's userPlaced
+    // pin was committed PERMANENTLY at the boundary, so reverting drag 2's mesh
+    // edit does not move the pin. Same observable as the old whole-run cancel,
+    // reached now by per-gesture stepping. (Q-b pin gate: this pin assert must
+    // stay green unchanged.)
     playAndWait(ctrlZ(50.0));
     settle();
 
@@ -338,8 +352,8 @@ unittest {
     assert(fabs(pivotAfterCancel.x - relocatedPivot.x) < 1e-2 &&
            fabs(pivotAfterCancel.y - relocatedPivot.y) < 1e-2 &&
            fabs(pivotAfterCancel.z - relocatedPivot.z) < 1e-2,
-        "in-session cancel should land the pivot on the RELOCATED point, " ~
-        "not pre-relocate; got (" ~
+        "the in-session step back should leave the pivot on the RELOCATED " ~
+        "point, not pre-relocate; got (" ~
         pivotAfterCancel.x.to!string ~ "," ~ pivotAfterCancel.y.to!string ~
         "," ~ pivotAfterCancel.z.to!string ~ ") want reloc (" ~
         relocatedPivot.x.to!string ~ "," ~ relocatedPivot.y.to!string ~ "," ~
@@ -349,7 +363,7 @@ unittest {
     // cube. (The relocate's userPlaced pin was committed PERMANENTLY at the
     // boundary — a history pop reverts the mesh edit, not the committed pin —
     // so the gizmo pivot legitimately stays at the relocated point; only run 1
-    // first-Ctrl+Z-cancel-then-pop chain matters for geometry here.)
+    // first-step-then-pop chain matters for geometry here.)
     playAndWait(ctrlZ(50.0));
     settle();
 
@@ -360,4 +374,213 @@ unittest {
         "second Ctrl+Z should pop run 1 (geometry back to cube); got (" ~
         v6Pop[0].to!string ~ "," ~ v6Pop[1].to!string ~ "," ~
         v6Pop[2].to!string ~ ")");
+}
+
+// ---------------------------------------------------------------------------
+// (c) W1 regression: TWO on-gizmo gestures WITHIN one userPlaced run (NO
+//     boundary between them), pin-START per-gesture undo lands on the right
+//     point.
+//
+//     The latent W1 bug: the Move commitEdit pin-revert hook read gesture-START
+//     from the FROZEN snapshot (snapPlacedCenter — the PRE-relocate pin staged
+//     at the last relocate). For the 2nd+ plain on-gizmo gesture in one
+//     userPlaced run there is NO boundary to re-stage it, so that frozen value
+//     is STALE: it is NOT the gesture's true start (= the previous gesture's
+//     sticky-follow END). An in-session undo of gesture B then snapped the pin
+//     too FAR back (to pre-relocate) instead of to gesture A's end. The fix
+//     captures gesture-START from the LIVE pin at beginEdit; this test pins it.
+//
+//     Sequence (tool stays LIVE throughout):
+//       relocate-click (pin placed, userPlaced=true) ->
+//       drag A (on-handle haul at the relocated pivot; pin sticky-follows to
+//               A's end) ->
+//       drag B (on-handle RE-GRAB at A's end pivot, same run, NO boundary; pin
+//               follows to B's end).
+//     Stepping:
+//       in-session Ctrl+Z #1 -> reverts gesture B; pin returns to B's START ==
+//                 gesture A's sticky-follow END (assert the ACTUAL value);
+//       in-session Ctrl+Z #2 -> reverts gesture A; pin returns to A's START ==
+//                 the RELOCATE point (gesture A opened from the relocated pin,
+//                 captured live at beginEdit; assert that actual value);
+//       a further Ctrl+Z pops prior history (the consolidated relocate run).
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    // Drain the select's UI-undo entry so the only thing below the open run is
+    // the consolidated relocate run (the further Ctrl+Z lands cleanly).
+    drainHistory();
+    postJson("/api/script", "tool.set move");   // default ACEN = None (relocate-permitted)
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    double ux, uy;
+    arrowDirPx(evalPivot(), vp, ux, uy);
+
+    Vec3 prePivot = evalPivot();
+
+    // Off-gizmo relocate FIRST: places the pin (userPlaced=true) so the
+    // following gestures sticky-follow it. A degenerate 1-step click well off
+    // every handle relocates in None mode. Grab pixels for the off point are
+    // derived from the +X arrow grab so it is reliably clear of the gizmo.
+    // Retry on the rare load-induced miss (pin did not move) — re-derive the
+    // off-point from a fresh camera each attempt.
+    int xg, yg;
+    arrowGrabPx(prePivot, vp, xg, yg);
+    foreach (attempt; 0 .. 4) {
+        settle();
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+        arrowDirPx(evalPivot(), vp, ux, uy);
+        arrowGrabPx(evalPivot(), vp, xg, yg);
+        int xoff = cast(int)(xg + 220.0 * uy);
+        int yoff = cast(int)(yg - 220.0 * ux);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  xoff, yoff, xoff, yoff, 1));
+        settle();
+        auto p = evalPivot();
+        if (fabs(p.x - prePivot.x) + fabs(p.y - prePivot.y)
+            + fabs(p.z - prePivot.z) > 1e-2) break;
+    }
+
+    Vec3 relocatedPivot = evalPivot();   // gesture A's START pin
+    assert((fabs(relocatedPivot.x - prePivot.x) +
+            fabs(relocatedPivot.y - prePivot.y) +
+            fabs(relocatedPivot.z - prePivot.z)) > 1e-2,
+        "relocate should move the pivot; pre=(" ~
+        prePivot.x.to!string ~ "," ~ prePivot.y.to!string ~ "," ~
+        prePivot.z.to!string ~ ") reloc=(" ~
+        relocatedPivot.x.to!string ~ "," ~ relocatedPivot.y.to!string ~ "," ~
+        relocatedPivot.z.to!string ~ ")");
+
+    // Gesture A: on-handle +X haul at the relocated pivot. The pin
+    // sticky-follows to A's displaced end on mouse-up. VERIFY-AND-RETRY keyed on
+    // the UNDO COUNT: a MISSED attempt (stale pivot/camera read => grab pixel off
+    // the arrow) has no on-handle grab => no commit => count unchanged, so we
+    // retry; the first SUCCESSFUL attempt records EXACTLY ONE in-session entry
+    // => +1, and we stop immediately (no undo-and-retry — that could starve under
+    // load, leaving zero committed gestures). 8 attempts because this case runs
+    // after a relocate + extra gesture, so the worker is busiest here under -j.
+    enum double MOVE_EPS = 1e-2;
+    long floorA = undoCount();
+    foreach (attempt; 0 .. 8) {
+        settle();   // quiesce before (re-)derivation so the pivot read is fresh
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+        auto piv = evalPivot();
+        arrowDirPx(piv, vp, ux, uy);
+        int xa, ya;
+        arrowGrabPx(piv, vp, xa, ya);
+        int xb = xa + cast(int)(60.0 * ux);
+        int yb = ya + cast(int)(60.0 * uy);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  xa, ya, xb, yb, 10));
+        settle();
+        if (undoCount() == floorA + 1) break;
+    }
+    assert(undoCount() == floorA + 1,
+        "gesture A should record EXACTLY ONE in-session entry; floor=" ~
+        floorA.to!string ~ " now=" ~ undoCount().to!string);
+    auto v6AfterA = vert(6);
+    Vec3 pivotEndA = evalPivot();   // gesture A's sticky-follow END == B's START
+    // Sanity: gesture A dragged the pin a clear distance off the relocate point.
+    // This is LOAD-BEARING for the witness — the W1 bug snaps the pin to the
+    // PRE-relocate point; the fix snaps it to A's end. Those two are
+    // distinguishable only when A's end is a clear distance off the relocate
+    // point (and the relocate already moved the pivot clearly off pre-relocate,
+    // asserted above). A 60px haul on this cube/camera always clears MOVE_EPS.
+    assert((fabs(pivotEndA.x - relocatedPivot.x) +
+            fabs(pivotEndA.y - relocatedPivot.y) +
+            fabs(pivotEndA.z - relocatedPivot.z)) > MOVE_EPS,
+        "gesture A should sticky-follow the pin away from the relocate point; " ~
+        "reloc=(" ~ relocatedPivot.x.to!string ~ "," ~
+        relocatedPivot.y.to!string ~ "," ~ relocatedPivot.z.to!string ~
+        ") endA=(" ~ pivotEndA.x.to!string ~ "," ~ pivotEndA.y.to!string ~
+        "," ~ pivotEndA.z.to!string ~ ")");
+
+    // Gesture B: RE-GRAB the +X arrow at A's end pivot (ON-handle, dragAxis>=0,
+    // so NO relocate boundary fires) and haul +X again — same userPlaced run,
+    // NO re-stage. THIS is the gesture whose pin-START the old code read stale.
+    // Same undo-count-keyed verify-and-retry (stop on the first committed entry).
+    // No magnitude gate here: gesture B's SIZE is irrelevant to the witness —
+    // B's START pin is captured at its beginEdit == A's sticky-follow END
+    // regardless of how far B then hauls, so the Ctrl+Z #1 pin assert below holds
+    // for ANY committed B. (Only A's move must be meaningful — asserted above.)
+    long floorB = undoCount();   // == floorA + 1
+    foreach (attempt; 0 .. 8) {
+        settle();
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+        auto piv = evalPivot();
+        arrowDirPx(piv, vp, ux, uy);
+        int xc, yc;
+        arrowGrabPx(piv, vp, xc, yc);
+        int xd = xc + cast(int)(50.0 * ux);
+        int yd = yc + cast(int)(50.0 * uy);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  xc, yc, xd, yd, 10));
+        settle();
+        if (undoCount() == floorB + 1) break;
+    }
+    assert(undoCount() == floorB + 1,
+        "gesture B should record EXACTLY ONE in-session entry; floor=" ~
+        floorB.to!string ~ " now=" ~ undoCount().to!string);
+
+    // In-session Ctrl+Z #1 (tool LIVE): plain history pop of gesture B. Geometry
+    // back to post-A AND the pin returns to gesture B's START == gesture A's
+    // sticky-follow END (pivotEndA). The OLD bug snapped it to pre-relocate.
+    playAndWait(ctrlZ(50.0));
+    settle();
+    auto v6Step1 = vert(6);
+    assert(fabs(v6Step1[0] - v6AfterA[0]) < 1e-3 &&
+           fabs(v6Step1[1] - v6AfterA[1]) < 1e-3 &&
+           fabs(v6Step1[2] - v6AfterA[2]) < 1e-3,
+        "Ctrl+Z #1 should revert gesture B (geometry to post-A); got (" ~
+        v6Step1[0].to!string ~ "," ~ v6Step1[1].to!string ~ "," ~
+        v6Step1[2].to!string ~ ")");
+    Vec3 pivotStep1 = evalPivot();
+    assert(fabs(pivotStep1.x - pivotEndA.x) < 1e-2 &&
+           fabs(pivotStep1.y - pivotEndA.y) < 1e-2 &&
+           fabs(pivotStep1.z - pivotEndA.z) < 1e-2,
+        "W1: Ctrl+Z #1 must return the pin to gesture B's START == gesture A's " ~
+        "sticky-follow END, NOT pre-relocate; got (" ~
+        pivotStep1.x.to!string ~ "," ~ pivotStep1.y.to!string ~ "," ~
+        pivotStep1.z.to!string ~ ") want endA (" ~
+        pivotEndA.x.to!string ~ "," ~ pivotEndA.y.to!string ~ "," ~
+        pivotEndA.z.to!string ~ ")");
+
+    // In-session Ctrl+Z #2 (tool LIVE): plain history pop of gesture A. Geometry
+    // back to the run baseline (== post-relocate, the cube corner) AND the pin
+    // returns to gesture A's START == the RELOCATE point (captured live at A's
+    // beginEdit, which fired AFTER the relocate's restage).
+    playAndWait(ctrlZ(60.0));
+    settle();
+    auto v6Step2 = vert(6);
+    assert(fabs(v6Step2[0] - 0.5) < 1e-3 &&
+           fabs(v6Step2[1] - 0.5) < 1e-3 &&
+           fabs(v6Step2[2] - 0.5) < 1e-3,
+        "Ctrl+Z #2 should revert gesture A (geometry back to the cube corner); " ~
+        "got (" ~ v6Step2[0].to!string ~ "," ~ v6Step2[1].to!string ~ "," ~
+        v6Step2[2].to!string ~ ")");
+    Vec3 pivotStep2 = evalPivot();
+    assert(fabs(pivotStep2.x - relocatedPivot.x) < 1e-2 &&
+           fabs(pivotStep2.y - relocatedPivot.y) < 1e-2 &&
+           fabs(pivotStep2.z - relocatedPivot.z) < 1e-2,
+        "W1: Ctrl+Z #2 must return the pin to gesture A's START == the RELOCATE " ~
+        "point; got (" ~ pivotStep2.x.to!string ~ "," ~
+        pivotStep2.y.to!string ~ "," ~ pivotStep2.z.to!string ~
+        ") want reloc (" ~ relocatedPivot.x.to!string ~ "," ~
+        relocatedPivot.y.to!string ~ "," ~ relocatedPivot.z.to!string ~ ")");
+
+    // A further Ctrl+Z pops prior history (the consolidated relocate run /
+    // baseline); the open run's two gesture entries are now fully reverted.
+    long beforePop = undoCount();
+    playAndWait(ctrlZ(70.0));
+    settle();
+    assert(undoCount() <= beforePop,
+        "a further Ctrl+Z should pop prior history (no growth); before=" ~
+        beforePop.to!string ~ " after=" ~ undoCount().to!string);
+
+    postJson("/api/script", "tool.set move off");
+    settle();
 }

@@ -179,15 +179,35 @@ unittest {
     assert(v6Run1[0] > 0.6,
         "move drag 1 should shift the whole mesh +X (v6.x>0.6); got "
         ~ v6Run1[0].to!string);
-    assert(undoCount() == stackBefore,
-        "move drag 1 keeps the wrapper run OPEN (no commit yet); got "
+    // record+consolidate (Phase 1): the move gesture commits a TAGGED
+    // in-session entry on mouse-up, so the stack grows +1 mid-run (the run
+    // consolidates at the relocate boundary below). Flipped from the old
+    // open-run "== stackBefore" observable.
+    assert(undoCount() == stackBefore + 1,
+        "move drag 1 records ONE in-session entry on mouse-up; got "
         ~ (undoCount() - stackBefore).to!string ~ " new entries");
 
-    // Open a NON-EMPTY rotate sub-tool session via the live reEvaluate seam.
-    // The wrapper session is live (the open Move run), so this attr write
-    // re-runs the rotate apply, which opens rotateSub's edit session AND
-    // rotates the mesh. Two sessions are now open: wrapper Move + sub-tool
-    // Rotate.
+    // Open a NON-EMPTY rotate sub-tool session, then rotate via the live
+    // reEvaluate seam (Phase 1 addendum C).
+    //
+    // FAITHFUL RATIONALE (why the bare `tool.attr Transform RZ 30` no longer
+    // suffices on its own): under per-gesture commit the Move gesture
+    // SELF-COMMITS at its mouse-up above, so at this idle moment there is NO
+    // open wrapper session and `hasLiveEval()` is FALSE. A non-interactive wire
+    // attr on a tool with no open session is FAITHFULLY inert — it stores the
+    // value and applies nothing (the fresh-tool rule). The OLD non-inert
+    // behavior, where this attr "rotated for free", was an ARTIFACT of the gizmo
+    // session staying open at idle — exactly the artifact per-gesture commit
+    // removes; `hasLiveEval()` is deliberately left session-based (addendum
+    // decision C). So we explicitly open the rotate sub-session via the
+    // supported testMode opener (`tool.beginSession` → openLiveSessionForTest),
+    // which is the headless stand-in for production's gizmo grab. With a session
+    // genuinely open, `hasLiveEval()` is true and the subsequent `tool.attr RZ
+    // 30` re-runs the rotate apply through reEvaluate, rotating the mesh AND
+    // leaving the rotate sub-tool session open. Two sessions are then live:
+    // wrapper Move (run, self-committed) + sub-tool Rotate (panel session).
+    cmd("tool.beginSession Transform");
+    settle();
     auto v6BeforeRot = vert(6);
     cmd("tool.attr Transform RZ 30");
     settle();
@@ -198,8 +218,14 @@ unittest {
         ~ v6BeforeRot[0].to!string ~ "," ~ v6BeforeRot[1].to!string
         ~ ") after=(" ~ v6AfterRot[0].to!string ~ ","
         ~ v6AfterRot[1].to!string ~ ")");
-    assert(undoCount() == stackBefore,
-        "the rotate attr write must NOT commit (session still open); got "
+    // The rotate attr write is a PANEL TX (no gizmo mouse-up), so it records
+    // NO per-gesture in-session entry — it stays an open sub-tool session until
+    // the boundary commits it. The absolute count is still stackBefore + 1: the
+    // Move drag-1 in-session entry recorded above is the only thing on the
+    // stack; the rotate leg adds nothing here.
+    assert(undoCount() == stackBefore + 1,
+        "the rotate attr write must NOT record (panel session still open); the "
+        ~ "stack stays at the Move in-session entry; got "
         ~ (undoCount() - stackBefore).to!string ~ " new entries");
 
     // Off-gizmo Move relocate click (perpendicular to the +X arrow ⇒ clearly
@@ -211,15 +237,28 @@ unittest {
                               xoff, yoff, xoff, yoff, 1));
     settle();
 
-    // THE DISCRIMINATING ASSERTION: +2 at the boundary (Move run + Rotate run
-    // both committed HERE). Without the Phase 2 cross-slot wiring this is +1
-    // (the rotate session leaks to drop).
+    // THE DISCRIMINATING ASSERTION: +3 at the boundary, the TRUTHFUL
+    // per-gesture observable (record+consolidate, addendum-2). Timeline:
+    //   (1) Move drag 1's in-session entry CONSOLIDATES into ONE surviving entry
+    //       at this relocate boundary (the run closes here).
+    //   (2) the open rotate PANEL session commits via the cross-slot
+    //       commitSessionIfOpen mirror (+1) — it did NOT leak past the boundary.
+    //   (3) the off-gizmo relocate CLICK is itself a Move gesture: it opens a
+    //       fresh Move session at the relocated pivot and SELF-COMMITS its own
+    //       tagged in-session entry on its (zero-distance) mouse-up (+1).
+    // So three entries are on the stack here. (A +2 here would mean the relocate
+    // click recorded no gesture; a +1 would mean the rotate session leaked.)
+    // The DROP count below stays +3 total because the relocate-click gesture and
+    // Move drag 2 share run 2 and consolidate together into ONE surviving entry
+    // at the drop — see the drop assert + the 3-step provenance chain.
     long stackAfterRelocate = undoCount();
-    assert(stackAfterRelocate == stackBefore + 2,
-        "the Move relocate must commit BOTH open sessions (Move run + leaked "
-        ~ "Rotate run) ⇒ +2 at the boundary; got "
+    assert(stackAfterRelocate == stackBefore + 3,
+        "the Move relocate must commit BOTH open sessions (consolidated Move "
+        ~ "run 1 + leaked Rotate run) AND self-commit the relocate click's own "
+        ~ "Move gesture ⇒ +3 at the boundary; got "
         ~ (stackAfterRelocate - stackBefore).to!string
-        ~ " (a +1 here means the rotate session LEAKED past the boundary)");
+        ~ " (a +2 here means the relocate click recorded no gesture; a +1 means "
+        ~ "the rotate session LEAKED past the boundary)");
 
     // Move drag 2: fresh wrapper Move run at the relocated pivot.
     cam = fetchCamera();

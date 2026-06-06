@@ -269,7 +269,7 @@ public:
             () { angleAccum = accAfter;  propDeg = propAfter;  },
             () { angleAccum = accBefore; propDeg = propBefore; }
         );
-        history.record(cmd);
+        recordCommit(cmd);
     }
 
     // Phase 2 cross-slot relocate boundary — PUBLIC mirror of the protected
