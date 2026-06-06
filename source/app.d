@@ -530,6 +530,14 @@ void main(string[] args) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    // SDL's default depth size is 16 bits. Linux drivers tend to hand back a
+    // 24-bit depth buffer anyway, but on Windows the pixel-format chooser
+    // honours the 16-bit request literally — and with drawFaces' worth of
+    // glPolygonOffset(1,1), the 256× coarser depth step pushes steep
+    // (silhouette-adjacent) faces far enough back that backfaces poke
+    // through along contour edges (black triangular notches). Ask for
+    // 24-bit explicitly.
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
     int winW = cliWinW, winH = cliWinH;
     // In --test mode create the window HIDDEN. The GL context, ImGui rendering,
