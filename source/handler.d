@@ -12,7 +12,8 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 // ---------------------------------------------------------------------------
-// HandleState — mirrors MODO's LXiSELECTION_UNSELECTED / ROLLOVER / SELECTED.
+// HandleState — mirrors MODO's three-state handle selection model
+// (unselected / rollover / selected).
 // One enum replaces the old hovered/selected bool soup at the colour-pick site.
 // ---------------------------------------------------------------------------
 
@@ -146,10 +147,11 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 
 class Handler {
 private:
-    // Single source of truth for hover/selected state (mirrors LXiSELECTION_*).
+    // Single source of truth for hover/selected state (the three-state model).
     // Set by the central ToolHandles Test pass for registered handles; left at
     // the default Normal for draw-only (unregistered) handles, which therefore
-    // never highlight — exactly as MODO treats a handle absent from tmod_Test.
+    // never highlight — exactly as MODO treats a handle absent from its
+    // hit-test pass.
     HandleState state = HandleState.Normal;
     bool   visible = true;
 
@@ -1243,7 +1245,7 @@ class ToolHandles {
         entries ~= Entry(h, part);
     }
 
-    // tmod_Test: first registered handle (by priority) whose hitTest passes.
+    // Hit-test pass: first registered handle (by priority) whose hitTest passes.
     // Skips invisible handles. Returns its part id, or -1 on miss.
     int test(int mx, int my, const ref Viewport vp) {
         foreach (ref e; entries) {

@@ -18,9 +18,9 @@ groups:
           action: { kind: script, lines: ["select.convert polygon"] }
   - title: toolpipe
     buttons:
-      # MODO-style Action Center pulldown. Mirrors
-      # resrc/701_frm_modomodes_actioncenters:sheet from the MODO 9
-      # install: top-level actr.<mode> presets, "(none)" first,
+      # MODO-style Action Center pulldown. Mirrors the action-centers
+      # popover sheet from the MODO 9 UI:
+      # top-level actr.<mode> presets, "(none)" first,
       # divider, then granular Center → / Axis → submenus that map to
       # vibe3d's per-stage `tool.pipe.attr` commands.
       #
@@ -117,9 +117,9 @@ groups:
                   action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
                   checked: { path: "axis/mode", equals: "local" }
       # MODO-style Snapping pulldown. Master toggle on top (matches the
-      # @x keybind in inmapdefault.cfg → tool.snapState true), divider,
+      # default @x keybind → tool.snapState true), divider,
       # then a checkbox per SnapType. Button face stays highlighted as
-      # long as snap is on. Mirrors resrc/_snap.cfg structure but
+      # long as snap is on. Mirrors the snap palette structure but
       # scoped to vibe3d's seven supported types.
       - label: "Snap"
         action: { kind: command, id: snap.toggle }
@@ -200,7 +200,7 @@ groups:
             # Shape preset moved to Tool Properties → Falloff section
             # (Phase 7.9). Status-bar pulldown owns only the type, not
             # the per-type config.
-      # Phase 7.6: Symmetry (SYMM) — MODO SymmetryPopover.cfg parity.
+      # Phase 7.6: Symmetry (SYMM) — MODO symmetry-popover parity.
       # Click   → master toggle (symmetry.toggle).
       # Alt+click → Options popup (axis pick + workplane).
       # Button face: static "Symmetry" when off; flips to

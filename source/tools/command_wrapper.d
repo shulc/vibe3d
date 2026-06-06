@@ -475,7 +475,7 @@ abstract class CommandWrapperTool : Tool {
         if (fp.enabled) {
             if (falloffGizmo is null) falloffGizmo = new FalloffGizmo();
             if (toolHandles  is null) toolHandles  = new ToolHandles();
-            // Host arbiter (MODO tmod_Test -> tmod_Draw): register the
+            // Host arbiter (MODO's two-pass hit-test -> draw tool model): register the
             // falloff handles, resolve one hot/captured part, then render.
             // CommandWrapper has no gizmo bank, so falloff is the only
             // emitter — this unifies the previously per-endpoint self-hover
