@@ -180,6 +180,20 @@ private int countSelected(bool[] sel) {
     return n;
 }
 
+// Set of stage ids whose config-driven form has already thrown once. A broken
+// stage form degrades to the legacy drawProvider every frame; this gate keeps
+// the diagnostic to a single stderr line per stage instead of per-frame spam.
+// Main-thread only (the Tool Properties draw loop), so no locking needed.
+private __gshared bool[string] g_stageFormWarned;
+
+private void warnStageFormOnce(string stageId, string msg) {
+    import std.stdio : stderr;
+    if (stageId in g_stageFormWarned) return;
+    g_stageFormWarned[stageId] = true;
+    stderr.writeln("[forms] stage form for '", stageId,
+                   "' failed to draw; falling back to legacy panel: ", msg);
+}
+
 
 private string buildJsonArray(bool[] sel) {
     import std.array : appender;
@@ -4242,13 +4256,44 @@ void main(string[] args) {
                 // collapse to nothing.
                 if (g_pipeCtx !is null) {
                     import toolpipe.stage : Stage;
+                    import forms : g_formsPanelEnabled, formByStage;
                     foreach (s; g_pipeCtx.pipeline.all()) {
                         if (!s.enabled) continue;
                         auto stage = cast(Stage)s;
                         if (stage is null) continue;
                         if (stage.params().length == 0) continue;
                         if (ImGui.CollapsingHeader(stage.displayName())) {
-                            propertyPanel.drawProvider(stage);
+                            // Phase 6: prefer a config-driven stage form (bound
+                            // to the stage via whenStage:, looked up by the
+                            // stage's id()) over the legacy drawProvider path —
+                            // same gating + kill switch as the tool-level form
+                            // integration above. The stage IS a ParamProvider,
+                            // so FormsPanel queries its live (type-filtered)
+                            // params() per frame and hides rows whose attr the
+                            // active type doesn't expose. Stages without a
+                            // matching form fall back to the unchanged
+                            // drawProvider. stage.drawProperties() still runs in
+                            // both cases (shape popup / auto-size buttons aren't
+                            // form rows).
+                            auto stageForm = g_formsPanelEnabled
+                                           ? formByStage(stage.id()) : null;
+                            if (stageForm !is null) {
+                                // A malformed row must degrade to the legacy
+                                // panel, NOT throw mid-ImGui-frame (an escaping
+                                // exception would leave ImGui's stack unbalanced
+                                // and abort the frame). Fall back to drawProvider
+                                // on any failure; warn ONCE per stage so a broken
+                                // form doesn't spam stderr every frame.
+                                try {
+                                    formsPanel.draw(*stageForm, stage,
+                                                    commandHandlerDelegate,
+                                                    formsInteractiveDispatch);
+                                } catch (Exception e) {
+                                    warnStageFormOnce(stage.id(), e.msg);
+                                    propertyPanel.drawProvider(stage);
+                                }
+                            } else
+                                propertyPanel.drawProvider(stage);
                             stage.drawProperties();
                         }
                     }

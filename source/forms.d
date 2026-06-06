@@ -163,18 +163,36 @@ struct Form {
     // always shown (shared sub-forms referenced by id). The loader populates
     // this from a single id or a YAML list.
     string[] whenTool;
+    // Stage binding: when set, this form is the config-driven Tool Properties
+    // form for the named pipe stage (the per-stage loop looks it up via
+    // formByStage(stageId)). A form has whenTool OR whenStage OR neither — never
+    // both: a tool form can never match a stage and a stage form can never match
+    // a tool, so the two lookups (formsForTool / formByStage) stay disjoint.
+    string whenStage;
     string category;              // slotting category (assembly order)
     double ordinal;               // sort within the category
     bool   hasOrdinal;            // YAML supplied an `ordinal:`
     Row[]  rows;
 
     /// True if this form should be shown for `activeToolId`. A form with no
-    /// `whenTool` filter is always shown (shared sub-form).
+    /// `whenTool` filter is always shown (shared sub-form) — UNLESS it is a
+    /// stage form (whenStage set), which must never leak into the per-tool
+    /// lookup. So a tool match requires either a whenTool hit, or a filter-less
+    /// form that is NOT a stage form.
     bool matchesTool(string activeToolId) const {
+        if (whenStage.length != 0) return false;   // stage form — not a tool form
         if (whenTool.length == 0) return true;
         foreach (w; whenTool)
             if (w == activeToolId) return true;
         return false;
+    }
+
+    /// True if this form is the config-driven properties form for `stageId`.
+    /// Only a form that explicitly declares `whenStage: <stageId>` matches; a
+    /// tool form (whenTool) or a filter-less shared sub-form never matches a
+    /// stage, keeping the stage lookup disjoint from matchesTool.
+    bool matchesStage(string stageId) const {
+        return whenStage.length != 0 && whenStage == stageId;
     }
 }
 
@@ -699,6 +717,19 @@ private Form parseForm(ref /*dyaml.*/ DyamlNodeT node, string ctx)
         }
     }
 
+    // whenStage: scalar pipe-stage id. Binds this form to a single stage's
+    // Tool Properties section (looked up by formByStage). A form is a tool form
+    // (whenTool), a stage form (whenStage), or a shared sub-form (neither) —
+    // never both, so the two lookups stay disjoint.
+    if (node.containsKey("whenStage")) {
+        f.whenStage = node["whenStage"].as!string;
+        if (f.whenTool.length != 0)
+            throw new FormLoadException(format(
+                "forms: form '%s' in '%s' declares both 'whenTool' and "
+                ~ "'whenStage' — a form binds to a tool OR a stage, not both",
+                f.id, ctx));
+    }
+
     if (node.containsKey("rows"))
         foreach (Node r; node["rows"])
             f.rows ~= parseRow(r, f.id, ctx);
@@ -928,9 +959,43 @@ class FormValidationException : Exception {
 /// `ctx` is the source path/string, threaded into every message.
 void validateForms(Form[] forms, FormValidators v, string ctx)
 {
-    foreach (ref f; forms)
+    foreach (ref f; forms) {
+        validateFormStageBinding(f, v, ctx);
         foreach (ref r; f.rows)
             validateRow(r, f.id, v, ctx);
+    }
+}
+
+/// A `whenStage:` form must name a LIVE pipe stage (the per-stage loop will
+/// otherwise never find it), and every value control it carries must target
+/// THAT stage's namespace — pinning the contract that a stage form configures
+/// its own stage. Skipped when the stageAttrs delegate is absent (pure-loader
+/// callers that don't supply the live universe). The runtime resolver still
+/// hides type-filtered rows; this is the boot-time typo fence.
+private void validateFormStageBinding(ref Form f, FormValidators v, string ctx)
+{
+    if (f.whenStage.length == 0) return;
+    if (v.stageAttrs is null) return;          // no live universe to check against
+
+    if (v.stageAttrs(f.whenStage) is null)
+        throw new FormValidationException(format(
+            "forms: form '%s' (%s) binds to unknown pipe stage '%s' via "
+            ~ "whenStage", f.id, ctx, f.whenStage));
+
+    // Every value-bound control in a stage form must target this same stage.
+    void checkRow(ref Row r) {
+        if (r.kind == RowKind.control) {
+            auto b = parseBinding(r.command);
+            if (b.namespace != Namespace.stage || b.targetId != f.whenStage)
+                throw new FormValidationException(format(
+                    "forms: form '%s' (%s) is a whenStage:'%s' form but control "
+                    ~ "'%s' does not target that stage (expected "
+                    ~ "'tool.pipe.attr %s <attr> ?')",
+                    f.id, ctx, f.whenStage, r.command, f.whenStage));
+        }
+        foreach (ref c; r.rows) checkRow(c);
+    }
+    foreach (ref r; f.rows) checkRow(r);
 }
 
 private void validateRow(ref Row r, string formId, FormValidators v, string ctx)
@@ -1068,6 +1133,35 @@ Form[] formsForTool(string activeToolId)
         if (f.matchesTool(activeToolId))
             hits ~= f;
     return hits;
+}
+
+/// Look up a loaded form by its stable `id` (the target of `sub`/`ref`, and —
+/// as of Phase 6 — the key the Tool Properties per-stage loop uses to prefer a
+/// config-driven stage form over the legacy drawProvider path). Returns a
+/// pointer into `g_forms` (so the caller renders it without copying its rows),
+/// or null when no form carries that id. Main-thread only — `g_forms` is
+/// populated once at startup and never mutated afterwards.
+Form* formById(string id)
+{
+    foreach (ref f; g_forms)
+        if (f.id == id)
+            return &f;
+    return null;
+}
+
+/// Look up the config-driven Tool Properties form bound to a pipe stage. The
+/// Phase-6 per-stage loop calls this with the stage's `id()` (e.g. "falloff");
+/// it matches ONLY a form that declared `whenStage: <stageId>` (form `id`s are
+/// a separate form-reference namespace — `sub`/`ref` targets — and are NOT the
+/// stage id, which is why the loop cannot use formById(stage.id())). Returns a
+/// pointer into `g_forms`, or null when no stage form is bound. Main-thread
+/// only — `g_forms` is populated once at startup and never mutated afterwards.
+Form* formByStage(string stageId)
+{
+    foreach (ref f; g_forms)
+        if (f.matchesStage(stageId))
+            return &f;
+    return null;
 }
 
 // ===========================================================================

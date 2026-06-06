@@ -353,6 +353,199 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 6: the shipped config/forms/falloff.yaml loads + validates. Every
+// value row binds to a `tool.pipe.attr falloff <attr> ?` line and resolves
+// against the FalloffStage static universe (knownAttrs()) — some of those
+// attrs are type-filtered OUT of params() at runtime (Linear's start vs
+// Radial's center), so loading against the static universe must NOT throw;
+// the renderer hides absent rows at runtime instead.
+// ---------------------------------------------------------------------------
+
+unittest {
+    import std.file : exists;
+    if (!exists("config/forms/falloff.yaml"))
+        return;   // harness ran from an unexpected cwd; HTTP test below covers boot
+    auto forms = loadForms("config/forms/falloff.yaml");
+    assert(forms.length >= 1);
+    assert(forms[0].id == "toolprops.falloff");
+    // No whenTool filter: it is a stage form, bound via whenStage and shown by
+    // the per-stage formByStage("falloff") lookup — never by active tool.
+    assert(forms[0].whenTool.length == 0);
+    assert(forms[0].whenStage == "falloff");
+    assert(forms[0].matchesStage("falloff"));
+    assert(!forms[0].matchesTool("falloff"));
+    validateForms(forms, realisticValidators(), "config/forms/falloff.yaml");
+
+    // Every control/group-child binding in the shipped form must name a real
+    // FalloffStage attr (the static universe) — a fence on hand-edits to the
+    // YAML even from a cwd where the HTTP boot check below can't run.
+    auto uni = falloffUniverse();
+    void checkRow(ref Row r) {
+        if (r.kind == RowKind.control) {
+            auto b = parseBinding(r.command);
+            assert(b.namespace == Namespace.stage && b.targetId == "falloff",
+                "falloff form row should bind to the falloff stage: " ~ r.command);
+            assert(uni.canFind(b.attr),
+                "falloff form binds unknown attr '" ~ b.attr ~ "'");
+        }
+        foreach (ref c; r.rows) checkRow(c);
+    }
+    foreach (ref r; forms[0].rows) checkRow(r);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: a TEST-LOCAL falloff form with a deliberately-unknown stage attr
+// throws under strict validation. (The SHIPPED file is proven clean above +
+// by the boot aliveness check; this exercises the failure path against the
+// SAME falloff universe without risking the on-disk config.)
+// ---------------------------------------------------------------------------
+
+unittest {
+    enum yaml = q"YAML
+forms:
+  - id: toolprops.falloff
+    rows:
+      - { control: "tool.pipe.attr falloff start ?" }
+      - { control: "tool.pipe.attr falloff bogusAttr ?" }
+YAML";
+    auto forms = loadFormsFromString(yaml);    // structurally valid
+    auto msg = collectExceptionMsg!FormValidationException(
+        validateForms(forms, realisticValidators(), "<falloff-typo>"));
+    assert(msg.canFind("unknown attr 'bogusAttr'"), msg);
+    assert(msg.canFind("falloff"), msg);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 WIRING: the per-stage Tool Properties loop resolves a stage form via
+// formByStage(stageId) — matching ONLY a form that declared `whenStage:`. This
+// is the regression fence for the id-mismatch blocker: the shipped falloff form
+// has id "toolprops.falloff" but whenStage "falloff", so a stage-id lookup must
+// go through whenStage, never the form id. Drives g_forms directly (the same
+// registry the app populates at boot) so it needs no running app.
+// ---------------------------------------------------------------------------
+
+unittest {
+    enum yaml = q"YAML
+forms:
+  - id: toolprops.falloff
+    label: Falloff
+    whenStage: falloff
+    rows:
+      - { control: "tool.pipe.attr falloff start ?" }
+  - id: transform.main
+    label: Transform
+    whenTool: xfrm.transform
+    rows:
+      - { control: "tool.attr xfrm.transform T ?", label: Translate }
+YAML";
+    // Replace the process-wide loaded-forms registry for this assertion. Other
+    // unittests in this binary don't read g_forms, so the clobber is safe.
+    g_forms = loadFormsFromString(yaml);
+
+    // formByStage matches the whenStage form by STAGE id ("falloff"), NOT by
+    // the form's id ("toolprops.falloff"): the blocker was a stage-id lookup
+    // that used the form id and silently returned null.
+    auto sf = formByStage("falloff");
+    assert(sf !is null, "formByStage('falloff') must resolve the whenStage form");
+    assert(sf.id == "toolprops.falloff");
+    assert(sf.whenStage == "falloff");
+
+    // A stage id with no bound form resolves to null (the loop then falls back
+    // to the legacy drawProvider).
+    assert(formByStage("nonexistent") is null);
+
+    // Symmetric safety: the stage form must NEVER leak into the per-tool lookup,
+    // and the tool form must NEVER leak into the per-stage lookup. (Point 3 of
+    // the review: matchesTool excludes whenStage forms; matchesStage requires
+    // whenStage. The two lookups are disjoint.)
+    auto toolHits = formsForTool("xfrm.transform");
+    assert(toolHits.length == 1, "only the whenTool form matches the tool");
+    assert(toolHits[0].id == "transform.main");
+    // The form id of the falloff stage form is NOT a tool id and must not match.
+    assert(formsForTool("toolprops.falloff").length == 0);
+    assert(formsForTool("falloff").length == 0);
+    // And the tool form is not reachable as a stage (its id resembles nothing,
+    // but prove a tool form never answers a stage lookup).
+    assert(formByStage("transform.main") is null);
+    assert(formByStage("xfrm.transform") is null);
+
+    g_forms = null;   // leave the registry empty for any later block
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 WIRING: a whenStage form is matched by matchesStage and excluded from
+// matchesTool — the pure struct-level invariant behind formByStage/formsForTool.
+// ---------------------------------------------------------------------------
+
+unittest {
+    Form stageForm;
+    stageForm.id = "toolprops.falloff";
+    stageForm.whenStage = "falloff";
+    assert(stageForm.matchesStage("falloff"));
+    assert(!stageForm.matchesStage("other"));
+    // A stage form is NOT a tool form even though it has an empty whenTool.
+    assert(!stageForm.matchesTool("anything"));
+
+    Form toolForm;
+    toolForm.whenTool = ["xfrm.transform"];
+    assert(toolForm.matchesTool("xfrm.transform"));
+    assert(!toolForm.matchesStage("xfrm.transform"));   // never a stage
+
+    Form sharedSub;                                     // neither filter
+    assert(sharedSub.matchesTool("anything"));          // shared sub-form
+    assert(!sharedSub.matchesStage("anything"));        // but not a stage form
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 WIRING: a whenStage form whose control targets a DIFFERENT stage, or
+// names a non-live stage, fails strict validation (the boot-time contract fence
+// added alongside formByStage).
+// ---------------------------------------------------------------------------
+
+unittest { // whenStage names an unknown (non-live) stage
+    enum yaml = q"YAML
+forms:
+  - id: toolprops.ghost
+    whenStage: ghost
+    rows:
+      - { control: "tool.pipe.attr ghost start ?" }
+YAML";
+    auto forms = loadFormsFromString(yaml);
+    auto msg = collectExceptionMsg!FormValidationException(
+        validateForms(forms, realisticValidators(), "<t>"));
+    assert(msg.canFind("unknown pipe stage 'ghost'"), msg);
+}
+
+unittest { // whenStage form control targets a different stage than it binds
+    // start IS a real falloff attr, but a whenStage:falloff form may only bind
+    // tool.pipe.attr falloff — targeting another stage is a contract break.
+    enum yaml = q"YAML
+forms:
+  - id: toolprops.falloff
+    whenStage: falloff
+    rows:
+      - { control: "tool.attr xfrm.transform T ?" }
+YAML";
+    auto forms = loadFormsFromString(yaml);
+    auto msg = collectExceptionMsg!FormValidationException(
+        validateForms(forms, realisticValidators(), "<t>"));
+    assert(msg.canFind("does not target that stage"), msg);
+}
+
+unittest { // declaring both whenTool and whenStage is rejected by the loader
+    enum yaml = q"YAML
+forms:
+  - id: bad
+    whenTool: move
+    whenStage: falloff
+    rows:
+      - { control: "tool.pipe.attr falloff start ?" }
+YAML";
+    auto msg = collectExceptionMsg!FormLoadException(loadFormsFromString(yaml));
+    assert(msg.canFind("both 'whenTool' and 'whenStage'"), msg);
+}
+
+// ---------------------------------------------------------------------------
 // HTTP aliveness: a responsive server proves the REAL boot loaded + strict-
 // validated the on-disk forms (startup aborts on a forms-validation failure).
 // ---------------------------------------------------------------------------

@@ -1,0 +1,69 @@
+# Tool Properties form for the falloff pipe stage.
+#
+# Second config-driven adopter (see doc/forms_engine_plan.md Phase 6). Every
+# value row binds to a stage command line carrying exactly one `?` placeholder
+# (tool.pipe.attr falloff <attr> ?): reading queries the stage, writing executes
+# it with `?` substituted. Loaded at startup by source/forms.d (loadForms) and
+# strict-validated against FalloffStage.knownAttrs() (the authoritative static
+# attr union) via validateForms — a misspelt attr fails loud at boot.
+#
+# Dynamic rows: FalloffStage.params() is FILTERED by the active falloff type
+# (Linear exposes start/end, Radial/Cylinder expose center/size, Element exposes
+# mode/dist/connect, ...). The forms resolver hides any row whose attr is absent
+# from the live params() this frame, so switching the falloff type changes which
+# rows are visible with NO inline conditionals in this file — the rows are
+# simply the UNION of every type's attrs, and visibility falls out of the
+# per-type params() filtering. That value-driven row hiding is the point of this
+# form: the same union of rows serves all types.
+#
+# Note: type and shape are NOT in params() (they are driven by the status-bar
+# Falloff pulldown / the stage's own drawProperties popup), so they are
+# intentionally not bound here — the form configures the CONFIG of whichever
+# type is active, never the type selection itself.
+
+forms:
+  - id: toolprops.falloff
+    label: Falloff
+    # whenStage binds this form to the "falloff" pipe stage: the Tool Properties
+    # per-stage loop resolves it via formByStage("falloff"), NOT by active tool
+    # and NOT by form id (ids are the sub/ref form-reference namespace, distinct
+    # from stage ids). Keep the id as-is.
+    whenStage: falloff
+    showLabel: false
+    rows:
+      # ---- Custom-shape tangents (only present when shape == Custom) ----
+      - { control: "tool.pipe.attr falloff in ?",  label: In,  style: slider }
+      - { control: "tool.pipe.attr falloff out ?", label: Out, style: slider }
+
+      # ---- Linear: start/end line endpoints (Vec3) ----
+      - { control: "tool.pipe.attr falloff start ?", label: Start }
+      - { control: "tool.pipe.attr falloff end ?",   label: End }
+
+      # ---- Radial / Cylinder: ellipsoid centre + per-axis radii (Vec3) ----
+      - { control: "tool.pipe.attr falloff center ?", label: Center }
+      - { control: "tool.pipe.attr falloff size ?",   label: Size }
+      # ---- Cylinder only: axis direction (Vec3) ----
+      - { control: "tool.pipe.attr falloff axis ?",   label: Axis }
+
+      # ---- Screen: window-space centre + radius + transparency ----
+      - group: Screen
+        style: inline
+        rows:
+          - { control: "tool.pipe.attr falloff screenCx ?",   label: Cx }
+          - { control: "tool.pipe.attr falloff screenCy ?",   label: Cy }
+          - { control: "tool.pipe.attr falloff screenSize ?", label: Size }
+      - { control: "tool.pipe.attr falloff transparent ?", label: Transparent,
+          booleanStyle: checkbox }
+
+      # ---- Lasso: shape style + soft border (pixels) ----
+      - { control: "tool.pipe.attr falloff lassoStyle ?", label: "Lasso Style" }
+      - { control: "tool.pipe.attr falloff softBorder ?", label: "Soft Border" }
+
+      # ---- Element: pick mode + connectivity gate ----
+      - { control: "tool.pipe.attr falloff mode ?",    label: "Element Mode" }
+      - { control: "tool.pipe.attr falloff connect ?", label: Connect }
+
+      # ---- dist is shared by Element (Range) and Selection (Steps); omit the
+      #      label so the live Param.label is used — "Range" or "Steps" per the
+      #      active type. ----
+      - { control: "tool.pipe.attr falloff dist ?" }
