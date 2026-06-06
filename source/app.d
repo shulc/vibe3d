@@ -560,11 +560,15 @@ void main(string[] args) {
     // the window is in true physical pixels — so the UI must compensate by
     // scaling fonts/style/window itself. Quantized to 0.25 steps so X11
     // hosts with slightly-off xrandr DPI (e.g. 95.4) stay at exactly 1.0.
+    // macOS/Retina reports high physical DPI for an otherwise point-sized UI;
+    // scaling the font again makes the interface visibly oversized there.
     // Pinned to 1.0 in --test mode: recorded event logs carry absolute
     // pixel coordinates, and a host-dependent scale would shift panel
     // layout under them.
     float uiScale = 1.0f;
-    if (!command.g_testMode) {
+    version (OSX) {
+        // Keep the default 14px Inter font on macOS.
+    } else if (!command.g_testMode) {
         float ddpi;
         if (SDL_GetDisplayDPI(0, &ddpi, null, null) == 0 && ddpi > 0) {
             import std.algorithm : clamp;

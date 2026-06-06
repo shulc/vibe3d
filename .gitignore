@@ -1,7 +1,9 @@
 .DS_Store
 .vscode/
-# .claude is a gitignored symlink to the private repo (vibe3d_private).
+# .claude is a gitignored symlink to local private notes.
 /.claude
+# Local agent instructions — symlinked to private notes, not published.
+/AGENTS.md
 dub.selections.json
 events.log
 imgui.ini
