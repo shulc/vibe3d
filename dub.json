@@ -22,7 +22,8 @@
 		"source"
 	],
 	"stringImportPaths": [
-		"assets/icon"
+		"assets/icon",
+		"assets/fonts"
 	],
 	"libs-linux": [
 		"pthread",
