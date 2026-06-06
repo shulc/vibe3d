@@ -70,6 +70,16 @@ enum HistoryFlags : uint {
                          // derived rule). Provenance only — surfaced for the
                          // panel / api; behaviour is identical to any other
                          // undoable entry once it is on the stack.
+    InSession  = 1 << 7, // Entry was recorded mid tool-session as one step of
+                         // a RUN — a sequence of in-session gestures that share
+                         // a runId and consolidate into ONE surviving entry at
+                         // the run boundary / tool drop. Set by
+                         // recordInSession(); the matching entry carries the
+                         // run's id in HistoryEntry.runId. Surfaced per-entry so
+                         // a future command-history panel can group + badge the
+                         // per-gesture steps of an open run. Navigation-neutral:
+                         // an in-session entry is a normal undoable stack entry
+                         // until consolidate() rewrites the run.
 }
 
 struct HistoryEntry {
@@ -82,6 +92,12 @@ struct HistoryEntry {
                             //  history-panel design doc surfaces this in
                             //  the panel's display options.
     uint    flags;          // bitfield of HistoryFlags; Phase 7.
+    ulong   runId;          // Run identity for in-session entries. Meaningful
+                            //  only when (flags & HistoryFlags.InSession): all
+                            //  gestures of one run share the same id, and
+                            //  consolidate(runId) collapses that run's
+                            //  contiguous tail into one surviving entry. 0 for
+                            //  ordinary (non-in-session) entries.
 }
 
 /// Map a command's CmdFlags to the per-entry HistoryFlags recorded on
@@ -203,6 +219,24 @@ final class CommandHistory {
     private Command[] blockChildren;
     private string    blockLabel;
 
+    // In-session run state. A RUN is a sequence of in-session gestures that
+    // share one runId and consolidate into ONE surviving stack entry at the
+    // run boundary / tool drop. `_currentRunId` is a monotone allocator (bumped
+    // by nextRun()); `_runOpen` is true between the first recordInSession() of a
+    // run and the consolidate() that closes it. The open-run flag is what the
+    // foreign-record guard in record()/recordCoalescing() keys on (Q-a, layer A
+    // of the design doc): a NON-tagged undoable entry appending while a run is
+    // open first consolidates that run, so the run's tagged entries are always a
+    // contiguous tail with no foreign entry buried inside.
+    //
+    // THREAD NOTE: every recorder (interactive commits, navHistory, and the
+    // epoch-marshalled HTTP /api/command, /api/select, /api/toolpipe/eval
+    // handlers) runs on the MAIN thread, so this run state — like the rest of
+    // CommandHistory — needs no locking. A future HTTP-thread-direct recorder
+    // would have to marshal to main like every existing path.
+    private ulong _currentRunId = 0;
+    private bool  _runOpen      = false;
+
     /// Phase 7 macro recorder hook. Invoked AFTER an entry lands on
     /// the undo stack — receives the canonical argstring command
     /// line (commandName + " " + args, or just commandName) plus the
@@ -255,6 +289,32 @@ final class CommandHistory {
         return g;
     }
 
+    // ----- in-session runs -------------------------------------------------
+
+    /// The current run id — the value recordInSession() stamps and a
+    /// consolidate() target. Monotone; publicly readable so a tool can read
+    /// it to tag a commit (it does NOT change merely by reading).
+    ulong currentRunId() const { return _currentRunId; }
+
+    /// Whether an in-session run is currently open (between its first
+    /// recordInSession() and the consolidate() that closes it).
+    bool runOpen() const { return _runOpen; }
+
+    /// Allocate + return a fresh run id. A run boundary (hard boundary, bank
+    /// switch, tool drop) consolidates the just-ended run then bumps to a new
+    /// id so the next run's gestures are tagged distinctly.
+    ulong nextRun() { return ++_currentRunId; }
+
+    // Foreign-record guard (Q-a, layer A). Invoked at the top of the public
+    // record() / recordCoalescing() entry points: if an open in-session run
+    // exists, consolidate it FIRST so the foreign (non-tagged) entry lands on
+    // top of one surviving consolidated entry rather than buried inside the
+    // run. Idempotent — a no-op once the run is closed (so the internal
+    // recordCoalescing()->record() hop does not double-consolidate).
+    private void consolidateOpenRunIfForeign() {
+        if (_runOpen) consolidate(_currentRunId);
+    }
+
     // ----- recording -------------------------------------------------------
 
     // Called by the HTTP dispatcher AFTER a successful apply(). The command
@@ -264,6 +324,14 @@ final class CommandHistory {
         if (cmd is null) return;
         if (!cmd.isUndoable) return;
         if (_state != UndoState.Active) return;
+
+        // Q-a guard: a foreign (non-tagged) undoable append closes any open
+        // in-session run first, keeping a run's tagged entries a contiguous
+        // tail. Block children defer to the open block, not the stack, so they
+        // are not a foreign append in the run sense — but consolidating before
+        // routing is still correct (a run cannot be open inside a command block
+        // in practice), and keeps the single touch point simple.
+        consolidateOpenRunIfForeign();
 
         // Inside an open command block, the command becomes a child of the
         // block instead of its own stack entry. The composite lands as one
@@ -331,6 +399,11 @@ final class CommandHistory {
         if (cmd is null) return;
         if (!cmd.isUndoable) return;
         if (_state != UndoState.Active) return;
+        // Q-a guard: close any open in-session run before a foreign coalescing
+        // append (same rationale as record()). Done here too — the coalescing
+        // merge path below can return early without reaching the inner
+        // record() hop, so the guard must run at this entry point as well.
+        consolidateOpenRunIfForeign();
         // Inside an open command block, defer to record()'s block-child path
         // (no in-place coalesce — the block already collapses its children).
         if (blockDepth > 0) { record(cmd); return; }
@@ -370,6 +443,137 @@ final class CommandHistory {
         // No compatible top entry → normal append (record() clears redo +
         // fires onRecord).
         record(cmd);
+    }
+
+    /// Record `cmd` as ONE in-session entry of the run identified by `runId`.
+    /// Identical to record() in every guard + side-effect (lockout / null /
+    /// undoable / Active gating, maxDepth trim, macro hook) EXCEPT:
+    ///   - the entry is stamped HistoryFlags.InSession + runId, and
+    ///   - it sets _runOpen so the foreign-record guard knows a run is live.
+    /// Like record()/recordCoalescing() it CLEARS the redo stack (N1): a fresh
+    /// in-session gesture invalidates the redo timeline exactly as a committed
+    /// record does, so an in-session redo can never re-apply a stale entry.
+    ///
+    /// Does NOT call the foreign-record guard — an in-session entry is, by
+    /// definition, NOT a foreign append (it extends the open run).
+    void recordInSession(Command cmd, ulong runId) {
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+
+        // Inside an open command block, an in-session gesture is not a designed
+        // scenario (gizmo runs do not open blocks); defer to record()'s
+        // block-child path so behaviour matches a plain record there.
+        if (blockDepth > 0) { record(cmd); return; }
+
+        import core.time : MonoTime;
+        long tMs = MonoTime.currTime.ticks
+                 * 1000 / MonoTime.ticksPerSecond;
+        uint flags = historyFlagsFor(cmd) | HistoryFlags.InSession;
+        string args = serializeParams(cmd.params());
+        HistoryEntry e = { label: cmd.label,
+                           args:  args,
+                           commandName: cmd.name,
+                           cmd: cmd,
+                           timestampMs: tMs,
+                           flags: flags,
+                           runId: runId };
+        undoStack ~= e;
+        if (undoStack.length > maxDepth) {
+            undoStack = undoStack[$ - maxDepth .. $];
+        }
+        // N1: a fresh in-session gesture invalidates the redo timeline.
+        redoStack.length = 0;
+
+        // The run is now open until consolidate(runId) closes it.
+        _runOpen = true;
+
+        if (onRecord !is null) {
+            string line = args.length > 0
+                ? (cmd.name ~ " " ~ args) : cmd.name;
+            onRecord(line, flags);
+        }
+    }
+
+    /// Consolidate one in-session RUN: collapse its CONTIGUOUS tail of entries
+    /// tagged (InSession + runId) into ONE merged entry, in place at the
+    /// position of the FIRST gathered entry. Clears _runOpen.
+    ///
+    /// Merge semantics (design doc Q1, MERGE-OF-ENTRIES):
+    ///   - indices = sorted union of the gathered entries' indices,
+    ///   - before[vid] = the EARLIEST gathered entry's before for vid
+    ///     (first-touch-wins → run-start state),
+    ///   - after[vid]  = the LATEST gathered entry's after for vid,
+    ///   - hooks = first gathered entry's revert-hook + last's apply-hook,
+    /// all built by MeshVertexEdit.mergeRun() (which owns the module-private
+    /// payload + GPU/cache pointers). Consolidation does NOT mutate geometry —
+    /// the mesh already holds the run-end state; this only rewrites the stack.
+    ///
+    /// Defense-in-depth (Q-a): even though contiguity holds BY CONSTRUCTION (a
+    /// foreign record consolidates the run first, so nothing interleaves), the
+    /// gather walks from the stack tail and STOPS at the first entry that is not
+    /// (InSession && runId == runId). A future invariant violation thus
+    /// degrades to a graceful partial merge rather than a corrupt one.
+    ///
+    /// Edge cases (all safe no-ops): an empty stack, no matching tail (run never
+    /// opened or already consolidated), or a single gathered entry — in each the
+    /// stack is left untouched apart from clearing _runOpen. Cap-50 interplay
+    /// (Q1 risk 6): if the run-start entry already fell off maxDepth, the gather
+    /// merges only the SURVIVING tail, so before[] anchors to the earliest
+    /// surviving gesture — graceful degradation, not a crash.
+    void consolidate(ulong runId) {
+        scope(exit) _runOpen = false;
+        if (undoStack.length == 0) return;
+
+        // Gather the contiguous matching-runId InSession tail (oldest→newest).
+        size_t end = undoStack.length;       // one past the last gathered
+        size_t start = end;
+        while (start > 0) {
+            auto e = undoStack[start - 1];
+            if (!(e.flags & HistoryFlags.InSession) || e.runId != runId)
+                break;
+            --start;
+        }
+        size_t n = end - start;
+        if (n == 0) return;                   // no matching tail — no-op.
+
+        // Downcast the gathered commands to MeshVertexEdit. Any non-vertex-edit
+        // in the run (not expected — runs are vertex edits) aborts the merge as
+        // a safe no-op rather than guessing a cross-type union.
+        import commands.mesh.vertex_edit : MeshVertexEdit;
+        MeshVertexEdit[] gathered;
+        gathered.reserve(n);
+        foreach (i; start .. end) {
+            auto mve = cast(MeshVertexEdit) undoStack[i].cmd;
+            if (mve is null) return;          // unexpected type — leave as-is.
+            gathered ~= mve;
+        }
+
+        // Single-entry run: nothing to merge, but it IS the consolidated form
+        // already. Leave it on the stack untouched (just clears _runOpen via
+        // scope(exit)). Stripping the InSession tag is deferred to the consumer
+        // (a future panel) and is not required for navigation correctness.
+        if (n == 1) return;
+
+        auto merged = MeshVertexEdit.mergeRun(gathered);
+
+        // Replace the gathered entries with ONE entry at the first's position.
+        // The merged entry is an ordinary (non-in-session) surviving entry —
+        // the run has ended. Preserve the first entry's label/timestamp shape
+        // via a fresh entry built from the merged command.
+        auto first = undoStack[start];
+        HistoryEntry mergedEntry = {
+            label:       merged.label,
+            args:        serializeParams(merged.params()),
+            commandName: merged.name,
+            cmd:         merged,
+            timestampMs: first.timestampMs,
+            flags:       historyFlagsFor(merged),
+            runId:       0,
+        };
+
+        undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
     }
 
     // ----- navigation ------------------------------------------------------
