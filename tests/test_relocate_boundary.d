@@ -1,6 +1,12 @@
 // In-session action-center relocate commits the current undo run (Phase 1a
 // of doc/transform_per_gesture_commit_plan.md).
 //
+// Phase-3 audit (2026-06-07): boundary surviving-entry counts + pin-semantics
+// asserts confirmed on-contract under record+consolidate (Q-b gate —
+// discardAcenUserPlacedSnapshot stays per-gesture, so pin coherence is
+// byte-for-byte identical). Migration already landed in Phase 1 / its addendum;
+// no assert changed in Phase 3, re-run to confirm green.
+//
 // The undo unit is the tool SESSION: consecutive ON-handle gizmo drags
 // coalesce into ONE history entry (pinned by test_property_panel_drag.d).
 // The ONE additional boundary added here: an off-gizmo click during a live

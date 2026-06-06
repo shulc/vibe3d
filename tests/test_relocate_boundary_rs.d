@@ -1,6 +1,10 @@
 // Single-mode Rotate / Scale relocate boundary under the wrapper (Phase 2,
 // Part A of doc/transform_per_gesture_commit_plan.md §6 test 3/4).
 //
+// Phase-3 audit (2026-06-07): R/S per-gesture self-commit + relocate-boundary
+// consolidation counts already landed in Phase 2 (the "Phase 2 flip" comments
+// in-body). No assert changed in Phase 3, re-run to confirm green.
+//
 // The undo unit is the tool SESSION: consecutive ON-handle gizmo drags
 // coalesce into ONE history entry. A click-away / action-center relocate
 // during a live session commits the current run and opens a fresh one. For

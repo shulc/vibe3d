@@ -1,6 +1,13 @@
 // In-session Ctrl+Z contract + forms/panel non-interference
 // (record+consolidate, Phase 1).
 //
+// Phase-3 audit (2026-06-07): swept for stale single-coalesced-entry / "no pop"
+// / whole-run-cancel assumptions. NONE remain — this file was already rewritten
+// to the record+consolidate contract atomically with Move recording in Phase 1
+// (the green-interval table's "Assert adjusted in: Phase 1" rows). No assert
+// changed in Phase 3; the suite is re-run to confirm green alongside the new
+// tests/test_run_consolidation.d.
+//
 // CONTRACT (record+consolidate model — per-gesture in-session recording with
 // run consolidation at the boundary / tool drop):
 //

@@ -1,5 +1,14 @@
 // In-session Ctrl+Z cancels an OPEN rotate/scale sub-tool session.
 //
+// Phase-3 audit (2026-06-07): case (d)'s flip (post-gizmo-R-drag stepping) and
+// case (e) (two-gesture rotate run -> step / drop-consolidate) already landed in
+// Phase 2, atomic with R/S recording (green-interval table). Cases (a)/(b)/(c)
+// are PANEL-path sessions (tool.beginSession + tool.attr, no mouse-up) whose
+// session stays OPEN at idle, so cancelUncommittedEdit still aborts them
+// unchanged. No assert changed in Phase 3; re-run to confirm green. The SCALE
+// analogue of case (e)'s per-gesture stepping is added in
+// tests/test_run_consolidation.d case (E).
+//
 // THE BUG (found by code review): the rotate/scale geometry sessions live on
 // the R/S SUB-TOOLS (MS-5), not the XfrmTransformTool wrapper. A PANEL value
 // edit (tool.attr RZ … on a live session) opens that sub-tool session at IDLE

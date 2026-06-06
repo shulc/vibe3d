@@ -1,6 +1,11 @@
 // Property-panel slider-drag behaviour test
 // (Stage E3 of doc/test_coverage_plan.md).
 //
+// Phase-3 audit (2026-06-07): the two-ON-handle-drags -> drop `stackBefore + 1`
+// assert stayed GREEN UNCHANGED through Phase 1 — two in-session entries record
+// mid-run, the drop consolidates them to 1, so +1 holds by construction. No
+// assert changed in Phase 3, re-run to confirm green.
+//
 // Driving the actual ImGui slider via synthesized SDL events would
 // require pixel-perfect knowledge of the slider's runtime position
 // (it drifts with the panel's docked width, font metrics, and the

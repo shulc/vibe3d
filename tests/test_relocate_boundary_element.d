@@ -1,6 +1,11 @@
 // Element-falloff pick+haul relocate commits the current undo run (Phase 1b
 // of doc/transform_per_gesture_commit_plan.md).
 //
+// Phase-3 audit (2026-06-07): element-pick boundary count (+1) confirmed
+// on-contract — the consolidate-at-boundary gate moved from editIsOpen() to
+// history.runOpen() in the Phase-1 addendum (A2). No assert changed in Phase 3,
+// re-run to confirm green.
+//
 // Sibling of test_relocate_boundary.d (Phase 1a, the off-gizmo Move
 // click-relocate). Phase 1b covers the OTHER relocate path: with
 // falloff.element active (the `xfrm.elementMove` preset), an off-handle
