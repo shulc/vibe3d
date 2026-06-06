@@ -70,7 +70,7 @@ panels:
                   - "prim.torus cenX:0 cenY:0 cenZ:0 majorRadius:0.5 minorRadius:0.125 majorSegments:24 minorSegments:12 axis:1"
           - label: Pen
             action: { kind: tool, id: pen }
-  # Deform palette — mirrors MODO's frm_modoTools_Deform layout. D.1
+  # Deform palette — mirrors MODO's Deform tool-palette layout. D.1
   # of doc/deform_plan.md ships the 9 transform+falloff presets; the
   # remaining MODO tools (Element Move, Flex, Push, Bend, Vortex,
   # Sculpt, Smooth, Jitter, Quantize, Linear/Radial Align, Flare)
@@ -129,8 +129,7 @@ panels:
               action: { kind: command, id: mesh.radial_align } }
           - { label: "Linear Align",
               action: { kind: command, id: mesh.linear_align } }
-  # Duplicate palette — mirrors MODO's frm_modoTools_Duplicate layout
-  # (resrc/701_frm_modotools.cfg, sheet `frm_modoTools_Duplicate`).
+  # Duplicate palette — mirrors MODO's Duplicate tool-palette layout.
   # PR-1..4 of doc/duplicate_plan.md ship the 4 mesh-frequency
   # primitives; remaining MODO items (Radial Sweep, Bridge, Patch
   # Curves, Curve / Bezier / Pen Extrude+Clone, Scatter Clone, Clone,

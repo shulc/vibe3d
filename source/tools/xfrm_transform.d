@@ -337,7 +337,7 @@ public:
         // (so the overlay/handles follow a dragged endpoint) otherwise.
         FalloffPacket fp = (activeDrag !is null) ? dragFalloff : currentFalloff(vts);
 
-        // Cross-bank single-winner hover/capture (MODO tmod_Test → tmod_Draw):
+        // Cross-bank single-winner hover/capture (MODO's two-pass hit-test → draw):
         // ONE shared arbiter over the falloff handles (registered first =
         // highest priority) + every enabled gizmo bank, resolve ONE
         // hot/captured part, THEN render.
@@ -2207,7 +2207,7 @@ private:
     RotateTool rotateSub;
     ScaleTool  scaleSub;
 
-    // Single shared cross-bank handle arbiter (MODO tmod_Test → tmod_Draw).
+    // Single shared cross-bank handle arbiter (MODO's two-pass hit-test → draw).
     // Every enabled bank registers its handles into this each frame at its
     // part-id base; one resolve picks ONE hot/captured part across move +
     // rotate + scale, so overlapping handles never co-highlight. Falloff
