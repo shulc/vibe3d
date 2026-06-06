@@ -260,6 +260,37 @@ protected:
         ac.discardUserPlacedSnapshot();
     }
 
+    // In-session-cancel geometry/GPU teardown, shared by RotateTool /
+    // ScaleTool's `cancelSessionIfOpen()`. Restores the moving set to the
+    // per-vertex snapshot beginEdit() captured (editBaseline()), re-uploads it
+    // to the GPU and clears the whole-mesh-bypass matrix state, then closes the
+    // capture WITHOUT recording (suppressCommit gates the single commitEdit()
+    // chokepoint so deactivate()/update() can't re-fire a commit during the
+    // teardown). This is exactly the geometry half of the wrapper's
+    // cancelUncommittedEdit() — factored here because rotate + scale do it
+    // identically; the only per-subclass part (restoring angleAccum/propDeg vs
+    // scaleAccum/propScale to their session-start values) stays in each
+    // sub-tool's cancelSessionIfOpen() before it calls this. Caller must have
+    // verified editIsOpen() == true.
+    protected void cancelOpenSessionGeometry() {
+        suppressCommit = true;
+        scope(exit) suppressCommit = false;
+
+        uint[] idx  = editIndices();
+        Vec3[] base = editBaseline();
+        foreach (i, vid; idx) {
+            if (vid < mesh.vertices.length)
+                mesh.vertices[vid] = base[i];
+        }
+        ++mesh.mutationVersion;
+        gpu.upload(*mesh);
+        gpuMatrix      = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        propsDragging  = false;
+        needsGpuUpdate = false;
+
+        cancelEdit();
+    }
+
     override void activate() {
         active = true;
         resetTransientState();

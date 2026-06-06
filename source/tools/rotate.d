@@ -285,6 +285,30 @@ public:
             commitEdit("Rotate");
     }
 
+    // In-session-cancel PUBLIC mirror (same sibling-access reasoning as
+    // commitSessionIfOpen): the composing wrapper's cancelUncommittedEdit()
+    // calls this to abort THIS sub-tool's open rotate session WITHOUT recording,
+    // restoring the mesh to the session's pre-edit baseline. Rotate keeps its
+    // geometry session on the sub-tool (MS-5), so the wrapper's own
+    // cancelUncommittedEdit() cannot reach it — this widens the whole-open-run
+    // cancel (D6) to the R slot. Restores the Tool-Properties state (angleAccum /
+    // propDeg) to the values snapshotEditState() froze at session open, then
+    // hands the geometry/GPU teardown to the shared base helper. origVertices is
+    // left untouched: the (origVertices, angleAccum) invariant holds again once
+    // angleAccum is back at its session-start value and the verts are restored.
+    // No-op (returns false) when no rotate session is open; on cancel returns
+    // true and writes the restored session-start PANEL value (degrees) to
+    // `outDeg` so the wrapper can snap its own `headlessRotate` mirror — the attr
+    // the panel reads back — to the pre-edit value in lockstep with the geometry.
+    public bool cancelSessionIfOpen(out Vec3 outDeg) {
+        if (!editIsOpen()) return false;
+        angleAccum = preEditAngleAccum;
+        propDeg    = preEditPropDeg;
+        outDeg     = preEditPropDeg;
+        cancelOpenSessionGeometry();
+        return true;
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
     {
         if (!active) return;

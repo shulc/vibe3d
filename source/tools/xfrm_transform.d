@@ -1615,13 +1615,32 @@ public:
     // Commit guard: the wrapper-owned edit session commits from deactivate()
     // (:225), update() on selection/mutation change (:254) and BrushReset
     // mouse-up (:887) — every one gated by editIsOpen(). So the exact "a
-    // commit would fire if the session ended now" predicate IS editIsOpen().
-    // KEPT wrapper-only (NOT widened to the sub-tools): this drives the P0
-    // Ctrl+Z chokepoint (app.d:2699 → cancelUncommittedEdit(), which restores
-    // only the WRAPPER baseline), and the R/S gizmo-drag path already commits
-    // its session via the sub-tools' own deactivate/update guards. Widening it
-    // would change mid-gizmo-drag Ctrl+Z semantics for rotate/scale.
-    override bool hasUncommittedEdit() const { return editIsOpen(); }
+    // commit would fire if the wrapper session ended now" predicate IS
+    // editIsOpen().
+    //
+    // Widened (in-session R/S cancel) to ALSO see an open R/S sub-tool session,
+    // BUT ONLY WHEN NO GIZMO DRAG IS IN FLIGHT (`activeDrag is null`). R/S keep
+    // their geometry sessions on the sub-tools (MS-5); a PANEL value edit opens
+    // such a session at IDLE (mouse not held), and today the P0 Ctrl+Z
+    // chokepoint missed it entirely — navHistory saw hasUncommittedEdit()==false
+    // and popped a prior committed step (or no-op'd on an empty stack) while the
+    // geometry stayed transformed. Folding subToolEditOpen() in lets
+    // cancelUncommittedEdit() abort that open R/S run instead.
+    //
+    // The `activeDrag is null` clause is load-bearing — it preserves today's
+    // MID-GIZMO-DRAG semantics EXACTLY. During an R/S gizmo drag the sub-tool
+    // session is open with the mouse HELD (`activeDrag !is null`), and a Ctrl+Z
+    // then must behave as it does today: this predicate stays false (assuming no
+    // wrapper T session), so navHistory falls through to history.undo() — it does
+    // NOT cancel the live drag. After mouse-UP the drag is released
+    // (`activeDrag = null`) but the R/S session stays open (gizmo mouse-up does
+    // not commit — per-gesture coalescing), so a Ctrl+Z at THAT point now cancels
+    // the open run (a deliberate behavior change, consistent with the D6
+    // whole-open-run-cancel contract: the open run reverts first, committed runs
+    // pop after).
+    override bool hasUncommittedEdit() const {
+        return editIsOpen() || (subToolEditOpen() && activeDrag is null);
+    }
 
     // ----- Live re-evaluation hooks (attr edit re-runs a live tool) ---------
     //
@@ -1747,47 +1766,82 @@ public:
     // commitEdit() chokepoint on TransformTool) prevents deactivate()/update()/
     // BrushReset from re-firing a commit while we tear the session down.
     override void cancelUncommittedEdit() {
-        if (!editIsOpen()) return;
+        // hasUncommittedEdit() gates the entry from navHistory, but this is also
+        // reachable directly; bail when there is nothing open on EITHER the
+        // wrapper or a sub-tool. (subToolEditOpen() folds in the R/S sessions
+        // MS-5 keeps off the wrapper.)
+        bool wrapperOpen = editIsOpen();
+        if (!wrapperOpen && !subToolEditOpen()) return;
+
+        // Cancel the open R/S sub-tool sessions FIRST, in a deterministic order
+        // (R then S), so one in-session Ctrl+Z reverts the WHOLE open run — the
+        // wrapper Move session AND any open sub-tool sessions — consistent with
+        // the D6 whole-open-run-cancel contract. Each sub-tool restores its own
+        // geometry baseline + Tool-Properties accumulator and returns the
+        // pre-edit PANEL value so we can snap the wrapper's headlessRotate /
+        // headlessScale mirror (the attr the panel reads back) to it in lockstep
+        // — the sub-tools own their geometry session but NOT those wrapper
+        // fields, so the mirror restore has to happen here. Mirrors the attrBase*
+        // discipline below; no-op (returns false) when the slot has no open
+        // session. Their suppressCommit latches are self-contained (set/cleared
+        // inside each cancelSessionIfOpen → cancelOpenSessionGeometry).
+        Vec3 subDeg, subFactors;
+        if (rotateSub.cancelSessionIfOpen(subDeg))     headlessRotate = subDeg;
+        if (scaleSub.cancelSessionIfOpen(subFactors))  headlessScale  = subFactors;
+
         suppressCommit = true;
         scope(exit) suppressCommit = false;
 
-        // Restore the moving set to its pre-edit positions. editIndices() /
-        // editBaseline() are the per-selected-vertex snapshot beginEdit()
-        // captured; restoring them is exactly what an undo of this session
-        // would do, but without recording anything.
-        uint[] idx  = editIndices();
-        Vec3[] base = editBaseline();
-        foreach (i, vid; idx) {
-            if (vid < mesh.vertices.length)
-                mesh.vertices[vid] = base[i];
+        // Wrapper-side restore (Move / T session). Only runs when the WRAPPER
+        // session is open — a pure R/S panel-edit cancel (no Move session) skips
+        // it; the sub-tool cancels above already reverted the geometry + GPU and
+        // restored the R/S attr mirrors. The action-center pin snapshot is frozen
+        // by beginEdit() ONLY on the wrapper session's open, so its restore lives
+        // here too.
+        if (wrapperOpen) {
+            // Restore the moving set to its pre-edit positions. editIndices() /
+            // editBaseline() are the per-selected-vertex snapshot beginEdit()
+            // captured; restoring them is exactly what an undo of this session
+            // would do, but without recording anything.
+            uint[] idx  = editIndices();
+            Vec3[] base = editBaseline();
+            foreach (i, vid; idx) {
+                if (vid < mesh.vertices.length)
+                    mesh.vertices[vid] = base[i];
+            }
+            ++mesh.mutationVersion;
+            gpu.upload(*mesh);
+            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            needsGpuUpdate = false;
+
+            // Restore the headless TRS attrs to their session-start values so the
+            // Tool-Properties panel / config form (which read params() — the live
+            // &headlessTranslate.x etc. pointers — per frame) snap back in
+            // lockstep with the geometry. Without this the verts revert but the
+            // numeric fields keep the stale edited numbers. Captured on the
+            // closed->open transition in beginEdit() above. (headlessRotate /
+            // headlessScale were already snapped above from the sub-tool's
+            // pre-edit panel value when its session was open; if the wrapper froze
+            // them too, attrBase* holds the identical session-start value.)
+            headlessTranslate = attrBaseTranslate;
+            headlessRotate    = attrBaseRotate;
+            headlessScale     = attrBaseScale;
+
+            // Restore the action-center pin to its session-start state. A
+            // click-away / element-pick relocate that opened this gesture moved
+            // the ACEN userPlaced pin on mouse-down; without this the gizmo would
+            // stick at the click point while the geometry snaps back. The
+            // pre-gesture pin state was staged at the relocate site and frozen as
+            // the session baseline by beginEdit() above. No-op when nothing
+            // relocated (no frozen snapshot). The commit (tool-drop) path never
+            // reaches here, so a committed relocate persists, as today.
+            if (auto ac = activeAcenStage())
+                ac.restoreUserPlacedSnapshot();
         }
-        ++mesh.mutationVersion;
-        gpu.upload(*mesh);
-        gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-        needsGpuUpdate = false;
 
-        // Restore the headless TRS attrs to their session-start values so the
-        // Tool-Properties panel / config form (which read params() — the live
-        // &headlessTranslate.x etc. pointers — per frame) snap back in lockstep
-        // with the geometry. Without this the verts revert but the numeric
-        // fields keep the stale edited numbers. Captured on the closed->open
-        // transition in beginEdit() above.
-        headlessTranslate = attrBaseTranslate;
-        headlessRotate    = attrBaseRotate;
-        headlessScale     = attrBaseScale;
-
-        // Restore the action-center pin to its session-start state. A
-        // click-away / element-pick relocate that opened this gesture moved the
-        // ACEN userPlaced pin on mouse-down; without this the gizmo would stick
-        // at the click point while the geometry snaps back. The pre-gesture pin
-        // state was staged at the relocate site and frozen as the session
-        // baseline by beginEdit() above. No-op when nothing relocated (no frozen
-        // snapshot). The commit (tool-drop) path never reaches here, so a
-        // committed relocate persists, as today.
-        if (auto ac = activeAcenStage())
-            ac.restoreUserPlacedSnapshot();
-
-        // Close the capture session WITHOUT recording, and drop any live drag.
+        // Close the wrapper capture session WITHOUT recording, and drop any live
+        // drag. cancelEdit() is idempotent when the wrapper session was never
+        // open (pure R/S cancel path).
         cancelEdit();
         activeDrag          = null;
         dragBaseline.length = 0;

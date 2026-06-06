@@ -271,6 +271,31 @@ public:
             commitEdit("Scale");
     }
 
+    // In-session-cancel PUBLIC mirror (same sibling-access reasoning as
+    // commitSessionIfOpen): the composing wrapper's cancelUncommittedEdit()
+    // calls this to abort THIS sub-tool's open scale session WITHOUT recording,
+    // restoring the mesh to the session's pre-edit baseline. Scale keeps its
+    // geometry session on the sub-tool (MS-5), so the wrapper's own
+    // cancelUncommittedEdit() cannot reach it — this widens the whole-open-run
+    // cancel (D6) to the S slot. Restores the Tool-Properties state (scaleAccum /
+    // propScale) to the values snapshotEditState() froze at session open, then
+    // hands the geometry/GPU teardown to the shared base helper.
+    // activationVertices is left untouched: the (activationVertices, scaleAccum)
+    // invariant holds again once scaleAccum is back at its session-start value
+    // and the verts are restored. No-op (returns false) when no scale session is
+    // open; on cancel returns true and writes the restored session-start PANEL
+    // value (factors) to `outFactors` so the wrapper can snap its own
+    // `headlessScale` mirror — the attr the panel reads back — to the pre-edit
+    // value in lockstep with the geometry.
+    public bool cancelSessionIfOpen(out Vec3 outFactors) {
+        if (!editIsOpen()) return false;
+        scaleAccum = preEditScaleAccum;
+        propScale  = preEditPropScale;
+        outFactors = preEditPropScale;
+        cancelOpenSessionGeometry();
+        return true;
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
     {
         if (!active) return;
