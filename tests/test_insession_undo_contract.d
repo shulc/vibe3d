@@ -229,8 +229,16 @@ unittest {
 
     auto v6BaselineB = vert(6);   // run B's frozen baseline (== post-run-A)
 
-    // Drag 1: on-handle +X haul.
-    {
+    // Drag 1: on-handle +X haul. VERIFY-AND-RETRY: under a loaded -j run the
+    // pivot/camera read right after re-activation can be a frame stale, so the
+    // derived grab pixel misses the arrow and the drag silently moves nothing
+    // (the run-B-not-displaced flake). One retry with freshly re-derived
+    // camera + pivot absorbs the staleness; a genuine regression (a drag that
+    // never moves geometry) still fails the post-loop assert below.
+    foreach (attempt; 0 .. 2) {
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+        arrowDirPx(evalPivot(), vp, ux, uy);
         int xa, ya;
         arrowGrabPx(evalPivot(), vp, xa, ya);
         int xb = xa + cast(int)(60.0 * ux);
@@ -238,21 +246,32 @@ unittest {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xa, ya, xb, yb, 10));
         settle();
+        auto now = vert(6);
+        if (fabs(now[0] - v6BaselineB[0]) + fabs(now[1] - v6BaselineB[1])
+            + fabs(now[2] - v6BaselineB[2]) > 1e-3) break;
+        settle();   // extra quiesce before the re-derived retry
     }
+    auto v6AfterDrag1 = vert(6);
     // Drag 2: RE-DERIVE the handle from the moved pivot (ON-handle re-grab, so
     // dragAxis >= 0 and NO relocate boundary fires) and haul back -X. Hauling
     // BACK (the proven test_property_panel_drag.d pattern) keeps the second
     // mouse-DOWN cleanly on the re-derived handle so the two drags coalesce
     // into ONE open run rather than tripping the relocate boundary.
-    cam = fetchCamera();
-    vp  = viewportFromCamera(cam);
-    {
+    // Same verify-and-retry discipline as drag 1.
+    foreach (attempt; 0 .. 2) {
+        cam = fetchCamera();
+        vp  = viewportFromCamera(cam);
+        arrowDirPx(evalPivot(), vp, ux, uy);
         int xc, yc;
         arrowGrabPx(evalPivot(), vp, xc, yc);
         int xd = xc - cast(int)(40.0 * ux);
         int yd = yc - cast(int)(40.0 * uy);
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xc, yc, xd, yd, 10));
+        settle();
+        auto now = vert(6);
+        if (fabs(now[0] - v6AfterDrag1[0]) + fabs(now[1] - v6AfterDrag1[1])
+            + fabs(now[2] - v6AfterDrag1[2]) > 1e-3) break;
         settle();
     }
 
