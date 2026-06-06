@@ -204,8 +204,12 @@ unittest {
         ~ sxLive.toString);
 
     long stackAfterRun1 = undoCount();
-    assert(stackAfterRun1 == stackBefore,
-        "scale drag 1 keeps the run OPEN (no commit yet); got "
+    // Phase 2 flip: the scale gizmo gesture SELF-COMMITS a tagged in-session
+    // entry on mouse-up (was: open run, no commit). The run stays open (the
+    // entry is in-session, runOpen true) and consolidates at the relocate
+    // boundary below — so the boundary count stays +1.
+    assert(stackAfterRun1 == stackBefore + 1,
+        "Phase 2: scale drag 1 self-commits one in-session entry mid-run; got "
         ~ (stackAfterRun1 - stackBefore).to!string ~ " new entries");
 
     // Off-axis relocate click (perpendicular to the +X handle ⇒ clearly off
@@ -298,9 +302,12 @@ unittest {
         ~ v6Run1[1].to!string ~ "," ~ v6Run1[2].to!string ~ ")");
 
     long stackAfterRun1 = undoCount();
-    assert(stackAfterRun1 == stackBefore,
-        "rotate ring drag 1 keeps the run OPEN; got "
-        ~ (stackAfterRun1 - stackBefore).to!string ~ " new entries");
+    // Phase 2 flip (mirrors the scale leg): the ring gizmo gesture SELF-COMMITS
+    // a tagged in-session entry on mouse-up; the run stays open and consolidates
+    // at the relocate boundary below, so the boundary count stays +1.
+    assert(stackAfterRun1 == stackBefore + 1,
+        "Phase 2: rotate ring drag 1 self-commits one in-session entry mid-run; "
+        ~ "got " ~ (stackAfterRun1 - stackBefore).to!string ~ " new entries");
 
     // Off-ring relocate click well to the side of the gizmo.
     int xoff = xa + 200;
