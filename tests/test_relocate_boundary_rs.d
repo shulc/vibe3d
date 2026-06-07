@@ -138,15 +138,13 @@ double[3] vert(int idx) {
     return [v[0].floating, v[1].floating, v[2].floating];
 }
 
-// +X single-axis handle grab pixel + screen-space +X direction (the scale
-// single-axis handle 0 and the move arrow share the +X projection — proven
-// reliable in test_xfrm_transform.d / test_relocate_boundary.d).
+// +X single-axis handle grab pixel + screen-space +X direction.
 void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
                 out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size,        pivot.y, pivot.z), vp, sx2, sy2);
+    projectToWindow(Vec3(pivot.x + size / 7.0f,   pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size * 1.18f,  pivot.y, pivot.z), vp, sx2, sy2);
     gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
     double dx = sx2 - sx1, dy = sy2 - sy1;

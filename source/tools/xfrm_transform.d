@@ -443,7 +443,10 @@ public:
             if (compactPresentation()) moveSub.registerCompactHandles(toolHandles, MOVE_BASE);
             else                       moveSub.registerHandles    (toolHandles, MOVE_BASE);
         }
-        if (flagR) rotateSub.registerHandles(toolHandles, ROT_BASE);
+        if (flagR) {
+            if (compactPresentation()) rotateSub.registerPrincipalHandles(toolHandles, ROT_BASE);
+            else                       rotateSub.registerHandles         (toolHandles, ROT_BASE);
+        }
         if (flagS) {
             if (compactPresentation()) scaleSub.registerAxisHandles(toolHandles, SCALE_BASE);
             else                       scaleSub.registerHandles    (toolHandles, SCALE_BASE);
@@ -463,7 +466,10 @@ public:
             if (compactPresentation()) moveSub.drawCompact (shader, vp, vts);
             else                       moveSub.draw        (shader, vp, vts);
         }
-        if (flagR) rotateSub.draw(shader, vp, vts);
+        if (flagR) {
+            if (compactPresentation()) rotateSub.drawPrincipalOnly(shader, vp, vts);
+            else                       rotateSub.draw             (shader, vp, vts);
+        }
         if (flagS) {
             if (compactPresentation()) scaleSub.drawAxisBoxesOnly(shader, vp, vts);
             else                       scaleSub.draw             (shader, vp, vts);
@@ -636,7 +642,10 @@ public:
                 if (compactPresentation()) moveSub.registerCompactHandles(toolHandles, MOVE_BASE);
                 else                       moveSub.registerHandles       (toolHandles, MOVE_BASE);
             }
-            if (flagR) rotateSub.registerHandles(toolHandles, ROT_BASE);
+            if (flagR) {
+                if (compactPresentation()) rotateSub.registerPrincipalHandles(toolHandles, ROT_BASE);
+                else                       rotateSub.registerHandles         (toolHandles, ROT_BASE);
+            }
             if (flagS) {
                 if (compactPresentation()) scaleSub.registerAxisHandles(toolHandles, SCALE_BASE);
                 else                       scaleSub.registerHandles    (toolHandles, SCALE_BASE);

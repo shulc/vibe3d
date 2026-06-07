@@ -99,9 +99,9 @@ unittest { // single-axis (X) scale-arrow drag == numeric SX, per vertex
 
     Vec3 pivot = Vec3(0, 0, 0);            // ACEN.Auto centroid for full cube
     float size = gizmoSize(pivot, vp);
-    // ScaleHandler X-arrow shaft: center + axis*(size/7) → center + axis*size.
+    // ScaleHandler X-arrow shaft: center + axis*(size/7) → center + axis*(size*1.18).
     Vec3 arrowStart = Vec3(pivot.x + size / 7.0f, pivot.y, pivot.z);
-    Vec3 arrowEnd   = Vec3(pivot.x + size,         pivot.y, pivot.z);
+    Vec3 arrowEnd   = Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
     assert(projectToWindow(arrowStart, vp, sx1, sy1),
         "X-arrow start projects off-camera");
