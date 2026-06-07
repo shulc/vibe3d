@@ -688,9 +688,24 @@ void main(string[] args) {
         // here — corrupting the heap ("free(): invalid size").
         ImFontConfig fontCfg = ImFontConfig(false);
         fontCfg.FontDataOwnedByAtlas = false;
+        version (OSX) {
+            static immutable ImWchar[] macGlyphRanges = [
+                0x0020, 0x00FF, // Basic Latin + Latin Supplement
+                0x0400, 0x052F, // Cyrillic + Cyrillic Supplement
+                0x2DE0, 0x2DFF, // Cyrillic Extended-A
+                0xA640, 0xA69F, // Cyrillic Extended-B
+                0x21E7, 0x21E7, // Shift: ⇧
+                0x2303, 0x2303, // Control: ⌃
+                0x2318, 0x2318, // Command: ⌘
+                0x2325, 0x2325, // Option: ⌥
+                0,
+            ];
+            const(ImWchar)* glyphRanges = macGlyphRanges.ptr;
+        } else {
+            auto glyphRanges = io.Fonts.GetGlyphRangesCyrillic();
+        }
         io.Fonts.AddFontFromMemoryTTF(cast(ubyte[]) interTtf, 14.0f * uiScale,
-                                      &fontCfg,
-                                      io.Fonts.GetGlyphRangesCyrillic());
+                                      &fontCfg, glyphRanges);
         ImGui.GetStyle().ScaleAllSizes(uiScale);
     }
     ImGui.StyleColorsDark();
@@ -1584,7 +1599,9 @@ void main(string[] args) {
 
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
-    ShortcutTable shortcuts         = loadShortcuts("config/shortcuts.yaml");
+    version (OSX) enum shortcutsPath = "config/shortcuts_macos.yaml";
+    else          enum shortcutsPath = "config/shortcuts.yaml";
+    ShortcutTable shortcuts         = loadShortcuts(shortcutsPath);
 
     // Validate: every action id (including modifier variants) must exist in
     // the registry. For script actions, validate the first token of each
@@ -1656,7 +1673,7 @@ void main(string[] args) {
             if ((id in reg.commandFactories) is null)
                 missing ~= " command:" ~ id;
         if (missing.data.length > 0)
-            throw new Exception("shortcuts.yaml references unknown ids:" ~ missing.data);
+            throw new Exception(shortcutsPath ~ " references unknown ids:" ~ missing.data);
     }
 
     void activateToolById(string id) {
