@@ -2912,6 +2912,9 @@ private:
     // is exactly contract (C).
     private void recordFalloffRefire(string label, Vec3[] anchor,
                                      Vec3[] after, size_t[] idx, DragBank bank) {
+        // `idx` is dead until a scoped-subset caller exists — only null
+        // (full-range) callers today; kept so a future scoped re-grade need not
+        // re-thread the signature.
         // Step 0 — staleness gate (defense-in-depth; the site already gated, but
         // the helper must refuse too). On a miss the run's anchor is invalid.
         if (mesh.mutationVersion != lastAppliedGestureMutationVersion) {
