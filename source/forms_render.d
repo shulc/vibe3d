@@ -474,13 +474,16 @@ class FormsPanel {
 
         ImGui.EndGroup();
 
-        // Background channel: a highlighted rect + border behind the cluster.
+        // Background channel: fill with the SAME color as the Tool Properties
+        // window background (style WindowBg, fetched live so any theme change
+        // tracks automatically) — a contrasting fill behind the labels read
+        // poorly. The thin border alone delimits the cluster.
         ImVec2 rmin = ImGui.GetItemRectMin();
         ImVec2 rmax = ImGui.GetItemRectMax();
         rmin.x -= pad; rmin.y -= pad;
         rmax.x += pad; rmax.y += pad;
         dl.ChannelsSetCurrent(0);        // 0 = background
-        dl.AddRectFilled(rmin, rmax, IM_COL32(58, 58, 66, 255), 3.0f);
+        dl.AddRectFilled(rmin, rmax, ImGui.GetColorU32(ImGuiCol.WindowBg), 3.0f);
         dl.AddRect(rmin, rmax, IM_COL32(96, 96, 110, 255), 3.0f);
         dl.ChannelsMerge();
 
