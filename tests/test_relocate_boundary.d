@@ -413,9 +413,12 @@ unittest {
 unittest {
     establishCubeBaseline();
     postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    // Drain the select's UI-undo entry so the only thing below the open run is
-    // the consolidated relocate run (the further Ctrl+Z lands cleanly).
-    drainHistory();
+    // Do NOT drain the select's UI-undo entry: undoing a select restores the
+    // PREVIOUS selection — on a shared per-worker instance that's whatever a
+    // preceding test left (e.g. an edge selection), silently retargeting every
+    // following gesture while all count asserts stay green (the -j
+    // "Move 2 verts" bleed). The entry sits below floorA/floorB (captured
+    // after it); the bounded Ctrl+Z ladder never pops that deep.
     postJson("/api/script", "tool.set move");   // default ACEN = None (relocate-permitted)
 
     auto cam = fetchCamera();
