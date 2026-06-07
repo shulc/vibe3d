@@ -234,19 +234,52 @@ public:
         // therefore NOT applied — its target idle gizmo-run re-apply no longer
         // exists post-Phase-2. Only the idle-time gate below lands; flagged for
         // the plan owner. (See the rotate site for the full rationale.)
+        // Two-arm branch (Phase 2; mirrors the wrapper-Move + rotate sites):
+        //  - ARM 1 (open panel session, editIsOpen() true): the OLD in-place
+        //    coalesce, UNCHANGED — a scale panel session (tool.attr SX … with
+        //    scaleAccum != identity) folds the re-apply into its single drop
+        //    commit and records nothing (scenario C, out of scope).
+        //  - ARM 2 (committed gizmo gesture, editIsOpen() false but the wrapper's
+        //    run is open with a landed Scale gesture): the NEW record path. The
+        //    re-grade is baked as a tagged in-session entry in the current run.
+        //    The wrapper owns the run / history / currentRunBank / refire state,
+        //    so the bank+staleness gate and the record route through its public
+        //    R/S seam (refireScaleEligible / recordFalloffRefireScale).
+        import tools.xfrm_transform : XfrmTransformTool;
         bool dragLive = false;
+        XfrmTransformTool wrap = null;
         if (wrapperRef !is null) {
-            import tools.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                dragLive = wrap.dragInFlight();
+            if (auto w = cast(XfrmTransformTool) wrapperRef) {
+                dragLive = w.dragInFlight();
+                wrap = w;
+            }
         }
-        if (editIsOpen() && !dragLive && scaleAccum != Vec3(1, 1, 1)) {
-            FalloffPacket live = currentFalloff(vts);
-            if (!falloffPacketsEqual(live, dragFalloff)) {
-                dragFalloff = live;
-                buildVertexCacheIfNeeded();
-                applyScaleFromActivationCpuOnly(vts);
-                needsGpuUpdate = true;
+        if (!dragLive && scaleAccum != Vec3(1, 1, 1)) {
+            if (editIsOpen()) {
+                // ARM 1 — panel session: old in-place coalesce, no record.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    dragFalloff = live;
+                    buildVertexCacheIfNeeded();
+                    applyScaleFromActivationCpuOnly(vts);
+                    needsGpuUpdate = true;
+                }
+            } else if (wrap !is null && wrap.refireScaleEligible()) {
+                // ARM 2 — committed gizmo gesture: re-grade + record. The
+                // bank (Scale) + staleness gates live inside refireScaleEligible.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    // Capture the pre-recompute (post-gesture) geometry LIVE for
+                    // the once-per-window anchor (OBJ-3 W1: live, never frozen).
+                    Vec3[] anchor = mesh.vertices.dup;
+                    dragFalloff = live;
+                    buildVertexCacheIfNeeded();
+                    applyScaleFromActivationCpuOnly(vts);   // mutates mesh.vertices
+                    Vec3[] after = mesh.vertices.dup;
+                    // Empty idx → helper iterates the full vertex range (S1).
+                    wrap.recordFalloffRefireScale("Falloff", anchor, after, null);
+                    needsGpuUpdate = true;
+                }
             }
         }
 
