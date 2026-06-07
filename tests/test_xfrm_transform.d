@@ -48,6 +48,25 @@ bool approxEq(double a, double b, double eps = 1e-4) {
     return fabs(a - b) < eps;
 }
 
+int findTopFace() {
+    auto m = getJson("/api/model");
+    auto verts = m["vertices"].array;
+    foreach (fi, f; m["faces"].array) {
+        bool top = true;
+        foreach (vi; f.array) {
+            double vy = verts[vi.integer].array[1].floating;
+            if (fabs(vy - 0.5) > 1e-4) { top = false; break; }
+        }
+        if (top) return cast(int)fi;
+    }
+    assert(false, "no top face found in default cube");
+}
+
+double[3] actionCenter() {
+    auto c = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;
+    return [c[0].floating, c[1].floating, c[2].floating];
+}
+
 unittest { // tool.set xfrm.transform activates without error; attrs
            // round-trip through /api/command.
     postJson("/api/reset", "");
@@ -234,6 +253,161 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
     foreach (k; 0 .. 3) {
         assert(fabs(verts[0][k] - [-0.5,-0.5,-0.5][k]) < 1e-4,
             "v0 moved on X-only drag of v6");
+    }
+}
+
+unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
+    postJson("/api/reset", "");
+    int topFace = findTopFace();
+    postJson("/api/select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    cmd("tool.set Transform on");
+
+    int[] topVerts;
+    {
+        auto m = getJson("/api/model");
+        foreach (vi; m["faces"].array[topFace].array)
+            topVerts ~= cast(int)vi.integer;
+    }
+    double[3][] pre = new double[3][](topVerts.length);
+    foreach (i, vi; topVerts) pre[i] = vertexPos(vi);
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    drag_helpers.Vec3 pivot = drag_helpers.Vec3(0, 0.5f, 0);
+    float cx, cy;
+    assert(projectToWindow(pivot, vp, cx, cy));
+
+    int x0 = cast(int)(cx + 95);
+    int y0 = cast(int)cy;
+    int x1 = x0;
+    int y1 = y0 - 70;
+    string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              x0, y0, x1, y1, 20);
+    playAndWait(log);
+
+    double[3] centroid = [0, 0, 0];
+    foreach (vi; topVerts) {
+        auto p = vertexPos(vi);
+        centroid[0] += p[0];
+        centroid[1] += p[1];
+        centroid[2] += p[2];
+    }
+    foreach (k; 0 .. 3) centroid[k] /= topVerts.length;
+    assert(fabs(centroid[0]) < 0.02 && fabs(centroid[1] - 0.5) < 0.02
+        && fabs(centroid[2]) < 0.02,
+        "Transform rotate ring should rotate around the top-face centroid, not move it; centroid="
+        ~ centroid[0].to!string ~ "," ~ centroid[1].to!string ~ "," ~ centroid[2].to!string);
+
+    double movedMax = 0;
+    foreach (i, vi; topVerts) {
+        auto p = vertexPos(vi);
+        double dx = p[0] - pre[i][0];
+        double dy = p[1] - pre[i][1];
+        double dz = p[2] - pre[i][2];
+        movedMax = movedMax > sqrt(dx*dx + dy*dy + dz*dz)
+            ? movedMax : sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    assert(movedMax > 0.05,
+        "Transform rotate ring did not rotate the selected face; max movement="
+        ~ movedMax.to!string);
+}
+
+unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
+    postJson("/api/reset", "");
+    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    cmd("tool.set Transform on");
+
+    double[3][8] pre;
+    foreach (i; 0 .. 8) pre[i] = vertexPos(i);
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    drag_helpers.Vec3 pivot = drag_helpers.Vec3(0, 0, 0);
+    float size = gizmoSize(pivot, vp);
+    auto arrowEnd = drag_helpers.Vec3(pivot.x + size, pivot.y, pivot.z);
+    float sx, sy;
+    assert(projectToWindow(arrowEnd, vp, sx, sy));
+
+    int x0 = cast(int)sx;
+    int y0 = cast(int)sy;
+    int x1 = x0 + 80;
+    int y1 = y0;
+    string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              x0, y0, x1, y1, 20);
+    playAndWait(log);
+
+    foreach (i; 0 .. 8) {
+        auto p = vertexPos(i);
+        assert(fabs(p[1] - pre[i][1]) < 1e-4,
+            "Transform X-scale should not change y for v" ~ i.to!string);
+        assert(fabs(p[2] - pre[i][2]) < 1e-4,
+            "Transform X-scale should not change z for v" ~ i.to!string);
+        assert(fabs(p[0]) > 0.6,
+            "Transform X-scale head did not scale x for v" ~ i.to!string
+            ~ "; x=" ~ p[0].to!string);
+        assert((p[0] > 0) == (pre[i][0] > 0),
+            "Transform X-scale should preserve x sign for v" ~ i.to!string);
+    }
+}
+
+unittest { // Bare Transform: rotate then move must not re-apply the rotation.
+    postJson("/api/reset", "");
+    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2]}`);
+    cmd("tool.set Transform off");
+    cmd("tool.set Transform on");
+    cmd("tool.pipe.attr actionCenter mode auto");
+    cmd("tool.pipe.attr axis mode auto");
+    cmd("tool.pipe.attr falloff type none");
+    cmd("tool.pipe.attr symmetry enabled false");
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    auto center = actionCenter();
+    drag_helpers.Vec3 pivot = drag_helpers.Vec3(cast(float)center[0],
+                                                cast(float)center[1],
+                                                cast(float)center[2]);
+    float cx, cy;
+    assert(projectToWindow(pivot, vp, cx, cy));
+
+    string rotLog = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cast(int)(cx + 95), cast(int)cy,
+                                 cast(int)(cx + 95), cast(int)(cy - 70), 20);
+    playAndWait(rotLog);
+
+    double[3][3] afterRotate;
+    foreach (slot, vi; [0, 1, 2])
+        afterRotate[slot] = vertexPos(vi);
+
+    center = actionCenter();
+    pivot = drag_helpers.Vec3(cast(float)center[0],
+                              cast(float)center[1],
+                              cast(float)center[2]);
+    float mx, my;
+    assert(projectToWindow(pivot, vp, mx, my));
+    int x0 = cast(int)mx;
+    int y0 = cast(int)my;
+    int x1 = x0 + 80;
+    int y1 = y0;
+
+    string moveLog = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  x0, y0, x1, y1, 20);
+    playAndWait(moveLog);
+
+    double[3] d0;
+    auto p0 = vertexPos(0);
+    foreach (k; 0 .. 3) d0[k] = p0[k] - afterRotate[0][k];
+    double moved = sqrt(d0[0]*d0[0] + d0[1]*d0[1] + d0[2]*d0[2]);
+    assert(moved > 0.05, "post-rotate move did not move v0 enough");
+
+    foreach (vi; [1, 2]) {
+        auto p = vertexPos(vi);
+        foreach (k; 0 .. 3) {
+            double dk = p[k] - afterRotate[vi][k];
+            assert(fabs(dk - d0[k]) < 0.02,
+                "post-rotate move should translate every selected vertex by the same delta; "
+                ~ "v" ~ vi.to!string ~ " component " ~ k.to!string
+                ~ " delta=" ~ dk.to!string ~ " expected " ~ d0[k].to!string);
+        }
     }
 }
 

@@ -346,6 +346,35 @@ class CubicArrow : ShaftedArrow {
         glEnable(GL_DEPTH_TEST);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
     }
+
+    void drawHeadOnly(const ref Shader shader, const ref Viewport vp)
+    {
+        if (!visible) return;
+        Vec3 dir = end - start;
+        float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+        if (len < 1e-6f) return;
+        Vec3 fwd = (fixedDir.x != 0.0f || fixedDir.y != 0.0f || fixedDir.z != 0.0f)
+            ? fixedDir
+            : dir / len;
+        Vec3 right, up;
+        localFrame(fwd, right, up);
+
+        float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
+        Vec3  cubeCenter = end - fwd * cubeHalf;
+        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+
+        glUniform3f(shader.locColor, c.x, c.y, c.z);
+        glDisable(GL_DEPTH_TEST);
+
+        auto headModel = modelMatrix(right, up, fwd, Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
+        glBindVertexArray(headVao);
+        glDrawArrays(GL_TRIANGLES, 0, headVertCount);
+
+        glBindVertexArray(0);
+        glEnable(GL_DEPTH_TEST);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -585,7 +614,7 @@ class MoveHandler : Handler {
         center = pos;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    private void updateGeometry(const ref Viewport vp)
     {
         float size = gizmoSize(center, vp);
 
@@ -627,10 +656,31 @@ class MoveHandler : Handler {
         arrowX.setVisible(abs(dot(viewDir, axisX)) < HIDE_THRESHOLD);
         arrowY.setVisible(abs(dot(viewDir, axisY)) < HIDE_THRESHOLD);
         arrowZ.setVisible(abs(dot(viewDir, axisZ)) < HIDE_THRESHOLD);
+    }
 
+    override void draw(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
         circleXY.draw(shader, vp);
         circleYZ.draw(shader, vp);
         circleXZ.draw(shader, vp);
+        centerBox.draw(shader, vp);
+        arrowX.draw(shader, vp);
+        arrowY.draw(shader, vp);
+        arrowZ.draw(shader, vp);
+    }
+
+    void drawAxesOnly(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
+        arrowX.draw(shader, vp);
+        arrowY.draw(shader, vp);
+        arrowZ.draw(shader, vp);
+    }
+
+    void drawAxesAndCenter(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
         centerBox.draw(shader, vp);
         arrowX.draw(shader, vp);
         arrowY.draw(shader, vp);
@@ -1046,7 +1096,7 @@ class ScaleHandler : Handler {
         center = pos;
     }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    private void updateGeometry(const ref Viewport vp)
     {
         size = gizmoSize(center, vp);
 
@@ -1093,7 +1143,11 @@ class ScaleHandler : Handler {
         circleYZ.normal = axisX; circleYZ.radius = circR;
         circleXZ.center = center + axisX * cirOffset + axisZ * cirOffset;
         circleXZ.normal = axisY; circleXZ.radius = circR;
+    }
 
+    override void draw(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
         circleXY.draw(shader, vp);
         circleYZ.draw(shader, vp);
         circleXZ.draw(shader, vp);
@@ -1104,6 +1158,17 @@ class ScaleHandler : Handler {
         if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.draw(shader, vp);
         if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.draw(shader, vp);
         if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.draw(shader, vp);
+    }
+
+    void drawAxisBoxesOnly(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
+        arrowX.drawHeadOnly(shader, vp);
+        arrowY.drawHeadOnly(shader, vp);
+        arrowZ.drawHeadOnly(shader, vp);
+        if (activeDragAxis == 0 && scaleAccum.x != 0.0f) scaleArrowX.drawHeadOnly(shader, vp);
+        if (activeDragAxis == 1 && scaleAccum.y != 0.0f) scaleArrowY.drawHeadOnly(shader, vp);
+        if (activeDragAxis == 2 && scaleAccum.z != 0.0f) scaleArrowZ.drawHeadOnly(shader, vp);
     }
 }
 
