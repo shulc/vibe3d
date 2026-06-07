@@ -189,15 +189,18 @@ presets:
 
   # ----- xfrm.transform per-mode presets --------------------------
   # Mirror MODO's stock TransformMove / TransformRotate / TransformScale
-  # presets — one tool (xfrm.transform) with different
-  # T/R/S flag combos. MODO's `H` (haul) attr has no vibe3d analogue
-  # yet; omitted.
+  # presets — one tool (xfrm.transform) with different T/R/S flag combos
+  # and H selecting the handle family. `presentation` is vibe3d's explicit
+  # split between MODO's per-mode full handles and bare Transform's compact
+  # combined handles.
   - id: TransformMove
     base: xfrm.transform
     attrs:
       T: "true"
       R: "false"
       S: "false"
+      H: "0"
+      presentation: "full"
 
   - id: TransformRotate
     base: xfrm.transform
@@ -205,6 +208,8 @@ presets:
       T: "false"
       R: "true"
       S: "false"
+      H: "1"
+      presentation: "full"
 
   - id: TransformScale
     base: xfrm.transform
@@ -212,6 +217,8 @@ presets:
       T: "false"
       R: "false"
       S: "true"
+      H: "2"
+      presentation: "full"
 
   # Bare Transform: all three handler banks visible (MODO's
   # `Transform` preset with T=R=S=1). Documented limitation: each
@@ -224,4 +231,5 @@ presets:
       T: "true"
       R: "true"
       S: "true"
-
+      H: "0"
+      presentation: "compact"

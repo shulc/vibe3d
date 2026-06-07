@@ -27,6 +27,14 @@ void cmd(string s) {
         "cmd `" ~ s ~ "` failed: " ~ j.toString);
 }
 
+JSONValue queryCmd(string s) {
+    auto j = postJson("/api/command", s);
+    assert(j["status"].str == "ok",
+        "query `" ~ s ~ "` failed: " ~ j.toString);
+    assert("value" in j, "query `" ~ s ~ "` returned no value: " ~ j.toString);
+    return j["value"];
+}
+
 double[3][] dumpVerts() {
     double[3][] out_;
     foreach (v; getJson("/api/model")["vertices"].array) {
@@ -149,6 +157,39 @@ unittest { // TransformScale preset: T=0/R=0/S=1. Pure SY=2 around
         assert(approxEq(verts[vi][1], -0.5, 1e-4),
             "v" ~ vi.to!string ~ " on pivot plane stays at y=-0.5; got "
             ~ verts[vi][1].to!string);
+}
+
+unittest { // MODO-style transform presets publish both operation flags
+           // (T/R/S) and handle presentation metadata (H/presentation).
+    postJson("/api/reset", "");
+
+    cmd("tool.set Transform on");
+    assert(queryCmd("tool.attr Transform H ?").integer == 0);
+    assert(queryCmd("tool.attr Transform presentation ?").str == "compact");
+    assert(queryCmd("tool.attr Transform T ?").type == JSON_TYPE.TRUE);
+    assert(queryCmd("tool.attr Transform R ?").type == JSON_TYPE.TRUE);
+    assert(queryCmd("tool.attr Transform S ?").type == JSON_TYPE.TRUE);
+
+    cmd("tool.set TransformMove on");
+    assert(queryCmd("tool.attr TransformMove H ?").integer == 0);
+    assert(queryCmd("tool.attr TransformMove presentation ?").str == "full");
+    assert(queryCmd("tool.attr TransformMove T ?").type == JSON_TYPE.TRUE);
+    assert(queryCmd("tool.attr TransformMove R ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr TransformMove S ?").type == JSON_TYPE.FALSE);
+
+    cmd("tool.set TransformRotate on");
+    assert(queryCmd("tool.attr TransformRotate H ?").integer == 1);
+    assert(queryCmd("tool.attr TransformRotate presentation ?").str == "full");
+    assert(queryCmd("tool.attr TransformRotate T ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr TransformRotate R ?").type == JSON_TYPE.TRUE);
+    assert(queryCmd("tool.attr TransformRotate S ?").type == JSON_TYPE.FALSE);
+
+    cmd("tool.set TransformScale on");
+    assert(queryCmd("tool.attr TransformScale H ?").integer == 2);
+    assert(queryCmd("tool.attr TransformScale presentation ?").str == "full");
+    assert(queryCmd("tool.attr TransformScale T ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr TransformScale R ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr TransformScale S ?").type == JSON_TYPE.TRUE);
 }
 
 unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
