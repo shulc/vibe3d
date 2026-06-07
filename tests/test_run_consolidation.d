@@ -562,69 +562,237 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (D) FALLOFF-MID-RUN (Q5 / OBJ 6).
+// (D) FALLOFF-MID-RUN re-grade (re-cast for the in-session falloff re-fire).
 //
-// gesture -> falloff CONFIG change via /api/command (tool.pipe.attr, which is
-// CmdFlags.SideEffect / non-undoable -> records NOTHING, does NOT split the run,
-// does NOT mutate geometry at idle) -> second gesture in the SAME run (no
-// boundary) -> drop. The two gestures consolidate to ONE entry; the config
-// change between them neither added an entry nor moved geometry while idle.
+// gesture -> falloff CONFIG change via /api/command (tool.pipe.attr is
+// CmdFlags.SideEffect / non-undoable, so the CONFIG command itself records
+// NOTHING and does NOT split the run) -> but the tool now RE-GRADES the landed
+// gesture against the new weights at idle and bakes that as ONE tagged
+// in-session entry in the SAME run (contract A). The re-grade is a geometry
+// change (the falloff weighting differs), so v6 moves. inSessionCount becomes
+// 2 (gesture + the appended re-grade — REPLACE only collapses CONSECUTIVE
+// tweaks; the FIRST tweak appends, pinned). One in-session Ctrl+Z reverts ONLY
+// the re-grade back to the post-gesture geometry (contract C). A second gesture
+// continues the SAME run, and the drop consolidates the whole run to ONE entry
+// (contract D).
+//
+// This REVERSES the prior "falloff at idle is inert for a committed gizmo
+// gesture" finding — flipped atomically with the wrapper-Move re-fire site.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    selectV6();   // verified select; entry stays below the floor (see helper)
-
+    // NO selection -> whole mesh is the moving set; the radial falloff weights
+    // gate it. A radial falloff centered at v6 with a TIGHT radius moves v6
+    // fully (it sits at the center) and leaves the far corner v0 untouched;
+    // WIDENING the radius mid-run re-grades v0 (pulls it along) — the same
+    // geometry shape as the panel re-eval test, driven here via the GIZMO.
+    // The falloff stage is configured AFTER the tool activates (the pipe stage
+    // is set up on tool.set; configuring before it would be discarded).
     postJson("/api/script", "tool.set move");
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`);
+    cmd(`tool.pipe.attr falloff size "1,1,1"`);   // tight: v6 in, v0 out
+    settle();
     long floor = undoCount();
 
     moveGestureOnHandle(floor + 1, +1.0);
     assert(undoCount() == floor + 1, "gesture 1 records one in-session entry");
-    auto v6AfterG1 = vert(6);
+    assert(inSessionCount() == 1, "one gesture entry tagged inSession");
+    auto v0AfterG1 = vert(0);   // far corner: unmoved by the tight-radius gesture
 
     // Falloff CONFIG change between gestures: tool.pipe.attr is SideEffect /
     // non-undoable, so it records NO foreign entry (the layer-A guard is never
-    // tripped -> the run is NOT split) and, at idle, mutates only the
-    // FalloffStage packet — geometry must NOT move on the config change alone.
-    // (`start`/`end` are vec3 attrs and need quoted "x,y,z" values; a bare
-    // scalar is rejected by the argstring parser.)
-    long undoBeforeCfg = undoCount();
-    cmd("tool.pipe.attr falloff type linear");
-    cmd(`tool.pipe.attr falloff start "0.1,0,0"`);
-    cmd(`tool.pipe.attr falloff end "2,0,0"`);
+    // tripped -> the run is NOT split). At idle the tool RE-GRADES the landed
+    // gesture against the WIDENED radius and bakes ONE in-session re-grade entry.
+    cmd(`tool.pipe.attr falloff size "4,4,4"`);   // WIDEN -> v0 re-grades
     settle();
-    assert(undoCount() == undoBeforeCfg,
-        "a falloff CONFIG change (SideEffect/non-undoable) adds NO history entry "
-        ~ "and does NOT split the run; before=" ~ undoBeforeCfg.to!string
-        ~ " now=" ~ undoCount().to!string);
-    assert(inSessionCount() == 1,
-        "the single open-run gesture entry is still the only inSession entry "
-        ~ "after the config change; got " ~ inSessionCount().to!string);
-    assert(vertNear(vert(6), v6AfterG1),
-        "the falloff config change must NOT mutate geometry at idle (Phase-2 "
-        ~ "reachability finding); v6 expected (" ~ v6AfterG1[0].to!string ~ ","
-        ~ v6AfterG1[1].to!string ~ "," ~ v6AfterG1[2].to!string ~ ") got ("
-        ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
-        ~ vert(6)[2].to!string ~ ")");
 
-    // Second gesture in the SAME run (no boundary between the gestures).
-    moveGestureOnHandle(floor + 2, +1.0, 50.0);
+    // The re-grade entry is appended (FIRST tweak appends), so inSession == 2.
+    assert(inSessionCount() == 2,
+        "the falloff re-grade appends ONE tagged in-session entry to the open "
+        ~ "run (gesture + re-grade); got " ~ inSessionCount().to!string);
     assert(undoCount() == floor + 2,
-        "gesture 2 records a second in-session entry in the SAME run (the config "
-        ~ "change did not split it); floor=" ~ floor.to!string ~ " now="
+        "the CONFIG command itself records nothing; only the re-grade added an "
+        ~ "entry — the run now holds the gesture + the appended re-grade "
+        ~ "(floor+2 on the undo stack); floor=" ~ floor.to!string ~ " now="
+        ~ undoCount().to!string);
+    // The re-grade MOVED geometry (the widened weighting pulls v0 along).
+    auto v0Regraded = vert(0);
+    assert(!vertNear(v0Regraded, v0AfterG1),
+        "the falloff re-grade MUST mutate geometry at idle (contract A): v0 "
+        ~ "post-gesture (" ~ v0AfterG1[0].to!string ~ "," ~ v0AfterG1[1].to!string
+        ~ "," ~ v0AfterG1[2].to!string ~ ") re-graded (" ~ v0Regraded[0].to!string
+        ~ "," ~ v0Regraded[1].to!string ~ "," ~ v0Regraded[2].to!string ~ ")");
+
+    // Contract C: one IN-SESSION Ctrl+Z (keystroke, tool LIVE — NEVER /api/undo
+    // here) reverts ONLY the re-grade, back to the post-gesture geometry.
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(vertNear(vert(0), v0AfterG1),
+        "in-session Ctrl+Z reverts the re-grade to the post-gesture geometry "
+        ~ "(contract C); v0 expected (" ~ v0AfterG1[0].to!string ~ ","
+        ~ v0AfterG1[1].to!string ~ "," ~ v0AfterG1[2].to!string ~ ") got ("
+        ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
+        ~ vert(0)[2].to!string ~ ")");
+    // The in-session Ctrl+Z reverted geometry, which the wrapper's mutation
+    // guard sees on the next idle frame and treats as a run boundary: the run
+    // consolidates, leaving the lone surviving gesture as ONE untagged entry
+    // (the n==1 path strips the tag). So undoCount is floor+1 and the gesture is
+    // no longer tagged inSession — the run has closed around the surviving
+    // gesture. (This mirrors the in-session-Ctrl+Z behaviour of the sibling
+    // contract test: a pop that re-baselines the tool closes the run.)
+    assert(undoCount() == floor + 1,
+        "after the in-session Ctrl+Z the re-grade is popped and the run holds "
+        ~ "the lone gesture (floor+1); floor=" ~ floor.to!string ~ " now="
         ~ undoCount().to!string);
 
-    // Drop consolidates the two gestures (config change between them folds in
-    // harmlessly) into ONE entry.
+    // Drop is a no-op consolidate (the run already closed). The geometry is the
+    // post-gesture state, captured as ONE surviving entry (contract D shape: a
+    // gesture + a popped re-grade resolve to ONE entry).
     postJson("/api/script", "tool.set move off");
     settle();
     assert(undoCount() == floor + 1,
-        "drop consolidates the two-gesture run (falloff config mid-run) to ONE "
-        ~ "entry; floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+        "drop leaves ONE entry (the surviving gesture; the re-grade was popped) "
+        ~ "(D); floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     postJson("/api/undo", "");
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated run to the cube");
+    cmd("tool.pipe.attr falloff type none");   // clean falloff for following tests
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (D2) consecutive-tweaks REPLACE + drop-D.
+//
+// drag -> falloff tweak (re-grade + ONE tagged in-session entry, A) -> assert
+// re-grade + entry count -> a CONSECUTIVE tweak REPLACES the prior re-grade in
+// place (two tweaks = ONE re-grade entry, run length stable) -> drop
+// (consolidate gesture + the merged re-grade to ONE, D) -> one post-drop Ctrl+Z
+// reverts the WHOLE run to the cube, including the WIDENED-support vert (the
+// once-per-run anchor covers the widened support).
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    // Whole-mesh moving set, radial falloff centered at v6; the witness for the
+    // re-grade is the far corner v0 (pulled along as the radius widens).
+    postJson("/api/script", "tool.set move");
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`);
+    cmd(`tool.pipe.attr falloff size "1,1,1"`);
+    settle();
+    long floor = undoCount();
+
+    moveGestureOnHandle(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "gesture records one in-session entry");
+    assert(inSessionCount() == 1);
+    auto v0Gesture = vert(0);   // far corner, unmoved by the tight gesture
+
+    // First tweak: widen -> re-grade, appends ONE entry.
+    cmd(`tool.pipe.attr falloff size "3,3,3"`);
+    settle();
+    assert(inSessionCount() == 2, "first tweak APPENDS a re-grade entry");
+    auto v0Tweak1 = vert(0);
+    assert(!vertNear(v0Tweak1, v0Gesture), "first tweak re-grades geometry");
+
+    // CONSECUTIVE tweak: widen further -> the re-grade REPLACES the prior one in
+    // place (REPLACE semantics) — inSession stays 2, not 3.
+    cmd(`tool.pipe.attr falloff size "6,6,6"`);
+    settle();
+    assert(inSessionCount() == 2,
+        "consecutive tweak REPLACES the prior re-grade (run length stable); got "
+        ~ inSessionCount().to!string);
+    auto v0Tweak2 = vert(0);
+    assert(!vertNear(v0Tweak2, v0Tweak1),
+        "the second (consecutive) tweak re-grades again");
+
+    // Drop -> consolidate the gesture + the single (REPLACE-merged) re-grade to
+    // ONE entry (contract D), with NO in-session Ctrl+Z between the tweaks and
+    // the drop (an in-session Ctrl+Z is a run boundary that closes the run — see
+    // case D / the sibling contract test; contract C is covered there).
+    postJson("/api/script", "tool.set move off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "drop consolidates gesture + the merged re-grade to ONE entry (D); floor="
+        ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+
+    // One post-drop Ctrl+Z reverts the WHOLE consolidated run to the cube — the
+    // merged entry's before[] anchors to the gesture run-start, and the re-grade
+    // entry's before[] anchored to the post-gesture snapshot (covering the
+    // WIDENED support), so the widened verts (v0) revert cleanly too (OBJ-3).
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one post-drop Ctrl+Z reverts the consolidated run to the cube (v6)");
+    assertVertex(0, -0.5, -0.5, -0.5,
+        "the widened-support vert v0 also reverts cleanly to the cube (OBJ-3 "
+        ~ "anchor covers the widened support)");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (D3) OBJ-1 pop-then-tweak — a popped gesture is NEVER resurrected.
+//
+// drag -> in-session Ctrl+Z (pops the gesture; geometry back to the cube) ->
+// falloff tweak -> assert NO geometry change (still the cube) and NO new entry
+// (the staleness stamp no longer matches, the re-fire site is inert) -> redo
+// still restores the gesture.
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    // Whole-mesh moving set, radial falloff centered at v6 (size 1). The gesture
+    // moves v6 fully; v0 stays put. After the in-session pop both are back at
+    // the cube, and the tweak must NOT re-grade anything.
+    postJson("/api/script", "tool.set move");
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`);
+    cmd(`tool.pipe.attr falloff size "1,1,1"`);
+    settle();
+    long floor = undoCount();
+
+    auto v6Gesture = moveGestureOnHandle(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "gesture records one in-session entry");
+    assert(!vertNear(v6Gesture, [0.5, 0.5, 0.5]), "gesture moved v6 off the cube");
+
+    // In-session Ctrl+Z pops the gesture -> geometry back to the cube.
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "in-session Ctrl+Z popped the gesture -> v6 back to the cube");
+    long undoAfterPop = undoCount();
+    long tagAfterPop  = inSessionCount();
+
+    // Falloff tweak NOW: the staleness stamp no longer matches the bumped mesh
+    // version, so the re-fire site is inert — NO geometry change, NO new entry.
+    cmd(`tool.pipe.attr falloff size "4,4,4"`);
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "a falloff tweak after a popped gesture must NOT resurrect it (OBJ-1); "
+        ~ "v6 stays at the cube");
+    assert(undoCount() == undoAfterPop,
+        "the inert tweak adds NO history entry; was=" ~ undoAfterPop.to!string
+        ~ " now=" ~ undoCount().to!string);
+    assert(inSessionCount() == tagAfterPop,
+        "the inert tweak adds NO tagged entry; was=" ~ tagAfterPop.to!string
+        ~ " now=" ~ inSessionCount().to!string);
+
+    // Redo still restores the gesture (the popped gesture survives on the redo
+    // stack — the inert tweak never cleared it).
+    playAndWait(ctrlShiftZ(60.0));
+    settle();
+    assert(vertNear(vert(6), v6Gesture),
+        "redo restores the popped gesture (it was never destroyed by the inert "
+        ~ "tweak); v6 expected (" ~ v6Gesture[0].to!string ~ ","
+        ~ v6Gesture[1].to!string ~ "," ~ v6Gesture[2].to!string ~ ")");
+
+    postJson("/api/script", "tool.set move off");
+    settle();
+    cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
 
