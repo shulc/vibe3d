@@ -423,16 +423,13 @@ public:
                     applyTRSForBank(DragBank.Move, dragBaseline);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
 
-                    // Index set = the full vertex range; the helper diffs against
-                    // the anchor and keeps only moved verts. (The falloff support
-                    // can be the whole mesh, so a full-range pass is the safe
-                    // superset.)
-                    size_t[] allIdx;
-                    allIdx.length = mesh.vertices.length;
-                    foreach (i; 0 .. allIdx.length) allIdx[i] = i;
-
+                    // Index set = the full vertex range; pass an EMPTY idx so the
+                    // helper iterates the whole range directly (S1 economy — no
+                    // materialised identity array). The helper diffs against the
+                    // anchor and keeps only moved verts. (The falloff support can
+                    // be the whole mesh, so a full-range pass is the safe superset.)
                     recordFalloffRefire("Falloff", anchor, after,
-                                        allIdx, DragBank.Move);
+                                        null, DragBank.Move);
                     needsGpuUpdate = true;
                 }
             }
@@ -1477,6 +1474,18 @@ public:
             // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
             // now pops one gesture rather than cancelling the whole open run.
             rotateSub.commitGesture();
+
+            // In-session falloff re-grade — staleness stamp + window reset
+            // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
+            // R/S gesture after a Move tweak (or a prior R/S tweak) would leave a
+            // STALE refireAnchor + stamp: a subsequent falloff tweak would either
+            // anchor before[] to the wrong (pre-this-gesture) geometry or fire
+            // off a mismatched version. Stamp the version this rotate gesture left
+            // behind so a later falloff tweak re-grades THIS gesture only while
+            // the version still matches; clear refireAnchor so the tweak opens a
+            // FRESH re-fire window anchored to this gesture's post-recompute state.
+            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            refireAnchor.length = 0;
         }
 
         // Scale single-source — wrapper owns the final upload + gpuMatrix
@@ -1496,6 +1505,15 @@ public:
             // hooks + routes in-session), the next handle grab reopens a fresh
             // scaleSub session, and the run consolidates at the boundary / drop.
             scaleSub.commitGesture();
+
+            // In-session falloff re-grade — staleness stamp + window reset
+            // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
+            // rationale: stamp the version this scale gesture left behind and
+            // clear refireAnchor so a later falloff tweak re-grades THIS gesture
+            // from a fresh window, and an R/S gesture after a Move/R/S tweak never
+            // inherits a stale anchor.
+            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            refireAnchor.length = 0;
         }
 
         // moveSub + all rotate rings + scale are wrapper-owned. Anything else
@@ -1997,6 +2015,48 @@ public:
     // re-apply entry underneath that in-flight gesture must not happen. Public
     // so the sub-tools (siblings) can query it cross-instance.
     public bool dragInFlight() const { return activeDrag !is null; }
+
+    // Falloff in-session re-fire — PUBLIC R/S seam. The Rotate / Scale falloff
+    // re-grade sites live on the sub-tools, but the run, history, currentRunBank,
+    // and the recordFalloffRefire helper all live on the wrapper. These thin
+    // public forwarders let the sub-tools (siblings, reached via wrapperRef cast,
+    // same pattern as dragInFlight) run the §4.3 ARM-2 gate + record without
+    // naming the wrapper-private DragBank enum or the refire state fields.
+    //
+    // The bank gate (currentRunBank == this bank, OBJ-2 single-winner) and the
+    // staleness gate (mesh.mutationVersion == lastAppliedGestureMutationVersion,
+    // OBJ-1) are both bundled here so the site reads a single boolean. The bank
+    // is fixed by the typed entry point (refireRotateEligible / refireScaleEligible)
+    // so the sub-tool never references DragBank.
+    public bool refireRotateEligible() const {
+        return history !is null
+            && history.runOpen()
+            && currentRunBank == DragBank.Rotate
+            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+    }
+
+    public bool refireScaleEligible() const {
+        return history !is null
+            && history.runOpen()
+            && currentRunBank == DragBank.Scale
+            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+    }
+
+    // Record forwarders: the sub-tool dup'd the pre-recompute (post-gesture)
+    // geometry into `anchor`, ran its absolute recompute (mutating mesh.vertices),
+    // and dup'd the result into `after`. These route into the shared helper with
+    // the correct bank tag. The helper re-checks the staleness gate as
+    // defense-in-depth (§4.1 step 0) and re-stamps lastAppliedGestureMutationVersion
+    // after the record (a no-op today; defensive).
+    public void recordFalloffRefireRotate(string label, Vec3[] anchor,
+                                          Vec3[] after, size_t[] idx) {
+        recordFalloffRefire(label, anchor, after, idx, DragBank.Rotate);
+    }
+
+    public void recordFalloffRefireScale(string label, Vec3[] anchor,
+                                         Vec3[] after, size_t[] idx) {
+        recordFalloffRefire(label, anchor, after, idx, DragBank.Scale);
+    }
 
     // Phase 2 — cross-slot relocate boundary. In a composed T+R+S preset
     // (Transform / xfrm.transform) two sessions can be open at once: the Move
@@ -2876,13 +2936,25 @@ private:
         // Step 3 — build the entry. before[] = refireAnchor (post-gesture state)
         // for the moved indices; after[] = the re-graded positions. Drop any
         // index that did not actually move vs the anchor (no spurious payload).
+        //
+        // S1 economy: when `idx` is null/empty the index set is the FULL vertex
+        // range (the falloff support can be the whole mesh, so a full pass is the
+        // safe superset) — iterate `after` POSITIONALLY (after[vid] == the
+        // re-graded position of vid, since every site dups the whole
+        // mesh.vertices into `after`). This drops the per-re-grade identity
+        // `size_t[] allIdx` allocation the sites previously materialised. When
+        // `idx` is supplied (a scoped subset) it is honoured, with `after[k]`
+        // positionally aligned to `idx[k]`.
+        immutable bool fullRange = (idx.length == 0);
+        immutable size_t n = fullRange ? after.length : idx.length;
         size_t[] movedIdx;
         Vec3[]   before;
         Vec3[]   movedAfter;
-        movedIdx.reserve(idx.length);
-        before.reserve(idx.length);
-        movedAfter.reserve(idx.length);
-        foreach (k, vid; idx) {
+        movedIdx.reserve(n);
+        before.reserve(n);
+        movedAfter.reserve(n);
+        foreach (k; 0 .. n) {
+            immutable size_t vid = fullRange ? k : idx[k];
             if (vid >= refireAnchor.length || vid >= mesh.vertices.length)
                 continue;
             Vec3 b = refireAnchor[vid];
