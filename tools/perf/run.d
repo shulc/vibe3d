@@ -994,6 +994,14 @@ void printTable(CaseResult[] results) {
              ok, skip, err, results.length);
 }
 
+// JSON-safe number: a bare `%.3f` renders NaN as `nan`, which is INVALID
+// JSON and breaks loadBaseline (std.json throws). Command cases have no
+// pipe stages, so their pipe median is legitimately NaN — emit `null`.
+string jsonNum(double v) {
+    import std.math : isNaN;
+    return v.isNaN ? "null" : format("%.3f", v);
+}
+
 string replicate(string s, size_t n) {
     auto a = appender!string();
     foreach (_; 0 .. n) a.put(s);
@@ -1023,9 +1031,9 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
         a.put(format(`      "note": "%s",` ~ "\n", r.note));
         a.put(format(`      "status": "%s",` ~ "\n", r.status.to!string));
         if (r.status == CaseStatus.OK) {
-            a.put(format(`      "kernelMedianUs": %.3f,` ~ "\n", r.kernelMedianUs));
-            a.put(format(`      "kernelP95Us": %.3f,` ~ "\n", r.kernelP95Us));
-            a.put(format(`      "pipeMedianUs": %.3f,` ~ "\n", r.pipeMedianUs));
+            a.put(format(`      "kernelMedianUs": %s,` ~ "\n", jsonNum(r.kernelMedianUs)));
+            a.put(format(`      "kernelP95Us": %s,` ~ "\n", jsonNum(r.kernelP95Us)));
+            a.put(format(`      "pipeMedianUs": %s,` ~ "\n", jsonNum(r.pipeMedianUs)));
             a.put(format(`      "dominantStage": "%s",` ~ "\n", r.dominantStage));
             a.put(format(`      "vertsTouched": %d,` ~ "\n", r.vertsTouched));
             a.put(format(`      "kernelInternalP95Ns": %d,` ~ "\n",
@@ -1106,9 +1114,9 @@ void writeBaselineJson(string path, RunHeader h, CaseResult[] results) {
         first = false;
         a.put("    {\n");
         a.put(format(`      "name": "%s",` ~ "\n", r.name));
-        a.put(format(`      "kernelMedianUs": %.3f,` ~ "\n", r.kernelMedianUs));
-        a.put(format(`      "kernelP95Us": %.3f,` ~ "\n", r.kernelP95Us));
-        a.put(format(`      "pipeMedianUs": %.3f,` ~ "\n", r.pipeMedianUs));
+        a.put(format(`      "kernelMedianUs": %s,` ~ "\n", jsonNum(r.kernelMedianUs)));
+        a.put(format(`      "kernelP95Us": %s,` ~ "\n", jsonNum(r.kernelP95Us)));
+        a.put(format(`      "pipeMedianUs": %s,` ~ "\n", jsonNum(r.pipeMedianUs)));
         a.put(format(`      "dominantStage": "%s",` ~ "\n", r.dominantStage));
         a.put(format(`      "vertsTouched": %d` ~ "\n", r.vertsTouched));
         a.put("    }");
@@ -1140,7 +1148,9 @@ Baseline loadBaseline(string path) {
         bc.name           = cv["name"].str;
         bc.kernelMedianUs = cv["kernelMedianUs"].floating;
         bc.kernelP95Us    = cv["kernelP95Us"].floating;
-        bc.pipeMedianUs   = cv["pipeMedianUs"].floating;
+        // `null` = NaN round-trip (command cases have no pipe stages).
+        bc.pipeMedianUs   = (cv["pipeMedianUs"].type == JSONType.null_)
+                            ? double.nan : cv["pipeMedianUs"].floating;
         bc.dominantStage  = cv["dominantStage"].str;
         bc.vertsTouched   = cv["vertsTouched"].integer;
         b.byName[bc.name] = bc;
