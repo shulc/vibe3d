@@ -2535,12 +2535,15 @@ void main(string[] args) {
         });
         httpServer.setHistoryProvider(() {
             // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
-            //                   "inSession":bool,"runId":N}, ...], "redo":[..] }
+            //                   "inSession":bool,"refire":bool,"runId":N}, ...],
+            //         "redo":[..] }
             // "ui" is true when the entry is UI-undo class (selection / edit-mode
             // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
             // "inSession" is true when the entry is one step of an open tool RUN
             // (a per-gesture in-session entry, tagged HistoryFlags.InSession);
-            // "runId" groups the gestures of one run. Both surface the
+            // "refire" is true when an in-session entry is a falloff RE-GRADE of
+            // the run's last gesture (HistoryFlags.Refire — always implies
+            // inSession); "runId" groups the gestures of one run. All surface the
             // record+consolidate structure for a future command-history panel.
             import std.json : JSONValue;
             import command_history : HistoryFlags;
@@ -2553,6 +2556,7 @@ void main(string[] args) {
                 obj["flags"]     = JSONValue(cast(long)e.flags);
                 obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
                 obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
+                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
                 undoArr ~= obj;
             }
@@ -2565,6 +2569,7 @@ void main(string[] args) {
                 obj["flags"]     = JSONValue(cast(long)e.flags);
                 obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
                 obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
+                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
                 redoArr ~= obj;
             }
@@ -4350,28 +4355,33 @@ void main(string[] args) {
                 auto matchingForms = g_formsPanelEnabled
                                    ? formsForTool(activeToolId) : null;
                 if (matchingForms.length) {
+                    // Pass activeToolId so FormsPanel rebinds a tool-namespace
+                    // write (the form line carries the canonical family id
+                    // `xfrm.transform`) to whichever XfrmTransformTool activation
+                    // id is live — move / rotate / scale / a transform preset —
+                    // satisfying ToolAttrCommand's active-id guard.
                     foreach (ref fm; matchingForms)
                         formsPanel.draw(fm, activeTool,
                                         commandHandlerDelegate,
-                                        formsInteractiveDispatch);
+                                        formsInteractiveDispatch,
+                                        activeToolId);
 
-                    // The transform form owns the translate value rows (Position
-                    // TX/TY/TZ) and the T/R/S checkboxes, but Rotate/Scale value
-                    // editing has no form rows yet (deferred Phase 5b) and lives
-                    // ONLY in the legacy rotateSub/scaleSub sliders. So still call
-                    // drawProperties() AFTER the form, with the translate section
-                    // suppressed — no double-live-widget on headlessTranslate, R/S
-                    // sliders still editable. For any other formed tool the latch
-                    // is harmless (it only gates the transform tool's translate
-                    // sliders). The schema panel is NOT drawn: the transform tool
-                    // sets renderParamsAsPanel()==false (PropertyPanel.draw
-                    // early-returns), and formed tools render values via the form.
+                    // The transform form now owns ALL the TRS value rows —
+                    // Position (TX/TY/TZ), Rotate (RX/RY/RZ) and Scale (SX/SY/SZ),
+                    // all driven through the reEvaluate() seam. The legacy
+                    // moveSub/rotateSub/scaleSub sliders would duplicate every row
+                    // (and fight the form's live widgets), so suppress them while
+                    // the form rendered. For any other formed tool the latch is
+                    // harmless (it only gates the transform tool's TRS sliders); we
+                    // still call drawProperties() so a formed tool's custom non-row
+                    // UI (if any) renders. The schema panel is NOT drawn: the
+                    // transform tool sets renderParamsAsPanel()==false
+                    // (PropertyPanel.draw early-returns), and formed tools render
+                    // values via the form.
                     import tools.xfrm_transform : XfrmTransformTool;
                     if (auto xf = cast(XfrmTransformTool) activeTool) {
-                        xf.suppressTranslateProperties = true;
-                        scope(exit) xf.suppressTranslateProperties = false;
-                    // Phase 5b: R/S sliders below still commit their own sessions
-                    // (separate undo entries) until reEvaluate covers R/S.
+                        xf.suppressTRSProperties = true;
+                        scope(exit) xf.suppressTRSProperties = false;
                         xf.drawProperties();
                     }
                 } else {

@@ -1,6 +1,12 @@
 // Off-gizmo click commits the run in relocate-DISALLOWED action-center modes
 // (Phase 5 of doc/transform_per_gesture_commit_plan.md).
 //
+// Phase-3 audit (2026-06-07): P5 boundary count (+2) + the in-session step
+// reverting only the post-click run (pin stays at the picked anchor) confirmed
+// on-contract; the consolidate gate moved editIsOpen() -> history.runOpen() in
+// the Phase-1 addendum (A3). No assert changed in Phase 3, re-run to confirm
+// green.
+//
 // Phases 1a/1b/2 added the relocate-commit boundary for the modes where an
 // off-gizmo click actually RELOCATES the gizmo (Auto/None/Screen). The
 // reference splits the undo run on an off-gizmo click EVEN in the pinned

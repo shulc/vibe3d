@@ -90,14 +90,29 @@ class FormsPanel {
     }
     private Scratch[string] scratch_;
 
+    // Live active tool id for the frame, set by draw(). A `tool.attr` (Namespace
+    // .tool) control line carries the CANONICAL family tool id `xfrm.transform`
+    // (what validateForms resolves against), but the SAME readable form is shown
+    // for every XfrmTransformTool activation id (move / rotate / scale / the
+    // transform presets — config/forms/transform.yaml). ToolAttrCommand guards
+    // that its tool id equals the live activeToolId, so a write must be rebound
+    // to the active id or it throws "active tool is 'move', expected
+    // 'xfrm.transform'". writeValue rebinds the tool-namespace target to this id.
+    // Empty (the default / stage-form callers) => use the line's literal id.
+    private string activeToolId_;
+
     /// Render `form` for the active provider. `provider` supplies the live
     /// params() snapshot (read once at the top of this call to bound re-query
     /// cost — the plan's per-frame-cost mitigation). `dispatch` fires cmd /
     /// choice rows; `idispatch` fires control value writes marked interactive.
+    /// `activeToolId` rebinds tool-namespace writes to the live tool (see
+    /// activeToolId_); pass "" for stage forms (their lines name the real stage).
     void draw(ref Form form, ParamProvider provider,
-              DispatchFn dispatch, InteractiveDispatchFn idispatch)
+              DispatchFn dispatch, InteractiveDispatchFn idispatch,
+              string activeToolId = "")
     {
         if (provider is null) return;
+        activeToolId_ = activeToolId;
 
         // ---- one params() snapshot per frame -----------------------------
         // The resolver reads from this name->Param map; falloff.params()
@@ -149,6 +164,37 @@ class FormsPanel {
     }
 
     // -----------------------------------------------------------------------
+    // Left-label layout. A value row reads as:  [ Label ........ | widget---- ]
+    // The label sits in a fixed LEFT column (~0.35 of the content width); the
+    // widget that follows fills the remaining width via SetNextItemWidth(-eps).
+    // This replaces ImGui's default label-RIGHT-of-widget placement, which drew
+    // a default-width box first and pushed the label off the panel edge.
+    //
+    // Call this immediately before the value widget. When `label` is empty
+    // (showLabel: false) it still reserves the column so unlabeled rows in a
+    // group stay aligned with labelled ones, and still fills the widget width.
+    // -----------------------------------------------------------------------
+    private void beginLabeledRow(string label)
+    {
+        const float avail = ImGui.GetContentRegionAvail().x;
+        // Left column = 35% of the available content width, clamped to a sane
+        // minimum so a very narrow panel still shows a few glyphs.
+        float col = avail * 0.35f;
+        if (col < 36.0f) col = 36.0f;
+
+        ImGui.AlignTextToFramePadding();   // baseline-align label with the widget
+        if (label.length)
+            ImGui.TextUnformatted(label);
+        else
+            ImGui.TextUnformatted(" ");    // keep the row height + column
+
+        ImGui.SameLine(col);
+        // Fill the rest of the row. -float.min_normal is the ImGui idiom for
+        // "stretch to the right edge of the content region".
+        ImGui.SetNextItemWidth(-float.min_normal);
+    }
+
+    // -----------------------------------------------------------------------
     // control rows — value field/toggle bound to `tool.attr ... ?`.
     // -----------------------------------------------------------------------
 
@@ -172,30 +218,41 @@ class FormsPanel {
         if (disabled) ImGui.BeginDisabled();
         scope(exit) if (disabled) ImGui.EndDisabled();
 
-        string label = row.showLabel
-                     ? (row.label.length ? row.label : rc.param.label)
-                     : "##" ~ cid;        // hidden label, keep a unique id
+        // Visible label text (left column) vs. the hidden `##id` label fed to
+        // the widget. Checkbox / button keep ImGui's native right-of-widget
+        // label; value widgets (float / int / combo / text) put the label in a
+        // fixed LEFT column and let the widget fill the rest of the row width —
+        // so X/Y/Z labels never clip off the panel edge and the boxes don't
+        // overflow (the readability fix, doc/forms_engine_plan.md user feedback).
+        string visible = row.showLabel
+                       ? (row.label.length ? row.label : rc.param.label)
+                       : "";
+        string hidden  = "##" ~ cid;   // unique id, no visible glyphs
 
         final switch (rc.widget) {
             case WidgetKind.checkbox:
-                drawCheckbox(row, rc, label, idispatch);
+                drawCheckbox(row, rc, row.showLabel ? visible : hidden, idispatch);
                 break;
             case WidgetKind.button:
-                drawBoolButton(row, rc, label, idispatch);
+                drawBoolButton(row, rc, row.showLabel ? visible : hidden, idispatch);
                 break;
             case WidgetKind.dragFloat:
             case WidgetKind.sliderFloat:
-                drawFloatControl(row, rc, cid, label, idispatch);
+                beginLabeledRow(visible);
+                drawFloatControl(row, rc, cid, hidden, idispatch);
                 break;
             case WidgetKind.dragInt:
             case WidgetKind.sliderInt:
-                drawIntControl(row, rc, cid, label, idispatch);
+                beginLabeledRow(visible);
+                drawIntControl(row, rc, cid, hidden, idispatch);
                 break;
             case WidgetKind.combo:
-                drawCombo(row, rc, label, idispatch);
+                beginLabeledRow(visible);
+                drawCombo(row, rc, hidden, idispatch);
                 break;
             case WidgetKind.text:
-                drawText(row, rc, label, idispatch);
+                beginLabeledRow(visible);
+                drawText(row, rc, hidden, idispatch);
                 break;
             case WidgetKind.vec3:
                 // A Vec3 attr expands into three drags; transform binds X/Y/Z
@@ -203,7 +260,8 @@ class FormsPanel {
                 // the v1 adopter. Render the live components read-only-ish via
                 // the float helper would need three sub-ids; defer — v1 forms
                 // never bind a single Vec3 attr. Show value as text fallback.
-                ImGui.LabelText(label, "%s", paramToJson(rc.param).toString());
+                ImGui.LabelText(row.showLabel ? visible : hidden, "%s",
+                                paramToJson(rc.param).toString());
                 break;
             case WidgetKind.none:
                 break;
@@ -361,10 +419,33 @@ class FormsPanel {
     // A naive rect-after-widgets would paint over them; channel-split avoids it.
     // -----------------------------------------------------------------------
 
+    // True iff at least one member of `group` resolves to a renderable widget
+    // this frame. A control row whose bound attr is absent from the active
+    // params() resolves found=false and draws nothing (drawControl early-returns);
+    // a fully-absent group would otherwise leave an empty framed box with just
+    // the group label. Non-control members (cmd / choice / divider / label)
+    // always draw, so they count as visible.
+    private bool groupHasVisibleMember(ref Row group, Param[] snapshot)
+    {
+        foreach (ref child; group.rows) {
+            if (child.kind == RowKind.control) {
+                if (resolveControl(child, snapshot).found) return true;
+            } else {
+                return true;   // cmd / choice / divider / label always render
+            }
+        }
+        return false;
+    }
+
     private void drawGroup(ref Row row, int rowIdx, Param[] snapshot,
                            ParamProvider provider,
                            DispatchFn dispatch, InteractiveDispatchFn idispatch)
     {
+        // Skip the framed box entirely when every member is runtime-hidden —
+        // otherwise the channel-split below paints an empty rect + the group
+        // label with no controls inside it.
+        if (!groupHasVisibleMember(row, snapshot)) return;
+
         ImGui.PushID(format("group#%d#%s", rowIdx, row.label));
         scope(exit) ImGui.PopID();
 
@@ -393,13 +474,16 @@ class FormsPanel {
 
         ImGui.EndGroup();
 
-        // Background channel: a highlighted rect + border behind the cluster.
+        // Background channel: fill with the SAME color as the Tool Properties
+        // window background (style WindowBg, fetched live so any theme change
+        // tracks automatically) — a contrasting fill behind the labels read
+        // poorly. The thin border alone delimits the cluster.
         ImVec2 rmin = ImGui.GetItemRectMin();
         ImVec2 rmax = ImGui.GetItemRectMax();
         rmin.x -= pad; rmin.y -= pad;
         rmax.x += pad; rmax.y += pad;
         dl.ChannelsSetCurrent(0);        // 0 = background
-        dl.AddRectFilled(rmin, rmax, IM_COL32(58, 58, 66, 255), 3.0f);
+        dl.AddRectFilled(rmin, rmax, ImGui.GetColorU32(ImGuiCol.WindowBg), 3.0f);
         dl.AddRect(rmin, rmax, IM_COL32(96, 96, 110, 255), 3.0f);
         dl.ChannelsMerge();
 
@@ -420,6 +504,20 @@ class FormsPanel {
     {
         if (idispatch is null) return;
         auto b = parseBinding(row.command);
+        // Rebind a tool-namespace write to the LIVE active tool id. The form
+        // line carries the canonical family id `xfrm.transform`, but the same
+        // form is shown for every XfrmTransformTool activation id; the write
+        // must name whichever id is active or ToolAttrCommand's active-id guard
+        // throws. Stage forms (Namespace.stage) and callers that pass no active
+        // id keep the literal target. positionals[0] is the target id (the
+        // tokenized form parseBinding produced); substituteQuery rebuilds the
+        // line from positionals, so rewriting that slot is sufficient.
+        if (b.namespace == Namespace.tool && activeToolId_.length
+            && b.positionals.length >= 1)
+        {
+            b.positionals[0] = activeToolId_;
+            b.targetId       = activeToolId_;
+        }
         // Reconstruct the command line with the value in the `?` slot, then
         // parse it back through argstring so tokenization matches the wire.
         string line = substituteQuery(b, value);

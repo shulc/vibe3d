@@ -80,6 +80,20 @@ enum HistoryFlags : uint {
                          // per-gesture steps of an open run. Navigation-neutral:
                          // an in-session entry is a normal undoable stack entry
                          // until consolidate() rewrites the run.
+    Refire     = 1 << 8, // Entry is an in-session RE-GRADE (a falloff re-fire of
+                         // the open run's last gesture), recorded by
+                         // replaceInSessionTail(). ALWAYS accompanies InSession.
+                         // It is the trustworthy "the tail is a re-grade" signal
+                         // the REPLACE-vs-APPEND decision keys on: a fresh
+                         // re-grade REPLACES the prior re-grade tail (so N
+                         // consecutive tweaks stay ONE undo step) ONLY when the
+                         // tail itself is a Refire of the same run — a plain
+                         // gesture entry (InSession but NOT Refire) is never
+                         // dropped, so a second gesture's geometry contribution
+                         // is never lost (the multi-gesture-run REPLACE hazard).
+                         // The contiguous-run gather (consolidate) keys on
+                         // InSession+runId, so a Refire entry merges normally;
+                         // the n==1 tag-strip clears BOTH bits.
 }
 
 struct HistoryEntry {
@@ -496,6 +510,65 @@ final class CommandHistory {
         }
     }
 
+    /// Record `cmd` as an in-session RE-GRADE (a falloff re-fire) of the open
+    /// run, tagged InSession + Refire + runId. This is the ONE primitive the
+    /// re-fire path routes through (the caller no longer makes the
+    /// REPLACE-vs-APPEND decision itself — this primitive owns it, keyed on the
+    /// trustworthy Refire bit). It keeps N consecutive re-grades at ONE undo
+    /// step while never dropping a plain gesture entry. It is the narrow
+    /// stack-mutation seam a tool routes through instead of reaching into the
+    /// stack itself — command_history stays the single owner of stack mutation
+    /// (mirrors the consolidate() ownership boundary).
+    ///
+    /// REPLACE-vs-APPEND, keyed on the Refire bit (NOT on whether ANY re-grade
+    /// happened this run):
+    ///   - If the undo-stack tail is (InSession && Refire && runId == runId) —
+    ///     i.e. the tail is THIS run's prior RE-GRADE entry — DROP it (length
+    ///     -= 1, NOT onto the redo stack: a superseded re-grade is not a
+    ///     navigable step), then append the new one. The net stack length is
+    ///     unchanged: N consecutive tweaks stay ONE undo step.
+    ///   - Otherwise (empty stack; or the tail is a plain GESTURE entry
+    ///     (InSession but NOT Refire); or it belongs to a different run; or it is
+    ///     untagged/foreign) it DEGRADES TO APPEND — recordInSession then sets
+    ///     the Refire bit. This is the load-bearing safety property: when a
+    ///     SECOND gesture lands after a first tweak (stack tail = the gesture,
+    ///     not a re-grade), a following tweak APPENDS rather than dropping the
+    ///     gesture, so the gesture's geometry contribution is never lost from
+    ///     the consolidated drop entry.
+    ///
+    /// Both arms tag the recorded entry with the Refire bit (so the NEXT
+    /// re-grade sees a Refire tail and replaces it). recordInSession clears the
+    /// redo stack (N1), re-sets _runOpen, and fires onRecord as usual.
+    ///
+    /// The caller owns the BEFORE[] of `cmd` (it anchors before[] to the
+    /// once-per-re-fire-window post-gesture snapshot, NOT to the dropped entry's
+    /// before[], so a widening support reverts cleanly). This primitive only
+    /// owns the stack rewrite + the Refire tag.
+    ///
+    /// Main-thread only (all recorders are; recordInSession asserts the same).
+    void replaceInSessionTail(Command cmd, ulong runId) {
+        if (cmd is null) return;
+        // Drop the matching in-session tail ONLY when it is this run's prior
+        // RE-GRADE entry (InSession && Refire && runId). A plain gesture entry
+        // (InSession but NOT Refire) is NEVER dropped — that is the fix for the
+        // multi-gesture-run hazard (g1 -> tweak1 -> g2 -> tweak2 must NOT erase
+        // g2). A non-matching tail degrades to a plain append below.
+        if (undoStack.length > 0) {
+            auto tail = undoStack[$ - 1];
+            if ((tail.flags & HistoryFlags.InSession)
+             && (tail.flags & HistoryFlags.Refire)
+             && tail.runId == runId) {
+                undoStack.length -= 1;
+            }
+        }
+        // Append the replacement as a fresh tagged in-session entry, then stamp
+        // the Refire bit so the NEXT re-grade recognises it as a re-grade tail.
+        // recordInSession clears the redo stack (N1) and re-sets _runOpen.
+        recordInSession(cmd, runId);
+        if (undoStack.length > 0)
+            undoStack[$ - 1].flags |= HistoryFlags.Refire;
+    }
+
     /// Consolidate one in-session RUN: collapse its CONTIGUOUS tail of entries
     /// tagged (InSession + runId) into ONE merged entry, in place at the
     /// position of the FIRST gathered entry. Clears _runOpen.
@@ -573,7 +646,8 @@ final class CommandHistory {
         // sees exactly the OPEN run's tagged steps. Navigation is unaffected
         // (the entry's command + before/after are untouched).
         if (n == 1) {
-            undoStack[start].flags &= ~cast(uint)HistoryFlags.InSession;
+            undoStack[start].flags &=
+                ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
             undoStack[start].runId  = 0;
             return;
         }
