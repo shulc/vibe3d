@@ -2535,12 +2535,15 @@ void main(string[] args) {
         });
         httpServer.setHistoryProvider(() {
             // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
-            //                   "inSession":bool,"runId":N}, ...], "redo":[..] }
+            //                   "inSession":bool,"refire":bool,"runId":N}, ...],
+            //         "redo":[..] }
             // "ui" is true when the entry is UI-undo class (selection / edit-mode
             // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
             // "inSession" is true when the entry is one step of an open tool RUN
             // (a per-gesture in-session entry, tagged HistoryFlags.InSession);
-            // "runId" groups the gestures of one run. Both surface the
+            // "refire" is true when an in-session entry is a falloff RE-GRADE of
+            // the run's last gesture (HistoryFlags.Refire — always implies
+            // inSession); "runId" groups the gestures of one run. All surface the
             // record+consolidate structure for a future command-history panel.
             import std.json : JSONValue;
             import command_history : HistoryFlags;
@@ -2553,6 +2556,7 @@ void main(string[] args) {
                 obj["flags"]     = JSONValue(cast(long)e.flags);
                 obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
                 obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
+                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
                 undoArr ~= obj;
             }
@@ -2565,6 +2569,7 @@ void main(string[] args) {
                 obj["flags"]     = JSONValue(cast(long)e.flags);
                 obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
                 obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
+                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
                 redoArr ~= obj;
             }

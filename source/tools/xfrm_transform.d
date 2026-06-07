@@ -1440,6 +1440,16 @@ public:
             // the stamp), so the re-grade site then refuses — a popped gesture is
             // never resurrected.
             lastAppliedGestureMutationVersion = mesh.mutationVersion;
+
+            // Open a FRESH re-fire window for this gesture. A run can hold more
+            // than one gesture (g1 -> tweak -> g2 -> tweak), and a tweak after g2
+            // must anchor before[] to the post-g2 geometry, NOT the stale post-g1
+            // snapshot. Clearing here makes each gesture start a fresh window:
+            // the next re-grade re-captures the anchor live. (The drop's
+            // consolidate still reverts every touched vert to the run-start state
+            // via mergeRun's first-touch before[], so the per-gesture window only
+            // governs the SINGLE in-session Ctrl+Z granularity, exactly C.)
+            refireAnchor.length = 0;
         }
 
         // Rotate drag (principal axes OR view-ring) — wrapper owns the final
@@ -2775,14 +2785,20 @@ private:
     //   selection/mutation guard).
     ulong lastAppliedGestureMutationVersion = ulong.max;
 
-    // refireAnchor — once-per-run POST-GESTURE full-mesh snapshot. Captured ONCE
-    //   at the FIRST re-grade of a run (before the recompute mutates the mesh)
-    //   and reused as the before[] source for EVERY re-grade of that run. Using
-    //   the full post-gesture geometry (not just the falloff support) makes a
-    //   WIDENING scrub revert cleanly: a re-grade that pulls in verts outside the
-    //   prior re-grade's support still has a recorded baseline for them. Empty =
-    //   none captured. Cleared at every run boundary, at activate / deactivate /
-    //   resetTransientState, and on a staleness miss (the run's anchor is then
+    // refireAnchor — once-per-RE-FIRE-WINDOW POST-GESTURE full-mesh snapshot.
+    //   Captured ONCE at the FIRST re-grade after a gesture (before the recompute
+    //   mutates the mesh) and reused as the before[] source for EVERY re-grade of
+    //   that window. A re-fire WINDOW is per-gesture, NOT per-run: a run can hold
+    //   more than one gesture (g1 -> tweak -> g2 -> tweak), and each gesture
+    //   mouse-up commit CLEARS this anchor so the next re-grade re-captures the
+    //   NEW post-gesture geometry — a tweak after g2 must anchor before[] to
+    //   post-g2, not the stale post-g1 snapshot (the multi-gesture anchor
+    //   hazard). Using the full post-gesture geometry (not just the falloff
+    //   support) makes a WIDENING scrub revert cleanly: a re-grade that pulls in
+    //   verts outside the prior re-grade's support still has a recorded baseline
+    //   for them. Empty = none captured. Cleared at every gesture mouse-up
+    //   commit, at every run boundary, at activate / deactivate /
+    //   resetTransientState, and on a staleness miss (the window's anchor is then
     //   invalid; a later forward gesture re-captures fresh).
     Vec3[] refireAnchor;
 
@@ -2809,15 +2825,23 @@ private:
     // The SITE has already: gated on its own bank + the staleness stamp, dup'd
     // the pre-recompute geometry into `anchor`, run the recompute (mutating
     // mesh.vertices), and dup'd the result into `after`. This helper owns the
-    // record: it anchors before[] to the once-per-run POST-GESTURE snapshot and
-    // routes through recordInSession (first re-grade APPENDS) or
-    // replaceInSessionTail (consecutive re-grades REPLACE) so N consecutive
-    // tweaks stay ONE undo step.
+    // record: it anchors before[] to the POST-GESTURE snapshot of the current
+    // re-fire WINDOW and ALWAYS routes through replaceInSessionTail, which owns
+    // the REPLACE-vs-APPEND decision (keyed on the Refire bit): a re-grade whose
+    // tail is the prior re-grade REPLACES it (consecutive tweaks stay ONE undo
+    // step); a re-grade whose tail is a plain GESTURE entry APPENDS (preserving
+    // that gesture). The helper itself no longer chooses — keying on a stale
+    // "did any re-grade happen this run" signal dropped a second gesture's entry
+    // (the C1 hazard).
     //
     // `anchor` is the site's pre-recompute snapshot (post-gesture geometry). On
-    // the run's FIRST re-grade the helper STORES it as refireAnchor; on later
+    // the WINDOW's FIRST re-grade the helper STORES it as refireAnchor; on later
     // re-grades refireAnchor already holds the post-gesture state and `anchor` is
-    // ignored. before[] is sourced from refireAnchor for ALL re-grades, so a
+    // ignored. A new gesture CLEARS refireAnchor at its mouse-up commit, opening
+    // a fresh window anchored to the new post-gesture geometry — so a tweak after
+    // a SECOND gesture anchors before[] to post-gesture-2, not the stale
+    // post-gesture-1 (the multi-gesture anchor hazard). before[] is sourced from
+    // refireAnchor for ALL re-grades of the window, so a
     // widening scrub (verts pulled in that the prior re-grade never touched) has
     // a complete baseline and reverts cleanly on one Ctrl+Z (contract C).
     //
@@ -2839,17 +2863,13 @@ private:
         if (history is null) return;
         if (!history.runOpen()) return;
 
-        // Whether a prior re-grade already recorded this run — the REPLACE-vs-
-        // APPEND signal (step 4). It is exactly "refireAnchor already captured":
-        // the FIRST re-grade has an empty anchor (APPEND), every subsequent one
-        // has a non-empty anchor (REPLACE the prior re-grade tail). This is
-        // robust where a label compare is not — the MeshVertexEdit label embeds
-        // the moved-vert count, which differs between re-grades of different
-        // support, so it cannot identify "is the tail a re-grade".
-        bool priorRefireExists = refireAnchor.length != 0;
-
-        // Step 2 — anchor capture (once per run). The FIRST re-grade stores the
-        // site's pre-recompute snapshot; later re-grades reuse it unchanged.
+        // Step 2 — anchor capture (once per RE-FIRE WINDOW). The FIRST re-grade
+        // after a gesture stores that gesture's post-recompute snapshot; later
+        // CONSECUTIVE re-grades reuse it unchanged. A new gesture CLEARS
+        // refireAnchor at its mouse-up commit (see the per-bank commit sites),
+        // opening a fresh window anchored to the NEW post-gesture geometry — so
+        // a tweak after a second gesture anchors before[] to post-gesture-2, not
+        // the stale post-gesture-1 (the multi-gesture-run anchor hazard).
         if (refireAnchor.length == 0)
             refireAnchor = anchor.dup;
 
@@ -2883,16 +2903,17 @@ private:
         auto cmd = vertexEditFactory();
         cmd.setEdit(uidx, before, movedAfter, label);
 
-        // Step 4 — record. The FIRST re-grade of the run APPENDS (the tail is the
-        // landed gesture, never dropped). Every CONSECUTIVE re-grade REPLACES the
-        // prior re-grade tail so N tweaks stay ONE undo step (bounded run length
-        // under a falloff scrub). priorRefireExists is the signal; the tail at a
-        // consecutive re-grade IS this run's prior re-grade entry, which
-        // replaceInSessionTail drops (it re-checks InSession && runId).
-        if (priorRefireExists)
-            history.replaceInSessionTail(cmd, history.currentRunId);
-        else
-            history.recordInSession(cmd, history.currentRunId);
+        // Step 4 — record. ALWAYS route through replaceInSessionTail: it is the
+        // single re-fire primitive and owns the REPLACE-vs-APPEND decision,
+        // keyed on the trustworthy Refire bit. It DROPS the tail only when the
+        // tail is THIS run's prior RE-GRADE (InSession && Refire && runId) — so
+        // a CONSECUTIVE tweak replaces the prior re-grade (N tweaks = ONE undo
+        // step), while a tweak whose tail is a plain GESTURE entry (the run's
+        // first tweak, OR the first tweak after a SECOND gesture) APPENDS,
+        // preserving the gesture's geometry contribution. This is the fix for
+        // the multi-gesture-run hazard: keying on "is the tail a refire" instead
+        // of "did any refire happen this run" stops a tweak2 from erasing g2.
+        history.replaceInSessionTail(cmd, history.currentRunId);
 
         // Step 5 — defensive re-stamps (no-ops today: the re-grade does NOT bump
         // mutationVersion — applyTRS is version-silent and recordInSession never

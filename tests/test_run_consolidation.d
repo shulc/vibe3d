@@ -101,6 +101,15 @@ long inSessionCount() {
     return n;
 }
 
+// Count of in-session RE-GRADE (Refire) entries on the undo stack — the falloff
+// re-fires of the open run's gestures. Reads the /api/history `refire` field.
+long refireCount() {
+    long n = 0;
+    foreach (e; getJson("/api/history")["undo"].array)
+        if (("refire" in e.object) !is null && e["refire"].boolean) ++n;
+    return n;
+}
+
 // /api/undo/status canUndo truthfulness (Q8): an in-session entry IS a real
 // undo-stack entry, so canUndo() must be true while a run is open.
 bool canUndo() {
@@ -642,6 +651,15 @@ unittest {
     // no longer tagged inSession — the run has closed around the surviving
     // gesture. (This mirrors the in-session-Ctrl+Z behaviour of the sibling
     // contract test: a pop that re-baselines the tool closes the run.)
+    //
+    // W1 (mechanics deviation): contract C's REDO arm for a re-grade WITHIN an
+    // open run is untestable in this architecture — the in-session Ctrl+Z that
+    // pops a re-grade closes the run (the mutation-guard boundary above), so
+    // there is no open-run state in which to redo the popped re-grade. The redo
+    // of a re-grade is therefore exercised only POST-DROP (the consolidated
+    // entry's redo, covered by the post-drop Ctrl+Z / redo cases). The in-session
+    // pop here is verified to revert geometry (contract C, undo arm); its redo
+    // arm rides the closed-run consolidated entry, not an open-run re-grade.
     assert(undoCount() == floor + 1,
         "after the in-session Ctrl+Z the re-grade is popped and the run holds "
         ~ "the lone gesture (floor+1); floor=" ~ floor.to!string ~ " now="
@@ -792,6 +810,109 @@ unittest {
 
     postJson("/api/script", "tool.set move off");
     settle();
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (D4) C1 MULTI-GESTURE-RUN re-grade — the REPLACE-vs-APPEND key must be "is the
+// TAIL a re-grade" (the Refire bit), NOT "did any re-grade happen this run".
+//
+// Sequence in ONE Move run:
+//   g1 -> tweak1 (APPENDS a re-grade; tail was g1, a plain gesture)
+//      -> g2 (SECOND gesture, SAME bank/run; a plain gesture, NOT a refire)
+//      -> tweak2 (its tail is g2 -> must APPEND, never DROP g2)
+// Stack = [g1, tweak1, g2, tweak2] = FOUR tagged in-session entries.
+//   -> tweak3 (its tail is tweak2, a refire -> REPLACES) -> still FOUR.
+//
+// The C1 bug (priorRefireExists keyed on "any refire this run") made tweak2 call
+// replaceInSessionTail, which dropped g2 — g2's geometry vanished from the
+// consolidated drop entry (undo-stack corruption). On e3d4bce this test sees 3
+// tagged entries (g2 erased); with the Refire-bit fix it sees 4, AND g2's
+// contribution survives the post-drop single-entry revert.
+//
+// Per-gesture anchor: tweak2 must re-grade against the POST-G2 geometry, not the
+// stale post-g1 snapshot. refireAnchor is cleared at every gesture mouse-up
+// commit, so each gesture opens a fresh re-fire window.
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    // Whole-mesh moving set; radial falloff at v6. v0 (far corner) is the
+    // re-grade witness — it is pulled along as the radius widens.
+    postJson("/api/script", "tool.set move");
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`);
+    cmd(`tool.pipe.attr falloff size "1,1,1"`);   // tight: v6 in, v0 out
+    settle();
+    long floor = undoCount();
+
+    // g1.
+    moveGestureOnHandle(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "g1 records one in-session entry");
+    assert(inSessionCount() == 1, "g1 tagged inSession");
+    auto v0AfterG1 = vert(0);
+
+    // tweak1: widen -> re-grade. Tail is g1 (a plain gesture) -> APPEND.
+    cmd(`tool.pipe.attr falloff size "4,4,4"`);
+    settle();
+    assert(inSessionCount() == 2, "tweak1 APPENDS a re-grade (gesture + tweak1)");
+    assert(refireCount() == 1, "exactly ONE refire entry after tweak1");
+    auto v0AfterTweak1 = vert(0);
+    assert(!vertNear(v0AfterTweak1, v0AfterG1), "tweak1 re-graded v0");
+
+    // g2: a SECOND Move gesture in the SAME run/bank. It is a plain gesture (NOT
+    // a refire). This is the entry the C1 bug erased.
+    moveGestureOnHandle(floor + 3, +1.0);
+    assert(undoCount() == floor + 3,
+        "after g2 the run holds g1 + tweak1 + g2 (floor+3); floor=" ~ floor.to!string
+        ~ " now=" ~ undoCount().to!string);
+    assert(inSessionCount() == 3, "g1 + tweak1 + g2 = 3 tagged inSession");
+    assert(refireCount() == 1, "g2 is a plain gesture, not a refire (still 1)");
+    auto v6AfterG2 = vert(6);
+    auto v0AfterG2 = vert(0);
+
+    // tweak2: re-grade after g2. Its tail is g2 (NOT a refire), so it must
+    // APPEND -> g2 is NEVER dropped. Stack = g1 + tweak1 + g2 + tweak2 = FOUR.
+    // (On e3d4bce this REPLACES and drops g2 -> inSessionCount == 3.) The
+    // re-grade is anchored to the POST-G2 geometry (fresh window).
+    cmd(`tool.pipe.attr falloff size "8,8,8"`);
+    settle();
+    assert(inSessionCount() == 4,
+        "tweak2's tail is g2 (a plain gesture) so it APPENDS — g2 is NOT erased "
+        ~ "(C1): expected 4 tagged entries, got " ~ inSessionCount().to!string);
+    assert(refireCount() == 2, "two refire entries (tweak1, tweak2)");
+    auto v0AfterTweak2 = vert(0);
+    assert(!vertNear(v0AfterTweak2, v0AfterG2), "tweak2 re-graded v0 further");
+
+    // tweak3: a CONSECUTIVE re-grade. Its tail is tweak2 (a refire), so it
+    // REPLACES -> stack stays FOUR.
+    cmd(`tool.pipe.attr falloff size "12,12,12"`);
+    settle();
+    assert(inSessionCount() == 4,
+        "tweak3's tail is tweak2 (a refire) so it REPLACES — stack stays 4; got "
+        ~ inSessionCount().to!string);
+    assert(refireCount() == 2, "still two refire entries (tweak3 replaced tweak2)");
+
+    // Drop: the whole run consolidates to ONE entry (D).
+    postJson("/api/script", "tool.set move off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "drop consolidates the four-entry run to ONE (D); floor=" ~ floor.to!string
+        ~ " now=" ~ undoCount().to!string);
+
+    // One post-drop Ctrl+Z reverts the WHOLE run to the cube. The witness that
+    // g2's geometry contribution is present: v6 (moved by BOTH g1 and g2) reverts
+    // exactly to the cube. If g2 had been erased (C1), the consolidated entry
+    // would carry g2's after WITHOUT its run-start before, and v6 would not land
+    // on the cube.
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one post-drop Ctrl+Z reverts the consolidated run to the cube (v6) — "
+        ~ "g2's contribution was present in the drop entry (C1)");
+    assertVertex(0, -0.5, -0.5, -0.5,
+        "the widened-support vert v0 also reverts cleanly to the cube");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
