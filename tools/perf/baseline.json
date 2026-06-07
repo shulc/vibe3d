@@ -380,7 +380,7 @@
       "name": "delete/vertices/whole",
       "kernelMedianUs": 4480.700,
       "kernelP95Us": 4564.900,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -388,7 +388,7 @@
       "name": "delete/vertices/half",
       "kernelMedianUs": 1482544.700,
       "kernelP95Us": 1483266.900,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -396,7 +396,7 @@
       "name": "delete/edges/whole",
       "kernelMedianUs": 48753.400,
       "kernelP95Us": 49314.400,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -404,7 +404,7 @@
       "name": "delete/polygons/whole",
       "kernelMedianUs": 3464.800,
       "kernelP95Us": 3494.800,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -412,7 +412,7 @@
       "name": "delete/polygons/half",
       "kernelMedianUs": 1512094.900,
       "kernelP95Us": 1512756.300,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -420,7 +420,7 @@
       "name": "remove/vertices/whole",
       "kernelMedianUs": 3780.800,
       "kernelP95Us": 3798.000,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -428,7 +428,7 @@
       "name": "remove/vertices/half",
       "kernelMedianUs": 1692758.400,
       "kernelP95Us": 1808772.200,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -436,7 +436,7 @@
       "name": "remove/edges/whole",
       "kernelMedianUs": 50170.200,
       "kernelP95Us": 51041.400,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -444,7 +444,7 @@
       "name": "remove/polygons/whole",
       "kernelMedianUs": 3637.100,
       "kernelP95Us": 3873.200,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     },
@@ -452,7 +452,7 @@
       "name": "remove/polygons/half",
       "kernelMedianUs": 1615434.600,
       "kernelP95Us": 1623220.500,
-      "pipeMedianUs": nan,
+      "pipeMedianUs": null,
       "dominantStage": "commandApply",
       "vertsTouched": 0
     }
