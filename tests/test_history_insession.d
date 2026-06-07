@@ -29,6 +29,7 @@ import view : View;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import editmode : EditMode;
 import math : Vec3;
+import std.conv : to;
 
 void main() {}
 
@@ -275,4 +276,163 @@ unittest {
     // Earliest SURVIVING gesture is k=10 (before y=10); latest is k=59 (after y=60).
     assert(veq(bef[0], Vec3(0, 10, 0)), "before anchors to earliest survivor");
     assert(veq(aft[0], Vec3(0, 60, 0)), "after = latest gesture");
+}
+
+// ===========================================================================
+// 7. replaceInSessionTail (in-session re-grade primitive) — Refire-keyed
+//    REPLACE-vs-APPEND. It is the SINGLE re-fire primitive: it tags every
+//    recorded entry with the Refire bit, and DROPS the tail ONLY when the tail
+//    is THIS run's prior RE-GRADE (InSession && Refire && runId). The FIRST
+//    re-grade (tail = a plain GESTURE, InSession but NOT Refire) APPENDS; a
+//    CONSECUTIVE re-grade (tail = the prior Refire entry) REPLACES. N consecutive
+//    tweaks stay ONE undo step; the stack always clears redo (N1). The caller
+//    owns before[] (anchored to the post-gesture snapshot).
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+    ulong run = h.nextRun();
+
+    // A landed GESTURE (plain in-session entry, NOT a refire).
+    h.recordInSession(s.makeEdit(
+        [0u], [Vec3(0,0,0)], [Vec3(0,1,0)], "Move"), run);
+    assert(h.undoEntries().length == 1, "gesture recorded");
+    assert(h.runOpen());
+
+    // FIRST re-grade: the tail is the GESTURE (no Refire bit), so this APPENDS,
+    // giving 2 entries; the new entry IS tagged Refire. before[] anchors to the
+    // POST-GESTURE state (0,1,0).
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,2,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 2,
+        "first re-grade APPENDS (tail is a plain gesture, not a refire)");
+    auto firstRegrade = h.undoEntries()[1];
+    assert((firstRegrade.flags & HistoryFlags.InSession)
+        && (firstRegrade.flags & HistoryFlags.Refire),
+        "the re-grade entry carries both InSession AND Refire");
+
+    // CONSECUTIVE re-grade: the tail IS this run's prior RE-GRADE (Refire set),
+    // so this DROPS it and records the new one — the stack length stays 2. The
+    // new entry's before[] is again anchored to the post-gesture state (0,1,0),
+    // NOT to the dropped entry's before[]; the CALLER owns that anchoring.
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,3,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 2,
+        "consecutive re-grade REPLACES in place (length stable)");
+    assert(h.runOpen());
+    assert(!h.canRedo(), "replaceInSessionTail clears redo (N1)");
+
+    auto tail = mveAt(h, 1);
+    assert(tail !is null, "tail is the replacement vertex edit");
+    assert((h.undoEntries()[1].flags & HistoryFlags.Refire),
+        "the replacement entry is still tagged Refire");
+    auto bef = tail.editBefore();
+    auto aft = tail.editAfter();
+    assert(veq(bef[0], Vec3(0,1,0)), "tail before = post-gesture anchor (0,1,0)");
+    assert(veq(aft[0], Vec3(0,3,0)), "tail after = latest re-grade (0,3,0)");
+
+    // Consolidate: the gesture + the single re-grade tail collapse to ONE entry.
+    // before[] = run-start (0,0,0); after[] = latest re-grade (0,3,0).
+    h.consolidate(run);
+    assert(!h.runOpen(), "consolidate clears runOpen");
+    assert(h.undoEntries().length == 1, "drop = ONE consolidated entry");
+    auto merged = mveAt(h, 0);
+    assert(veq(merged.editBefore()[0], Vec3(0,0,0)),
+        "consolidated before = gesture run-start");
+    assert(veq(merged.editAfter()[0], Vec3(0,3,0)),
+        "consolidated after = latest re-grade");
+}
+
+// ===========================================================================
+// 8. replaceInSessionTail on a NON-matching tail degrades to append.
+//    A tail belonging to a different run (or an untagged/foreign entry) must
+//    NOT be dropped — the primitive only drops a SAME-run in-session REFIRE
+//    tail.
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+
+    // Run A: one in-session entry, then CONSOLIDATE so it is no longer tagged.
+    ulong runA = h.nextRun();
+    h.recordInSession(s.makeEdit([0u], [Vec3(0,0,0)], [Vec3(0,1,0)], "Move"), runA);
+    h.consolidate(runA);   // strips the InSession (+ Refire) tag (n==1)
+    assert(h.undoEntries().length == 1);
+
+    // Run B opens; a replace for run B must NOT drop run A's (now untagged)
+    // surviving entry — the tail is not (InSession && Refire && runId==runB), so
+    // it appends.
+    ulong runB = h.nextRun();
+    h.replaceInSessionTail(s.makeEdit([1u], [Vec3(1,0,0)], [Vec3(1,1,0)], "Falloff"), runB);
+    assert(h.undoEntries().length == 2,
+        "replace with non-matching tail appends (does not drop run A)");
+    // Entry 0 is run A's untagged survivor; entry 1 is run B's new tagged entry.
+    auto e0 = h.undoEntries()[0];
+    assert(!(e0.flags & HistoryFlags.InSession),
+        "run A entry stays untagged + intact");
+}
+
+// ===========================================================================
+// 9. The C1 multi-gesture-run hazard, at the primitive level: a SECOND gesture
+//    in the same run must NOT be dropped by a following re-grade. The key is
+//    keyed on the Refire bit ("is the TAIL a re-grade"), NOT on "did any
+//    re-grade happen this run". Sequence: g1 -> tweak1 (appends, Refire) -> g2
+//    (plain gesture, NO Refire) -> tweak2. tweak2's tail is g2 (no Refire), so
+//    tweak2 must APPEND — never drop g2. Stack: [g1, tweak1, g2, tweak2] = 4.
+//    Then tweak3 (tail = tweak2, Refire) REPLACES -> still 4. g2's after[] must
+//    survive into the consolidated drop entry.
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+    ulong run = h.nextRun();
+
+    // g1: vert 0 (0,0,0) -> (0,1,0).
+    h.recordInSession(s.makeEdit([0u], [Vec3(0,0,0)], [Vec3(0,1,0)], "Move"), run);
+    // tweak1: re-grade after g1, anchored to post-g1 (0,1,0) -> (0,1,5).
+    h.replaceInSessionTail(s.makeEdit([0u], [Vec3(0,1,0)], [Vec3(0,1,5)], "Falloff"), run);
+    assert(h.undoEntries().length == 2, "g1 + tweak1 = 2");
+    assert((h.undoEntries()[1].flags & HistoryFlags.Refire), "tweak1 is a refire");
+
+    // g2: a SECOND gesture in the SAME run — vert 1 NEW (1,0,0) -> (1,9,0). It is
+    // a plain in-session entry (NO Refire). This is the entry the C1 bug erased.
+    h.recordInSession(s.makeEdit([1u], [Vec3(1,0,0)], [Vec3(1,9,0)], "Move"), run);
+    assert(h.undoEntries().length == 3, "g1 + tweak1 + g2 = 3");
+    assert(!(h.undoEntries()[2].flags & HistoryFlags.Refire),
+        "g2 is a plain gesture, NOT a refire");
+
+    // tweak2: re-grade after g2. The tail is g2 (NO Refire), so it must APPEND —
+    // NEVER drop g2. before[] anchored to post-g2 for vert 1: (1,9,0) -> (1,9,7).
+    h.replaceInSessionTail(s.makeEdit([1u], [Vec3(1,9,0)], [Vec3(1,9,7)], "Falloff"), run);
+    assert(h.undoEntries().length == 4,
+        "tweak2 APPENDS (its tail g2 is not a refire) -> g2 NOT erased; expected 4 "
+        ~ "got " ~ h.undoEntries().length.to!string);
+
+    // tweak3: a CONSECUTIVE re-grade. The tail is tweak2 (Refire), so it REPLACES
+    // -> stack stays 4.
+    h.replaceInSessionTail(s.makeEdit([1u], [Vec3(1,9,0)], [Vec3(1,9,8)], "Falloff"), run);
+    assert(h.undoEntries().length == 4,
+        "tweak3 REPLACES tweak2 (tail is a refire) -> stack stays 4; got "
+        ~ h.undoEntries().length.to!string);
+
+    // Drop: consolidate to ONE entry. g2's contribution (vert 1) MUST be present:
+    // before[1] = g2 run-start (1,0,0) (first-touch), after[1] = latest (1,9,8).
+    h.consolidate(run);
+    assert(h.undoEntries().length == 1, "drop = ONE consolidated entry");
+    auto merged = mveAt(h, 0);
+    auto idx = merged.editIndices();
+    // Union of {0} and {1}.
+    assert(idx.length == 2 && idx[0] == 0 && idx[1] == 1,
+        "consolidated union covers BOTH g1's vert 0 and g2's vert 1");
+    auto bef = merged.editBefore();
+    auto aft = merged.editAfter();
+    // vert 0: g1 run-start (0,0,0) -> latest tweak1 (0,1,5).
+    assert(veq(bef[0], Vec3(0,0,0)) && veq(aft[0], Vec3(0,1,5)),
+        "vert 0 spans g1 run-start -> tweak1");
+    // vert 1: g2 run-start (1,0,0) -> latest tweak3 (1,9,8). This is the C1
+    // witness — g2's geometry contribution survived into the drop entry.
+    assert(veq(bef[1], Vec3(1,0,0)),
+        "vert 1 before = g2 run-start (1,0,0) — g2 was NOT erased (C1)");
+    assert(veq(aft[1], Vec3(1,9,8)),
+        "vert 1 after = latest re-grade (1,9,8)");
 }

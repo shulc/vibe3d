@@ -280,6 +280,9 @@ public:
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
         gesturePinStartKnown      = false;
+        // In-session falloff re-grade state — no live gesture, no anchor.
+        lastAppliedGestureMutationVersion = ulong.max;
+        refireAnchor.length               = 0;
     }
 
     override void deactivate() {
@@ -306,6 +309,10 @@ public:
         if (flagR) rotateSub.setRecordViaInSession(false);
         if (flagS) scaleSub.setRecordViaInSession(false);
         currentRunBank       = DragBank.None;
+        // Tool drop: no live gesture, no re-grade anchor carries to the next
+        // activation (resetTransientState also clears these on (re)activate).
+        lastAppliedGestureMutationVersion = ulong.max;
+        refireAnchor.length               = 0;
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
@@ -351,6 +358,11 @@ public:
                     history.consolidate(history.currentRunId);
                     history.nextRun();
                     currentRunBank = DragBank.None;
+                    // Run boundary: invalidate the re-grade anchor + staleness
+                    // stamp so a falloff change after a selection/mutation
+                    // boundary cannot re-grade the just-closed run.
+                    lastAppliedGestureMutationVersion = ulong.max;
+                    refireAnchor.length               = 0;
                 }
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
@@ -370,17 +382,56 @@ public:
         // distinct from `mesh.vertices`). `dragBaseline` was
         // captured at the most recent mouse-down and matches
         // `mesh.vertices.length`.
-        if (editIsOpen() && activeDrag is null
+        //
+        // Two-arm branch (R3/R4):
+        //  - ARM 1 (panel session, editIsOpen() true): the OLD in-place
+        //    coalesce. A panel session (driven by tool.attr at idle) is its own
+        //    coalescing world — the re-apply folds into the session's single
+        //    drop commit, records nothing. UNCHANGED behaviour.
+        //  - ARM 2 (committed gizmo gesture, editIsOpen() false but the run is
+        //    open with a landed Move gesture): the NEW record path. The re-grade
+        //    is baked as a tagged in-session entry in the current run so the
+        //    in-session Ctrl+Z contract holds.
+        if (activeDrag is null
             && dragBaseline.length == mesh.vertices.length
             && (headlessTranslate.x != 0
              || headlessTranslate.y != 0
              || headlessTranslate.z != 0)) {
-            FalloffPacket live = currentFalloff(vts);
-            if (!falloffPacketsEqual(live, dragFalloff)) {
-                dragFalloff = live;
-                vertexCacheDirty = true;
-                applyTRSForBank(DragBank.Move, dragBaseline);
-                needsGpuUpdate = true;
+            if (editIsOpen()) {
+                // ARM 1 — panel session: old in-place coalesce, no record.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    dragFalloff = live;
+                    vertexCacheDirty = true;
+                    applyTRSForBank(DragBank.Move, dragBaseline);
+                    needsGpuUpdate = true;
+                }
+            } else if (history !is null
+                    && history.runOpen()
+                    && currentRunBank == DragBank.Move           // OBJ-2 single-winner
+                    && mesh.mutationVersion == lastAppliedGestureMutationVersion) {
+                // ARM 2 — committed gizmo gesture: re-grade + record.
+                // Staleness gate (OBJ-1) checked at the SITE before the recompute
+                // mutates the mesh; the helper re-checks as defense-in-depth.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    // Capture the pre-recompute (post-gesture) geometry LIVE for
+                    // the once-per-run anchor (OBJ-3 W1: live, never frozen).
+                    Vec3[] anchor = mesh.vertices.dup;
+                    dragFalloff = live;
+                    vertexCacheDirty = true;
+                    applyTRSForBank(DragBank.Move, dragBaseline);   // mutates mesh.vertices
+                    Vec3[] after = mesh.vertices.dup;
+
+                    // Index set = the full vertex range; pass an EMPTY idx so the
+                    // helper iterates the whole range directly (S1 economy — no
+                    // materialised identity array). The helper diffs against the
+                    // anchor and keeps only moved verts. (The falloff support can
+                    // be the whole mesh, so a full-range pass is the safe superset.)
+                    recordFalloffRefire("Falloff", anchor, after,
+                                        null, DragBank.Move);
+                    needsGpuUpdate = true;
+                }
             }
         }
 
@@ -505,18 +556,22 @@ public:
     }
 
     // When the config-driven transform form is rendering (forms_engine_plan.md
-    // Phase 5), it OWNS the translate value rows (Position TX/TY/TZ) — so the
-    // legacy translate sliders (moveSub.drawProperties() → applyMovePanelDelta)
-    // must NOT also render, or two live widgets would drive headlessTranslate on
-    // one frame. R/S value editing has no form rows yet (deferred Phase 5b) and
-    // lives ONLY in rotateSub/scaleSub.drawProperties(), so those still render.
-    // app.d raises this latch for the frame in which it drew the transform form,
-    // then calls drawProperties() for the R/S remainder. Default false keeps the
-    // legacy panel (VIBE3D_FORMS=0 kill-switch, or any non-form caller) intact.
-    public bool suppressTranslateProperties = false;
+    // Phase 5 + 5b), it OWNS ALL the TRS value rows — Position (TX/TY/TZ),
+    // Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) — and drives them through the
+    // reEvaluate() seam (a plain `interactive` tool.attr per axis). The legacy
+    // moveSub/rotateSub/scaleSub.drawProperties() sliders must therefore NOT
+    // also render, or two live widgets would fight over the same per-frame
+    // edit (headlessTranslate / the rotate-scale activation deltas) and the
+    // panel would show each value row TWICE — once readable (form, left labels)
+    // and once with the old right-of-widget labels (the unreadability the
+    // rework targets). app.d raises this latch for the frame in which it drew
+    // the transform form. Default false keeps the legacy panel intact for the
+    // VIBE3D_FORMS=0 kill-switch and any non-form caller.
+    public bool suppressTRSProperties = false;
 
     override void drawProperties() {
-        if (flagT && !suppressTranslateProperties) moveSub.drawProperties();
+        if (suppressTRSProperties) return;   // form owns all TRS value rows
+        if (flagT) moveSub.drawProperties();
         if (flagR) rotateSub.drawProperties();
         if (flagS) scaleSub.drawProperties();
     }
@@ -1374,6 +1429,24 @@ public:
             // (Q-b): the next gesture's beginEdit re-freezes the pin.
             if (editIsOpen())
                 commitEdit("Move");
+
+            // In-session falloff re-grade — staleness stamp (OBJ-1). Record the
+            // mesh version this gesture left behind: a later falloff tweak at
+            // idle re-grades this gesture ONLY while the version still matches.
+            // An in-session Ctrl+Z reverts geometry (bumps the version away from
+            // the stamp), so the re-grade site then refuses — a popped gesture is
+            // never resurrected.
+            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+
+            // Open a FRESH re-fire window for this gesture. A run can hold more
+            // than one gesture (g1 -> tweak -> g2 -> tweak), and a tweak after g2
+            // must anchor before[] to the post-g2 geometry, NOT the stale post-g1
+            // snapshot. Clearing here makes each gesture start a fresh window:
+            // the next re-grade re-captures the anchor live. (The drop's
+            // consolidate still reverts every touched vert to the run-start state
+            // via mergeRun's first-touch before[], so the per-gesture window only
+            // governs the SINGLE in-session Ctrl+Z granularity, exactly C.)
+            refireAnchor.length = 0;
         }
 
         // Rotate drag (principal axes OR view-ring) — wrapper owns the final
@@ -1401,6 +1474,18 @@ public:
             // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
             // now pops one gesture rather than cancelling the whole open run.
             rotateSub.commitGesture();
+
+            // In-session falloff re-grade — staleness stamp + window reset
+            // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
+            // R/S gesture after a Move tweak (or a prior R/S tweak) would leave a
+            // STALE refireAnchor + stamp: a subsequent falloff tweak would either
+            // anchor before[] to the wrong (pre-this-gesture) geometry or fire
+            // off a mismatched version. Stamp the version this rotate gesture left
+            // behind so a later falloff tweak re-grades THIS gesture only while
+            // the version still matches; clear refireAnchor so the tweak opens a
+            // FRESH re-fire window anchored to this gesture's post-recompute state.
+            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            refireAnchor.length = 0;
         }
 
         // Scale single-source — wrapper owns the final upload + gpuMatrix
@@ -1420,6 +1505,15 @@ public:
             // hooks + routes in-session), the next handle grab reopens a fresh
             // scaleSub session, and the run consolidates at the boundary / drop.
             scaleSub.commitGesture();
+
+            // In-session falloff re-grade — staleness stamp + window reset
+            // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
+            // rationale: stamp the version this scale gesture left behind and
+            // clear refireAnchor so a later falloff tweak re-grades THIS gesture
+            // from a fresh window, and an R/S gesture after a Move/R/S tweak never
+            // inherits a stale anchor.
+            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            refireAnchor.length = 0;
         }
 
         // moveSub + all rotate rings + scale are wrapper-owned. Anything else
@@ -1921,6 +2015,48 @@ public:
     // re-apply entry underneath that in-flight gesture must not happen. Public
     // so the sub-tools (siblings) can query it cross-instance.
     public bool dragInFlight() const { return activeDrag !is null; }
+
+    // Falloff in-session re-fire — PUBLIC R/S seam. The Rotate / Scale falloff
+    // re-grade sites live on the sub-tools, but the run, history, currentRunBank,
+    // and the recordFalloffRefire helper all live on the wrapper. These thin
+    // public forwarders let the sub-tools (siblings, reached via wrapperRef cast,
+    // same pattern as dragInFlight) run the §4.3 ARM-2 gate + record without
+    // naming the wrapper-private DragBank enum or the refire state fields.
+    //
+    // The bank gate (currentRunBank == this bank, OBJ-2 single-winner) and the
+    // staleness gate (mesh.mutationVersion == lastAppliedGestureMutationVersion,
+    // OBJ-1) are both bundled here so the site reads a single boolean. The bank
+    // is fixed by the typed entry point (refireRotateEligible / refireScaleEligible)
+    // so the sub-tool never references DragBank.
+    public bool refireRotateEligible() const {
+        return history !is null
+            && history.runOpen()
+            && currentRunBank == DragBank.Rotate
+            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+    }
+
+    public bool refireScaleEligible() const {
+        return history !is null
+            && history.runOpen()
+            && currentRunBank == DragBank.Scale
+            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+    }
+
+    // Record forwarders: the sub-tool dup'd the pre-recompute (post-gesture)
+    // geometry into `anchor`, ran its absolute recompute (mutating mesh.vertices),
+    // and dup'd the result into `after`. These route into the shared helper with
+    // the correct bank tag. The helper re-checks the staleness gate as
+    // defense-in-depth (§4.1 step 0) and re-stamps lastAppliedGestureMutationVersion
+    // after the record (a no-op today; defensive).
+    public void recordFalloffRefireRotate(string label, Vec3[] anchor,
+                                          Vec3[] after, size_t[] idx) {
+        recordFalloffRefire(label, anchor, after, idx, DragBank.Rotate);
+    }
+
+    public void recordFalloffRefireScale(string label, Vec3[] anchor,
+                                         Vec3[] after, size_t[] idx) {
+        recordFalloffRefire(label, anchor, after, idx, DragBank.Scale);
+    }
 
     // Phase 2 — cross-slot relocate boundary. In a composed T+R+S preset
     // (Transform / xfrm.transform) two sessions can be open at once: the Move
@@ -2691,6 +2827,41 @@ private:
     enum DragBank { None, Move, Rotate, Scale }
     DragBank currentRunBank = DragBank.None;
 
+    // In-session falloff re-grade (re-fire) state.
+    //
+    // When a falloff configuration changes at idle while the current run has a
+    // landed gesture, the just-applied gesture is re-evaluated against the new
+    // weights and recorded as one tagged in-session entry in the SAME run. Two
+    // pieces of state make that safe + bounded:
+    //
+    // lastAppliedGestureMutationVersion — STALENESS STAMP. Set to
+    //   mesh.mutationVersion at the end of every gesture's mouse-up commit (all
+    //   banks). The re-grade site fires ONLY if mesh.mutationVersion still
+    //   equals this stamp. An in-session Ctrl+Z that pops a gesture reverts
+    //   geometry and so bumps mutationVersion away from the stamp; the site then
+    //   goes inert and never re-applies the popped gesture from a stale baseline.
+    //   ulong.max = "no live gesture to re-grade". Reset at activate /
+    //   deactivate / resetTransientState and at every run boundary (bank switch,
+    //   selection/mutation guard).
+    ulong lastAppliedGestureMutationVersion = ulong.max;
+
+    // refireAnchor — once-per-RE-FIRE-WINDOW POST-GESTURE full-mesh snapshot.
+    //   Captured ONCE at the FIRST re-grade after a gesture (before the recompute
+    //   mutates the mesh) and reused as the before[] source for EVERY re-grade of
+    //   that window. A re-fire WINDOW is per-gesture, NOT per-run: a run can hold
+    //   more than one gesture (g1 -> tweak -> g2 -> tweak), and each gesture
+    //   mouse-up commit CLEARS this anchor so the next re-grade re-captures the
+    //   NEW post-gesture geometry — a tweak after g2 must anchor before[] to
+    //   post-g2, not the stale post-g1 snapshot (the multi-gesture anchor
+    //   hazard). Using the full post-gesture geometry (not just the falloff
+    //   support) makes a WIDENING scrub revert cleanly: a re-grade that pulls in
+    //   verts outside the prior re-grade's support still has a recorded baseline
+    //   for them. Empty = none captured. Cleared at every gesture mouse-up
+    //   commit, at every run boundary, at activate / deactivate /
+    //   resetTransientState, and on a staleness miss (the window's anchor is then
+    //   invalid; a later forward gesture re-captures fresh).
+    Vec3[] refireAnchor;
+
     // Detect a bank switch at gizmo mouse-down and consolidate the prior run.
     // Called from each mouse-down consume arm AFTER the sub-tool confirmed the
     // click landed on its bank, BEFORE begin*DragSession. An empty/not-yet-open
@@ -2701,8 +2872,129 @@ private:
         if (currentRunBank != DragBank.None && currentRunBank != thisBank) {
             history.consolidate(history.currentRunId);
             history.nextRun();
+            // A bank switch is a run boundary: the prior run's re-grade anchor +
+            // staleness stamp must not leak into the new run.
+            lastAppliedGestureMutationVersion = ulong.max;
+            refireAnchor.length               = 0;
         }
         currentRunBank = thisBank;
+    }
+
+    // Record an in-session falloff re-grade entry for the current run.
+    //
+    // The SITE has already: gated on its own bank + the staleness stamp, dup'd
+    // the pre-recompute geometry into `anchor`, run the recompute (mutating
+    // mesh.vertices), and dup'd the result into `after`. This helper owns the
+    // record: it anchors before[] to the POST-GESTURE snapshot of the current
+    // re-fire WINDOW and ALWAYS routes through replaceInSessionTail, which owns
+    // the REPLACE-vs-APPEND decision (keyed on the Refire bit): a re-grade whose
+    // tail is the prior re-grade REPLACES it (consecutive tweaks stay ONE undo
+    // step); a re-grade whose tail is a plain GESTURE entry APPENDS (preserving
+    // that gesture). The helper itself no longer chooses — keying on a stale
+    // "did any re-grade happen this run" signal dropped a second gesture's entry
+    // (the C1 hazard).
+    //
+    // `anchor` is the site's pre-recompute snapshot (post-gesture geometry). On
+    // the WINDOW's FIRST re-grade the helper STORES it as refireAnchor; on later
+    // re-grades refireAnchor already holds the post-gesture state and `anchor` is
+    // ignored. A new gesture CLEARS refireAnchor at its mouse-up commit, opening
+    // a fresh window anchored to the new post-gesture geometry — so a tweak after
+    // a SECOND gesture anchors before[] to post-gesture-2, not the stale
+    // post-gesture-1 (the multi-gesture anchor hazard). before[] is sourced from
+    // refireAnchor for ALL re-grades of the window, so a
+    // widening scrub (verts pulled in that the prior re-grade never touched) has
+    // a complete baseline and reverts cleanly on one Ctrl+Z (contract C).
+    //
+    // The entry carries NO Tool-Properties / pin hooks: the falloff CONFIG is an
+    // accepted v1 undo divergence (the config command is a separate SideEffect,
+    // not captured in geometry undo) and a falloff tweak never relocates the
+    // pivot. So the MeshVertexEdit's apply/revert restore geometry alone — which
+    // is exactly contract (C).
+    private void recordFalloffRefire(string label, Vec3[] anchor,
+                                     Vec3[] after, size_t[] idx, DragBank bank) {
+        // `idx` is dead until a scoped-subset caller exists — only null
+        // (full-range) callers today; kept so a future scoped re-grade need not
+        // re-thread the signature.
+        // Step 0 — staleness gate (defense-in-depth; the site already gated, but
+        // the helper must refuse too). On a miss the run's anchor is invalid.
+        if (mesh.mutationVersion != lastAppliedGestureMutationVersion) {
+            refireAnchor.length = 0;
+            return;
+        }
+        // Step 1 — guards: need a history, an OPEN run (a re-grade only extends a
+        // run that has a landed gesture), and a real geometry change.
+        if (history is null) return;
+        if (!history.runOpen()) return;
+
+        // Step 2 — anchor capture (once per RE-FIRE WINDOW). The FIRST re-grade
+        // after a gesture stores that gesture's post-recompute snapshot; later
+        // CONSECUTIVE re-grades reuse it unchanged. A new gesture CLEARS
+        // refireAnchor at its mouse-up commit (see the per-bank commit sites),
+        // opening a fresh window anchored to the NEW post-gesture geometry — so
+        // a tweak after a second gesture anchors before[] to post-gesture-2, not
+        // the stale post-gesture-1 (the multi-gesture-run anchor hazard).
+        if (refireAnchor.length == 0)
+            refireAnchor = anchor.dup;
+
+        // Step 3 — build the entry. before[] = refireAnchor (post-gesture state)
+        // for the moved indices; after[] = the re-graded positions. Drop any
+        // index that did not actually move vs the anchor (no spurious payload).
+        //
+        // S1 economy: when `idx` is null/empty the index set is the FULL vertex
+        // range (the falloff support can be the whole mesh, so a full pass is the
+        // safe superset) — iterate `after` POSITIONALLY (after[vid] == the
+        // re-graded position of vid, since every site dups the whole
+        // mesh.vertices into `after`). This drops the per-re-grade identity
+        // `size_t[] allIdx` allocation the sites previously materialised. When
+        // `idx` is supplied (a scoped subset) it is honoured, with `after[k]`
+        // positionally aligned to `idx[k]`.
+        immutable bool fullRange = (idx.length == 0);
+        immutable size_t n = fullRange ? after.length : idx.length;
+        size_t[] movedIdx;
+        Vec3[]   before;
+        Vec3[]   movedAfter;
+        movedIdx.reserve(n);
+        before.reserve(n);
+        movedAfter.reserve(n);
+        foreach (k; 0 .. n) {
+            immutable size_t vid = fullRange ? k : idx[k];
+            if (vid >= refireAnchor.length || vid >= mesh.vertices.length)
+                continue;
+            Vec3 b = refireAnchor[vid];
+            Vec3 a = after[k];
+            if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
+            movedIdx   ~= vid;
+            before     ~= b;
+            movedAfter ~= a;
+        }
+        if (movedIdx.length == 0) return;   // no net change → no entry.
+
+        // setEdit takes uint[] indices.
+        uint[] uidx;
+        uidx.length = movedIdx.length;
+        foreach (k, vid; movedIdx) uidx[k] = cast(uint) vid;
+
+        if (vertexEditFactory is null) return;
+        auto cmd = vertexEditFactory();
+        cmd.setEdit(uidx, before, movedAfter, label);
+
+        // Step 4 — record. ALWAYS route through replaceInSessionTail: it is the
+        // single re-fire primitive and owns the REPLACE-vs-APPEND decision,
+        // keyed on the trustworthy Refire bit. It DROPS the tail only when the
+        // tail is THIS run's prior RE-GRADE (InSession && Refire && runId) — so
+        // a CONSECUTIVE tweak replaces the prior re-grade (N tweaks = ONE undo
+        // step), while a tweak whose tail is a plain GESTURE entry (the run's
+        // first tweak, OR the first tweak after a SECOND gesture) APPENDS,
+        // preserving the gesture's geometry contribution. This is the fix for
+        // the multi-gesture-run hazard: keying on "is the tail a refire" instead
+        // of "did any refire happen this run" stops a tweak2 from erasing g2.
+        history.replaceInSessionTail(cmd, history.currentRunId);
+
+        // Step 5 — defensive re-stamps (no-ops today: the re-grade does NOT bump
+        // mutationVersion — applyTRS is version-silent and recordInSession never
+        // calls apply()). Kept future-proof should the apply path ever bump.
+        lastMutationVersion               = mesh.mutationVersion;
+        lastAppliedGestureMutationVersion = mesh.mutationVersion;
     }
 
     // Phase 3 — wrapper-owned drag state.

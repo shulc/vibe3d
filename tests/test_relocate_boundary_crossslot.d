@@ -1,6 +1,13 @@
 // Cross-slot relocate boundary in a composed T+R+S preset (Phase 2, Part B of
 // doc/transform_per_gesture_commit_plan.md §4 / §6 test 4b).
 //
+// Phase-3 audit (2026-06-07): the Move-leg open-mid-run count (+1, gizmo
+// mouse-up record) landed in Phase 1; the rotate-leg mid-run count stayed
+// UNCHANGED (panel TX, no gizmo mouse-up -> no per-gesture record); the +2/+3
+// boundary/drop counts are unchanged (cross-slot PLAIN mirror trips the layer-A
+// foreign-record guard, keeping single-bank-per-run). No assert changed in
+// Phase 3, re-run to confirm green.
+//
 // THE LEAK (plan §4): in a composed preset (`Transform`, T+R+S all on) TWO
 // edit sessions can be open at once — the Move session on the WRAPPER
 // (XfrmTransformTool), and a Rotate/Scale session on the SUB-TOOL instance. A

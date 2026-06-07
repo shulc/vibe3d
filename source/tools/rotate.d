@@ -256,19 +256,54 @@ public:
         // — the prescribed target (an idle gizmo-run re-apply) does not exist
         // post-Phase-1/2. Only the idle-time gate below lands. (Flagged for the
         // plan owner: OBJ-4's wrap premise is moot once gizmo sessions self-close.)
+        // Two-arm branch (Phase 2; mirrors the wrapper-Move site):
+        //  - ARM 1 (open panel session, editIsOpen() true): the OLD in-place
+        //    coalesce, UNCHANGED. A rotate panel session (tool.attr RZ … keeps a
+        //    session open at idle with angleAccum != 0) folds the re-apply into
+        //    its single drop commit and records nothing (scenario C, out of scope).
+        //  - ARM 2 (committed gizmo gesture, editIsOpen() false but the wrapper's
+        //    run is open with a landed Rotate gesture): the NEW record path. The
+        //    re-grade is baked as a tagged in-session entry in the current run so
+        //    the in-session Ctrl+Z contract holds. The wrapper owns the run /
+        //    history / currentRunBank / refire state, so the bank+staleness gate
+        //    and the record both route through its public R/S seam
+        //    (refireRotateEligible / recordFalloffRefireRotate), reached via the
+        //    same wrapperRef cast that backs dragLive.
+        import tools.xfrm_transform : XfrmTransformTool;
         bool dragLive = false;
+        XfrmTransformTool wrap = null;
         if (wrapperRef !is null) {
-            import tools.xfrm_transform : XfrmTransformTool;
-            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
-                dragLive = wrap.dragInFlight();
+            if (auto w = cast(XfrmTransformTool) wrapperRef) {
+                dragLive = w.dragInFlight();
+                wrap = w;
+            }
         }
-        if (editIsOpen() && !dragLive && angleAccum != Vec3(0, 0, 0)) {
-            FalloffPacket live = currentFalloff(vts);
-            if (!falloffPacketsEqual(live, dragFalloff)) {
-                dragFalloff = live;
-                buildVertexCacheIfNeeded();
-                applyAbsoluteFromOrigCpuOnly(vts);
-                needsGpuUpdate = true;
+        if (!dragLive && angleAccum != Vec3(0, 0, 0)) {
+            if (editIsOpen()) {
+                // ARM 1 — panel session: old in-place coalesce, no record.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    dragFalloff = live;
+                    buildVertexCacheIfNeeded();
+                    applyAbsoluteFromOrigCpuOnly(vts);
+                    needsGpuUpdate = true;
+                }
+            } else if (wrap !is null && wrap.refireRotateEligible()) {
+                // ARM 2 — committed gizmo gesture: re-grade + record. The
+                // bank (Rotate) + staleness gates live inside refireRotateEligible.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    // Capture the pre-recompute (post-gesture) geometry LIVE for
+                    // the once-per-window anchor (OBJ-3 W1: live, never frozen).
+                    Vec3[] anchor = mesh.vertices.dup;
+                    dragFalloff = live;
+                    buildVertexCacheIfNeeded();
+                    applyAbsoluteFromOrigCpuOnly(vts);   // mutates mesh.vertices
+                    Vec3[] after = mesh.vertices.dup;
+                    // Empty idx → helper iterates the full vertex range (S1).
+                    wrap.recordFalloffRefireRotate("Falloff", anchor, after, null);
+                    needsGpuUpdate = true;
+                }
             }
         }
 

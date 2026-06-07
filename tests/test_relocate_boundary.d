@@ -1,6 +1,12 @@
 // In-session action-center relocate commits the current undo run (Phase 1a
 // of doc/transform_per_gesture_commit_plan.md).
 //
+// Phase-3 audit (2026-06-07): boundary surviving-entry counts + pin-semantics
+// asserts confirmed on-contract under record+consolidate (Q-b gate —
+// discardAcenUserPlacedSnapshot stays per-gesture, so pin coherence is
+// byte-for-byte identical). Migration already landed in Phase 1 / its addendum;
+// no assert changed in Phase 3, re-run to confirm green.
+//
 // The undo unit is the tool SESSION: consecutive ON-handle gizmo drags
 // coalesce into ONE history entry (pinned by test_property_panel_drag.d).
 // The ONE additional boundary added here: an off-gizmo click during a live
@@ -407,9 +413,12 @@ unittest {
 unittest {
     establishCubeBaseline();
     postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    // Drain the select's UI-undo entry so the only thing below the open run is
-    // the consolidated relocate run (the further Ctrl+Z lands cleanly).
-    drainHistory();
+    // Do NOT drain the select's UI-undo entry: undoing a select restores the
+    // PREVIOUS selection — on a shared per-worker instance that's whatever a
+    // preceding test left (e.g. an edge selection), silently retargeting every
+    // following gesture while all count asserts stay green (the -j
+    // "Move 2 verts" bleed). The entry sits below floorA/floorB (captured
+    // after it); the bounded Ctrl+Z ladder never pops that deep.
     postJson("/api/script", "tool.set move");   // default ACEN = None (relocate-permitted)
 
     auto cam = fetchCamera();
