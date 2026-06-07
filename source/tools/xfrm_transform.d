@@ -505,18 +505,22 @@ public:
     }
 
     // When the config-driven transform form is rendering (forms_engine_plan.md
-    // Phase 5), it OWNS the translate value rows (Position TX/TY/TZ) — so the
-    // legacy translate sliders (moveSub.drawProperties() → applyMovePanelDelta)
-    // must NOT also render, or two live widgets would drive headlessTranslate on
-    // one frame. R/S value editing has no form rows yet (deferred Phase 5b) and
-    // lives ONLY in rotateSub/scaleSub.drawProperties(), so those still render.
-    // app.d raises this latch for the frame in which it drew the transform form,
-    // then calls drawProperties() for the R/S remainder. Default false keeps the
-    // legacy panel (VIBE3D_FORMS=0 kill-switch, or any non-form caller) intact.
-    public bool suppressTranslateProperties = false;
+    // Phase 5 + 5b), it OWNS ALL the TRS value rows — Position (TX/TY/TZ),
+    // Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) — and drives them through the
+    // reEvaluate() seam (a plain `interactive` tool.attr per axis). The legacy
+    // moveSub/rotateSub/scaleSub.drawProperties() sliders must therefore NOT
+    // also render, or two live widgets would fight over the same per-frame
+    // edit (headlessTranslate / the rotate-scale activation deltas) and the
+    // panel would show each value row TWICE — once readable (form, left labels)
+    // and once with the old right-of-widget labels (the unreadability the
+    // rework targets). app.d raises this latch for the frame in which it drew
+    // the transform form. Default false keeps the legacy panel intact for the
+    // VIBE3D_FORMS=0 kill-switch and any non-form caller.
+    public bool suppressTRSProperties = false;
 
     override void drawProperties() {
-        if (flagT && !suppressTranslateProperties) moveSub.drawProperties();
+        if (suppressTRSProperties) return;   // form owns all TRS value rows
+        if (flagT) moveSub.drawProperties();
         if (flagR) rotateSub.drawProperties();
         if (flagS) scaleSub.drawProperties();
     }

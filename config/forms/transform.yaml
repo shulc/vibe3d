@@ -1,4 +1,4 @@
-# Tool Properties form for the transform tool family (xfrm.transform).
+# Tool Properties forms for the transform tool family.
 #
 # Config-driven Tool Properties: each value control binds to a command line
 # carrying exactly one `?` placeholder — reading queries the command, writing
@@ -7,32 +7,89 @@
 # universe (validateForms) — a misspelt attr or unknown command id fails loud
 # at boot.
 #
-# Scope (see doc/forms_engine_plan.md Phase 5 + 5b): the T/R/S enable
-# checkboxes, the Position (TX/TY/TZ) value group, an Action Center choice row
-# firing actr.* commands, plus the Rotate (RX/RY/RZ) and Scale (SX/SY/SZ) value
-# groups. Phase 5b widened the panel value-apply path to cover R/S, so those
-# rows drive geometry through the reEvaluate() seam exactly like the Position
-# rows (a plain `interactive` tool.attr — no per-axis routing).
+# ---------------------------------------------------------------------------
+# whenTool coverage (reviewer finding, 2026-06-07)
+# ---------------------------------------------------------------------------
+# XfrmTransformTool is the ONE engine behind MANY activation ids. The factory
+# id that `tool.set <id>` records as activeToolId — which is what
+# formsForTool(activeToolId) matches — is NOT always "xfrm.transform":
+#
+#   * Toolbar Move/Rotate/Scale activate `move` / `rotate` / `scale`
+#     (config/buttons.yaml; factories in source/app.d).
+#   * Toolbar Transform activates `xfrm.transform`.
+#   * Every preset in config/tool_presets.yaml whose `base:` is one of
+#     move / rotate / scale / xfrm.transform registers its OWN factory id
+#     (source/tool_presets.d: reg.toolFactories[p.id]); activating the preset
+#     records the PRESET id as activeToolId (e.g. TransformMove, xfrm.flex,
+#     xfrm.softMove, ...). All of these construct an XfrmTransformTool.
+#
+# A single scalar `whenTool: xfrm.transform` therefore left the readable panel
+# unrendered for every other id (toolbar Move/Rotate/Scale, the deform presets,
+# etc.), and the unreadable legacy sliders showed instead.
+#
+# The panel is split into THREE per-bank forms (Position / Rotate / Scale), each
+# matching exactly the activation ids whose T / R / S flag is ENABLED. A tool
+# that enables multiple banks (xfrm.transform, Transform, xfrm.flex) matches
+# multiple forms and shows multiple groups; a single-bank tool (move, rotate,
+# scale and the bank-specific presets) shows only its one group. This is the
+# row-filtering mechanism: XfrmTransformTool.params() always exposes ALL of
+# TX..SZ (a flag-disabled bank's attr must still accept a no-op `tool.attr`
+# write — see tests/test_element_move_trs.d), so we CANNOT hide a bank by
+# filtering params(); we hide it by scoping which form (hence which group) each
+# id selects.
+#
+# Bank/flag mapping per id (T -> Position, R -> Rotate, S -> Scale):
+#   move            T          xfrm.softDrag   T (base move)
+#   rotate          R          xfrm.softMove   T (base move)
+#   scale           S          xfrm.shear      T (base move)
+#   xfrm.transform  T+R+S      xfrm.softRotate R (base rotate)
+#   Transform       T+R+S      xfrm.twist      R (base rotate)
+#   xfrm.flex       T+R+S      xfrm.swirl      R (base rotate)
+#   TransformMove   T          xfrm.vortex     R (base rotate)
+#   TransformRotate R          xfrm.softScale  S (base scale)
+#   TransformScale  S          xfrm.taper      S (base scale)
+#   xfrm.elementMove T         xfrm.bulge      S (base scale)
+#   ElementMove     T          move.element    T (base move)
+#
+# Excluded deliberately: xfrm.flare (base xfrm.push, NOT XfrmTransformTool — it
+# is a PushTool and has no TX..SZ params); xfrm.push / xfrm.bend / xfrm.smooth /
+# xfrm.jitter / xfrm.quantize (their own tool classes, own params, own forms or
+# legacy panels). Listing an id here that did NOT expose the bound attr would
+# fail validateForms at boot — the coverage is verified, not guessed.
+#
+# The bound tool id in each control line stays `xfrm.transform` (the canonical
+# family tool, which validateForms resolves against). At WRITE time FormsPanel
+# rewrites it to the live activeToolId (forms_render.d, Namespace.tool rebind),
+# so a write under `move` dispatches `tool.attr move TX <v>` and ToolAttrCommand's
+# active-id guard passes. The READ path reads the live typed pointer straight
+# from the active provider's params() snapshot and never checks the tool id.
+#
+# The T/R/S bank-enable checkboxes were removed — bank switching is owned by the
+# left toolbar presets (move / rotate / scale / Transform). Action Center is no
+# longer a one-shot choice row here; it renders as a stage-bound section
+# (config/forms/actioncenter.yaml, whenStage: actionCenter) via the Tool
+# Properties per-stage loop, the same way Falloff does.
 
 forms:
-  - id: transform.main
+  # ---- Position value group (TX/TY/TZ) — every T-enabled id ----
+  - id: transform.position
     label: Transform
     showLabel: false
-    whenTool: xfrm.transform
+    whenTool:
+      - move
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformMove
+      - xfrm.elementMove
+      - ElementMove
+      - move.element
+      - xfrm.softDrag
+      - xfrm.softMove
+      - xfrm.shear
     category: toolprops/main
     ordinal: 150.45
     rows:
-      # ---- T/R/S enable flags -> checkboxes (real bool attrs) ----
-      - { control: "tool.attr xfrm.transform T ?", label: Translate,
-          booleanStyle: checkbox }
-      - { control: "tool.attr xfrm.transform R ?", label: Rotate,
-          booleanStyle: checkbox }
-      - { control: "tool.attr xfrm.transform S ?", label: Scale,
-          booleanStyle: checkbox }
-
-      - { divider: true }
-
-      # ---- Position value group (TX/TY/TZ) ----
       - group: Position
         style: inline
         rows:
@@ -40,7 +97,22 @@ forms:
           - { control: "tool.attr xfrm.transform TY ?", label: Y }
           - { control: "tool.attr xfrm.transform TZ ?", label: Z }
 
-      # ---- Rotate value group (RX/RY/RZ, degrees) — Phase 5b ----
+  # ---- Rotate value group (RX/RY/RZ, degrees) — every R-enabled id ----
+  - id: transform.rotate
+    showLabel: false
+    whenTool:
+      - rotate
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformRotate
+      - xfrm.softRotate
+      - xfrm.twist
+      - xfrm.swirl
+      - xfrm.vortex
+    category: toolprops/main
+    ordinal: 150.46
+    rows:
       - group: Rotate
         style: inline
         rows:
@@ -48,24 +120,24 @@ forms:
           - { control: "tool.attr xfrm.transform RY ?", label: Y }
           - { control: "tool.attr xfrm.transform RZ ?", label: Z }
 
-      # ---- Scale value group (SX/SY/SZ, factors) — Phase 5b ----
+  # ---- Scale value group (SX/SY/SZ, factors) — every S-enabled id ----
+  - id: transform.scale
+    showLabel: false
+    whenTool:
+      - scale
+      - xfrm.transform
+      - Transform
+      - xfrm.flex
+      - TransformScale
+      - xfrm.softScale
+      - xfrm.taper
+      - xfrm.bulge
+    category: toolprops/main
+    ordinal: 150.47
+    rows:
       - group: Scale
         style: inline
         rows:
           - { control: "tool.attr xfrm.transform SX ?", label: X }
           - { control: "tool.attr xfrm.transform SY ?", label: Y }
           - { control: "tool.attr xfrm.transform SZ ?", label: Z }
-
-      - { divider: true }
-
-      # ---- Action Center: a choice row firing actr.* commands (no `?`) ----
-      - choice: "Action Center"
-        entries:
-          - { label: Auto,    cmd: "actr.auto" }
-          - { label: Select,  cmd: "actr.select" }
-          - { label: Element, cmd: "actr.element" }
-          - { label: Local,   cmd: "actr.local" }
-          - { label: Origin,  cmd: "actr.origin" }
-
-      # ---- shared falloff sub-form, assembled by id (future phase) ----
-      - { ref: toolprops.falloff }

@@ -1,0 +1,40 @@
+# Tool Properties form for the Action Center pipe stage.
+#
+# Stage-bound adopter (same mechanism as config/forms/falloff.yaml). The single
+# row binds to the stage command line `tool.pipe.attr actionCenter mode ?`:
+# reading queries ActionCenterStage.params() (the `mode` enum Param), writing
+# executes it with `?` substituted by the chosen wire tag. Loaded at startup by
+# source/forms.d (loadForms) and strict-validated against
+# ActionCenterStage.knownAttrs() via validateForms — a misspelt attr fails loud
+# at boot.
+#
+# The dropdown choices (Automatic / Selection / … / (none)) and the current
+# selection both fall out of the enum Param's IntEnumEntry list returned by
+# ActionCenterStage.params() — the form does NOT enumerate modes itself. This
+# replaces the old one-shot `choice:` row in transform.yaml, which rendered a
+# combo whose preview never reflected the active mode.
+#
+# whenStage binds this form to the "actionCenter" pipe stage: the Tool
+# Properties per-stage loop resolves it via formByStage("actionCenter"), NOT by
+# active tool and NOT by form id. The stage section appears under whichever
+# tool's properties when the actionCenter stage is enabled.
+#
+# userLocked semantics: this dropdown is the GRANULAR ACEN-only control. Its
+# write path (`tool.pipe.attr actionCenter mode <tag>` → setAttr → applySetAttr)
+# is the SAME wire the granular status-bar Center submenu uses and does NOT set
+# userLocked — deliberately. The wire cannot lock, because tool PRESETS apply
+# their action-center mode through the very same Stage.setAttr (see
+# source/tool_presets.d): if setAttr locked, every tool activation would pin the
+# mode and defeat resetTransientPipeStages. A mode that must survive tool
+# switches is set via the toolbar / status-bar `actr.<mode>` presets, which call
+# ActionCenterStage.setUserMode() (the only path that sets userLocked). Within a
+# single tool session the panel pick persists normally; only a tool switch
+# re-applies the active preset's mode.
+
+forms:
+  - id: toolprops.actioncenter
+    label: Action Center
+    whenStage: actionCenter
+    showLabel: false
+    rows:
+      - { control: "tool.pipe.attr actionCenter mode ?", label: "Mode" }
