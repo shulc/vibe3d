@@ -153,6 +153,12 @@ public:
         th.add(handler.arrowZ,    base + 2);
     }
 
+    void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
+        cachedCenter = center;
+        handler.setPosition(center);
+        handler.setOrientation(bX, bY, bZ);
+    }
+
     // Recompute gizmo center from current selection / mesh state.
     //
     // Phase 3 — the wrapper owns the selection/mutation-change commit

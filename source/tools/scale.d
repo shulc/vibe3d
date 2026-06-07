@@ -74,6 +74,14 @@ public:
 
     void destroy() { handler.destroy(); }
 
+    void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
+        cachedCenter = center;
+        if (!editIsOpen())
+            activationCenter = center;
+        handler.setPosition(center);
+        handler.setOrientation(bX, bY, bZ);
+    }
+
     // Register this bank's gizmo handles into the shared arbiter `th`
     // at part-id offset `base` (so overlapping handles across banks get
     // distinct parts). Order = hitTestAxes priority (disc, plane

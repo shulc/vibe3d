@@ -398,6 +398,14 @@ public:
         if (flagT) moveSub.update(vts);
         if (flagR) rotateSub.update(vts);
         if (flagS) scaleSub.update(vts);
+        if (activeDrag is moveSub)
+            setSharedGizmoPose(moveSub.handler.center, vts);
+        else if (activeDrag is rotateSub)
+            setSharedGizmoPose(rotateSub.handler.center, vts);
+        else if (activeDrag is scaleSub)
+            setSharedGizmoPose(scaleSub.handler.center, vts);
+        else
+            setSharedGizmoPose(queryActionCenter(vts), vts);
         syncGpuMatrix();
     }
 
@@ -408,6 +416,14 @@ public:
         // Live falloff packet: frozen snapshot during a gizmo drag, live
         // (so the overlay/handles follow a dragged endpoint) otherwise.
         FalloffPacket fp = (activeDrag !is null) ? dragFalloff : currentFalloff(vts);
+        if (activeDrag is moveSub)
+            setSharedGizmoPose(moveSub.handler.center, vts);
+        else if (activeDrag is rotateSub)
+            setSharedGizmoPose(rotateSub.handler.center, vts);
+        else if (activeDrag is scaleSub)
+            setSharedGizmoPose(scaleSub.handler.center, vts);
+        else
+            setSharedGizmoPose(queryActionCenter(vts), vts);
 
         // Cross-bank single-winner hover/capture (MODO's two-pass hit-test → draw):
         // ONE shared arbiter over the falloff handles (registered first =
@@ -489,6 +505,15 @@ public:
     // The Move bank's gizmo center — the host uses it to anchor the haul drag
     // and (in 4b) as the action-center pivot.
     public Vec3 moveGizmoCenter() const { return moveSub.handler.center; }
+
+    private void setSharedGizmoPose(Vec3 center, ref VectorStack vts) {
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ, vts);
+        if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);
+        if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);
+        if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);
+    }
+
     // Direct handle to the embedded Move sub-tool so the host can drive the Move
     // GESTURE without routing through the wrapper's drain+applyTRS. MoveTool is a
     // pure gesture-scalar producer: its onMouseButtonDown / onMouseMotion /
@@ -647,6 +672,7 @@ public:
             // relocated-pin Move gesture extends the freshly-opened Move run.
             noteRunBank(DragBank.Move);
             beginMoveDragSession(vts);
+            setSharedGizmoPose(moveSub.handler.center, vts);
             activeDrag = moveSub;  return true;
         }
         if (flagR && rotateSub.onMouseButtonDown(e, vts)) {
@@ -786,6 +812,7 @@ public:
             moveSub.beginScreenPlaneDragAt(e.x, e.y, pivot,
                                            ctrlMod, /*notifyAcen=*/false, vts);
             beginMoveDragSession(vts);
+            setSharedGizmoPose(moveSub.handler.center, vts);
             activeDrag = moveSub;
             syncGpuMatrix();
             return true;
@@ -1100,6 +1127,7 @@ public:
                 }
                 moveSub.handler.setPosition(
                     moveSub.handler.center + worldStep);
+                setSharedGizmoPose(moveSub.handler.center, vts);
             }
         } else if (activeDrag is rotateSub) {
             r = rotateSub.onMouseMotion(e, vts);
