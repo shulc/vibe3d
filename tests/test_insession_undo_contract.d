@@ -103,6 +103,24 @@ void drainHistory() {
     }
 }
 
+// Select vertex 6 and VERIFY it took. Do NOT drain the select's UI-undo
+// entry afterwards: undoing a select restores the PREVIOUS selection — on a
+// shared per-worker instance that's whatever a preceding test left (e.g. an
+// edge selection in Edges mode), silently retargeting every following gesture
+// at the wrong elements while every count assert stays green (the -j
+// "Move 2 verts" bleed: v6 frozen at (-1,0,1), tagged/undo counts perfect).
+// The select entry simply sits BELOW the floor counters captured after it;
+// the bounded Ctrl+Z ladders never pop that deep.
+void selectV6() {
+    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    settle();
+    auto s = getJson("/api/selection");
+    assert(s["mode"].str == "vertices"
+        && s["selectedVertices"].array.length == 1
+        && s["selectedVertices"].array[0].integer == 6,
+        "v6 selection did not take: " ~ s.toString);
+}
+
 // Pristine cube + (near-)empty undo stack, retrying if a preceding test left
 // the shared per-worker vibe3d dirty. The load-bearing discipline (mirrors
 // test_relocate_boundary.d): /api/reset is ITSELF undoable (SceneReset
@@ -217,11 +235,7 @@ void cmd(string line) {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    // Drain the select's UI-undo entry so the only thing on history below the
-    // open run will be the committed geometry run A (drain-after-select is safe;
-    // it is NOT after a reset — see establishCubeBaseline()).
-    drainHistory();
+    selectV6();   // verified select; entry stays below the floor (see helper)
 
     // --- Run A: a committed gizmo drag on v6 (the entry the 3rd Ctrl+Z pops). ---
     postJson("/api/script", "tool.set move");   // default ACEN = None
@@ -255,16 +269,17 @@ unittest {
 
     auto v6BaselineB = vert(6);   // run B's baseline (== post-run-A)
 
-    // Drag 1: on-handle +X haul. VERIFY-AND-RETRY keyed on the UNDO COUNT (not a
-    // geometry delta): under a loaded -j run the pivot/camera read right after
-    // re-activation can be a frame stale, so the derived grab pixel misses the
-    // arrow and the drag records nothing (the run-B-not-recorded flake). Keying
-    // on the count makes single-commit DETERMINISTIC: a MISSED attempt has no
-    // on-handle grab => no commit => count unchanged (retry); a SUCCESSFUL
-    // attempt records EXACTLY ONE in-session entry => +1 (stop). The old
-    // geometry-delta heuristic (>1e-3 from baseline) raced the post-drag
-    // geometry read under load — a lagged read looked like "didn't move", so it
-    // retried and recorded a SECOND gesture (the floor+2 double-commit flake).
+    // Drag 1: on-handle +X haul. VERIFY-AND-RETRY keyed on the UNDO COUNT (not
+    // a geometry delta): under a loaded -j run the pivot/camera read right
+    // after re-activation can be a frame stale, so the derived grab pixel
+    // misses the arrow and the drag records nothing (the run-B-not-recorded
+    // flake). Keying on the count makes single-commit DETERMINISTIC: a MISSED
+    // attempt has no on-handle grab => no commit => count unchanged (retry); a
+    // SUCCESSFUL attempt records EXACTLY ONE in-session entry => +1 (stop).
+    // No junk entry can sneak into the count while the tool is live: clicks
+    // never reach the app's selection branches (gated on !anyToolActive), and
+    // the historical false-green killer was never a junk entry at all — it was
+    // the drain-after-select selection bleed, fixed at selectV6().
     foreach (attempt; 0 .. 6) {
         settle();
         cam = fetchCamera();
@@ -308,6 +323,8 @@ unittest {
 
     auto v6BothDrags = vert(6);
     // Sanity: run B accumulated a net displacement away from its baseline.
+    // (When this fired historically the gestures had recorded FINE — they were
+    // dragging a stale predecessor selection; see selectV6().)
     assert(fabs(v6BothDrags[0] - v6BaselineB[0])
          + fabs(v6BothDrags[1] - v6BaselineB[1])
          + fabs(v6BothDrags[2] - v6BaselineB[2]) > 1e-2,
@@ -388,7 +405,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    selectV6();
     postJson("/api/script", "tool.set move");   // default ACEN = None
     long stackBefore = undoCount();
 

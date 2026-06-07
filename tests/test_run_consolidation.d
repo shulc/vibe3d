@@ -122,6 +122,24 @@ void drainHistory() {
     }
 }
 
+// Select vertex 6 and VERIFY it took. Do NOT drain the select's UI-undo
+// entry afterwards: undoing a select restores the PREVIOUS selection — on a
+// shared per-worker instance that's whatever a preceding test left (e.g. an
+// edge selection in Edges mode), silently retargeting every following gesture
+// at the wrong elements while every count assert stays green (the -j
+// "Move 2 verts" bleed: v6 frozen at (-1,0,1), tagged/undo counts perfect).
+// The select entry simply sits BELOW the floor counters captured after it;
+// the bounded Ctrl+Z ladders never pop that deep.
+void selectV6() {
+    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    settle();
+    auto s = getJson("/api/selection");
+    assert(s["mode"].str == "vertices"
+        && s["selectedVertices"].array.length == 1
+        && s["selectedVertices"].array[0].integer == 6,
+        "v6 selection did not take: " ~ s.toString);
+}
+
 // Pristine cube + (near-)empty undo stack. Same discipline as the sibling
 // in-session tests: drop any stale tool, drain a lingering replay, drain the
 // undo stack BEFORE the reset (/api/reset is itself undoable), reset, drain
@@ -256,8 +274,12 @@ void ringGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
 
 // One ON-handle +X Move gesture against the CURRENT pivot, verify-and-retry
 // keyed on the UNDO COUNT: a missed grab records nothing (count unchanged ->
-// retry); a hit records exactly ONE in-session entry (-> stop). `dir` = +1 haul
-// out, -1 haul back. Returns v6's post-gesture position.
+// retry); a hit records exactly ONE in-session entry (-> stop). No junk entry
+// can sneak into the count while the tool is live (clicks never reach the
+// app's selection branches — gated on !anyToolActive); the historical
+// false-green killer was the drain-after-select selection bleed, fixed at
+// selectV6(). `dir` = +1 haul out, -1 haul back. Returns v6's post-gesture
+// position.
 double[3] moveGestureOnHandle(long wantCount, double dir = 1.0, double mag = 60.0) {
     foreach (attempt; 0 .. 6) {
         settle();
@@ -289,8 +311,7 @@ double[3] moveGestureOnHandle(long wantCount, double dir = 1.0, double mag = 60.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    drainHistory();   // drop the select's UI-undo entry — clean floor.
+    selectV6();   // verified select; entry stays below the floor (see helper)
 
     postJson("/api/script", "tool.set move");   // default ACEN = None
     long floor = undoCount();
@@ -369,7 +390,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    selectV6();
     postJson("/api/script", "tool.set move");   // default ACEN = None
     long floor = undoCount();
 
@@ -475,8 +496,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    drainHistory();
+    selectV6();   // verified select; entry stays below the floor (see helper)
 
     postJson("/api/script", "tool.set move");
     long floor = undoCount();
@@ -552,8 +572,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    drainHistory();
+    selectV6();   // verified select; entry stays below the floor (see helper)
 
     postJson("/api/script", "tool.set move");
     long floor = undoCount();
@@ -708,8 +727,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
-    drainHistory();
+    selectV6();   // verified select; entry stays below the floor (see helper)
 
     postJson("/api/script", "tool.set move");
     long floor = undoCount();
@@ -882,7 +900,7 @@ unittest {
     // the run's {v6} set, so the foreign edit cannot coalesce into the
     // consolidated run entry (compareOp is same-index-set only). `floor` is read
     // AFTER the select, so the select entry sits below the floor.
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    selectV6();
 
     postJson("/api/script", "tool.set move");
     long floor = undoCount();
