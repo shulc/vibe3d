@@ -142,6 +142,11 @@ public:
     bool flagT = true;
     bool flagR = true;
     bool flagS = true;
+    // MODO-style handle family selector: 0=Move, 1=Rotate, 2=Scale,
+    // 3=Uniform Scale. Presentation is separate: bare Transform uses
+    // compact combined handles, while per-mode presets use the full bank.
+    int handleFamily = 0;
+    string handlePresentation = "compact";
 
     // Headless TRS attrs — always exposed regardless of flag state
     // so scripted callers can set TX with R=1 S=1 without first
@@ -464,6 +469,11 @@ public:
             Param.bool_ ("T",  "Translate", &flagT, true),
             Param.bool_ ("R",  "Rotate",    &flagR, true),
             Param.bool_ ("S",  "Scale",     &flagS, true),
+            Param.int_  ("H",  "Handle Family", &handleFamily, 0).hidden(),
+            Param.enum_ ("presentation", "Handle Presentation",
+                         &handlePresentation,
+                         [["compact", "Compact"], ["full", "Full"]],
+                         "compact").hidden(),
             Param.float_("TX", "Translate X", &headlessTranslate.x, 0.0f),
             Param.float_("TY", "Translate Y", &headlessTranslate.y, 0.0f),
             Param.float_("TZ", "Translate Z", &headlessTranslate.z, 0.0f),
