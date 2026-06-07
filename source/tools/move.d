@@ -153,6 +153,19 @@ public:
         th.add(handler.arrowZ,    base + 2);
     }
 
+    void registerAxisHandles(ToolHandles th, int base) {
+        th.add(handler.arrowX, base + 0);
+        th.add(handler.arrowY, base + 1);
+        th.add(handler.arrowZ, base + 2);
+    }
+
+    void registerCompactHandles(ToolHandles th, int base) {
+        th.add(handler.centerBox, base + 3);
+        th.add(handler.arrowX,    base + 0);
+        th.add(handler.arrowY,    base + 1);
+        th.add(handler.arrowZ,    base + 2);
+    }
+
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
         cachedCenter = center;
         handler.setPosition(center);
@@ -230,6 +243,42 @@ public:
         // Falloff overlay + endpoint handles are drawn ONCE by the
         // XfrmTransformTool wrapper, which owns the single shared
         // FalloffGizmo (step 4b-2). The banks no longer touch it.
+    }
+
+    void drawAxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    {
+        if (!active) return;
+        cachedVp = vp;
+
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ, vts);
+        handler.setOrientation(bX, bY, bZ);
+
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
+        handler.drawAxesOnly(shader, vp);
+        drawSnapOverlay(lastSnap, vp, *mesh);
+    }
+
+    void drawCompact(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    {
+        if (!active) return;
+        cachedVp = vp;
+
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ, vts);
+        handler.setOrientation(bX, bY, bZ);
+
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
+        handler.drawAxesAndCenter(shader, vp);
+        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {

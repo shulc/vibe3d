@@ -379,7 +379,7 @@ public:
             if (!falloffPacketsEqual(live, dragFalloff)) {
                 dragFalloff = live;
                 vertexCacheDirty = true;
-                applyTRS(dragBaseline);
+                applyTRSForBank(DragBank.Move, dragBaseline);
                 needsGpuUpdate = true;
             }
         }
@@ -439,9 +439,15 @@ public:
             ensureFalloffGizmo();
             falloffGizmo.registerHandles(toolHandles, FALLOFF_BASE, fp);
         }
-        if (flagT) moveSub.registerHandles  (toolHandles, MOVE_BASE);
+        if (flagT) {
+            if (compactPresentation()) moveSub.registerCompactHandles(toolHandles, MOVE_BASE);
+            else                       moveSub.registerHandles    (toolHandles, MOVE_BASE);
+        }
         if (flagR) rotateSub.registerHandles(toolHandles, ROT_BASE);
-        if (flagS) scaleSub.registerHandles (toolHandles, SCALE_BASE);
+        if (flagS) {
+            if (compactPresentation()) scaleSub.registerAxisHandles(toolHandles, SCALE_BASE);
+            else                       scaleSub.registerHandles    (toolHandles, SCALE_BASE);
+        }
         // Capture precedence: a live falloff-handle drag wins; else the active
         // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
         if      (falloffGizmo !is null && falloffGizmo.isDragging())  toolHandles.setHaul(falloffGizmo.capturedPart(FALLOFF_BASE));
@@ -453,9 +459,15 @@ public:
         queryMouse(hmx, hmy);
         toolHandles.update(hmx, hmy, vp);
 
-        if (flagT) moveSub.draw(shader, vp, vts);
+        if (flagT) {
+            if (compactPresentation()) moveSub.drawCompact (shader, vp, vts);
+            else                       moveSub.draw        (shader, vp, vts);
+        }
         if (flagR) rotateSub.draw(shader, vp, vts);
-        if (flagS) scaleSub.draw(shader, vp, vts);
+        if (flagS) {
+            if (compactPresentation()) scaleSub.drawAxisBoxesOnly(shader, vp, vts);
+            else                       scaleSub.draw             (shader, vp, vts);
+        }
 
         // Falloff overlay + handles drawn ONCE, on top of the gizmo banks.
         drawFalloffOverlay(fp, vp);
@@ -522,6 +534,10 @@ public:
         if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);
+    }
+
+    private bool compactPresentation() const {
+        return handlePresentation == "compact";
     }
 
     // Direct handle to the embedded Move sub-tool so the host can drive the Move
@@ -610,10 +626,40 @@ public:
         }
 
         // Dispatch to the first enabled sub-tool that consumes the
-        // event. The sub-tool's own hit-test determines whether
-        // this click lands on its handler bank or falls through to
-        // ACEN click-relocate.
-        if (flagT && moveSub.onMouseButtonDown(e, vts)) {
+        // event. When a click hits a registered shared handle, dispatch only
+        // to that handle's bank; otherwise the Move bank may consume a
+        // rotate/scale click as an off-gizmo relocate before R/S see it.
+        int hitPart = -1;
+        if (e.button == SDL_BUTTON_LEFT) {
+            toolHandles.begin();
+            if (flagT) {
+                if (compactPresentation()) moveSub.registerCompactHandles(toolHandles, MOVE_BASE);
+                else                       moveSub.registerHandles       (toolHandles, MOVE_BASE);
+            }
+            if (flagR) rotateSub.registerHandles(toolHandles, ROT_BASE);
+            if (flagS) {
+                if (compactPresentation()) scaleSub.registerAxisHandles(toolHandles, SCALE_BASE);
+                else                       scaleSub.registerHandles    (toolHandles, SCALE_BASE);
+            }
+            hitPart = toolHandles.test(e.x, e.y, cachedVp);
+            if (compactPresentation() && flagS) {
+                int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
+                if (scaleHeadAxis >= 0)
+                    hitPart = SCALE_BASE + scaleHeadAxis;
+            }
+        }
+        bool hitMoveBank  = hitPart >= MOVE_BASE  && hitPart < MOVE_BASE  + 10;
+        bool hitRotBank   = hitPart >= ROT_BASE   && hitPart < ROT_BASE   + 10;
+        bool hitScaleBank = hitPart >= SCALE_BASE && hitPart < SCALE_BASE + 10;
+        bool allowMoveDispatch  = hitPart < 0 || hitMoveBank;
+        bool allowRotDispatch   = compactPresentation()
+            ? hitRotBank
+            : (hitPart < 0 || hitRotBank);
+        bool allowScaleDispatch = compactPresentation()
+            ? hitScaleBank
+            : (hitPart < 0 || hitScaleBank);
+
+        if (flagT && allowMoveDispatch && moveSub.onMouseButtonDown(e, vts)) {
             // An off-gizmo click-relocate during a live session is a new
             // logical run: commit the prior run, then re-stage the
             // relocated pin so the fresh session freezes IT (not the stale
@@ -685,7 +731,7 @@ public:
             setSharedGizmoPose(moveSub.handler.center, vts);
             activeDrag = moveSub;  return true;
         }
-        if (flagR && rotateSub.onMouseButtonDown(e, vts)) {
+        if (flagR && allowRotDispatch && rotateSub.onMouseButtonDown(e, vts)) {
             // Principal-axis ring (0/1/2) AND view-ring (3) → wrapper owns
             // geometry via applyTRS (capture the drag state). Principal axes
             // drain into headlessRotate (Euler); the view-ring drains into the
@@ -720,7 +766,7 @@ public:
             }
             activeDrag = rotateSub; return true;
         }
-        if (flagS && scaleSub.onMouseButtonDown(e, vts)) {
+        if (flagS && allowScaleDispatch && scaleSub.onMouseButtonDown(e, vts)) {
             // Scale single-source: a real gizmo drag (dragAxis >= 0 — any
             // of single-axis 0/1/2, uniform disc 3, plane circle 4/5/6)
             // → wrapper owns geometry via applyTRS (capture the drag
@@ -908,6 +954,12 @@ public:
         return false;
     }
 
+    private void resetGestureAttrs() {
+        headlessTranslate = Vec3(0, 0, 0);
+        headlessRotate    = Vec3(0, 0, 0);
+        headlessScale     = Vec3(1, 1, 1);
+    }
+
     // Capture the per-drag state that `applyTRS` and the fast-path
     // bypass read from. Runs exactly once per drag, immediately
     // after `moveSub.onMouseButtonDown` (or `beginScreenPlaneDragAt`)
@@ -949,7 +1001,7 @@ public:
         foreach (i; 0 .. mesh.vertices.length)
             dragBaseline[i] = mesh.vertices[i];
 
-        headlessTranslate       = Vec3(0, 0, 0);
+        resetGestureAttrs();
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
@@ -1012,7 +1064,7 @@ public:
         foreach (i; 0 .. mesh.vertices.length)
             dragBaseline[i] = mesh.vertices[i];
 
-        headlessRotate = Vec3(0, 0, 0);   // zero ALL axes (S1)
+        resetGestureAttrs();   // zero ALL axes (S1) and neutralize prior drags
 
         // Ring index: 0/1/2 = principal (Euler slot), 3 = view-ring (axis-angle
         // slot). Both are wrapper-owned now; clamp anything else to -1
@@ -1058,7 +1110,7 @@ public:
         foreach (i; 0 .. mesh.vertices.length)
             dragBaseline[i] = mesh.vertices[i];
 
-        headlessScale = Vec3(1, 1, 1);
+        resetGestureAttrs();
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -1092,6 +1144,8 @@ public:
                 // the drain is a no-op on those.
                 Vec3 pending = moveSub.pendingTranslateDelta;
                 moveSub.pendingTranslateDelta = Vec3(0, 0, 0);
+                headlessRotate = Vec3(0, 0, 0);
+                headlessScale  = Vec3(1, 1, 1);
                 headlessTranslate = headlessTranslate + pending;
 
                 // Visual: the gizmo center moves along the GLOBAL
@@ -1111,7 +1165,7 @@ public:
                 // basis-local scalar; under ACEN.Local it flows
                 // into `applyTranslatePerCluster`, otherwise into
                 // the global-basis branch.
-                applyTRS(dragBaseline);
+                applyTRSForBank(DragBank.Move, dragBaseline);
 
                 // GPU update policy: the fast-path uses the
                 // u_model matrix (one uniform per frame) instead
@@ -1156,6 +1210,8 @@ public:
                     float deg = ang * 180.0f / cast(float)PI;
                     // Absolute-from-baseline: only the dragged axis is set;
                     // beginRotateDragSession zeroed all three (S1).
+                    headlessTranslate = Vec3(0, 0, 0);
+                    headlessScale     = Vec3(1, 1, 1);
                     headlessRotate = Vec3(0, 0, 0);
                     if      (ax == 0) headlessRotate.x = deg;
                     else if (ax == 1) headlessRotate.y = deg;
@@ -1166,7 +1222,7 @@ public:
                     // parity). The fast-path then merely skips the per-frame
                     // vertex re-upload — the GPU keeps the baseline buffer and
                     // u_model = pivotRotationMatrix bridges the rotation.
-                    applyTRS(dragBaseline);
+                    applyTRSForBank(DragBank.Rotate, dragBaseline);
                     if (rotDragFastPath) {
                         // MS-4.5 — reuse the matrix applyTRS's fold just built
                         // (wrapped about its pivot) rather than rebuilding a
@@ -1184,10 +1240,13 @@ public:
                     // producer captured. Euler slot stays zeroed (S1).
                     // MS-3.4: the view-ring rotation is now a TRANSIENT applyTRS
                     // parameter — no persistent slot to set/clear.
+                    headlessTranslate = Vec3(0, 0, 0);
+                    headlessScale     = Vec3(1, 1, 1);
                     headlessRotate = Vec3(0, 0, 0);
                     Vec3  viewAxisLocal = rotateSub.pendingRotateViewAxis;
                     float viewDegLocal  = deg;
-                    applyTRS(dragBaseline, viewAxisLocal, viewDegLocal);
+                    applyTRSForBank(DragBank.Rotate, dragBaseline,
+                                    viewAxisLocal, viewDegLocal);
                     if (rotDragFastPath) {
                         // MS-4.5 — reuse the fold's composed matrix (view-ring
                         // rotation included) wrapped about its pivot.
@@ -1207,13 +1266,15 @@ public:
                 Vec3 f = scaleSub.pendingScale;
                 // Absolute-from-baseline: headlessScale carries this drag's
                 // running factor; beginScaleDragSession reset it to identity.
+                headlessTranslate = Vec3(0, 0, 0);
+                headlessRotate    = Vec3(0, 0, 0);
                 headlessScale = f;
 
                 // CPU is rebuilt from the drag baseline EVERY frame so it is
                 // never stale at mouseUp. The fast-path then merely skips the
                 // per-frame vertex re-upload — the GPU keeps the baseline
                 // buffer and u_model = pivotScaleMatrixBasis bridges the scale.
-                applyTRS(dragBaseline);
+                applyTRSForBank(DragBank.Scale, dragBaseline);
                 if (scaleDragFastPath) {
                     // MS-4.5 — reuse the fold's composed scale matrix wrapped
                     // about its pivot instead of rebuilding it here.
@@ -1367,6 +1428,27 @@ public:
     // `applyTRS` rebuilds `mesh.vertices` from it (T → R → S, using
     // `headlessTranslate` / `headlessRotate` / `headlessScale` as
     // attributes).
+    private bool applyTRSForBank(DragBank bank, Vec3[] baseline,
+                                 Vec3 viewAxis = Vec3(0, 0, 0),
+                                 float viewAngleDeg = 0) {
+        bool oldT = flagT, oldR = flagR, oldS = flagS;
+        final switch (bank) {
+            case DragBank.None:
+                break;
+            case DragBank.Move:
+                flagT = true;  flagR = false; flagS = false;
+                break;
+            case DragBank.Rotate:
+                flagT = false; flagR = true;  flagS = false;
+                break;
+            case DragBank.Scale:
+                flagT = false; flagR = false; flagS = true;
+                break;
+        }
+        scope(exit) { flagT = oldT; flagR = oldR; flagS = oldS; }
+        return applyTRS(baseline, viewAxis, viewAngleDeg);
+    }
+
     //
     // Prologue: UNCONDITIONAL whole-baseline restore. Required because
     // `applyTranslatePerCluster` is `+=` incremental and the symmetry

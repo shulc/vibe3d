@@ -99,6 +99,12 @@ public:
         th.add(handler.arrowZ,     base + 2);
     }
 
+    void registerAxisHandles(ToolHandles th, int base) {
+        th.add(handler.arrowX, base + 0);
+        th.add(handler.arrowY, base + 1);
+        th.add(handler.arrowZ, base + 2);
+    }
+
     override string name() const { return "Scale"; }
 
     override void activate() {
@@ -373,6 +379,21 @@ public:
         // Falloff overlay + endpoint handles are drawn ONCE by the
         // XfrmTransformTool wrapper, which owns the single shared
         // FalloffGizmo (step 4b-2). The banks no longer touch it.
+    }
+
+    void drawAxisBoxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    {
+        if (!active) return;
+        cachedVp = vp;
+
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ, vts);
+        handler.setOrientation(bX, bY, bZ);
+        handler.setScaleAccum(dragScaleAccum);
+        handler.activeDragAxis = dragAxis;
+        handler.drawAxisBoxesOnly(shader, vp);
+
+        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
@@ -795,6 +816,20 @@ private:
             float t;
             if (closestOnSegment2D(cast(float)mx, cast(float)my,
                                    sax, say, sbx, sby, t) < 8.0f)
+                return cast(int)i;
+        }
+        return -1;
+    }
+
+    public int hitTestAxisHeads(int mx, int my) {
+        CubicArrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
+        foreach (i, arrow; arrows) {
+            if (!arrow.isVisible()) continue;
+            float ex, ey, ndcZ;
+            if (!projectToWindowFull(arrow.end, cachedVp, ex, ey, ndcZ)) continue;
+            float dx = cast(float)mx - ex;
+            float dy = cast(float)my - ey;
+            if (sqrt(dx*dx + dy*dy) < 12.0f)
                 return cast(int)i;
         }
         return -1;
