@@ -2139,9 +2139,6 @@ public:
         // a preset whose every relevant flag is off would silently no-op, looking
         // like the seam is broken when it is simply out of scope. Surface it.
         if (!flagT && !flagR && !flagS) {
-            import std.stdio : stderr;
-            stderr.writeln("[xfrm.transform] reEvaluate(): no T/R/S flag set — "
-                ~ "value edit is inert (out of scope, not an error).");
             return;
         }
         // T always re-runs (its baseline replay is harmless at zero translate
@@ -2183,9 +2180,6 @@ public:
         // the wrapper session for an R/S preset would make its commitEdit record
         // a spurious "Move" entry for geometry the sub-tool actually applied.
         if (!flagT && !flagR && !flagS) {
-            import std.stdio : stderr;
-            stderr.writeln("[xfrm.transform] openLiveSessionForTest(): no T/R/S "
-                ~ "flag set — session opener is inert (out of scope, not an error).");
             return;
         }
         // Open exactly ONE bare session — the one for the FIRST enabled slot, in
