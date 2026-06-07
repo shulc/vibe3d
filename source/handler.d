@@ -726,7 +726,7 @@ class RotateHandler : Handler {
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); arcView.destroy(); bgCircle.destroy(); }
     void setPosition(Vec3 pos) { center = pos; }
 
-    override void draw(const ref Shader shader, const ref Viewport vp)
+    private void updateGeometry(const ref Viewport vp)
     {
         size = gizmoSize(center, vp);
 
@@ -765,12 +765,25 @@ class RotateHandler : Handler {
         applyStart(arcX, axisX);
         applyStart(arcY, axisY);
         applyStart(arcZ, axisZ);
+    }
 
+    override void draw(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
         bgCircle.draw(shader, vp);
         arcX.draw(shader, vp);
         arcY.draw(shader, vp);
         arcZ.draw(shader, vp);
         arcView.draw(shader, vp);
+    }
+
+    void drawPrincipalOnly(const ref Shader shader, const ref Viewport vp)
+    {
+        updateGeometry(vp);
+        bgCircle.draw(shader, vp);
+        arcX.draw(shader, vp);
+        arcY.draw(shader, vp);
+        arcZ.draw(shader, vp);
     }
 }
 
@@ -1034,6 +1047,8 @@ private:
 // ---------------------------------------------------------------------------
 
 class ScaleHandler : Handler {
+    enum float AXIS_BOX_DISTANCE = 1.18f;
+
     Vec3  center;
     float size;   // world-space gizmo length, updated each frame in draw()
     CubicArrow      arrowX, arrowY, arrowZ;
@@ -1096,28 +1111,26 @@ class ScaleHandler : Handler {
         center = pos;
     }
 
-    private void updateGeometry(const ref Viewport vp)
+    private void updateGeometry(const ref Viewport vp, float axisBoxDistance = AXIS_BOX_DISTANCE)
     {
         size = gizmoSize(center, vp);
 
         arrowX.start = center + axisX * (size/7);
-        arrowX.end   = center + axisX * size;
+        arrowX.end   = center + axisX * (size * axisBoxDistance);
         arrowY.start = center + axisY * (size/7);
-        arrowY.end   = center + axisY * size;
+        arrowY.end   = center + axisY * (size * axisBoxDistance);
         arrowZ.start = center + axisZ * (size/7);
-        arrowZ.end   = center + axisZ * size;
+        arrowZ.end   = center + axisZ * (size * axisBoxDistance);
 
         float cubeFixed = size * 0.03f;
-        if (activeDragAxis < 0) {
-            scaleArrowX.start = arrowX.start;
-            scaleArrowY.start = arrowY.start;
-            scaleArrowZ.start = arrowZ.start;
-        }
-        scaleArrowX.end           = center + axisX * (size * scaleAccum.x);
+        scaleArrowX.start         = arrowX.end;
+        scaleArrowY.start         = arrowY.end;
+        scaleArrowZ.start         = arrowZ.end;
+        scaleArrowX.end           = center + axisX * (size * axisBoxDistance * scaleAccum.x);
         scaleArrowX.fixedCubeHalf = cubeFixed;
-        scaleArrowY.end           = center + axisY * (size * scaleAccum.y);
+        scaleArrowY.end           = center + axisY * (size * axisBoxDistance * scaleAccum.y);
         scaleArrowY.fixedCubeHalf = cubeFixed;
-        scaleArrowZ.end           = center + axisZ * (size * scaleAccum.z);
+        scaleArrowZ.end           = center + axisZ * (size * axisBoxDistance * scaleAccum.z);
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
         Vec3  d    = vp.eye - center;

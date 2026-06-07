@@ -324,7 +324,7 @@ unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
     auto vp  = viewportFromCamera(cam);
     drag_helpers.Vec3 pivot = drag_helpers.Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
-    auto arrowEnd = drag_helpers.Vec3(pivot.x + size, pivot.y, pivot.z);
+    auto arrowEnd = drag_helpers.Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
     float sx, sy;
     assert(projectToWindow(arrowEnd, vp, sx, sy));
 

@@ -100,6 +100,12 @@ public:
         th.add(handler.arcView, base + 3);
     }
 
+    void registerPrincipalHandles(ToolHandles th, int base) {
+        th.add(handler.arcX, base + 0);
+        th.add(handler.arcY, base + 1);
+        th.add(handler.arcZ, base + 2);
+    }
+
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
         cachedCenter = center;
         handler.setPosition(center);
@@ -413,6 +419,24 @@ public:
         // Falloff overlay + endpoint handles are drawn ONCE by the
         // XfrmTransformTool wrapper, which owns the single shared
         // FalloffGizmo (step 4b-2). The banks no longer touch it.
+    }
+
+    void drawPrincipalOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
+    {
+        if (!active) return;
+        cachedVp = vp;
+
+        Vec3 bX, bY, bZ;
+        currentBasis(bX, bY, bZ, vts);
+        handler.setOrientation(bX, bY, bZ);
+
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
+        handler.drawPrincipalOnly(shader, vp);
+        drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
