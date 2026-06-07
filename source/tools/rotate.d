@@ -100,6 +100,12 @@ public:
         th.add(handler.arcView, base + 3);
     }
 
+    void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
+        cachedCenter = center;
+        handler.setPosition(center);
+        handler.setOrientation(bX, bY, bZ);
+    }
+
     override string name() const { return "Rotate"; }
 
     override void activate() {
