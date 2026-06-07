@@ -1,0 +1,34 @@
+tools:
+  move:   W
+  rotate: E
+  scale:  R
+  xfrm.transform: Y
+  prim.cube: ""
+
+commands:
+  select.expand:         "Shift+Up"
+  select.contract:       "Shift+Down"
+  select.more:           Up
+  select.less:           Down
+  select.loop:           L
+  select.ring:           "Alt+L"
+  select.invert:         "["
+  select.connect:        "]"
+  select.between:        "Shift+G"
+  viewport.fit:          A
+  viewport.fit_selected: "Shift+A"
+  mesh.subdivide:        "D"
+  history.undo:          "Cmd+Z"
+  history.redo:          "Cmd+Shift+Z"
+  mesh.delete:           Backspace
+  mesh.remove:           "Cmd+Backspace"
+  snap.toggle:           X
+  file.new:              "Cmd+N"
+  file.load:             "Cmd+O"
+  file.save:             "Cmd+S"
+  file.quit:             "Cmd+Q"
+
+editmodes:
+  vertices: "1"
+  edges:    "2"
+  polygons: "3"

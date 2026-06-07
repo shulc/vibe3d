@@ -15,6 +15,7 @@ struct Shortcut {
     bool ctrl;
     bool shift;
     bool alt;
+    bool gui;          // Cmd on macOS, Windows/Super elsewhere.
 
     // Canonical form used as hash key only: "alt+shift+a", "shift+up", etc.
     string toCanonical() const {
@@ -22,6 +23,7 @@ struct Shortcut {
         string mods;
         if (alt)   mods ~= "alt+";
         if (ctrl)  mods ~= "ctrl+";
+        if (gui)   mods ~= "cmd+";
         if (shift) mods ~= "shift+";
         return mods ~ keycodeSpelling(key);
     }
@@ -30,9 +32,17 @@ struct Shortcut {
     string display() const {
         if (key == 0) return "";
         string mods;
-        if (alt)   mods ~= "Alt+";
-        if (ctrl)  mods ~= "Ctrl+";
-        if (shift) mods ~= "Shift+";
+        version (OSX) {
+            if (ctrl) mods ~= "⌃";
+            if (alt) mods ~= "⌥";
+            if (shift) mods ~= "⇧";
+            if (gui) mods ~= "⌘";
+        } else {
+            if (alt) mods ~= "Alt+";
+            if (ctrl) mods ~= "Ctrl+";
+            if (gui) mods ~= "Super+";
+            if (shift) mods ~= "Shift+";
+        }
         return mods ~ keycodeDisplaySpelling(key);
     }
 }
@@ -58,26 +68,29 @@ struct ShortcutTable {
 
 Shortcut parseShortcut(string s) {
     s = s.strip();
-    if (s.length == 0) return Shortcut(0, false, false, false);
+    if (s.length == 0) return Shortcut(0, false, false, false, false);
 
     string[] tokens;
     foreach (tok; s.split("+"))
         tokens ~= tok.strip();
 
-    if (tokens.length == 0) return Shortcut(0, false, false, false);
+    if (tokens.length == 0) return Shortcut(0, false, false, false, false);
 
-    bool ctrl = false, shift = false, alt = false;
+    bool ctrl = false, shift = false, alt = false, gui = false;
     // All tokens except the last are modifiers.
     foreach (tok; tokens[0 .. $ - 1]) {
         string lo = tok.toLower();
         if      (lo == "ctrl")  ctrl  = true;
         else if (lo == "shift") shift = true;
         else if (lo == "alt")   alt   = true;
+        else if (lo == "option") alt   = true;
+        else if (lo == "cmd" || lo == "command" || lo == "gui" || lo == "super")
+            gui = true;
         else throw new Exception(format("Unknown modifier '%s' in shortcut '%s'", tok, s));
     }
 
     SDL_Keycode key = parseKeyToken(tokens[$ - 1], s);
-    return Shortcut(key, ctrl, shift, alt);
+    return Shortcut(key, ctrl, shift, alt, gui);
 }
 
 private SDL_Keycode parseKeyToken(string tok, string fullShortcut) {
@@ -187,10 +200,12 @@ string canonFromEvent(SDL_Keycode sym, SDL_Keymod mod) {
     bool ctrl  = (mod & KMOD_CTRL)  != 0;
     bool shift = (mod & KMOD_SHIFT) != 0;
     bool alt   = (mod & KMOD_ALT)   != 0;
+    bool gui   = (mod & KMOD_GUI)   != 0;
 
     string mods;
     if (alt)   mods ~= "alt+";
     if (ctrl)  mods ~= "ctrl+";
+    if (gui)   mods ~= "cmd+";
     if (shift) mods ~= "shift+";
     return mods ~ keycodeSpelling(sym);
 }
