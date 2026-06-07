@@ -4350,28 +4350,33 @@ void main(string[] args) {
                 auto matchingForms = g_formsPanelEnabled
                                    ? formsForTool(activeToolId) : null;
                 if (matchingForms.length) {
+                    // Pass activeToolId so FormsPanel rebinds a tool-namespace
+                    // write (the form line carries the canonical family id
+                    // `xfrm.transform`) to whichever XfrmTransformTool activation
+                    // id is live — move / rotate / scale / a transform preset —
+                    // satisfying ToolAttrCommand's active-id guard.
                     foreach (ref fm; matchingForms)
                         formsPanel.draw(fm, activeTool,
                                         commandHandlerDelegate,
-                                        formsInteractiveDispatch);
+                                        formsInteractiveDispatch,
+                                        activeToolId);
 
-                    // The transform form owns the translate value rows (Position
-                    // TX/TY/TZ) and the T/R/S checkboxes, but Rotate/Scale value
-                    // editing has no form rows yet (deferred Phase 5b) and lives
-                    // ONLY in the legacy rotateSub/scaleSub sliders. So still call
-                    // drawProperties() AFTER the form, with the translate section
-                    // suppressed — no double-live-widget on headlessTranslate, R/S
-                    // sliders still editable. For any other formed tool the latch
-                    // is harmless (it only gates the transform tool's translate
-                    // sliders). The schema panel is NOT drawn: the transform tool
-                    // sets renderParamsAsPanel()==false (PropertyPanel.draw
-                    // early-returns), and formed tools render values via the form.
+                    // The transform form now owns ALL the TRS value rows —
+                    // Position (TX/TY/TZ), Rotate (RX/RY/RZ) and Scale (SX/SY/SZ),
+                    // all driven through the reEvaluate() seam. The legacy
+                    // moveSub/rotateSub/scaleSub sliders would duplicate every row
+                    // (and fight the form's live widgets), so suppress them while
+                    // the form rendered. For any other formed tool the latch is
+                    // harmless (it only gates the transform tool's TRS sliders); we
+                    // still call drawProperties() so a formed tool's custom non-row
+                    // UI (if any) renders. The schema panel is NOT drawn: the
+                    // transform tool sets renderParamsAsPanel()==false
+                    // (PropertyPanel.draw early-returns), and formed tools render
+                    // values via the form.
                     import tools.xfrm_transform : XfrmTransformTool;
                     if (auto xf = cast(XfrmTransformTool) activeTool) {
-                        xf.suppressTranslateProperties = true;
-                        scope(exit) xf.suppressTranslateProperties = false;
-                    // Phase 5b: R/S sliders below still commit their own sessions
-                    // (separate undo entries) until reEvaluate covers R/S.
+                        xf.suppressTRSProperties = true;
+                        scope(exit) xf.suppressTRSProperties = false;
                         xf.drawProperties();
                     }
                 } else {

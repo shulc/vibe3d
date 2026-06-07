@@ -6,6 +6,7 @@ import math    : Vec3, Viewport, screenRay, rayPlaneIntersect;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
+import params           : Param, IntEnumEntry;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
@@ -296,6 +297,62 @@ public:
             ["clusterCount",  format("%d", clusters)],
         ];
     }
+
+    // ------------------------------------------------------------------
+    // Tool Properties schema. Exposes the `mode` selector as an int-backed
+    // enum Param so the config-driven Action Center form
+    // (config/forms/actioncenter.yaml, whenStage: actionCenter) renders a
+    // dropdown whose choices + current selection both fall out of THIS list
+    // — the same pattern as FalloffStage.params(). The wire tags match
+    // `applySetAttr("mode", ...)` exactly; user labels mirror the status-bar
+    // Action Center pulldown (config/statusline.yaml) for consistency.
+    //
+    // Unlike FalloffStage (which returns [] when type==None to hide its
+    // section), this list is ALWAYS non-empty so the section — and the
+    // dropdown — stay visible even at the default None mode; the dropdown is
+    // how the user PICKS a mode, so hiding it at None would be a dead end.
+    //
+    // The FORM write path fires `tool.pipe.attr actionCenter mode <tag>`,
+    // routed through setAttr → applySetAttr (NOT this Param's typed pointer);
+    // PropertyPanel's direct-pointer path is unused for this stage because
+    // the form is the only consumer. Either way the int* below mirrors the
+    // live mode so the dropdown previews the active mode.
+    override Param[] params() {
+        IntEnumEntry[] modeEntries = [
+            IntEnumEntry(cast(int)Mode.None,       "none",       "(none)"),
+            IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
+            IntEnumEntry(cast(int)Mode.Select,     "select",     "Selection"),
+            IntEnumEntry(cast(int)Mode.Border,     "border",     "Selection Border"),
+            IntEnumEntry(cast(int)Mode.SelectAuto, "selectauto", "Selection Center Auto Axis"),
+            IntEnumEntry(cast(int)Mode.Element,    "element",    "Element"),
+            IntEnumEntry(cast(int)Mode.Screen,     "screen",     "Screen"),
+            IntEnumEntry(cast(int)Mode.Origin,     "origin",     "Origin"),
+            IntEnumEntry(cast(int)Mode.Local,      "local",      "Local"),
+        ];
+        Param[] ps;
+        ps ~= Param.intEnum_("mode", "Action Center",
+                             cast(int*)&mode, modeEntries,
+                             cast(int)Mode.None);
+        return ps;
+    }
+
+    // Full STATIC attr universe for forms-engine startup validation. params()
+    // reports only `mode`, but applySetAttr (and listAttrs) accept the wider
+    // set below — so the base Stage.knownAttrs() default (params() names)
+    // would reject perfectly valid attrs like cenX / userPlacedCenter /
+    // selectSubMode at boot. Mirror FalloffStage.knownAttrs(): enumerate
+    // everything applySetAttr accepts. KEEP IN SYNC with the applySetAttr
+    // switch and listAttrs().
+    override string[] knownAttrs() {
+        return [
+            "mode", "cenX", "cenY", "cenZ",
+            "userPlacedCenter", "userPlacedX", "userPlacedY", "userPlacedZ",
+            "selectSubMode",
+        ];
+    }
+
+    /// Header label for the stage's Tool Properties section.
+    override string displayName() const { return "Action Center"; }
 
     /// `tool.set actr.auto` semantics — reset Auto sub-state to "follow
     /// selection". Switching mode to Auto via setAttr also goes through

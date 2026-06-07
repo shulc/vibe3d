@@ -347,9 +347,50 @@ unittest {
     if (!exists("config/forms/transform.yaml"))
         return;   // harness ran from an unexpected cwd; HTTP test below still covers boot
     auto forms = loadForms("config/forms/transform.yaml");
-    assert(forms.length >= 1);
-    assert(forms[0].id == "transform.main");
+    // Split into three per-bank forms (Position / Rotate / Scale) so each can
+    // carry its own whenTool list (the ids whose T / R / S flag is enabled).
+    assert(forms.length == 3);
+    assert(forms[0].id == "transform.position");
+    assert(forms[1].id == "transform.rotate");
+    assert(forms[2].id == "transform.scale");
     validateForms(forms, realisticValidators(), "config/forms/transform.yaml");
+
+    // ---- whenTool coverage: the reviewer finding's regression fence --------
+    // Every XfrmTransformTool ACTIVATION id (toolbar move/rotate/scale, the
+    // bare xfrm.transform, and the transform presets) must select the form for
+    // each bank that id enables. A scalar `whenTool: xfrm.transform` left the
+    // readable panel unrendered for all the other ids.
+    g_forms = forms;
+    scope(exit) g_forms = null;
+    string[] formIds(string toolId) {
+        string[] ids;
+        foreach (ref f; formsForTool(toolId)) ids ~= f.id;
+        return ids;
+    }
+    // Single-bank ids: exactly their one group.
+    assert(formIds("move")   == ["transform.position"]);
+    assert(formIds("rotate") == ["transform.rotate"]);
+    assert(formIds("scale")  == ["transform.scale"]);
+    // Per-mode + element presets: single bank each.
+    assert(formIds("TransformMove")    == ["transform.position"]);
+    assert(formIds("TransformRotate")  == ["transform.rotate"]);
+    assert(formIds("TransformScale")   == ["transform.scale"]);
+    assert(formIds("xfrm.elementMove") == ["transform.position"]);
+    assert(formIds("ElementMove")      == ["transform.position"]);
+    // Deform presets (base move/rotate/scale): single bank each.
+    assert(formIds("xfrm.softMove")   == ["transform.position"]);
+    assert(formIds("xfrm.twist")      == ["transform.rotate"]);
+    assert(formIds("xfrm.taper")      == ["transform.scale"]);
+    // T+R+S ids: all three groups, Position->Rotate->Scale order.
+    assert(formIds("xfrm.transform") ==
+           ["transform.position", "transform.rotate", "transform.scale"]);
+    assert(formIds("Transform") ==
+           ["transform.position", "transform.rotate", "transform.scale"]);
+    assert(formIds("xfrm.flex") ==
+           ["transform.position", "transform.rotate", "transform.scale"]);
+    // A non-transform tool selects none of these forms.
+    assert(formIds("prim.cube").length == 0);
+    assert(formIds("xfrm.flare").length == 0);   // PushTool, deliberately excluded
 }
 
 // ---------------------------------------------------------------------------
