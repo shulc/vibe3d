@@ -276,3 +276,86 @@ unittest {
     assert(veq(bef[0], Vec3(0, 10, 0)), "before anchors to earliest survivor");
     assert(veq(aft[0], Vec3(0, 60, 0)), "after = latest gesture");
 }
+
+// ===========================================================================
+// 7. replaceInSessionTail (Phase 0, in-session re-grade REPLACE primitive).
+//    Contract: it UNCONDITIONALLY drops the matching (InSession && runId)
+//    undo-stack tail, then recordInSession()'s the new entry — keeping the
+//    stack length stable and clearing redo (N1). The label-based decision of
+//    WHEN to replace vs append lives in the CALLER (recordFalloffRefire); this
+//    primitive only owns the stack rewrite, so here we drive it the way the
+//    caller does for a CONSECUTIVE re-grade (tail is a prior re-grade entry).
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+    ulong run = h.nextRun();
+
+    // A landed gesture, then the FIRST re-grade — the caller APPENDS this via
+    // recordInSession (tail is the "Move" gesture, not a re-grade), giving 2
+    // entries. before[] anchors to the POST-GESTURE state (0,1,0).
+    h.recordInSession(s.makeEdit(
+        [0u], [Vec3(0,0,0)], [Vec3(0,1,0)], "Move"), run);
+    h.recordInSession(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,2,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 2, "gesture + first re-grade = 2 entries");
+    assert(h.runOpen());
+
+    // CONSECUTIVE re-grade: the tail IS this run's in-session re-grade entry, so
+    // the caller routes through replaceInSessionTail — it DROPS that tail and
+    // records the new one, so the stack length stays 2. The new entry's before[]
+    // is still anchored to the post-gesture state (0,1,0), NOT to the dropped
+    // entry's before[]; the CALLER owns that anchoring.
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,3,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 2,
+        "consecutive re-grade REPLACES in place (length stable)");
+    assert(h.runOpen());
+    assert(!h.canRedo(), "replaceInSessionTail clears redo (N1)");
+
+    auto tail = mveAt(h, 1);
+    assert(tail !is null, "tail is the replacement vertex edit");
+    auto bef = tail.editBefore();
+    auto aft = tail.editAfter();
+    assert(veq(bef[0], Vec3(0,1,0)), "tail before = post-gesture anchor (0,1,0)");
+    assert(veq(aft[0], Vec3(0,3,0)), "tail after = latest re-grade (0,3,0)");
+
+    // Consolidate: the gesture + the single re-grade tail collapse to ONE entry.
+    // before[] = run-start (0,0,0); after[] = latest re-grade (0,3,0).
+    h.consolidate(run);
+    assert(!h.runOpen(), "consolidate clears runOpen");
+    assert(h.undoEntries().length == 1, "drop = ONE consolidated entry");
+    auto merged = mveAt(h, 0);
+    assert(veq(merged.editBefore()[0], Vec3(0,0,0)),
+        "consolidated before = gesture run-start");
+    assert(veq(merged.editAfter()[0], Vec3(0,3,0)),
+        "consolidated after = latest re-grade");
+}
+
+// ===========================================================================
+// 8. replaceInSessionTail on a NON-matching tail degrades to append.
+//    A tail belonging to a different run (or an untagged/foreign entry) must
+//    NOT be dropped — the primitive only drops a SAME-run in-session tail.
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+
+    // Run A: one in-session entry, then CONSOLIDATE so it is no longer tagged.
+    ulong runA = h.nextRun();
+    h.recordInSession(s.makeEdit([0u], [Vec3(0,0,0)], [Vec3(0,1,0)], "Move"), runA);
+    h.consolidate(runA);   // strips the InSession tag (n==1)
+    assert(h.undoEntries().length == 1);
+
+    // Run B opens; a replace for run B must NOT drop run A's (now untagged)
+    // surviving entry — the tail is not (InSession && runId==runB), so it
+    // appends.
+    ulong runB = h.nextRun();
+    h.replaceInSessionTail(s.makeEdit([1u], [Vec3(1,0,0)], [Vec3(1,1,0)], "Falloff"), runB);
+    assert(h.undoEntries().length == 2,
+        "replace with non-matching tail appends (does not drop run A)");
+    // Entry 0 is run A's untagged survivor; entry 1 is run B's new tagged entry.
+    auto e0 = h.undoEntries()[0];
+    assert(!(e0.flags & HistoryFlags.InSession),
+        "run A entry stays untagged + intact");
+}
