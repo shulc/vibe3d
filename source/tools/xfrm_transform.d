@@ -382,17 +382,59 @@ public:
         // distinct from `mesh.vertices`). `dragBaseline` was
         // captured at the most recent mouse-down and matches
         // `mesh.vertices.length`.
-        if (editIsOpen() && activeDrag is null
+        //
+        // Two-arm branch (R3/R4):
+        //  - ARM 1 (panel session, editIsOpen() true): the OLD in-place
+        //    coalesce. A panel session (driven by tool.attr at idle) is its own
+        //    coalescing world — the re-apply folds into the session's single
+        //    drop commit, records nothing. UNCHANGED behaviour.
+        //  - ARM 2 (committed gizmo gesture, editIsOpen() false but the run is
+        //    open with a landed Move gesture): the NEW record path. The re-grade
+        //    is baked as a tagged in-session entry in the current run so the
+        //    in-session Ctrl+Z contract holds.
+        if (activeDrag is null
             && dragBaseline.length == mesh.vertices.length
             && (headlessTranslate.x != 0
              || headlessTranslate.y != 0
              || headlessTranslate.z != 0)) {
-            FalloffPacket live = currentFalloff(vts);
-            if (!falloffPacketsEqual(live, dragFalloff)) {
-                dragFalloff = live;
-                vertexCacheDirty = true;
-                applyTRSForBank(DragBank.Move, dragBaseline);
-                needsGpuUpdate = true;
+            if (editIsOpen()) {
+                // ARM 1 — panel session: old in-place coalesce, no record.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    dragFalloff = live;
+                    vertexCacheDirty = true;
+                    applyTRSForBank(DragBank.Move, dragBaseline);
+                    needsGpuUpdate = true;
+                }
+            } else if (history !is null
+                    && history.runOpen()
+                    && currentRunBank == DragBank.Move           // OBJ-2 single-winner
+                    && mesh.mutationVersion == lastAppliedGestureMutationVersion) {
+                // ARM 2 — committed gizmo gesture: re-grade + record.
+                // Staleness gate (OBJ-1) checked at the SITE before the recompute
+                // mutates the mesh; the helper re-checks as defense-in-depth.
+                FalloffPacket live = currentFalloff(vts);
+                if (!falloffPacketsEqual(live, dragFalloff)) {
+                    // Capture the pre-recompute (post-gesture) geometry LIVE for
+                    // the once-per-run anchor (OBJ-3 W1: live, never frozen).
+                    Vec3[] anchor = mesh.vertices.dup;
+                    dragFalloff = live;
+                    vertexCacheDirty = true;
+                    applyTRSForBank(DragBank.Move, dragBaseline);   // mutates mesh.vertices
+                    Vec3[] after = mesh.vertices.dup;
+
+                    // Index set = the full vertex range; the helper diffs against
+                    // the anchor and keeps only moved verts. (The falloff support
+                    // can be the whole mesh, so a full-range pass is the safe
+                    // superset.)
+                    size_t[] allIdx;
+                    allIdx.length = mesh.vertices.length;
+                    foreach (i; 0 .. allIdx.length) allIdx[i] = i;
+
+                    recordFalloffRefire("Falloff", anchor, after,
+                                        allIdx, DragBank.Move);
+                    needsGpuUpdate = true;
+                }
             }
         }
 
@@ -1390,6 +1432,14 @@ public:
             // (Q-b): the next gesture's beginEdit re-freezes the pin.
             if (editIsOpen())
                 commitEdit("Move");
+
+            // In-session falloff re-grade — staleness stamp (OBJ-1). Record the
+            // mesh version this gesture left behind: a later falloff tweak at
+            // idle re-grades this gesture ONLY while the version still matches.
+            // An in-session Ctrl+Z reverts geometry (bumps the version away from
+            // the stamp), so the re-grade site then refuses — a popped gesture is
+            // never resurrected.
+            lastAppliedGestureMutationVersion = mesh.mutationVersion;
         }
 
         // Rotate drag (principal axes OR view-ring) — wrapper owns the final
@@ -2789,6 +2839,15 @@ private:
         if (history is null) return;
         if (!history.runOpen()) return;
 
+        // Whether a prior re-grade already recorded this run — the REPLACE-vs-
+        // APPEND signal (step 4). It is exactly "refireAnchor already captured":
+        // the FIRST re-grade has an empty anchor (APPEND), every subsequent one
+        // has a non-empty anchor (REPLACE the prior re-grade tail). This is
+        // robust where a label compare is not — the MeshVertexEdit label embeds
+        // the moved-vert count, which differs between re-grades of different
+        // support, so it cannot identify "is the tail a re-grade".
+        bool priorRefireExists = refireAnchor.length != 0;
+
         // Step 2 — anchor capture (once per run). The FIRST re-grade stores the
         // site's pre-recompute snapshot; later re-grades reuse it unchanged.
         if (refireAnchor.length == 0)
@@ -2824,22 +2883,13 @@ private:
         auto cmd = vertexEditFactory();
         cmd.setEdit(uidx, before, movedAfter, label);
 
-        // Step 4 — record. REPLACE-last-if-last-is-a-re-grade keeps N consecutive
-        // tweaks at ONE entry; the first tweak (tail is the gesture, not a
-        // re-grade) appends. replaceInSessionTail does exactly that: it drops the
-        // tail ONLY if the tail is this run's in-session entry whose label is the
-        // re-grade label, else it appends. The run tail is a re-grade iff its
-        // label matches the re-grade label AND it is this run's in-session entry.
-        // A gesture entry (label "Move"/"Rotate"/"Scale") is therefore never
-        // dropped — only a prior re-grade ("Falloff") is superseded.
-        bool replace = false;
-        auto ents = history.undoEntries();
-        if (ents.length > 0) {
-            auto tail = ents[$ - 1];
-            replace = tail.label == label
-                   && tail.runId == history.currentRunId;
-        }
-        if (replace)
+        // Step 4 — record. The FIRST re-grade of the run APPENDS (the tail is the
+        // landed gesture, never dropped). Every CONSECUTIVE re-grade REPLACES the
+        // prior re-grade tail so N tweaks stay ONE undo step (bounded run length
+        // under a falloff scrub). priorRefireExists is the signal; the tail at a
+        // consecutive re-grade IS this run's prior re-grade entry, which
+        // replaceInSessionTail drops (it re-checks InSession && runId).
+        if (priorRefireExists)
             history.replaceInSessionTail(cmd, history.currentRunId);
         else
             history.recordInSession(cmd, history.currentRunId);
