@@ -280,6 +280,9 @@ public:
         accumulatedWorldDelta     = Vec3(0, 0, 0);
         accumulatedAtDragStart    = Vec3(0, 0, 0);
         gesturePinStartKnown      = false;
+        // In-session falloff re-grade state — no live gesture, no anchor.
+        lastAppliedGestureMutationVersion = ulong.max;
+        refireAnchor.length               = 0;
     }
 
     override void deactivate() {
@@ -306,6 +309,10 @@ public:
         if (flagR) rotateSub.setRecordViaInSession(false);
         if (flagS) scaleSub.setRecordViaInSession(false);
         currentRunBank       = DragBank.None;
+        // Tool drop: no live gesture, no re-grade anchor carries to the next
+        // activation (resetTransientState also clears these on (re)activate).
+        lastAppliedGestureMutationVersion = ulong.max;
+        refireAnchor.length               = 0;
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
@@ -351,6 +358,11 @@ public:
                     history.consolidate(history.currentRunId);
                     history.nextRun();
                     currentRunBank = DragBank.None;
+                    // Run boundary: invalidate the re-grade anchor + staleness
+                    // stamp so a falloff change after a selection/mutation
+                    // boundary cannot re-grade the just-closed run.
+                    lastAppliedGestureMutationVersion = ulong.max;
+                    refireAnchor.length               = 0;
                 }
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
@@ -2695,6 +2707,35 @@ private:
     enum DragBank { None, Move, Rotate, Scale }
     DragBank currentRunBank = DragBank.None;
 
+    // In-session falloff re-grade (re-fire) state.
+    //
+    // When a falloff configuration changes at idle while the current run has a
+    // landed gesture, the just-applied gesture is re-evaluated against the new
+    // weights and recorded as one tagged in-session entry in the SAME run. Two
+    // pieces of state make that safe + bounded:
+    //
+    // lastAppliedGestureMutationVersion — STALENESS STAMP. Set to
+    //   mesh.mutationVersion at the end of every gesture's mouse-up commit (all
+    //   banks). The re-grade site fires ONLY if mesh.mutationVersion still
+    //   equals this stamp. An in-session Ctrl+Z that pops a gesture reverts
+    //   geometry and so bumps mutationVersion away from the stamp; the site then
+    //   goes inert and never re-applies the popped gesture from a stale baseline.
+    //   ulong.max = "no live gesture to re-grade". Reset at activate /
+    //   deactivate / resetTransientState and at every run boundary (bank switch,
+    //   selection/mutation guard).
+    ulong lastAppliedGestureMutationVersion = ulong.max;
+
+    // refireAnchor — once-per-run POST-GESTURE full-mesh snapshot. Captured ONCE
+    //   at the FIRST re-grade of a run (before the recompute mutates the mesh)
+    //   and reused as the before[] source for EVERY re-grade of that run. Using
+    //   the full post-gesture geometry (not just the falloff support) makes a
+    //   WIDENING scrub revert cleanly: a re-grade that pulls in verts outside the
+    //   prior re-grade's support still has a recorded baseline for them. Empty =
+    //   none captured. Cleared at every run boundary, at activate / deactivate /
+    //   resetTransientState, and on a staleness miss (the run's anchor is then
+    //   invalid; a later forward gesture re-captures fresh).
+    Vec3[] refireAnchor;
+
     // Detect a bank switch at gizmo mouse-down and consolidate the prior run.
     // Called from each mouse-down consume arm AFTER the sub-tool confirmed the
     // click landed on its bank, BEFORE begin*DragSession. An empty/not-yet-open
@@ -2705,8 +2746,109 @@ private:
         if (currentRunBank != DragBank.None && currentRunBank != thisBank) {
             history.consolidate(history.currentRunId);
             history.nextRun();
+            // A bank switch is a run boundary: the prior run's re-grade anchor +
+            // staleness stamp must not leak into the new run.
+            lastAppliedGestureMutationVersion = ulong.max;
+            refireAnchor.length               = 0;
         }
         currentRunBank = thisBank;
+    }
+
+    // Record an in-session falloff re-grade entry for the current run.
+    //
+    // The SITE has already: gated on its own bank + the staleness stamp, dup'd
+    // the pre-recompute geometry into `anchor`, run the recompute (mutating
+    // mesh.vertices), and dup'd the result into `after`. This helper owns the
+    // record: it anchors before[] to the once-per-run POST-GESTURE snapshot and
+    // routes through recordInSession (first re-grade APPENDS) or
+    // replaceInSessionTail (consecutive re-grades REPLACE) so N consecutive
+    // tweaks stay ONE undo step.
+    //
+    // `anchor` is the site's pre-recompute snapshot (post-gesture geometry). On
+    // the run's FIRST re-grade the helper STORES it as refireAnchor; on later
+    // re-grades refireAnchor already holds the post-gesture state and `anchor` is
+    // ignored. before[] is sourced from refireAnchor for ALL re-grades, so a
+    // widening scrub (verts pulled in that the prior re-grade never touched) has
+    // a complete baseline and reverts cleanly on one Ctrl+Z (contract C).
+    //
+    // The entry carries NO Tool-Properties / pin hooks: the falloff CONFIG is an
+    // accepted v1 undo divergence (the config command is a separate SideEffect,
+    // not captured in geometry undo) and a falloff tweak never relocates the
+    // pivot. So the MeshVertexEdit's apply/revert restore geometry alone — which
+    // is exactly contract (C).
+    private void recordFalloffRefire(string label, Vec3[] anchor,
+                                     Vec3[] after, size_t[] idx, DragBank bank) {
+        // Step 0 — staleness gate (defense-in-depth; the site already gated, but
+        // the helper must refuse too). On a miss the run's anchor is invalid.
+        if (mesh.mutationVersion != lastAppliedGestureMutationVersion) {
+            refireAnchor.length = 0;
+            return;
+        }
+        // Step 1 — guards: need a history, an OPEN run (a re-grade only extends a
+        // run that has a landed gesture), and a real geometry change.
+        if (history is null) return;
+        if (!history.runOpen()) return;
+
+        // Step 2 — anchor capture (once per run). The FIRST re-grade stores the
+        // site's pre-recompute snapshot; later re-grades reuse it unchanged.
+        if (refireAnchor.length == 0)
+            refireAnchor = anchor.dup;
+
+        // Step 3 — build the entry. before[] = refireAnchor (post-gesture state)
+        // for the moved indices; after[] = the re-graded positions. Drop any
+        // index that did not actually move vs the anchor (no spurious payload).
+        size_t[] movedIdx;
+        Vec3[]   before;
+        Vec3[]   movedAfter;
+        movedIdx.reserve(idx.length);
+        before.reserve(idx.length);
+        movedAfter.reserve(idx.length);
+        foreach (k, vid; idx) {
+            if (vid >= refireAnchor.length || vid >= mesh.vertices.length)
+                continue;
+            Vec3 b = refireAnchor[vid];
+            Vec3 a = after[k];
+            if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
+            movedIdx   ~= vid;
+            before     ~= b;
+            movedAfter ~= a;
+        }
+        if (movedIdx.length == 0) return;   // no net change → no entry.
+
+        // setEdit takes uint[] indices.
+        uint[] uidx;
+        uidx.length = movedIdx.length;
+        foreach (k, vid; movedIdx) uidx[k] = cast(uint) vid;
+
+        if (vertexEditFactory is null) return;
+        auto cmd = vertexEditFactory();
+        cmd.setEdit(uidx, before, movedAfter, label);
+
+        // Step 4 — record. REPLACE-last-if-last-is-a-re-grade keeps N consecutive
+        // tweaks at ONE entry; the first tweak (tail is the gesture, not a
+        // re-grade) appends. replaceInSessionTail does exactly that: it drops the
+        // tail ONLY if the tail is this run's in-session entry whose label is the
+        // re-grade label, else it appends. The run tail is a re-grade iff its
+        // label matches the re-grade label AND it is this run's in-session entry.
+        // A gesture entry (label "Move"/"Rotate"/"Scale") is therefore never
+        // dropped — only a prior re-grade ("Falloff") is superseded.
+        bool replace = false;
+        auto ents = history.undoEntries();
+        if (ents.length > 0) {
+            auto tail = ents[$ - 1];
+            replace = tail.label == label
+                   && tail.runId == history.currentRunId;
+        }
+        if (replace)
+            history.replaceInSessionTail(cmd, history.currentRunId);
+        else
+            history.recordInSession(cmd, history.currentRunId);
+
+        // Step 5 — defensive re-stamps (no-ops today: the re-grade does NOT bump
+        // mutationVersion — applyTRS is version-silent and recordInSession never
+        // calls apply()). Kept future-proof should the apply path ever bump.
+        lastMutationVersion               = mesh.mutationVersion;
+        lastAppliedGestureMutationVersion = mesh.mutationVersion;
     }
 
     // Phase 3 — wrapper-owned drag state.

@@ -496,6 +496,46 @@ final class CommandHistory {
         }
     }
 
+    /// Replace the open run's in-session TAIL entry with `cmd` (still tagged
+    /// InSession + runId), keeping the run length stable. This is the REPLACE
+    /// primitive used when a re-graded gesture should supersede the prior
+    /// re-grade entry of the SAME run rather than append a second one (so N
+    /// consecutive re-grades stay ONE undo step). It is the narrow stack-mutation
+    /// seam a tool routes through instead of reaching into the stack itself —
+    /// command_history stays the single owner of stack mutation (mirrors the
+    /// consolidate() ownership boundary).
+    ///
+    /// Behaviour:
+    ///   - If the undo-stack tail is (InSession && runId == runId), DROP it
+    ///     (length -= 1, NOT onto the redo stack — a superseded re-grade entry
+    ///     is not a navigable step), then recordInSession(cmd, runId). The net
+    ///     stack length is unchanged; the run stays open; recordInSession clears
+    ///     the redo stack (N1) and fires onRecord as usual.
+    ///   - Otherwise (empty stack, or the tail is not this run's in-session
+    ///     entry) it degrades to a plain recordInSession(cmd, runId) append —
+    ///     i.e. the FIRST re-grade of a run, where there is no prior re-grade
+    ///     entry to replace, simply appends.
+    ///
+    /// The caller owns the BEFORE[] of `cmd` (it anchors before[] to the
+    /// once-per-run post-gesture snapshot, NOT to the dropped entry's before[],
+    /// so a widening support reverts cleanly). This primitive only owns the
+    /// stack rewrite.
+    ///
+    /// Main-thread only (all recorders are; recordInSession asserts the same).
+    void replaceInSessionTail(Command cmd, ulong runId) {
+        if (cmd is null) return;
+        // Drop the matching in-session tail if present (superseded re-grade).
+        if (undoStack.length > 0) {
+            auto tail = undoStack[$ - 1];
+            if ((tail.flags & HistoryFlags.InSession) && tail.runId == runId) {
+                undoStack.length -= 1;
+            }
+        }
+        // Append the replacement as a fresh tagged in-session entry. This also
+        // clears the redo stack (N1) and re-sets _runOpen — both correct.
+        recordInSession(cmd, runId);
+    }
+
     /// Consolidate one in-session RUN: collapse its CONTIGUOUS tail of entries
     /// tagged (InSession + runId) into ONE merged entry, in place at the
     /// position of the FIRST gathered entry. Clears _runOpen.
