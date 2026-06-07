@@ -3,6 +3,7 @@ module tools.scale;
 import bindbc.opengl;
 import operator : VectorStack;
 import bindbc.sdl;
+import sdl.stdinc : SDL_FALSE, SDL_TRUE, SDL_bool;
 
 import tools.transform;
 import handler;
@@ -37,6 +38,10 @@ private:
     Vec3     propScale      = Vec3(1, 1, 1);  // persistent value shown in Tool Properties
     Vec3[]   activationVertices;              // mesh snapshot at tool activation (for props apply)
     Vec3     activationCenter;               // gizmo center at activation
+    Vec3     dragStartScaleAccum = Vec3(1, 1, 1);
+    float    dragScaleScalarDelta;
+    SDL_bool preDragRelativeMouse = SDL_FALSE;
+    bool     ownsRelativeMouse;
 
     // Phase C.3: Tool Properties state at the start of the current edit
     // session, restored by hooks on undo of the matching MeshVertexEdit.
@@ -177,6 +182,7 @@ public:
     // Phase 7.5h: tool-session boundary — bake pending edit into one
     // undo entry on tool switch.
     override void deactivate() {
+        restoreRelativeMouseMode();
         if (editIsOpen())
             commitEdit("Scale");
         super.deactivate();
@@ -419,7 +425,11 @@ public:
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
+            dragStartScaleAccum = scaleAccum;
             dragScaleAccum = Vec3(1, 1, 1);
+            dragScaleScalarDelta = 0.0f;
+            preDragRelativeMouse = SDL_GetRelativeMouseMode();
+            ownsRelativeMouse = SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
 
             buildVertexCacheIfNeeded();
             // Capture falloff/symmetry so the standalone (no-wrapper)
@@ -494,6 +504,7 @@ public:
         // XfrmTransformTool.onMouseButtonUp). This sub-tool only resets
         // its own drag bookkeeping here; no geometry, no upload.
         wholeMeshDrag = false;
+        restoreRelativeMouseMode();
 
         dragAxis = -1;
         propScale = scaleAccum;
@@ -524,17 +535,15 @@ public:
         }
 
         Vec3 center = handler.center;
+        int dxRel = motionDeltaX(e);
+        int dyRel = motionDeltaY(e);
 
         if (dragAxis == 3) {
             float gizmoScreenPx = gizmoScreenWidth(center);
             if (gizmoScreenPx < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
-            float dx = cast(float)(e.x - lastMX);
-            float scaleFactor = 1.0f + dx / gizmoScreenPx;
-            float minAccum = scaleAccum.x < scaleAccum.y ? scaleAccum.x : scaleAccum.y;
-            if (scaleAccum.z < minAccum) minAccum = scaleAccum.z;
-            if (minAccum * scaleFactor < 0.0f) scaleFactor = 0.0f;
-            scaleAccum.x *= scaleFactor; scaleAccum.y *= scaleFactor; scaleAccum.z *= scaleFactor;
-            dragScaleAccum.x *= scaleFactor; dragScaleAccum.y *= scaleFactor; dragScaleAccum.z *= scaleFactor;
+            dragScaleScalarDelta += cast(float)dxRel / gizmoScreenPx;
+            float scaleFactor = clampScaleFactor(1.0f + dragScaleScalarDelta);
+            setDragAxisScale(true, true, true, scaleFactor);
             publishScaleGesture();
             lastMX = e.x; lastMY = e.y;
             return true;
@@ -543,17 +552,12 @@ public:
         if (dragAxis >= 4) {
             float gizmoScreenPx = gizmoScreenWidth(center);
             if (gizmoScreenPx < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
-            float dx = cast(float)(e.x - lastMX);
-            float scaleFactor = 1.0f + dx / gizmoScreenPx;
+            dragScaleScalarDelta += cast(float)dxRel / gizmoScreenPx;
+            float scaleFactor = clampScaleFactor(1.0f + dragScaleScalarDelta);
             bool scaleX = (dragAxis == 4 || dragAxis == 6);
             bool scaleY = (dragAxis == 4 || dragAxis == 5);
             bool scaleZ = (dragAxis == 5 || dragAxis == 6);
-            if (scaleX) { if (scaleAccum.x * scaleFactor < 0.0f) scaleFactor = 0.0f; }
-            if (scaleY) { if (scaleAccum.y * scaleFactor < 0.0f) scaleFactor = 0.0f; }
-            if (scaleZ) { if (scaleAccum.z * scaleFactor < 0.0f) scaleFactor = 0.0f; }
-            if (scaleX) { scaleAccum.x *= scaleFactor; dragScaleAccum.x *= scaleFactor; }
-            if (scaleY) { scaleAccum.y *= scaleFactor; dragScaleAccum.y *= scaleFactor; }
-            if (scaleZ) { scaleAccum.z *= scaleFactor; dragScaleAccum.z *= scaleFactor; }
+            setDragAxisScale(scaleX, scaleY, scaleZ, scaleFactor);
             publishScaleGesture();
             lastMX = e.x; lastMY = e.y;
             return true;
@@ -573,12 +577,10 @@ public:
         float slen2 = sdx*sdx + sdy*sdy;
         if (slen2 < 1.0f) { lastMX = e.x; lastMY = e.y; return true; }
 
-        float delta       = ((e.x - lastMX) * sdx + (e.y - lastMY) * sdy) / slen2;
-        float scaleFactor = 1.0f + delta;
+        dragScaleScalarDelta += (dxRel * sdx + dyRel * sdy) / slen2;
+        float scaleFactor = clampScaleFactor(1.0f + dragScaleScalarDelta);
         bool  axX = (dragAxis == 0), axY = (dragAxis == 1), axZ = (dragAxis == 2);
-        if (axX) { if (scaleAccum.x * scaleFactor < 0.0f) scaleFactor = 0.0f; scaleAccum.x *= scaleFactor; dragScaleAccum.x *= scaleFactor; }
-        if (axY) { if (scaleAccum.y * scaleFactor < 0.0f) scaleFactor = 0.0f; scaleAccum.y *= scaleFactor; dragScaleAccum.y *= scaleFactor; }
-        if (axZ) { if (scaleAccum.z * scaleFactor < 0.0f) scaleFactor = 0.0f; scaleAccum.z *= scaleFactor; dragScaleAccum.z *= scaleFactor; }
+        setDragAxisScale(axX, axY, axZ, scaleFactor);
         publishScaleGesture();
 
         lastMX = e.x; lastMY = e.y;
@@ -597,6 +599,41 @@ public:
     private void publishScaleGesture() {
         pendingScale      = dragScaleAccum;
         pendingScaleValid = true;
+    }
+
+    private float clampScaleFactor(float f) const {
+        return f < 0.0f ? 0.0f : f;
+    }
+
+    private void setDragAxisScale(bool scaleX, bool scaleY, bool scaleZ,
+                                  float scaleFactor)
+    {
+        if (scaleX) {
+            dragScaleAccum.x = scaleFactor;
+            scaleAccum.x = dragStartScaleAccum.x * scaleFactor;
+        }
+        if (scaleY) {
+            dragScaleAccum.y = scaleFactor;
+            scaleAccum.y = dragStartScaleAccum.y * scaleFactor;
+        }
+        if (scaleZ) {
+            dragScaleAccum.z = scaleFactor;
+            scaleAccum.z = dragStartScaleAccum.z * scaleFactor;
+        }
+    }
+
+    private int motionDeltaX(ref const SDL_MouseMotionEvent e) const {
+        return e.xrel != 0 ? e.xrel : e.x - lastMX;
+    }
+
+    private int motionDeltaY(ref const SDL_MouseMotionEvent e) const {
+        return e.yrel != 0 ? e.yrel : e.y - lastMY;
+    }
+
+    private void restoreRelativeMouseMode() {
+        if (!ownsRelativeMouse) return;
+        SDL_SetRelativeMouseMode(preDragRelativeMouse);
+        ownsRelativeMouse = false;
     }
 
     override bool drawImGui() {
