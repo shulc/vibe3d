@@ -16,6 +16,7 @@ vibe3d-test-with-render
 run.log
 vibe3d.pdb
 vibe3d.exe
+vibe3d.app/
 .dub/version.json
 install.cmd
 run_render.ps1

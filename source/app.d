@@ -293,6 +293,30 @@ version (WithRender) private void ensureRuntimeLibPath()
     }
 }
 
+version (OSX) private void useAppBundleResourceCwd()
+{
+    import std.file : chdir, exists, thisExePath;
+    import std.path : baseName, buildNormalizedPath, buildPath, dirName;
+    import std.string : endsWith;
+
+    string exeDir;
+    try exeDir = thisExePath().dirName;
+    catch (Exception) return;
+
+    if (baseName(exeDir) != "MacOS") return;
+    const contentsDir = dirName(exeDir);
+    const appDir = dirName(contentsDir);
+    if (!baseName(appDir).endsWith(".app")) return;
+
+    const resourcesDir = buildNormalizedPath(contentsDir, "Resources");
+    if (!exists(buildPath(resourcesDir, "config"))) return;
+
+    try chdir(resourcesDir);
+    catch (Exception) {
+        // Fall back to the launch cwd; dev runs and test harnesses keep working.
+    }
+}
+
 /// Set the window/taskbar icon from the RGBA blob embedded at compile time
 /// (assets/icon/icon_64.rgba: 8-byte LE width/height header + RGBA8 pixels;
 /// regenerate with tools/icon/gen_icons.py). Covers X11 and Windows — on
@@ -325,6 +349,7 @@ void main(string[] args) {
     // <exeDir>/lib doesn't exist — dev builds rely on the link-time
     // dub-cache absolute paths and don't need this.
     version (WithRender) ensureRuntimeLibPath();
+    version (OSX) useAppBundleResourceCwd();
 
     // Parse --playback <file> flag
     string playbackFile;
