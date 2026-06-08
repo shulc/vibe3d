@@ -99,6 +99,42 @@ class SnapStage : Stage, Operator {
         return ok;
     }
 
+    /// Snapshot the stage's LIVE user-facing CONFIG fields into a SnapPacket —
+    /// the inverse of `restoreConfigFromPacket`. Used by the wrapper's
+    /// transform-session undo/redo hooks (P-C) so a mid-run snap toggle reverts
+    /// the snap CONFIG together with the geometry. Mirrors
+    /// FalloffStage.snapshotConfigToPacket: captures only the STAGE-owned config
+    /// fields (the ones a round-trip restores); the workplane cache + gridStep
+    /// are re-derived by evaluate() from the upstream WORK stage.
+    SnapPacket snapshotConfigToPacket() const {
+        SnapPacket p;
+        p.enabled       = enabled;
+        p.enabledTypes  = enabledTypes;
+        p.innerRangePx  = innerRangePx;
+        p.outerRangePx  = outerRangePx;
+        p.fixedGrid     = fixedGrid;
+        p.fixedGridSize = fixedGridSize;
+        return p;
+    }
+
+    /// Restore the user-facing CONFIG fields from a previously-snapshotted
+    /// SnapPacket and re-publish so the status-bar pulldown follows. Used by the
+    /// wrapper's in-session snap-refire undo/redo hooks (P-C): an in-session
+    /// Ctrl+Z of a transform-session snap change restores the snap config to its
+    /// PRE-tweak value (revert hook); redo restores the POST-tweak config (apply
+    /// hook). Mirrors FalloffStage.restoreConfigFromPacket — assign + publish, no
+    /// session. Does NOT restore the workplane cache / gridStep (evaluate()
+    /// re-derives those from the upstream WORK stage).
+    void restoreConfigFromPacket(const ref SnapPacket p) {
+        enabled       = p.enabled;
+        enabledTypes  = p.enabledTypes;
+        innerRangePx  = p.innerRangePx;
+        outerRangePx  = p.outerRangePx;
+        fixedGrid     = p.fixedGrid;
+        fixedGridSize = p.fixedGridSize;
+        publishState();
+    }
+
     override string[2][] listAttrs() const {
         return [
             ["enabled",       enabled ? "true" : "false"],

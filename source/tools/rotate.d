@@ -20,7 +20,7 @@ import d_imgui.imgui_h;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
-import toolpipe.packets : FalloffPacket;
+import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 
 // ---------------------------------------------------------------------------
@@ -282,9 +282,20 @@ public:
         if (!dragLive && angleAccum != Vec3(0, 0, 0)) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
-                FalloffPacket live = currentFalloff(vts);
-                if (!falloffPacketsEqual(live, dragFalloff)) {
-                    dragFalloff = live;
+                // P-C: trigger spans falloff + snap + symmetry. The wrapper's
+                // applyAbsolute*/applyTRS path re-captures the live symmetry +
+                // falloff from a fresh vts, so a mid-session symmetry toggle
+                // re-grades the mirror set here; re-read the sub-tool's own
+                // captured packets so the next compare baseline is current.
+                FalloffPacket liveF  = currentFalloff(vts);
+                SnapPacket     liveSn = currentSnap(vts);
+                SymmetryPacket liveSy = currentSymmetry(vts);
+                if (!falloffPacketsEqual(liveF, dragFalloff)
+                 || !snapPacketsEqual(liveSn, dragSnap)
+                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
+                    dragFalloff  = liveF;
+                    dragSnap     = liveSn;
+                    dragSymmetry = liveSy;
                     buildVertexCacheIfNeeded();
                     applyAbsoluteFromOrigCpuOnly(vts);
                     needsGpuUpdate = true;
@@ -292,23 +303,33 @@ public:
             } else if (wrap !is null && wrap.refireRotateEligible()) {
                 // ARM 2 — committed gizmo gesture: re-grade + record. The
                 // bank (Rotate) + staleness gates live inside refireRotateEligible.
-                FalloffPacket live = currentFalloff(vts);
-                if (!falloffPacketsEqual(live, dragFalloff)) {
+                // P-C: trigger spans falloff + snap + symmetry.
+                FalloffPacket liveF  = currentFalloff(vts);
+                SnapPacket     liveSn = currentSnap(vts);
+                SymmetryPacket liveSy = currentSymmetry(vts);
+                if (!falloffPacketsEqual(liveF, dragFalloff)
+                 || !snapPacketsEqual(liveSn, dragSnap)
+                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-window anchor (OBJ-3 W1: live, never frozen).
                     Vec3[] anchor = mesh.vertices.dup;
-                    // P-A: PRE-tweak falloff config = still-current dragFalloff;
-                    // POST = the live packet. Captured BEFORE `dragFalloff =
-                    // live` so the re-grade entry's hooks restore config too.
-                    FalloffPacket prePkt  = dragFalloff;
-                    FalloffPacket postPkt = live;
-                    dragFalloff = live;
+                    // P-A / P-C: PRE-tweak config = still-current captured packets;
+                    // POST = the live packets. Captured BEFORE the re-read below so
+                    // the re-grade entry's hooks restore the whole config (falloff +
+                    // snap + symmetry).
+                    FalloffPacket  preF  = dragFalloff,  postF  = liveF;
+                    SnapPacket     preSn = dragSnap,     postSn = liveSn;
+                    SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
+                    dragFalloff  = liveF;
+                    dragSnap     = liveSn;
+                    dragSymmetry = liveSy;
                     buildVertexCacheIfNeeded();
                     applyAbsoluteFromOrigCpuOnly(vts);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
                     // Empty idx → helper iterates the full vertex range (S1).
                     wrap.recordFalloffRefireRotate("Falloff", anchor, after, null,
-                                                   prePkt, postPkt);
+                                                   preF, postF, preSn, postSn,
+                                                   preSy, postSy);
                     needsGpuUpdate = true;
                 }
             }
@@ -354,33 +375,40 @@ public:
         Vec3 accAfter   = angleAccum;
         Vec3 propAfter  = propDeg;
 
-        // P-A blocker fix — UNIFORM hook family: compose the falloff CONFIG
-        // restore into this gesture's accumulator hooks. A transform run can be
-        // consolidated at DROP as [gesture, falloffRefire]; mergeRun keeps
-        // first.revert + last.apply. The refire entry carries config hooks, but
-        // without config here the merged first.revert (this gesture) would NOT
-        // restore the run-start config — leaving the falloff handle stranded at
-        // its post-tweak value after a post-drop Ctrl+Z (geometry reverts, config
-        // does not). So snapshot the config AT THIS gesture's commit (= run-start
-        // config for the first gesture in the run, since a falloff tweak only
-        // happens AFTER a gesture commit) and have BOTH hooks restore it. The
-        // gesture itself never changes the falloff config, so before==after here;
-        // the snapshot exists purely so the merged first.revert carries it.
-        // ABSOLUTE (assign), never delta — splices through mergeRun like the
-        // accums. Two INDEPENDENT stage mutations compose without clobber: the
-        // accum assignment is local field state, the config restore mutates the
-        // FalloffStage; neither reads the other.
-        FalloffPacket cfgSnap;
-        bool haveCfg = false;
-        if (auto fs = falloffStageForHooks()) { cfgSnap = fs.snapshotConfigToPacket(); haveCfg = true; }
+        // P-A + P-C — UNIFORM hook family: compose the WHOLE transient pipe
+        // CONFIG restore (falloff + snap + symmetry) into this gesture's
+        // accumulator hooks. A transform run can be consolidated at DROP as
+        // [gesture, pipeRefire]; mergeRun keeps first.revert + last.apply. The
+        // refire entry carries the pipe-config hooks, but without config here the
+        // merged first.revert (this gesture) would NOT restore the run-start
+        // config — leaving the pipe handle stranded at its post-tweak value after
+        // a post-drop Ctrl+Z (geometry reverts, config does not). So snapshot the
+        // config AT THIS gesture's commit (= run-start config for the first
+        // gesture in the run, since a config tweak only happens AFTER a gesture
+        // commit) and have BOTH hooks restore it. The gesture itself never changes
+        // the pipe config, so before==after here; the snapshot exists purely so
+        // the merged first.revert carries it. ABSOLUTE (assign), never delta —
+        // splices through mergeRun like the accums. The accum assignment + the
+        // three config restores are INDEPENDENT mutations (local fields vs three
+        // disjoint stages); none reads another, so they compose without clobber.
+        FalloffPacket  fSnap;  bool haveF  = false;
+        SnapPacket     snSnap; bool haveSn = false;
+        SymmetryPacket sySnap; bool haveSy = false;
+        if (auto fs = falloffStageForHooks())  { fSnap  = fs.snapshotConfigToPacket(); haveF  = true; }
+        if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
+        if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
         cmd.setHooks(
             () {
                 angleAccum = accAfter;  propDeg = propAfter;
-                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+                if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
+                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
+                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
             },
             () {
                 angleAccum = accBefore; propDeg = propBefore;
-                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+                if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
+                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
+                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
             }
         );
         recordCommit(cmd);

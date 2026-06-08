@@ -7,8 +7,10 @@ import math : Vec3, Viewport;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
-import toolpipe.packets : FalloffPacket, SymmetryPacket, SubjectPacket;
+import toolpipe.packets : FalloffPacket, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
+import toolpipe.stages.snap : SnapStage;
+import toolpipe.stages.symmetry : SymmetryStage;
 import falloff : evaluateFalloff;
 import falloff_handles : FalloffGizmo;
 import symmetry : applySymmetryMirror;
@@ -79,6 +81,18 @@ protected:
     // mid-drag). Refreshed by captureSymmetryForDrag(); default-init
     // (`enabled = false`) until that gets called.
     SymmetryPacket dragSymmetry;
+
+    // P-C: snap packet snapshot. Same pattern as dragFalloff / dragSymmetry —
+    // captured at drag start (captureSnapForDrag) so the transform-session
+    // refire trigger can compare the LIVE snap config against the run-start
+    // snapshot at idle (a mid-run snap toggle re-grades / restores config like a
+    // falloff or symmetry change). default-init (`enabled = false`) until
+    // captured. NB: snap is a CURSOR-time op (snapCursor during the live drag),
+    // NOT part of the composed absolute fold (applyTRS/applyFold), so a
+    // snap-ONLY change at idle re-grades to byte-identical geometry — its role
+    // in P-C is the refire trigger + the uniform config-restore hook family, so
+    // an in-session / post-drop undo restores the snap config with the geometry.
+    SnapPacket dragSnap;
 
     // Phase 7.5h+: interactive falloff endpoint handles. Built lazily
     // on first draw() that sees a Linear-typed enabled falloff packet,
@@ -583,6 +597,26 @@ protected:
                g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
     }
 
+    /// P-C: the single SnapStage / SymmetryStage — the config sources of truth
+    /// for the snap + symmetry banks. Used by the R/S commitEdit gesture-commit
+    /// hooks to snapshot the RUN-START snap + symmetry config and compose a
+    /// config-restore alongside the accumulator + falloff hooks (uniform hook
+    /// family). `final` + distinctly named for the same vtable-collision reason
+    /// as falloffStageForHooks (the wrapper keeps its OWN
+    /// activeSnapStage/activeSymmetryStage accessors).
+    final SnapStage snapStageForHooks() const {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stage    : TaskCode;
+        if (g_pipeCtx is null) return null;
+        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+    }
+    final SymmetryStage symmetryStageForHooks() const {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stage    : TaskCode;
+        if (g_pipeCtx is null) return null;
+        return cast(SymmetryStage) g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+    }
+
     /// Live falloff packet for rendering the viewport overlay. Walks
     /// the toolpipe each call — fine because draw() runs at most once
     /// per frame and the upstream stages (WORK / ACEN / etc.) are all
@@ -621,6 +655,33 @@ protected:
         if (auto sp = vts.get!SymmetryPacket()) dragSymmetry = *sp;
         else                                    dragSymmetry = SymmetryPacket.init;
         return dragSymmetry.enabled;
+    }
+
+    /// P-C: snapshot the SnapPacket at drag start — same shape as
+    /// captureFalloffForDrag / captureSymmetryForDrag. Gives the
+    /// transform-session refire trigger a stable run-start snap config to
+    /// compare the live config against at idle. No-op (init packet, enabled
+    /// false) when SnapStage is disabled / unregistered.
+    void captureSnapForDrag(ref VectorStack vts) {
+        if (auto sp = vts.get!SnapPacket()) dragSnap = *sp;
+        else                                dragSnap = SnapPacket.init;
+    }
+
+    /// P-C: live SnapPacket for the idle-time refire compare (mirrors
+    /// currentFalloff). Walks the toolpipe each call — cheap, and only the
+    /// idle re-grade path reads it.
+    SnapPacket currentSnap(ref VectorStack vts) {
+        if (auto sp = vts.get!SnapPacket()) return *sp;
+        return SnapPacket.init;
+    }
+
+    /// P-C: live SymmetryPacket for the idle-time refire compare (mirrors
+    /// currentFalloff / currentSnap). The captured `dragSymmetry` already
+    /// covers the drag-time read; this surfaces the live packet so the wrapper
+    /// can detect a mid-run config change and re-read it before the re-grade.
+    SymmetryPacket currentSymmetry(ref VectorStack vts) {
+        if (auto sp = vts.get!SymmetryPacket()) return *sp;
+        return SymmetryPacket.init;
     }
 
     /// Phase 7.6b: invoke the symmetry mirror pass on the verts that
@@ -666,6 +727,23 @@ protected:
                                               const ref FalloffPacket b) {
         import falloff : fpeq = falloffPacketsEqual;
         return fpeq(a, b);
+    }
+
+    /// P-C: config-equality wrappers for the snap + symmetry packets, mirroring
+    /// `falloffPacketsEqual`. The transform refire trigger now generalises
+    /// beyond falloff (a mid-run snap toggle or symmetry toggle re-grades the
+    /// applied op too), so the same idle-time inequality test is needed for all
+    /// three pipe packets. Free functions in snap.d / symmetry.d so the wrapper
+    /// + R/S sub-tools share one implementation.
+    protected static bool snapPacketsEqual(const ref SnapPacket a,
+                                           const ref SnapPacket b) {
+        import snap : speq = snapPacketsEqual;
+        return speq(a, b);
+    }
+    protected static bool symmetryPacketsEqual(const ref SymmetryPacket a,
+                                               const ref SymmetryPacket b) {
+        import symmetry : syeq = symmetryPacketsEqual;
+        return syeq(a, b);
     }
 
     /// Lazy-construct the falloff endpoint gizmo. Called from each

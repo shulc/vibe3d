@@ -1958,7 +1958,7 @@ void main(string[] args) {
 
             import operator             : VectorStack;
             import toolpipe.packets     : ActionCenterPacket, AxisPacket,
-                                          SymmetryPacket;
+                                          SymmetryPacket, SnapPacket;
             VectorStack vts;
             vts.put(&subj);
             g_pipeCtx.pipeline.evaluate(vts);
@@ -1966,9 +1966,11 @@ void main(string[] args) {
             ActionCenterPacket acen;
             AxisPacket         axis;
             SymmetryPacket     symm;
+            SnapPacket         snapPkt;   // P-C: surface live snap config for tests
             if (auto p = vts.get!ActionCenterPacket()) acen = *p;
             if (auto p = vts.get!AxisPacket())         axis = *p;
             if (auto p = vts.get!SymmetryPacket())     symm = *p;
+            if (auto p = vts.get!SnapPacket())         snapPkt = *p;
 
             void putVec3(Vec3 v) {
                 buf.put(format(`[%f,%f,%f]`, v.x, v.y, v.z));
@@ -2029,7 +2031,12 @@ void main(string[] args) {
                 if (i) buf.put(",");
                 buf.put(format(`%d`, s));
             }
-            buf.put(`]}}`);
+            // P-C: snap config block — lets tests witness the snap config-restore
+            // (snap is a cursor-time op with no geometry signal at idle, so its
+            // undo/redo restore is observed via this published enabled/types).
+            buf.put(format(`]},"snap":{"enabled":%s,"types":%d}}`,
+                           snapPkt.enabled ? "true" : "false",
+                           snapPkt.enabledTypes));
             return buf.data;
         });
 

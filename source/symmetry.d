@@ -17,6 +17,24 @@ import toolpipe.packets : SymmetryPacket;
 // frame.
 // ---------------------------------------------------------------------------
 
+/// Config-equality for two SymmetryPackets — compares only the user-facing
+/// CONFIG fields (the ones SymmetryStage.snapshotConfigToPacket round-trips),
+/// NOT the derived plane / pairing snapshot (planePoint / planeNormal / pairOf /
+/// onPlane / vertSign, which evaluate() rebuilds from the config + live mesh).
+/// Used by the transform wrapper's refire trigger (P-C) to detect a mid-run
+/// symmetry-config change, mirroring falloffPacketsEqual.
+bool symmetryPacketsEqual(const ref SymmetryPacket a, const ref SymmetryPacket b)
+    pure nothrow @nogc @safe
+{
+    return a.enabled      == b.enabled
+        && a.axisIndex    == b.axisIndex
+        && a.offset       == b.offset
+        && a.useWorkplane == b.useWorkplane
+        && a.topology     == b.topology
+        && a.epsilonWorld == b.epsilonWorld
+        && a.baseSide     == b.baseSide;
+}
+
 /// Mirror a world-space point across the plane described by `sp`.
 /// `sp.planeNormal` must be unit length (the stage normalises it).
 /// `pos_mirror = pos - 2 * dot(pos - planePoint, normal) * normal`.

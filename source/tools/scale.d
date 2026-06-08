@@ -21,7 +21,7 @@ import std.math : sqrt;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
-import toolpipe.packets : FalloffPacket;
+import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 
 
@@ -264,9 +264,16 @@ public:
         if (!dragLive && scaleAccum != Vec3(1, 1, 1)) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
-                FalloffPacket live = currentFalloff(vts);
-                if (!falloffPacketsEqual(live, dragFalloff)) {
-                    dragFalloff = live;
+                // P-C: trigger spans falloff + snap + symmetry.
+                FalloffPacket liveF  = currentFalloff(vts);
+                SnapPacket     liveSn = currentSnap(vts);
+                SymmetryPacket liveSy = currentSymmetry(vts);
+                if (!falloffPacketsEqual(liveF, dragFalloff)
+                 || !snapPacketsEqual(liveSn, dragSnap)
+                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
+                    dragFalloff  = liveF;
+                    dragSnap     = liveSn;
+                    dragSymmetry = liveSy;
                     buildVertexCacheIfNeeded();
                     applyScaleFromActivationCpuOnly(vts);
                     needsGpuUpdate = true;
@@ -274,23 +281,32 @@ public:
             } else if (wrap !is null && wrap.refireScaleEligible()) {
                 // ARM 2 — committed gizmo gesture: re-grade + record. The
                 // bank (Scale) + staleness gates live inside refireScaleEligible.
-                FalloffPacket live = currentFalloff(vts);
-                if (!falloffPacketsEqual(live, dragFalloff)) {
+                // P-C: trigger spans falloff + snap + symmetry.
+                FalloffPacket liveF  = currentFalloff(vts);
+                SnapPacket     liveSn = currentSnap(vts);
+                SymmetryPacket liveSy = currentSymmetry(vts);
+                if (!falloffPacketsEqual(liveF, dragFalloff)
+                 || !snapPacketsEqual(liveSn, dragSnap)
+                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-window anchor (OBJ-3 W1: live, never frozen).
                     Vec3[] anchor = mesh.vertices.dup;
-                    // P-A: PRE-tweak falloff config = still-current dragFalloff;
-                    // POST = the live packet. Captured BEFORE `dragFalloff =
-                    // live` so the re-grade entry's hooks restore config too.
-                    FalloffPacket prePkt  = dragFalloff;
-                    FalloffPacket postPkt = live;
-                    dragFalloff = live;
+                    // P-A / P-C: PRE-tweak config = still-current captured packets;
+                    // POST = the live packets. Captured BEFORE the re-read below so
+                    // the re-grade entry's hooks restore the whole config.
+                    FalloffPacket  preF  = dragFalloff,  postF  = liveF;
+                    SnapPacket     preSn = dragSnap,     postSn = liveSn;
+                    SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
+                    dragFalloff  = liveF;
+                    dragSnap     = liveSn;
+                    dragSymmetry = liveSy;
                     buildVertexCacheIfNeeded();
                     applyScaleFromActivationCpuOnly(vts);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
                     // Empty idx → helper iterates the full vertex range (S1).
                     wrap.recordFalloffRefireScale("Falloff", anchor, after, null,
-                                                  prePkt, postPkt);
+                                                  preF, postF, preSn, postSn,
+                                                  preSy, postSy);
                     needsGpuUpdate = true;
                 }
             }
@@ -330,24 +346,32 @@ public:
         Vec3 accAfter   = scaleAccum;
         Vec3 propAfter  = propScale;
 
-        // P-A blocker fix — UNIFORM hook family (see rotate.d commitEdit for the
-        // full rationale): compose the falloff CONFIG restore into this gesture's
-        // accumulator hooks so mergeRun's merged first.revert restores both the
-        // accumulators AND the run-start falloff config (config snapshot captured
-        // at this gesture's commit = run-start, since a falloff tweak only fires
-        // after a gesture commits). ABSOLUTE assign; two independent stage
-        // mutations (accum field vs FalloffStage) compose without clobber.
-        FalloffPacket cfgSnap;
-        bool haveCfg = false;
-        if (auto fs = falloffStageForHooks()) { cfgSnap = fs.snapshotConfigToPacket(); haveCfg = true; }
+        // P-A + P-C — UNIFORM hook family (see rotate.d commitEdit for the full
+        // rationale): compose the WHOLE transient pipe CONFIG restore (falloff +
+        // snap + symmetry) into this gesture's accumulator hooks so mergeRun's
+        // merged first.revert restores both the accumulators AND the run-start
+        // pipe config (snapshot captured at this gesture's commit = run-start,
+        // since a config tweak only fires after a gesture commits). ABSOLUTE
+        // assign; the accum field + the three disjoint stages compose without
+        // clobber.
+        FalloffPacket  fSnap;  bool haveF  = false;
+        SnapPacket     snSnap; bool haveSn = false;
+        SymmetryPacket sySnap; bool haveSy = false;
+        if (auto fs = falloffStageForHooks())  { fSnap  = fs.snapshotConfigToPacket(); haveF  = true; }
+        if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
+        if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
         cmd.setHooks(
             () {
                 scaleAccum = accAfter;  propScale = propAfter;
-                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+                if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
+                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
+                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
             },
             () {
                 scaleAccum = accBefore; propScale = propBefore;
-                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+                if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
+                if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
+                if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
             }
         );
         recordCommit(cmd);

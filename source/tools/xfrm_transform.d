@@ -97,7 +97,10 @@ import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.actcenter : ActionCenterStage;
-import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket;
+import toolpipe.stages.snap : SnapStage;
+import toolpipe.stages.symmetry : SymmetryStage;
+import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
+                          SnapPacket, SymmetryPacket;
 import falloff_render    : drawFalloffOverlay;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
 
@@ -258,6 +261,7 @@ public:
         if (flagS) scaleSub.setRecordViaInSession(true);
         currentRunBank     = DragBank.None;
         runBaselineValid   = false;   // apply-path Phase 2: fresh geometry run
+        lastAcenMode       = -1;      // P-C: re-latch the ACEN mode on first poll
     }
 
     // Wrapper-level transient reset (undo/redo migration P1). Extends the base
@@ -377,6 +381,46 @@ public:
             }
         }
 
+        // P-C — ACEN-mode boundary poll. An action-center MODE change mid-run is
+        // a session BOUNDARY (the reference restarts the op at a new pivot). But
+        // `actr.*` is a SideEffect command (records nothing) so it never trips
+        // the command-history foreign-record guard that the selection/mutation
+        // boundary above relies on. So poll the published ACEN mode here, in the
+        // SAME idle path: on a change with an open run, consolidate + nextRun so
+        // the next gesture is a new run (mirrors the selection-boundary block's
+        // consolidate/nextRun + the bank/anchor/baseline resets). This runs
+        // BEFORE the refire block and before any mouse-down is processed this
+        // frame (update() runs before event dispatch), so no gesture lands in the
+        // wrong run — the poll always precedes the next gesture (invariant).
+        // Skipped during a live drag (dragAxis frozen): a mode read mid-drag is
+        // the drag's own state, not a user action.
+        if (activeDrag is null) {
+            if (auto ac = activeAcenStage()) {
+                int curMode = cast(int) ac.mode;
+                if (lastAcenMode == -1) {
+                    // First poll this session: latch without firing a boundary.
+                    lastAcenMode = curMode;
+                } else if (curMode != lastAcenMode) {
+                    if (editIsOpen())
+                        commitEdit("Move");
+                    if (history !is null && history.runOpen()) {
+                        history.consolidate(history.currentRunId);
+                        history.nextRun();
+                        currentRunBank = DragBank.None;
+                        // Run boundary: invalidate the re-grade anchor + staleness
+                        // stamp so a later config change cannot re-grade the
+                        // just-closed run (same resets as the selection boundary).
+                        lastAppliedGestureMutationVersion = ulong.max;
+                        refireAnchor.length               = 0;
+                    }
+                    // GEOMETRY-run boundary regardless of an open history run: the
+                    // pivot moved, so the next gesture must re-capture its baseline.
+                    runBaselineValid = false;
+                    lastAcenMode     = curMode;
+                }
+            }
+        }
+
         // Mid-tool falloff re-apply. While an edit session is open
         // and a non-trivial translate has been applied, a falloff
         // packet change (status-bar pulldown / property panel / HTTP)
@@ -407,9 +451,25 @@ public:
              || headlessTranslate.z != 0)) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
-                FalloffPacket live = currentFalloff(vts);
-                if (!falloffPacketsEqual(live, dragFalloff)) {
-                    dragFalloff = live;
+                // P-C: the trigger now spans the whole pipe config — falloff,
+                // snap AND symmetry. A mid-session toggle of any of the three
+                // re-grades the COMPOSED op against the new pipe state.
+                FalloffPacket liveF = currentFalloff(vts);
+                SnapPacket     liveSn = currentSnap(vts);
+                SymmetryPacket liveSy = currentSymmetry(vts);
+                if (!falloffPacketsEqual(liveF, dragFalloff)
+                 || !snapPacketsEqual(liveSn, dragSnap)
+                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
+                    // Re-read ALL THREE live packets before the recompute so
+                    // applyTRS's symmetry pass + per-vertex falloff weight read
+                    // the new config. recaptureLivePipePackets() does a FRESH
+                    // pipeline evaluate so a just-enabled symmetry stage's pairOf
+                    // is populated (the single update() evaluate publishes a
+                    // stale-empty pairOf on the toggle frame). Snap is a
+                    // cursor-time op, NOT in the fold, so re-reading dragSnap
+                    // changes no geometry — but keeps the run-state coherent for
+                    // the config-restore hooks downstream.
+                    recaptureLivePipePackets();
                     vertexCacheDirty = true;
                     // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
                     // re-grade. Re-weight the COMPOSED op (all preset banks'
@@ -429,36 +489,54 @@ public:
                 // ARM 2 — committed gizmo gesture: re-grade + record.
                 // Staleness gate (OBJ-1) checked at the SITE before the recompute
                 // mutates the mesh; the helper re-checks as defense-in-depth.
-                FalloffPacket live = currentFalloff(vts);
-                if (!falloffPacketsEqual(live, dragFalloff)) {
+                // P-C: the trigger spans falloff + snap + symmetry; a change in
+                // any one re-grades + records ONE tagged in-session entry.
+                FalloffPacket liveF  = currentFalloff(vts);
+                SnapPacket     liveSn = currentSnap(vts);
+                SymmetryPacket liveSy = currentSymmetry(vts);
+                if (!falloffPacketsEqual(liveF, dragFalloff)
+                 || !snapPacketsEqual(liveSn, dragSnap)
+                 || !symmetryPacketsEqual(liveSy, dragSymmetry)) {
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-run anchor (OBJ-3 W1: live, never frozen).
                     Vec3[] anchor = mesh.vertices.dup;
-                    // P-A: PRE-tweak falloff config = the still-current
-                    // dragFalloff (the geometry the gesture sat on); POST = the
-                    // live (just-tweaked) packet. Captured BEFORE the
-                    // `dragFalloff = live` reassignment so the entry's
-                    // revert/apply hooks restore the config endpoints.
-                    FalloffPacket prePkt  = dragFalloff;
-                    FalloffPacket postPkt = live;
-                    dragFalloff = live;
+                    // P-A / P-C: PRE-tweak pipe config = the still-current
+                    // captured packets (the geometry the gesture sat on); POST =
+                    // the live (just-tweaked) packets. Captured BEFORE the
+                    // re-read below so the entry's revert/apply hooks restore the
+                    // whole config endpoints (falloff + snap + symmetry).
+                    FalloffPacket  preF  = dragFalloff,  postF  = liveF;
+                    SnapPacket     preSn = dragSnap,     postSn = liveSn;
+                    SymmetryPacket preSy = dragSymmetry, postSy = liveSy;
+                    // Re-capture the live packets via a FRESH evaluate so a
+                    // just-enabled symmetry stage's pairOf is populated (see
+                    // recaptureLivePipePackets); applyTRS below then mirrors. The
+                    // POST hook packet (postSy) is the config-only `liveSy` from
+                    // above — pairOf is rebuilt by evaluate() at undo/redo time,
+                    // so the hook needs only the config fields.
+                    recaptureLivePipePackets();
                     vertexCacheDirty = true;
                     // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
                     // re-grade of the committed gesture. Byte-identical to the
                     // old applyTRSForBank(Move) on a Move-only run (held R/S
-                    // identity); composes the held banks otherwise. The
-                    // anchor/after brackets still wrap exactly the recompute, so
-                    // the recordFalloffRefire before/after pair stays coherent.
+                    // identity); composes the held banks otherwise. With symmetry
+                    // toggled on mid-run, applyFold's mirror pass now drives the
+                    // mirror partners (P-C). The anchor/after brackets still wrap
+                    // exactly the recompute, so the recordPipeRefire before/after
+                    // pair stays coherent.
                     applyTRS(dragBaseline);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
 
                     // Index set = the full vertex range; pass an EMPTY idx so the
                     // helper iterates the whole range directly (S1 economy — no
                     // materialised identity array). The helper diffs against the
-                    // anchor and keeps only moved verts. (The falloff support can
-                    // be the whole mesh, so a full-range pass is the safe superset.)
-                    recordFalloffRefire("Falloff", anchor, after,
-                                        null, DragBank.Move, prePkt, postPkt);
+                    // anchor and keeps only moved verts (the symmetry mirror set
+                    // is covered by the whole-mesh dragBaseline). The falloff
+                    // support can be the whole mesh, so a full-range pass is the
+                    // safe superset.
+                    recordPipeRefire("Falloff", anchor, after,
+                                     null, DragBank.Move,
+                                     preF, postF, preSn, postSn, preSy, postSy);
                     needsGpuUpdate = true;
                 }
             }
@@ -1159,6 +1237,7 @@ public:
         buildVertexCacheIfNeeded();
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         beginEdit();   // idempotent — opens tool-session edit on first call
 
         // `cachedVp` is already up to date from the most recent
@@ -1218,6 +1297,7 @@ public:
         buildVertexCacheIfNeeded();
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
 
         // NOTE: the rotate edit SESSION is owned by `rotateSub` (its
         // `onMouseButtonDown` calls `beginEdit`, and its `deactivate`/`update`
@@ -1272,6 +1352,7 @@ public:
         buildVertexCacheIfNeeded();
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
         // cross-bank scale reuses the run baseline + resets ONLY headlessScale,
@@ -1947,6 +2028,7 @@ public:
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;   // wrapper cache may be stale (panel path)
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
@@ -1980,6 +2062,7 @@ public:
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;   // wrapper cache may be stale (panel path)
         headlessScale = scaleAccum;
         applyTRS(baseline);
@@ -1993,6 +2076,27 @@ public:
     // byte-for-byte; the golden fixtures (`test_fixture_acen_local`,
     // `test_fixture_translate*`, `test_fixture_rotate*`,
     // `test_fixture_scale*`) stay green.
+    // P-C: re-capture the live falloff + symmetry + snap packets into the
+    // wrapper's dragFalloff / dragSymmetry / dragSnap via a FRESH pipeline
+    // evaluate. The Move re-grade arm calls this before `applyTRS` so the
+    // symmetry pass reads a packet with a POPULATED pairOf table: a symmetry
+    // stage just toggled on publishes a stale-EMPTY pairOf on its first
+    // evaluate (cachedReady_ flips true only after that rebuild — see
+    // SymmetryStage.evaluate), so re-reading from update()'s single evaluate
+    // would mirror nothing. A second evaluate here lands the rebuilt pairing.
+    // Mirrors what applyRotateAbsolute / applyScaleAbsolute already do for the
+    // R/S arms (capture from a fresh buildLocalVts). No-op cost on a non-symmetry
+    // change (the extra evaluate is cheap and only runs on the rare config tweak).
+    private void recaptureLivePipePackets() {
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;
+        VectorStack vts;
+        if (!buildLocalVts(subj, vts)) return;
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);
+    }
+
     override bool applyHeadless() {
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
@@ -2000,6 +2104,7 @@ public:
         buildLocalVts(subj, vts);
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;
         // Numeric path uses RX/RY/RZ (Euler slot) only — the view-ring rotation
         // has no numeric attr, so applyTRS's transient param defaults to zero.
@@ -2064,6 +2169,7 @@ public:
         // want the live falloff to take effect immediately.
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         buildVertexCacheIfNeeded();
         beginEdit();   // idempotent
 
@@ -2172,18 +2278,20 @@ public:
     // after the record (a no-op today; defensive).
     public void recordFalloffRefireRotate(string label, Vec3[] anchor,
                                           Vec3[] after, size_t[] idx,
-                                          FalloffPacket prePkt,
-                                          FalloffPacket postPkt) {
-        recordFalloffRefire(label, anchor, after, idx, DragBank.Rotate,
-                            prePkt, postPkt);
+                                          FalloffPacket preF, FalloffPacket postF,
+                                          SnapPacket preSn,  SnapPacket postSn,
+                                          SymmetryPacket preSy, SymmetryPacket postSy) {
+        recordPipeRefire(label, anchor, after, idx, DragBank.Rotate,
+                         preF, postF, preSn, postSn, preSy, postSy);
     }
 
     public void recordFalloffRefireScale(string label, Vec3[] anchor,
                                          Vec3[] after, size_t[] idx,
-                                         FalloffPacket prePkt,
-                                         FalloffPacket postPkt) {
-        recordFalloffRefire(label, anchor, after, idx, DragBank.Scale,
-                            prePkt, postPkt);
+                                         FalloffPacket preF, FalloffPacket postF,
+                                         SnapPacket preSn,  SnapPacket postSn,
+                                         SymmetryPacket preSy, SymmetryPacket postSy) {
+        recordPipeRefire(label, anchor, after, idx, DragBank.Scale,
+                         preF, postF, preSn, postSn, preSy, postSy);
     }
 
     // Phase 2 — cross-slot relocate boundary. In a composed T+R+S preset
@@ -2322,41 +2430,48 @@ public:
         }
         if (!startKnown) { startPlaced = endPlaced; startCenter = endCenter; }
 
-        // P-A blocker fix — UNIFORM hook family. Compose the falloff CONFIG
-        // restore alongside the pin restore. A transform run is consolidated at
-        // DROP as [moveGesture, falloffRefire]; mergeRun keeps first.revert +
-        // last.apply. The refire entry carries CONFIG hooks (recordFalloffRefire
-        // Step 3.5), the gesture entry carries PIN hooks — but until now NOT
-        // config. So the merged first.revert (= this gesture's revert) restored
-        // the pin yet LEFT the falloff handle stranded at its post-tweak value
-        // after a post-drop Ctrl+Z (geometry + pin reverted, config did not).
-        // Snapshot the config AT THIS gesture's commit (= run-start config, since
-        // a falloff tweak only fires AFTER a gesture commits) and restore it from
-        // BOTH hooks. The pin restore and the config restore are INDEPENDENT
-        // stage mutations (ActionCenterStage.restorePinState vs
-        // FalloffStage.restoreConfigFromPacket) — neither reads the other, so the
-        // composed closure calls both without clobber. ABSOLUTE (assign), splices
-        // through mergeRun exactly like the pin endpoints. The gesture never
-        // changes the falloff config, so the snapshot is the same on apply and
-        // revert here; it exists purely so the merged first.revert carries it.
-        FalloffPacket cfgSnap;
-        bool haveCfg = false;
-        if (auto fs = activeFalloffStage()) { cfgSnap = fs.snapshotConfigToPacket(); haveCfg = true; }
+        // P-A blocker fix + P-C — UNIFORM hook family. Compose the WHOLE
+        // transient pipe CONFIG restore (falloff + snap + symmetry) alongside the
+        // pin restore. A transform run is consolidated at DROP as [moveGesture,
+        // pipeRefire]; mergeRun keeps first.revert + last.apply. The refire entry
+        // carries the pipe-CONFIG hooks (recordPipeRefire Step 3.5), the gesture
+        // entry carries PIN hooks — and now ALSO the run-start pipe config. So the
+        // merged first.revert (= this gesture's revert) restores the pin AND every
+        // transient pipe handle (a single post-drop Ctrl+Z reverts geometry + pin
+        // + falloff + snap + symmetry together; before P-A/P-C the handle was
+        // stranded at its post-tweak value). Snapshot the config AT THIS gesture's
+        // commit (= run-start config, since a config tweak only fires AFTER a
+        // gesture commits) and restore it from BOTH hooks. The pin restore + the
+        // three config restores are INDEPENDENT stage mutations
+        // (ActionCenterStage / FalloffStage / SnapStage / SymmetryStage own
+        // disjoint state) — none reads another, so the composed closure calls all
+        // without clobber. ABSOLUTE (assign), splices through mergeRun like the
+        // pin endpoints. The gesture never changes the pipe config, so the
+        // snapshot is the same on apply and revert here; it exists purely so the
+        // merged first.revert carries it.
+        FalloffPacket  fSnap;  bool haveF  = false;
+        SnapPacket     snSnap; bool haveSn = false;
+        SymmetryPacket sySnap; bool haveSy = false;
+        if (auto fs = activeFalloffStage())  { fSnap  = fs.snapshotConfigToPacket(); haveF  = true; }
+        if (auto sn = activeSnapStage())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
+        if (auto sy = activeSymmetryStage()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
 
         cmd.setHooks(
-            // apply (redo): restore the gesture-END pin + run config + publish.
+            // apply (redo): restore the gesture-END pin + run pipe config + publish.
             () {
                 if (auto ac = activeAcenStage())
                     ac.restorePinState(endPlaced, endCenter);
-                if (haveCfg) if (auto fs = activeFalloffStage())
-                    fs.restoreConfigFromPacket(cfgSnap);
+                if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
+                if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
+                if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
             },
-            // revert (undo): restore the gesture-START pin + run config + publish.
+            // revert (undo): restore the gesture-START pin + run pipe config + publish.
             () {
                 if (auto ac = activeAcenStage())
                     ac.restorePinState(startPlaced, startCenter);
-                if (haveCfg) if (auto fs = activeFalloffStage())
-                    fs.restoreConfigFromPacket(cfgSnap);
+                if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
+                if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
+                if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
             },
         );
         recordCommit(cmd);
@@ -2969,6 +3084,21 @@ private:
                g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
     }
 
+    // P-C: the single SNAP / SYMM stages — config sources of truth for the
+    // snap + symmetry banks. The refire entry's config-restore hooks + the
+    // gesture-commit hooks restore their config through these (mirrors
+    // activeFalloffStage). Wrapper-owned virtuals; the base TransformTool keeps
+    // its own `final` snapStageForHooks()/symmetryStageForHooks() for the R/S
+    // sub-tools (the same vtable-collision avoidance as falloffStageForHooks).
+    SnapStage activeSnapStage() const {
+        if (g_pipeCtx is null) return null;
+        return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+    }
+    SymmetryStage activeSymmetryStage() const {
+        if (g_pipeCtx is null) return null;
+        return cast(SymmetryStage) g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
+    }
+
     MoveTool   moveSub;
     RotateTool rotateSub;
     ScaleTool  scaleSub;
@@ -2999,6 +3129,20 @@ private:
     // empty-run consolidate (no-op) that just sets the bank.
     enum DragBank { None, Move, Rotate, Scale }
     DragBank currentRunBank = DragBank.None;
+
+    // P-C — ACEN-mode boundary poll. `actr.*` is a SideEffect command
+    // (commands/actr.d) so it records nothing and never trips the
+    // command-history foreign-record guard — yet an action-center MODE change
+    // mid-run IS a session BOUNDARY (the reference restarts the op at a new
+    // pivot, panel values reset to 0). So the wrapper polls the published ACEN
+    // mode at idle in update() (the SAME path as the falloff-packet compare,
+    // alongside the selection/mutation guard): on a change with an open run it
+    // consolidates the open run + nextRun() so the next gesture is a new run.
+    // -1 = "no mode observed yet"; the first poll latches the current mode
+    // without spuriously firing a boundary (mirrors lastSelectionHash /
+    // lastMutationVersion init-latch). Cast from ActionCenterStage.Mode (an
+    // int-backed enum); -1 is outside its value range so any real mode differs.
+    int lastAcenMode = -1;
 
     // In-session falloff re-grade (re-fire) state.
     //
@@ -3078,16 +3222,25 @@ private:
     // widening scrub (verts pulled in that the prior re-grade never touched) has
     // a complete baseline and reverts cleanly on one Ctrl+Z (contract C).
     //
-    // The entry carries CONFIG-RESTORE hooks (P-A, Step 3.5 below): apply
-    // restores the POST-tweak falloff packet, revert the PRE-tweak packet, so an
-    // in-session Ctrl+Z reverts the falloff HANDLE/config together with the
-    // geometry (and redo re-applies both). The entry does NOT carry pin hooks: a
-    // falloff tweak never relocates the pivot, so the pin is unchanged across
-    // the re-grade. The MeshVertexEdit's apply/revert still restore the geometry
-    // (contract C); the new hooks ride alongside that, restoring config too.
-    private void recordFalloffRefire(string label, Vec3[] anchor,
-                                     Vec3[] after, size_t[] idx, DragBank bank,
-                                     FalloffPacket prePkt, FalloffPacket postPkt) {
+    // The entry carries CONFIG-RESTORE hooks (P-A + P-C, Step 3.5 below): apply
+    // restores the POST-tweak pipe config (falloff + snap + symmetry), revert
+    // the PRE-tweak config, so an in-session Ctrl+Z reverts the pipe HANDLES /
+    // config together with the geometry (and redo re-applies both). The entry
+    // does NOT carry pin hooks: a falloff / snap / symmetry tweak never relocates
+    // the pivot (an ACEN-mode change is a BOUNDARY, handled in update(), not a
+    // refire), so the pin is unchanged across the re-grade. The MeshVertexEdit's
+    // apply/revert still restore the geometry (contract C); the new hooks ride
+    // alongside that, restoring config too.
+    //
+    // P-C: generalised from the P-A `recordFalloffRefire` (falloff only) to the
+    // whole transient pipe config. The three config restores are INDEPENDENT
+    // stage mutations (FalloffStage / SnapStage / SymmetryStage own disjoint
+    // fields), so one composed closure calls all three without clobber.
+    private void recordPipeRefire(string label, Vec3[] anchor,
+                                  Vec3[] after, size_t[] idx, DragBank bank,
+                                  FalloffPacket preF, FalloffPacket postF,
+                                  SnapPacket preSn, SnapPacket postSn,
+                                  SymmetryPacket preSy, SymmetryPacket postSy) {
         // `idx` is dead until a scoped-subset caller exists — only null
         // (full-range) callers today; kept so a future scoped re-grade need not
         // re-thread the signature.
@@ -3143,9 +3296,19 @@ private:
             before     ~= b;
             movedAfter ~= a;
         }
-        if (movedIdx.length == 0) return;   // no net change → no entry.
-
-        // setEdit takes uint[] indices.
+        // movedIdx.length == 0 → the re-grade produced NO geometry delta. For a
+        // falloff change this is the rare degenerate case (a weight tweak that
+        // moved nothing). For snap it is the NORM (snap is a cursor-time op, not
+        // in the fold). For symmetry it happens when the toggled-on pairing finds
+        // no valid mirror partner on the deformed mesh. In ALL these cases the
+        // pipe CONFIG still changed, and an in-session / post-drop undo must
+        // restore that config (P-C). So instead of returning we record a
+        // CONFIG-ONLY entry: an empty geometry edit (apply/revert no-op on the
+        // mesh) carrying the SAME config-restore hooks. It rides the run like any
+        // refire — replaceInSessionTail REPLACES a prior refire tail or APPENDS
+        // after a gesture, and mergeRun keeps first.revert + last.apply, so the
+        // config endpoints splice coherently. No geometry payload ⇒ no spurious
+        // vertex churn on undo.
         uint[] uidx;
         uidx.length = movedIdx.length;
         foreach (k, vid; movedIdx) uidx[k] = cast(uint) vid;
@@ -3154,34 +3317,41 @@ private:
         auto cmd = vertexEditFactory();
         cmd.setEdit(uidx, before, movedAfter, label);
 
-        // Step 3.5 — falloff CONFIG-restore hooks (P-A). The re-grade entry must
-        // restore the falloff HANDLE/config together with the geometry: an
-        // in-session Ctrl+Z reverts geometry (the MeshVertexEdit revert) AND the
-        // falloff config to its PRE-tweak value, and redo re-applies both — so
-        // the visible handle follows the undo, not just the mesh. The hooks fire
-        // MAIN-thread (C4: history.undo/redo runs from tickUndo() / navHistory,
-        // never the background /api/undo poster), so mutating + publishing the
-        // FalloffStage from inside them is safe — identical to the pin-hook
-        // precedent (commitEdit → ActionCenterStage.restorePinState).
+        // Step 3.5 — pipe CONFIG-restore hooks (P-A falloff + P-C snap/symmetry).
+        // The re-grade entry must restore the pipe HANDLES / config together with
+        // the geometry: an in-session Ctrl+Z reverts geometry (the MeshVertexEdit
+        // revert) AND the falloff + snap + symmetry config to their PRE-tweak
+        // values, and redo re-applies all — so the visible handles follow the
+        // undo, not just the mesh. The hooks fire MAIN-thread (C4:
+        // history.undo/redo runs from tickUndo() / navHistory, never the
+        // background /api/undo poster), so mutating + publishing the stages from
+        // inside them is safe — identical to the pin-hook precedent (commitEdit →
+        // ActionCenterStage.restorePinState).
         //
-        // ABSOLUTE snapshots, NOT deltas (mirrors rotate.d:345-352): revert →
-        // PRE-tweak packet, apply → POST-tweak packet. This is required for
+        // ABSOLUTE snapshots, NOT deltas (mirrors rotate.d accum hooks): revert →
+        // PRE-tweak packets, apply → POST-tweak packets. This is required for
         // mergeRun correctness — a consolidated run keeps first.revert +
         // last.apply, so absolute endpoints splice coherently (a delta would
         // double-apply across the merge). The captured packets are by-value
-        // copies (struct), so they survive past this stack frame.
-        FalloffPacket preCopy  = prePkt;
-        FalloffPacket postCopy = postPkt;
+        // copies (struct), so they survive past this stack frame. The three
+        // restores hit DISJOINT stage state (FalloffStage / SnapStage /
+        // SymmetryStage own non-overlapping fields), so one closure calls all
+        // three without clobber.
+        FalloffPacket  preFCopy  = preF,  postFCopy  = postF;
+        SnapPacket     preSnCopy = preSn, postSnCopy = postSn;
+        SymmetryPacket preSyCopy = preSy, postSyCopy = postSy;
         cmd.setHooks(
-            // apply (redo): restore the POST-tweak falloff config + publish.
+            // apply (redo): restore the POST-tweak pipe config + publish.
             () {
-                if (auto fs = activeFalloffStage())
-                    fs.restoreConfigFromPacket(postCopy);
+                if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(postFCopy);
+                if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
+                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
             },
-            // revert (undo): restore the PRE-tweak falloff config + publish.
+            // revert (undo): restore the PRE-tweak pipe config + publish.
             () {
-                if (auto fs = activeFalloffStage())
-                    fs.restoreConfigFromPacket(preCopy);
+                if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(preFCopy);
+                if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
+                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
             },
         );
 
