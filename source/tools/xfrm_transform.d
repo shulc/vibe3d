@@ -217,6 +217,21 @@ public:
     private bool moveGestureStartKnown     = false;
     private Vec3 moveGestureStartSnapshot  = Vec3(0, 0, 0);
 
+    // P-F Phase 3a — per-GESTURE run-absolute Scale snapshot, the Scale twin of
+    // moveGestureStartSnapshot. `headlessScale` is now run-absolute (the field
+    // holds the run-total factor across same-bank gestures, base ⊗ this-gesture
+    // factor). The per-gesture undo hook needs THIS gesture's run-absolute START
+    // factor (the run total before this gesture's drain). Captured at every Scale
+    // mouse-down (beginScaleDragSession), gated by `scaleGestureStartKnown` so a
+    // commit with no preceding mouse-down (a relocate-boundary no-op cmd) falls
+    // back to inert (start == end ⇒ the hook does not move the field on undo).
+    // DISTINCT from the sub-tool accumulator anchor `dragStartScaleAccum`
+    // (scale.d:509, anchors the PANEL-path scaleAccum) — this lives on the WRAPPER
+    // and feeds ONLY the undo hook (never the fold; composeFor reads headlessScale
+    // directly).
+    private bool scaleGestureStartKnown     = false;
+    private Vec3 scaleGestureStartSnapshot  = Vec3(1, 1, 1);
+
     // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
     // and consumed by commitEdit ONLY when a real edit command was built. A
     // zero-motion off-gizmo relocate CLICK opens a moveSub session (so the mouse-up
@@ -1242,13 +1257,26 @@ public:
         bool hadRun = runBaselineValid;
         runBaselineValid = false;
         runFrameValid    = false;
+        // P-F Phase 3a (MAJOR-4) — a run boundary re-freezes the baseline from the
+        // current mesh on the next beginRunGesture, at which point the GPU buffer
+        // (uploaded at the prior gesture's mouse-up) reflects that baseline. So the
+        // buffer-vs-baseline invariant resets clean: the next run starts with
+        // buffer == frozen baseline. Unconditional (not gated on hadRun): even a
+        // bare-write boundary leaves the buffer == mesh == next baseline.
+        runGpuBufferDirty = false;
         if (hadRun) {
             headlessTranslate        = Vec3(0, 0, 0);
             moveGestureStartKnown    = false;
             moveGestureStartSnapshot = Vec3(0, 0, 0);
+            // P-F Phase 3a — Scale is run-absolute: a geometry-run boundary that
+            // ended an ACTIVE run resets the SCALE display field to identity with
+            // the geometry baseline (G8 relocate->1). Same active-run gate as Move.
+            headlessScale            = Vec3(1, 1, 1);
+            scaleGestureStartKnown    = false;
+            scaleGestureStartSnapshot = Vec3(1, 1, 1);
         }
-        // (Phase 3 adds headlessRotate/Scale + their gesture anchors here, under
-        // the same active-run gate.)
+        // (Phase 3b adds headlessRotate + its gesture anchor here, under the same
+        // active-run gate.)
     }
 
     private bool bankIsNonIdentity(DragBank bank) {
@@ -1297,20 +1325,27 @@ public:
     //       since it is identity), so the HELD banks survive into the fold and
     //       `composeFor` folds active-live ⊕ held from ONE original baseline.
     private void beginRunGesture(DragBank bank) {
-        // P-F Phase 2 — Move is RUN-ABSOLUTE. A same-bank Move repeat must NOT
-        // re-bake the prior move into `dragBaseline` and must NOT zero
-        // `headlessTranslate`: the run keeps ONE frozen baseline and the field
-        // accumulates the run total across gestures (the drain at 1462 does
-        // `headlessTranslate += pending`). Only a genuinely fresh run
-        // (`!runBaselineValid`) re-captures. So for Move the re-bake trigger is
-        // ONLY `!runBaselineValid`; `bankIsNonIdentity(Move)` no longer forces a
-        // re-bake (that was the pre-(c) per-gesture re-baseline-and-zero).
+        // P-F Phase 2/3a — Move AND Scale are RUN-ABSOLUTE. A same-bank Move or
+        // Scale repeat must NOT re-bake the prior gesture into `dragBaseline` and
+        // must NOT zero its field (`headlessTranslate` / `headlessScale`): the run
+        // keeps ONE frozen baseline and the field accumulates the run total across
+        // gestures. Move's drain does `headlessTranslate += pending`; Scale's drain
+        // (1677 `headlessScale = f`) writes the within-run absolute factor anchored
+        // at the run-start accumulator (dragStartScaleAccum), so a same-axis repeat
+        // multiplies into the run total. Scale factors commute per-axis ⇒ no
+        // cross-axis hazard, fully run-absolute exactly like Move.
         //
-        // R/S keep the legacy trigger (`bankIsNonIdentity`) until Phase 3 migrates
-        // them to run-absolute. The held-bank cross-bank reuse (case B) is
+        // Only a genuinely fresh run (`!runBaselineValid`) re-captures. For Move
+        // and Scale the re-bake trigger is ONLY `!runBaselineValid`;
+        // `bankIsNonIdentity` no longer forces a re-bake for those banks (that was
+        // the pre-(c) per-gesture re-baseline-and-zero).
+        //
+        // Rotate keeps the legacy trigger (`bankIsNonIdentity`) until Phase 3b
+        // migrates it to run-absolute (Euler does not commute — needs explicit
+        // re-bake transitions). The held-bank cross-bank reuse (case B) is
         // unchanged.
         bool rebake = !runBaselineValid
-                   || (bank != DragBank.Move && bankIsNonIdentity(bank));
+                   || (bank == DragBank.Rotate && bankIsNonIdentity(bank));
         if (rebake) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
@@ -1318,11 +1353,11 @@ public:
             resetGestureAttrs();
             runBaselineValid = true;
         } else {
-            // Reuse the held baseline; held banks stay. For Move (run-absolute)
-            // do NOT reset the bank attr — the field carries the run total across
-            // gestures. For a cross-bank R/S gesture into a bank with no held
-            // value, resetBankAttr is a no-op (already identity).
-            if (bank != DragBank.Move)
+            // Reuse the held baseline; held banks stay. For Move and Scale
+            // (run-absolute) do NOT reset the bank attr — the field carries the
+            // run total across gestures. For a cross-bank Rotate gesture into a
+            // bank with no held value, resetBankAttr is a no-op (already identity).
+            if (bank == DragBank.Rotate)
                 resetBankAttr(bank);
         }
     }
@@ -1483,9 +1518,18 @@ public:
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
         // cross-bank scale reuses the run baseline + resets ONLY headlessScale,
-        // so held T/R survive into the composed fold; a scale-after-scale
-        // re-baselines (same-bank repeat).
+        // so held T/R survive into the composed fold. For Scale (run-absolute,
+        // Phase 3a) a scale-after-scale does NOT re-bake/zero: the run keeps ONE
+        // frozen baseline and headlessScale accumulates the run-total factor.
         beginRunGesture(DragBank.Scale);
+        // P-F Phase 3a — capture THIS gesture's run-absolute START factor (the run
+        // total before this gesture's drain). AFTER beginRunGesture so a fresh run
+        // (just zeroed to identity) snapshots (1,1,1) and a same-bank repeat
+        // snapshots the held run-total factor. The Scale commit hook restores
+        // pre/post of headlessScale from this. DISTINCT from the sub-tool
+        // accumulator anchor dragStartScaleAccum — undo-only, never a fold input.
+        scaleGestureStartSnapshot = headlessScale;
+        scaleGestureStartKnown    = true;
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -1668,20 +1712,40 @@ public:
             if (r && scaleSub.pendingScaleValid) {
                 scaleSub.pendingScaleValid = false;
                 Vec3 f = scaleSub.pendingScale;
-                // Absolute-from-baseline for THIS bank only (apply-path
-                // Phase 2): headlessScale carries this drag's running factor
-                // (beginRunGesture reset it at drag start). The held T/R are NOT
-                // zeroed — they compose into the fold via the preset flags.
-                // Pre-Phase-2 this drain force-zeroed T/R so single-bank
-                // applyTRSForBank(Scale) saw only the scale.
-                headlessScale = f;
+                // P-F Phase 3a — headlessScale is RUN-ABSOLUTE: it holds the
+                // run-total factor = run-start base ⊗ this-gesture factor. The
+                // producer's `pendingScale` (f) is the WITHIN-GESTURE absolute
+                // factor only (dragScaleAccum, reset to 1 at this drag's start,
+                // scale.d:510), so the drain multiplies it per-axis by the run
+                // total captured at this gesture's mouse-down
+                // (scaleGestureStartSnapshot). For a fresh run the snapshot is
+                // identity ⇒ headlessScale = f (byte-identical to pre-3a). For a
+                // same-bank repeat the snapshot is the held run total ⇒ the factors
+                // multiply into the run total (mirrors the producer's own
+                // scaleAccum.x = dragStartScaleAccum.x * scaleFactor at
+                // scale.d:694). Per-axis factors commute ⇒ no cross-axis hazard.
+                // The held T/R are NOT touched — they compose into the fold via
+                // the preset flags. composeFor (3253) reads this FULL run-absolute
+                // headlessScale against the FROZEN dragBaseline — no divide.
+                headlessScale = Vec3(scaleGestureStartSnapshot.x * f.x,
+                                     scaleGestureStartSnapshot.y * f.y,
+                                     scaleGestureStartSnapshot.z * f.z);
 
                 // CPU is rebuilt from the run baseline EVERY frame so it is
                 // never stale at mouseUp. The fast-path then merely skips the
                 // per-frame vertex re-upload — the GPU keeps the baseline
                 // buffer and u_model = wrapAboutPivot(fold) bridges the scale.
                 applyTRS(dragBaseline);
-                if (scaleDragFastPath) {
+                // P-F Phase 3a (MAJOR-4) — the own-bank fast-path
+                // `wrapAboutPivot(lastFoldMatrix) · buffer` is valid ONLY while the
+                // GPU buffer still holds the FROZEN run baseline (lastFoldMatrix is
+                // built from the FULL run-absolute headlessScale against that
+                // baseline). Once a prior committed gesture in this run uploaded the
+                // buffer (`runGpuBufferDirty`), buffer ≠ frozen baseline and the
+                // fast-path would DOUBLE-APPLY — drop to a CPU re-upload (mirrors the
+                // Move buffer-vs-baseline drop-out at 1626). The single-Scale common
+                // path (fresh run, dirty == false) is untouched.
+                if (scaleDragFastPath && !runGpuBufferDirty) {
                     // MS-4.5 — reuse the fold's composed scale matrix wrapped
                     // about its pivot instead of rebuilding it here.
                     gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
@@ -1760,6 +1824,11 @@ public:
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate   = false;
             moveDragFastPath = false;
+            // P-F Phase 3a (MAJOR-4) — this upload moves the GPU buffer off the
+            // frozen run baseline, so a subsequent R/S own-bank fast-path in this
+            // run must drop to a CPU re-upload (its lastFoldMatrix is relative to
+            // the frozen baseline).
+            runGpuBufferDirty = true;
 
             // Per-gesture commit (record+consolidate, Phase 1): each move drag
             // is its own atomic gesture, baked to history at mouse-up as a
@@ -1884,6 +1953,9 @@ public:
             needsGpuUpdate  = false;
             rotDragFastPath = false;
             rotDragAxisIdx  = -1;
+            // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; a
+            // subsequent R/S own-bank fast-path must drop to CPU re-upload.
+            runGpuBufferDirty = true;
 
             // Per-gesture commit (record+consolidate, Phase 2): each ring drag
             // bakes a tagged in-session entry on mouse-up (rotateSub's commitEdit
@@ -1921,6 +1993,32 @@ public:
             needsGpuUpdate    = false;
             scaleDragFastPath = false;
             scaleDragActive   = false;
+            // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; the
+            // NEXT same-bank Scale own-bank fast-path in this run must drop to a
+            // CPU re-upload (its lastFoldMatrix is built from the FULL run-absolute
+            // headlessScale against the frozen baseline → wrapAboutPivot(fold) ×
+            // this transformed buffer would double-scale).
+            runGpuBufferDirty = true;
+
+            // P-F Phase 3a (MAJOR-5) — uniform field-snapshot undo hook. The
+            // gesture-START is THIS gesture's run-absolute snapshot (captured at
+            // scale mouse-down, scaleGestureStartSnapshot); the END is the current
+            // run-total factor (headlessScale). Splice them onto the scaleSub
+            // gesture entry through the wrapper-field hook pair so an in-session
+            // Ctrl+Z restores the panel SX/SY/SZ to the run total BEFORE this
+            // gesture (mergeRun first.revert/last.apply splices to run-START /
+            // run-END at the drop), and redo restores the post-gesture run total.
+            // Gated by scaleGestureStartKnown so a commit with no preceding
+            // mouse-down leaves start == end (inert). The same pre/post is recorded
+            // IDENTICALLY in recordPipeRefire (3747-region) so a snap/falloff
+            // mid-run refire does not strand the field. DISJOINT wrapper field.
+            bool scaleAbsKnown = scaleGestureStartKnown;
+            Vec3 scaleAbsStart = scaleGestureStartSnapshot;
+            Vec3 scaleAbsEnd   = headlessScale;
+            scaleGestureStartKnown = false;
+            if (!scaleAbsKnown) scaleAbsStart = scaleAbsEnd;   // inert
+            scaleSub.wrapperFieldApplyHook  = () { headlessScale = scaleAbsEnd;   };
+            scaleSub.wrapperFieldRevertHook = () { headlessScale = scaleAbsStart; };
 
             // Per-gesture commit (record+consolidate, Phase 2): mirrors the
             // rotate path above — each scale drag bakes a tagged in-session entry
@@ -1928,6 +2026,11 @@ public:
             // hooks + routes in-session), the next handle grab reopens a fresh
             // scaleSub session, and the run consolidates at the boundary / drop.
             scaleSub.commitGesture();
+            // Clear the wrapper-field hooks so a later sub-tool commit with no
+            // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
+            // does not re-fire this gesture's stale snapshot.
+            scaleSub.wrapperFieldApplyHook  = null;
+            scaleSub.wrapperFieldRevertHook = null;
 
             // In-session falloff re-grade — staleness stamp + window reset
             // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
@@ -3744,18 +3847,39 @@ private:
         FalloffPacket  preFCopy  = preF,  postFCopy  = postF;
         SnapPacket     preSnCopy = preSn, postSnCopy = postSn;
         SymmetryPacket preSyCopy = preSy, postSyCopy = postSy;
+        // P-F Phase 2/3a (MAJOR-5) — the run-absolute WRAPPER fields join the
+        // uniform hook family on the refire entry IDENTICALLY to the gesture-commit
+        // entry, or mergeRun first.revert/last.apply would strand the field: an
+        // in-session Ctrl+Z after a snap/falloff mid-run refire would restore
+        // geometry but leave headlessTranslate/headlessScale at the post-refire
+        // value (panel desyncs from geometry). A refire re-grades geometry under
+        // the SAME transform, so the field does NOT change across it — snapshot the
+        // CURRENT run-absolute fields as BOTH pre and post (pre == post). When the
+        // refire entry is merged with the gesture entries, the field endpoints
+        // splice coherently because every entry in the run carries the field hook.
+        // DISJOINT from the pipe-config restores. (Move's headlessTranslate is
+        // included here too — closing the latent Phase-2 gap; Rotate stays out
+        // until Phase 3b makes it run-absolute.)
+        Vec3 tFieldCopy = headlessTranslate;
+        Vec3 sFieldCopy = headlessScale;
         cmd.setHooks(
-            // apply (redo): restore the POST-tweak pipe config + publish.
+            // apply (redo): restore the POST-tweak pipe config + the run-absolute
+            // fields (unchanged across the refire) + publish.
             () {
                 if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(postFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
+                headlessTranslate = tFieldCopy;
+                headlessScale     = sFieldCopy;
             },
-            // revert (undo): restore the PRE-tweak pipe config + publish.
+            // revert (undo): restore the PRE-tweak pipe config + the run-absolute
+            // fields + publish.
             () {
                 if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(preFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
+                headlessTranslate = tFieldCopy;
+                headlessScale     = sFieldCopy;
             },
         );
 
@@ -3830,6 +3954,22 @@ private:
     Vec3 runFrameR      = Vec3(1, 0, 0);
     Vec3 runFrameU      = Vec3(0, 1, 0);
     Vec3 runFrameF      = Vec3(0, 0, 1);
+
+    // P-F Phase 3a (MAJOR-4) — GPU buffer-vs-frozen-baseline invariant. With the
+    // Scale baseline now FROZEN for the whole run, the Scale OWN-bank fast-path
+    // (`scaleDragFastPath`, draws GPU buffer × wrapAboutPivot(lastFoldMatrix))
+    // is valid ONLY while the GPU buffer still holds the frozen run baseline:
+    // `lastFoldMatrix` is composed RELATIVE to that baseline from the FULL
+    // run-absolute headlessScale, so `wrapAboutPivot(fold) · buffer` reconstructs
+    // the CPU pose only when buffer == frozen baseline. The moment ANY prior
+    // committed gesture in this run did `gpu.upload(*mesh)` (mouse-up), the buffer
+    // becomes the already-transformed mesh ≠ frozen baseline, and the fast-path
+    // would DOUBLE-APPLY. This flag tracks that: FALSE at run start (resetRun —
+    // buffer reflects the about-to-be-frozen baseline), set TRUE at every gesture
+    // mouse-up upload. The R/S own-bank fast-path drops to needsGpuUpdate=true
+    // when set (mirrors the Move buffer-vs-baseline drop-out at 1626). INVARIANT:
+    // the R/S own-bank fast-path is valid only while runGpuBufferDirty == false.
+    bool runGpuBufferDirty = false;
 
     // `moveDragFastPath`: ONCE-PER-DRAG decision (evaluated at
     // mouse-down in `beginMoveDragSession`) for whether the per-frame
