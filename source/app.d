@@ -2501,6 +2501,30 @@ void main(string[] args) {
                     // tool commits stay on record() (one entry per gesture).
                     history.recordCoalescing(cmd);
                 }
+
+                // P-E: a DISCRETE pipe-config tweak opens a NEW tweak
+                // generation, so the re-grade it triggers (recorded later, on the
+                // next XfrmTransformTool.update() tick) APPENDS as its OWN
+                // in-session undo step rather than REPLACING the prior re-grade
+                // (reference fact G2: each separate setAttr command is one step).
+                // Gate: a tool.pipe.attr WRITE (not a `?` query) that is NOT part
+                // of a held interactive interaction. The forms-panel slider scrub
+                // raises formsInteractiveLatch and fires MANY tool.pipe.attr
+                // writes as the mouse drags one slider — those must SHARE one
+                // generation (REPLACE into one step), so the latch suppresses the
+                // per-setAttr bump; the slider's end-of-scrub deactivate bumps the
+                // generation instead (forms_render.d). A raw /api/command or
+                // /api/script tool.pipe.attr (latch down) is a discrete tweak and
+                // bumps here. A falloff-handle drag bypasses this dispatcher
+                // entirely (it setAttrs the stage directly) and bumps on
+                // mouse-up (xfrm_transform.d). bumpTweakGeneration() is a no-op on
+                // history state otherwise — it only advances the token a future
+                // re-grade reads.
+                if (id == "tool.pipe.attr" && !formsInteractiveLatch) {
+                    bool isQuery = false;
+                    if (auto tpa = cast(ToolPipeAttrCommand)cmd) isQuery = tpa.isQuery();
+                    if (!isQuery) history.bumpTweakGeneration();
+                }
             }
         };
         httpServer.setCommandHandler(commandHandlerDelegate);
@@ -2514,6 +2538,16 @@ void main(string[] args) {
             scope(exit) formsInteractiveLatch = false;
             commandHandlerDelegate(id, paramsJson);
         };
+
+        // P-E: wire the forms panel's tweak-boundary hook to the history's
+        // generation counter. A panel slider/drag deactivate (end of a continuous
+        // scrub) or a combo selection (a single discrete pick) bumps the
+        // generation so the NEXT pipe tweak APPENDS as its own in-session undo
+        // step rather than REPLACING the just-finished one (reference fact G2).
+        // The per-frame setAttrs DURING a scrub do NOT bump (the interactive
+        // latch suppresses the app.d per-command bump), so the scrub coalesces
+        // into ONE step; this end-of-scrub hook closes that window.
+        formsPanel.setTweakEndHook(() { history.bumpTweakGeneration(); });
 
         // Phase 5.6: assign the outer-scope replayUndoEntry delegate so the
         // History panel replay button can call it from the main-loop render.
@@ -2565,6 +2599,10 @@ void main(string[] args) {
                 obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
                 obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
+                // P-E: pipe-tweak generation token (load-bearing on Refire
+                // entries — see HistoryEntry.tweakGeneration). Surfaced so a test
+                // can assert two discrete tweaks carry DIFFERENT generations.
+                obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
                 undoArr ~= obj;
             }
             JSONValue[] redoArr;
@@ -2578,6 +2616,7 @@ void main(string[] args) {
                 obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
                 obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
+                obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
                 redoArr ~= obj;
             }
             JSONValue payload = JSONValue.emptyObject;

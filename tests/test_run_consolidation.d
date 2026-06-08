@@ -683,14 +683,24 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (D2) consecutive-tweaks REPLACE + drop-D.
+// (D2) DISCRETE consecutive tweaks each APPEND (P-E) + drop-D.
 //
-// drag -> falloff tweak (re-grade + ONE tagged in-session entry, A) -> assert
-// re-grade + entry count -> a CONSECUTIVE tweak REPLACES the prior re-grade in
-// place (two tweaks = ONE re-grade entry, run length stable) -> drop
-// (consolidate gesture + the merged re-grade to ONE, D) -> one post-drop Ctrl+Z
-// reverts the WHOLE run to the cube, including the WIDENED-support vert (the
-// once-per-run anchor covers the widened support).
+// P-E FLIP (was: "consecutive tweaks REPLACE"). The two tweaks below are two
+// SEPARATE /api/command tool.pipe.attr calls — i.e. two DISCRETE tweaks, each
+// its own tweak generation. Per reference fact G2 each discrete tweak is its OWN
+// in-session undo step, so the SECOND tweak now APPENDS (inSession 2 -> 3, run
+// floor+2 -> floor+3) instead of REPLACING the first. REPLACE is reserved for a
+// CONTINUOUS interaction (a held slider scrub / falloff-handle drag, whose
+// per-frame setAttr stream shares one generation) — not headlessly drivable
+// through discrete /api calls, so it is exercised by the (P-E CONTINUOUS) case
+// in test_falloff_refire_rs.d via the shared-generation seam.
+//
+// drag -> falloff tweak1 (re-grade + ONE tagged in-session entry, A) -> assert
+// re-grade + entry count -> tweak2 is a DISCRETE tweak so it APPENDS a SECOND
+// re-grade entry (inSession 3) -> drop (consolidate gesture + BOTH re-grades to
+// ONE, D) -> one post-drop Ctrl+Z reverts the WHOLE run to the cube, including
+// the WIDENED-support vert (the once-per-window anchor covers the widened
+// support).
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -716,26 +726,31 @@ unittest {
     auto v0Tweak1 = vert(0);
     assert(!vertNear(v0Tweak1, v0Gesture), "first tweak re-grades geometry");
 
-    // CONSECUTIVE tweak: widen further -> the re-grade REPLACES the prior one in
-    // place (REPLACE semantics) — inSession stays 2, not 3.
+    // SECOND DISCRETE tweak (P-E): a separate tool.pipe.attr call = its own
+    // generation, so it APPENDS a SECOND re-grade entry — inSession 2 -> 3 (NOT
+    // REPLACE). This is the P-E behaviour change: discrete tweaks are separate
+    // undo steps.
     cmd(`tool.pipe.attr falloff size "6,6,6"`);
     settle();
-    assert(inSessionCount() == 2,
-        "consecutive tweak REPLACES the prior re-grade (run length stable); got "
+    assert(inSessionCount() == 3,
+        "a DISCRETE second tweak APPENDS its own re-grade entry (P-E G2): "
+        ~ "gesture + tweak1 + tweak2 = 3 tagged in-session entries; got "
         ~ inSessionCount().to!string);
     auto v0Tweak2 = vert(0);
     assert(!vertNear(v0Tweak2, v0Tweak1),
-        "the second (consecutive) tweak re-grades again");
+        "the second (discrete) tweak re-grades again");
 
-    // Drop -> consolidate the gesture + the single (REPLACE-merged) re-grade to
-    // ONE entry (contract D), with NO in-session Ctrl+Z between the tweaks and
-    // the drop (an in-session Ctrl+Z is a run boundary that closes the run — see
-    // case D / the sibling contract test; contract C is covered there).
+    // Drop -> consolidate the gesture + BOTH discrete re-grades to ONE entry
+    // (contract D — the contiguous-run gather merges every InSession entry of the
+    // run regardless of how many discrete tweaks landed), with NO in-session
+    // Ctrl+Z between the tweaks and the drop (an in-session Ctrl+Z is a run
+    // boundary that closes the run — see case D / the sibling contract test;
+    // contract C is covered there).
     postJson("/api/script", "tool.set move off");
     settle();
     assert(undoCount() == floor + 1,
-        "drop consolidates gesture + the merged re-grade to ONE entry (D); floor="
-        ~ floor.to!string ~ " now=" ~ undoCount().to!string);
+        "drop consolidates gesture + BOTH discrete re-grades to ONE entry (D); "
+        ~ "floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     // One post-drop Ctrl+Z reverts the WHOLE consolidated run to the cube — the
     // merged entry's before[] anchors to the gesture run-start, and the re-grade
@@ -823,13 +838,20 @@ unittest {
 //      -> g2 (SECOND gesture, SAME bank/run; a plain gesture, NOT a refire)
 //      -> tweak2 (its tail is g2 -> must APPEND, never DROP g2)
 // Stack = [g1, tweak1, g2, tweak2] = FOUR tagged in-session entries.
-//   -> tweak3 (its tail is tweak2, a refire -> REPLACES) -> still FOUR.
+//   -> tweak3 (P-E: a DISCRETE tweak, its own generation -> APPENDS even though
+//      its tail tweak2 is a refire) -> FIVE.
 //
 // The C1 bug (priorRefireExists keyed on "any refire this run") made tweak2 call
 // replaceInSessionTail, which dropped g2 — g2's geometry vanished from the
 // consolidated drop entry (undo-stack corruption). On e3d4bce this test sees 3
 // tagged entries (g2 erased); with the Refire-bit fix it sees 4, AND g2's
 // contribution survives the post-drop single-entry revert.
+//
+// P-E FLIP: tweak3 was a REPLACE (-> 4) on the assumption "tail is a refire =>
+// REPLACE". Post-P-E the gate ALSO requires the tail refire's tweak generation
+// to match the new entry's — and tweak3 is a SEPARATE /api command (a discrete
+// tweak, its own generation) so it APPENDS instead (-> 5). Each discrete tweak
+// is its own in-session step (G2). g2 still survives the merge.
 //
 // Per-gesture anchor: tweak2 must re-grade against the POST-G2 geometry, not the
 // stale post-g1 snapshot. refireAnchor is cleared at every gesture mouse-up
@@ -885,20 +907,22 @@ unittest {
     auto v0AfterTweak2 = vert(0);
     assert(!vertNear(v0AfterTweak2, v0AfterG2), "tweak2 re-graded v0 further");
 
-    // tweak3: a CONSECUTIVE re-grade. Its tail is tweak2 (a refire), so it
-    // REPLACES -> stack stays FOUR.
+    // tweak3 (P-E): its tail IS tweak2 (a refire), but tweak3 is a DISCRETE tweak
+    // (a separate /api command, its own generation) so the P-E gate fails and it
+    // APPENDS -> stack grows to FIVE (was four pre-P-E).
     cmd(`tool.pipe.attr falloff size "12,12,12"`);
     settle();
-    assert(inSessionCount() == 4,
-        "tweak3's tail is tweak2 (a refire) so it REPLACES — stack stays 4; got "
+    assert(inSessionCount() == 5,
+        "tweak3 is a DISCRETE tweak (its own generation) so it APPENDS even "
+        ~ "though its tail is a refire (P-E G2) — stack grows to 5; got "
         ~ inSessionCount().to!string);
-    assert(refireCount() == 2, "still two refire entries (tweak3 replaced tweak2)");
+    assert(refireCount() == 3, "three refire entries (tweak1, tweak2, tweak3)");
 
     // Drop: the whole run consolidates to ONE entry (D).
     postJson("/api/script", "tool.set move off");
     settle();
     assert(undoCount() == floor + 1,
-        "drop consolidates the four-entry run to ONE (D); floor=" ~ floor.to!string
+        "drop consolidates the five-entry run to ONE (D); floor=" ~ floor.to!string
         ~ " now=" ~ undoCount().to!string);
 
     // One post-drop Ctrl+Z reverts the WHOLE run to the cube. The witness that

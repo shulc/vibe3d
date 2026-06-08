@@ -1595,8 +1595,16 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
+        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e)) {
+            // P-E: a falloff-handle DRAG just ended. Its per-frame setAttrs
+            // (issued directly on the stage as the handle was hauled, bypassing
+            // the command dispatcher) shared ONE generation and REPLACEd into one
+            // in-session step — the continuous-coalesce case. Bump the generation
+            // now so the NEXT pipe tweak (handle drag or discrete setAttr) starts
+            // a fresh generation and APPENDS as its own step (G2).
+            if (history !is null) history.bumpTweakGeneration();
             return true;
+        }
         bool r;
         bool wasMoveDrag = (activeDrag is moveSub);
         // Capture BEFORE rotateSub.onMouseButtonUp resets its dragAxis to -1.

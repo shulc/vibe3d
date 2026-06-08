@@ -112,6 +112,26 @@ struct HistoryEntry {
                             //  consolidate(runId) collapses that run's
                             //  contiguous tail into one surviving entry. 0 for
                             //  ordinary (non-in-session) entries.
+    ulong   tweakGeneration;// Pipe-tweak GENERATION token (P-E). Stamped on every
+                            //  recorded entry from CommandHistory._tweakGeneration
+                            //  at record time. Load-bearing ONLY on a Refire
+                            //  entry: replaceInSessionTail() REPLACES the tail
+                            //  Refire ONLY when the tail's generation == the new
+                            //  entry's generation — i.e. both re-grades belong to
+                            //  ONE continuous tweak interaction (a held slider
+                            //  scrub / a falloff-handle drag, whose setAttr stream
+                            //  shares one generation). Two DISCRETE tweaks (each a
+                            //  separate setAttr command / handle gesture) carry
+                            //  DIFFERENT generations, so the second APPENDS — it
+                            //  is its own in-session undo step (reference fact G2:
+                            //  drag + 2 discrete tweaks = 3 steps; one continuous
+                            //  scrub = 1 step). The generation is bumped by
+                            //  bumpTweakGeneration() at a tweak boundary: per
+                            //  discrete (non-interactive) tool.pipe.attr command,
+                            //  and at the END of a continuous interaction (panel-
+                            //  slider deactivate / falloff-handle mouse-up). 0 for
+                            //  ordinary entries (irrelevant — the gate consults it
+                            //  only for Refire tails).
 }
 
 /// Map a command's CmdFlags to the per-entry HistoryFlags recorded on
@@ -251,6 +271,19 @@ final class CommandHistory {
     private ulong _currentRunId = 0;
     private bool  _runOpen      = false;
 
+    // Pipe-tweak GENERATION (P-E). A monotone token that distinguishes a
+    // CONTINUOUS tweak interaction (one held slider scrub / one falloff-handle
+    // drag — its setAttr stream shares ONE generation) from a DISCRETE tweak
+    // (each a separate setAttr command / handle gesture, its own generation).
+    // recordInSession()/replaceInSessionTail() stamp the recorded entry with
+    // this value; replaceInSessionTail() REPLACES a Refire tail ONLY when the
+    // tail's generation matches (same continuous interaction), else APPENDS. The
+    // counter starts at 0 and is bumped by bumpTweakGeneration() at a tweak
+    // boundary (see the field doc on HistoryEntry.tweakGeneration). Default 0
+    // means a caller that never bumps (e.g. the replaceInSessionTail unit tests)
+    // sees pure REPLACE — the historical Refire-keyed behaviour, unchanged.
+    private ulong _tweakGeneration = 0;
+
     /// Phase 7 macro recorder hook. Invoked AFTER an entry lands on
     /// the undo stack — receives the canonical argstring command
     /// line (commandName + " " + args, or just commandName) plus the
@@ -318,6 +351,29 @@ final class CommandHistory {
     /// switch, tool drop) consolidates the just-ended run then bumps to a new
     /// id so the next run's gestures are tagged distinctly.
     ulong nextRun() { return ++_currentRunId; }
+
+    /// The current pipe-tweak generation token (P-E). Read by
+    /// replaceInSessionTail()/recordInSession() to stamp a recorded entry;
+    /// publicly readable so a caller can correlate. Does NOT change merely by
+    /// reading. See the field doc on HistoryEntry.tweakGeneration.
+    ulong currentTweakGeneration() const { return _tweakGeneration; }
+
+    /// Open a NEW pipe-tweak generation (P-E) and return it. Called at a tweak
+    /// BOUNDARY so the NEXT re-grade's entry carries a generation distinct from
+    /// the prior re-grade's — making two DISCRETE tweaks APPEND as separate
+    /// in-session undo steps (G2), while the contiguous setAttr stream of ONE
+    /// continuous interaction (which does NOT bump between its frames) stays at
+    /// one generation and REPLACEs into one step. Call sites:
+    ///   - per discrete (non-interactive) tool.pipe.attr command (app.d
+    ///     command dispatch): each HTTP/script setAttr is its own generation;
+    ///   - at the END of a continuous interaction: a forms-panel slider
+    ///     deactivate (IsItemDeactivatedAfterEdit, forms_render.d) and a
+    ///     falloff-handle drag mouse-up (xfrm_transform.d onMouseButtonUp), so
+    ///     the following tweak starts fresh.
+    /// Monotone; never decreases. Idempotent in effect — a redundant bump only
+    /// skips a generation value, never breaks the gate (a fresh generation can
+    /// never spuriously match a prior Refire tail).
+    ulong bumpTweakGeneration() { return ++_tweakGeneration; }
 
     // Foreign-record guard (Q-a, layer A). Invoked at the top of the public
     // record() / recordCoalescing() entry points: if an open in-session run
@@ -492,7 +548,12 @@ final class CommandHistory {
                            cmd: cmd,
                            timestampMs: tMs,
                            flags: flags,
-                           runId: runId };
+                           runId: runId,
+                           // P-E: stamp the live tweak generation. Load-bearing
+                           // only when this entry is later a Refire tail (see
+                           // replaceInSessionTail). A plain gesture entry carries
+                           // it harmlessly.
+                           tweakGeneration: _tweakGeneration };
         undoStack ~= e;
         if (undoStack.length > maxDepth) {
             undoStack = undoStack[$ - maxDepth .. $];
@@ -549,15 +610,31 @@ final class CommandHistory {
     void replaceInSessionTail(Command cmd, ulong runId) {
         if (cmd is null) return;
         // Drop the matching in-session tail ONLY when it is this run's prior
-        // RE-GRADE entry (InSession && Refire && runId). A plain gesture entry
-        // (InSession but NOT Refire) is NEVER dropped — that is the fix for the
-        // multi-gesture-run hazard (g1 -> tweak1 -> g2 -> tweak2 must NOT erase
-        // g2). A non-matching tail degrades to a plain append below.
+        // RE-GRADE entry (InSession && Refire && runId) AND it belongs to the
+        // SAME continuous tweak interaction (P-E: tail.tweakGeneration ==
+        // _tweakGeneration). A plain gesture entry (InSession but NOT Refire) is
+        // NEVER dropped — that is the fix for the multi-gesture-run hazard (g1 ->
+        // tweak1 -> g2 -> tweak2 must NOT erase g2). A non-matching tail (a
+        // gesture, a different run, foreign — OR a Refire of a DIFFERENT
+        // generation, i.e. a DISCRETE prior tweak) degrades to a plain append
+        // below.
+        //
+        // P-E GATE: the generation token distinguishes continuous from discrete.
+        // Within ONE held interaction (a slider scrub / a falloff-handle drag)
+        // the setAttr stream does NOT bump the generation, so consecutive
+        // re-grades share it and REPLACE (N pixel increments = ONE undo step).
+        // Between two DISCRETE tweaks (each its own tool.pipe.attr command, each
+        // bumping the generation) the tail's generation differs from the new
+        // entry's, so this APPENDS — each discrete tweak is its own in-session
+        // step (reference fact G2). A caller that never bumps (default
+        // generation 0 throughout — the replaceInSessionTail unit tests) keeps
+        // pure REPLACE, the historical Refire-keyed behaviour.
         if (undoStack.length > 0) {
             auto tail = undoStack[$ - 1];
             if ((tail.flags & HistoryFlags.InSession)
              && (tail.flags & HistoryFlags.Refire)
-             && tail.runId == runId) {
+             && tail.runId == runId
+             && tail.tweakGeneration == _tweakGeneration) {
                 undoStack.length -= 1;
             }
         }

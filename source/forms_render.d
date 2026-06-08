@@ -90,6 +90,22 @@ class FormsPanel {
     }
     private Scratch[string] scratch_;
 
+    // P-E tweak-boundary hook. Fired when a value control finishes a continuous
+    // edit (ImGui IsItemDeactivatedAfterEdit) — i.e. the user RELEASES a slider /
+    // drag-field after scrubbing it. The host wires this to
+    // CommandHistory.bumpTweakGeneration() so the slider's contiguous setAttr
+    // stream (which all shared one generation and REPLACEd into ONE in-session
+    // undo step — the continuous-coalesce case) closes out, and the NEXT tweak
+    // opens a fresh generation that APPENDS as its own step (reference fact G2).
+    // Optional: a null hook means no generation management (e.g. a non-transform
+    // form, or a build without the transform-session refire). Set once via
+    // setTweakEndHook(); never per-frame.
+    private void delegate() onTweakEnd_;
+
+    /// Wire the P-E tweak-boundary hook (see onTweakEnd_). Idempotent; pass null
+    /// to clear.
+    void setTweakEndHook(void delegate() hook) { onTweakEnd_ = hook; }
+
     // Live active tool id for the frame, set by draw(). A `tool.attr` (Namespace
     // .tool) control line carries the CANONICAL family tool id `xfrm.transform`
     // (what validateForms resolves against), but the SAME readable form is shown
@@ -315,6 +331,13 @@ class FormsPanel {
         sc.active = ImGui.IsItemActive();
         if (changed)
             writeValue(row, JSONValue(cast(double) sc.f), idispatch);
+        // P-E: a slider/drag scrub just ENDED (released after editing). Close out
+        // the continuous tweak's generation so the next tweak APPENDS (G2). The
+        // contiguous setAttr stream during the scrub shared one generation (the
+        // interactive latch suppressed the per-setAttr bump in app.d), so this is
+        // the seam that ends the coalesced window.
+        if (ImGui.IsItemDeactivatedAfterEdit() && onTweakEnd_ !is null)
+            onTweakEnd_();
     }
 
     // ---- int: drag / slider, with active-item guard ----------------------
@@ -341,6 +364,9 @@ class FormsPanel {
         sc.active = ImGui.IsItemActive();
         if (changed)
             writeValue(row, JSONValue(sc.i), idispatch);
+        // P-E: end-of-scrub tweak-generation boundary (see drawFloatControl).
+        if (ImGui.IsItemDeactivatedAfterEdit() && onTweakEnd_ !is null)
+            onTweakEnd_();
     }
 
     // ---- enum / intEnum: combo (choices from the Param, not YAML) --------
@@ -360,6 +386,12 @@ class FormsPanel {
                     // Enum writes the tag string; intEnum writes its wire tag
                     // too (both are strings on the wire — the command parses).
                     writeValue(row, JSONValue(ch[0]), idispatch);
+                    // P-E: a combo selection is a SINGLE discrete tweak (not a
+                    // scrub). Open a fresh generation immediately after the write
+                    // so a following tweak APPENDS as its own step (G2). Without
+                    // this, the interactive-latch path would let the next pipe
+                    // tweak coalesce with this enum change.
+                    if (onTweakEnd_ !is null) onTweakEnd_();
                 }
                 if (sel) ImGui.SetItemDefaultFocus();
             }
