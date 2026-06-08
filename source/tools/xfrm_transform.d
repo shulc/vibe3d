@@ -189,6 +189,35 @@ public:
     private bool gesturePinStartPlaced  = false;
     private Vec3 gesturePinStartCenter  = Vec3(0, 0, 0);
 
+    // BUG-2 (reviewer BLOCKER) — gesture-START display SOFT-pin, captured LIVE at
+    // beginEdit alongside gesturePinStart* (the W1 lesson: capture the live state
+    // NOW, not a frozen snapshot). The Move soft pin (notifyAcenSoftPlaced, fired
+    // AFTER commitEdit at mouse-up) is otherwise stranded by an in-session Ctrl+Z:
+    // the Move revert hook restored only the userPlaced pin, never the soft pin,
+    // and the update() clear is skipped on undo (undo bumps mutationVersion but
+    // not the selection hash) — so geometry reverted to pristine while the gizmo
+    // pivot stayed floating at the settled height. The commit now carries the
+    // soft-pin endpoints into the same revert/apply closures as the userPlaced pin
+    // + pipe config (disjoint state — no clobber): revert restores this
+    // gesture-START soft state (typically cleared → pivot recomputes to the
+    // reverted-geometry centroid), apply restores the gesture-END (settled) soft
+    // pin. Gated identically to gesturePinStart* so a no-preceding-beginEdit commit
+    // falls back to inert.
+    private bool gestureSoftStartPlaced = false;
+    private Vec3 gestureSoftStartCenter = Vec3(0, 0, 0);
+
+    // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
+    // and consumed by commitEdit ONLY when a real edit command was built. A
+    // zero-motion off-gizmo relocate CLICK opens a moveSub session (so the mouse-up
+    // path runs) but produces NO geometry edit (buildEditCmd returns null) — its
+    // mouse-DOWN already fired setUserPlaced (clearing the soft pin). Setting the
+    // soft pin unconditionally on every Move mouse-up resurrected it on top of the
+    // relocate. Routing the request through commitEdit lets the soft pin be set
+    // (and captured into the hooks) only on a genuine edit; a no-op relocate leaves
+    // the soft pin cleared. Cleared after each commit (one-shot).
+    private bool pendingMoveSoftPin    = false;
+    private Vec3 pendingMoveSoftCenter = Vec3(0, 0, 0);
+
     // MS-4.5 — the composed pivot-relative matrix the GLOBAL fold built on the
     // last applyGlobalFold (origin-fixing) plus the pivot it used. The GPU
     // fast-path (whole-mesh / no-falloff, which always takes the fold) reuses
@@ -379,6 +408,29 @@ public:
                 // set (and thus the meaningful baseline) changed, so the next gesture
                 // must re-capture from the current mesh.
                 runBaselineValid = false;
+                // BUG-1: the display soft-pin (Move-settle) tracks the prior
+                // selection's settled pivot; a NEW SELECTION must recompute the
+                // center from the new moving set, so drop it here. Gated to a
+                // genuine selection change (NOT a bare mutation bump): a Move
+                // gesture's own apply does not bump mutationVersion, but R/S panel
+                // applies DO — clearing on a mutation-only bump would wipe the pin
+                // mid-run after a rotate/scale, which is not a moving-set change.
+                // BUG-2 (reviewer BLOCKER) — clear the soft pin ONLY on a GENUINE
+                // selection change, NOT on the first-poll latch. lastSelectionHash
+                // is seeded to uint.max by activate() / a session re-open as the
+                // "not yet synced" sentinel (NOT a real selection); the very next
+                // update() then sees curHash != uint.max and would spuriously wipe
+                // the soft pin. After an in-session redo this is the bug: the Move
+                // apply hook restores the settled soft pin, then this guard frame
+                // (running with lastSelectionHash == uint.max because the session
+                // re-opened) re-cleared it, snapping the gizmo back to the weighted
+                // centroid. Mirror the ACEN-mode poll's first-poll latch (below):
+                // when the prior hash is the sentinel, adopt curHash WITHOUT firing
+                // the soft-pin clear. A real selection change (sentinel already
+                // replaced by a concrete hash) still clears, as before.
+                if (lastSelectionHash != uint.max
+                 && curHash != lastSelectionHash)
+                    clearAcenSoftPlaced();
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
             }
@@ -420,6 +472,12 @@ public:
                     // GEOMETRY-run boundary regardless of an open history run: the
                     // pivot moved, so the next gesture must re-capture its baseline.
                     runBaselineValid = false;
+                    // BUG-1: a mode change recomputes the center from scratch — drop
+                    // any display soft-pin from a prior mode's settle. (applySetAttr
+                    // "mode" already clears it inside the stage when the change came
+                    // through setAttr; this covers any other path that moved the mode
+                    // and is a no-op when already clear.)
+                    clearAcenSoftPlaced();
                     lastAcenMode     = curMode;
                 }
             }
@@ -1654,8 +1712,79 @@ public:
             // applyMovePanelDelta (never this gizmo mouse-up) and stays coalesced
             // until drop. discardAcenUserPlacedSnapshot stays on commitEdit
             // (Q-b): the next gesture's beginEdit re-freezes the pin.
+            // BUG-1 — Move gizmo settle (DISPLAY soft-pin). The reference keeps
+            // the Move gizmo at the FULL-delta pivot on mouse-up. On mouse-up the
+            // active drag clears and computeCenter (Auto/None/Screen) recomputes
+            // the gizmo pose from the moving-set centroid.
+            //
+            //   • WITHOUT falloff every selected vert moved by the full delta, so
+            //     that centroid ALREADY equals moveSub.handler.center — the gizmo
+            //     does not move. Setting a soft pin here would only freeze a value
+            //     equal-up-to-float-noise to the live centroid, but since the live
+            //     centroid and handler.center are not bit-identical it would nudge
+            //     the published pivot off the centroid the recompute would give —
+            //     visible to the pixel-exact relocate-boundary tests. So the
+            //     no-falloff path is left EXACTLY as today (byte-identical): no
+            //     soft pin, computeCenter returns the centroid as before.
+            //
+            //   • WITH falloff the centroid is the WEIGHTED moving-set bbox-center,
+            //     which sits well short of the full delta — that is the snap-back.
+            //     Record the settled handler center (which followed the full delta
+            //     via center + worldStep every motion frame) as a DISPLAY soft-pin
+            //     so computeCenter returns it instead.
+            //
+            // Gated to the relocate-allowed modes (Auto/None/Screen) — the exact
+            // set whose computeCenter reads the soft pin and where the snap-back
+            // occurs (Select/Element/Local/Origin/Manual/Border keep their own
+            // selection-derived pivot and never read it). Deliberately NOT
+            // notifyAcenUserPlaced: it must NOT set userPlaced (a prior attempt
+            // did, breaking the cross-slot relocate boundary), so the relocate
+            // snapshot machinery is untouched. The soft pin is sticky for the next
+            // same-run gesture and cleared at the selection / ACEN-mode boundaries
+            // (where the moving set legitimately changes) and by any relocate.
+            //
+            // BUG-2 (reviewer BLOCKER) — set the soft pin BEFORE commitEdit so the
+            // commit captures the gesture-END soft state LIVE (ac.isSoftPlaced() /
+            // currentSoftCenter()) into its undo/redo hooks, alongside the
+            // userPlaced pin + pipe config. Previously this fired AFTER commitEdit,
+            // so the recorded hooks never carried the soft pin and an in-session
+            // Ctrl+Z reverted geometry but left the gizmo floating at the settled
+            // height (the update() clear is skipped on undo — undo bumps
+            // mutationVersion but not the selection hash). Reordering does not
+            // change any externally-observable steady state for a real drag: the
+            // soft pin's effect (computeCenter returning it) is identical whether
+            // published just before or just after the commit; the commit itself
+            // does not read the soft pin (it captures the userPlaced pin, which the
+            // soft pin does not touch).
+            //
+            // ALSO gated to actual MOTION (BUG-2 falloff+relocate): a Move mouse-up
+            // can be a degenerate off-gizmo relocate CLICK — its mouse-DOWN opened a
+            // moveSub session AND fired setUserPlaced (which CLEARS the soft pin),
+            // but the gesture moved ZERO distance, so it is a pure relocate, not a
+            // settle. (Such a click still builds a Move command, so a "non-null cmd"
+            // test does NOT distinguish it.) accumulatedWorldDelta is this gesture's
+            // total world translate — reset to 0 at beginMoveDragSession and summed
+            // per motion frame — so a near-zero magnitude means no drag happened.
+            // Setting the soft pin then would resurrect it on top of the explicit
+            // userPlaced relocate (both pins set). So only REQUEST the soft pin when
+            // the gesture genuinely moved geometry; commitEdit applies the pending
+            // request (BEFORE recording the cmd hooks, so the END capture sees the
+            // settle) only when a real edit command was also built. A relocate-only
+            // click leaves the soft pin cleared (userPlaced wins, as the reference
+            // does); a relocate-THEN-drag still stamps the settle (motion > 0).
+            enum float kMoveEps = 1e-5f;
+            bool gestureMoved = accumulatedWorldDelta.length() > kMoveEps;
+            if (gestureMoved && acenAllowsClickRelocate()
+                             && currentFalloff(vts).enabled) {
+                pendingMoveSoftPin    = true;
+                pendingMoveSoftCenter = moveSub.handler.center;
+            }
+
             if (editIsOpen())
                 commitEdit("Move");
+            // A no-op commit (no cmd built) never consumes the request; drop it so
+            // it cannot leak into an unrelated later commit.
+            pendingMoveSoftPin = false;
 
             // In-session falloff re-grade — staleness stamp (OBJ-1). Record the
             // mesh version this gesture left behind: a later falloff tweak at
@@ -2376,6 +2505,14 @@ public:
                 gesturePinStartPlaced = ac.isUserPlaced();
                 gesturePinStartCenter = ac.currentPinCenter();
                 gesturePinStartKnown  = true;
+
+                // BUG-2 — capture the gesture-START SOFT pin LIVE here too (the
+                // W1 lesson). For gesture-1 of a run this is typically unset (no
+                // soft pin yet → revert clears, pivot recomputes to the
+                // reverted-geometry centroid). For gesture-2+ of a sticky run it
+                // is the prior gesture's settle, so revert restores that.
+                gestureSoftStartPlaced = ac.isSoftPlaced();
+                gestureSoftStartCenter = ac.currentSoftCenter();
             }
         }
     }
@@ -2423,6 +2560,15 @@ public:
             startPlaced = gesturePinStartPlaced;
             startCenter = gesturePinStartCenter;
         }
+        // BUG-2 — gesture-START SOFT pin, captured live at the same beginEdit and
+        // gated by the SAME known flag (so a no-preceding-beginEdit commit makes
+        // the soft-pin hook inert too, below).
+        bool softStartPlaced = false;
+        Vec3 softStartCenter = Vec3(0, 0, 0);
+        if (startKnown) {
+            softStartPlaced = gestureSoftStartPlaced;
+            softStartCenter = gestureSoftStartCenter;
+        }
         gesturePinStartKnown = false;
 
         // Base commit discards the frozen pin snapshot, then builds + records the
@@ -2433,17 +2579,40 @@ public:
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
 
+        // BUG-2 — a real edit command was built, so this gesture genuinely moved
+        // geometry (NOT a no-op relocate click). Apply the pending Move-settle soft
+        // pin NOW — after the null check (so a no-op relocate never sets it) and
+        // BEFORE the gesture-END capture below (so the captured endSoft* reflects
+        // the settle that the apply/redo hook must restore). publishState() inside
+        // setSoftPlaced makes the live gizmo follow immediately. The display soft
+        // pin is disjoint from the userPlaced pin captured here.
+        if (pendingMoveSoftPin) {
+            if (auto ac = activeAcenStage())
+                ac.setSoftPlaced(pendingMoveSoftCenter);
+            pendingMoveSoftPin = false;
+        }
+
         // pin-END — current pin at mouse-up. If the gesture-START pin was never
         // captured (no preceding beginEdit-open), use the current pin for START
         // too so the hooks are inert (no pin jump on undo of a gesture that never
         // moved the pin).
         bool endPlaced = false;
         Vec3 endCenter = Vec3(0, 0, 0);
+        // BUG-2 — gesture-END SOFT pin, the LIVE soft state at commit. The Move
+        // mouse-up sets it (notifyAcenSoftPlaced) BEFORE this commit when falloff
+        // is active and the mode allows relocate, so it is already settled here.
+        bool softEndPlaced = false;
+        Vec3 softEndCenter = Vec3(0, 0, 0);
         if (auto ac = activeAcenStage()) {
-            endPlaced = ac.isUserPlaced();
-            endCenter = ac.currentPinCenter();
+            endPlaced     = ac.isUserPlaced();
+            endCenter     = ac.currentPinCenter();
+            softEndPlaced = ac.isSoftPlaced();
+            softEndCenter = ac.currentSoftCenter();
         }
-        if (!startKnown) { startPlaced = endPlaced; startCenter = endCenter; }
+        if (!startKnown) {
+            startPlaced     = endPlaced;     startCenter     = endCenter;
+            softStartPlaced = softEndPlaced; softStartCenter = softEndCenter;
+        }
 
         // P-A blocker fix + P-C — UNIFORM hook family. Compose the WHOLE
         // transient pipe CONFIG restore (falloff + snap + symmetry) alongside the
@@ -2472,18 +2641,30 @@ public:
         if (auto sy = activeSymmetryStage()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
 
         cmd.setHooks(
-            // apply (redo): restore the gesture-END pin + run pipe config + publish.
+            // apply (redo): restore the gesture-END pin + SOFT pin + run pipe
+            // config + publish. The userPlaced pin and the display soft pin own
+            // DISJOINT ActionCenterStage state (neither reads the other), so the
+            // two restores compose in one closure without clobber — like the
+            // independent pin / falloff / snap / symmetry restores (P-A).
             () {
-                if (auto ac = activeAcenStage())
+                if (auto ac = activeAcenStage()) {
                     ac.restorePinState(endPlaced, endCenter);
+                    ac.restoreSoftPlaced(softEndPlaced, softEndCenter);
+                }
                 if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
             },
-            // revert (undo): restore the gesture-START pin + run pipe config + publish.
+            // revert (undo): restore the gesture-START pin + SOFT pin + run pipe
+            // config + publish. The gesture-START soft state is typically cleared
+            // (gesture-1 of a run had no soft pin), so the pivot recomputes to the
+            // reverted-geometry centroid — closing the BLOCKER where the gizmo
+            // stayed floating at the settled height.
             () {
-                if (auto ac = activeAcenStage())
+                if (auto ac = activeAcenStage()) {
                     ac.restorePinState(startPlaced, startCenter);
+                    ac.restoreSoftPlaced(softStartPlaced, softStartCenter);
+                }
                 if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
