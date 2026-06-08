@@ -38,9 +38,13 @@
 // is raw history.undo() with no resyncSession); vec3 falloff attrs are
 // DOUBLE-QUOTED; verify-and-retry is keyed on the UNDO COUNT; a ~120ms settle
 // follows every play-events + config command; counts are truthful with timeline
-// comments. R3: the falloff CONFIG is an accepted v1 undo divergence — an
-// in-session Ctrl+Z of a re-grade restores GEOMETRY only; the config stays at
-// the new value.
+// comments. R3 (CLOSED by P-A): an in-session Ctrl+Z of a falloff re-grade now
+// restores the falloff CONFIG together with the geometry — the re-grade entry
+// carries config-restore hooks (revert→PRE-tweak packet, apply→POST-tweak
+// packet) so the visible handle reverts WITH the mesh and redo re-applies both.
+// The (CONFIG-RESTORE) cases below assert this on the Move, Rotate, and Scale
+// banks. (Previously R3 was an accepted v1 divergence: config stayed at the new
+// value across an in-session undo.)
 
 import std.net.curl;
 import std.json;
@@ -184,6 +188,17 @@ string ctrlZ(double t) {
         t, t + 10.0);
 }
 
+// SDL Ctrl+Shift+Z keystroke → handleKeyDown → navHistory(false) (in-session
+// redo, the symmetric partner of ctrlZ). mod 65 = KMOD_LCTRL (64) | KMOD_LSHIFT
+// (1). Goes through the SAME navHistory chokepoint (resyncSession runs), so an
+// in-session redo re-applies BOTH geometry and the config-restore apply hook.
+string ctrlShiftZ(double t) {
+    return format(
+        `{"t":%g,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":65,"repeat":0}` ~ "\n",
+        t, t + 10.0);
+}
+
 Vec3 evalPivot() {
     auto c = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;
     return Vec3(cast(float)c[0].floating,
@@ -279,6 +294,20 @@ void configTightRadial() {
     cmd("tool.pipe.attr falloff shape linear");
     cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`);
     cmd(`tool.pipe.attr falloff size "1,1,1"`);
+}
+
+// Read back the live falloff `size` X component via the `?` query path
+// (tool.pipe.attr falloff size ? → {"value":[x,y,z]}). `size` is exposed by
+// FalloffStage.params() only for the Radial / Cylinder types, so the queried
+// falloff must be Radial when this is called. This is the witness for P-A's
+// CONFIG restore: after an in-session Ctrl+Z of a size re-grade, the live size
+// must revert to its PRE-tweak value (not stay at the tweaked value).
+double queryFalloffSizeX() {
+    auto r = postJson("/api/command", "tool.pipe.attr falloff size ?");
+    assert(r["status"].str == "ok",
+        "falloff size query failed: " ~ r.toString);
+    auto v = r["value"].array;
+    return v[0].floating;
 }
 
 // ===========================================================================
@@ -1023,6 +1052,331 @@ unittest {
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "popping the Move run reverts v6 to the cube — TWO distinct runs");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (CONFIG-RESTORE MOVE) P-A: in-session Ctrl+Z of a falloff re-grade reverts
+// the falloff CONFIG together with the geometry; redo re-applies both.
+//
+// timeline: tool.set move → tight radial (size 1) → +X arrow gesture (1 entry)
+//   → WIDEN radial size 1→5 (re-grade APPENDS; v0 pulled along) → assert
+//   size==5 AND geometry re-graded → in-session Ctrl+Z → assert v0 back to
+//   post-gesture AND size reverted to 1 (P-A: config follows the undo) →
+//   in-session Ctrl+Shift+Z (redo) → assert v0 re-graded AND size back to 5.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set move");
+    configTightRadial();          // radial, size 1,1,1, centered at v6
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: falloff size starts at 1");
+
+    // +X move-arrow gesture, verify-and-retry on the undo count.
+    {
+        auto cam = fetchCamera();
+        auto vp  = viewportFromCamera(cam);
+        double ux, uy;
+        int xa, ya;
+        foreach (attempt; 0 .. 6) {
+            settle();
+            arrowGrabPx(evalPivot(), vp, xa, ya, ux, uy);
+            playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                      xa, ya, xa + cast(int)(60.0 * ux),
+                                      ya + cast(int)(60.0 * uy), 10));
+            settle();
+            if (undoCount() == floor + 1) break;
+        }
+    }
+    assert(undoCount() == floor + 1, "move gesture records one in-session entry");
+    auto v0AfterG = vert(0);
+
+    // WIDEN the radius 1→5: the landed translate re-grades against the new
+    // weights, baking ONE appended in-session entry. The config command itself
+    // records nothing.
+    cmd(`tool.pipe.attr falloff size "5,5,5"`);
+    settle();
+    assert(inSessionCount() == 2,
+        "the move falloff re-grade APPENDS one tagged in-session entry; got "
+        ~ inSessionCount().to!string);
+    assert(undoCount() == floor + 2,
+        "config records nothing; only the re-grade added an entry (floor+2)");
+    assert(queryFalloffSizeX() == 5.0, "the tweak set the live falloff size to 5");
+    auto v0Regraded = vert(0);
+    assert(!vertNear(v0Regraded, v0AfterG),
+        "the move re-grade MUST mutate geometry at idle (contract A)");
+
+    // In-session Ctrl+Z: P-A — reverts BOTH the geometry (back to post-gesture)
+    // AND the falloff config (size back to 1).
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(vertNear(vert(0), v0AfterG),
+        "in-session Ctrl+Z reverts the move re-grade geometry to post-gesture; "
+        ~ "got (" ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
+        ~ vert(0)[2].to!string ~ ")");
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A: in-session Ctrl+Z restores the falloff config WITH the geometry "
+        ~ "(size reverted 5→1); got " ~ queryFalloffSizeX().to!string);
+
+    // In-session Ctrl+Shift+Z (redo): re-applies BOTH — geometry re-graded AND
+    // config back to 5. The pop above did NOT consolidate the run because no
+    // boundary fired (a plain in-session undo keeps the run open for redo).
+    playAndWait(ctrlShiftZ(70.0));
+    settle();
+    assert(vertNear(vert(0), v0Regraded),
+        "in-session redo re-applies the move re-grade geometry; got ("
+        ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
+        ~ vert(0)[2].to!string ~ ")");
+    assert(queryFalloffSizeX() == 5.0,
+        "P-A: in-session redo re-applies the falloff config (size 1→5); got "
+        ~ queryFalloffSizeX().to!string);
+
+    cmd("tool.set move off");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (CONFIG-RESTORE ROTATE) P-A on the Rotate bank — same shape as the Move case.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set TransformRotate");
+    configTightRadial();
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: falloff size starts at 1");
+
+    rotateGestureOnRing(floor + 1);
+    assert(undoCount() == floor + 1, "rotate gesture records one in-session entry");
+    auto v0AfterG = vert(0);
+
+    cmd(`tool.pipe.attr falloff size "5,5,5"`);
+    settle();
+    assert(inSessionCount() == 2, "the rotate falloff re-grade APPENDS one entry");
+    assert(queryFalloffSizeX() == 5.0, "the tweak set the live falloff size to 5");
+    auto v0Regraded = vert(0);
+    assert(!vertNear(v0Regraded, v0AfterG),
+        "the rotate re-grade MUST mutate geometry at idle (contract A)");
+
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(vertNear(vert(0), v0AfterG),
+        "in-session Ctrl+Z reverts the rotate re-grade geometry to post-gesture");
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A: in-session Ctrl+Z restores the falloff config (size 5→1) on the "
+        ~ "Rotate bank; got " ~ queryFalloffSizeX().to!string);
+
+    playAndWait(ctrlShiftZ(70.0));
+    settle();
+    assert(vertNear(vert(0), v0Regraded),
+        "in-session redo re-applies the rotate re-grade geometry");
+    assert(queryFalloffSizeX() == 5.0,
+        "P-A: in-session redo re-applies the falloff config (size 1→5) on the "
+        ~ "Rotate bank; got " ~ queryFalloffSizeX().to!string);
+
+    cmd("tool.set TransformRotate off");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (CONFIG-RESTORE SCALE) P-A on the Scale bank — same shape.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set TransformScale");
+    configTightRadial();
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: falloff size starts at 1");
+
+    scaleGestureOnAxis(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "scale gesture records one in-session entry");
+    auto v0AfterG = vert(0);
+
+    cmd(`tool.pipe.attr falloff size "5,5,5"`);
+    settle();
+    assert(inSessionCount() == 2, "the scale falloff re-grade APPENDS one entry");
+    assert(queryFalloffSizeX() == 5.0, "the tweak set the live falloff size to 5");
+    auto v0Regraded = vert(0);
+    assert(!vertNear(v0Regraded, v0AfterG),
+        "the scale re-grade MUST mutate geometry at idle (contract A)");
+
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(vertNear(vert(0), v0AfterG),
+        "in-session Ctrl+Z reverts the scale re-grade geometry to post-gesture");
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A: in-session Ctrl+Z restores the falloff config (size 5→1) on the "
+        ~ "Scale bank; got " ~ queryFalloffSizeX().to!string);
+
+    playAndWait(ctrlShiftZ(70.0));
+    settle();
+    assert(vertNear(vert(0), v0Regraded),
+        "in-session redo re-applies the scale re-grade geometry");
+    assert(queryFalloffSizeX() == 5.0,
+        "P-A: in-session redo re-applies the falloff config (size 1→5) on the "
+        ~ "Scale bank; got " ~ queryFalloffSizeX().to!string);
+
+    cmd("tool.set TransformScale off");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (POST-DROP CONFIG-RESTORE MOVE) P-A BLOCKER fix — the consolidated-run case.
+//
+// The in-session (CONFIG-RESTORE *) cases above pop the re-grade entry BEFORE
+// the drop, so the refire entry's OWN config hook fires. This case is the
+// blocker the reviewer flagged: NO in-session Ctrl+Z, so BOTH the gesture and
+// the falloff-refire entries are alive at DROP. `tool.set move off` consolidates
+// them via MeshVertexEdit.mergeRun, which keeps first.revert + last.apply. The
+// merged.revert is therefore the GESTURE entry's revert — which must now restore
+// BOTH the pin AND the RUN-START falloff config (size 1). Before the uniform-hook
+// fix the gesture revert restored geometry+pin only, leaving the falloff handle
+// stranded at the post-tweak value (size 5) after a single post-drop Ctrl+Z.
+//
+// timeline: tool.set move → tight radial (size 1) → +X arrow gesture (1 entry)
+//   → WIDEN radial 1→5 (re-grade APPENDS → 2 entries) → DROP (consolidate to 1
+//   via mergeRun) → ONE post-drop Ctrl+Z → assert geometry reverts to the cube
+//   AND size reverts to the RUN-START value (1), NOT the post-tweak 5.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set move");
+    configTightRadial();          // radial, size 1,1,1, centered at v6
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: falloff size starts at 1");
+
+    // +X move-arrow gesture, verify-and-retry on the undo count.
+    {
+        auto cam = fetchCamera();
+        auto vp  = viewportFromCamera(cam);
+        double ux, uy;
+        int xa, ya;
+        foreach (attempt; 0 .. 6) {
+            settle();
+            arrowGrabPx(evalPivot(), vp, xa, ya, ux, uy);
+            playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                      xa, ya, xa + cast(int)(60.0 * ux),
+                                      ya + cast(int)(60.0 * uy), 10));
+            settle();
+            if (undoCount() == floor + 1) break;
+        }
+    }
+    assert(undoCount() == floor + 1, "move gesture records one in-session entry");
+
+    // WIDEN 1→5 → ONE appended re-grade entry. Both entries now alive at drop.
+    cmd(`tool.pipe.attr falloff size "5,5,5"`);
+    settle();
+    assert(inSessionCount() == 2,
+        "the move falloff re-grade APPENDS one tagged in-session entry; got "
+        ~ inSessionCount().to!string);
+    assert(queryFalloffSizeX() == 5.0, "the tweak set the live falloff size to 5");
+
+    // DROP — consolidate [gesture, refire] to ONE entry via mergeRun. NO
+    // in-session Ctrl+Z first, so the refire entry survives into the merge.
+    cmd("tool.set move off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "drop consolidates the run to ONE entry (D); floor=" ~ floor.to!string
+        ~ " now=" ~ undoCount().to!string);
+
+    // ONE post-drop Ctrl+Z: P-A BLOCKER — the merged first.revert (gesture)
+    // restores BOTH the geometry (back to the cube) AND the run-start config.
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one post-drop Ctrl+Z reverts the consolidated move run to the cube");
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A BLOCKER: post-drop Ctrl+Z restores the RUN-START falloff config "
+        ~ "(size reverted 5→1) on the merged run, NOT stranded at the post-tweak "
+        ~ "5; got " ~ queryFalloffSizeX().to!string);
+
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (POST-DROP CONFIG-RESTORE ROTATE) P-A BLOCKER on the Rotate bank — same shape.
+// The merged first.revert here is the ROTATE gesture's accumulator+config hook
+// (rotate.d commitEdit), which must restore the run-start falloff config.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set TransformRotate");
+    configTightRadial();
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: falloff size starts at 1");
+
+    rotateGestureOnRing(floor + 1);
+    assert(undoCount() == floor + 1, "rotate gesture records one in-session entry");
+
+    cmd(`tool.pipe.attr falloff size "5,5,5"`);
+    settle();
+    assert(inSessionCount() == 2, "the rotate falloff re-grade APPENDS one entry");
+    assert(queryFalloffSizeX() == 5.0, "the tweak set the live falloff size to 5");
+
+    cmd("tool.set TransformRotate off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "drop consolidates the rotate run to ONE entry (D); now="
+        ~ undoCount().to!string);
+
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A BLOCKER: post-drop Ctrl+Z restores the RUN-START falloff config "
+        ~ "(size 5→1) on the merged Rotate run; got "
+        ~ queryFalloffSizeX().to!string);
+
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (POST-DROP CONFIG-RESTORE SCALE) P-A BLOCKER on the Scale bank — same shape.
+// The merged first.revert is the SCALE gesture's accumulator+config hook
+// (scale.d commitEdit).
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set TransformScale");
+    configTightRadial();
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: falloff size starts at 1");
+
+    scaleGestureOnAxis(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "scale gesture records one in-session entry");
+
+    cmd(`tool.pipe.attr falloff size "5,5,5"`);
+    settle();
+    assert(inSessionCount() == 2, "the scale falloff re-grade APPENDS one entry");
+    assert(queryFalloffSizeX() == 5.0, "the tweak set the live falloff size to 5");
+
+    cmd("tool.set TransformScale off");
+    settle();
+    assert(undoCount() == floor + 1,
+        "drop consolidates the scale run to ONE entry (D); now="
+        ~ undoCount().to!string);
+
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "one post-drop Ctrl+Z reverts the consolidated scale run to the cube");
+    assert(queryFalloffSizeX() == 1.0,
+        "P-A BLOCKER: post-drop Ctrl+Z restores the RUN-START falloff config "
+        ~ "(size 5→1) on the merged Scale run; got "
+        ~ queryFalloffSizeX().to!string);
+
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }

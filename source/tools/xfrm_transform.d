@@ -434,6 +434,13 @@ public:
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-run anchor (OBJ-3 W1: live, never frozen).
                     Vec3[] anchor = mesh.vertices.dup;
+                    // P-A: PRE-tweak falloff config = the still-current
+                    // dragFalloff (the geometry the gesture sat on); POST = the
+                    // live (just-tweaked) packet. Captured BEFORE the
+                    // `dragFalloff = live` reassignment so the entry's
+                    // revert/apply hooks restore the config endpoints.
+                    FalloffPacket prePkt  = dragFalloff;
+                    FalloffPacket postPkt = live;
                     dragFalloff = live;
                     vertexCacheDirty = true;
                     // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
@@ -451,7 +458,7 @@ public:
                     // anchor and keeps only moved verts. (The falloff support can
                     // be the whole mesh, so a full-range pass is the safe superset.)
                     recordFalloffRefire("Falloff", anchor, after,
-                                        null, DragBank.Move);
+                                        null, DragBank.Move, prePkt, postPkt);
                     needsGpuUpdate = true;
                 }
             }
@@ -2164,13 +2171,19 @@ public:
     // defense-in-depth (§4.1 step 0) and re-stamps lastAppliedGestureMutationVersion
     // after the record (a no-op today; defensive).
     public void recordFalloffRefireRotate(string label, Vec3[] anchor,
-                                          Vec3[] after, size_t[] idx) {
-        recordFalloffRefire(label, anchor, after, idx, DragBank.Rotate);
+                                          Vec3[] after, size_t[] idx,
+                                          FalloffPacket prePkt,
+                                          FalloffPacket postPkt) {
+        recordFalloffRefire(label, anchor, after, idx, DragBank.Rotate,
+                            prePkt, postPkt);
     }
 
     public void recordFalloffRefireScale(string label, Vec3[] anchor,
-                                         Vec3[] after, size_t[] idx) {
-        recordFalloffRefire(label, anchor, after, idx, DragBank.Scale);
+                                         Vec3[] after, size_t[] idx,
+                                         FalloffPacket prePkt,
+                                         FalloffPacket postPkt) {
+        recordFalloffRefire(label, anchor, after, idx, DragBank.Scale,
+                            prePkt, postPkt);
     }
 
     // Phase 2 — cross-slot relocate boundary. In a composed T+R+S preset
@@ -2309,16 +2322,41 @@ public:
         }
         if (!startKnown) { startPlaced = endPlaced; startCenter = endCenter; }
 
+        // P-A blocker fix — UNIFORM hook family. Compose the falloff CONFIG
+        // restore alongside the pin restore. A transform run is consolidated at
+        // DROP as [moveGesture, falloffRefire]; mergeRun keeps first.revert +
+        // last.apply. The refire entry carries CONFIG hooks (recordFalloffRefire
+        // Step 3.5), the gesture entry carries PIN hooks — but until now NOT
+        // config. So the merged first.revert (= this gesture's revert) restored
+        // the pin yet LEFT the falloff handle stranded at its post-tweak value
+        // after a post-drop Ctrl+Z (geometry + pin reverted, config did not).
+        // Snapshot the config AT THIS gesture's commit (= run-start config, since
+        // a falloff tweak only fires AFTER a gesture commits) and restore it from
+        // BOTH hooks. The pin restore and the config restore are INDEPENDENT
+        // stage mutations (ActionCenterStage.restorePinState vs
+        // FalloffStage.restoreConfigFromPacket) — neither reads the other, so the
+        // composed closure calls both without clobber. ABSOLUTE (assign), splices
+        // through mergeRun exactly like the pin endpoints. The gesture never
+        // changes the falloff config, so the snapshot is the same on apply and
+        // revert here; it exists purely so the merged first.revert carries it.
+        FalloffPacket cfgSnap;
+        bool haveCfg = false;
+        if (auto fs = activeFalloffStage()) { cfgSnap = fs.snapshotConfigToPacket(); haveCfg = true; }
+
         cmd.setHooks(
-            // apply (redo): restore the gesture-END pin + publish.
+            // apply (redo): restore the gesture-END pin + run config + publish.
             () {
                 if (auto ac = activeAcenStage())
                     ac.restorePinState(endPlaced, endCenter);
+                if (haveCfg) if (auto fs = activeFalloffStage())
+                    fs.restoreConfigFromPacket(cfgSnap);
             },
-            // revert (undo): restore the gesture-START pin + publish.
+            // revert (undo): restore the gesture-START pin + run config + publish.
             () {
                 if (auto ac = activeAcenStage())
                     ac.restorePinState(startPlaced, startCenter);
+                if (haveCfg) if (auto fs = activeFalloffStage())
+                    fs.restoreConfigFromPacket(cfgSnap);
             },
         );
         recordCommit(cmd);
@@ -3040,13 +3078,16 @@ private:
     // widening scrub (verts pulled in that the prior re-grade never touched) has
     // a complete baseline and reverts cleanly on one Ctrl+Z (contract C).
     //
-    // The entry carries NO Tool-Properties / pin hooks: the falloff CONFIG is an
-    // accepted v1 undo divergence (the config command is a separate SideEffect,
-    // not captured in geometry undo) and a falloff tweak never relocates the
-    // pivot. So the MeshVertexEdit's apply/revert restore geometry alone — which
-    // is exactly contract (C).
+    // The entry carries CONFIG-RESTORE hooks (P-A, Step 3.5 below): apply
+    // restores the POST-tweak falloff packet, revert the PRE-tweak packet, so an
+    // in-session Ctrl+Z reverts the falloff HANDLE/config together with the
+    // geometry (and redo re-applies both). The entry does NOT carry pin hooks: a
+    // falloff tweak never relocates the pivot, so the pin is unchanged across
+    // the re-grade. The MeshVertexEdit's apply/revert still restore the geometry
+    // (contract C); the new hooks ride alongside that, restoring config too.
     private void recordFalloffRefire(string label, Vec3[] anchor,
-                                     Vec3[] after, size_t[] idx, DragBank bank) {
+                                     Vec3[] after, size_t[] idx, DragBank bank,
+                                     FalloffPacket prePkt, FalloffPacket postPkt) {
         // `idx` is dead until a scoped-subset caller exists — only null
         // (full-range) callers today; kept so a future scoped re-grade need not
         // re-thread the signature.
@@ -3112,6 +3153,37 @@ private:
         if (vertexEditFactory is null) return;
         auto cmd = vertexEditFactory();
         cmd.setEdit(uidx, before, movedAfter, label);
+
+        // Step 3.5 — falloff CONFIG-restore hooks (P-A). The re-grade entry must
+        // restore the falloff HANDLE/config together with the geometry: an
+        // in-session Ctrl+Z reverts geometry (the MeshVertexEdit revert) AND the
+        // falloff config to its PRE-tweak value, and redo re-applies both — so
+        // the visible handle follows the undo, not just the mesh. The hooks fire
+        // MAIN-thread (C4: history.undo/redo runs from tickUndo() / navHistory,
+        // never the background /api/undo poster), so mutating + publishing the
+        // FalloffStage from inside them is safe — identical to the pin-hook
+        // precedent (commitEdit → ActionCenterStage.restorePinState).
+        //
+        // ABSOLUTE snapshots, NOT deltas (mirrors rotate.d:345-352): revert →
+        // PRE-tweak packet, apply → POST-tweak packet. This is required for
+        // mergeRun correctness — a consolidated run keeps first.revert +
+        // last.apply, so absolute endpoints splice coherently (a delta would
+        // double-apply across the merge). The captured packets are by-value
+        // copies (struct), so they survive past this stack frame.
+        FalloffPacket preCopy  = prePkt;
+        FalloffPacket postCopy = postPkt;
+        cmd.setHooks(
+            // apply (redo): restore the POST-tweak falloff config + publish.
+            () {
+                if (auto fs = activeFalloffStage())
+                    fs.restoreConfigFromPacket(postCopy);
+            },
+            // revert (undo): restore the PRE-tweak falloff config + publish.
+            () {
+                if (auto fs = activeFalloffStage())
+                    fs.restoreConfigFromPacket(preCopy);
+            },
+        );
 
         // Step 4 — record. ALWAYS route through replaceInSessionTail: it is the
         // single re-fire primitive and owns the REPLACE-vs-APPEND decision,
