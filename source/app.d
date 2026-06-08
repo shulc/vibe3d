@@ -2053,9 +2053,25 @@ void main(string[] args) {
             // P-C: snap config block — lets tests witness the snap config-restore
             // (snap is a cursor-time op with no geometry signal at idle, so its
             // undo/redo restore is observed via this published enabled/types).
-            buf.put(format(`]},"snap":{"enabled":%s,"types":%d}}`,
+            buf.put(format(`]},"snap":{"enabled":%s,"types":%d}`,
                            snapPkt.enabled ? "true" : "false",
                            snapPkt.enabledTypes));
+
+            // P-F: published transform attrs (TX..SZ). Read straight off the active
+            // XfrmTransformTool's introspection seam so the run-absolute panel-
+            // display contract can be asserted without poking the panel struct.
+            // Absent block ⇒ no transform tool active; tests gate on its presence.
+            // (Phase 1 adds the frozen run-frame fields to this same block.)
+            {
+                import tools.xfrm_transform : XfrmTransformTool;
+                if (auto xf = cast(XfrmTransformTool) activeTool) {
+                    buf.put(`,"transform":{"translate":`); putVec3(xf.publishedTranslate());
+                    buf.put(`,"rotate":`);  putVec3(xf.publishedRotate());
+                    buf.put(`,"scale":`);   putVec3(xf.publishedScale());
+                    buf.put(`}`);
+                }
+            }
+            buf.put(`}`);
             return buf.data;
         });
 

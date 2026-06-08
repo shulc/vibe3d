@@ -2388,6 +2388,16 @@ public:
     // so the sub-tools (siblings) can query it cross-instance.
     public bool dragInFlight() const { return activeDrag !is null; }
 
+    // P-F introspection seam (test-only): the LIVE published transform attrs the
+    // panel binds (headlessTranslate/Rotate/Scale, the TX..SZ Param.float_
+    // pointees). The /api/toolpipe/eval provider emits these so the run-absolute
+    // panel-display contract can be asserted from a unit test without poking the
+    // panel struct. Read-only — never mutates tool state. (Phase 1 extends this
+    // with the companion frozen run-frame accessor.)
+    public Vec3 publishedTranslate() const { return headlessTranslate; }
+    public Vec3 publishedRotate()    const { return headlessRotate; }
+    public Vec3 publishedScale()     const { return headlessScale; }
+
     // Falloff in-session re-fire — PUBLIC R/S seam. The Rotate / Scale falloff
     // re-grade sites live on the sub-tools, but the run, history, currentRunBank,
     // and the recordFalloffRefire helper all live on the wrapper. These thin
