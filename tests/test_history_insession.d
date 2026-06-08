@@ -436,3 +436,81 @@ unittest {
     assert(veq(aft[1], Vec3(1,9,8)),
         "vert 1 after = latest re-grade (1,9,8)");
 }
+
+// ===========================================================================
+// 10. P-E continuous-vs-discrete tweak GENERATION gate. replaceInSessionTail
+//     REPLACES a Refire tail ONLY when the tail's tweak generation matches the
+//     live generation (same CONTINUOUS interaction — a held slider scrub /
+//     falloff-handle drag whose setAttr stream shares one generation). When the
+//     generations DIFFER (two DISCRETE tweaks, each its own bumped generation)
+//     it APPENDS — each discrete tweak is its OWN in-session undo step (G2).
+//
+// This is the unit-level witness for the continuous-REPLACE path that is NOT
+// headlessly drivable through /api/command (every /api command is its own
+// discrete generation by design): here we drive the generation directly.
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+    ulong run = h.nextRun();
+
+    // A landed GESTURE at generation 0 (default).
+    assert(h.currentTweakGeneration() == 0, "generation starts at 0");
+    h.recordInSession(s.makeEdit(
+        [0u], [Vec3(0,0,0)], [Vec3(0,1,0)], "Move"), run);
+    assert(h.undoEntries().length == 1, "gesture recorded");
+
+    // FIRST re-grade: the tail is the GESTURE (no Refire), so this APPENDS
+    // regardless of generation. Records at generation 0.
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,2,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 2,
+        "first re-grade APPENDS (tail is a plain gesture)");
+    assert(h.undoEntries()[1].tweakGeneration == 0,
+        "first re-grade stamped at generation 0");
+
+    // CONTINUOUS scrub: a SECOND re-grade at the SAME generation (the held slider
+    // never bumped between frames). Its tail is the prior Refire AND the
+    // generation matches → REPLACE. Stack stays 2.
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,3,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 2,
+        "a same-generation (CONTINUOUS) re-grade REPLACES the prior refire "
+        ~ "(length stable); got " ~ h.undoEntries().length.to!string);
+    auto tail = mveAt(h, 1);
+    assert(veq(tail.editAfter()[0], Vec3(0,3,0)),
+        "the REPLACED tail carries the latest continuous value (0,3,0)");
+
+    // DISCRETE tweak: BUMP the generation (a separate tweak interaction), then
+    // re-grade. The tail IS a Refire but its generation (0) no longer matches the
+    // live generation (1) → P-E gate fails → APPEND. Stack grows to 3 — the
+    // discrete tweak is its OWN step (G2).
+    ulong g1 = h.bumpTweakGeneration();
+    assert(g1 == 1, "bump advances the generation to 1");
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,4,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 3,
+        "a DISCRETE (new-generation) tweak APPENDS even though its tail is a "
+        ~ "refire (P-E G2) — stack grows to 3; got "
+        ~ h.undoEntries().length.to!string);
+    assert(h.undoEntries()[2].tweakGeneration == 1,
+        "the discrete tweak's entry is stamped at the new generation 1");
+
+    // A FOLLOWING same-(new-)generation re-grade REPLACES the discrete tweak
+    // (it is now the latest continuous window). Stack stays 3.
+    h.replaceInSessionTail(s.makeEdit(
+        [0u], [Vec3(0,1,0)], [Vec3(0,5,0)], "Falloff"), run);
+    assert(h.undoEntries().length == 3,
+        "a same-(new-)generation re-grade REPLACES the discrete tweak's refire "
+        ~ "(length stable at 3); got " ~ h.undoEntries().length.to!string);
+
+    // Consolidate: all three (gesture + the two surviving refires) collapse to
+    // ONE entry. before[] = run-start (0,0,0); after[] = latest (0,5,0).
+    h.consolidate(run);
+    assert(h.undoEntries().length == 1, "drop = ONE consolidated entry");
+    auto merged = mveAt(h, 0);
+    assert(veq(merged.editBefore()[0], Vec3(0,0,0)),
+        "consolidated before = gesture run-start");
+    assert(veq(merged.editAfter()[0], Vec3(0,5,0)),
+        "consolidated after = latest re-grade");
+}
