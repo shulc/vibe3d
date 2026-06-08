@@ -257,6 +257,7 @@ public:
         if (flagR) rotateSub.setRecordViaInSession(true);
         if (flagS) scaleSub.setRecordViaInSession(true);
         currentRunBank     = DragBank.None;
+        runBaselineValid   = false;   // apply-path Phase 2: fresh geometry run
     }
 
     // Wrapper-level transient reset (undo/redo migration P1). Extends the base
@@ -272,6 +273,7 @@ public:
         headlessScale             = Vec3(1, 1, 1);
         activeDrag                = null;
         dragBaseline.length       = 0;
+        runBaselineValid          = false;   // apply-path Phase 2: fresh run
         moveDragFastPath          = false;
         rotDragFastPath           = false;
         rotDragAxisIdx            = -1;
@@ -316,6 +318,7 @@ public:
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
+        runBaselineValid     = false;   // apply-path Phase 2: tool drop = run boundary
         moveDragFastPath     = false;
     }
 
@@ -364,6 +367,11 @@ public:
                     lastAppliedGestureMutationVersion = ulong.max;
                     refireAnchor.length               = 0;
                 }
+                // Apply-path Phase 2: a selection/mutation change is a GEOMETRY-run
+                // boundary regardless of whether a history run is open — the moving
+                // set (and thus the meaningful baseline) changed, so the next gesture
+                // must re-capture from the current mesh.
+                runBaselineValid = false;
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
             }
@@ -403,7 +411,15 @@ public:
                 if (!falloffPacketsEqual(live, dragFalloff)) {
                     dragFalloff = live;
                     vertexCacheDirty = true;
-                    applyTRSForBank(DragBank.Move, dragBaseline);
+                    // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
+                    // re-grade. Re-weight the COMPOSED op (all preset banks'
+                    // run-absolutes) from one baseline, not translate-only. On
+                    // a Move-only run the held R/S are identity so this is
+                    // byte-identical to the old applyTRSForBank(Move); the
+                    // difference surfaces only when a held non-identity rotate/
+                    // scale also wants re-weighting (the reference re-Evaluates
+                    // the WHOLE held op when falloff changes).
+                    applyTRS(dragBaseline);
                     needsGpuUpdate = true;
                 }
             } else if (history !is null
@@ -420,7 +436,13 @@ public:
                     Vec3[] anchor = mesh.vertices.dup;
                     dragFalloff = live;
                     vertexCacheDirty = true;
-                    applyTRSForBank(DragBank.Move, dragBaseline);   // mutates mesh.vertices
+                    // Apply-path Phase 2 (OBJ-1, decision (a)): full-fold
+                    // re-grade of the committed gesture. Byte-identical to the
+                    // old applyTRSForBank(Move) on a Move-only run (held R/S
+                    // identity); composes the held banks otherwise. The
+                    // anchor/after brackets still wrap exactly the recompute, so
+                    // the recordFalloffRefire before/after pair stays coherent.
+                    applyTRS(dragBaseline);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
 
                     // Index set = the full vertex range; pass an EMPTY idx so the
@@ -781,6 +803,10 @@ public:
                     history.consolidate(history.currentRunId);
                     history.nextRun();
                 }
+                // Apply-path Phase 2: a relocate is a GEOMETRY-run boundary (the
+                // pivot moved + the prior run committed) — re-capture the run
+                // baseline at the relocated mesh on the fresh Move gesture below.
+                runBaselineValid = false;
             }
             // Bank-switch run boundary (Q-c): a switch INTO Move from a prior
             // R/S run consolidates that run first. After a Move relocate above,
@@ -827,6 +853,9 @@ public:
                     history.nextRun();
                     currentRunBank = DragBank.None;
                 }
+                // Apply-path Phase 2: relocate / no-axis click = geometry-run
+                // boundary; re-capture the run baseline on the next gesture.
+                runBaselineValid = false;
             }
             activeDrag = rotateSub; return true;
         }
@@ -856,6 +885,9 @@ public:
                     history.nextRun();
                     currentRunBank = DragBank.None;
                 }
+                // Apply-path Phase 2: relocate / no-axis click = geometry-run
+                // boundary; re-capture the run baseline on the next gesture.
+                runBaselineValid = false;
             }
             activeDrag = scaleSub;  return true;
         }
@@ -922,6 +954,10 @@ public:
                 history.consolidate(history.currentRunId);
                 history.nextRun();
             }
+            // Apply-path Phase 2: an element-pick relocate is a geometry-run
+            // boundary (pivot moved + prior run committed); re-capture the run
+            // baseline at the relocated mesh on the fresh Move gesture below.
+            runBaselineValid = false;
             // The fresh screen-plane drag below is a Move gesture; record its
             // bank (no-op switch when the prior run was also Move).
             noteRunBank(DragBank.Move);
@@ -1013,6 +1049,9 @@ public:
                 history.consolidate(history.currentRunId);
                 history.nextRun();
                 currentRunBank = DragBank.None;
+                // Apply-path Phase 2: the P5 off-gizmo-in-relocate-DISALLOWED
+                // click is a geometry-run boundary; re-capture on the next drag.
+                runBaselineValid = false;
             }
         }
         return false;
@@ -1022,6 +1061,64 @@ public:
         headlessTranslate = Vec3(0, 0, 0);
         headlessRotate    = Vec3(0, 0, 0);
         headlessScale     = Vec3(1, 1, 1);
+    }
+
+    private bool bankIsNonIdentity(DragBank bank) {
+        final switch (bank) {
+            case DragBank.None:   return false;
+            case DragBank.Move:   return headlessTranslate.x != 0
+                                       || headlessTranslate.y != 0
+                                       || headlessTranslate.z != 0;
+            case DragBank.Rotate: return headlessRotate.x != 0
+                                       || headlessRotate.y != 0
+                                       || headlessRotate.z != 0;
+            case DragBank.Scale:  return headlessScale.x != 1
+                                       || headlessScale.y != 1
+                                       || headlessScale.z != 1;
+        }
+    }
+
+    private void resetBankAttr(DragBank bank) {
+        final switch (bank) {
+            case DragBank.None:   break;
+            case DragBank.Move:   headlessTranslate = Vec3(0, 0, 0); break;
+            case DragBank.Rotate: headlessRotate    = Vec3(0, 0, 0); break;
+            case DragBank.Scale:  headlessScale     = Vec3(1, 1, 1); break;
+        }
+    }
+
+    // Run-baseline + held-attr discipline for a gizmo gesture (apply-path
+    // unification Phase 2). Replaces the three identical per-gesture
+    // `dragBaseline` dups + the blanket `resetGestureAttrs()` that each
+    // `begin*DragSession` used to do. Called from each `begin*DragSession`
+    // AFTER falloff/symmetry capture but BEFORE the fast-path predicate.
+    //
+    // Two cases, chosen so cross-bank gestures compose through ONE fold while
+    // same-bank repeats stay byte-identical to the pre-refactor per-gesture
+    // re-baseline:
+    //   (A) FRESH RUN (`!runBaselineValid`) OR a SAME-bank repeat (this bank
+    //       already holds a non-identity run-absolute, e.g. move-then-move):
+    //       re-capture the run baseline from the CURRENT mesh and reset ALL
+    //       held attrs to identity. A same-bank repeat re-baselines because
+    //       the gizmo producer emits a value relative to THIS drag's start
+    //       (move `+=` incremental, rotate/scale drag-absolute), so the prior
+    //       same-bank gesture must be baked into the baseline to accumulate —
+    //       exactly the old behaviour. A fresh run starts a new geometry run.
+    //   (B) CROSS-bank into a bank with NO held value (e.g. move-then-rotate):
+    //       REUSE the run baseline and reset ONLY this bank's attr (a no-op,
+    //       since it is identity), so the HELD banks survive into the fold and
+    //       `composeFor` folds active-live ⊕ held from ONE original baseline.
+    private void beginRunGesture(DragBank bank) {
+        if (!runBaselineValid || bankIsNonIdentity(bank)) {
+            dragBaseline.length = mesh.vertices.length;
+            foreach (i; 0 .. mesh.vertices.length)
+                dragBaseline[i] = mesh.vertices[i];
+            resetGestureAttrs();
+            runBaselineValid = true;
+        } else {
+            // Reuse the held baseline; this bank starts fresh, held banks stay.
+            resetBankAttr(bank);
+        }
     }
 
     // Capture the per-drag state that `applyTRS` and the fast-path
@@ -1061,11 +1158,10 @@ public:
         // `draw()` call (every frame, before any event dispatch);
         // `applyTRS` reuses it for falloff weight evaluation.
 
-        dragBaseline.length = mesh.vertices.length;
-        foreach (i; 0 .. mesh.vertices.length)
-            dragBaseline[i] = mesh.vertices[i];
-
-        resetGestureAttrs();
+        // Run-scoped baseline + held-attr discipline (apply-path Phase 2):
+        // capture once per geometry run (or re-baseline a same-bank repeat),
+        // preserving held R/S into the fold on a cross-bank move gesture.
+        beginRunGesture(DragBank.Move);
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
@@ -1124,11 +1220,11 @@ public:
         // session deliberately stays on `rotateSub` (MS-5 decision) — keeping
         // it there avoids the cross-instance commit problem entirely.
 
-        dragBaseline.length = mesh.vertices.length;
-        foreach (i; 0 .. mesh.vertices.length)
-            dragBaseline[i] = mesh.vertices[i];
-
-        resetGestureAttrs();   // zero ALL axes (S1) and neutralize prior drags
+        // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
+        // cross-bank rotate (e.g. after a held move) reuses the run baseline +
+        // resets ONLY headlessRotate, so the held translate survives into the
+        // composed fold; a rotate-after-rotate re-baselines (same-bank repeat).
+        beginRunGesture(DragBank.Rotate);
 
         // Ring index: 0/1/2 = principal (Euler slot), 3 = view-ring (axis-angle
         // slot). Both are wrapper-owned now; clamp anything else to -1
@@ -1170,11 +1266,11 @@ public:
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
 
-        dragBaseline.length = mesh.vertices.length;
-        foreach (i; 0 .. mesh.vertices.length)
-            dragBaseline[i] = mesh.vertices[i];
-
-        resetGestureAttrs();
+        // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
+        // cross-bank scale reuses the run baseline + resets ONLY headlessScale,
+        // so held T/R survive into the composed fold; a scale-after-scale
+        // re-baselines (same-bank repeat).
+        beginRunGesture(DragBank.Scale);
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -1208,8 +1304,11 @@ public:
                 // the drain is a no-op on those.
                 Vec3 pending = moveSub.pendingTranslateDelta;
                 moveSub.pendingTranslateDelta = Vec3(0, 0, 0);
-                headlessRotate = Vec3(0, 0, 0);
-                headlessScale  = Vec3(1, 1, 1);
+                // Apply-path Phase 2: update ONLY this bank's attr. The held
+                // R/S run-absolutes are NOT zeroed — they compose into the fold
+                // via `applyTRS`'s preset flags (composeFor folds T·R·S from one
+                // run baseline). Pre-Phase-2 this drain force-zeroed R/S so the
+                // single-bank `applyTRSForBank(Move)` saw only translate.
                 headlessTranslate = headlessTranslate + pending;
 
                 // Visual: the gizmo center moves along the GLOBAL
@@ -1224,12 +1323,14 @@ public:
                                + moveSub.handler.axisZ * pending.z;
                 accumulatedWorldDelta = accumulatedWorldDelta + worldStep;
 
-                // Single per-frame mesh mutation through
-                // applyTRS. headlessTranslate carries the running
-                // basis-local scalar; under ACEN.Local it flows
-                // into `applyTranslatePerCluster`, otherwise into
-                // the global-basis branch.
-                applyTRSForBank(DragBank.Move, dragBaseline);
+                // Single per-frame mesh mutation through applyTRS with the
+                // PRESET flags (apply-path Phase 2 — no per-bank force). For a
+                // single-bank Move preset this folds T only; for a composed
+                // Transform preset it folds the held R/S too. headlessTranslate
+                // carries the running basis-local scalar; under ACEN.Local it
+                // flows into `applyTranslatePerCluster`, otherwise into the
+                // global-basis branch.
+                applyTRS(dragBaseline);
 
                 // GPU update policy: the fast-path uses the
                 // u_model matrix (one uniform per frame) instead
@@ -1272,21 +1373,24 @@ public:
                 if (ax >= 0 && ax <= 2) {
                     import std.math : PI;
                     float deg = ang * 180.0f / cast(float)PI;
-                    // Absolute-from-baseline: only the dragged axis is set;
-                    // beginRotateDragSession zeroed all three (S1).
-                    headlessTranslate = Vec3(0, 0, 0);
-                    headlessScale     = Vec3(1, 1, 1);
+                    // Absolute-from-baseline for THIS bank only (apply-path
+                    // Phase 2): set the dragged Euler axis; the OTHER rotate
+                    // axes were zeroed once by beginRunGesture at drag start
+                    // (S1). The held T/S are NOT zeroed — they compose into the
+                    // fold via the preset flags. Pre-Phase-2 this drain
+                    // force-zeroed T/S so single-bank applyTRSForBank(Rotate)
+                    // saw only the rotate.
                     headlessRotate = Vec3(0, 0, 0);
                     if      (ax == 0) headlessRotate.x = deg;
                     else if (ax == 1) headlessRotate.y = deg;
                     else              headlessRotate.z = deg;
 
-                    // CPU is rebuilt from the drag baseline EVERY frame so it
+                    // CPU is rebuilt from the run baseline EVERY frame so it
                     // is never stale at mouseUp (round-1/3 B3; landed-move
                     // parity). The fast-path then merely skips the per-frame
                     // vertex re-upload — the GPU keeps the baseline buffer and
-                    // u_model = pivotRotationMatrix bridges the rotation.
-                    applyTRSForBank(DragBank.Rotate, dragBaseline);
+                    // u_model = wrapAboutPivot(fold) bridges the rotation.
+                    applyTRS(dragBaseline);
                     if (rotDragFastPath) {
                         // MS-4.5 — reuse the matrix applyTRS's fold just built
                         // (wrapped about its pivot) rather than rebuilding a
@@ -1301,16 +1405,14 @@ public:
                     float deg = ang * 180.0f / cast(float)PI;
                     // Absolute-from-baseline: the running view-axis angle this
                     // drag has accumulated, about the camera-forward axis the
-                    // producer captured. Euler slot stays zeroed (S1).
-                    // MS-3.4: the view-ring rotation is now a TRANSIENT applyTRS
-                    // parameter — no persistent slot to set/clear.
-                    headlessTranslate = Vec3(0, 0, 0);
-                    headlessScale     = Vec3(1, 1, 1);
+                    // producer captured. The Euler slot is zeroed (the view-ring
+                    // rotation is a TRANSIENT applyTRS param, MS-3.4); the held
+                    // T/S are NOT zeroed (apply-path Phase 2 — they compose via
+                    // the preset flags).
                     headlessRotate = Vec3(0, 0, 0);
                     Vec3  viewAxisLocal = rotateSub.pendingRotateViewAxis;
                     float viewDegLocal  = deg;
-                    applyTRSForBank(DragBank.Rotate, dragBaseline,
-                                    viewAxisLocal, viewDegLocal);
+                    applyTRS(dragBaseline, viewAxisLocal, viewDegLocal);
                     if (rotDragFastPath) {
                         // MS-4.5 — reuse the fold's composed matrix (view-ring
                         // rotation included) wrapped about its pivot.
@@ -1328,17 +1430,19 @@ public:
             if (r && scaleSub.pendingScaleValid) {
                 scaleSub.pendingScaleValid = false;
                 Vec3 f = scaleSub.pendingScale;
-                // Absolute-from-baseline: headlessScale carries this drag's
-                // running factor; beginScaleDragSession reset it to identity.
-                headlessTranslate = Vec3(0, 0, 0);
-                headlessRotate    = Vec3(0, 0, 0);
+                // Absolute-from-baseline for THIS bank only (apply-path
+                // Phase 2): headlessScale carries this drag's running factor
+                // (beginRunGesture reset it at drag start). The held T/R are NOT
+                // zeroed — they compose into the fold via the preset flags.
+                // Pre-Phase-2 this drain force-zeroed T/R so single-bank
+                // applyTRSForBank(Scale) saw only the scale.
                 headlessScale = f;
 
-                // CPU is rebuilt from the drag baseline EVERY frame so it is
+                // CPU is rebuilt from the run baseline EVERY frame so it is
                 // never stale at mouseUp. The fast-path then merely skips the
                 // per-frame vertex re-upload — the GPU keeps the baseline
-                // buffer and u_model = pivotScaleMatrixBasis bridges the scale.
-                applyTRSForBank(DragBank.Scale, dragBaseline);
+                // buffer and u_model = wrapAboutPivot(fold) bridges the scale.
+                applyTRS(dragBaseline);
                 if (scaleDragFastPath) {
                     // MS-4.5 — reuse the fold's composed scale matrix wrapped
                     // about its pivot instead of rebuilding it here.
@@ -1531,27 +1635,15 @@ public:
     // `applyTRS` rebuilds `mesh.vertices` from it (T → R → S, using
     // `headlessTranslate` / `headlessRotate` / `headlessScale` as
     // attributes).
-    private bool applyTRSForBank(DragBank bank, Vec3[] baseline,
-                                 Vec3 viewAxis = Vec3(0, 0, 0),
-                                 float viewAngleDeg = 0) {
-        bool oldT = flagT, oldR = flagR, oldS = flagS;
-        final switch (bank) {
-            case DragBank.None:
-                break;
-            case DragBank.Move:
-                flagT = true;  flagR = false; flagS = false;
-                break;
-            case DragBank.Rotate:
-                flagT = false; flagR = true;  flagS = false;
-                break;
-            case DragBank.Scale:
-                flagT = false; flagR = false; flagS = true;
-                break;
-        }
-        scope(exit) { flagT = oldT; flagR = oldR; flagS = oldS; }
-        return applyTRS(baseline, viewAxis, viewAngleDeg);
-    }
-
+    //
+    // Apply-path Phase 2: the former `applyTRSForBank(bank, …)` shim — which
+    // force-restricted flagT/flagR/flagS to a single bank so a live drain saw
+    // only its own factor — is DELETED. Every caller (the four motion drains +
+    // the two Move falloff-refire sites) now calls `applyTRS` directly with the
+    // PRESET flags intact, so `composeFor` folds the active bank's live value
+    // ⊕ the held banks' run-absolutes from ONE run baseline (the reference
+    // Evaluate-from-original shape). Per-bank inclusion is driven by the
+    // preset's flag*/hasT/hasS gates, not an artificial per-gesture override.
     //
     // Prologue: UNCONDITIONAL whole-baseline restore. Required because
     // `applyTranslatePerCluster` is `+=` incremental and the symmetry
@@ -2438,6 +2530,7 @@ public:
         cancelEdit();
         activeDrag          = null;
         dragBaseline.length = 0;
+        runBaselineValid    = false;   // apply-path Phase 2: cancelled run
         moveDragFastPath    = false;
         rotDragFastPath     = false;
         rotDragAxisIdx      = -1;
@@ -2999,17 +3092,39 @@ private:
 
     // Phase 3 — wrapper-owned drag state.
     //
-    // `dragBaseline`: full-mesh snapshot captured at every mouse-down
-    // when `moveSub` consumes the click. The per-frame `applyTRS`
+    // `dragBaseline`: full-mesh snapshot. Lifetime is now RUN-SCOPED
+    // (apply-path unification Phase 2): captured ONCE at the run's
+    // FIRST gizmo gesture and reused by every subsequent gesture in the
+    // same geometry run, so the held banks' run-absolutes
+    // (`headlessTranslate`/`headlessRotate`/`headlessScale`) compose
+    // through ONE `applyFold` from one original baseline (the reference
+    // "Evaluate-from-original" shape) rather than re-baselining off the
+    // progressively-mutated mesh per gesture. The per-frame `applyTRS`
     // restores ALL of `mesh.vertices` from this snapshot before
     // re-applying the chain — required because the per-cluster
     // translate kernel `applyTranslatePerCluster` is `+=` incremental
     // and symmetry mirroring touches indices outside
-    // `vertexIndicesToProcess`. Reset at each drag start; the
-    // tool-session edit baseline (`editBefore` in TransformTool) is
-    // separate and lives longer (commit at deactivate / selection
-    // change).
+    // `vertexIndicesToProcess`. Re-captured at GEOMETRY-RUN boundaries
+    // (relocate / element-pick / selection-change / off-gizmo-disallowed
+    // click / tool drop), signalled by `runBaselineValid` going false.
+    // The tool-session edit baseline (`editBefore` in TransformTool) is
+    // separate and lives at session scope.
     Vec3[] dragBaseline;
+
+    // Run-scoped validity flag for `dragBaseline` (apply-path unification
+    // Phase 2). False ⇒ the next gizmo `begin*DragSession` re-captures the
+    // run baseline AND resets the held-bank attrs to identity (a fresh
+    // geometry run). True ⇒ reuse the existing baseline + held attrs so a
+    // bank switch composes the active bank's live value ON TOP of the held
+    // banks via the fold (NOT via a mesh re-baseline). Decoupled from the
+    // undo-run boundary (`currentRunBank` / `noteRunBank`): a bank switch is
+    // an UNDO run boundary but NOT a geometry-run boundary, so it does NOT
+    // invalidate the baseline. Set false at every geometry-run boundary; set
+    // true after a capture. NOTE (run-scoped aliasing audit, plan MINOR): an
+    // explicit flag rather than the length-equality proxy — transforms never
+    // change vertex count, so a same-length-but-stale baseline must be
+    // distinguished from a fresh-run one, which length alone cannot do.
+    bool runBaselineValid = false;
 
     // `moveDragFastPath`: ONCE-PER-DRAG decision (evaluated at
     // mouse-down in `beginMoveDragSession`) for whether the per-frame
