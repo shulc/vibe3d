@@ -206,6 +206,17 @@ public:
     private bool gestureSoftStartPlaced = false;
     private Vec3 gestureSoftStartCenter = Vec3(0, 0, 0);
 
+    // P-F Phase 2 — per-GESTURE run-absolute Move snapshot. `headlessTranslate`
+    // is now run-absolute and `beginEdit` (the SESSION open) fires only once per
+    // session, so attrBaseTranslate captures the SESSION start, not each gesture.
+    // The per-gesture undo hook needs THIS gesture's run-absolute START value
+    // (the run total before this gesture's drain). Captured at every Move mouse-
+    // down (beginMoveDragSession), gated by `moveGestureStartKnown` so a commit
+    // with no preceding mouse-down (a relocate-boundary no-op cmd) falls back to
+    // inert (start == end ⇒ the hook does not move the field on undo).
+    private bool moveGestureStartKnown     = false;
+    private Vec3 moveGestureStartSnapshot  = Vec3(0, 0, 0);
+
     // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
     // and consumed by commitEdit ONLY when a real edit command was built. A
     // zero-motion off-gizmo relocate CLICK opens a moveSub session (so the mouse-up
@@ -1218,8 +1229,26 @@ public:
     // run-absolute field resets are added as each field migrates (Phase 2 Move,
     // Phase 3 R/S).
     private void resetRun() {
+        // P-F Phase 2 — Move is run-absolute, so a geometry-run boundary that
+        // ends an ACTIVE run (relocate / selection change after a gesture / tool
+        // drop) resets the DISPLAY field with the geometry baseline (G8
+        // relocate->0). GATE on `runBaselineValid`: only an established geometry
+        // run (set by beginRunGesture on a gizmo gesture) carries a run-absolute
+        // field worth resetting. A bare headless `tool.attr move TX v` write at
+        // idle leaves runBaselineValid == false (the bare-write reEvaluate path
+        // sets runFrameValid, never runBaselineValid), so a subsequent selection-
+        // change boundary must NOT wipe that pending headless apply input — the
+        // headless scripting contract (set-attr, then select, then doApply).
+        bool hadRun = runBaselineValid;
         runBaselineValid = false;
         runFrameValid    = false;
+        if (hadRun) {
+            headlessTranslate        = Vec3(0, 0, 0);
+            moveGestureStartKnown    = false;
+            moveGestureStartSnapshot = Vec3(0, 0, 0);
+        }
+        // (Phase 3 adds headlessRotate/Scale + their gesture anchors here, under
+        // the same active-run gate.)
     }
 
     private bool bankIsNonIdentity(DragBank bank) {
@@ -1268,15 +1297,33 @@ public:
     //       since it is identity), so the HELD banks survive into the fold and
     //       `composeFor` folds active-live ⊕ held from ONE original baseline.
     private void beginRunGesture(DragBank bank) {
-        if (!runBaselineValid || bankIsNonIdentity(bank)) {
+        // P-F Phase 2 — Move is RUN-ABSOLUTE. A same-bank Move repeat must NOT
+        // re-bake the prior move into `dragBaseline` and must NOT zero
+        // `headlessTranslate`: the run keeps ONE frozen baseline and the field
+        // accumulates the run total across gestures (the drain at 1462 does
+        // `headlessTranslate += pending`). Only a genuinely fresh run
+        // (`!runBaselineValid`) re-captures. So for Move the re-bake trigger is
+        // ONLY `!runBaselineValid`; `bankIsNonIdentity(Move)` no longer forces a
+        // re-bake (that was the pre-(c) per-gesture re-baseline-and-zero).
+        //
+        // R/S keep the legacy trigger (`bankIsNonIdentity`) until Phase 3 migrates
+        // them to run-absolute. The held-bank cross-bank reuse (case B) is
+        // unchanged.
+        bool rebake = !runBaselineValid
+                   || (bank != DragBank.Move && bankIsNonIdentity(bank));
+        if (rebake) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
             resetGestureAttrs();
             runBaselineValid = true;
         } else {
-            // Reuse the held baseline; this bank starts fresh, held banks stay.
-            resetBankAttr(bank);
+            // Reuse the held baseline; held banks stay. For Move (run-absolute)
+            // do NOT reset the bank attr — the field carries the run total across
+            // gestures. For a cross-bank R/S gesture into a bank with no held
+            // value, resetBankAttr is a no-op (already identity).
+            if (bank != DragBank.Move)
+                resetBankAttr(bank);
         }
     }
 
@@ -1322,6 +1369,12 @@ public:
         // capture once per geometry run (or re-baseline a same-bank repeat),
         // preserving held R/S into the fold on a cross-bank move gesture.
         beginRunGesture(DragBank.Move);
+        // P-F Phase 2 — capture THIS gesture's run-absolute START (the run total
+        // before this gesture's drain). AFTER beginRunGesture so a fresh run (just
+        // zeroed) snapshots 0 and a same-bank repeat snapshots the held run total.
+        // The Move commit hook restores pre/post of headlessTranslate from this.
+        moveGestureStartSnapshot = headlessTranslate;
+        moveGestureStartKnown    = true;
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
@@ -2625,6 +2678,19 @@ public:
         }
         gesturePinStartKnown = false;
 
+        // P-F Phase 2 — run-absolute Move field START/END for the per-gesture undo
+        // hook. START = this gesture's run-absolute snapshot (captured at mouse-
+        // down); END = the field's current run total. Gated by moveGestureStartKnown
+        // so a commit with no preceding mouse-down (a no-op relocate cmd) leaves
+        // start == end ⇒ the hook is inert (no field jump on undo). DISJOINT from
+        // the pin / soft-pin / pipe-config hooks (a wrapper field vs stage state) —
+        // composes into the same closure without clobber.
+        bool moveAbsKnown   = moveGestureStartKnown;
+        Vec3 moveAbsStart   = moveGestureStartSnapshot;
+        Vec3 moveAbsEnd     = headlessTranslate;
+        moveGestureStartKnown = false;
+        if (!moveAbsKnown) moveAbsStart = moveAbsEnd;   // inert
+
         // Base commit discards the frozen pin snapshot, then builds + records the
         // cmd via recordCommit. We replicate the body so we can splice setHooks
         // between buildEditCmd and recordCommit (buildEditCmd returns null on a
@@ -2708,6 +2774,10 @@ public:
                 if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
+                // P-F: restore the gesture-END run-absolute Move field so the
+                // panel TX/TY/TZ track the redone geometry (run total after this
+                // gesture). DISJOINT wrapper field — composes without clobber.
+                headlessTranslate = moveAbsEnd;
             },
             // revert (undo): restore the gesture-START pin + SOFT pin + run pipe
             // config + publish. The gesture-START soft state is typically cleared
@@ -2722,6 +2792,11 @@ public:
                 if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
+                // P-F: restore the gesture-START run-absolute Move field so an
+                // in-session Ctrl+Z steps the panel TX/TY/TZ back one gesture (the
+                // run total BEFORE this gesture). mergeRun first.revert/last.apply
+                // splices these to run-START / run-END at the drop.
+                headlessTranslate = moveAbsStart;
             },
         );
         recordCommit(cmd);
@@ -3137,14 +3212,30 @@ private:
                    bool hasT, bool hasS,
                    Vec3 viewAxis, float viewAngleDeg) {
         import std.math : PI;
-        // Compose S·R·T in a given frame (ax/ay/az). `withView` folds the global
-        // view-ring rotation in (per-cluster frames get no view rotation).
-        float[16] composeFor(Vec3 ax, Vec3 ay, Vec3 az, bool withView) {
+        // Compose S·R·T. R/S use the rotate/scale frame (ax/ay/az); the TRANSLATE
+        // term uses its OWN basis (tx/ty/tz) so P-F can project the run-absolute
+        // headlessTranslate along the FROZEN run-frame (the global path) while R/S
+        // keep their per-frame / per-cluster frame untouched (Phase 3 migrates
+        // R/S). For the per-cluster path tx/ty/tz == ax/ay/az (the cluster's own
+        // axes — M5 geometry unchanged). `withView` folds the global view-ring
+        // rotation in (per-cluster frames get no view rotation).
+        //
+        // P-F (c): headlessTranslate is RUN-ABSOLUTE and the run baseline
+        // (dragBaseline) is FROZEN at the run start (never re-baked across same-
+        // bank gestures), so the T term is the FULL field projected once against
+        // the frozen baseline — geometry = baseline + full-run-translate. This is
+        // numerically the same per-gesture matrix the pre-(c) re-bake path built
+        // (it composed the per-gesture delta against a re-baked baseline); only
+        // the stored field value (run-absolute vs per-gesture) and the T basis
+        // (frozen vs per-frame) changed. At idle (bare-write) the field is read
+        // absolutely exactly as before.
+        float[16] composeFor(Vec3 ax, Vec3 ay, Vec3 az,
+                             Vec3 tx, Vec3 ty, Vec3 tz, bool withView) {
             float[16] M = identityMatrix;
             if (hasT)
-                M = translationMatrix(ax * headlessTranslate.x
-                                    + ay * headlessTranslate.y
-                                    + az * headlessTranslate.z);    // T (rightmost)
+                M = translationMatrix(tx * headlessTranslate.x
+                                    + ty * headlessTranslate.y
+                                    + tz * headlessTranslate.z);    // T (rightmost)
             void rot(Vec3 axis, float deg) {
                 if (deg == 0) return;
                 M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
@@ -3165,19 +3256,35 @@ private:
             return M;
         }
 
-        float[16] M = composeFor(bX, bY, bZ, /*withView=*/true);
+        // P-F Phase 2 — the GLOBAL fold's TRANSLATE term projects the run-absolute
+        // headlessTranslate along the FROZEN run-frame (runFrameR/U/F), so the
+        // displayed run-absolute components sum along a stable axis across same-
+        // bank gestures even though currentBasis (bX/bY/bZ) re-derives per frame.
+        // The frozen frame is captured at the run's first applyTRS (M6); it is
+        // valid by the time we reach here. R/S still use the per-frame bX/bY/bZ
+        // (Phase 3 migrates them). Under acen=None / world-fixed axes the frozen
+        // frame equals the live basis, so geometry is unchanged; the freeze only
+        // matters under a per-frame-drifting basis (acen=local).
+        Vec3 tX = runFrameValid ? runFrameR : bX;
+        Vec3 tY = runFrameValid ? runFrameU : bY;
+        Vec3 tZ = runFrameValid ? runFrameF : bZ;
+        float[16] M = composeFor(bX, bY, bZ, tX, tY, tZ, /*withView=*/true);
 
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
         lastFoldMatrix = M;
         lastFoldPivot  = pivot;
 
-        // Per-cluster: one composed matrix per cluster, in its own frame.
+        // Per-cluster: one composed matrix per cluster, in its own frame. The
+        // translate term keeps the cluster's OWN axes (M5: per-cluster geometry
+        // is unchanged — the displayed run-absolute is the single gizmo-frame
+        // value, asserted independently for multi-cluster).
         float[16][] clusterM = null;
         if (cp.active && ap.active) {
             clusterM = new float[16][](ap.right.length);
             foreach (cid; 0 .. ap.right.length)
                 clusterM[cid] = composeFor(ap.right[cid], ap.up[cid], ap.fwd[cid],
+                                           ap.right[cid], ap.up[cid], ap.fwd[cid],
                                            /*withView=*/false);
         }
 
