@@ -289,7 +289,7 @@ public:
         if (flagR) rotateSub.setRecordViaInSession(true);
         if (flagS) scaleSub.setRecordViaInSession(true);
         currentRunBank     = DragBank.None;
-        runBaselineValid   = false;   // apply-path Phase 2: fresh geometry run
+        resetRun();                   // apply-path Phase 2: fresh geometry run (+ P-F frozen frame)
         lastAcenMode       = -1;      // P-C: re-latch the ACEN mode on first poll
     }
 
@@ -306,7 +306,7 @@ public:
         headlessScale             = Vec3(1, 1, 1);
         activeDrag                = null;
         dragBaseline.length       = 0;
-        runBaselineValid          = false;   // apply-path Phase 2: fresh run
+        resetRun();                          // apply-path Phase 2: fresh run (+ P-F frozen frame)
         moveDragFastPath          = false;
         rotDragFastPath           = false;
         rotDragAxisIdx            = -1;
@@ -353,7 +353,7 @@ public:
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
-        runBaselineValid     = false;   // apply-path Phase 2: tool drop = run boundary
+        resetRun();                     // apply-path Phase 2: tool drop = run boundary (+ P-F frozen frame)
         moveDragFastPath     = false;
     }
 
@@ -407,7 +407,7 @@ public:
                 // boundary regardless of whether a history run is open — the moving
                 // set (and thus the meaningful baseline) changed, so the next gesture
                 // must re-capture from the current mesh.
-                runBaselineValid = false;
+                resetRun();   // + P-F: a new moving set freezes a NEW run-frame
                 // BUG-1: the display soft-pin (Move-settle) tracks the prior
                 // selection's settled pivot; a NEW SELECTION must recompute the
                 // center from the new moving set, so drop it here. Gated to a
@@ -471,7 +471,7 @@ public:
                     }
                     // GEOMETRY-run boundary regardless of an open history run: the
                     // pivot moved, so the next gesture must re-capture its baseline.
-                    runBaselineValid = false;
+                    resetRun();   // + P-F: a mode change freezes a NEW run-frame
                     // BUG-1: a mode change recomputes the center from scratch — drop
                     // any display soft-pin from a prior mode's settle. (applySetAttr
                     // "mode" already clears it inside the stage when the change came
@@ -953,7 +953,7 @@ public:
                 // Apply-path Phase 2: a relocate is a GEOMETRY-run boundary (the
                 // pivot moved + the prior run committed) — re-capture the run
                 // baseline at the relocated mesh on the fresh Move gesture below.
-                runBaselineValid = false;
+                resetRun();   // + P-F: relocate freezes a NEW run-frame (G8)
             }
             // Bank-switch run boundary (Q-c): a switch INTO Move from a prior
             // R/S run consolidates that run first. After a Move relocate above,
@@ -1002,7 +1002,7 @@ public:
                 }
                 // Apply-path Phase 2: relocate / no-axis click = geometry-run
                 // boundary; re-capture the run baseline on the next gesture.
-                runBaselineValid = false;
+                resetRun();   // + P-F: this boundary freezes a NEW run-frame
             }
             activeDrag = rotateSub; return true;
         }
@@ -1034,7 +1034,7 @@ public:
                 }
                 // Apply-path Phase 2: relocate / no-axis click = geometry-run
                 // boundary; re-capture the run baseline on the next gesture.
-                runBaselineValid = false;
+                resetRun();   // + P-F: this boundary freezes a NEW run-frame
             }
             activeDrag = scaleSub;  return true;
         }
@@ -1104,7 +1104,7 @@ public:
             // Apply-path Phase 2: an element-pick relocate is a geometry-run
             // boundary (pivot moved + prior run committed); re-capture the run
             // baseline at the relocated mesh on the fresh Move gesture below.
-            runBaselineValid = false;
+            resetRun();   // + P-F: relocate freezes a NEW run-frame (G8)
             // The fresh screen-plane drag below is a Move gesture; record its
             // bank (no-op switch when the prior run was also Move).
             noteRunBank(DragBank.Move);
@@ -1198,7 +1198,7 @@ public:
                 currentRunBank = DragBank.None;
                 // Apply-path Phase 2: the P5 off-gizmo-in-relocate-DISALLOWED
                 // click is a geometry-run boundary; re-capture on the next drag.
-                runBaselineValid = false;
+                resetRun();   // + P-F: this boundary freezes a NEW run-frame
             }
         }
         return false;
@@ -1208,6 +1208,18 @@ public:
         headlessTranslate = Vec3(0, 0, 0);
         headlessRotate    = Vec3(0, 0, 0);
         headlessScale     = Vec3(1, 1, 1);
+    }
+
+    // P-F — geometry-run boundary reset. Factored so EVERY `runBaselineValid =
+    // false` site clears the frozen run-frame (and, as each field migrates to
+    // run-absolute, its run-start value) together with the geometry-run baseline,
+    // so a relocate resets DISPLAY + GEOMETRY as one (G8 relocate->0). Called at
+    // all 11 boundary sites. Phase 1: only the frozen frame resets here; the
+    // run-absolute field resets are added as each field migrates (Phase 2 Move,
+    // Phase 3 R/S).
+    private void resetRun() {
+        runBaselineValid = false;
+        runFrameValid    = false;
     }
 
     private bool bankIsNonIdentity(DragBank bank) {
@@ -1954,6 +1966,26 @@ public:
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
 
+        // P-F (M6) — FREEZE the per-run gizmo frame on the FIRST applyTRS of a
+        // run. Lazy capture here (just after currentBasis computes the live basis
+        // and the pivot above) freezes one world-space frame for the whole run so
+        // the run-absolute panel components sum along a STABLE axis even though
+        // currentBasis re-derives per frame (drifts under acen=local). The capture
+        // is INERT in Phase 1 — composeFor still reads the per-frame bX/bY/bZ; the
+        // frozen frame is published for assertion but feeds no geometry yet
+        // (Phase 2 wires the Move T component to runFrameR/U/F). Ordering is
+        // load-bearing: freeze BEFORE applyFold/composeFor read the frame, so the
+        // first apply of a run (incl. the bare-write replay path) has a valid
+        // frame to publish; resetRun() at every geometry-run boundary clears it so
+        // a relocate re-freezes a fresh frame next apply.
+        if (!runFrameValid) {
+            runFrameOrigin = pivot;
+            runFrameR      = bX;
+            runFrameU      = bY;
+            runFrameF      = bZ;
+            runFrameValid  = true;
+        }
+
         // MS-4.3/4.4 — canonical-matrix FOLD. The whole T->R->S chain is composed
         // into ONE pivot-relative matrix (per cluster in the ACEN.Local case) and
         // applied through a SINGLE `applyXformMatrix` call, blended toward identity
@@ -2397,6 +2429,18 @@ public:
     public Vec3 publishedTranslate() const { return headlessTranslate; }
     public Vec3 publishedRotate()    const { return headlessRotate; }
     public Vec3 publishedScale()     const { return headlessScale; }
+
+    // P-F Phase 1 — the FROZEN per-run gizmo frame, for assertion via
+    // /api/toolpipe/eval. `valid` is false until the first applyTRS of a run
+    // freezes it; a relocate resets it (resetRun) so the next apply re-freezes.
+    public void publishedRunFrame(out bool valid, out Vec3 origin,
+                                  out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        valid  = runFrameValid;
+        origin = runFrameOrigin;
+        right  = runFrameR;
+        up     = runFrameU;
+        fwd    = runFrameF;
+    }
 
     // Falloff in-session re-fire — PUBLIC R/S seam. The Rotate / Scale falloff
     // re-grade sites live on the sub-tools, but the run, history, currentRunBank,
@@ -2912,7 +2956,7 @@ public:
         cancelEdit();
         activeDrag          = null;
         dragBaseline.length = 0;
-        runBaselineValid    = false;   // apply-path Phase 2: cancelled run
+        resetRun();                    // apply-path Phase 2: cancelled run (+ P-F frozen frame)
         moveDragFastPath    = false;
         rotDragFastPath     = false;
         rotDragAxisIdx      = -1;
@@ -3662,6 +3706,23 @@ private:
     // change vertex count, so a same-length-but-stale baseline must be
     // distinguished from a fresh-run one, which length alone cannot do.
     bool runBaselineValid = false;
+
+    // P-F (run-absolute panel) — the FROZEN per-run gizmo frame. Lifetime is
+    // IDENTICAL to the geometry-run baseline (`runBaselineValid`): captured ONCE
+    // at the run's first `applyTRS` and reset at EVERY geometry-run boundary via
+    // `resetRun()`. The reference captures the gizmo basis once at activation;
+    // vibe3d's `currentBasis` re-derives per frame, so summing the run-absolute
+    // TX/TY/TZ across gestures along that drifting frame would wander under
+    // acen=local. Freezing one world-space frame per run gives the run-absolute
+    // components a STABLE axis to sum along. STORED on the wrapper (NOT on
+    // ActionCenterStage, which is per-frame live and per-cluster). INERT in
+    // Phase 1: captured + reset, but nothing READS it yet (composeFor still uses
+    // the per-frame currentBasis) — Phase 2 wires the Move T component to it.
+    bool runFrameValid  = false;
+    Vec3 runFrameOrigin = Vec3(0, 0, 0);
+    Vec3 runFrameR      = Vec3(1, 0, 0);
+    Vec3 runFrameU      = Vec3(0, 1, 0);
+    Vec3 runFrameF      = Vec3(0, 0, 1);
 
     // `moveDragFastPath`: ONCE-PER-DRAG decision (evaluated at
     // mouse-down in `beginMoveDragSession`) for whether the per-frame
