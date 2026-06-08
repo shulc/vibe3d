@@ -1348,7 +1348,30 @@ public:
                 // future multi-drag-per-session design can pin
                 // the per-drag GPU translate against the prior
                 // mouseUp's upload.
-                if (moveDragFastPath) {
+                // Apply-path Phase 3 — cross-bank GPU correctness. The Move
+                // fast-path skips the per-frame vertex re-upload and instead draws
+                // the GPU buffer through a single `gpuMatrix`. That is only valid
+                // while the GPU buffer still holds the fold's RUN BASELINE: the
+                // published `lastFoldMatrix` is composed RELATIVE to that baseline,
+                // so `gpuMatrix · buffer` reconstructs the CPU pose only when
+                // buffer == baseline.
+                //
+                // For a SINGLE-bank Move (no held R/S) that invariant holds — the
+                // buffer is the run baseline and the fold is a pure translation, so
+                // we keep the cheap `translationMatrix(accumulatedWorldDelta)` (a
+                // translation is invariant under wrapAboutPivot, so this is
+                // byte-identical to the pre-Phase-3 path).
+                //
+                // For a CROSS-bank Move (a Move drag after a COMMITTED rotate/scale
+                // in the same composed run) the held bank's mouse-up did
+                // `gpu.upload(*mesh)` — the GPU buffer is now the ALREADY-TRANSFORMED
+                // mesh, NOT the run baseline. Multiplying it by the composed
+                // `wrapAboutPivot(lastFoldMatrix)` would re-apply the held rotate/
+                // scale a second time (double transform). So we DROP OUT of the
+                // fast-path (chose plan option (b)): `needsGpuUpdate=true` re-uploads
+                // the CPU-folded verts this frame. This is the small, already-CPU
+                // multi-bank case; the single-bank common path is untouched.
+                if (moveDragFastPath && !heldRotateOrScaleNonIdentity()) {
                     gpuMatrix = translationMatrix(
                         accumulatedWorldDelta - accumulatedAtDragStart);
                 } else {
@@ -2660,6 +2683,25 @@ private:
         if (face.length > 0)
             updateConnectMask(stage, cast(int)face[0]);
         return true;
+    }
+
+    // Apply-path Phase 3 — does a HELD rotate/scale bank carry a non-identity
+    // run-absolute right now? Gates the Move GPU fast-path between the cheap
+    // pure-translation `gpuMatrix` (single-bank, byte-identical to pre-Phase-3)
+    // and the CPU re-upload (cross-bank: the held bank's mouse-up replaced the
+    // GPU buffer with the transformed mesh, so the fold's baseline-relative
+    // matrix can no longer reconstruct the pose — drop out of the fast-path).
+    // Mirrors the `flagR && headlessRotate!=0` / `flagS && headlessScale!=1`
+    // gates `applyTRS` uses for `composeFor`, so the GPU path switches exactly
+    // when the CPU fold starts composing a held rotate/scale factor.
+    bool heldRotateOrScaleNonIdentity() const {
+        const bool heldRot = flagR && (headlessRotate.x != 0
+                                    || headlessRotate.y != 0
+                                    || headlessRotate.z != 0);
+        const bool heldScl = flagS && (headlessScale.x != 1
+                                    || headlessScale.y != 1
+                                    || headlessScale.z != 1);
+        return heldRot || heldScl;
     }
 
     // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole T->R->S chain into
