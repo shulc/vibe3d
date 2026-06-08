@@ -183,6 +183,52 @@ public:
         return ok;
     }
 
+    /// Snapshot the stage's LIVE user-facing CONFIG fields into a
+    /// SymmetryPacket — the inverse of `restoreConfigFromPacket`. Used by the
+    /// wrapper's transform-session undo/redo hooks (P-C) so a mid-run symmetry
+    /// toggle reverts the symmetry CONFIG together with the geometry. Mirrors
+    /// FalloffStage.snapshotConfigToPacket: captures only the STAGE-owned config
+    /// (the fields a round-trip restores), NOT the derived pairing cache
+    /// (pairOf / onPlane / vertSign rebuild on the next evaluate).
+    SymmetryPacket snapshotConfigToPacket() const {
+        SymmetryPacket p;
+        p.enabled      = enabled;
+        p.axisIndex    = axisIndex;
+        p.offset       = offset;
+        p.useWorkplane = useWorkplane;
+        p.topology     = topology;
+        p.epsilonWorld = epsilonWorld;
+        p.baseSide     = baseSide;
+        return p;
+    }
+
+    /// Restore the user-facing CONFIG fields from a previously-snapshotted
+    /// SymmetryPacket and re-publish so the status-bar pulldown follows. Used by
+    /// the wrapper's in-session symmetry-refire undo/redo hooks (P-C): an
+    /// in-session Ctrl+Z of a transform-session symmetry change restores the
+    /// symmetry config to its PRE-tweak value (revert hook); redo restores the
+    /// POST-tweak config (apply hook). Mirrors FalloffStage.restoreConfigFromPacket
+    /// — assign + invalidate the derived cache + publish, no session.
+    ///
+    /// Drops the pairing cache (cachedReady_) so the next evaluate() rebuilds
+    /// pairOf / onPlane / vertSign from the restored plane; does NOT touch the
+    /// injected mesh / editMode refs.
+    void restoreConfigFromPacket(const ref SymmetryPacket p) {
+        enabled      = p.enabled;
+        axisIndex    = p.axisIndex;
+        offset       = p.offset;
+        useWorkplane = p.useWorkplane;
+        topology     = p.topology;
+        epsilonWorld = p.epsilonWorld;
+        baseSide     = p.baseSide;
+        // The pairing cache is keyed on (mutationVersion, plane, epsilon);
+        // restoring config that changes the plane / epsilon must invalidate it
+        // so the next evaluate() rebuilds the mirror table.
+        cachedReady_           = false;
+        cachedMutationVersion_ = ulong.max;
+        publishState();
+    }
+
     /// Update `baseSide` from a world-space anchor point — typically
     /// the centroid of the element the user
     /// just clicked while symmetry was active. Off-plane anchors set

@@ -310,6 +310,18 @@ double queryFalloffSizeX() {
     return v[0].floating;
 }
 
+// P-C config-restore witnesses, read from /api/toolpipe/eval (which publishes
+// the live SnapPacket.enabled + SymmetryPacket.enabled). Snap has no geometry
+// signal at idle, so its enabled flag is the ONLY observable for its
+// config-restore; symmetry's enabled flag corroborates the mirror-geometry
+// witness.
+bool querySnapEnabled() {
+    return getJson("/api/toolpipe/eval")["snap"]["enabled"].boolean;
+}
+bool querySymmetryEnabled() {
+    return getJson("/api/toolpipe/eval")["symmetry"]["enabled"].boolean;
+}
+
 // ===========================================================================
 // (R-F) ROTATE F-mirror — re-grade + record + in-session Ctrl+Z + drop.
 //
@@ -1378,5 +1390,209 @@ unittest {
         ~ queryFalloffSizeX().to!string);
 
     cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// One +X move-arrow gesture against the CURRENT pivot, verify-and-retry keyed
+// on the UNDO COUNT (mirrors the inline pattern in CONFIG-RESTORE MOVE). Returns
+// after the gesture records exactly one in-session entry (undoCount == want).
+void moveArrowGesture(long want) {
+    foreach (attempt; 0 .. 6) {
+        settle();
+        auto cam = fetchCamera();
+        auto vp  = viewportFromCamera(cam);
+        double ux, uy;
+        int xa, ya;
+        arrowGrabPx(evalPivot(), vp, xa, ya, ux, uy);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                  xa, ya, xa + cast(int)(60.0 * ux),
+                                  ya + cast(int)(60.0 * uy), 10));
+        settle();
+        if (undoCount() == want) return;
+    }
+}
+
+// ===========================================================================
+// (P-C SYMMETRY MID-RUN, toggle-on) A symmetry toggle AFTER a committed move
+// gesture participates in the generalized refire trigger + the uniform
+// config-restore hook family: the re-grade re-runs the composed fold WITH the
+// live symmetry pass and records ONE tagged in-session entry; an in-session /
+// post-drop undo restores the symmetry CONFIG together with the geometry.
+//
+// NOTE on the geometry witness: symmetry pairs vertices by their CURRENT
+// position (SymmetryStage.rebuildPairing on the live mesh). When symmetry is
+// enabled AFTER a gesture has already displaced a vertex off the plane, that
+// vertex no longer pairs with its old mirror, so toggling symmetry on mid-run
+// re-grades to byte-identical geometry on this fixture (no valid pair → no
+// mirror write). That is faithful positional-symmetry behaviour, NOT a P-C bug
+// (the geometric re-grade with symmetry is exercised by the (SYMMETRY) case
+// above, which captures the pristine-mesh pairing at mouse-down). The P-C
+// deliverable witnessed here is the TRIGGER + CONFIG-RESTORE, exactly like the
+// (P-C SNAP MID-RUN) case. The symmetry-on companion that DOES drive the mirror
+// (pairing captured at mouse-down) is the pre-existing (SYMMETRY) test.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set move");
+    configTightRadial();                         // stable falloff baseline
+    cmd("tool.pipe.attr symmetry enabled 0");    // OFF at mouse-down
+    settle();
+    long floor = undoCount();
+    assert(!querySymmetryEnabled(), "pre-condition: symmetry starts OFF");
+
+    moveArrowGesture(floor + 1);
+    assert(undoCount() == floor + 1, "move gesture records one in-session entry");
+    auto v0AfterG = vert(0);
+
+    // Toggle symmetry ON mid-run (X plane). P-C: the trigger fires (symmetry
+    // packet changed) → ONE tagged in-session entry is recorded, carrying the
+    // symmetry config-restore hooks.
+    cmd("tool.pipe.attr symmetry enabled 1");
+    cmd("tool.pipe.attr symmetry axis x");
+    settle();
+    assert(querySymmetryEnabled(), "symmetry is now enabled");
+    assert(inSessionCount() == 2,
+        "the symmetry toggle re-grade APPENDS one tagged in-session entry; got "
+        ~ inSessionCount().to!string);
+
+    // In-session Ctrl+Z: restores the symmetry config (enabled→false). Geometry
+    // stays at the post-gesture position (positional pairing found no mirror on
+    // the deformed mesh — see the NOTE above).
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(!querySymmetryEnabled(),
+        "P-C: in-session Ctrl+Z restores the symmetry config (enabled 1→0)");
+    assert(vertNear(vert(0), v0AfterG),
+        "the symmetry-toggle re-grade left geometry at the post-gesture position");
+
+    // Post-drop: drop the tool (consolidates), one Ctrl+Z reverts the whole run
+    // to the cube AND restores the run-start symmetry config (off).
+    cmd("tool.set move off");
+    settle();
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5, "post-drop undo reverts the move run to the cube");
+    assert(!querySymmetryEnabled(),
+        "P-C uniform-hook: post-drop undo restores the RUN-START symmetry config "
+        ~ "(off) on the merged run");
+
+    cmd("tool.pipe.attr symmetry enabled 0");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (P-C SNAP MID-RUN) A snap toggle AFTER a committed move gesture participates
+// in the generalized refire trigger + the uniform config-restore hook family.
+// Snap is a CURSOR-time op (snapCursor during the live drag), NOT part of the
+// composed absolute fold — so a snap-only toggle at idle re-grades to
+// byte-identical geometry. Its P-C role is config-restore: an in-session /
+// post-drop undo restores the snap config (enabled) together with the geometry.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set move");
+    configTightRadial();                         // gives a stable falloff baseline
+    cmd("tool.pipe.attr snap enabled false");    // OFF at mouse-down
+    settle();
+    long floor = undoCount();
+    assert(!querySnapEnabled(), "pre-condition: snap starts OFF");
+
+    moveArrowGesture(floor + 1);
+    assert(undoCount() == floor + 1, "move gesture records one in-session entry");
+    auto v0AfterG = vert(0);
+
+    // Toggle snap ON mid-run. The trigger fires (snap packet changed) → a
+    // re-grade entry is recorded carrying the snap config-restore hooks. Geometry
+    // is byte-identical (snap not in the fold); the witness here is the CONFIG.
+    cmd("tool.pipe.attr snap enabled true");
+    settle();
+    assert(querySnapEnabled(), "snap is now enabled");
+    assert(inSessionCount() >= 2,
+        "the snap toggle re-grade APPENDS a tagged in-session entry; got "
+        ~ inSessionCount().to!string);
+
+    // In-session Ctrl+Z: restores the snap config (enabled→false). Geometry stays
+    // at the post-gesture position (the snap-only re-grade moved nothing).
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(!querySnapEnabled(),
+        "P-C: in-session Ctrl+Z restores the snap config (enabled 1→0)");
+    assert(vertNear(vert(0), v0AfterG),
+        "the snap-only re-grade left geometry unchanged (snap not in the fold)");
+
+    // Post-drop: drop + one undo restores the cube AND the run-start snap config.
+    cmd("tool.set move off");
+    settle();
+    postJson("/api/undo", "");
+    settle();
+    assertVertex(6, 0.5, 0.5, 0.5, "post-drop undo reverts the move run to the cube");
+    assert(!querySnapEnabled(),
+        "P-C uniform-hook: post-drop undo restores the RUN-START snap config "
+        ~ "(off) on the merged run");
+
+    cmd("tool.pipe.attr snap enabled false");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (P-C ACEN-MODE BOUNDARY) An action-center MODE change mid-run is a session
+// BOUNDARY (NOT a refire): it consolidates the open run + opens a new one, so
+// the next gesture is a separate surviving undo entry. The actr.* command
+// itself is SideEffect — it records NOTHING — the boundary is detected by the
+// wrapper's idle ACEN-mode poll.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set move");
+    // Latch an explicit ACEN mode so the first idle poll records it without
+    // firing a boundary, and the later change to a DIFFERENT mode is a clean
+    // mode delta.
+    cmd("actr.select");
+    settle();
+    long floor = undoCount();
+
+    moveArrowGesture(floor + 1);
+    assert(undoCount() == floor + 1, "drag1 records one in-session entry (run A)");
+
+    // ACEN MODE CHANGE mid-run → BOUNDARY. actr.origin is SideEffect (records
+    // nothing); the wrapper's idle poll consolidates run A.
+    cmd("actr.origin");
+    settle();
+    assert(undoCount() == floor + 1,
+        "the actr.* mode change itself records NOTHING (still floor+1); got "
+        ~ undoCount().to!string);
+    // The open run consolidated: no tagged in-session entry lingers as a
+    // re-gradable tail (the boundary closed the run + bumped the run id).
+    assert(inSessionCount() <= 1,
+        "after the ACEN-mode boundary the prior run is consolidated; got "
+        ~ inSessionCount().to!string ~ " in-session entries");
+
+    // drag2 opens a NEW run (run B) → a SEPARATE surviving entry. If the boundary
+    // had NOT fired, drag2 would coalesce into run A and the drop would leave
+    // ONE entry, not two.
+    moveArrowGesture(floor + 2);
+    assert(undoCount() == floor + 2,
+        "drag2 opens a NEW run after the boundary (floor+2); got "
+        ~ undoCount().to!string);
+
+    cmd("tool.set move off");
+    settle();
+    // Two surviving runs ⇒ two post-drop undo steps to unwind both.
+    assert(undoCount() == floor + 2,
+        "the drop leaves the two consolidated runs (boundary kept them separate);"
+        ~ " got " ~ undoCount().to!string);
+    postJson("/api/undo", "");
+    settle();
+    postJson("/api/undo", "");
+    settle();
+    assert(undoCount() == floor,
+        "two post-drop undos unwind BOTH runs back to the select floor; got "
+        ~ undoCount().to!string);
+    assertVertex(6, 0.5, 0.5, 0.5,
+        "after unwinding both runs the cube is restored");
+
+    cmd("actr.auto");
     drainHistory();
 }

@@ -37,6 +37,23 @@ struct SnapResult {
     int      targetIndex = -1;             /// mesh element index (vert/edge/face) or -1
 }
 
+/// Config-equality for two SnapPackets — compares only the user-facing CONFIG
+/// fields (the ones SnapStage.snapshotConfigToPacket round-trips), NOT the
+/// derived workplane cache / gridStep (evaluate() re-derives those each frame
+/// from the upstream WORK stage, so they would spuriously differ). Used by the
+/// transform wrapper's refire trigger (P-C) to detect a mid-run snap-config
+/// change, mirroring falloffPacketsEqual.
+bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
+    pure nothrow @nogc @safe
+{
+    return a.enabled       == b.enabled
+        && a.enabledTypes  == b.enabledTypes
+        && a.innerRangePx  == b.innerRangePx
+        && a.outerRangePx  == b.outerRangePx
+        && a.fixedGrid     == b.fixedGrid
+        && a.fixedGridSize == b.fixedGridSize;
+}
+
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
