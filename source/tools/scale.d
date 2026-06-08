@@ -360,18 +360,27 @@ public:
         if (auto fs = falloffStageForHooks())  { fSnap  = fs.snapshotConfigToPacket(); haveF  = true; }
         if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
         if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
+        // P-F Phase 3a (MAJOR-5) — capture the WRAPPER field-snapshot hooks (the
+        // run-absolute headlessScale pre/post) into locals so the closures below
+        // compose them alongside the accumulator + pipe-config restores. Null when
+        // standalone (no wrapper) ⇒ inert. DISJOINT wrapper field — composes into
+        // the same closure without clobbering scaleAccum/propScale.
+        auto wrapApply  = wrapperFieldApplyHook;
+        auto wrapRevert = wrapperFieldRevertHook;
         cmd.setHooks(
             () {
                 scaleAccum = accAfter;  propScale = propAfter;
                 if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
+                if (wrapApply !is null) wrapApply();
             },
             () {
                 scaleAccum = accBefore; propScale = propBefore;
                 if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
+                if (wrapRevert !is null) wrapRevert();
             }
         );
         recordCommit(cmd);

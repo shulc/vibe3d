@@ -657,6 +657,22 @@ protected:
         return cast(SymmetryStage) g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
     }
 
+    /// P-F Phase 3a (MAJOR-5) — WRAPPER field-snapshot hook pair, composed into
+    /// this sub-tool's gesture-commit hook closures alongside the accumulator +
+    /// pipe-config restores (uniform hook family). The R/S sub-tool accumulator
+    /// hooks restore the SUB-TOOL panel state (scaleAccum/propScale, angleAccum/
+    /// propDeg) — NOT the WRAPPER `headlessScale`/`headlessRotate` that
+    /// `composeFor` folds. So the wrapper sets these two delegates right before it
+    /// calls `commitGesture()`: `wrapperFieldApplyHook` restores the gesture-END
+    /// run-absolute field (redo follows the geometry), `wrapperFieldRevertHook`
+    /// restores the gesture-START field (in-session Ctrl+Z steps the panel back
+    /// one gesture). DISJOINT from the accumulator + pipe-config state — composes
+    /// into the same closure without clobber. Null when no wrapper is composing
+    /// (standalone tool) ⇒ the closures skip them (inert). Cleared by the wrapper
+    /// after each commit so a stale snapshot never bleeds into the next gesture.
+    void delegate() wrapperFieldApplyHook  = null;
+    void delegate() wrapperFieldRevertHook = null;
+
     /// Live falloff packet for rendering the viewport overlay. Walks
     /// the toolpipe each call — fine because draw() runs at most once
     /// per frame and the upstream stages (WORK / ACEN / etc.) are all
