@@ -1,19 +1,26 @@
-// P-F Phase 0 — invariant pin (NO behavior change).
+// P-F Move pilot — run-absolute panel display (single-field mechanism (c)).
 //
-// Locks the CURRENT Move semantics numerically BEFORE the run-absolute flip, so
-// every later Phase-2 flip is provable:
+// Pinned at Phase 0 (invariant pin), FLIPPED at Phase 2 (the Move run-absolute
+// change). The cases:
 //
 //   (a) BARE-WRITE ABSOLUTE contract (mirrors test_reevaluate Test 1b-absolute):
 //       a live `tool.attr move TX v` write lands at exactly baseline+v, and a
-//       SECOND write is absolute (baseline+v2, never v1+v2). This is the apply
-//       field the panel binds; P-F (single-field mechanism (c)) keeps it intact,
-//       so this assert STAYS GREEN through every phase.
+//       SECOND write is absolute (baseline+v2, never v1+v2). The write field IS
+//       the apply field; at IDLE the derived in-gesture delta equals the written
+//       absolute, so this STAYS GREEN through every phase.
 //
-//   (b) CURRENT per-gesture panel display: two same-bank Move gizmo gestures ->
-//       the published TX (/api/toolpipe/eval transform.translate.x) reads the
-//       SECOND gesture's increment, NOT the run total. This is the BUG P-F fixes;
-//       Phase 2 FLIPS this assert to the run-absolute total (timeline comment
-//       below marks the flip).
+//   (b) RUN-ABSOLUTE panel display (Phase-2 FLIP): two same-bank Move gizmo
+//       gestures -> the published TX (/api/toolpipe/eval transform.translate.x)
+//       accumulates the RUN TOTAL across gestures (NOT just the 2nd gesture's
+//       increment), and the geometry matches base+TX (no double-apply).
+//
+//   (c) IN-SESSION Ctrl+Z steps the run-absolute TX back ONE gesture (the per-
+//       gesture headlessTranslate undo hook); redo restores it.
+//
+//   (d) CROSS-BANK: a held Move TX survives a panel RZ edit on the Transform
+//       preset (held banks compose through one fold from one frozen baseline).
+//
+//   (e) RELOCATE -> TX resets to 0 (G8 relocate->0, via resetRun()).
 //
 // Discipline: selectV6 (no select-undo drain), drainHistory BEFORE reset, gizmo
 // gestures via drag_helpers.buildDragLog + /api/play-events with the mandatory
@@ -61,6 +68,22 @@ bool replayIdle() {
     auto s = getJson("/api/play-events/status");
     auto f = "finished" in s;
     return f is null || f.type != JSONType.false_;
+}
+
+// SDL Ctrl+Z keystroke -> handleKeyDown -> navHistory(true). 122='z', mod 64 =
+// KMOD_LCTRL. Drives the in-session keyboard chokepoint (NOT /api/undo).
+string ctrlZ(double t) {
+    return format(
+        `{"t":%g,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":64,"repeat":0}` ~ "\n",
+        t, t + 10.0);
+}
+// SDL Ctrl+Shift+Z keystroke -> navHistory(false) (redo). mod 65 = LCTRL|LSHIFT.
+string ctrlShiftZ(double t) {
+    return format(
+        `{"t":%g,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}` ~ "\n"
+      ~ `{"t":%g,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":65,"repeat":0}` ~ "\n",
+        t, t + 10.0);
 }
 
 double[3] vert(int idx) {
@@ -210,26 +233,21 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (b) CURRENT per-gesture panel display — the BUG P-F fixes.
+// (b) RUN-ABSOLUTE panel display — the P-F Phase-2 FLIP (the user's bug fixed).
 //
-// Two same-bank Move gizmo gestures (drag +X, mouse-up, drag +X again). TODAY
-// beginRunGesture(Move) case A re-bakes the prior move into dragBaseline and
-// zeroes headlessTranslate at the SECOND gesture's mouse-down, so after gesture 2
-// the published TX holds ONLY gesture-2's increment — NOT the run total of both
-// gestures. We pin that buggy relationship:
+// >>> PHASE-2 TIMELINE FLIP. The Phase-0 version of this case pinned the BUGGY
+// >>> per-gesture display (the published TX after gesture 2 held ONLY gesture-2's
+// >>> increment, because beginRunGesture(Move) re-baked + zeroed the field). With
+// >>> Phase 2 the field stops being zeroed per gesture (single-field run-absolute
+// >>> mechanism (c)), so the published TX now accumulates the RUN TOTAL. <<<
 //
-//   * after gesture 1: published TX == g1Tx (> 0).
-//   * after gesture 2: published TX is roughly g2's increment, and is STRICTLY
-//     LESS than g1Tx + g2's increment (it does NOT accumulate the run total).
-//
-// >>> Phase 2 FLIPS this: the field stops being zeroed per gesture, so the
-// >>> published TX becomes the run-absolute SUM (g1Tx + g2Tx). The Phase-2 test
-// >>> (test_run_absolute_move) asserts the flipped value; this assert is removed
-// >>> / inverted there. <<<
-//
-// The GEOMETRY (v6) accumulates correctly in BOTH worlds (the run-end mesh is the
-// same); only the DISPLAYED scalar differs. So we read TX off the published eval
-// block, not geometry.
+// Two same-bank Move gizmo gestures (drag +X, mouse-up, drag +X again):
+//   * after gesture 1 the published TX == g1Tx (> 0);
+//   * after gesture 2 the published TX == g1Tx + g2Tx (the run total) — NOT just
+//     gesture-2's increment.
+// AND the geometry is correct (v6 at base + run-total, never double-applied: the
+// frozen run-start baseline + the full run-absolute field compose to exactly the
+// run total).
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -237,7 +255,7 @@ unittest {
     cmd("tool.set move");             // default ACEN = None
     long floor = undoCount();
 
-    // Gesture 1: +X haul. Published TX = this gesture's basis-local translate.
+    // Gesture 1: +X haul. Published TX = this gesture's run-absolute translate.
     moveGestureOnHandle(floor + 1, +1.0);
     assert(undoCount() == floor + 1, "gesture 1 records ONE in-session entry");
     double g1Tx = publishedTX();
@@ -245,13 +263,12 @@ unittest {
         "gesture 1 produced a positive published TX; got " ~ g1Tx.to!string);
     auto v6AfterG1 = vert(6);
 
-    // Gesture 2: re-grab the moved handle and haul +X again. With the CURRENT
-    // per-gesture re-baseline-and-zero, the published TX after gesture 2 holds
-    // ONLY gesture-2's increment.
+    // Gesture 2: re-grab the moved handle and haul +X again. Run-absolute: the
+    // field is NOT zeroed at gesture-2 start, so the published TX accumulates.
     moveGestureOnHandle(floor + 2, +1.0);
     assert(undoCount() == floor + 2,
         "gesture 2 records a SECOND in-session entry in the same run");
-    double g2Tx = publishedTX();
+    double txAfterG2 = publishedTX();
     auto v6AfterG2 = vert(6);
 
     // GEOMETRY accumulated (v6 moved further along +X across the two gestures).
@@ -260,22 +277,155 @@ unittest {
         ~ v6AfterG2[0].to!string ~ ") must exceed after g1 ("
         ~ v6AfterG1[0].to!string ~ ")");
 
-    // CURRENT BUG (Phase 2 flips this to g1Tx + g2increment): the published TX
-    // after gesture 2 is NOT the run total. It is strictly less than g1Tx + g2's
-    // own increment, because the field was zeroed at gesture-2 start. We assert
-    // the per-gesture (non-accumulating) display: TX after g2 is well below the
-    // run total it WOULD hold if it accumulated.
-    //
-    // Run-total lower bound: if the field accumulated, TX would be >= g1Tx
-    // (gesture 1 alone) PLUS gesture 2's positive increment, i.e. clearly > g1Tx.
-    // The current per-gesture value is just gesture-2's increment, which (same
-    // re-grabbed handle, same +X mag) is on the order of g1Tx, NOT g1Tx + more.
-    assert(g2Tx < g1Tx + g1Tx - 1e-3,
-        "Phase 2 flips this to run-absolute: TODAY the published TX after gesture "
-        ~ "2 holds only gesture-2's increment (per-gesture display), NOT the run "
-        ~ "total g1Tx+g2Tx. g1Tx=" ~ g1Tx.to!string ~ " g2Tx(published)="
-        ~ g2Tx.to!string ~ " — expected < ~2*g1Tx (well below the accumulated "
-        ~ "run total).");
+    // RUN-ABSOLUTE display: TX after gesture 2 is the RUN TOTAL, strictly GREATER
+    // than gesture-1's value alone (it added gesture-2's positive increment on
+    // top). Pre-Phase-2 this was < ~g1Tx (per-gesture). The published TX must now
+    // exceed g1Tx by a clear margin.
+    assert(txAfterG2 > g1Tx + 1e-3,
+        "P-F Phase 2: the published TX after gesture 2 is the RUN TOTAL "
+        ~ "(accumulates across gestures), strictly greater than gesture 1's TX. "
+        ~ "g1Tx=" ~ g1Tx.to!string ~ " txAfterG2=" ~ txAfterG2.to!string);
+
+    // GEOMETRY = base + the published run-absolute TX (acen=None world +X axis:
+    // v6.x = 0.5 + TX). Proves the run-absolute field is NOT double-applied
+    // against the frozen run baseline.
+    assert(fabs(v6AfterG2[0] - (0.5 + txAfterG2)) < 1e-2,
+        "geometry matches the published run-absolute TX (no double-apply): v6.x="
+        ~ v6AfterG2[0].to!string ~ " expected 0.5 + TX = "
+        ~ (0.5 + txAfterG2).to!string);
+
+    cmd("tool.set move off");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (c) IN-SESSION Ctrl+Z steps ONE Move gesture back; the run-absolute field hook
+//     drives the GEOMETRY revert; redo restores it.
+//
+// Two same-bank Move gestures -> published TX == run total. An in-session Ctrl+Z
+// (keyboard chokepoint, tool LIVE) pops gesture 2 and the GEOMETRY reverts to
+// post-gesture-1 — driven by the per-gesture headlessTranslate undo hook (the
+// revert closure sets the field to the gesture-START run-absolute, which applyTRS
+// re-applies). Redo restores the run-end geometry. This mirrors the GEOMETRY
+// proof of test_run_consolidation case (E) (scale accumulator stepping); the
+// published-accumulator value after the pop is NOT asserted because the in-session
+// Ctrl+Z re-baselines the tool (closes the open run -> the field publishes
+// relative to the new geometry baseline, the documented run-close behaviour).
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    selectV6();
+    cmd("tool.set move");
+    long floor = undoCount();
+
+    auto v6G1 = moveGestureOnHandle(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "gesture 1 records one in-session entry");
+    double g1Tx = publishedTX();
+
+    moveGestureOnHandle(floor + 2, +1.0);
+    assert(undoCount() == floor + 2, "gesture 2 records a second in-session entry");
+    double txBoth = publishedTX();
+    auto v6Both = vert(6);
+    assert(txBoth > g1Tx + 1e-3, "run total exceeds gesture 1 alone");
+
+    // In-session Ctrl+Z pops gesture 2 -> GEOMETRY reverts to post-gesture-1 (the
+    // run-absolute headlessTranslate undo hook fed applyTRS the gesture-START
+    // field). This is the (c)-specific proof: without the hook the field would
+    // hold the run total and applyTRS would re-apply the both-drags transform.
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(fabs(vert(6)[0] - v6G1[0]) < 1e-2,
+        "in-session Ctrl+Z reverts the geometry to post-gesture-1 (run-absolute "
+        ~ "field hook drove applyTRS); v6.x expected " ~ v6G1[0].to!string
+        ~ " got " ~ vert(6)[0].to!string);
+
+    // Redo re-applies gesture 2 -> back to the both-drags geometry (the apply
+    // hook restores the gesture-END run-absolute field).
+    playAndWait(ctrlShiftZ(60.0));
+    settle();
+    assert(fabs(vert(6)[0] - v6Both[0]) < 1e-2,
+        "redo restores the run-end (both-drags) geometry; v6.x expected "
+        ~ v6Both[0].to!string ~ " got " ~ vert(6)[0].to!string);
+
+    cmd("tool.set move off");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (d) CROSS-BANK: a held Move TX survives a panel RZ edit (Transform preset).
+//
+// On the bare Transform preset (T=R=S), a Move gizmo gesture leaves a run-
+// absolute TX held; a subsequent panel RZ edit must NOT clear it — the published
+// TX stays at the Move run total (held banks compose through one fold from one
+// frozen run baseline).
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    // NO selection ⇒ whole-mesh moving set, pivot at the origin so the Move and
+    // the rotate both move geometry.
+    cmd("tool.set Transform");
+    long floor = undoCount();
+
+    // A Move arrow gesture in the same wrapper session (records one in-session
+    // entry). moveGestureOnHandle re-grabs the +X arrow at the current pivot.
+    moveGestureOnHandle(floor + 1, +1.0);
+    double txHeld = publishedTX();
+    assert(txHeld > 1e-3,
+        "Move gesture left a positive held run-absolute TX; got "
+        ~ txHeld.to!string);
+
+    // Panel RZ edit (a value edit through the live seam — does not touch the
+    // Move bank). The held TX must survive.
+    cmd("tool.attr Transform RZ 30");
+    settle();
+    double txAfterRz = publishedTX();
+    assert(fabs(txAfterRz - txHeld) < 1e-2,
+        "a panel RZ edit must NOT clear the held Move run-absolute TX (cross-bank "
+        ~ "hold): held=" ~ txHeld.to!string ~ " after RZ=" ~ txAfterRz.to!string);
+
+    cmd("tool.set Transform off");
+    drainHistory();
+}
+
+// ---------------------------------------------------------------------------
+// (e) RELOCATE -> TX resets to 0 (G8).
+//
+// In None mode an off-gizmo click is an allowed relocate = a geometry-run
+// boundary. After a Move gesture (TX > 0), the relocate boundary calls resetRun()
+// which resets the run-absolute field, so the published TX returns to 0 (display
+// follows the geometry re-baseline). The committed gesture's geometry stays put.
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    selectV6();
+    cmd("tool.set move");             // default ACEN = None (relocate allowed)
+    long floor = undoCount();
+
+    moveGestureOnHandle(floor + 1, +1.0);
+    assert(undoCount() == floor + 1, "gesture records one in-session entry");
+    assert(publishedTX() > 1e-3, "the gesture left a positive run-absolute TX");
+    auto v6AfterGesture = vert(6);
+
+    // Off-gizmo relocate click (well off every handle): a hard run boundary.
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    double ux, uy;
+    arrowDirPx(evalPivot(), vp, ux, uy);
+    int xa, ya;
+    arrowGrabPx(evalPivot(), vp, xa, ya);
+    int xoff = cast(int)(xa + 220.0 * uy);
+    int yoff = cast(int)(ya - 220.0 * ux);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xoff, yoff, xoff, yoff, 1));
+    settle();
+
+    assert(fabs(publishedTX()) < 1e-2,
+        "the relocate boundary resets the run-absolute TX to 0 (G8 relocate->0); "
+        ~ "got " ~ publishedTX().to!string);
+    // The committed gesture's geometry is untouched by the relocate.
+    assert(fabs(vert(6)[0] - v6AfterGesture[0]) < 1e-2,
+        "the relocate does not move the committed gesture's geometry; v6.x="
+        ~ vert(6)[0].to!string ~ " expected " ~ v6AfterGesture[0].to!string);
 
     cmd("tool.set move off");
     drainHistory();
