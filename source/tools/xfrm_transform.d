@@ -289,6 +289,7 @@ public:
         // In-session falloff re-grade state — no live gesture, no anchor.
         lastAppliedGestureMutationVersion = ulong.max;
         refireAnchor.length               = 0;
+        refirePreValid                    = false;
     }
 
     override void deactivate() {
@@ -319,6 +320,7 @@ public:
         // activation (resetTransientState also clears these on (re)activate).
         lastAppliedGestureMutationVersion = ulong.max;
         refireAnchor.length               = 0;
+        refirePreValid                    = false;
         super.deactivate();
         activeDrag           = null;
         dragBaseline.length  = 0;
@@ -370,6 +372,7 @@ public:
                     // boundary cannot re-grade the just-closed run.
                     lastAppliedGestureMutationVersion = ulong.max;
                     refireAnchor.length               = 0;
+                    refirePreValid                    = false;
                 }
                 // Apply-path Phase 2: a selection/mutation change is a GEOMETRY-run
                 // boundary regardless of whether a history run is open — the moving
@@ -412,6 +415,7 @@ public:
                         // just-closed run (same resets as the selection boundary).
                         lastAppliedGestureMutationVersion = ulong.max;
                         refireAnchor.length               = 0;
+                        refirePreValid                    = false;
                     }
                     // GEOMETRY-run boundary regardless of an open history run: the
                     // pivot moved, so the next gesture must re-capture its baseline.
@@ -1670,6 +1674,7 @@ public:
             // via mergeRun's first-touch before[], so the per-gesture window only
             // governs the SINGLE in-session Ctrl+Z granularity, exactly C.)
             refireAnchor.length = 0;
+            refirePreValid      = false;   // fresh window ⇒ recapture pre-config
         }
 
         // Rotate drag (principal axes OR view-ring) — wrapper owns the final
@@ -1709,6 +1714,7 @@ public:
             // FRESH re-fire window anchored to this gesture's post-recompute state.
             lastAppliedGestureMutationVersion = mesh.mutationVersion;
             refireAnchor.length = 0;
+            refirePreValid      = false;   // fresh window ⇒ recapture pre-config
         }
 
         // Scale single-source — wrapper owns the final upload + gpuMatrix
@@ -1737,6 +1743,7 @@ public:
             // inherits a stale anchor.
             lastAppliedGestureMutationVersion = mesh.mutationVersion;
             refireAnchor.length = 0;
+            refirePreValid      = false;   // fresh window ⇒ recapture pre-config
         }
 
         // moveSub + all rotate rings + scale are wrapper-owned. Anything else
@@ -3187,6 +3194,31 @@ private:
     //   invalid; a later forward gesture re-captures fresh).
     Vec3[] refireAnchor;
 
+    // refirePre{Falloff,Snap,Sym} — once-per-RE-FIRE-WINDOW PRE-tweak pipe config,
+    // the config analogue of refireAnchor. BUG-2 fix: a CONTINUOUS falloff/snap/
+    // symmetry scrub fires recordPipeRefire every frame and (per P-E) the frames
+    // REPLACE into ONE coalesced in-session entry. Each site captures its
+    // `preF = dragFalloff` BEFORE re-reading the live packets, so on the WINDOW's
+    // FIRST frame `preF` IS run-start — but on later frames `dragFalloff` already
+    // holds the PRIOR frame's tweaked value (captureFalloffForDrag /
+    // recaptureLivePipePackets clobbers it every frame). Using that per-frame
+    // `preF` as the coalesced entry's revert endpoint left an in-session Ctrl+Z
+    // restoring the PENULTIMATE-frame config, not run-start — geometry reverted
+    // but the viewport falloff viz stayed at the next-to-last scrub value.
+    //
+    // Fix: snapshot the PRE-tweak config ONCE at the window's first re-grade
+    // (the same point refireAnchor is captured, from the SAME passed-in `preF`
+    // that is still run-start on that first frame) and reuse it as the revert
+    // endpoint for EVERY frame of the window. The DISCRETE path (one re-grade per
+    // window) is unaffected: the captured value equals the single frame's `preF`.
+    // `refirePreValid` distinguishes "no window open" from a legitimately captured
+    // window (the packets are value structs with no empty sentinel). Cleared at
+    // the SAME resets as refireAnchor.
+    bool           refirePreValid;
+    FalloffPacket  refirePreFalloff;
+    SnapPacket     refirePreSnap;
+    SymmetryPacket refirePreSym;
+
     // Detect a bank switch at gizmo mouse-down and consolidate the prior run.
     // Called from each mouse-down consume arm AFTER the sub-tool confirmed the
     // click landed on its bank, BEFORE begin*DragSession. An empty/not-yet-open
@@ -3201,6 +3233,7 @@ private:
             // staleness stamp must not leak into the new run.
             lastAppliedGestureMutationVersion = ulong.max;
             refireAnchor.length               = 0;
+            refirePreValid                    = false;
         }
         currentRunBank = thisBank;
     }
@@ -3256,6 +3289,7 @@ private:
         // the helper must refuse too). On a miss the run's anchor is invalid.
         if (mesh.mutationVersion != lastAppliedGestureMutationVersion) {
             refireAnchor.length = 0;
+            refirePreValid      = false;
             return;
         }
         // Step 1 — guards: need a history, an OPEN run (a re-grade only extends a
@@ -3272,6 +3306,26 @@ private:
         // the stale post-gesture-1 (the multi-gesture-run anchor hazard).
         if (refireAnchor.length == 0)
             refireAnchor = anchor.dup;
+
+        // BUG-2: capture the PRE-tweak pipe config ONCE per re-fire window, from
+        // the same first-frame `preF/preSn/preSy` the site passed in (still
+        // run-start on the FIRST re-grade; clobbered to the prior frame's value on
+        // later frames). On every subsequent frame OVERRIDE the passed-in pre-*
+        // with this stored run-start config so the coalesced entry's revert hook
+        // restores the TRUE run-start pipe config (the viewport falloff viz then
+        // reverts WITH the geometry on an in-session Ctrl+Z), not the
+        // penultimate-frame value. Captured at the SAME point as refireAnchor so
+        // the geometry + config baselines stay in lockstep across the window.
+        if (!refirePreValid) {
+            refirePreFalloff = preF;
+            refirePreSnap    = preSn;
+            refirePreSym     = preSy;
+            refirePreValid   = true;
+        } else {
+            preF  = refirePreFalloff;
+            preSn = refirePreSnap;
+            preSy = refirePreSym;
+        }
 
         // Step 3 — build the entry. before[] = refireAnchor (post-gesture state)
         // for the moved indices; after[] = the re-graded positions. Drop any

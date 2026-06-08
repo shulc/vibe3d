@@ -2529,6 +2529,16 @@ void main(string[] args) {
         };
         httpServer.setCommandHandler(commandHandlerDelegate);
 
+        // Test-automation seam: let /api/script?interactive=true raise the same
+        // formsInteractiveLatch the forms-panel scrub uses, so a sequence of
+        // tool.pipe.attr writes shares ONE tweak generation (REPLACE-coalesce
+        // into one in-session re-grade step) — the headless analogue of a held
+        // falloff-handle drag. Runs on the main thread inside tickCommand, the
+        // same thread that reads the latch, so no synchronisation is needed.
+        httpServer.setInteractiveLatchHook((bool raised) {
+            formsInteractiveLatch = raised;
+        });
+
         // FormsPanel value writes go through here: raise the latch, dispatch the
         // ordinary `tool.attr` via the same handler, lower the latch. The handler
         // marks the built ToolAttrCommand interactive while the latch is up, so

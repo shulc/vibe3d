@@ -131,6 +131,22 @@ class HttpServer {
     private string pendingCmdId;
     private string pendingCmdParams;
     private string pendingCmdError;
+    // Test-automation only: when true, tickCommand raises the app's
+    // formsInteractiveLatch (via interactiveLatchHook) around the dispatch, so
+    // a sequence of tool.pipe.attr writes SHARES one tweak generation — exactly
+    // a continuous falloff-handle / slider scrub, which the per-/api-command
+    // generation bump otherwise turns into discrete steps. Set per-line by the
+    // /api/script?interactive=true handler; consumed + the hook restores the
+    // latch in tickCommand. Read/written only on the bridge happens-before, like
+    // pendingCmdId. The interactive end-of-scrub generation bump is the caller's
+    // responsibility (a following non-interactive tool.pipe.attr or an explicit
+    // /api/script line bumps it), mirroring the forms panel's end-of-scrub hook.
+    private bool pendingCmdInteractive;
+    // Hook the app registers to raise/lower formsInteractiveLatch from the main
+    // thread. Null in builds that never wire it (the latch then stays inert and
+    // ?interactive=true is a no-op — faithful: a raw command path is discrete).
+    private alias InteractiveLatchHook = void delegate(bool raised);
+    private InteractiveLatchHook interactiveLatchHook;
     // Forms-engine query (read-back) result. The command handler runs on the
     // main thread inside tickCommand() and, for a `?`-query command, stashes the
     // boxed JSON value here via setCmdResult() BEFORE tickCommand bumps
@@ -353,6 +369,13 @@ class HttpServer {
      */
     public void setCommandHandler(CommandHandler handler) {
         this.commandHandler = handler;
+    }
+
+    /// Register the main-thread hook that raises/lowers the app's
+    /// formsInteractiveLatch around an interactive (continuous-scrub) command
+    /// dispatch. Test-automation seam for /api/script?interactive=true.
+    public void setInteractiveLatchHook(InteractiveLatchHook hook) {
+        this.interactiveLatchHook = hook;
     }
 
     /**
@@ -1082,7 +1105,8 @@ class HttpServer {
                         pendingCmdParams = parsed.params.toString();
                     }
 
-                    pendingCmdError  = "";
+                    pendingCmdError       = "";
+                    pendingCmdInteractive = false;   // plain command = discrete
                     long my = atomicOp!"+="(submittedEpoch, 1);
                     // Wait for main thread to drain — bounded at ~5s.
                     enum int maxIters = 2500;  // 2500 * 2ms = 5s
@@ -1123,6 +1147,12 @@ class HttpServer {
             // ?continue=true keeps running after errors; default stops on first.
             bool continueOnError =
                 (parseQueryString(request.path, "continue", "") == "true");
+            // Test-only: ?interactive=true marks every line a continuous-scrub
+            // dispatch (shared tweak generation → REPLACE-coalesce), simulating a
+            // held falloff-handle / slider drag that /api/command's per-command
+            // generation bump otherwise splits into discrete steps.
+            immutable bool interactiveScript =
+                (parseQueryString(request.path, "interactive", "") == "true");
 
             if (commandHandler is null) {
                 response.statusCode = 200;
@@ -1150,9 +1180,10 @@ class HttpServer {
                         auto parsed = parseArgstring(rawLine);
                         if (parsed.isEmpty) continue; // blank / comment
 
-                        pendingCmdId     = parsed.commandId;
-                        pendingCmdParams = parsed.params.toString();
-                        pendingCmdError  = "";
+                        pendingCmdId          = parsed.commandId;
+                        pendingCmdParams      = parsed.params.toString();
+                        pendingCmdError       = "";
+                        pendingCmdInteractive = interactiveScript;
 
                         long my = atomicOp!"+="(submittedEpoch, 1);
                         enum int maxIters = 2500; // 2500 * 2ms = 5s per line
@@ -1583,6 +1614,13 @@ class HttpServer {
         if (commandHandler is null) {
             pendingCmdError = "command handler not set";
         } else {
+            // Continuous-scrub simulation (test only): raise the app latch so
+            // this tool.pipe.attr shares the live tweak generation (REPLACE-
+            // coalesce) instead of bumping a new one. Restored after dispatch.
+            immutable bool interactive =
+                pendingCmdInteractive && interactiveLatchHook !is null;
+            if (interactive) interactiveLatchHook(true);
+            scope(exit) if (interactive) interactiveLatchHook(false);
             try {
                 commandHandler(pendingCmdId, pendingCmdParams);
                 pendingCmdError = "";
