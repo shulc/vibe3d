@@ -2068,6 +2068,15 @@ void main(string[] args) {
                     buf.put(`,"transform":{"translate":`); putVec3(xf.publishedTranslate());
                     buf.put(`,"rotate":`);  putVec3(xf.publishedRotate());
                     buf.put(`,"scale":`);   putVec3(xf.publishedScale());
+                    // P-F Phase 1 — the frozen per-run gizmo frame.
+                    bool rfValid; Vec3 rfO, rfR, rfU, rfF;
+                    xf.publishedRunFrame(rfValid, rfO, rfR, rfU, rfF);
+                    buf.put(format(`,"runFrameValid":%s,"runFrameOrigin":`,
+                                   rfValid ? "true" : "false"));
+                    putVec3(rfO);
+                    buf.put(`,"runFrameRight":`); putVec3(rfR);
+                    buf.put(`,"runFrameUp":`);    putVec3(rfU);
+                    buf.put(`,"runFrameFwd":`);   putVec3(rfF);
                     buf.put(`}`);
                 }
             }
