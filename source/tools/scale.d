@@ -11,6 +11,7 @@ import mesh;
 import editmode;
 import math;
 import shader;
+import toolpipe.packets : FalloffPacket;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -278,12 +279,18 @@ public:
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-window anchor (OBJ-3 W1: live, never frozen).
                     Vec3[] anchor = mesh.vertices.dup;
+                    // P-A: PRE-tweak falloff config = still-current dragFalloff;
+                    // POST = the live packet. Captured BEFORE `dragFalloff =
+                    // live` so the re-grade entry's hooks restore config too.
+                    FalloffPacket prePkt  = dragFalloff;
+                    FalloffPacket postPkt = live;
                     dragFalloff = live;
                     buildVertexCacheIfNeeded();
                     applyScaleFromActivationCpuOnly(vts);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
                     // Empty idx → helper iterates the full vertex range (S1).
-                    wrap.recordFalloffRefireScale("Falloff", anchor, after, null);
+                    wrap.recordFalloffRefireScale("Falloff", anchor, after, null,
+                                                  prePkt, postPkt);
                     needsGpuUpdate = true;
                 }
             }
@@ -322,9 +329,26 @@ public:
         Vec3 propBefore = preEditPropScale;
         Vec3 accAfter   = scaleAccum;
         Vec3 propAfter  = propScale;
+
+        // P-A blocker fix — UNIFORM hook family (see rotate.d commitEdit for the
+        // full rationale): compose the falloff CONFIG restore into this gesture's
+        // accumulator hooks so mergeRun's merged first.revert restores both the
+        // accumulators AND the run-start falloff config (config snapshot captured
+        // at this gesture's commit = run-start, since a falloff tweak only fires
+        // after a gesture commits). ABSOLUTE assign; two independent stage
+        // mutations (accum field vs FalloffStage) compose without clobber.
+        FalloffPacket cfgSnap;
+        bool haveCfg = false;
+        if (auto fs = falloffStageForHooks()) { cfgSnap = fs.snapshotConfigToPacket(); haveCfg = true; }
         cmd.setHooks(
-            () { scaleAccum = accAfter;  propScale = propAfter;  },
-            () { scaleAccum = accBefore; propScale = propBefore; }
+            () {
+                scaleAccum = accAfter;  propScale = propAfter;
+                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+            },
+            () {
+                scaleAccum = accBefore; propScale = propBefore;
+                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+            }
         );
         recordCommit(cmd);
     }

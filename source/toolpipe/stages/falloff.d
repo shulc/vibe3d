@@ -281,6 +281,89 @@ class FalloffStage : Stage, Operator {
         return true;
     }
 
+    /// Restore the user-facing CONFIG fields from a previously-published
+    /// FalloffPacket and re-publish so the visible handle / status pulldown
+    /// follow. Used by the wrapper's in-session falloff-refire undo/redo hooks
+    /// (P-A): an in-session Ctrl+Z of a falloff re-grade restores the geometry
+    /// (the MeshVertexEdit revert) AND the falloff config to its PRE-tweak
+    /// value (this method, via the entry's revert hook); redo restores the
+    /// POST-tweak config (via the apply hook). Mirrors
+    /// ActionCenterStage.restorePinState — assign + publish, no session.
+    ///
+    /// Restores only STAGE-owned config (the fields a FalloffPacket round-trips
+    /// from this stage's own fields). It does NOT touch the ACEN-owned sphere
+    /// centre (`pickedCenter`) — that pivot has its own source of truth + its
+    /// own pin hooks — nor the derived caches (selWeights_, adjacency,
+    /// connectMask), which rebuild on the next evaluate(). The `dist` field is
+    /// re-used as the radius / step count, so it tracks `pickedRadius`.
+    void restoreConfigFromPacket(const ref FalloffPacket p) {
+        type         = p.type;
+        shape        = p.shape;
+        start        = p.start;
+        end          = p.end;
+        center       = p.center;
+        size         = p.size;
+        normal       = p.normal;
+        dist         = p.pickedRadius;
+        connect      = p.connect;
+        elementMode  = p.elementMode;
+        screenCx     = p.screenCx;
+        screenCy     = p.screenCy;
+        screenSize   = p.screenSize;
+        transparent  = p.transparent;
+        lassoStyle   = p.lassoStyle;
+        lassoPolyX   = p.lassoPolyX.dup;
+        lassoPolyY   = p.lassoPolyY.dup;
+        softBorderPx = p.softBorderPx;
+        in_          = p.in_;
+        out_         = p.out_;
+        anchorRing   = p.anchorRing.dup;
+        // The Selection-weight cache is keyed on (mutationVersion, editMode,
+        // selectionSig, steps, shape, in_, out_); restoring config that changes
+        // any of those must invalidate it so the next evaluate() recomputes.
+        _selCacheValid     = false;
+        publishState();
+    }
+
+    /// Snapshot the stage's LIVE user-facing CONFIG fields into a FalloffPacket
+    /// — the exact inverse of `restoreConfigFromPacket`. Used by the wrapper's
+    /// gesture-commit hooks (P-A blocker fix) to capture the RUN-START falloff
+    /// config at the moment the first gesture commits, so the merged-run revert
+    /// hook (first.revert) can restore both the pin AND the run-start config.
+    ///
+    /// Captures only the STAGE-owned fields that round-trip through
+    /// restoreConfigFromPacket (same set, same `dist`↔`pickedRadius` mapping).
+    /// It deliberately does NOT capture the ACEN-owned sphere centre
+    /// (`pickedCenter`) or the derived caches — restoreConfigFromPacket would
+    /// not consume them anyway. Slices are .dup'd so the snapshot is independent
+    /// of subsequent in-place stage mutation.
+    FalloffPacket snapshotConfigToPacket() const {
+        FalloffPacket p;
+        p.enabled      = (type != FalloffType.None);
+        p.type         = type;
+        p.shape        = shape;
+        p.start        = start;
+        p.end          = end;
+        p.center       = center;
+        p.size         = size;
+        p.normal       = normal;
+        p.pickedRadius = dist;
+        p.connect      = connect;
+        p.elementMode  = elementMode;
+        p.screenCx     = screenCx;
+        p.screenCy     = screenCy;
+        p.screenSize   = screenSize;
+        p.transparent  = transparent;
+        p.lassoStyle   = lassoStyle;
+        p.lassoPolyX   = lassoPolyX.dup;
+        p.lassoPolyY   = lassoPolyY.dup;
+        p.softBorderPx = softBorderPx;
+        p.in_          = in_;
+        p.out_         = out_;
+        p.anchorRing   = anchorRing.dup;
+        return p;
+    }
+
     override bool setAttr(string name, string value) {
         FalloffType prev = type;
         bool ok = applySetAttr(name, value);

@@ -10,6 +10,7 @@ import mesh;
 import editmode;
 import math;
 import shader;
+import toolpipe.packets : FalloffPacket;
 
 import std.math;
 
@@ -296,12 +297,18 @@ public:
                     // Capture the pre-recompute (post-gesture) geometry LIVE for
                     // the once-per-window anchor (OBJ-3 W1: live, never frozen).
                     Vec3[] anchor = mesh.vertices.dup;
+                    // P-A: PRE-tweak falloff config = still-current dragFalloff;
+                    // POST = the live packet. Captured BEFORE `dragFalloff =
+                    // live` so the re-grade entry's hooks restore config too.
+                    FalloffPacket prePkt  = dragFalloff;
+                    FalloffPacket postPkt = live;
                     dragFalloff = live;
                     buildVertexCacheIfNeeded();
                     applyAbsoluteFromOrigCpuOnly(vts);   // mutates mesh.vertices
                     Vec3[] after = mesh.vertices.dup;
                     // Empty idx → helper iterates the full vertex range (S1).
-                    wrap.recordFalloffRefireRotate("Falloff", anchor, after, null);
+                    wrap.recordFalloffRefireRotate("Falloff", anchor, after, null,
+                                                   prePkt, postPkt);
                     needsGpuUpdate = true;
                 }
             }
@@ -346,9 +353,35 @@ public:
         Vec3 propBefore = preEditPropDeg;
         Vec3 accAfter   = angleAccum;
         Vec3 propAfter  = propDeg;
+
+        // P-A blocker fix — UNIFORM hook family: compose the falloff CONFIG
+        // restore into this gesture's accumulator hooks. A transform run can be
+        // consolidated at DROP as [gesture, falloffRefire]; mergeRun keeps
+        // first.revert + last.apply. The refire entry carries config hooks, but
+        // without config here the merged first.revert (this gesture) would NOT
+        // restore the run-start config — leaving the falloff handle stranded at
+        // its post-tweak value after a post-drop Ctrl+Z (geometry reverts, config
+        // does not). So snapshot the config AT THIS gesture's commit (= run-start
+        // config for the first gesture in the run, since a falloff tweak only
+        // happens AFTER a gesture commit) and have BOTH hooks restore it. The
+        // gesture itself never changes the falloff config, so before==after here;
+        // the snapshot exists purely so the merged first.revert carries it.
+        // ABSOLUTE (assign), never delta — splices through mergeRun like the
+        // accums. Two INDEPENDENT stage mutations compose without clobber: the
+        // accum assignment is local field state, the config restore mutates the
+        // FalloffStage; neither reads the other.
+        FalloffPacket cfgSnap;
+        bool haveCfg = false;
+        if (auto fs = falloffStageForHooks()) { cfgSnap = fs.snapshotConfigToPacket(); haveCfg = true; }
         cmd.setHooks(
-            () { angleAccum = accAfter;  propDeg = propAfter;  },
-            () { angleAccum = accBefore; propDeg = propBefore; }
+            () {
+                angleAccum = accAfter;  propDeg = propAfter;
+                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+            },
+            () {
+                angleAccum = accBefore; propDeg = propBefore;
+                if (haveCfg) if (auto fs = falloffStageForHooks()) fs.restoreConfigFromPacket(cfgSnap);
+            }
         );
         recordCommit(cmd);
     }

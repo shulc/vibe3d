@@ -8,6 +8,7 @@ import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
 import toolpipe.packets : FalloffPacket, SymmetryPacket, SubjectPacket;
+import toolpipe.stages.falloff : FalloffStage;
 import falloff : evaluateFalloff;
 import falloff_handles : FalloffGizmo;
 import symmetry : applySymmetryMirror;
@@ -557,6 +558,29 @@ protected:
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return;
         ac.stageCurrentPinState();
+    }
+
+    /// The single FalloffStage (TaskCode.Wght) — source of truth for the
+    /// falloff CONFIG (type/shape/size/handle). Used by the R/S commitEdit
+    /// gesture-commit hooks (P-A blocker fix) to capture the RUN-START config
+    /// snapshot and compose a config-restore into the accumulator hooks, so
+    /// mergeRun's first.revert restores both the accumulators AND the run-start
+    /// falloff config. Mirrors the ACEN-stage accessors above.
+    ///
+    /// `final` (NON-virtual) and DISTINCTLY named — the XfrmTransformTool wrapper
+    /// keeps its OWN same-purpose `activeFalloffStage()`. An earlier attempt made
+    /// THIS the shared `public`/virtual `activeFalloffStage()` and dropped the
+    /// wrapper's copy; that introduced a vtable collision: a closure that
+    /// captured `this` and called `activeFalloffStage()` was dispatched through
+    /// the wrong slot and SEGV'd inside the Move commitEdit revert hook. Keeping
+    /// this `final` + uniquely named leaves the wrapper's virtual surface
+    /// untouched, so the R/S sub-tools resolve a direct (non-virtual) call here.
+    final FalloffStage falloffStageForHooks() const {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return null;
+        return cast(FalloffStage)
+               g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
     }
 
     /// Live falloff packet for rendering the viewport overlay. Walks
