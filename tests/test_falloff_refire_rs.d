@@ -71,6 +71,20 @@ void cmd(string line) {
         ~ r.toString);
 }
 
+// Drive a CONTINUOUS pipe scrub: a sequence of tool.pipe.attr writes that SHARE
+// one tweak generation (the headless analogue of a held falloff-handle / slider
+// drag). /api/script?interactive=true raises the app's formsInteractiveLatch on
+// the main thread for each line, suppressing the per-command generation bump, so
+// the re-grades REPLACE-coalesce into ONE in-session step (P-E). Without this,
+// each /api/command tool.pipe.attr is its OWN generation and APPENDS (discrete).
+void pipeScrub(string[] lines) {
+    string body_;
+    foreach (l; lines) body_ ~= l ~ "\n";
+    auto r = postJson("/api/script?interactive=true", body_);
+    assert(r["status"].str == "ok",
+        "interactive pipe scrub failed: " ~ r.toString);
+}
+
 long undoCount() {
     return getJson("/api/history")["undo"].array.length;
 }
@@ -1736,6 +1750,99 @@ unittest {
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "draining the run history reverts the move run to the cube");
+    cmd("tool.pipe.attr falloff type none");
+    drainHistory();
+}
+
+// ===========================================================================
+// (BUG-2 CONTINUOUS SCRUB CONFIG-RESTORE) An in-session Ctrl+Z of a CONTINUOUS
+// falloff scrub restores the RUN-START config, NOT the penultimate-frame value.
+//
+// This is the regression P-C/P-E introduced and BUG-2 fixes. A continuous
+// falloff-handle drag fires the re-grade EVERY frame and the frames REPLACE-
+// coalesce into ONE in-session entry (P-E shared generation). The pre-recompute
+// snapshot used to be re-read from `dragFalloff` every frame, but
+// captureFalloffForDrag clobbers `dragFalloff` with the live (just-tweaked)
+// packet on each frame — so the coalesced entry's PRE-tweak (revert) endpoint
+// ended up as the PENULTIMATE frame's value (e.g. size 3), not the run-start
+// value (size 1). An in-session Ctrl+Z then reverted geometry but left the
+// falloff CONFIG (and the viewport falloff viz) stranded at the next-to-last
+// scrub value. The fix snapshots the PRE-tweak config ONCE per re-fire window
+// (the same point refireAnchor is captured, when it is still run-start) and
+// reuses it for every frame's revert endpoint.
+//
+// Headless drive: /api/script?interactive=true raises the forms-interactive
+// latch so the THREE size writes (1→3→6→9) SHARE one tweak generation and
+// REPLACE-coalesce into ONE re-grade entry (the continuous path that a plain
+// /api/command stream cannot exercise — every command is its own generation).
+// We assert (1) the coalesce happened (inSession stays 2, not 4), (2) the live
+// size landed at the LAST scrub value (9), then (3) one in-session Ctrl+Z
+// reverts the live size all the way to the RUN-START value (1) — NOT the
+// penultimate (6). Pre-fix this asserted 6; post-fix it asserts 1.
+// ===========================================================================
+unittest {
+    establishCubeBaseline();
+    cmd("tool.set move");
+    configTightRadial();          // radial, size 1,1,1, centered at v6
+    settle();
+    long floor = undoCount();
+    assert(queryFalloffSizeX() == 1.0, "pre-condition: run-start falloff size is 1");
+
+    moveArrowGesture(floor + 1);
+    assert(undoCount() == floor + 1, "move gesture records one in-session step");
+    auto v0AfterG = vert(0);      // far corner, barely moved under the tight radius
+
+    // CONTINUOUS scrub: three same-generation widenings 1→3→6→9. The first
+    // re-grade APPENDS (its tail is the gesture, not a refire); the next two
+    // REPLACE (tail is the prior refire at the SAME generation). Net: ONE
+    // re-grade entry → inSession 2 (gesture + the one coalesced re-grade).
+    pipeScrub([
+        `tool.pipe.attr falloff size "3,3,3"`,
+        `tool.pipe.attr falloff size "6,6,6"`,
+        `tool.pipe.attr falloff size "9,9,9"`,
+    ]);
+    settle();
+    assert(inSessionCount() == 2,
+        "a CONTINUOUS scrub (shared generation) REPLACE-coalesces into ONE "
+        ~ "re-grade entry (gesture + 1 = 2 in-session), NOT one per frame; got "
+        ~ inSessionCount().to!string);
+    assert(undoCount() == floor + 2,
+        "the coalesced scrub added exactly ONE re-grade entry (floor+2); now="
+        ~ undoCount().to!string);
+    assert(queryFalloffSizeX() == 9.0,
+        "the scrub left the live falloff size at the LAST value (9); got "
+        ~ queryFalloffSizeX().to!string);
+    auto v0Regraded = vert(0);
+    assert(!vertNear(v0Regraded, v0AfterG),
+        "the scrub re-graded geometry at idle (contract A)");
+
+    // THE BUG-2 ASSERTION: one in-session Ctrl+Z restores the RUN-START config
+    // (size 1), not the penultimate frame (size 6). Geometry reverts to the
+    // post-gesture anchor in lockstep (OBJ-3 once-per-window anchor).
+    playAndWait(ctrlZ(50.0));
+    settle();
+    assert(vertNear(vert(0), v0AfterG),
+        "in-session Ctrl+Z reverts the scrub geometry to the post-gesture anchor; "
+        ~ "got (" ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
+        ~ vert(0)[2].to!string ~ ")");
+    assert(queryFalloffSizeX() == 1.0,
+        "BUG-2: in-session Ctrl+Z of a CONTINUOUS scrub restores the RUN-START "
+        ~ "falloff size (1), NOT the penultimate-frame value (6); got "
+        ~ queryFalloffSizeX().to!string);
+
+    // In-session redo re-applies BOTH: geometry re-graded AND config back to the
+    // LAST scrub value (9, the coalesced entry's POST endpoint).
+    playAndWait(ctrlShiftZ(70.0));
+    settle();
+    assert(vertNear(vert(0), v0Regraded),
+        "in-session redo re-applies the coalesced scrub geometry; got ("
+        ~ vert(0)[0].to!string ~ "," ~ vert(0)[1].to!string ~ ","
+        ~ vert(0)[2].to!string ~ ")");
+    assert(queryFalloffSizeX() == 9.0,
+        "in-session redo re-applies the coalesced scrub config to the LAST value "
+        ~ "(9, the POST endpoint); got " ~ queryFalloffSizeX().to!string);
+
+    cmd("tool.set move off");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
