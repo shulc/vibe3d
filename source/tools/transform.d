@@ -514,6 +514,46 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
+    // Display soft-pin hooks (BUG-1: Move gizmo settle, falloff-independent).
+    // The Move mouse-up records the settled gizmo pivot here so the recompute
+    // modes (Auto/None/Screen) keep the gizmo at the full-delta position instead
+    // of snapping to the WEIGHTED moving-set centroid under falloff. This is
+    // computeCenter-only and DOES NOT touch userPlaced / the relocate snapshot —
+    // it leaves the relocate boundary, cross-slot commit and element-pick paths
+    // exactly as they were (the whole point of a separate field). No-op when no
+    // ACEN stage is registered.
+    //
+    // PUBLIC for the wrapper→sub-tool reason (the XfrmTransformTool wrapper sets
+    // the soft pin from its moveSub's handler.center — a sibling instance, which
+    // D `protected` does not grant cross-instance access to). Mirrors
+    // restageActionCenterPin's public visibility.
+    public void notifyAcenSoftPlaced(Vec3 settled) {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.setSoftPlaced(settled);
+    }
+
+    // Clear the display soft-pin so the action center recomputes from the
+    // selection. Driven from the transform wrapper at the selection / mutation
+    // and ACEN-mode run boundaries — the same boundaries that invalidate the run
+    // baseline (where the moving-set centroid legitimately changes). No-op when
+    // no ACEN stage is registered. PUBLIC for the wrapper→sub-tool reason.
+    public void clearAcenSoftPlaced() {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.clearSoftPlaced();
+    }
+
     // Re-stage the CURRENT action-center pin as the in-session-cancel
     // baseline after a relocate-boundary commit has cleared the frozen
     // snapshot. Used by the element-falloff pick+haul boundary (Phase 1b):

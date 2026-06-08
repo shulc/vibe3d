@@ -1984,8 +1984,27 @@ void main(string[] args) {
                 buf.put("]");
             }
 
+            // Soft/user-placed pin introspection — read straight off the ACEN
+            // stage (the evaluated ActionCenterPacket does not carry the pin
+            // flags). Lets the soft-pin undo/relocate tests witness that an
+            // explicit relocate clears the display soft pin (userPlaced wins).
+            bool acIsUserPlaced = false;
+            bool acIsSoftPlaced = false;
+            {
+                import toolpipe.stage            : TaskCode;
+                import toolpipe.stages.actcenter : ActionCenterStage;
+                if (auto acs = cast(ActionCenterStage)
+                               g_pipeCtx.pipeline.findByTask(TaskCode.Acen)) {
+                    acIsUserPlaced = acs.isUserPlaced();
+                    acIsSoftPlaced = acs.isSoftPlaced();
+                }
+            }
+
             buf.put(`{"actionCenter":{"center":`);
             putVec3(acen.center);
+            buf.put(format(`,"isUserPlaced":%s,"isSoftPlaced":%s`,
+                           acIsUserPlaced ? "true" : "false",
+                           acIsSoftPlaced ? "true" : "false"));
             buf.put(format(`,"isAuto":%s,"type":%d,"clusterCenters":`,
                            acen.isAuto ? "true" : "false",
                            acen.type));

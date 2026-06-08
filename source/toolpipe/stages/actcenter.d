@@ -235,6 +235,8 @@ public:
         snapFrozen       = false;
         snapPlaced       = false;
         snapPlacedCenter = Vec3(0, 0, 0);
+        softPlaced       = false;
+        softPlacedCenter = Vec3(0, 0, 0);
         invalidateClusterCache();
         publishState();
     }
@@ -360,6 +362,9 @@ public:
     void resetAuto() {
         mode = Mode.Auto;
         userPlaced = false;
+        // Re-picking Auto re-follows the selection — drop any display settle.
+        softPlaced       = false;
+        softPlacedCenter = Vec3(0, 0, 0);
         publishState();
     }
 
@@ -384,6 +389,11 @@ public:
         }
         userPlacedCenter = worldHit;
         userPlaced       = true;
+        // An explicit click-relocate supersedes any display settle (userPlaced
+        // wins in computeCenter anyway; clear so the soft pin can't resurface if
+        // userPlaced is later cleared without a fresh settle).
+        softPlaced       = false;
+        softPlacedCenter = Vec3(0, 0, 0);
         publishState();
     }
 
@@ -416,6 +426,88 @@ public:
     private bool snapFrozen        = false;
     private bool snapPlaced        = false;
     private Vec3 snapPlacedCenter  = Vec3(0, 0, 0);
+
+    // ----- Display soft-pin (BUG-1: Move gizmo settle) ------------------------
+    //
+    // A Move gizmo drag must leave the gizmo at the FULL-delta settled pivot on
+    // mouse-up — matching the reference, where the pivot follows the whole drag
+    // delta and STAYS there. On mouse-up the recompute modes (Auto / None /
+    // Screen) recompute the pivot from `centroidWithGeometryFallback()`. WITHOUT
+    // falloff every vert moved by the full delta so that centroid already equals
+    // the settled gizmo position (no snap-back, soft pin unused — the wrapper
+    // leaves the no-falloff path byte-identical by not setting one). WITH falloff
+    // the fallback returns the WEIGHTED moving-set bbox-center, which snaps back
+    // toward the original pivot — the bug.
+    //
+    // The soft-pin records the settled pivot so the recompute modes return it
+    // instead of the weighted centroid. The MECHANISM is falloff-agnostic
+    // (computeCenter knows nothing about falloff); the wrapper only sets a soft
+    // pin in the falloff case, where the snap-back actually occurs. It is
+    // DELIBERATELY distinct from `userPlaced` / `snapPlaced`: a soft pin is a
+    // weaker, display-only sticky center that does NOT touch the relocate
+    // machinery (setUserPlaced / freeze / restore / stageCurrentPinState) — so the
+    // relocate boundary, cross-slot commit, and element-falloff pick behave
+    // EXACTLY as before. It is computeCenter()-only.
+    //
+    // Precedence in computeCenter (Auto / None / Screen): userPlaced (explicit
+    // click-relocate) wins over softPlaced (the settle), which wins over the
+    // weighted centroid fallback. An explicit relocate (setUserPlaced) therefore
+    // takes over from any soft pin.
+    //
+    // Lifetime: a soft pin from gesture-1's settle persists for gesture-2 of the
+    // SAME run (sticky — matches the reference's gizmo follow), but is CLEARED
+    // wherever the center should legitimately recompute: full reset(), resetAuto,
+    // an explicit setUserPlaced (userPlaced supersedes), a mode switch
+    // (applySetAttr "mode"), and — driven by the transform wrapper — a selection /
+    // mutation boundary and an ACEN-mode boundary. It is NOT read by the relocate-
+    // boundary detection, beginRunGesture / per-run baseline, or the falloff-
+    // element pick (all of which use userPlaced).
+    private bool softPlaced        = false;
+    private Vec3 softPlacedCenter  = Vec3(0, 0, 0);
+
+    /// Record the settled display pivot after a Move gizmo mouse-up so the
+    /// recompute modes (Auto / None / Screen) return it instead of the weighted
+    /// moving-set centroid (BUG-1). Display-only: does NOT touch userPlaced or any
+    /// relocate snapshot. publishState so the live gizmo follows immediately.
+    void setSoftPlaced(Vec3 settled) {
+        softPlaced       = true;
+        softPlacedCenter = settled;
+        publishState();
+    }
+
+    /// Drop the display soft-pin so the center recomputes from the selection
+    /// (the moving-set centroid). Called wherever a soft pin must be invalidated:
+    /// reset / mode-switch / explicit relocate / selection or ACEN-mode boundary.
+    /// No-op (besides a publish-free early return) when no soft pin is active.
+    void clearSoftPlaced() {
+        if (!softPlaced) return;
+        softPlaced       = false;
+        softPlacedCenter = Vec3(0, 0, 0);
+        publishState();
+    }
+
+    /// True iff a display soft-pin is active. (Used by tests / introspection;
+    /// computeCenter reads the field directly.)
+    bool isSoftPlaced() const { return softPlaced; }
+
+    /// The current soft-pin center (meaningful only when isSoftPlaced()). Exposed
+    /// so the transform wrapper can capture the gesture-START / gesture-END soft
+    /// state for the Move undo/redo hooks, mirroring currentPinCenter() for the
+    /// userPlaced pin.
+    Vec3 currentSoftCenter() const { return softPlacedCenter; }
+
+    /// Restore the display soft-pin to an explicit (placed, center) endpoint and
+    /// publish. Used by the wrapper's Move undo/redo hooks to carry the soft pin
+    /// in lockstep with the geometry: revert restores the gesture-START soft state
+    /// (typically cleared → the pivot recomputes to the reverted-geometry
+    /// centroid), apply restores the gesture-END (settled) soft pin. Independent
+    /// of restorePinState (userPlaced) — the two own disjoint state and compose in
+    /// one hook closure without clobber.
+    void restoreSoftPlaced(bool placed, Vec3 center) {
+        softPlaced       = placed;
+        softPlacedCenter = placed ? center : Vec3(0, 0, 0);
+        publishState();
+    }
 
     /// Freeze the currently-staged pre-relocate pin state as the cancel
     /// baseline for an opening edit session. Called once per session on the
@@ -535,6 +627,7 @@ private:
         final switch (mode) {
             case Mode.Auto:
                 if (userPlaced) return userPlacedCenter;
+                if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Select:
                 return selectionCentroid(/*sub*/ selectSubMode);
@@ -551,6 +644,7 @@ private:
                 // handled by AxisStage. The action-center POSITION
                 // tracks the selection like Auto does.
                 if (userPlaced) return userPlacedCenter;
+                if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Element:
                 // Click-pick (XfrmTransformTool.tryPickElement when
@@ -577,6 +671,7 @@ private:
                 // Auto / Screen), so the gizmo + transform pivot stay
                 // in sync after relocation.
                 if (userPlaced) return userPlacedCenter;
+                if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Border:
                 // Bbox center of selection-border verts — those on edges
@@ -1255,9 +1350,12 @@ private:
                 else if (value == "none")       m = Mode.None;
                 else return false;
                 // Switching mode (including Auto→Auto re-pick) clears the
-                // Auto-userPlaced sub-state, as a popup re-click does.
+                // Auto-userPlaced sub-state, as a popup re-click does, and the
+                // display settle (a new mode recomputes the center afresh).
                 mode = m;
-                userPlaced = false;
+                userPlaced       = false;
+                softPlaced       = false;
+                softPlacedCenter = Vec3(0, 0, 0);
                 return true;
             }
             case "cenX": case "cenY": case "cenZ": {
