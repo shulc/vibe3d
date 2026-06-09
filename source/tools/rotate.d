@@ -36,6 +36,14 @@ private:
     Vec3     dragStartDir;    // direction from center to click point in arc plane
     float    totalAngle = 0;       // accumulated raw angle during drag (radians)
     float    lastSnappedAngle = 0; // last snapped angle value (kept in sync for display)
+    // Absolute-angle drag state: the gesture angle is measured each frame as
+    // the signed angle from a FIXED grab reference to the cursor's current
+    // point on the rotation plane, never integrated frame-to-frame. This
+    // immunises the ring against the edge-on ray-plane singularity that
+    // otherwise flips the angle ~180° in a single frame and launches the model.
+    Vec3     dragRefDir;           // unit center→grab-point direction in the arc plane
+    float    dragRefRadius = 0;    // |grab point − center|; sets the grazing-reject scale
+    float    prevWrapped = 0;      // previous frame's wrapped [-π,π] angle (unwrap state)
     Vec3     viewDragAxis;    // camera forward captured at start of view-plane drag
     Vec3     dragAxisVec;     // axis vector for current drag (cached to avoid recomputation)
     Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
@@ -643,14 +651,20 @@ public:
 
         // Compute drag start direction in the arc plane.
         Vec3 hit;
+        prevWrapped = 0;
         if (rayPlaneIntersect(viewCamOrigin(), screenRay(e.x, e.y, cachedVp),
                               handler.center, dragAxisVec, hit)) {
             Vec3 d = hit - handler.center;
-            float dlen = sqrt(d.x*d.x + d.y*d.y + d.z*d.z) * 1.05f;
-            dragStartDir = dlen > 1e-6f ? d / dlen
-                                        : Vec3(0,0,0);
+            float draw = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+            dragStartDir = draw * 1.05f > 1e-6f ? d / (draw * 1.05f)
+                                                : Vec3(0,0,0);
+            // Fixed reference for the absolute-angle measurement (see fields).
+            dragRefDir    = draw > 1e-6f ? d / draw : Vec3(0,0,0);
+            dragRefRadius = draw;
         } else {
-            dragStartDir = Vec3(0,0,0);
+            dragStartDir  = Vec3(0,0,0);
+            dragRefDir    = Vec3(0,0,0);
+            dragRefRadius = 0;
         }
         return true;
     }
@@ -731,21 +745,42 @@ public:
 
         Vec3 center = handler.center;
 
+        // Absolute-angle drag: the gesture angle is measured each frame as the
+        // signed angle from the FIXED grab reference (dragRefDir) to the cursor's
+        // current point on the rotation plane — it is NOT integrated from
+        // frame-to-frame deltas. The
+        // old per-frame `atan2(prevDir, currDir)` accumulator was poisoned when
+        // the plane went near edge-on: the ray-plane hit raced past the horizon,
+        // the direction flipped ~180° in one frame, that ~π delta entered the
+        // accumulator permanently, and the model "flew away". Here a degenerate
+        // (off-plane / horizon-racing) frame is REJECTED and the last good angle
+        // is held instead. `angle` below stays the per-frame increment so the
+        // downstream snap / standalone-apply code is untouched.
         Vec3 camOrigin = viewCamOrigin();
-        Vec3 hitCurr, hitPrev;
-        if (!rayPlaneIntersect(camOrigin, screenRay(e.x,    e.y,    cachedVp), center, dragAxisVec, hitCurr) ||
-            !rayPlaneIntersect(camOrigin, screenRay(lastMX, lastMY, cachedVp), center, dragAxisVec, hitPrev))
+        Vec3 hitCurr;
+        if (dragRefRadius < 1e-6f ||
+            !rayPlaneIntersect(camOrigin, screenRay(e.x, e.y, cachedVp), center, dragAxisVec, hitCurr))
         { lastMX = e.x; lastMY = e.y; return true; }
 
-        Vec3 d1 = hitPrev - center;
         Vec3 d2 = hitCurr - center;
-        float l1 = sqrt(d1.x*d1.x + d1.y*d1.y + d1.z*d1.z);
         float l2 = sqrt(d2.x*d2.x + d2.y*d2.y + d2.z*d2.z);
-        if (l1 < 1e-6f || l2 < 1e-6f) { lastMX = e.x; lastMY = e.y; return true; }
-        d1 = d1 / l1;
+        // Grazing guard: near edge-on the hit shoots toward the horizon
+        // (l2 ≫ grab radius). Reject the frame rather than feed the singularity
+        // into the angle.
+        enum float grazeFactor = 64.0f;
+        if (l2 < 1e-6f || l2 > grazeFactor * dragRefRadius)
+        { lastMX = e.x; lastMY = e.y; return true; }
         d2 = d2 / l2;
-        Vec3  cr    = cross(d1, d2);
-        float angle = atan2(dot(cr, dragAxisVec), dot(d1, d2));
+
+        // Signed wrapped angle [-π, π] from the fixed reference to the current dir.
+        Vec3  cr       = cross(dragRefDir, d2);
+        float aWrapped = atan2(dot(cr, dragAxisVec), dot(dragRefDir, d2));
+        // Unwrap into a continuous total via the minimal signed step from the
+        // previous frame's wrapped value (handles passing through ±π).
+        float angle = aWrapped - prevWrapped;
+        if (angle >  PI) angle -= 2.0f * PI;
+        if (angle < -PI) angle += 2.0f * PI;
+        prevWrapped = aWrapped;
         totalAngle += angle;
 
         bool ctrlHeld = (SDL_GetModState() & KMOD_CTRL) != 0;
