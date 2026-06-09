@@ -40,6 +40,54 @@
 // + /api/play-events with the mandatory ~120ms settle, vec3 attrs double-quoted,
 // published values read off /api/toolpipe/eval (never the raw panel struct),
 // geometry off /api/model with count-keyed settle.
+//
+// ===========================================================================
+// P-F DEFINITION-OF-DONE COVERAGE MAP (Phase 5)
+// ---------------------------------------------------------------------------
+// Each P-F sub-claim + each prior opponent objection -> its verifying test.
+// No row is uncovered; this phase adds NO redundant test (the matrix is
+// satisfied by the per-bank run-absolute suites + this acen=local file).
+//
+//   CLAIM / OBJECTION                         VERIFYING TEST (case)
+//   ------------------------------------------------------------------------
+//   run-absolute across gestures — Move       test_pf_move_pin (b)
+//   run-absolute across gestures — Scale      test_run_absolute_scale (b)
+//   run-absolute across gestures — Rotate     test_run_absolute_rotate (b)
+//     (same-axis accumulation; BLOCKER-1)
+//   round-2 read!=write wall resolved         test_reevaluate (1b/2 absolute
+//     (single field; read==write==apply)        write) + test_pf_move_pin (a)
+//   bare-write absolute (Q3, all 3 banks)     test_reevaluate; test_pf_move_pin
+//                                               (a); test_run_absolute_scale (a);
+//                                               test_run_absolute_rotate (a)
+//   fresh-tool inert (hasLiveEval false)      test_reevaluate (Test 1)
+//   in-session Ctrl+Z steps ONE gesture       test_run_absolute_scale (c);
+//     (G8 per-gesture undo; redo restores)      test_run_absolute_rotate (d);
+//                                               test_pf_move_pin (undo case)
+//   drop consolidates run -> ONE entry        test_run_absolute_scale (a)
+//   relocate -> identity (G8)                 test_pf_move_pin; _scale (e);
+//                                               _rotate (f); THIS file (d);
+//                                               test_relocate_boundary* (x5)
+//   cross-bank hold (held bank survives)      test_run_absolute_scale (d);
+//                                               test_run_absolute_rotate (e)
+//   cross-bank GPU no double-apply            test_run_absolute_scale (d);
+//     (own-bank fast-path drop-out, MAJOR-4)    test_run_absolute_rotate (e)
+//   composeFor reads FULL field, no subtract  test_xfrm_fold_multibank
+//     (BLOCKER-1; held bank survives a refold)
+//   rotate Euler non-commute (BLOCKER-3)      test_run_absolute_rotate (c
+//     -> same-axis only; cross-axis re-bakes)   cross-axis re-bake)
+//   rotate geometry matrix unchanged          test_rotate_xfrm_reference
+//   uniform hook across gesture + refire      test_falloff_refire_rs;
+//     (MAJOR-5; in-session undo after refire     test_refire
+//      restores field + geometry together)
+//   M4 reset-site list (11 sites, resetRun)   THIS file (d) + _scale/_rotate (e)
+//                                               + test_relocate_boundary* (x5)
+//   M5 multi-cluster display scope            THIS file (b) — display = gizmo
+//     (display = gizmo-frame, NOT per-cluster)   frame, single-frame == geometry
+//   M6 frozen-frame capture ordering /        THIS file (a) single-frame; (c)
+//     SDK-#3 frozen frame no drift              acen=local byte-stable run-frame
+//   forms panel binds same field/ids          test_forms_* (x4)
+//     (no repoint, no mirror member)
+// ===========================================================================
 
 import std.net.curl;
 import std.json;
@@ -157,17 +205,14 @@ RunFrame publishedRunFrame() {
     return rf;
 }
 
-// Cluster info (per-vertex cluster id + per-cluster signed local axes) off the
-// eval. The divergence cases drive the gizmo's +Y ("up") arrow: under acen=local
-// each cluster moves along its OWN clusterUp[cid], which for the asymmetric
-// 3-poly selection is +Z for one cluster and -Z for the other (opposite world
-// directions, SAME basis-local scalar). The +Y arrow projects vertically on the
-// locked camera (a clean synthetic grab), unlike the near-degenerate +Z/fwd arrow
-// that points almost straight at the eye.
+// Cluster info (per-vertex cluster id + per-cluster signed fwd) off the eval. The
+// divergence cases drive the gizmo's blue Z (fwd) handle via the committed local
+// drag log: under acen=local each cluster moves along its OWN clusterFwd[cid],
+// which for the asymmetric 3-poly selection is -Y for one cluster and +Y for the
+// other (opposite world directions, SAME basis-local scalar).
 struct ClusterInfo {
     Vec3[] centers;
     Vec3[] fwd;     // signed snapped face normal per cluster (axis index 2)
-    Vec3[] up;      // signed local up per cluster (axis index 1; the Y handle)
     int[]  clusterOf;
 }
 ClusterInfo readClusters() {
@@ -185,11 +230,6 @@ ClusterInfo readClusters() {
         ci.fwd ~= Vec3(cast(float)a[0].floating, cast(float)a[1].floating,
                        cast(float)a[2].floating);
     }
-    foreach (f; j["axis"]["clusterUp"].array) {
-        auto a = f.array;
-        ci.up ~= Vec3(cast(float)a[0].floating, cast(float)a[1].floating,
-                      cast(float)a[2].floating);
-    }
     return ci;
 }
 
@@ -198,10 +238,10 @@ ClusterInfo readClusters() {
 // ---------------------------------------------------------------------------
 // Grab pixel + screen-space direction for the gizmo arrow along the world-space
 // `axisDir` (the gizmo renders along the SHARED axis frame, which under acen=auto
-// and acen=local with a world-aligned cube is world-axis-aligned: right=+X,
-// up=+Y, fwd=+Z). Grabbing the `fwd` (+Z) arrow drives basis index 2; under
-// acen=local each cluster then moves along its OWN clusterFwd[cid] — opposite ±Y
-// for the asymmetric 3-poly selection (the divergence the M5 scope test needs).
+// with a world-aligned cube is world-axis-aligned: right=+X, up=+Y, fwd=+Z). Used
+// by the SINGLE-FRAME case (a), which grabs the +X arrow at the origin pivot. The
+// acen=local divergence cases instead replay the committed Z-handle log
+// (localFwdGesture), whose low blended pivot keeps the fwd handle clear.
 void arrowGrabPx(Vec3 pivot, Vec3 axisDir, ref Viewport vp,
                  out int gx, out int gy, out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
