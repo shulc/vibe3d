@@ -35,7 +35,8 @@
 //
 //   (f) RELOCATE -> RZ resets to 0 (G8 relocate->0, via resetRun()).
 //
-// Discipline: NO selection drain after reset; drainHistory BEFORE reset; gizmo
+// Discipline: NO selection drain after reset; hermetic baseline via reset +
+// history.clear (never drainHistory after /api/reset, which is undoable); gizmo
 // gestures via drag_helpers.buildDragLog + /api/play-events with the mandatory
 // ~120ms settle; vec3 attrs double-quoted; published values read off
 // /api/toolpipe/eval (never the raw panel struct); geometry off /api/model with
@@ -193,13 +194,19 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        drainHistory();            // BEFORE the reset (/api/reset is undoable)
-        postJson("/api/reset", "");
-        drainHistory();            // AFTER the reset
-        if (cubePristine()) return;
+        // Do NOT drainHistory() after /api/reset: SceneReset is itself undoable
+        // and its revert() restores the PRE-reset (prior test's dirty) mesh, so
+        // a drain-after-reset can leave a standing entry that reverts geometry
+        // to a stale state (the -j1 cross-test-bleed flake). history.clear is a
+        // SideEffect command: it wipes BOTH stacks WITHOUT touching the mesh, so
+        // the cube stays pristine AND undo=0.
+        postJson("/api/reset", "");                 // cube
+        postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
+        if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
+    postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
