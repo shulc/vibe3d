@@ -354,9 +354,20 @@ public:
     // sub-tool activation + wrapperRef wiring stays in activate().
     protected override void resetTransientState() {
         super.resetTransientState();
-        headlessTranslate         = Vec3(0, 0, 0);
-        headlessRotate            = Vec3(0, 0, 0);
-        headlessScale             = Vec3(1, 1, 1);
+        // P-F Phase 3 — display-field preservation on the resync-after-undo path.
+        // resetTransientState() is shared by activate() (brand-new tool → MUST
+        // zero the run-absolute display fields) and resyncSession() (after an
+        // in-session Ctrl+Z/Y → must NOT zero them: the per-gesture revert/apply
+        // hooks already restored the field to the reverted-to step's run total
+        // during history.undo(), which runs BEFORE this). resyncSession() sets
+        // resyncPreserveDisplayFields so this path keeps the hook-restored value
+        // (and resetRun() below skips its own hadRun field-zero for the same
+        // reason). activate() leaves the flag false → identical zeroing as before.
+        if (!resyncPreserveDisplayFields) {
+            headlessTranslate     = Vec3(0, 0, 0);
+            headlessRotate        = Vec3(0, 0, 0);
+            headlessScale         = Vec3(1, 1, 1);
+        }
         activeDrag                = null;
         dragBaseline.length       = 0;
         resetRun();                          // apply-path Phase 2: fresh run (+ P-F frozen frame)
@@ -1292,22 +1303,34 @@ public:
         // bare-write boundary leaves the buffer == mesh == next baseline.
         runGpuBufferDirty = false;
         if (hadRun) {
-            headlessTranslate        = Vec3(0, 0, 0);
+            // P-F Phase 3 — on the resync-after-undo path the per-gesture revert/
+            // apply hooks already restored each display field to the reverted-to
+            // step's run total (during history.undo(), which runs before resync),
+            // so this run-boundary field-zero must be SUPPRESSED there or it would
+            // clobber that value (panel would snap back to identity while the
+            // geometry sits at gesture-1's pose). Every OTHER resetRun() caller
+            // (relocate / selection-change / mode-change / tool-drop / cancel)
+            // leaves resyncPreserveDisplayFields == false and zeroes exactly as
+            // before — preserving the G8 relocate->identity contract. The gesture-
+            // start bookkeeping is always cleared (re-primed at the next gesture's
+            // begin*DragSession), only the published display field is preserved.
+            if (!resyncPreserveDisplayFields) {
+                headlessTranslate        = Vec3(0, 0, 0);
+                // P-F Phase 3a — Scale is run-absolute: a geometry-run boundary
+                // that ended an ACTIVE run resets the SCALE display field to
+                // identity with the geometry baseline (G8 relocate->1).
+                headlessScale            = Vec3(1, 1, 1);
+                // P-F Phase 3b — Rotate is run-absolute (same-axis): a geometry-
+                // run boundary that ended an ACTIVE run resets the ROTATE display
+                // field to identity with the geometry baseline (G8 relocate->0).
+                headlessRotate           = Vec3(0, 0, 0);
+            }
             moveGestureStartKnown    = false;
             moveGestureStartSnapshot = Vec3(0, 0, 0);
-            // P-F Phase 3a — Scale is run-absolute: a geometry-run boundary that
-            // ended an ACTIVE run resets the SCALE display field to identity with
-            // the geometry baseline (G8 relocate->1). Same active-run gate as Move.
-            headlessScale            = Vec3(1, 1, 1);
             scaleGestureStartKnown    = false;
             scaleGestureStartSnapshot = Vec3(1, 1, 1);
-            // P-F Phase 3b — Rotate is run-absolute (same-axis): a geometry-run
-            // boundary that ended an ACTIVE run resets the ROTATE display field to
-            // identity with the geometry baseline (G8 relocate->0). Same active-run
-            // gate as Move/Scale. The view-ring run flag also clears so the next
-            // run's first principal gesture does not see a stale post-view-ring
-            // re-bake demand.
-            headlessRotate             = Vec3(0, 0, 0);
+            // The view-ring run flag clears so the next run's first principal
+            // gesture does not see a stale post-view-ring re-bake demand.
             rotateGestureStartKnown    = false;
             rotateGestureStartSnapshot = Vec3(0, 0, 0);
             runPriorRotateWasViewRing  = false;
@@ -3316,13 +3339,42 @@ public:
         // tool is active app.d invalidates them every frame (app.d :4574).
     }
 
-    // resyncSession() is inherited from TransformTool: it runs the shared
-    // resetTransientState() (overridden above to also clear the wrapper's
-    // headless-TRS + per-drag fast-path state), so the gizmo + vertex cache
-    // recompute from the now-current mesh on the next update() after a
-    // committed history pop. No wrapper-specific override is needed.
+    // resyncSession() re-baselines the still-live tool after a committed history
+    // pop (in-session Ctrl+Z / Ctrl+Y) moved geometry beneath it. It runs the
+    // shared resetTransientState() (overridden above to also clear the wrapper's
+    // per-drag fast-path state + gizmo/vertex cache) so they recompute from the
+    // now-current mesh on the next update().
+    //
+    // P-F Phase 3 — the ONE difference from activate()'s reset: the run-absolute
+    // DISPLAY fields (headlessTranslate/Rotate/Scale) must be PRESERVED here, not
+    // zeroed. history.undo()/redo() runs BEFORE this and fires the per-gesture
+    // revert/apply hooks (moveAbsStart/End at :3050/:3031, rotAbsStart/End at
+    // :2116/:2117, scaleAbsStart/End at :2173/:2174), which set each field to the
+    // reverted-to step's run total. Zeroing here (as resetTransientState() and
+    // resetRun() do on every non-resync path) would clobber that, snapping the
+    // panel to identity while the geometry sits at the reverted-to pose. The flag
+    // gates BOTH zeroing sites (resetTransientState's field-zero AND resetRun's
+    // hadRun field-zero); scope(exit) restores it so no other path is affected.
+    //
+    // No-hook case (an in-session undo/redo of a NON-transform command, e.g. an
+    // extrude, with the transform tool still live): no transform field hook fired,
+    // so the fields keep their current value — correct, because a non-transform
+    // pop does not change the transform tool's geometry contribution, and the
+    // field is re-primed at the next gesture's begin*DragSession if ever stale.
+    override void resyncSession() {
+        resyncPreserveDisplayFields = true;
+        scope(exit) resyncPreserveDisplayFields = false;
+        resetTransientState();
+    }
 
 private:
+    // P-F Phase 3 — set ONLY for the duration of resyncSession()'s
+    // resetTransientState() call; suppresses the run-absolute display-field
+    // zeroing in resetTransientState() and resetRun() so an in-session undo/redo
+    // keeps the hook-restored field. False everywhere else (activate(), relocate,
+    // selection/mode change, tool drop, cancel) → unchanged identity-zeroing.
+    bool resyncPreserveDisplayFields = false;
+
     // Element-falloff click-pick. Reads the GPU-resolved hover state
     // (g_hoveredVertex/Edge/Face — published by app.d after each
     // render frame) and pushes the picked element's anchor point
