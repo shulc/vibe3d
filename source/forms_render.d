@@ -319,7 +319,7 @@ class FormsPanel {
         const h = rc.param.hints;
         float lo   = h.hasMinF ? h.minF : 0.0f;
         float hi   = h.hasMaxF ? h.maxF : 0.0f;
-        float step = h.hasStep ? h.step_ : 0.001f;
+        float step = h.hasStep ? h.step_ : (h.isAngle ? 0.1f : 0.001f);
         string fmt = h.hasFmt  ? h.fmt   : "%.3f";
 
         bool changed;

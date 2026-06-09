@@ -34,9 +34,9 @@ private Param[] transformLikeParams(
         Param.float_("TX", "Translate X", &tx, 0.0f),
         Param.float_("TY", "Translate Y", &ty, 0.0f),
         Param.float_("TZ", "Translate Z", &tz, 0.0f),
-        Param.float_("RX", "Rotate X",    &rx, 0.0f),
-        Param.float_("RY", "Rotate Y",    &ry, 0.0f),
-        Param.float_("RZ", "Rotate Z",    &rz, 0.0f),
+        Param.float_("RX", "Rotate X",    &rx, 0.0f).angle(),
+        Param.float_("RY", "Rotate Y",    &ry, 0.0f).angle(),
+        Param.float_("RZ", "Rotate Z",    &rz, 0.0f).angle(),
         Param.float_("SX", "Scale X",     &sx, 1.0f),
         Param.float_("SY", "Scale Y",     &sy, 1.0f),
         Param.float_("SZ", "Scale Z",     &sz, 1.0f),
@@ -115,6 +115,17 @@ unittest { // the whole transform form resolves: every value row binds to a real
     import params : paramToJson;
     import std.math : fabs;
     assert(fabs(paramToJson(txRc.param).floating - 1.5) < 1e-6);
+
+    // Angle hint propagates through the SAME resolveControl path forms_render
+    // uses to pick the drag step: rotate (RX) carries isAngle (→ 0.1/px default
+    // step), while a positional float (TX) does not (→ 0.001/px). The resulting
+    // ImGui drag SPEED is not headlessly observable, so we assert the hint that
+    // drives it; the 0.1°/px feel itself is manual-verify.
+    assert(txRc.param.hints.isAngle == false, "TX must NOT be an angle param");
+    auto rxRc = resolveControl(
+        Row.makeControl("tool.attr xfrm.transform RX ?"), prov);
+    assert(rxRc.found);
+    assert(rxRc.param.hints.isAngle, "RX must carry the angle hint");
 }
 
 unittest { // the Action Center choice row is fire-only — entries carry actr.* cmds
