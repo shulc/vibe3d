@@ -232,6 +232,33 @@ public:
     private bool scaleGestureStartKnown     = false;
     private Vec3 scaleGestureStartSnapshot  = Vec3(1, 1, 1);
 
+    // P-F Phase 3b — per-GESTURE run-absolute Rotate snapshot, the Rotate twin of
+    // moveGestureStartSnapshot / scaleGestureStartSnapshot. Rotations do NOT
+    // commute, so `headlessRotate` is run-absolute ONLY across REPEATED SAME-AXIS
+    // principal gestures: the producer emits the WITHIN-GESTURE angle (totalAngle,
+    // reset to 0 at every drag start), so a same-axis repeat ADDS this gesture's
+    // angle to the run total captured at this gesture's mouse-down
+    // (rotateGestureStartSnapshot) — single-axis Euler add is EXACT (same-axis
+    // rotations commute/add). A CROSS-axis gesture or any gesture after a view-ring
+    // forces a re-bake (the held rotation is baked into dragBaseline, the field
+    // zeros) so the new axis starts fresh against the baked pose — no fixed-order
+    // Euler corruption, graceful geometry-carried fallback. Captured at every Rotate
+    // mouse-down (beginRotateDragSession), gated by rotateGestureStartKnown so a
+    // commit with no preceding mouse-down (a relocate-boundary no-op cmd) falls back
+    // to inert (start == end ⇒ the hook does not move the field on undo). DISTINCT
+    // from the sub-tool accumulator anchor (angleAccum) — undo-only, never a fold
+    // input (composeFor reads headlessRotate directly).
+    private bool rotateGestureStartKnown    = false;
+    private Vec3 rotateGestureStartSnapshot = Vec3(0, 0, 0);
+
+    // P-F Phase 3b — did the PRIOR rotate gesture in this run drive the view-ring
+    // (ax==3)? The view-ring angle is a transient applyTRS axis-angle param, NEVER
+    // stored in the Euler field, so a principal gesture AFTER a view-ring must
+    // re-bake (the held view-ring rotation lives only in the baked geometry). Set
+    // true on a view-ring mouse-down, false on a principal mouse-down, cleared by
+    // resetRun at every run boundary.
+    private bool runPriorRotateWasViewRing  = false;
+
     // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
     // and consumed by commitEdit ONLY when a real edit command was built. A
     // zero-motion off-gizmo relocate CLICK opens a moveSub session (so the mouse-up
@@ -1274,9 +1301,17 @@ public:
             headlessScale            = Vec3(1, 1, 1);
             scaleGestureStartKnown    = false;
             scaleGestureStartSnapshot = Vec3(1, 1, 1);
+            // P-F Phase 3b — Rotate is run-absolute (same-axis): a geometry-run
+            // boundary that ended an ACTIVE run resets the ROTATE display field to
+            // identity with the geometry baseline (G8 relocate->0). Same active-run
+            // gate as Move/Scale. The view-ring run flag also clears so the next
+            // run's first principal gesture does not see a stale post-view-ring
+            // re-bake demand.
+            headlessRotate             = Vec3(0, 0, 0);
+            rotateGestureStartKnown    = false;
+            rotateGestureStartSnapshot = Vec3(0, 0, 0);
+            runPriorRotateWasViewRing  = false;
         }
-        // (Phase 3b adds headlessRotate + its gesture anchor here, under the same
-        // active-run gate.)
     }
 
     private bool bankIsNonIdentity(DragBank bank) {
@@ -1340,26 +1375,75 @@ public:
         // `bankIsNonIdentity` no longer forces a re-bake for those banks (that was
         // the pre-(c) per-gesture re-baseline-and-zero).
         //
-        // Rotate keeps the legacy trigger (`bankIsNonIdentity`) until Phase 3b
-        // migrates it to run-absolute (Euler does not commute — needs explicit
-        // re-bake transitions). The held-bank cross-bank reuse (case B) is
-        // unchanged.
+        // P-F Phase 3b — Rotate is RUN-ABSOLUTE for REPEATED SAME-AXIS principal
+        // gestures: the field accumulates that one axis and stays byte-frozen for
+        // the run, exactly like Move/Scale (no re-bake, no resetBankAttr). Rotations
+        // do NOT commute, so the field can hold only a SINGLE axis run-absolutely —
+        // a CROSS-axis gesture (the drain is about to write a DIFFERENT component
+        // than the held non-zero one) OR a gesture after a VIEW-RING (whose angle
+        // never enters the Euler field) MUST re-bake: the held rotation bakes into
+        // dragBaseline via the current mesh and the field zeros, so the new axis
+        // starts fresh against the baked pose (sequential geometry, no fixed-order
+        // Euler corruption — today's geometry-carried fallback for those
+        // transitions). The view-ring gesture itself always re-bakes for the same
+        // reason. `rotateRunNeedsRebake` reads `rotateSub.dragAxis` — the SETTLED
+        // drag axis (rotateSub.onMouseButtonDown ran before this call, per the
+        // 1003/1011 dispatch contract), NOT the not-yet-published pendingRotateAxis.
         bool rebake = !runBaselineValid
-                   || (bank == DragBank.Rotate && bankIsNonIdentity(bank));
+                   || (bank == DragBank.Rotate && rotateRunNeedsRebake());
         if (rebake) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
             resetGestureAttrs();
             runBaselineValid = true;
-        } else {
-            // Reuse the held baseline; held banks stay. For Move and Scale
-            // (run-absolute) do NOT reset the bank attr — the field carries the
-            // run total across gestures. For a cross-bank Rotate gesture into a
-            // bank with no held value, resetBankAttr is a no-op (already identity).
-            if (bank == DragBank.Rotate)
-                resetBankAttr(bank);
         }
+        // else: reuse the held baseline; held banks stay. ALL THREE banks are now
+        // run-absolute on the frozen (no-rebake) path, so NONE reset its bank attr
+        // here — the field carries the run total across same-bank gestures (Move/
+        // Scale per-axis-commutative; Rotate same-axis-only, with cross-axis/
+        // view-ring forced onto the REBAKE branch above where resetGestureAttrs
+        // zeroes the field). P-F Phase 3b removed the old `resetBankAttr(Rotate)`
+        // here: it was a no-op only while Rotate ALWAYS re-baked on a non-identity
+        // field; now a same-axis rotate-after-rotate takes this frozen branch with a
+        // HELD field that MUST survive (zeroing it here clobbered the run total,
+        // collapsing the second same-axis gesture to a no-op).
+    }
+
+    // P-F Phase 3b — does this Rotate gesture force a run re-bake? Same-axis
+    // principal repeat (with no intervening view-ring) takes the Move/Scale frozen
+    // branch (returns false). A re-bake (returns true) is forced when:
+    //   - this gesture drives the VIEW-RING (dragAxis == 3): its angle is a
+    //     transient axis-angle param, never stored in the Euler field, so it must
+    //     bake the held rotation into geometry and start clean; OR
+    //   - the PRIOR gesture in this run was a view-ring
+    //     (`runPriorRotateWasViewRing`): the held view-ring rotation lives only in
+    //     the baked geometry, so the incoming principal gesture must re-bake to
+    //     compose on top of it; OR
+    //   - CROSS-axis: the held `headlessRotate` carries a non-zero component on an
+    //     axis DIFFERENT from the principal axis this gesture is about to write
+    //     (dragAxis 0/1/2 → x/y/z). Re-baking bakes the held axis into geometry
+    //     and zeros the field so the new axis starts fresh against the baked pose
+    //     (the held rotation is PRESERVED in the re-baked baseline, not lost — and
+    //     not doubled, because the field is zeroed by the re-bake).
+    // The SETTLED drag axis is `rotateSub.dragAxis` (settled by
+    // rotateSub.onMouseButtonDown before this runs); pendingRotateAxis is not yet
+    // published at mouse-down.
+    private bool rotateRunNeedsRebake() {
+        immutable int ax = rotateSub.dragAxis;
+        // View-ring this gesture, or any gesture after a view-ring → always re-bake.
+        if (ax == 3) return true;
+        if (runPriorRotateWasViewRing) return true;
+        // Principal gesture: re-bake only if the held field carries a non-zero
+        // component on a DIFFERENT axis than this one (cross-axis). Same-axis (or
+        // an identity field) accumulates run-absolutely → no re-bake.
+        immutable bool hx = headlessRotate.x != 0;
+        immutable bool hy = headlessRotate.y != 0;
+        immutable bool hz = headlessRotate.z != 0;
+        if (ax == 0) return hy || hz;   // dragging X: any held Y/Z is cross-axis
+        if (ax == 1) return hx || hz;   // dragging Y: any held X/Z is cross-axis
+        if (ax == 2) return hx || hy;   // dragging Z: any held X/Y is cross-axis
+        return bankIsNonIdentity(DragBank.Rotate);   // defensive (ax<0): legacy
     }
 
     // Capture the per-drag state that `applyTRS` and the fast-path
@@ -1469,11 +1553,28 @@ public:
         // session deliberately stays on `rotateSub` (MS-5 decision) — keeping
         // it there avoids the cross-instance commit problem entirely.
 
-        // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
+        // Run-scoped baseline + held-attr discipline (apply-path Phase 2/3b): a
         // cross-bank rotate (e.g. after a held move) reuses the run baseline +
         // resets ONLY headlessRotate, so the held translate survives into the
-        // composed fold; a rotate-after-rotate re-baselines (same-bank repeat).
+        // composed fold. For Rotate (Phase 3b, run-absolute same-axis-only) a
+        // SAME-AXIS principal repeat keeps the frozen baseline + accumulates the
+        // field; a CROSS-axis / view-ring transition re-bakes (rotateRunNeedsRebake
+        // reads rotateSub.dragAxis, settled above). beginRunGesture MUST run BEFORE
+        // the view-ring flag is updated below so it sees the PRIOR gesture's value.
         beginRunGesture(DragBank.Rotate);
+
+        // P-F Phase 3b — capture THIS gesture's run-absolute START angle (the run
+        // total before this gesture's drain). AFTER beginRunGesture so a fresh run
+        // or a re-baked transition (just zeroed) snapshots 0 and a same-axis repeat
+        // snapshots the held run-total angle. The Rotate commit hook restores
+        // pre/post of headlessRotate from this. DISTINCT from the sub-tool
+        // accumulator anchor (angleAccum) — undo-only, never a fold input.
+        rotateGestureStartSnapshot = headlessRotate;
+        rotateGestureStartKnown    = true;
+        // Track whether THIS gesture is a view-ring, for the NEXT gesture's
+        // post-view-ring re-bake decision. Set AFTER beginRunGesture consumed the
+        // prior value above.
+        runPriorRotateWasViewRing  = (rotateSub.dragAxis == 3);
 
         // Ring index: 0/1/2 = principal (Euler slot), 3 = view-ring (axis-angle
         // slot). Both are wrapper-owned now; clamp anything else to -1
@@ -1655,17 +1756,26 @@ public:
                 if (ax >= 0 && ax <= 2) {
                     import std.math : PI;
                     float deg = ang * 180.0f / cast(float)PI;
-                    // Absolute-from-baseline for THIS bank only (apply-path
-                    // Phase 2): set the dragged Euler axis; the OTHER rotate
-                    // axes were zeroed once by beginRunGesture at drag start
-                    // (S1). The held T/S are NOT zeroed — they compose into the
-                    // fold via the preset flags. Pre-Phase-2 this drain
-                    // force-zeroed T/S so single-bank applyTRSForBank(Rotate)
-                    // saw only the rotate.
+                    // P-F Phase 3b — headlessRotate is RUN-ABSOLUTE for repeated
+                    // SAME-AXIS principal gestures. The producer's `ang`
+                    // (pendingRotateAngle = totalAngle) is the WITHIN-GESTURE angle
+                    // only (totalAngle resets to 0 at every drag start, rotate.d
+                    // ~601/695), so the drain ADDS it to the run total captured at
+                    // this gesture's mouse-down (rotateGestureStartSnapshot) — a
+                    // single-axis Euler add is EXACT (same-axis rotations
+                    // commute/add). On a CROSS-axis / view-ring transition
+                    // beginRunGesture re-baked + zeroed the field, so the snapshot is
+                    // 0 ⇒ the new axis starts fresh against the baked pose (no double,
+                    // no loss). The OTHER Euler axes are zeroed (a same-axis run holds
+                    // only ONE axis; a cross-axis gesture re-baked the others into
+                    // geometry). composeFor (the applyTRS rotate build) reads this
+                    // FULL run-absolute headlessRotate against the FROZEN dragBaseline
+                    // — no subtract. The held T/S are NOT zeroed — they compose into
+                    // the fold via the preset flags.
                     headlessRotate = Vec3(0, 0, 0);
-                    if      (ax == 0) headlessRotate.x = deg;
-                    else if (ax == 1) headlessRotate.y = deg;
-                    else              headlessRotate.z = deg;
+                    if      (ax == 0) headlessRotate.x = rotateGestureStartSnapshot.x + deg;
+                    else if (ax == 1) headlessRotate.y = rotateGestureStartSnapshot.y + deg;
+                    else              headlessRotate.z = rotateGestureStartSnapshot.z + deg;
 
                     // CPU is rebuilt from the run baseline EVERY frame so it
                     // is never stale at mouseUp (round-1/3 B3; landed-move
@@ -1673,7 +1783,17 @@ public:
                     // vertex re-upload — the GPU keeps the baseline buffer and
                     // u_model = wrapAboutPivot(fold) bridges the rotation.
                     applyTRS(dragBaseline);
-                    if (rotDragFastPath) {
+                    // P-F Phase 3b (MAJOR-4) — the own-bank fast-path
+                    // `wrapAboutPivot(lastFoldMatrix) · buffer` is valid ONLY while
+                    // the GPU buffer still holds the FROZEN run baseline
+                    // (lastFoldMatrix is built from the FULL run-absolute
+                    // headlessRotate against that baseline). Once a prior committed
+                    // gesture in this run uploaded the buffer (`runGpuBufferDirty`),
+                    // buffer ≠ frozen baseline and the fast-path would DOUBLE-APPLY —
+                    // drop to a CPU re-upload (mirrors Move 1626 / Scale). The
+                    // single-Rotate common path (fresh run, dirty == false) is
+                    // untouched.
+                    if (rotDragFastPath && !runGpuBufferDirty) {
                         // MS-4.5 — reuse the matrix applyTRS's fold just built
                         // (wrapped about its pivot) rather than rebuilding a
                         // parallel about-pivot rotation. Whole-mesh/no-falloff
@@ -1695,7 +1815,11 @@ public:
                     Vec3  viewAxisLocal = rotateSub.pendingRotateViewAxis;
                     float viewDegLocal  = deg;
                     applyTRS(dragBaseline, viewAxisLocal, viewDegLocal);
-                    if (rotDragFastPath) {
+                    // P-F Phase 3b (MAJOR-4) — same own-bank buffer-vs-baseline
+                    // drop-out as the principal path: once a prior committed gesture
+                    // re-uploaded the buffer (`runGpuBufferDirty`), the view-ring
+                    // fast-path would double-apply the held transform — drop to CPU.
+                    if (rotDragFastPath && !runGpuBufferDirty) {
                         // MS-4.5 — reuse the fold's composed matrix (view-ring
                         // rotation included) wrapped about its pivot.
                         gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
@@ -1967,7 +2091,36 @@ public:
             // mouse-up commit above. Committing here also CLOSES the rotate
             // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
             // now pops one gesture rather than cancelling the whole open run.
+            //
+            // P-F Phase 3b (MAJOR-5) — uniform field-snapshot undo hook (the Rotate
+            // twin of the Scale hook below / the Move hook). The gesture-START is
+            // THIS gesture's run-absolute snapshot (captured at rotate mouse-down,
+            // rotateGestureStartSnapshot); the END is the current run-total angle
+            // (headlessRotate). Splice them onto the rotateSub gesture entry through
+            // the wrapper-field hook pair so an in-session Ctrl+Z restores the panel
+            // RX/RY/RZ to the run total BEFORE this gesture (mergeRun
+            // first.revert/last.apply splices to run-START / run-END at the drop),
+            // and redo restores the post-gesture run total. Gated by
+            // rotateGestureStartKnown so a commit with no preceding mouse-down leaves
+            // start == end (inert). The SAME pre/post is recorded IDENTICALLY in
+            // recordPipeRefire so a snap/falloff mid-run refire does not strand the
+            // field. DISJOINT wrapper field (only headlessRotate). On a cross-axis /
+            // view-ring re-bake the snapshot was 0 (re-bake zeroed the field), so the
+            // hook restores the field to 0 for the new-axis run-segment — consistent
+            // with the geometry baseline (the prior axis is carried in geometry).
+            bool rotAbsKnown = rotateGestureStartKnown;
+            Vec3 rotAbsStart = rotateGestureStartSnapshot;
+            Vec3 rotAbsEnd   = headlessRotate;
+            rotateGestureStartKnown = false;
+            if (!rotAbsKnown) rotAbsStart = rotAbsEnd;   // inert
+            rotateSub.wrapperFieldApplyHook  = () { headlessRotate = rotAbsEnd;   };
+            rotateSub.wrapperFieldRevertHook = () { headlessRotate = rotAbsStart; };
             rotateSub.commitGesture();
+            // Clear the wrapper-field hooks so a later sub-tool commit with no
+            // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
+            // does not re-fire this gesture's stale snapshot.
+            rotateSub.wrapperFieldApplyHook  = null;
+            rotateSub.wrapperFieldRevertHook = null;
 
             // In-session falloff re-grade — staleness stamp + window reset
             // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
@@ -3858,10 +4011,12 @@ private:
         // refire entry is merged with the gesture entries, the field endpoints
         // splice coherently because every entry in the run carries the field hook.
         // DISJOINT from the pipe-config restores. (Move's headlessTranslate is
-        // included here too — closing the latent Phase-2 gap; Rotate stays out
-        // until Phase 3b makes it run-absolute.)
+        // included here too — closing the latent Phase-2 gap; Phase 3b adds
+        // headlessRotate so all three banks carry their run-absolute field across a
+        // refire.)
         Vec3 tFieldCopy = headlessTranslate;
         Vec3 sFieldCopy = headlessScale;
+        Vec3 rFieldCopy = headlessRotate;
         cmd.setHooks(
             // apply (redo): restore the POST-tweak pipe config + the run-absolute
             // fields (unchanged across the refire) + publish.
@@ -3871,6 +4026,7 @@ private:
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
                 headlessTranslate = tFieldCopy;
                 headlessScale     = sFieldCopy;
+                headlessRotate    = rFieldCopy;
             },
             // revert (undo): restore the PRE-tweak pipe config + the run-absolute
             // fields + publish.
@@ -3880,6 +4036,7 @@ private:
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
                 headlessTranslate = tFieldCopy;
                 headlessScale     = sFieldCopy;
+                headlessRotate    = rFieldCopy;
             },
         );
 
