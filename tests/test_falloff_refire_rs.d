@@ -137,8 +137,21 @@ void selectV6() {
         "v6 selection did not take: " ~ s.toString);
 }
 
-// Pristine cube + drained undo stack. Drop any stale tool, drain a lingering
-// replay, drain BEFORE the reset (reset is undoable), reset, drain AFTER, verify.
+// Pristine cube + EMPTY undo stack. Drop any stale tool, drain a lingering
+// replay, then: reset (cube) → history.clear.
+//
+// Why NOT drainHistory() after /api/reset: SceneReset is itself undoable and
+// its revert() restores the PRE-reset mesh (snapshotted at apply). At -j1 the
+// preceding test leaves a dirty mesh, so an undo-of-reset rolls the cube BACK
+// to that dirt. The old "drain before + drain after" dance left exactly one
+// standing SceneReset entry whose snapshot was the prior test's geometry —
+// undo=1 after baseline (vs undo=0 in isolation), and the test's own terminal
+// drainHistory() popped it, reverting v6 to the stale prior mesh (the -j1
+// cross-test-bleed flake: v6 came back (-1,0,1) / 0.503245, not the cube).
+//
+// history.clear is a SideEffect command (not undoable, not recorded): it wipes
+// BOTH stacks WITHOUT touching the mesh, so the cube stays pristine AND undo=0.
+// Nothing below the test's floor can revert the mesh into a stale state.
 void establishCubeBaseline() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -165,13 +178,13 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        drainHistory();            // BEFORE the reset (/api/reset is undoable)
-        postJson("/api/reset", "");
-        drainHistory();            // AFTER the reset
-        if (cubePristine()) return;
+        postJson("/api/reset", "");           // cube (SceneReset on the stack)
+        postJson("/api/command", "history.clear"); // wipe stacks, keep the cube
+        if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
+    postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
