@@ -132,9 +132,9 @@ public:
     // around the matching AXIS-stage basis vector (right / up / fwd).
     override Param[] params() {
         return [
-            Param.float_("RX", "Rotate X", &headlessRotate.x, 0.0f),
-            Param.float_("RY", "Rotate Y", &headlessRotate.y, 0.0f),
-            Param.float_("RZ", "Rotate Z", &headlessRotate.z, 0.0f),
+            Param.float_("RX", "Rotate X", &headlessRotate.x, 0.0f).angle(),
+            Param.float_("RY", "Rotate Y", &headlessRotate.y, 0.0f).angle(),
+            Param.float_("RZ", "Rotate Z", &headlessRotate.z, 0.0f).angle(),
         ];
     }
 

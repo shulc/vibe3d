@@ -46,7 +46,7 @@ public:
     override Param[] params() {
         return [
             // `angle` is the bend angle attr (degrees).
-            Param.float_("angle",  "Angle",   &headlessAngleDeg, 0.0f),
+            Param.float_("angle",  "Angle",   &headlessAngleDeg, 0.0f).angle(),
             // spineX/Y/Z are the per-axis spine vector attrs.
             Param.float_("spineX", "Spine X", &headlessSpine.x, 1.0f),
             Param.float_("spineY", "Spine Y", &headlessSpine.y, 0.0f),

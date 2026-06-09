@@ -37,6 +37,7 @@ struct ParamHints {
     bool   hasMinI, hasMaxI;  int   minI, maxI;
     bool   hasStep;           float step_;
     bool   hasFmt;            string fmt;     // e.g. "%.4f"
+    bool   isAngle = false;   // angle-in-degrees param: coarser default drag step
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +264,9 @@ struct Param {
     Param step(float v)               { hints.hasStep = true; hints.step_ = v; return this; }
     Param fmt(string f)               { hints.hasFmt  = true; hints.fmt   = f; return this; }
     Param widget(ParamHints.Widget w) { hints.widget = w; return this; }
+    // Mark an angle-in-degrees param: forms_render uses a coarser default drag
+    // step (0.1/px) so rotate degrees are draggable, vs 0.001/px for plain floats.
+    Param angle()                     { hints.isAngle = true; return this; }
 
     // Flag setters — set the bit and return by value for literal chaining,
     // matching the hint-setter style above. Read the bits via the const
@@ -333,6 +337,27 @@ unittest {
     auto pb = Param.int_("n", "N", &i, 0).readonly().hidden().min(0).max(9);
     assert(pb.hidden_ && pb.readonly_);
     assert((pb.flags & ParamFlags.Hidden) && (pb.flags & ParamFlags.ReadOnly));
+}
+
+unittest {
+    // Angle hint — default clear; .angle() sets isAngle; composes with other
+    // chainable setters and does not bleed onto a non-angle float. forms_render
+    // reads hints.isAngle to widen the default drag step (0.1/px vs 0.001/px);
+    // the resulting ImGui drag SPEED has no headless signal, so this asserts the
+    // hint propagates through the Param the renderer resolves (drag feel is
+    // manual-verify).
+    float f = 0.0f;
+    auto plain = Param.float_("dist", "Distance", &f, 0.0f);
+    assert(!plain.hints.isAngle);
+
+    auto ang = Param.float_("RX", "Rotate X", &f, 0.0f).angle();
+    assert(ang.hints.isAngle);
+
+    // Composes with min/max/fmt without clobbering isAngle, and explicit .step()
+    // still wins at the render site (asserted there via hasStep).
+    auto ang2 = Param.float_("RY", "Rotate Y", &f, 0.0f).angle().min(-360.0f).max(360.0f);
+    assert(ang2.hints.isAngle);
+    assert(ang2.hints.hasMinF && ang2.hints.hasMaxF);
 }
 
 unittest {
