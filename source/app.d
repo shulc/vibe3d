@@ -4073,13 +4073,13 @@ void main(string[] args) {
             // forgets to maintain the counter; the linear walk is
             // the more robust default until perf demands otherwise.
             ImGui.LabelText("V", "%d/%d",
-                countSelected(mesh.selectedVertices),
+                mesh.countSelectedVertices(),
                 cast(int) mesh.vertices.length);
             ImGui.LabelText("E", "%d/%d",
-                countSelected(mesh.selectedEdges),
+                mesh.countSelectedEdges(),
                 cast(int) mesh.edges.length);
             ImGui.LabelText("F", "%d/%d",
-                countSelected(mesh.selectedFaces),
+                mesh.countSelectedFaces(),
                 cast(int) mesh.faces.length);
         }
         ImGui.End();

@@ -202,6 +202,23 @@ struct Mesh {
     bool isFaceSubpatch(size_t i) const {
         return i < faceMarks.length && (faceMarks[i] & Marks.Subpatch) != 0;
     }
+    // Non-allocating selection popcounts: scan the Select bit directly over
+    // the marks arrays instead of materializing a `bool[]` snapshot to count.
+    int countSelectedVertices() const {
+        int n = 0;
+        foreach (m; vertexMarks) if (m & Marks.Select) n++;
+        return n;
+    }
+    int countSelectedEdges() const {
+        int n = 0;
+        foreach (m; edgeMarks) if (m & Marks.Select) n++;
+        return n;
+    }
+    int countSelectedFaces() const {
+        int n = 0;
+        foreach (m; faceMarks) if (m & Marks.Select) n++;
+        return n;
+    }
     int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
     int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
     int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected

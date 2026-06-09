@@ -265,8 +265,8 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         foreach (k; 0 .. limitF) {
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
-            if (cageFi < cast(int)cage.isSubpatch.length)
-                result.setFaceSubpatch(k, cage.isSubpatch[cageFi]);
+            if (cageFi >= 0)
+                result.setFaceSubpatch(k, cage.isFaceSubpatch(cageFi));
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
                 result.faceMaterial[k] = cage.faceMaterial[cageFi];
         }
@@ -331,8 +331,8 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             result.faces[k] = verts;
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
-            if (cageFi < cast(int)cage.isSubpatch.length)
-                result.setFaceSubpatch(k, cage.isSubpatch[cageFi]);
+            if (cageFi >= 0)
+                result.setFaceSubpatch(k, cage.isFaceSubpatch(cageFi));
             // Material Groups (MG3): refined faces from the OSD subset
             // inherit their source cage face's surface index.
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
@@ -877,8 +877,7 @@ struct OsdAccel {
         bool anyMarked   = false;
         bool anyUnmarked = false;
         foreach (fi; 0 .. nf) {
-            immutable bool marked =
-                (fi < cage.isSubpatch.length) && cage.isSubpatch[fi];
+            immutable bool marked = cage.isFaceSubpatch(fi);
             if (marked) anyMarked = true;
             else        anyUnmarked = true;
         }
@@ -898,8 +897,7 @@ struct OsdAccel {
             int[2][] edgeFaces;
             edgeFaces.length = cage.edges.length;
             foreach (fi, face; cage.faces) {
-                immutable bool marked =
-                    (fi < cage.isSubpatch.length) && cage.isSubpatch[fi];
+                immutable bool marked = cage.isFaceSubpatch(fi);
                 foreach (i; 0 .. face.length) {
                     uint a = face[i];
                     uint b = face[(i + 1) % face.length];
@@ -1189,9 +1187,7 @@ struct OsdAccel {
         outMesh.resizeSubpatch();
         foreach (i; 0 .. limitFaces) {
             immutable int o = scratchFaceOrigins[i];
-            bool parentMarked =
-                (o >= 0) && (o < cast(int)cage.isSubpatch.length)
-                && cage.isSubpatch[o];
+            bool parentMarked = (o >= 0) && cage.isFaceSubpatch(o);
             outTrace.subpatch [i] = parentMarked;
             outMesh.setFaceSubpatch(i, parentMarked);
         }
