@@ -89,10 +89,11 @@ void drainHistory() {
     }
 }
 
-// Pristine cube + (near-)empty undo stack. Same discipline as the sibling
-// in-session-cancel tests: drop any stale tool, let a lingering replay drain,
-// drain the undo stack BEFORE the reset (/api/reset is itself undoable), reset,
-// drain AFTER, and verify the cube took — retrying on a cross-test bleed.
+// Pristine cube + EMPTY undo stack. Same discipline as the sibling in-session
+// tests: drop any stale tool, let a lingering replay drain, then reset to the
+// cube and history.clear (a SideEffect command — wipes BOTH stacks WITHOUT
+// touching the mesh). NEVER drainHistory() after /api/reset: SceneReset is
+// itself undoable and its revert() would restore the prior test's dirty mesh.
 void establishCubeBaseline() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -120,13 +121,19 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        drainHistory();            // BEFORE the reset (see header of the sibling)
-        postJson("/api/reset", "");
-        drainHistory();            // AFTER the reset
-        if (cubePristine()) return;
+        // Do NOT drainHistory() after /api/reset: SceneReset is itself undoable
+        // and its revert() restores the PRE-reset (prior test's dirty) mesh, so
+        // a drain-after-reset can leave a standing entry that reverts geometry
+        // to a stale state (the -j1 cross-test-bleed flake). history.clear is a
+        // SideEffect command: it wipes BOTH stacks WITHOUT touching the mesh, so
+        // the cube stays pristine AND undo=0.
+        postJson("/api/reset", "");                 // cube
+        postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
+        if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");    // last reset stands, un-undone
+    postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 

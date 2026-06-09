@@ -57,8 +57,9 @@
 // /api/command, which is epoch-marshalled onto the main thread. Verify-and-retry
 // is keyed on the UNDO COUNT (never a geometry delta — a lagged geometry read
 // under load looked like "didn't move" and re-fired a SECOND gesture, the
-// floor+2 double-commit flake). The undo stack is drained BEFORE /api/reset in
-// every preamble (/api/reset is itself undoable).
+// floor+2 double-commit flake). Each preamble establishes a hermetic cube
+// baseline via reset + history.clear (never drainHistory after /api/reset,
+// which is itself undoable), so undo=0 at the test floor.
 
 import std.net.curl;
 import std.json;
@@ -149,10 +150,11 @@ void selectV6() {
         "v6 selection did not take: " ~ s.toString);
 }
 
-// Pristine cube + (near-)empty undo stack. Same discipline as the sibling
-// in-session tests: drop any stale tool, drain a lingering replay, drain the
-// undo stack BEFORE the reset (/api/reset is itself undoable), reset, drain
-// AFTER, verify — retrying on a cross-test bleed.
+// Pristine cube + EMPTY undo stack. Same discipline as the sibling in-session
+// tests: drop any stale tool, drain a lingering replay, then reset to the cube
+// and history.clear (a SideEffect command — wipes BOTH stacks WITHOUT touching
+// the mesh). NEVER drainHistory() after /api/reset: SceneReset is itself
+// undoable and its revert() would restore the prior test's dirty mesh.
 void establishCubeBaseline() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -179,13 +181,19 @@ void establishCubeBaseline() {
             Thread.sleep(10.msecs);
         }
         Thread.sleep(120.msecs);
-        drainHistory();            // BEFORE the reset (/api/reset is undoable)
-        postJson("/api/reset", "");
-        drainHistory();            // AFTER the reset
-        if (cubePristine()) return;
+        // Do NOT drainHistory() after /api/reset: SceneReset is itself undoable
+        // and its revert() restores the PRE-reset (prior test's dirty) mesh, so
+        // a drain-after-reset can leave a standing entry that reverts geometry
+        // to a stale state (the -j1 cross-test-bleed flake). history.clear is a
+        // SideEffect command: it wipes BOTH stacks WITHOUT touching the mesh, so
+        // the cube stays pristine AND undo=0.
+        postJson("/api/reset", "");                 // cube
+        postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
+        if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");    // last reset stands, un-undone
+    postJson("/api/command", "history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
