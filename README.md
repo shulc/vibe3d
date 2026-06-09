@@ -1,151 +1,83 @@
 # Vibe3D
 
-A polygonal 3D mesh editor inspired by MODO and LightWave3D. Written in D using OpenGL 3.3 Core Profile, SDL2 and Dear ImGui.
+A polygonal 3D mesh editor in the spirit of MODO and LightWave3D — gizmo-driven
+direct manipulation, a configurable tool pipeline (action center / axis / falloff /
+snap), falloff deformers, and Catmull-Clark subdivision. Written in **D**, with
+OpenGL 3.3 Core Profile, SDL2 and Dear ImGui.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Language: D](https://img.shields.io/badge/language-D-b03931.svg)
+[![CI](https://github.com/shulc/vibe3d/actions/workflows/ci.yaml/badge.svg)](https://github.com/shulc/vibe3d/actions/workflows/ci.yaml)
+[![Latest release](https://img.shields.io/github/v/release/shulc/vibe3d?include_prereleases&sort=semver)](https://github.com/shulc/vibe3d/releases)
+![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
 ![vibe3d](https://github.com/user-attachments/assets/105f697f-b65f-45b1-b240-f20641aa7984)
 
-## Features
+<!-- TODO: replace/supplement with an animated GIF of interactive editing
+     (gizmo drag → edge extrude → falloff deform). A short loop sells the
+     project far better than a static frame. -->
 
-- Polygon editing in three modes: **Vertices**, **Edges**, **Polygons** (toggle with `1`/`2`/`3` or `Space`)
-- Interactive transform gizmos: **Move** (W), **Rotate** (E), **Scale** (R)
-- **Bevel** (B) — polygon inset/shift and edge bevel
-- **Create** tools — Box, Sphere, Cylinder, Cone, Capsule, Torus, Pen
-- **Deform** tools — falloff-driven Soft Drag / Move / Rotate / Scale, plus Twist, Swirl, Shear, Taper, Bulge
-- Numeric input for transform parameters in the ImGui properties panel
-- Rectangle drag-selection; Shift adds, Ctrl removes
-- Connected selection — flood-fill of adjacent components (`]`)
-- Loop / ring / between / expand / contract selection
-- Subdivision Surface — Catmull-Clark algorithm (Shift+D)
-- Frame-to-fit: whole scene (A) or selection only (Shift+A)
-- Adaptive gizmo sizing (screen-space scale); 9 size steps (`-` / `=`)
-- Geometric visibility test: back-facing faces, edges and vertices are not pickable
-- Snap rotation with 15° increments when holding Ctrl
-- Symmetry, snapping, action-center and axis modes driven by a MODO-style ToolPipe
-- Falloff types: linear, radial, screen — with on-screen handles
+> **Status: alpha / under active development.** The modeling core works —
+> selection, transform tools, primitives, edge tools, falloff deformers,
+> subdivision, undo/redo — but the project is young and rough edges are
+> expected.
+
+## What is this
+
+Vibe3D is a from-scratch 3D modeling application built around a MODO/LightWave-style
+workflow: you pick an edit mode (vertices / edges / polygons), drop an interactive
+gizmo, and manipulate geometry directly in the viewport. A configurable **tool
+pipeline** layers symmetry, snapping, action-center and axis modes, and falloff on
+top of every transform, so the same Move / Rotate / Scale core drives everything
+from a precise nudge to a soft falloff deformation. An optional interactive preview
+render (IPR) panel embeds Cycles and Radeon ProRender for in-editor lighting checks.
+
+It is written entirely in D and is, as far as we know, one of the few
+ground-up polygon modelers in the D ecosystem.
+
+## Download
+
+Prebuilt binaries for **Linux, Windows and macOS** are on the releases page:
+
+### → [Download the latest release](https://github.com/shulc/vibe3d/releases)
+
+Each archive extracts to a single self-contained folder — unzip and run `vibe3d`
+(no installer, no extra dependencies to stage). Or [build from source](#build-from-source).
+
+## Highlights
+
+- Polygon editing in three modes: **Vertices**, **Edges**, **Polygons** (`1`/`2`/`3`, or `Space` to cycle)
+- Interactive transform gizmos: **Move** (`W`), **Rotate** (`E`), **Scale** (`R`), and a unified **Transform** (`Y`) that exposes all three banks at once
+- **Create** primitives — Box, Sphere, Cylinder, Cone, Capsule, Torus — plus a click-to-place **Pen** tool
+- **Edge tools** — interactive **Edge Extrude** and **Edge Extend**
+- **Falloff deformers** — Soft Drag / Move / Rotate / Scale, plus Push, Bend, Smooth, Jitter, Quantize, Shear, Twist, Swirl, Taper, Bulge, Flare, Vortex
+- Configurable **tool pipeline**: symmetry, snapping, action-center and axis modes, with on-screen falloff handles (linear / radial / cylinder / screen)
+- Rich selection: rectangle drag-select (Shift adds, Ctrl removes), connected flood-fill, invert, loop / ring / between, expand / contract
+- **Catmull-Clark** subdivision surfaces (`D`)
+- Numeric parameter entry for every tool in the ImGui properties panel
+- Adaptive screen-space gizmo sizing (`-` / `=`); back-facing geometry is not pickable
 - Undo / redo command history (`Ctrl+Z` / `Ctrl+Shift+Z`)
-- OpenGL VBO/VAO rendering with optimizations (GPU offset drag, partial vertex upload)
-- Event recording to JSON (F1/F2) and playback (`--playback <file>`)
-- HTTP server for automated testing (`--test`)
+- OpenGL VBO/VAO rendering with GPU offset-drag and partial vertex upload
+- Configurable keyboard shortcuts (`config/shortcuts.yaml`)
+- Event recording (`F1`/`F2`) and deterministic playback (`--playback <file>`)
 
-## Tools
+**Full tool reference and keyboard controls:** see [USAGE.md](USAGE.md).
 
-### Transform — direct manipulation
+## Usage
 
-| Tool | Hotkey | Description |
-|---|---|---|
-| **Move** | `W` | Translate the selection along an axis, plane or freely via the gizmo. Numeric input in the property panel; ToolPipe-driven action center / axis / falloff. |
-| **Rotate** | `E` | Rotate the selection around X / Y / Z or the camera-facing axis. Hold Ctrl to snap to 15°. |
-| **Scale** | `R` | Scale the selection along one axis, in a plane, or uniformly from the gizmo center. |
-| **Move Elem** | — | Move tool preset with action center + axis pinned to **Element**, mirroring MODO's Element Move. |
-
-### Edit
-
-| Tool | Hotkey | Description |
-|---|---|---|
-| **Bevel** | `B` | Polygons mode: shift the face along its normal (Arrow handle) and inset along the face tangent (Cubic-Arrow handle). Edges mode: bevel the selected edge, dragging the resulting strip width along the edge-adjacent normal. |
-
-### Create — procedural primitives
-
-Each Create tool drops an interactive gizmo and a parameter panel. Parameters mirror MODO's `prim.*` headless schemas verbatim where applicable, so the same wire format works for both the GUI and the `modo_diff` reference suite.
-
-| Tool | ID | Description |
-|---|---|---|
-| **Box** | `prim.cube` | Cuboid with per-axis segments and optional rounded edges (radius / segmentsR / sharp axis). |
-| **Sphere** | `prim.sphere` | UV-sphere (Globe), QuadBall or Tessellation methods; per-axis radii, pole axis, longitude / latitude resolution. |
-| **Cylinder** | `prim.cylinder` | Per-axis radii (XY = elliptical cross-section), height along the chosen axis, sides and segment count. |
-| **Cone** | `prim.cone` | Linearly tapered cone (no truncated-cone mode, matching MODO `prim.cone`); ellipse base + apex vertex. |
-| **Capsule** | `prim.capsule` | Cylinder with proportional hemispherical end-caps (`endsize` × avg perpendicular radius); collapses cleanly to a sphere when the caps consume the full length. |
-| **Torus** | `prim.torus` | Quad-only torus with major / minor radius and major / minor segment counts. |
-| **Pen** | `pen` | Click-to-place vertex tool for building polygons / line strips / quad strips ("Make Quads") on the construction work-plane. Numeric edit of any committed point. |
-
-### Deform — falloff-driven transforms
-
-The Deform sub-tab exposes presets that combine a base transform tool with a pre-configured falloff stage in the ToolPipe. Drag the falloff handles in the viewport to control which vertices the deformation reaches and how strongly.
-
-| Preset | Base | Falloff | Description |
-|---|---|---|---|
-| **Soft Drag**   | Move   | screen | Drag in screen space with a screen-radius falloff. |
-| **Soft Move**   | Move   | radial | Translate with a 3D radial falloff anchored at the gizmo center. |
-| **Soft Rotate** | Rotate | radial | Rotate with a radial falloff. |
-| **Soft Scale**  | Scale  | radial | Scale with a radial falloff. |
-| **Shear**       | Move   | linear | Move along an axis, weighted by a linear falloff across the selection. |
-| **Twist**       | Rotate | linear | Rotate around an axis, weighted linearly along that axis. |
-| **Swirl**       | Rotate | radial | Rotate around an axis with a radial falloff. |
-| **Taper**       | Scale  | linear | Scale weighted linearly along an axis. |
-| **Bulge**       | Scale  | radial | Scale weighted radially from a center. |
-
-## Controls
-
-### Camera
+A quick taste of the controls (the complete cheat-sheet lives in [USAGE.md](USAGE.md)):
 
 | Action | Keys / mouse |
 |---|---|
-| Orbit | Alt + LMB |
-| Pan | Alt + Shift + LMB |
-| Zoom | Ctrl + Alt + LMB |
-| Frame whole scene | `A` |
-| Frame selection | Shift + `A` |
-
-### Modes and tools
-
-| Action | Key |
-|---|---|
-| Vertices mode | `1` |
-| Edges mode | `2` |
-| Polygons mode | `3` |
-| Cycle mode | `Space` |
-| Move tool (toggle) | `W` |
-| Rotate tool (toggle) | `E` |
-| Scale tool (toggle) | `R` |
-| Bevel tool (toggle) | `B` |
-
-### Selection
-
-| Action | Keys / mouse |
-|---|---|
-| Select | LMB / drag-rect |
-| Add to selection | Shift + LMB / drag |
-| Remove from selection | Ctrl + LMB / drag |
-| Connected selection | `]` |
-| Invert selection | `[` |
-| Expand / Contract | Shift + Up / Down |
-| More / Less | Up / Down |
-| Loop / Ring | `L` / Alt + `L` |
-| Between | Shift + `G` |
-
-### Mesh operations
-
-| Action | Key |
-|---|---|
-| Catmull-Clark subdivision | Shift + `D` |
-| Delete | `Delete` |
-| Remove | `Backspace` |
+| Orbit / Pan / Zoom camera | Alt+LMB / Alt+Shift+LMB / Ctrl+Alt+LMB |
+| Frame scene / selection | `A` / Shift+`A` |
+| Vertices / Edges / Polygons mode | `1` / `2` / `3` |
+| Move / Rotate / Scale / Transform | `W` / `E` / `R` / `Y` |
+| Connected select / Invert | `]` / `[` |
+| Subdivide | `D` |
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
-| Toggle snap | `X` |
-| Shrink gizmo | `-` |
-| Grow gizmo | `=` |
-| Start recording events | `F1` |
-| Stop recording | `F2` |
-| Quit | `Esc` |
 
-### Move / Scale gizmo
-
-| Action | Mouse |
-|---|---|
-| Translate / scale along axis | Drag arrow (X / Y / Z) |
-| Translate / scale in plane | Drag ring (XY / YZ / XZ) |
-| Free translate / uniform scale | Drag the center |
-| Constrain to axis while dragging a plane | Ctrl + drag plane |
-
-### Rotate gizmo
-
-| Action | Mouse |
-|---|---|
-| Rotate around axis | Drag arc (X / Y / Z) |
-| Rotate around camera axis | Drag outer arc |
-| Snap to 15° | Ctrl + drag |
-
-## Build and run
+## Build from source
 
 Requires [DUB](https://dub.pm/) and a D compiler (DMD or LDC), plus an installed SDL2.
 
@@ -156,70 +88,48 @@ dub build --config=with-render         # adds Cycles + RPR IPR backends
 ```
 
 The default `modeling` configuration is fast and free of external render
-dependencies — modeling, selection, tools, undo/redo and event-playback
-are all in this build.
+dependencies — modeling, selection, tools, undo/redo and event playback are all in
+this build. The `with-render` configuration adds the optional IPR panel (see below).
 
-The `with-render` configuration adds an embedded Interactive Preview
-Render (IPR) panel powered by [Cycles](https://projects.blender.org/blender/cycles)
-(CPU + CUDA/OPTIX/Metal where available) and [Radeon ProRender](https://gpuopen.com/radeon-prorender/)
-(CPU; GPU gated behind `VIBE3D_RPR_ALLOW_GPU=1`). See
-[`doc/render_support_matrix.md`](doc/render_support_matrix.md) for the
-per-platform / per-GPU verification status.
+You can also produce a self-contained release bundle locally:
+
+```sh
+./tools/release/bundle_linux.sh        # Linux
+./tools/release/bundle_macos.sh        # macOS
+.\tools\release\bundle_windows.ps1     # Windows (PowerShell)
+```
 
 ### Runtime flags
 
 | Flag | Description |
 |---|---|
-| `--test` | Start with HTTP server for automated testing |
 | `--playback events.log` | Replay a recorded event session |
+| `--test` | Start the HTTP server used by the test harness |
 | `--no-http` | Run without the HTTP server |
 | `--http-port 9090` | HTTP server port (default: 8080) |
 
-## Releases
+## Render backends (optional)
 
-Prebuilt zips are produced by the GitHub Actions workflow on
-`workflow_dispatch` and can also be built locally:
-
-```sh
-# Linux:                      Windows (PowerShell):
-./tools/release/bundle_linux.sh        .\tools\release\bundle_windows.ps1
-./tools/release/bundle_macos.sh
-```
-
-Each zip extracts to a single folder containing `vibe3d` (or
-`vibe3d.exe`), `SDL2.dll` on Windows, `config/`, the `LICENSE` /
-`THIRD_PARTY_LICENSES.md` attribution files, and — for the render
-build — every Cycles + RPR DLL/`.so`/`.dylib` flat next to the
-executable (no extra installs required). Verified host configurations
-for the Windows render build: RTX 3070 Ti / Windows 10, with Cycles
-CPU and RPR CPU IPR confirmed working. RPR GPU paths on NVIDIA hosts
-are upstream-broken at the AMD SDK level; the dropdown hides them by
-default. See [`doc/render_support_matrix.md`](doc/render_support_matrix.md).
+The `with-render` build embeds an Interactive Preview Render (IPR) panel powered by
+[Cycles](https://projects.blender.org/blender/cycles) (CPU + CUDA/OPTIX/Metal where
+available) and [Radeon ProRender](https://gpuopen.com/radeon-prorender/) (CPU; GPU
+gated behind `VIBE3D_RPR_ALLOW_GPU=1`). Render code is fully isolated behind a
+`version (WithRender)` boundary and is excluded from the default modeling build.
 
 ## Testing
 
-Tests are D programs that drive a running vibe3d instance through its HTTP API.
+Unit tests are D programs that drive a running vibe3d instance through its HTTP API:
 
 ```sh
-./run_all.d --no-build           # full pre-commit suite (unit + blender + modo + acen)
-./run_test.d                     # unit tests only
+./run_test.d                     # all unit tests (single worker)
 ./run_test.d -j 4                # parallel — 4 workers
-./run_test.d test_bevel          # one test (also: bevel, tests/test_bevel.d)
-./run_test.d bevel selection     # a subset
-./run_test.d -v test_bevel       # stream the test's stdout/stderr
+./run_test.d test_pen            # one test (also: pen, tests/test_pen.d)
+./run_test.d -v test_pen         # stream the test's stdout/stderr
 ./run_test.d --keep              # leave vibe3d running after tests finish
 ./run_test.d --no-build          # skip `dub build`
 ```
 
-Reference-comparison suites:
-
-```sh
-rdmd tools/blender_diff/run.d              # compare geometry against Blender
-rdmd tools/modo_diff/run.d                 # compare geometry against MODO (requires modo_cl)
-./tools/modo_diff/run_acen_drag.py -j 4    # MODO action-center drag parity
-```
-
-Test files: `tests/test_*.d`. Recorded event sessions: `tests/events/*.log`.
+Test files live in `tests/test_*.d`; recorded event sessions in `tests/events/*.log`.
 
 ## Dependencies
 
@@ -234,8 +144,8 @@ Modeling build:
 
 `with-render` build additionally pulls:
 
-- [D-Cycles](https://github.com/shulc/D-Cycles) — Blender Cycles renderer
-- [D-RadeonProRender](https://github.com/shulc/D-RadeonProRender) — AMD Radeon ProRender SDK
+- [D-Cycles](https://github.com/shulc/D-Cycles) — Cycles renderer wrapper
+- [D-RadeonProRender](https://github.com/shulc/D-RadeonProRender) — Radeon ProRender SDK
 - Transitive runtime libraries: OpenImageIO, OpenColorIO, OpenEXR, Imath,
   Embree, Open Image Denoise, oneTBB, Intel oneAPI DPC++/SYCL runtime.
 
@@ -243,10 +153,9 @@ Modeling build:
 
 Vibe3D itself is released under the [MIT License](LICENSE).
 
-Distribution zips bundle a number of third-party libraries (Cycles, RPR
-SDK, OpenImageIO, etc.) with their own open-source licenses
-(Apache-2.0, BSD-3-Clause, MIT, Zlib, BSL-1.0). The full attribution
-text required for redistribution is in
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). No EULA, activation
-or click-through agreement is involved — all components are
-redistributable under standard OSI-approved terms.
+Distribution zips bundle a number of third-party libraries (Cycles, RPR SDK,
+OpenImageIO, etc.) with their own open-source licenses (Apache-2.0, BSD-3-Clause,
+MIT, Zlib, BSL-1.0). The full attribution text required for redistribution is in
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). No EULA, activation or
+click-through is involved — all components are redistributable under standard
+OSI-approved terms.
