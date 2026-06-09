@@ -781,8 +781,10 @@ public:
         applyScaleFromActivationCpuOnly(propVts);
 
         if (anyActive) {
-            if (wholeMesh) {
-                // Whole-mesh: GPU bypass — upload base once at drag start, then only update matrix.
+            if (wholeMesh && wrapperRef is null) {
+                // STANDALONE whole-mesh: GPU bypass — upload base once at drag
+                // start, then only update matrix (matrix is around
+                // activationVertices, the correct base with no wrapper baseline).
                 if (!propsDragging) {
                     uploadPropsBase(activationVertices);
                     propsDragging = true;
@@ -791,7 +793,10 @@ public:
                     handler.axisX, handler.axisY, handler.axisZ,
                     scaleAccum.x, scaleAccum.y, scaleAccum.z);
             } else {
-                // Partial selection: deferred GPU upload in draw().
+                // WRAPPED path (Phase 1): GPU bypass would preview from the wrong
+                // base (activationVertices), ignoring baked history in
+                // dragBaseline. applyTRS wrote correct CPU verts — defer upload.
+                // Partial selection always defers too.
                 needsGpuUpdate = true;
             }
         } else {
@@ -861,12 +866,15 @@ public:
             beginEdit();   // idempotent
         }
 
-        // Rebuild CPU vertices from activationVertices via the shared apply path
-        // (delegates to the wrapper's applyScaleAbsolute → applyTRS).
+        // Rebuild CPU vertices via the shared apply path. In the WRAPPED path
+        // this delegates to applyScaleAbsoluteFromRun → applyTRS(dragBaseline);
+        // standalone it runs the activationVertices kernel.
         applyScaleFromActivationCpuOnly(propVts);
 
-        if (wholeMesh) {
-            // Whole-mesh: GPU bypass — upload base once, then only update matrix.
+        if (wholeMesh && wrapperRef is null) {
+            // STANDALONE whole-mesh: GPU bypass — upload base once, then only
+            // update matrix (around activationVertices, the correct base with no
+            // wrapper run baseline).
             if (!propsDragging) {
                 uploadPropsBase(activationVertices);
                 propsDragging = true;
@@ -875,7 +883,10 @@ public:
                 handler.axisX, handler.axisY, handler.axisZ,
                 scaleAccum.x, scaleAccum.y, scaleAccum.z);
         } else {
-            // Partial selection / falloff: deferred GPU upload in draw().
+            // WRAPPED path (Phase 1): the GPU bypass would preview from the wrong
+            // base (activationVertices), ignoring baked history in dragBaseline.
+            // applyTRS wrote correct CPU verts — defer the upload. Partial
+            // selection / falloff always defers too.
             needsGpuUpdate = true;
         }
     }
@@ -899,11 +910,13 @@ private:
     //
     // Single-source: the property-panel slider path and the kept-open-edit
     // falloff-reapply both reach geometry through here. It now DELEGATES to
-    // the wrapper's `applyScaleAbsolute` → `applyTRS` so the "ui" (panel)
-    // path shares the SAME single geometry-apply entry point as the
-    // "handle" (drag) and "headless" (numeric) paths. The edit session +
-    // undo display hooks stay on this sub-tool (no session migration → no
-    // cross-instance commit), mirroring RotateTool.applyAbsoluteFromOrigCpuOnly.
+    // the wrapper's `applyScaleAbsoluteFromRun` → `applyTRS(dragBaseline)` so
+    // the "ui" (panel) path shares the SAME single geometry-apply entry point
+    // AND the SAME run baseline as the "handle" (drag) and "headless" (numeric)
+    // paths. Phase 1 (R/S run-baseline): applying from the run baseline (not
+    // activationVertices) preserves any baked cross-axis gizmo history. The edit
+    // session + undo display hooks stay on this sub-tool (no session migration →
+    // no cross-instance commit), mirroring RotateTool.applyAbsoluteFromOrigCpuOnly.
     //
     // Standalone fallback (a bare ScaleTool with no wrapper — only unit-test
     // construction): the original `applyScaleFromActivation` kernel call,
@@ -913,7 +926,16 @@ private:
             import tools.xfrm_transform : XfrmTransformTool;
             auto wrap = cast(XfrmTransformTool) wrapperRef;
             if (wrap !is null) {
-                wrap.applyScaleAbsolute(activationVertices, scaleAccum);
+                // Phase 1 (R/S run-baseline fix): apply from the WRAPPER's run
+                // baseline (`dragBaseline`), NOT activationVertices. After a
+                // cross-axis gizmo gesture the prior transform is baked into
+                // dragBaseline + mesh, not into activationVertices, so applying
+                // the full scaleAccum from activationVertices would discard it.
+                // The run-baseline entry reads the live headlessScale absolutely
+                // against dragBaseline-with-baked-history. The edit SESSION stays
+                // on this sub-tool — the run-baseline entry does NOT open the
+                // wrapper session (MS-5).
+                wrap.applyScaleAbsoluteFromRun(scaleAccum);
                 return;
             }
         }

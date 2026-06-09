@@ -272,6 +272,19 @@ class Tool : ParamProvider {
     // runs through a session replay (the transform tool) keep evaluate() a no-op.
     bool hasLiveEval() const { return false; }
 
+    // Live-eval predicate SPECIFICALLY for a value-attribute write (`tool.attr
+    // <id> RX 30` etc.), distinct from `hasLiveEval()` (which also gates the
+    // pipe-stage config path `tool.pipe.attr falloff …`). Defaults to
+    // `hasLiveEval()` so existing tools are unaffected. The transform tool widens
+    // THIS predicate (only) to include a still-open gizmo RUN whose per-gesture
+    // edit session already self-committed (P-F): a panel RX/RY/RZ edit after a
+    // gizmo gesture must compose onto the run baseline, but a falloff CONFIG
+    // change in that same window must STILL flow through the idle re-grade record
+    // path (which appends a tagged in-session entry) rather than the silent
+    // panel-replay. Keeping the pipe path on the narrower `hasLiveEval()`
+    // preserves that falloff-refire entry-count contract.
+    bool hasLiveAttrEval() const { return hasLiveEval(); }
+
     // Re-run this tool's apply from its open live-evaluation session baseline
     // using the tool's CURRENT attribute values (ABSOLUTE — read the value
     // straight from the baseline, never accumulate a per-call delta). Only

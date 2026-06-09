@@ -2487,70 +2487,41 @@ public:
         return true;
     }
 
-    // MS-5 (rotate single-source) — ABSOLUTE-from-origVertices rotate apply,
-    // routed through the single `applyTRS` evaluate. `RotateTool`'s panel
-    // slider path and its kept-open-edit falloff-reapply both call
-    // `RotateTool.applyAbsoluteFromOrigCpuOnly`, which now delegates here so
-    // the PANEL ("ui") and the live-drag / numeric ("handle" / "headless")
-    // paths share ONE geometry-apply entry point. `angleAccumRad` is the
-    // cumulative per-basis-axis Euler rotation (radians) the panel/display
-    // maintains; we convert to the `headlessRotate` degree attribute and run
-    // `applyTRS(baseline)` with `baseline == origVertices` (the absolute
-    // rebuild baseline). Falloff/symmetry are (re)captured from the live
-    // toolpipe so a mid-edit falloff change takes effect, matching the prior
-    // `applyRotateFromOrig` behaviour.
+    // Phase 1 (R/S run-baseline) — the FIX. The Rotate/Scale panel-apply path
+    // used to rebuild absolutely from the SUB-TOOL's session-start snapshot
+    // (origVertices / activationVertices = the original mesh at sub-tool
+    // activation). After a cross-axis gizmo gesture the prior axis is baked into
+    // the wrapper's run baseline (`dragBaseline`) + mesh, NOT into the sub-tool
+    // snapshot, so a panel edit applied from that snapshot DISCARDED the baked
+    // axis. These two entry points re-route the R/S panel apply onto the SAME
+    // run baseline the gizmo apply uses (applyTRS(dragBaseline), see :1785 /
+    // :1862), so the baked cross-axis history is preserved and the per-axis-delta
+    // contract holds (headlessRotate carries only the LIVE axis; the prior axis
+    // lives in dragBaseline).
     //
-    // The edit SESSION stays owned by `RotateTool` (its `beginEdit` /
-    // `commitEdit` with the angleAccum/propDeg undo hooks) — only the
-    // GEOMETRY is unified here. This sidesteps the per-instance edit-snapshot
-    // ownership problem (would-be B2) entirely: no session migrates to the
-    // wrapper, so there is no cross-instance commit.
-    void applyRotateAbsolute(Vec3[] baseline, Vec3 angleAccumRad) {
+    // captureBaselinePacketsNoSession() snapshots dragBaseline if stale and
+    // captures the live falloff/symmetry/snap WITHOUT opening the WRAPPER edit
+    // session (MS-5: the R/S undo entry must stay on the sub-tool, which owns its
+    // own beginEdit/commitEdit — the sub-tool's applyRotatePanelValue /
+    // applyScalePanelValue already opened it before calling here). headlessRotate
+    // / headlessScale are read ABSOLUTELY by applyTRS, exactly as the gizmo path.
+    public void applyRotateAbsoluteFromRun(Vec3 angleAccumRad) {
         import std.math : PI;
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket subj;
-        VectorStack vts;
-        buildLocalVts(subj, vts);
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
-        vertexCacheDirty = true;   // wrapper cache may be stale (panel path)
+        captureBaselinePacketsNoSession();
+        vertexCacheDirty = true;
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
         // Euler-slot path: applyTRS defaults the transient view-ring rotation
         // to zero (MS-3.4), so a prior view-ring drag cannot re-apply on top.
-        applyTRS(baseline);
+        applyTRS(dragBaseline);
     }
 
-    // Scale single-source — ABSOLUTE-from-activationVertices scale apply,
-    // routed through the single `applyTRS` evaluate. `ScaleTool`'s panel
-    // slider path and its kept-open-edit falloff-reapply both call
-    // `ScaleTool.applyScaleFromActivationCpuOnly`, which now delegates here so
-    // the PANEL ("ui") and the live-drag / numeric ("handle" / "headless")
-    // paths share ONE geometry-apply entry point. `scaleAccum` is the
-    // cumulative per-axis scale factor the panel/display maintains; we write
-    // it into the `headlessScale` attribute and run `applyTRS(baseline)` with
-    // `baseline == activationVertices` (the absolute rebuild baseline).
-    // Falloff/symmetry are (re)captured from the live toolpipe so a mid-edit
-    // falloff change takes effect, matching the prior `applyScaleFromActivation`
-    // behaviour.
-    //
-    // The edit SESSION stays owned by `ScaleTool` (its `beginEdit` /
-    // `commitEdit` with the scaleAccum/propScale undo hooks) — only the
-    // GEOMETRY is unified here, sidestepping the per-instance edit-snapshot
-    // ownership problem (no session migrates to the wrapper).
-    void applyScaleAbsolute(Vec3[] baseline, Vec3 scaleAccum) {
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket subj;
-        VectorStack vts;
-        buildLocalVts(subj, vts);
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
-        vertexCacheDirty = true;   // wrapper cache may be stale (panel path)
+    public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
+        captureBaselinePacketsNoSession();
+        vertexCacheDirty = true;
         headlessScale = scaleAccum;
-        applyTRS(baseline);
+        applyTRS(dragBaseline);
     }
 
     // Numeric headless apply (`tool.doApply` + cross-engine deform
@@ -2569,8 +2540,8 @@ public:
     // evaluate (cachedReady_ flips true only after that rebuild — see
     // SymmetryStage.evaluate), so re-reading from update()'s single evaluate
     // would mirror nothing. A second evaluate here lands the rebuilt pairing.
-    // Mirrors what applyRotateAbsolute / applyScaleAbsolute already do for the
-    // R/S arms (capture from a fresh buildLocalVts). No-op cost on a non-symmetry
+    // Mirrors what applyRotateAbsoluteFromRun / applyScaleAbsoluteFromRun already
+    // do for the R/S arms (capture from a fresh buildLocalVts). No-op cost on a non-symmetry
     // change (the extra evaluate is cheap and only runs on the rare config tweak).
     private void recaptureLivePipePackets() {
         import toolpipe.packets : SubjectPacket;
@@ -2644,17 +2615,14 @@ public:
     // acting as a session-opener would wipe the just-injected absolute
     // translate before applyTRS, applying 0.0 on the first edit.
     private bool captureDragBaselineIfStale() {
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket subj;
-        VectorStack vts;
-        buildLocalVts(subj, vts);
-
-        // captureFalloffForDrag / captureSymmetryForDrag overwrite `dragFalloff`
-        // / `dragSymmetry` every call; that's fine — for slider / attr edits we
-        // want the live falloff to take effect immediately.
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
+        // Phase 1 (R/S run-baseline) factor-out: the dragBaseline staleness
+        // snapshot + live falloff/symmetry/snap capture is now a session-FREE
+        // helper, so the Rotate/Scale panel-apply path can reuse the SAME run
+        // baseline the gizmo uses WITHOUT opening the WRAPPER edit session (which
+        // would record a spurious "Move" undo entry — the R/S edit session must
+        // stay on the sub-tool, MS-5). The Move path keeps its original behaviour:
+        // capture-no-session, then open the wrapper session + seed the tracking.
+        bool fresh = captureBaselinePacketsNoSession();
         buildVertexCacheIfNeeded();
         beginEdit();   // idempotent
 
@@ -2674,11 +2642,38 @@ public:
         lastSelectionHash   = computeSelectionHash();
         lastMutationVersion = mesh.mutationVersion;
 
-        // Panel/attr baseline: when no gizmo drag is open the panel/attr edit is
-        // the only active write path, so we capture a fresh dragBaseline at the
-        // first-active-frame. A subsequent edit re-uses this baseline
-        // (length-equal check). Refreshing it every frame would zero out the
-        // prior cumulative — keep stale ones.
+        // `fresh` reflects whether captureBaselinePacketsNoSession snapshotted a
+        // new dragBaseline this call (used by applyMovePanelDelta to gate the
+        // headlessTranslate zero-on-first-active-frame).
+        return fresh;
+    }
+
+    // Phase 1 (R/S run-baseline): session-FREE baseline + packet capture, split
+    // out of captureDragBaselineIfStale so the Rotate/Scale panel-apply path can
+    // share the SAME run baseline (`dragBaseline`) the gizmo uses without opening
+    // the WRAPPER edit session. Opening the wrapper session for an R/S panel edit
+    // would record a spurious "Move" undo entry (MS-5: R/S undo entries stay on
+    // the sub-tool, which owns its own beginEdit/commitEdit).
+    //
+    // Captures the live falloff / symmetry / snap packets (overwriting
+    // dragFalloff / dragSymmetry / dragSnap so a mid-edit falloff change takes
+    // effect immediately), then snapshots a fresh full-mesh `dragBaseline` IFF
+    // the current one is stale (length != mesh.vertices.length — e.g. first edit
+    // of a run, or after a topology change). A non-stale baseline is KEPT so a
+    // subsequent edit replays from the run baseline that already has any prior
+    // cross-axis gesture baked in. Returns true when it captured fresh.
+    //
+    // Does NOT call beginEdit() / buildVertexCacheIfNeeded() / seed the wrapper
+    // selection-mutation tracking — those belong to the wrapper (Move) session
+    // and are done by captureDragBaselineIfStale's tail.
+    private bool captureBaselinePacketsNoSession() {
+        import toolpipe.packets : SubjectPacket;
+        SubjectPacket subj;
+        VectorStack vts;
+        buildLocalVts(subj, vts);
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         if (dragBaseline.length != mesh.vertices.length) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
@@ -2703,7 +2698,7 @@ public:
 
     // (MS-2's `commitRotateEdit` / `applyRotatePanelDelta` scaffolding was
     // removed in MS-8: the simpler MS-5 design keeps the rotate edit session
-    // on `RotateTool` and unifies only the GEOMETRY via `applyRotateAbsolute`
+    // on `RotateTool` and unifies only the GEOMETRY via `applyRotateAbsoluteFromRun`
     // → `applyTRS`, so no wrapper-side commit / panel-delta path is needed.)
 
     // Phase 3 — public accessor for MoveTool's `update()` to gate
@@ -3100,6 +3095,30 @@ public:
     // to include the sub-tool sessions so an R/S value edit re-evaluates.
     override bool hasLiveEval() const {
         return editIsOpen() || subToolEditOpen();
+    }
+
+    // Phase 1 (R/S run-baseline) — VALUE-attr live-eval widening. A panel
+    // RX/RY/RZ or SX/SY/SZ edit after a gizmo gesture (but before the tool
+    // drops) must compose onto the run baseline. The per-gesture commit model
+    // (P-F) CLOSES the sub-tool edit session at each gizmo mouse-up, so
+    // `subToolEditOpen()` is false BETWEEN gestures even though the run
+    // continues — the held run-absolute field + frozen `dragBaseline` are still
+    // the live state. Including `runIsLive()` HERE (not in `hasLiveEval()`) lets
+    // the value-attr path re-evaluate while leaving the pipe-stage config path
+    // (`tool.pipe.attr falloff …`) on the narrower `hasLiveEval()`, so a
+    // mid-run falloff change still flows through the idle re-grade RECORD path
+    // (one tagged in-session entry) instead of a silent panel replay.
+    override bool hasLiveAttrEval() const {
+        return hasLiveEval() || runIsLive();
+    }
+
+    // A transform gizmo RUN is live: a gesture established a frozen run baseline
+    // (`runBaselineValid`) AND the history run is still open (not yet
+    // consolidated at a boundary / tool drop). Gating on BOTH keeps a bare idle
+    // tool (no gesture yet ⇒ runBaselineValid==false) inert, preserving the
+    // headless set-attr-then-doApply scripting contract.
+    private bool runIsLive() const {
+        return runBaselineValid && history !is null && history.runOpen();
     }
 
     // Re-run the live transform from the session baseline using the CURRENT

@@ -133,7 +133,12 @@ class ToolAttrCommand : Command {
         //     every existing HTTP tool.attr golden depends on this).
         // tool.attr stays CmdFlags.SideEffect; the geometry change is recorded
         // by the session's commitEdit at tool drop, not by this command.
-        if (t.hasLiveEval())      t.reEvaluate();
+        // hasLiveAttrEval() (not hasLiveEval()): a VALUE-attr write also re-runs
+        // when a gizmo run is still open after a per-gesture self-commit (Phase
+        // 1, R/S run-baseline), so a panel RX/RY/RZ / SX/SY/SZ edit composes onto
+        // the run baseline. The pipe-stage config path keeps the narrower
+        // hasLiveEval() so a mid-run falloff change still records its re-grade.
+        if (t.hasLiveAttrEval())  t.reEvaluate();
         else if (interactive_)    t.reEvaluate();
         return true;
     }

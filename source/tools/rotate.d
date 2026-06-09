@@ -870,15 +870,20 @@ public:
         applyAbsoluteFromOrigCpuOnly(propVts);
 
         if (anyActive) {
-            if (wholeMesh) {
-                // Whole-mesh: GPU bypass — upload base once at drag start, then only update matrix.
+            if (wholeMesh && wrapperRef is null) {
+                // STANDALONE whole-mesh: GPU bypass — upload base once at drag
+                // start, then only update matrix (matrix is around origVertices,
+                // the correct base when there is no wrapper run baseline).
                 if (!propsDragging) {
                     uploadPropsBase(origVertices);
                     propsDragging = true;
                 }
                 gpuMatrix = computePropsRotationMatrix();
             } else {
-                // Partial selection: deferred GPU upload in draw().
+                // WRAPPED path (Phase 1): GPU bypass would preview from the wrong
+                // base (origVertices), ignoring the baked cross-axis history in
+                // dragBaseline. applyTRS already wrote the correct CPU verts —
+                // defer the upload. Partial selection always defers too.
                 needsGpuUpdate = true;
             }
         } else {
@@ -949,19 +954,26 @@ public:
             beginEdit();   // idempotent
         }
 
-        // Rebuild CPU vertices from origVertices via the shared apply path
-        // (delegates to the wrapper's applyRotateAbsolute → applyTRS).
+        // Rebuild CPU vertices via the shared apply path. In the WRAPPED path
+        // this delegates to applyRotateAbsoluteFromRun → applyTRS(dragBaseline);
+        // standalone it runs the origVertices kernel.
         applyAbsoluteFromOrigCpuOnly(propVts);
 
-        if (wholeMesh) {
-            // Whole-mesh: GPU bypass — upload base once, then only update matrix.
+        if (wholeMesh && wrapperRef is null) {
+            // STANDALONE whole-mesh: GPU bypass — upload base once, then only
+            // update matrix. The matrix is computed around origVertices, which IS
+            // the correct base when there is no wrapper run baseline.
             if (!propsDragging) {
                 uploadPropsBase(origVertices);
                 propsDragging = true;
             }
             gpuMatrix = computePropsRotationMatrix();
         } else {
-            // Partial selection / falloff: deferred GPU upload in draw().
+            // WRAPPED path (Phase 1): the GPU bypass would preview from the wrong
+            // base (origVertices) — it ignores the baked cross-axis history in
+            // dragBaseline. applyTRS already wrote the correct CPU verts, so defer
+            // the upload; the wrapper re-uploads from the live mesh. Also the
+            // partial-selection / falloff path always defers.
             needsGpuUpdate = true;
         }
     }
@@ -1023,10 +1035,13 @@ private:
     //
     // MS-5 (rotate single-source): the panel slider path and the kept-open-edit
     // falloff-reapply both reach geometry through here. It now DELEGATES to the
-    // wrapper's `applyRotateAbsolute` → `applyTRS` so the "ui" (panel) path
-    // shares the SAME single geometry-apply entry point as the "handle" (drag)
-    // and "headless" (numeric) paths. The edit session + undo display hooks
-    // stay on this sub-tool (no session migration → no cross-instance commit).
+    // wrapper's `applyRotateAbsoluteFromRun` → `applyTRS(dragBaseline)` so the
+    // "ui" (panel) path shares the SAME single geometry-apply entry point AND the
+    // SAME run baseline as the "handle" (drag) and "headless" (numeric) paths.
+    // Phase 1 (R/S run-baseline): applying from the run baseline (not
+    // origVertices) preserves any baked cross-axis gizmo history. The edit
+    // session + undo display hooks stay on this sub-tool (no session migration →
+    // no cross-instance commit).
     //
     // Standalone fallback (a bare RotateTool with no wrapper — only unit-test
     // construction): the original `applyRotateFromOrig` kernel call. For a
@@ -1038,7 +1053,16 @@ private:
             import tools.xfrm_transform : XfrmTransformTool;
             auto wrap = cast(XfrmTransformTool) wrapperRef;
             if (wrap !is null) {
-                wrap.applyRotateAbsolute(origVertices, angleAccum);
+                // Phase 1 (R/S run-baseline fix): apply from the WRAPPER's run
+                // baseline (`dragBaseline`), NOT origVertices. After a cross-axis
+                // gizmo gesture the prior axis is baked into dragBaseline + mesh,
+                // not into origVertices, so applying the full euler from
+                // origVertices would discard the baked axis. The run-baseline
+                // entry reads the live headlessRotate absolutely against
+                // dragBaseline-with-baked-history. The edit SESSION stays on this
+                // sub-tool (its own beginEdit/commitEdit) — the run-baseline entry
+                // does NOT open the wrapper session (MS-5).
+                wrap.applyRotateAbsoluteFromRun(angleAccum);
                 return;
             }
         }
