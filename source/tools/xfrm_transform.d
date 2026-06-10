@@ -723,18 +723,7 @@ public:
             ensureFalloffGizmo();
             falloffGizmo.registerHandles(toolHandles, FALLOFF_BASE, fp);
         }
-        if (flagT) {
-            if (compactPresentation()) moveSub.registerCompactHandles(toolHandles, MOVE_BASE);
-            else                       moveSub.registerHandles    (toolHandles, MOVE_BASE);
-        }
-        if (flagR) {
-            if (compactPresentation()) rotateSub.registerPrincipalHandles(toolHandles, ROT_BASE);
-            else                       rotateSub.registerHandles         (toolHandles, ROT_BASE);
-        }
-        if (flagS) {
-            if (compactPresentation()) scaleSub.registerAxisHandles(toolHandles, SCALE_BASE);
-            else                       scaleSub.registerHandles    (toolHandles, SCALE_BASE);
-        }
+        registerGizmoHandles(toolHandles);
         // Capture precedence: a live falloff-handle drag wins; else the active
         // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
         if      (falloffGizmo !is null && falloffGizmo.isDragging())  toolHandles.setHaul(falloffGizmo.capturedPart(FALLOFF_BASE));
@@ -834,6 +823,22 @@ public:
         return handlePresentation == "compact";
     }
 
+    private void registerGizmoHandles(ToolHandles th) {
+        if (compactPresentation()) {
+            // Bare Transform draws scale boxes at the same screen-space endpoints
+            // as move arrows. Register scale first so hover and click prefer the
+            // scale handle when they overlap.
+            if (flagS) scaleSub.registerAxisHeadHandles(th, SCALE_BASE);
+            if (flagR) rotateSub.registerPrincipalHandles(th, ROT_BASE);
+            if (flagT) moveSub.registerCompactHandles(th, MOVE_BASE);
+            return;
+        }
+
+        if (flagT) moveSub.registerHandles(th, MOVE_BASE);
+        if (flagR) rotateSub.registerHandles(th, ROT_BASE);
+        if (flagS) scaleSub.registerHandles(th, SCALE_BASE);
+    }
+
     // Direct handle to the embedded Move sub-tool so the host can drive the Move
     // GESTURE without routing through the wrapper's drain+applyTRS. MoveTool is a
     // pure gesture-scalar producer: its onMouseButtonDown / onMouseMotion /
@@ -926,18 +931,7 @@ public:
         int hitPart = -1;
         if (e.button == SDL_BUTTON_LEFT) {
             toolHandles.begin();
-            if (flagT) {
-                if (compactPresentation()) moveSub.registerCompactHandles(toolHandles, MOVE_BASE);
-                else                       moveSub.registerHandles       (toolHandles, MOVE_BASE);
-            }
-            if (flagR) {
-                if (compactPresentation()) rotateSub.registerPrincipalHandles(toolHandles, ROT_BASE);
-                else                       rotateSub.registerHandles         (toolHandles, ROT_BASE);
-            }
-            if (flagS) {
-                if (compactPresentation()) scaleSub.registerAxisHandles(toolHandles, SCALE_BASE);
-                else                       scaleSub.registerHandles    (toolHandles, SCALE_BASE);
-            }
+            registerGizmoHandles(toolHandles);
             hitPart = toolHandles.test(e.x, e.y, cachedVp);
             if (compactPresentation() && flagS) {
                 int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);

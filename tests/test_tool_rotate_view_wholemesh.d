@@ -19,7 +19,7 @@
 
 import std.net.curl;
 import std.json;
-import std.math : fabs, sqrt;
+import std.math : fabs, sqrt, cos, sin, PI;
 import std.conv : to;
 
 import drag_helpers;
@@ -33,13 +33,74 @@ double dist(double[3] a, double[3] b) {
     return sqrt(dx*dx + dy*dy + dz*dz);
 }
 
-unittest { // dragging the view ring with no selection rotates the whole cube rigidly
+double distPointSegment(double px, double py,
+                        double ax, double ay, double bx, double by)
+{
+    double vx = bx - ax, vy = by - ay;
+    double wx = px - ax, wy = py - ay;
+    double len2 = vx*vx + vy*vy;
+    double t = len2 > 1e-9 ? (wx*vx + wy*vy) / len2 : 0.0;
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    double qx = ax + t * vx, qy = ay + t * vy;
+    double dx = px - qx, dy = py - qy;
+    return sqrt(dx*dx + dy*dy);
+}
+
+void viewRingGrab(Vec3 pivot, Viewport vp,
+                  out int x0, out int y0, out int x1, out int y1)
+{
+    float cx, cy;
+    assert(projectToWindow(pivot, vp, cx, cy),
+        "gizmo center projects off-camera (camera changed?)");
+
+    float size = gizmoSize(pivot, vp);
+    Vec3[3] axisEnds = [
+        Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z),
+        Vec3(pivot.x, pivot.y + size * 1.18f, pivot.z),
+        Vec3(pivot.x, pivot.y, pivot.z + size * 1.18f),
+    ];
+    float[2][3] axisPx;
+    foreach (i; 0 .. 3) {
+        assert(projectToWindow(axisEnds[i], vp, axisPx[i][0], axisPx[i][1]),
+            "axis endpoint projects off-camera");
+    }
+
+    // Pick a point on the view ring that is far from projected axis handles.
+    // In compact Transform, move/scale handles are registered too; this keeps
+    // the click owned by arcView rather than an overlapping axis handle.
+    double bestScore = -1.0;
+    double bestA = 0.0;
+    foreach (deg; [20.0, 50.0, 80.0, 110.0, 140.0, 170.0,
+                   200.0, 230.0, 260.0, 290.0, 320.0]) {
+        double a = deg * PI / 180.0;
+        double px = cx + 95.0 * cos(a);
+        double py = cy + 95.0 * sin(a);
+        double score = double.max;
+        foreach (i; 0 .. 3) {
+            double d = distPointSegment(px, py, cx, cy,
+                                        axisPx[i][0], axisPx[i][1]);
+            if (d < score) score = d;
+        }
+        if (score > bestScore) { bestScore = score; bestA = a; }
+    }
+    assert(bestScore > 12.0,
+        "could not find view-ring grab away from axis handles");
+
+    x0 = cast(int)(cx + 95.0 * cos(bestA));
+    y0 = cast(int)(cy + 95.0 * sin(bestA));
+    // Tangential drag along the screen-space ring.
+    x1 = x0 + cast(int)(70.0 * -sin(bestA));
+    y1 = y0 + cast(int)(70.0 *  cos(bestA));
+}
+
+void runViewRingWholeMesh(string toolId) {
     post("http://localhost:8080/api/reset", "");
 
     // No selection: the moving set is the whole mesh.
-    auto setResp = post("http://localhost:8080/api/script", "tool.set rotate");
+    auto setResp = post("http://localhost:8080/api/script", "tool.set " ~ toolId);
     assert(parseJSON(cast(string)setResp)["status"].str == "ok",
-        "tool.set rotate failed: " ~ cast(string)setResp);
+        "tool.set " ~ toolId ~ " failed: " ~ cast(string)setResp);
 
     // Snapshot all 8 verts of the default unit cube.
     int nVerts;
@@ -64,17 +125,8 @@ unittest { // dragging the view ring with no selection rotates the whole cube ri
     auto vp  = viewportFromCamera(cam);
 
     Vec3 pivot = Vec3(0, 0, 0);
-    float cx, cy;
-    assert(projectToWindow(pivot, vp, cx, cy),
-        "gizmo center projects off-camera (camera changed?)");
-
-    // arcView ring ≈ 99 px around the gizmo center; click at +95 px lands
-    // inside the 8 px hit-test band. A 70 px tangent drag traces a large
-    // view-axis angle. Same geometry as test_tool_rotate_drag.
-    int x0 = cast(int)(cx + 95);
-    int y0 = cast(int)cy;
-    int x1 = x0;
-    int y1 = y0 - 70;
+    int x0, y0, x1, y1;
+    viewRingGrab(pivot, vp, x0, y0, x1, y1);
 
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
@@ -113,4 +165,12 @@ unittest { // dragging the view ring with no selection rotates the whole cube ri
         assert(approx(postCentroid[k], 0.0, 1e-3),
             "centroid drifted from origin during whole-mesh view rotation (k=" ~
             k.to!string ~ ", got " ~ postCentroid[k].to!string ~ ")");
+}
+
+unittest { // rotate full presentation: view ring rotates whole cube rigidly
+    runViewRingWholeMesh("rotate");
+}
+
+unittest { // bare Transform compact presentation includes screen-space rotate
+    runViewRingWholeMesh("Transform");
 }

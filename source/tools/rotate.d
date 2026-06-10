@@ -110,9 +110,10 @@ public:
     }
 
     void registerPrincipalHandles(ToolHandles th, int base) {
-        th.add(handler.arcX, base + 0);
-        th.add(handler.arcY, base + 1);
-        th.add(handler.arcZ, base + 2);
+        th.add(handler.arcX,    base + 0);
+        th.add(handler.arcY,    base + 1);
+        th.add(handler.arcZ,    base + 2);
+        th.add(handler.arcView, base + 3);
     }
 
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
@@ -550,6 +551,11 @@ public:
         }
 
         handler.drawPrincipalOnly(shader, vp);
+        handler.arcView.draw(shader, vp);
+        cachedSize = handler.size;
+
+        if (dragAxis >= 0 && (dragStartDir.x != 0 || dragStartDir.y != 0 || dragStartDir.z != 0))
+            drawRotationSector(vp);
         drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
