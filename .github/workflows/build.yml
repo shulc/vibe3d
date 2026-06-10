@@ -72,11 +72,9 @@ jobs:
           - runner: [self-hosted, Linux]
             name: linux
             binary: vibe3d
-          # macOS x86_64 (macos-13) currently has multi-hour queue waits on the
-          # free tier — re-enable later (likely via a self-hosted runner).
-          # - runner: [self-hosted, macOS]
-          #   name: macos
-          #   binary: vibe3d
+          - runner: [self-hosted, macOS, ARM64]
+            name: macos-arm64
+            binary: vibe3d
           - runner: [self-hosted, Windows]
             name: windows
             binary: vibe3d.exe
@@ -85,6 +83,36 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Add Homebrew to PATH (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ -x /opt/homebrew/bin/brew ]; then
+            echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+            echo "/opt/homebrew/sbin" >> "$GITHUB_PATH"
+            export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+          elif [ -x /usr/local/bin/brew ]; then
+            echo "/usr/local/bin" >> "$GITHUB_PATH"
+            echo "/usr/local/sbin" >> "$GITHUB_PATH"
+            export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
+          else
+            echo "::error::Homebrew not found on this macOS runner. Install Homebrew and re-run."
+            exit 1
+          fi
+          brew --version | head -1
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          missing=()
+          for pkg in ldc sdl2 cmake; do
+            if ! brew list "$pkg" >/dev/null 2>&1; then
+              missing+=("$pkg")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            brew install "${missing[@]}"
+          fi
 
       # Windows C: is small; put the dub package cache (nfde + heavy render git
       # deps / LFS) on F: where there's room. Must precede any dub command.
@@ -141,10 +169,6 @@ jobs:
 
       # ---- SDL2 ----
       # Linux self-hosted runner has SDL2/GTK3/ninja pre-installed on the host.
-
-      - name: Install SDL2 (macOS)
-        if: runner.os == 'macOS'
-        run: brew install sdl2
 
       - name: Install SDL2 (Windows)
         if: runner.os == 'Windows'
@@ -429,7 +453,7 @@ jobs:
           TAG:     ${{ needs.check.outputs.tag }}
           NIGHTLY: ${{ needs.check.outputs.nightly }}
         run: |
-          ASSETS=( vibe3d-linux.zip vibe3d-windows.zip )
+          ASSETS=( vibe3d-linux.zip vibe3d-macos-arm64.zip vibe3d-windows.zip )
           # Append with-render assets only if their build job actually ran.
           [[ -f vibe3d-linux-render.zip   ]] && ASSETS+=( vibe3d-linux-render.zip )
           [[ -f vibe3d-windows-render.zip ]] && ASSETS+=( vibe3d-windows-render.zip )
