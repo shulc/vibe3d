@@ -353,7 +353,10 @@ void main(string[] args) {
 
     // Parse --playback <file> flag
     string playbackFile;
-    bool startHttpServer = true;  // Enable HTTP server by default
+    version (ReleaseBuild)
+        bool startHttpServer = false; // Release/default runs do not expose HTTP.
+    else
+        bool startHttpServer = true;
     bool testMode = false;
     // --perf: benchmark mode. Disables vsync (SDL_GL_SetSwapInterval(0)) and
     // fast-forwards event replay (ignores recorded timestamps, drains every
@@ -391,12 +394,14 @@ void main(string[] args) {
             playbackFile = args[++i];
         } else if (args[i] == "--test") {
             testMode = true;
+            startHttpServer = true;
             command.g_testMode = true;  // gate testMode-only commands (re-eval D5)
         } else if (args[i] == "--perf") {
             perfMode = true;
         } else if (args[i] == "--no-http") {
             startHttpServer = false;
         } else if (args[i] == "--http-port") {
+            startHttpServer = true;
             if (i + 1 >= args.length) {
                 writeln("Error: --http-port requires a port number");
                 import core.stdc.stdlib : exit;
@@ -556,8 +561,14 @@ void main(string[] args) {
     }
 
     EventLogger evLog;
-    if (!playbackMode) {
-        evLog.open("events.log");
+    version (ReleaseBuild) {
+        if (testMode && !playbackMode) {
+            evLog.open("events.log");
+        }
+    } else {
+        if (!playbackMode) {
+            evLog.open("events.log");
+        }
     }
     scope(exit) evLog.close();
 
@@ -677,8 +688,12 @@ void main(string[] args) {
     // would capture it). Setting IniFilename = null before the first NewFrame
     // means windows always open at their programmatic default positions,
     // independent of cwd. Must run before any window is created/loaded.
-    if (command.g_testMode)
+    version (ReleaseBuild) {
         io.IniFilename = null;
+    } else {
+        if (command.g_testMode)
+            io.IniFilename = null;
+    }
     // UI font: Inter (embedded vector TTF, SIL OFL — see assets/fonts/) at
     // 14px × uiScale with Cyrillic coverage. Replaces ImGui's built-in 13px
     // bitmap font, which cannot scale fractionally without blurring.
