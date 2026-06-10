@@ -144,11 +144,15 @@ void establishCubeBaseline() {
         Thread.sleep(120.msecs);
         postJson("/api/reset", "");                 // cube
         postJson("/api/command", "history.clear");  // wipe stacks, keep the cube
+        postJson("/api/command", "workplane.reset");
+        postJson("/api/command", "tool.pipe.attr axis mode world");
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
     postJson("/api/command", "history.clear");
+    postJson("/api/command", "workplane.reset");
+    postJson("/api/command", "tool.pipe.attr axis mode world");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }
 
@@ -191,6 +195,7 @@ void setupSingleBankScene(string flag) {
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     settle();
     cmd("actr.auto");
+    cmd("tool.pipe.attr axis mode world");
     settle();
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T " ~ (flag == "T" ? "true" : "false"));
@@ -235,13 +240,13 @@ void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
                 out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size,        pivot.y, pivot.z), vp, sx2, sy2);
-    gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
-    gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    projectToWindow(Vec3(pivot.x + size / 7.0f,  pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z), vp, sx2, sy2);
     double dx = sx2 - sx1, dy = sy2 - sy1;
     double len = sqrt(dx*dx + dy*dy);
     ux = dx / len; uy = dy / len;
+    gx = cast(int)sx2;
+    gy = cast(int)sy2;
 }
 void scaleGestureOnHandle(long wantCount, double mag = 70.0) {
     foreach (attempt; 0 .. 8) {

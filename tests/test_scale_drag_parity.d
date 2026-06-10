@@ -99,7 +99,9 @@ unittest { // single-axis (X) scale-arrow drag == numeric SX, per vertex
 
     Vec3 pivot = Vec3(0, 0, 0);            // ACEN.Auto centroid for full cube
     float size = gizmoSize(pivot, vp);
-    // ScaleHandler X-arrow shaft: center + axis*(size/7) → center + axis*(size*1.18).
+    // Transform compact presentation dispatches Scale only from the axis head.
+    // The full ScaleTool hit-test still accepts the shaft, but the wrapper
+    // priority gate checks hitTestAxisHeads before dispatching to Scale.
     Vec3 arrowStart = Vec3(pivot.x + size / 7.0f, pivot.y, pivot.z);
     Vec3 arrowEnd   = Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z);
     float sx1, sy1, sx2, sy2;
@@ -108,13 +110,12 @@ unittest { // single-axis (X) scale-arrow drag == numeric SX, per vertex
     assert(projectToWindow(arrowEnd,   vp, sx2, sy2),
         "X-arrow end projects off-camera");
 
-    int x0 = cast(int)(sx1 + 0.7f * (sx2 - sx1));
-    int y0 = cast(int)(sy1 + 0.7f * (sy2 - sy1));
-
     double sdx = cast(double)(sx2 - sx1);
     double sdy = cast(double)(sy2 - sy1);
     double sLen = sqrt(sdx*sdx + sdy*sdy);
     assert(sLen > 1.0, "X-arrow projects too short for a reliable scale drag");
+    int x0 = cast(int)sx2;
+    int y0 = cast(int)sy2;
     int x1 = x0 + cast(int)(80.0 * sdx / sLen);
     int y1 = y0 + cast(int)(80.0 * sdy / sLen);
 
