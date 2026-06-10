@@ -272,7 +272,7 @@ jobs:
       # ---- Build ----
 
       - name: Build
-        run: dub build --compiler=ldc2 --build=release
+        run: dub build --compiler=ldc2 --build=release --d-version=ReleaseBuild
 
       - name: Build app bundle (macOS)
         if: runner.os == 'macOS'
