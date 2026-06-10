@@ -86,4 +86,6 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+codesign --force --deep --sign - "$APP_PATH"
+
 echo "[app] built $APP_PATH"
