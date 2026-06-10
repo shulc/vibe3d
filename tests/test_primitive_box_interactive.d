@@ -8,7 +8,7 @@
 import std.conv : to;
 import std.format : format;
 import std.json;
-import std.math : abs, fabs;
+import std.math : abs, cos, fabs, PI, sin;
 import std.net.curl : get, post;
 
 import drag_helpers;
@@ -91,6 +91,13 @@ Vec3 committedFaceNormal(long faceIndex) {
     auto v1 = verts[cast(size_t)f[1].integer];
     auto v2 = verts[cast(size_t)f[2].integer];
     return crossD(subD(v1, v0), subD(v2, v0));
+}
+
+Vec3 vertexAt(JSONValue model, size_t index) {
+    auto v = model["vertices"].array[index].array;
+    return Vec3(cast(float)v[0].floating,
+                cast(float)v[1].floating,
+                cast(float)v[2].floating);
 }
 
 Vec3 cameraBack() {
@@ -180,6 +187,32 @@ void resetForBoxCamera(double elevation) {
         `{"azimuth":0.4,"elevation":` ~ elevation.to!string ~ `,"distance":4.0,`
         ~ `"focus":{"x":0,"y":0,"z":0}}`);
     assert(r["status"].str == "ok", "camera set failed: " ~ r.toString);
+    cmd("tool.set prim.cube");
+}
+
+void resetForRotatedWorkplaneBox() {
+    auto r = postJson("/api/reset?empty=true", "");
+    assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
+    cmd("history.clear");
+
+    enum double deg = 35.0;
+    enum double rz = deg * PI / 180.0;
+    Vec3 wpCenter = Vec3(0.35f, -0.20f, 0.15f);
+
+    // Put the camera on rotated workplane axis1, not on the workplane normal.
+    // Box should use the workplane as a local coordinate frame and select the
+    // most camera-facing local construction plane inside that frame.
+    auto cam = postJson("/api/camera",
+        `{"azimuth":1.57079632679,"elevation":0.6108652382,"distance":4.0,`
+        ~ `"focus":{"x":` ~ wpCenter.x.to!string
+        ~ `,"y":` ~ wpCenter.y.to!string
+        ~ `,"z":` ~ wpCenter.z.to!string ~ `}}`);
+    assert(cam["status"].str == "ok", "camera set failed: " ~ cam.toString);
+
+    cmd("workplane.edit cenX:" ~ wpCenter.x.to!string
+        ~ " cenY:" ~ wpCenter.y.to!string
+        ~ " cenZ:" ~ wpCenter.z.to!string
+        ~ " rotX:0 rotY:0 rotZ:" ~ deg.to!string);
     cmd("tool.set prim.cube");
 }
 
@@ -336,6 +369,42 @@ void assertBaseOnlyCommitCreatesOneCameraFacingPolygon(double elevation) {
 unittest { // Box base-only commit creates one camera-facing polygon
     assertBaseOnlyCommitCreatesOneCameraFacingPolygon(1.1);
     assertBaseOnlyCommitCreatesOneCameraFacingPolygon(-1.1);
+}
+
+unittest { // Box base-only commit follows a rotated workplane
+    resetForRotatedWorkplaneBox();
+
+    enum double deg = 35.0;
+    enum double rz = deg * PI / 180.0;
+    Vec3 wpCenter = Vec3(0.35f, -0.20f, 0.15f);
+    Vec3 expectedNormal = Vec3(cast(float)cos(rz), cast(float)sin(rz), 0);
+
+    int cx, cy;
+    projectOrDie(wpCenter, cx, cy, "rotated workplane center");
+    dragPixels(cx, cy, cx + 150, cy + 140);
+    cmd("tool.set prim.cube off");
+
+    assert(vertCount() == 4,
+        "rotated workplane base should create 4 vertices, got " ~ vertCount().to!string);
+    assert(faceCount() == 1,
+        "rotated workplane base should create exactly one polygon, got " ~ faceCount().to!string);
+
+    auto m = getJson("/api/model");
+    foreach (i; 0 .. 4) {
+        Vec3 v = vertexAt(m, i);
+        double dist = dotD(v - wpCenter, expectedNormal);
+        assert(approx(dist, 0.0, 1e-3),
+            "vertex " ~ i.to!string ~
+            " is off the rotated construction plane: signed dist=" ~ dist.to!string);
+    }
+
+    Vec3 n = normalize(committedFaceNormal(0));
+    double aligned = abs(dotD(n, expectedNormal));
+    assert(aligned > 0.999,
+        "base polygon normal should align with the rotated construction normal, dot="
+        ~ aligned.to!string);
+    assert(dotD(committedFaceNormal(0), cameraBack()) > 0.0,
+        "rotated workplane base polygon should face the camera");
 }
 
 unittest { // Box active undo steps live edits; drop collapses to one history entry
