@@ -140,6 +140,20 @@ jobs:
             exit 1; }
           ldc2 --version | head -1 || true
 
+      - name: Locate dub (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v dub >/dev/null 2>&1; then
+            for d in "$HOME"/Code/dub/bin "$HOME"/dub/bin "$HOME"/.local/bin \
+                     /opt/dub/bin /usr/local/bin; do
+              if [ -x "$d/dub" ]; then echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; fi
+            done
+          fi
+          command -v dub >/dev/null 2>&1 || {
+            echo "::error::dub not found on this runner. Install dub or put it under ~/Code/dub/bin."
+            exit 1; }
+          dub --version
+
       - name: Locate LDC (Windows)
         if: runner.os == 'Windows'
         shell: powershell
