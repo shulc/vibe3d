@@ -2271,12 +2271,34 @@ public:
     //   S: applyScaleFromActivation already handles per-cluster via
     //      axesFor() — no change needed.
     bool applyTRS(Vec3[] baseline, Vec3 viewAxis = Vec3(0, 0, 0),
-                  float viewAngleDeg = 0) {
+                  float viewAngleDeg = 0,
+                  bool samplePipeFromBaseline = false) {
         import toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
-        buildLocalVts(subj, vts);
 
+        assert(baseline.length == mesh.vertices.length,
+               "applyTRS: baseline/mesh length mismatch ("
+             ~ "baseline must be a snapshot of mesh.vertices at the "
+             ~ "edit-session start)");
+
+        void restoreBaseline() {
+            foreach (i; 0 .. mesh.vertices.length)
+                mesh.vertices[i] = baseline[i];
+        }
+
+        if (samplePipeFromBaseline) {
+            restoreBaseline();
+            buildLocalVts(subj, vts);
+        } else {
+            buildLocalVts(subj, vts);
+        }
+
+        // Value-edit reEvaluate semantics are revert-then-rerun: for those paths,
+        // geometry-derived ACEN/AXIS state must be sampled from the baseline, not
+        // from the previous preview result. Live drags and their undo/resync hooks
+        // keep the historical live-pipe sampling because their action-center pins
+        // and soft-pins deliberately reflect the current gesture/run state.
         Vec3 pivot = queryActionCenter(vts);
         auto cp    = queryClusterPivots(vts);
         auto ap    = queryClusterAxes(vts);
@@ -2284,17 +2306,7 @@ public:
         buildVertexCacheIfNeeded();
         if (vertexProcessCount == 0) return false;
 
-        // UNCONDITIONAL whole-baseline restore. Cheap (one vector copy)
-        // and covers every cross-cluster / symmetry-mirror side effect.
-        // The assert pins the only valid relationship — if it ever
-        // trips, a caller is feeding the wrong baseline.
-        assert(baseline.length == mesh.vertices.length,
-               "applyTRS: baseline/mesh length mismatch ("
-             ~ "baseline must be a snapshot of mesh.vertices at the "
-             ~ "edit-session start)");
-        foreach (i; 0 .. mesh.vertices.length)
-            mesh.vertices[i] = baseline[i];
-
+        restoreBaseline();
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
 
@@ -2303,13 +2315,12 @@ public:
         // and the pivot above) freezes one world-space frame for the whole run so
         // the run-absolute panel components sum along a STABLE axis even though
         // currentBasis re-derives per frame (drifts under acen=local). The capture
-        // is INERT in Phase 1 — composeFor still reads the per-frame bX/bY/bZ; the
-        // frozen frame is published for assertion but feeds no geometry yet
-        // (Phase 2 wires the Move T component to runFrameR/U/F). Ordering is
-        // load-bearing: freeze BEFORE applyFold/composeFor read the frame, so the
-        // first apply of a run (incl. the bare-write replay path) has a valid
-        // frame to publish; resetRun() at every geometry-run boundary clears it so
-        // a relocate re-freezes a fresh frame next apply.
+        // is published for assertion and used by run-absolute display/frozen
+        // translate basis. Ordering is load-bearing: freeze BEFORE
+        // applyFold/composeFor read the frame, so the first apply of a run
+        // (incl. the bare-write replay path) has a valid frame to publish;
+        // resetRun() at every geometry-run boundary clears it so a relocate
+        // re-freezes a fresh frame next apply.
         if (!runFrameValid) {
             runFrameOrigin = pivot;
             runFrameR      = bX;
@@ -2537,14 +2548,14 @@ public:
                               angleAccumRad.z * 180.0f / cast(float)PI);
         // Euler-slot path: applyTRS defaults the transient view-ring rotation
         // to zero (MS-3.4), so a prior view-ring drag cannot re-apply on top.
-        applyTRS(dragBaseline);
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
     }
 
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
         captureBaselinePacketsNoSession();
         vertexCacheDirty = true;
         headlessScale = scaleAccum;
-        applyTRS(dragBaseline);
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
     }
 
     // Numeric headless apply (`tool.doApply` + cross-engine deform
@@ -2621,7 +2632,7 @@ public:
         if (freshBaseline)
             headlessTranslate = Vec3(0, 0, 0);
         headlessTranslate = headlessTranslate + basisLocalDelta;
-        applyTRS(dragBaseline);
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
         needsGpuUpdate = true;
     }
 
@@ -2715,7 +2726,7 @@ public:
     // assert. Shared by reEvaluate() and the panel-delta path's setup.
     private void replayTranslateFromBaseline() {
         captureDragBaselineIfStale();
-        applyTRS(dragBaseline);
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
         needsGpuUpdate = true;
     }
 
