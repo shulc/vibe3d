@@ -211,6 +211,33 @@ unittest { // MODO-style transform presets publish both operation flags
     assert(queryCmd("tool.attr TransformScale S ?").type == JSON_TYPE.TRUE);
 }
 
+unittest { // Toolbar aliases move/rotate/scale use the same full handle banks
+           // as TransformMove / TransformRotate / TransformScale. Bare Transform
+           // is the only compact combined presentation.
+    postJson("/api/reset", "");
+
+    cmd("tool.set move on");
+    assert(queryCmd("tool.attr move H ?").integer == 0);
+    assert(queryCmd("tool.attr move presentation ?").str == "full");
+    assert(queryCmd("tool.attr move T ?").type == JSON_TYPE.TRUE);
+    assert(queryCmd("tool.attr move R ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr move S ?").type == JSON_TYPE.FALSE);
+
+    cmd("tool.set rotate on");
+    assert(queryCmd("tool.attr rotate H ?").integer == 1);
+    assert(queryCmd("tool.attr rotate presentation ?").str == "full");
+    assert(queryCmd("tool.attr rotate T ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr rotate R ?").type == JSON_TYPE.TRUE);
+    assert(queryCmd("tool.attr rotate S ?").type == JSON_TYPE.FALSE);
+
+    cmd("tool.set scale on");
+    assert(queryCmd("tool.attr scale H ?").integer == 2);
+    assert(queryCmd("tool.attr scale presentation ?").str == "full");
+    assert(queryCmd("tool.attr scale T ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr scale R ?").type == JSON_TYPE.FALSE);
+    assert(queryCmd("tool.attr scale S ?").type == JSON_TYPE.TRUE);
+}
+
 unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
            // selected. The composition path dispatches mouse-down to
            // the MoveTool sub-instance which handles the drag as it

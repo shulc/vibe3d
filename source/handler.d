@@ -639,7 +639,7 @@ class MoveHandler : Handler {
         circleXY.normal = axisZ; circleXY.radius = circR;
         circleYZ.center = center + axisY * cirOffset + axisZ * cirOffset;
         circleYZ.normal = axisX; circleYZ.radius = circR;
-        circleXZ.center = center + axisX * size      + axisZ * cirOffset;
+        circleXZ.center = center + axisX * cirOffset + axisZ * cirOffset;
         circleXZ.normal = axisY; circleXZ.radius = circR;
 
         // Hide arrows that point too directly toward/away from the camera.

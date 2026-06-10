@@ -1062,6 +1062,8 @@ void main(string[] args) {
         import tools.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
         t.flagT = true; t.flagR = false; t.flagS = false;
+        t.handleFamily = 0;
+        t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
@@ -1069,6 +1071,8 @@ void main(string[] args) {
         import tools.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
         t.flagT = false; t.flagR = true; t.flagS = false;
+        t.handleFamily = 1;
+        t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
@@ -1076,6 +1080,8 @@ void main(string[] args) {
         import tools.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
         t.flagT = false; t.flagR = false; t.flagS = true;
+        t.handleFamily = 2;
+        t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
