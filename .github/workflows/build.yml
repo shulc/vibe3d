@@ -270,11 +270,19 @@ jobs:
       - name: Build
         run: dub build --compiler=ldc2 --build=release
 
+      - name: Build app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: tools/macos/build_app.sh --no-build --output Vibe3D.app
+
       # ---- Zip ----
 
-      - name: Zip artifact (Linux / macOS)
-        if: runner.os != 'Windows'
+      - name: Zip artifact (Linux)
+        if: runner.os == 'Linux'
         run: zip -r vibe3d-${{ matrix.name }}.zip ${{ matrix.binary }} config assets
+
+      - name: Zip artifact (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent Vibe3D.app vibe3d-${{ matrix.name }}.zip
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
