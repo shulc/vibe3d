@@ -30,8 +30,31 @@ import params : Param;
 //             selected vertices along the dragged axis relative to the center.
 // ---------------------------------------------------------------------------
 
+private class ScaleHeadHandle : Handler {
+    CubicArrow target;
+
+    this(CubicArrow target) {
+        this.target = target;
+    }
+
+    override void setState(HandleState s) {
+        super.setState(s);
+        target.setState(s);
+    }
+
+    override protected bool hitTest(int mx, int my, const ref Viewport vp) {
+        if (!target.isVisible()) return false;
+        float ex, ey, ndcZ;
+        if (!projectToWindowFull(target.end, vp, ex, ey, ndcZ)) return false;
+        float dx = cast(float)mx - ex;
+        float dy = cast(float)my - ey;
+        return sqrt(dx*dx + dy*dy) < 12.0f;
+    }
+}
+
 class ScaleTool : TransformTool {
     ScaleHandler handler;
+    ScaleHeadHandle headX, headY, headZ;
 
 private:
     Vec3     scaleAccum     = Vec3(1, 1, 1);  // cumulative scale factor per axis since tool activated
@@ -76,6 +99,9 @@ public:
     this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
         super(mesh, gpu, editMode);
         handler = new ScaleHandler(Vec3(0, 0, 0));
+        headX = new ScaleHeadHandle(handler.arrowX);
+        headY = new ScaleHeadHandle(handler.arrowY);
+        headZ = new ScaleHeadHandle(handler.arrowZ);
     }
 
     void destroy() { handler.destroy(); }
@@ -109,6 +135,12 @@ public:
         th.add(handler.arrowX, base + 0);
         th.add(handler.arrowY, base + 1);
         th.add(handler.arrowZ, base + 2);
+    }
+
+    void registerAxisHeadHandles(ToolHandles th, int base) {
+        th.add(headX, base + 0);
+        th.add(headY, base + 1);
+        th.add(headZ, base + 2);
     }
 
     override string name() const { return "Scale"; }
