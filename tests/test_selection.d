@@ -28,6 +28,42 @@ void waitPlayerIdle() {
     }
 }
 
+JSONValue postJson(string path, string body) {
+    auto resp = cast(string)post("http://localhost:8080" ~ path, body);
+    return parseJSON(resp);
+}
+
+void runCmd(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok" || r["status"].str == "success",
+        "/api/command '" ~ line ~ "' failed: " ~ r.toString);
+}
+
+void playKey(int sym, int mod = 0) {
+    enum header =
+        `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n";
+    string events = header
+        ~ `{"t":1,"type":"SDL_KEYDOWN","sym":` ~ sym.to!string
+        ~ `,"scan":0,"mod":` ~ mod.to!string ~ `,"repeat":0}` ~ "\n"
+        ~ `{"t":11,"type":"SDL_KEYUP","sym":` ~ sym.to!string
+        ~ `,"scan":0,"mod":` ~ mod.to!string ~ `,"repeat":0}` ~ "\n";
+
+    auto r = postJson("/api/play-events", events);
+    assert(r["status"].str == "success",
+        "/api/play-events failed: " ~ r.toString);
+    import core.thread : Thread;
+    import core.time : dur;
+    for (int i = 0; i < 100; ++i) {
+        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        if (statusJson["finished"].type == JSONType.TRUE) {
+            Thread.sleep(dur!"msecs"(120));
+            return;
+        }
+        Thread.sleep(dur!"msecs"(20));
+    }
+    assert(false, "key playback did not finish");
+}
+
 unittest { // SELECTION VERTICES: Test selected vertices after playing events
     waitPlayerIdle();
     post("http://localhost:8080/api/reset", "");
@@ -63,6 +99,31 @@ unittest { // SELECTION VERTICES: Test selected vertices after playing events
 
     assert(json["selectedEdges"].array.length  == 0, "selectedEdges should be empty");
     assert(json["selectedFaces"].array.length == 0, "selectedFaces should be empty");
+}
+
+unittest { // ESC clears selection in the current edit mode via select.drop shortcut
+    waitPlayerIdle();
+    post("http://localhost:8080/api/reset", "");
+
+    runCmd("select.typeFrom vertex");
+    runCmd("select.element vertex set 4 6");
+
+    auto before = parseJSON(get("http://localhost:8080/api/selection"));
+    assert(before["mode"].str == "vertices", "mode mismatch before Esc");
+    assert(before["selectedVertices"].array.length == 2,
+        "setup should have 2 selected vertices");
+
+    enum int SDLK_ESCAPE = 27;
+    playKey(SDLK_ESCAPE);
+
+    auto after = parseJSON(get("http://localhost:8080/api/selection"));
+    assert(after["mode"].str == "vertices", "Esc should not change edit mode");
+    assert(after["selectedVertices"].array.length == 0,
+        "Esc should clear vertex selection");
+    assert(after["selectedEdges"].array.length == 0,
+        "Esc should not select edges");
+    assert(after["selectedFaces"].array.length == 0,
+        "Esc should not select faces");
 }
 
 unittest { // ADD SELECTION: Shift+click adds a third vertex to existing selection

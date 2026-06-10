@@ -15,6 +15,7 @@ commands:
   select.invert:         "["
   select.connect:        "]"
   select.between:        "Shift+G"
+  select.drop:           Escape
   viewport.fit:          A
   viewport.fit_selected: "Shift+A"
   mesh.subdivide:        "D"

@@ -15,6 +15,11 @@ class SelectDropCommand : Command {
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
+        final switch (editMode) {
+            case EditMode.Vertices: targetType = "vertex";  break;
+            case EditMode.Edges:    targetType = "edge";    break;
+            case EditMode.Polygons: targetType = "polygon"; break;
+        }
     }
 
     override string name()  const { return "select.drop"; }

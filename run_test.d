@@ -383,7 +383,7 @@ bool isSourceBackedTest(string path) {
     static immutable string[] roots = [
         "math", "mesh", "tools.", "toolpipe.", "falloff", "symmetry",
         "view", "viewcache", "handler", "shader", "editmode", "command",
-        "snapshot", "forms", "params", "argstring",
+        "snapshot", "forms", "params", "argstring", "shortcuts",
     ];
     foreach (line; txt.splitLines) {
         auto s = line.strip;

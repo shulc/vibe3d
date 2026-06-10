@@ -161,3 +161,27 @@ unittest { // ZOOM: Test camera state after playing events from events.log
         650, 544
     ));
 }
+
+unittest { // WHEEL ZOOM: SDL_MOUSEWHEEL changes camera distance
+    post("http://localhost:8080/api/reset", "");
+
+    enum events =
+        `{"t":0,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}` ~ "\n" ~
+        `{"t":1,"type":"SDL_MOUSEWHEEL","x":0,"y":1}` ~ "\n";
+    auto playResponse = post("http://localhost:8080/api/play-events", events);
+    auto playJson = parseJSON(playResponse);
+    assert(playJson["status"].str == "success", "play-events failed: " ~ playResponse);
+
+    import core.thread : Thread;
+    import core.time : dur;
+    for (int i = 0; i < 100; ++i) {
+        auto statusJson = parseJSON(get("http://localhost:8080/api/play-events/status"));
+        if (statusJson["finished"].type == JSONType.TRUE) break;
+        Thread.sleep(dur!"msecs"(100));
+    }
+
+    auto json = parseJSON(get("http://localhost:8080/api/camera"));
+    assert(approxEqual(json["distance"].floating, 2.7),
+        "wheel-up should zoom in to distance 2.7; got " ~
+        json["distance"].floating.to!string);
+}

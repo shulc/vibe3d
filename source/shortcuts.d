@@ -186,7 +186,8 @@ string canonFromEvent(SDL_Keycode sym, SDL_Keymod mod) {
     else {
         switch (sym) {
             case SDLK_UP: case SDLK_DOWN: case SDLK_LEFT: case SDLK_RIGHT:
-            case SDLK_SPACE: case SDLK_RETURN: case SDLK_TAB: case SDLK_BACKSPACE:
+            case SDLK_SPACE: case SDLK_ESCAPE: case SDLK_RETURN:
+            case SDLK_TAB: case SDLK_BACKSPACE:
             case SDLK_DELETE:
             case SDLK_LEFTBRACKET: case SDLK_RIGHTBRACKET:
             case SDLK_MINUS: case SDLK_EQUALS:
