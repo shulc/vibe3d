@@ -101,6 +101,10 @@ jobs:
           fi
           brew --version | head -1
 
+      - name: Set deployment target (macOS)
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
+
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: |

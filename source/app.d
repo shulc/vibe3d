@@ -640,6 +640,8 @@ void main(string[] args) {
         NSApplication app = objc_getClass("NSApplication").sharedApplication();
         app.setActivationPolicy(0); // NSApplicationActivationPolicyRegular
         app.activateIgnoringOtherApps(true);
+        SDL_ShowWindow(window);
+        SDL_RaiseWindow(window);
     }
 
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
