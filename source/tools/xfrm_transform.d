@@ -2548,14 +2548,18 @@ public:
                               angleAccumRad.z * 180.0f / cast(float)PI);
         // Euler-slot path: applyTRS defaults the transient view-ring rotation
         // to zero (MS-3.4), so a prior view-ring drag cannot re-apply on top.
-        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
+        bool pureRotatePreset = flagR && !flagT && !flagS;
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                 /*samplePipeFromBaseline=*/pureRotatePreset);
     }
 
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
         captureBaselinePacketsNoSession();
         vertexCacheDirty = true;
         headlessScale = scaleAccum;
-        applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
+        bool pureScalePreset = flagS && !flagT && !flagR;
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                 /*samplePipeFromBaseline=*/pureScalePreset);
     }
 
     // Numeric headless apply (`tool.doApply` + cross-engine deform
