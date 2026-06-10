@@ -3448,6 +3448,11 @@ void main(string[] args) {
         }
     }
 
+    void handleMouseWheel(ref SDL_MouseWheelEvent wheel) {
+        if (wheel.y == 0) return;
+        cameraView.zoom(wheel.y * 10);
+    }
+
     // Delegate is forward-declared here and assigned after pickVertices /
     // pickEdges / pickFaces are defined further down. handleMouseMotion
     // captures it by reference; at call time the delegate is bound.
@@ -4372,6 +4377,7 @@ void main(string[] args) {
             case SDL_KEYDOWN:         handleKeyDown(ev.key);             break;
             case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button);  break;
             case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(ev.button);    break;
+            case SDL_MOUSEWHEEL:      handleMouseWheel(ev.wheel);        break;
             case SDL_MOUSEMOTION:     handleMouseMotion(ev.motion);      break;
             default: break;
         }
