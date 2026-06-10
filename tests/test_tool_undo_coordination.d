@@ -5,7 +5,8 @@
 // exactly three interactive sites (keyboard Ctrl+Z / Ctrl+Shift+Z, and the
 // history-panel drag-jump loop). The chokepoint:
 //   - if the active tool holds an uncommitted live edit, the first Ctrl+Z
-//     cancels THAT edit (no history pop, tool stays active);
+//     cancels THAT edit (no history pop); if that clears the last pending edit,
+//     the tool deactivates;
 //   - otherwise it pops/pushes the history stack and resyncs the tool.
 //
 // This file pins the KEYBOARD path end-to-end through /api/play-events:
@@ -110,6 +111,11 @@ double attrValue(string toolId, string name) {
     assert(r["status"].str == "ok",
         "tool.attr query failed: " ~ r.toString);
     return r["value"].floating;
+}
+
+bool attrQueryOk(string toolId, string name) {
+    auto r = postJson("/api/command", "tool.attr " ~ toolId ~ " " ~ name ~ " ?");
+    return r["status"].str == "ok";
 }
 
 // Authoritative gizmo pivot: /api/toolpipe/eval runs the pipeline once and
@@ -402,8 +408,11 @@ unittest {
         ~ "before=" ~ undoBefore.to!string ~ " after=" ~ undoLen().to!string);
     assert(approxEqual(vertX(v6), x0),
         "in-session Ctrl+Z did not restore the geometry");
+    assert(!attrQueryOk("move", "TX"),
+        "in-session Ctrl+Z should deactivate move after cancelling its last pending edit");
+    cmd("tool.set move");
     assert(approxEqual(attrValue("move", "TX"), 0.0),
-        "in-session Ctrl+Z restored geometry but left TX stale; expected 0, got "
+        "reactivated move after Ctrl+Z should expose clean TX 0, got "
         ~ attrValue("move", "TX").to!string);
 
     postJson("/api/command", "tool.set move off");
@@ -483,6 +492,8 @@ unittest {
         ~ " after=" ~ undoLen().to!string);
     assert(approxEqual(vertX(v6), x0),
         "in-session Ctrl+Z did not restore the geometry");
+    assert(!attrQueryOk("move", "TX"),
+        "in-session Ctrl+Z should deactivate move after cancelling its last pending edit");
     assert(approxEqual(pivotX(), pivot0),
         "in-session Ctrl+Z restored geometry but left the gizmo at the relocated "
         ~ "click point; expected pivot X " ~ pivot0.to!string

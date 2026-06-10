@@ -11,6 +11,7 @@ import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize, ToolHandles
 import eventlog : queryMouse;
 import drag;
 import shader : Shader, LitShader;
+import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import snapshot : MeshSnapshot;
@@ -22,6 +23,7 @@ import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import params : Param;
+import view : View;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -1782,6 +1784,8 @@ unittest {
 
 private enum BoxState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSet }
 
+private __gshared View gBoxLiveEditView;
+
 class BoxTool : Tool {
 private:
     Mesh*     mesh;
@@ -1868,6 +1872,15 @@ private:
     CommandHistory  history;
     BoxEditFactory  boxEditFactory;
 
+    bool     liveRunActive;
+    int      liveUndoDepth;
+    BoxParams dragBeforeParams;
+    BoxState  dragBeforeState;
+    bool      dragBeforeValid;
+    BoxParams paramBeforeParams;
+    BoxState  paramBeforeState;
+    bool      paramBeforeValid;
+
 public:
     bool meshChanged;
 
@@ -1907,6 +1920,7 @@ public:
         moverDragAxis   = -1;
         edgeDragIdx     = -1;
         heightHDragIdx  = -1;
+        clearLiveEditTracking();
         toolHandles.clearHaul();
         previewGpu.init();
     }
@@ -1929,6 +1943,7 @@ public:
         previewGpu.destroy();
 
         if (willCommit) commitBoxEdit(pre);
+        else clearLiveEditTracking();
 
         // Drop the snap overlay so it doesn't linger after deactivate.
         lastSnap = SnapResult.init;
@@ -1950,7 +1965,12 @@ public:
     // separate previewMesh/previewGpu; the scene mesh is never touched until
     // commit, so dropping back to Idle discards the whole live edit.
     public override void cancelUncommittedEdit() {
+        if (history !is null && liveRunActive && liveUndoDepth > 0) {
+            if (history.undo())
+                return;
+        }
         state = BoxState.Idle;
+        clearLiveEditTracking();
     }
 
     // Resync after a committed undo/redo moved geometry beneath the active tool
@@ -1959,6 +1979,7 @@ public:
     // the only safe action is to drop a half-drawn primitive (an in-progress
     // draw can't survive an external topology change), so reset to Idle.
     public override void resyncSession() {
+        if (liveRunActive) return;
         state = BoxState.Idle;
     }
 
@@ -1968,7 +1989,11 @@ public:
         auto cmd  = boxEditFactory();
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Create Box");
-        history.record(cmd);
+        if (liveRunActive)
+            history.replaceInSessionTailWith(history.currentRunId, cmd);
+        else
+            history.record(cmd);
+        clearLiveEditTracking();
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
@@ -1991,6 +2016,7 @@ public:
                     edgeDragIdx = cast(int)i;
                     edgeLastMX  = e.x;
                     edgeLastMY  = e.y;
+                    captureLiveDragStart();
                     return true;
                 }
             }
@@ -2005,6 +2031,7 @@ public:
             heightHHitIdx = 1;
         if ((state == BoxState.BaseSet || state == BoxState.HeightSet) && heightHHitIdx >= 0) {
             heightHDragIdx = heightHHitIdx;
+            captureLiveDragStart();
             if (state == BoxState.BaseSet) {
                 // Transition from BaseSet → DrawingHeight via bottom handle.
                 // Zero out height in params_ (the plane-normal axis size) before
@@ -2040,6 +2067,7 @@ public:
                 moverDragAxis  = hit;
                 moverLastMX    = e.x;
                 moverLastMY    = e.y;
+                captureLiveDragStart();
                 return true;
             }
         }
@@ -2076,6 +2104,7 @@ public:
         }
 
         if (state == BoxState.BaseSet) {
+            captureLiveDragStart();
             // Ctrl at the second click keeps the existing cube center and
             // re-drives all three sizes from the cursor's distance to that
             // center (uniform half-extent). The flat base from the first
@@ -2122,9 +2151,24 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
-        if (edgeDragIdx >= 0) { edgeDragIdx = -1; toolHandles.clearHaul(); return true; }
-        if (moverDragAxis >= 0) { moverDragAxis = -1; toolHandles.clearHaul(); return true; }
-        if (heightHDragIdx >= 0 && state == BoxState.HeightSet) { heightHDragIdx = -1; toolHandles.clearHaul(); return true; }
+        if (edgeDragIdx >= 0) {
+            recordLiveDragEnd();
+            edgeDragIdx = -1;
+            toolHandles.clearHaul();
+            return true;
+        }
+        if (moverDragAxis >= 0) {
+            recordLiveDragEnd();
+            moverDragAxis = -1;
+            toolHandles.clearHaul();
+            return true;
+        }
+        if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
+            recordLiveDragEnd();
+            heightHDragIdx = -1;
+            toolHandles.clearHaul();
+            return true;
+        }
 
         if (state == BoxState.DrawingBase) {
             // Ctrl-uniform mode: the drag fully defined a 3D cube on its
@@ -2155,6 +2199,7 @@ public:
 
         if (state == BoxState.DrawingHeight) {
             state = BoxState.HeightSet;
+            recordLiveDragEnd();
             heightHDragIdx = -1;
             toolHandles.clearHaul();
             return true;
@@ -2440,6 +2485,11 @@ public:
     /// Phase 6.1c: sharp attr (enabled only when radius > 0 and segmentsR <= 3).
     override Param[] params() {
         import params : IntEnumEntry;
+        if (state != BoxState.Idle) {
+            paramBeforeParams = params_;
+            paramBeforeState = state;
+            paramBeforeValid = true;
+        }
         return [
             Param.float_("cenX",  "Position X", &params_.cenX,  0.0f),
             Param.float_("cenY",  "Position Y", &params_.cenY,  0.0f),
@@ -2463,6 +2513,13 @@ public:
                  IntEnumEntry(2, "z", "Z")],
                 1).hidden(),
         ];
+    }
+
+    override void onParamChanged(string name) {
+        if (paramBeforeValid) {
+            recordLiveEdit(paramBeforeParams, paramBeforeState, params_, state);
+            paramBeforeValid = false;
+        }
     }
 
     /// Disable `sharp` when radius == 0 or segmentsR > 3 (no K-table entry).
@@ -2516,6 +2573,71 @@ public:
     }
 
 private:
+    void clearLiveEditTracking() {
+        liveRunActive = false;
+        liveUndoDepth = 0;
+        dragBeforeValid = false;
+        paramBeforeValid = false;
+    }
+
+    void ensureLiveRun() {
+        if (history is null) return;
+        if (!liveRunActive) {
+            history.nextRun();
+            liveRunActive = true;
+            liveUndoDepth = 0;
+        }
+    }
+
+    bool sameLiveEdit(const ref BoxParams a, BoxState as,
+                      const ref BoxParams b, BoxState bs) const {
+        return as == bs && a == b;
+    }
+
+    void recordLiveEdit(BoxParams before, BoxState beforeState,
+                        BoxParams after, BoxState afterState) {
+        if (history is null) return;
+        if (sameLiveEdit(before, beforeState, after, afterState)) return;
+        ensureLiveRun();
+        if (!liveRunActive) return;
+        auto cmd = new BoxLiveEditCommand(this, before, beforeState, after, afterState);
+        history.recordInSession(cmd, history.currentRunId);
+        ++liveUndoDepth;
+    }
+
+    void captureLiveDragStart() {
+        dragBeforeParams = params_;
+        dragBeforeState = state;
+        dragBeforeValid = true;
+    }
+
+    void recordLiveDragEnd() {
+        if (!dragBeforeValid) return;
+        recordLiveEdit(dragBeforeParams, dragBeforeState, params_, state);
+        dragBeforeValid = false;
+    }
+
+    void restoreLiveEdit(BoxParams p, BoxState s) {
+        params_ = p;
+        state = s;
+        if (state == BoxState.Idle) {
+            previewMesh.clear();
+            previewGpu.upload(previewMesh);
+            return;
+        }
+        uploadPreview();
+    }
+
+    void noteLiveHistoryApply() {
+        if (liveRunActive)
+            ++liveUndoDepth;
+    }
+
+    void noteLiveHistoryRevert() {
+        if (liveRunActive && liveUndoDepth > 0)
+            --liveUndoDepth;
+    }
+
     // -----------------------------------------------------------------------
     // Helpers that derive geometry from params_ (single source of truth).
     // -----------------------------------------------------------------------
@@ -2769,15 +2891,18 @@ private:
         float aN = abs(dot(camBack, frame.normal));
         float aZ = abs(dot(camBack, frame.axis2));
         if (aA >= aN && aA >= aZ) {
-            planeNormal = Vec3(1, 0, 0);
+            float s = dot(camBack, frame.axis1) >= 0.0f ? 1.0f : -1.0f;
+            planeNormal = Vec3(s, 0, 0);
             planeAxis1  = Vec3(0, 1, 0);
             planeAxis2  = Vec3(0, 0, 1);
         } else if (aN >= aA && aN >= aZ) {
-            planeNormal = Vec3(0, 1, 0);
+            float s = dot(camBack, frame.normal) >= 0.0f ? 1.0f : -1.0f;
+            planeNormal = Vec3(0, s, 0);
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 0, 1);
         } else {
-            planeNormal = Vec3(0, 0, 1);
+            float s = dot(camBack, frame.axis2) >= 0.0f ? 1.0f : -1.0f;
+            planeNormal = Vec3(0, 0, s);
             planeAxis1  = Vec3(1, 0, 0);
             planeAxis2  = Vec3(0, 1, 0);
         }
@@ -2813,7 +2938,10 @@ private:
     // through `frame.toWorld` before uploading / committing.
     void buildBase(Mesh* m) {
         // params_.size on planeNormal axis is 0 at this point (plane mode).
+        size_t firstFace = m.faces.length;
         buildCuboidParametric(m, params_);
+        if (planeNormal.x < -0.5f || planeNormal.y < -0.5f || planeNormal.z < -0.5f)
+            reverseFaceWinding(m, firstFace);
     }
 
     // Apply `frame.toWorld` to every vertex of `m`. The cuboid generator
@@ -2931,5 +3059,45 @@ private:
         mesh.buildLoops();
         gpu.upload(*mesh);
         meshChanged = true;
+    }
+}
+
+private final class BoxLiveEditCommand : Command {
+private:
+    BoxTool tool_;
+    BoxParams before_;
+    BoxParams after_;
+    BoxState beforeState_;
+    BoxState afterState_;
+
+public:
+    this(BoxTool tool, BoxParams before, BoxState beforeState,
+         BoxParams after, BoxState afterState) {
+        tool_ = tool;
+        before_ = before;
+        after_ = after;
+        beforeState_ = beforeState;
+        afterState_ = afterState;
+        super(null, gBoxLiveEditView, EditMode.Vertices);
+    }
+
+    override string name() const { return "prim.cube.live"; }
+    override string label() const { return "Edit Box"; }
+    override CmdFlags cmdFlags() const {
+        return CmdFlags.SideEffect | CmdFlags.Quiet | CmdFlags.UndoForce;
+    }
+
+    override bool apply() {
+        if (tool_ is null) return false;
+        tool_.restoreLiveEdit(after_, afterState_);
+        tool_.noteLiveHistoryApply();
+        return true;
+    }
+
+    override bool revert() {
+        if (tool_ is null) return false;
+        tool_.restoreLiveEdit(before_, beforeState_);
+        tool_.noteLiveHistoryRevert();
+        return true;
     }
 }

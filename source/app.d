@@ -513,6 +513,9 @@ void main(string[] args) {
     // exposed by bindbc-sdl at sdl2240+, but SDL_SetHint takes the name as
     // a plain string and pre-2.24 SDL runtimes just ignore unknown hints)
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+    // On macOS an unfocused window may consume the first click only to focus
+    // the app. Let SDL deliver that click as a normal mouse button event too.
+    SDL_SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
 
     // Cycles' Metal device holds a *process-global* ShaderCache singleton
@@ -1688,8 +1691,10 @@ void main(string[] args) {
     }
 
     void activateToolById(string id) {
-        if (activeToolId == id) { setActiveTool(null); activeToolId = ""; }
-        else {
+        if (activeToolId == id) {
+            setActiveTool(null);
+            activeToolId = "";
+        } else {
             // Switching tools: reset tool-driven pipe stages BEFORE
             // the new preset's preActivate writes its own settings.
             // Without this, residual config from the previous preset
@@ -2980,6 +2985,10 @@ void main(string[] args) {
     bool navHistory(bool isUndo) {
         if (isUndo && activeTool !is null && activeTool.hasUncommittedEdit()) {
             activeTool.cancelUncommittedEdit();
+            if (activeTool !is null && !activeTool.hasUncommittedEdit()) {
+                setActiveTool(null);
+                activeToolId = "";
+            }
             return true;
         }
         bool ok = isUndo ? history.undo() : history.redo();
