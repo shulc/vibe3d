@@ -40,6 +40,11 @@ JSONValue getJson(string path) {
     return parseJSON(cast(string)get(baseUrl ~ path));
 }
 
+void postTransform(string body) {
+    auto r = postJson("/api/transform", body);
+    assert(r["status"].str == "ok", "/api/transform failed: " ~ r.toString);
+}
+
 // Run an argstring command through /api/command (the same main-thread bridge
 // the keyboard/UI path uses) and assert ok.
 void cmd(string line) {
@@ -338,6 +343,50 @@ unittest {
     auto u = postJson("/api/undo", "");
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original (rotate)");
+}
+
+// Absolute Rotate edits must evaluate the action-center against the session
+// baseline, not against the already-rotated preview. With asymmetric geometry,
+// sampling the bbox center from the preview makes consecutive absolute values
+// orbit around a moving pivot (the visible "spiral" drift).
+unittest {
+    import std.math : sqrt;
+    drainAndReset();
+    cmd("tool.set TransformRotate off");
+    drainAndReset();
+
+    // Make the whole-mesh bbox asymmetric: v6 moves from x=0.5 to x=1.5.
+    // Then clear selection so TransformRotate uses the whole geometry. The
+    // run-start bbox center is (0.5, 0, 0).
+    selectVerts([6]);
+    postTransform(`{"kind":"translate","delta":[1,0,0]}`);
+    selectVerts([]);
+    cmd("tool.set TransformRotate");
+
+    long undoBefore = undoCount();
+
+    cmd("tool.beginSession");
+    assertVertex(6, 1.5, 0.5, 0.5,
+        "asymmetric rotate beginSession opens session, moves nothing");
+
+    cmd("tool.attr TransformRotate RZ 30");
+    double c30 = sqrt(3.0) * 0.5;
+    assertVertex(6, 0.5 + c30 - 0.25, 0.5 + 0.5 * c30, 0.5,
+        "asymmetric first rotate value edit: RZ=30 around baseline bbox center");
+
+    double c = sqrt(0.5);
+    cmd("tool.attr TransformRotate RZ 45");
+    assertVertex(6, 0.5 + 0.5 * c, 1.5 * c, 0.5,
+        "asymmetric second rotate value edit is absolute around the baseline pivot");
+
+    cmd("tool.set TransformRotate off");
+    assert(undoCount() == undoBefore + 1,
+        "asymmetric rotate value-edit session must coalesce to ONE undo entry; before="
+        ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
+    auto u = postJson("/api/undo", "");
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    assertVertex(6, 1.5, 0.5, 0.5,
+        "one undo restores the asymmetric baseline (rotate)");
 }
 
 // ---------------------------------------------------------------------------
