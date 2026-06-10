@@ -45,6 +45,61 @@ string buildPinnedRelativeDragLog(int vpX, int vpY, int vpW, int vpH,
     return log;
 }
 
+void runScalePlaneDrag(int plane) {
+    post("http://localhost:8080/api/reset", "");
+    auto selResp = post("http://localhost:8080/api/select",
+                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    assert(parseJSON(cast(string)selResp)["status"].str == "ok",
+        "select failed: " ~ cast(string)selResp);
+
+    auto setResp = post("http://localhost:8080/api/script", "tool.set scale");
+    assert(parseJSON(cast(string)setResp)["status"].str == "ok",
+        "tool.set scale failed: " ~ cast(string)setResp);
+
+    double[3][8] pre;
+    foreach (i; 0 .. 8) pre[i] = vertexPos(i);
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    Vec3 pivot = Vec3(0, 0, 0);
+    float off = gizmoSize(pivot, vp) * 0.75f;
+    Vec3 circleCenter =
+        plane == 4 ? Vec3(pivot.x + off, pivot.y + off, pivot.z)
+      : plane == 5 ? Vec3(pivot.x,       pivot.y + off, pivot.z + off)
+                   : Vec3(pivot.x + off, pivot.y,       pivot.z + off);
+    float cx, cy;
+    assert(projectToWindow(circleCenter, vp, cx, cy),
+        "scale plane circle center projects off-camera");
+
+    string log = buildPinnedRelativeDragLog(cam.vpX, cam.vpY, cam.width,
+                                            cam.height,
+                                            cast(int)cx, cast(int)cy,
+                                            80, 0, 20);
+    playAndWait(log);
+
+    foreach (i; 0 .. 8) {
+        auto p = vertexPos(i);
+        bool sx = (plane == 4 || plane == 6);
+        bool sy = (plane == 4 || plane == 5);
+        bool sz = (plane == 5 || plane == 6);
+
+        if (sx) assert(fabs(p[0]) > 0.6,
+            "v" ~ i.to!string ~ ".x did not scale for plane " ~ plane.to!string);
+        else    assert(approx(p[0], pre[i][0], 1e-4),
+            "v" ~ i.to!string ~ ".x drifted for plane " ~ plane.to!string);
+
+        if (sy) assert(fabs(p[1]) > 0.6,
+            "v" ~ i.to!string ~ ".y did not scale for plane " ~ plane.to!string);
+        else    assert(approx(p[1], pre[i][1], 1e-4),
+            "v" ~ i.to!string ~ ".y drifted for plane " ~ plane.to!string);
+
+        if (sz) assert(fabs(p[2]) > 0.6,
+            "v" ~ i.to!string ~ ".z did not scale for plane " ~ plane.to!string);
+        else    assert(approx(p[2], pre[i][2], 1e-4),
+            "v" ~ i.to!string ~ ".z drifted for plane " ~ plane.to!string);
+    }
+}
+
 unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
     post("http://localhost:8080/api/reset", "");
 
@@ -179,6 +234,18 @@ unittest { // X-axis scale keeps dragging from relative motion even if x/y stop
             "relative-only X scale did not move enough: "
             ~ pre[i][0].to!string ~ " → " ~ p[0].to!string);
     }
+}
+
+unittest { // XY plane scale: X/Y factors change, Z stays fixed
+    runScalePlaneDrag(4);
+}
+
+unittest { // YZ plane scale: Y/Z factors change, X stays fixed
+    runScalePlaneDrag(5);
+}
+
+unittest { // XZ plane scale: X/Z factors change, Y stays fixed
+    runScalePlaneDrag(6);
 }
 
 unittest { // X-axis scale reaches zero with finite reverse drag

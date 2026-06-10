@@ -19,7 +19,7 @@ void main() {}
 
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
-unittest { // XY plane drag of all verts moves them in X+Y, leaves Z alone
+void runMovePlaneDrag(int plane) {
     post("http://localhost:8080/api/reset", "");
 
     auto selResp = post("http://localhost:8080/api/select",
@@ -41,24 +41,22 @@ unittest { // XY plane drag of all verts moves them in X+Y, leaves Z alone
     Vec3 pivot = Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
 
-    // circleXY sits at center + axisX*0.75 + axisY*0.75 with normal Z
-    // (handler.d:MoveHandler.draw, cirOffset = size*0.75). Project that
-    // point; its on-screen projection is a small disc and pointInPolygon2D
-    // hit-tests against the 32-point projected ring — clicking on the
-    // exact world center gives a comfortable margin.
-    Vec3 circleCenter = Vec3(pivot.x + size * 0.75f,
-                             pivot.y + size * 0.75f,
-                             pivot.z);
+    // Plane handles sit at center + two basis axes * 0.75*gizmoSize:
+    //   4 = XY, 5 = YZ, 6 = XZ.
+    float off = size * 0.75f;
+    Vec3 circleCenter =
+        plane == 4 ? Vec3(pivot.x + off, pivot.y + off, pivot.z)
+      : plane == 5 ? Vec3(pivot.x,       pivot.y + off, pivot.z + off)
+                   : Vec3(pivot.x + off, pivot.y,       pivot.z + off);
     float cx, cy;
     assert(projectToWindow(circleCenter, vp, cx, cy),
-        "circleXY center projects off-camera");
+        "plane circle center projects off-camera");
     int x0 = cast(int)cx;
     int y0 = cast(int)cy;
 
-    // Drag screen-down by 60 px. With default camera (az=0.5, el=0.4),
-    // screen-down translates to a mix of -X and -Y in world coords; the
-    // exact split doesn't matter — what matters is that Z stays zero
-    // because the XY plane constraint zeroes the normal component.
+    // Drag screen-down by 60 px. The exact in-plane split depends on
+    // camera projection; the pin is that the plane normal component is
+    // stripped and at least one in-plane component changes.
     int x1 = x0;
     int y1 = y0 + 60;
 
@@ -66,20 +64,38 @@ unittest { // XY plane drag of all verts moves them in X+Y, leaves Z alone
                               x0, y0, x1, y1, 20);
     playAndWait(log);
 
-    bool anyXYMoved = false;
+    bool anyInPlaneMoved = false;
     foreach (i; 0 .. 8) {
         auto p = vertexPos(i);
-        double dz = p[2] - pre[i][2];
-        // Z must not change in an XY-plane drag.
-        assert(approx(dz, 0.0, 1e-3),
-            "v" ~ i.to!string ~ ".z moved on XY-plane drag: dz=" ~
-            dz.to!string ~ " (" ~ pre[i][2].to!string ~ " → " ~
-            p[2].to!string ~ ")");
-
         double dx = p[0] - pre[i][0];
         double dy = p[1] - pre[i][1];
-        if (fabs(dx) > 0.05 || fabs(dy) > 0.05) anyXYMoved = true;
+        double dz = p[2] - pre[i][2];
+        if (plane == 4) {
+            assert(approx(dz, 0.0, 1e-3),
+                "v" ~ i.to!string ~ ".z moved on XY-plane drag: dz=" ~ dz.to!string);
+            if (fabs(dx) > 0.05 || fabs(dy) > 0.05) anyInPlaneMoved = true;
+        } else if (plane == 5) {
+            assert(approx(dx, 0.0, 1e-3),
+                "v" ~ i.to!string ~ ".x moved on YZ-plane drag: dx=" ~ dx.to!string);
+            if (fabs(dy) > 0.05 || fabs(dz) > 0.05) anyInPlaneMoved = true;
+        } else {
+            assert(approx(dy, 0.0, 1e-3),
+                "v" ~ i.to!string ~ ".y moved on XZ-plane drag: dy=" ~ dy.to!string);
+            if (fabs(dx) > 0.05 || fabs(dz) > 0.05) anyInPlaneMoved = true;
+        }
     }
-    assert(anyXYMoved,
-        "no vertex moved in X or Y — plane-circle hit-test likely missed");
+    assert(anyInPlaneMoved,
+        "no vertex moved in plane " ~ plane.to!string ~ " — plane-circle hit-test likely missed");
+}
+
+unittest { // XY plane drag moves in X+Y, leaves Z alone
+    runMovePlaneDrag(4);
+}
+
+unittest { // YZ plane drag moves in Y+Z, leaves X alone
+    runMovePlaneDrag(5);
+}
+
+unittest { // XZ plane drag moves in X+Z, leaves Y alone
+    runMovePlaneDrag(6);
 }
