@@ -1599,8 +1599,13 @@ void main(string[] args) {
 
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
-    version (OSX) enum shortcutsPath = "config/shortcuts_macos.yaml";
-    else          enum shortcutsPath = "config/shortcuts.yaml";
+    version (OSX) {
+        string shortcutsPath = command.g_testMode
+            ? "config/shortcuts.yaml"
+            : "config/shortcuts_macos.yaml";
+    } else {
+        enum shortcutsPath = "config/shortcuts.yaml";
+    }
     ShortcutTable shortcuts         = loadShortcuts(shortcutsPath);
 
     // Validate: every action id (including modifier variants) must exist in
