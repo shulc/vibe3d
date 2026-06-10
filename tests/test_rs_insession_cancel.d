@@ -183,8 +183,8 @@ void ringGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
 // NO selection ⇒ whole-mesh moving set, rotate pivot at the origin (selecting
 // only v6 would put the pivot AT v6, leaving it fixed). v6 = (0.5, 0.5, 0.5);
 // RZ=30 about the workplane Z at the origin moves it. ONE in-session Ctrl+Z
-// must restore v6 to (0.5,0.5,0.5), add NO history entry, and leave the session
-// reopenable (a following RZ edit lands correctly).
+// must restore v6 to (0.5,0.5,0.5), add NO history entry, and deactivate the
+// tool. A following reactivation + RZ edit must still land correctly.
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -217,11 +217,11 @@ unittest {
         "in-session cancel of an uncommitted rotate run pops NOTHING; before="
         ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
 
-    // Reopenable: cancel CLOSED the session (faithful — a closed tool stores
-    // attrs but moves nothing, D4), so re-open with beginSession, then a fresh
-    // RZ=30 edit must reproduce the SAME absolute geometry as before — proving
-    // the accumulator + headless mirror were reset to the baseline, not left
-    // stale at the cancelled 30°.
+    cmd("tool.set TransformRotate");
+    // Reopenable: cancel deactivated the tool, so reactivate and re-open with
+    // beginSession. A fresh RZ=30 edit must reproduce the SAME absolute
+    // geometry as before — proving the accumulator + headless mirror were reset
+    // to the baseline, not left stale at the cancelled 30°.
     cmd("tool.beginSession");
     cmd("tool.attr TransformRotate RZ 30");
     auto vAgain = vert(6);
@@ -267,8 +267,10 @@ unittest {
         "in-session cancel of an uncommitted scale run pops NOTHING; before="
         ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
 
-    // Reopenable: cancel CLOSED the session, so re-open, then a fresh SX=2
-    // reproduces v6.x=1.0 absolutely (accum reset to baseline, not stale).
+    cmd("tool.set TransformScale");
+    // Reopenable: cancel deactivated the tool, so reactivate and re-open. A
+    // fresh SX=2 reproduces v6.x=1.0 absolutely (accum reset to baseline, not
+    // stale).
     cmd("tool.beginSession");
     cmd("tool.attr TransformScale SX 2");
     assertVertex(6, 1.0, 0.5, 0.5,

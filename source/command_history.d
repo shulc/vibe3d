@@ -749,6 +749,58 @@ final class CommandHistory {
         undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
     }
 
+    /// Replace the current matching in-session tail with `cmd` as a normal
+    /// history entry. Used by live tools whose final committed command is not a
+    /// merge of the transient in-session command type.
+    void replaceInSessionTailWith(ulong runId, Command cmd) {
+        scope(exit) _runOpen = false;
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+        if (blockDepth > 0) { record(cmd); return; }
+
+        size_t end = undoStack.length;
+        size_t start = end;
+        while (start > 0) {
+            auto e = undoStack[start - 1];
+            if (!(e.flags & HistoryFlags.InSession) || e.runId != runId)
+                break;
+            --start;
+        }
+
+        import core.time : MonoTime;
+        long tMs = MonoTime.currTime.ticks
+                 * 1000 / MonoTime.ticksPerSecond;
+        if (start < end)
+            tMs = undoStack[start].timestampMs;
+
+        uint flags = historyFlagsFor(cmd);
+        string args = serializeParams(cmd.params());
+        HistoryEntry e = { label: cmd.label,
+                           args: args,
+                           commandName: cmd.name,
+                           cmd: cmd,
+                           timestampMs: tMs,
+                           flags: flags,
+                           runId: 0 };
+
+        if (start < end) {
+            undoStack = undoStack[0 .. start] ~ [e] ~ undoStack[end .. $];
+        } else {
+            undoStack ~= e;
+            if (undoStack.length > maxDepth)
+                undoStack = undoStack[$ - maxDepth .. $];
+        }
+        redoStack.length = 0;
+
+        if (onRecord !is null) {
+            string line = args.length > 0
+                ? (cmd.name ~ " " ~ args) : cmd.name;
+            onRecord(line, flags);
+        }
+    }
+
     // ----- navigation ------------------------------------------------------
 
     bool canUndo() const { return undoStack.length > 0; }
