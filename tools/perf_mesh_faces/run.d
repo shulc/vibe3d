@@ -115,10 +115,17 @@ int main(string[] args) {
     // matter how (SIGKILL from sandbox, abort, segfault — the D
     // scope(exit) cleanup won't run in those cases, but PDEATHSIG
     // is enforced kernel-side).
-    string[] vibe3dArgs = [
-        "setpriv", "--pdeathsig", "SIGKILL", "--",
-        vibe3d, "--test", "--http-port", port.to!string,
-    ];
+    string[] vibe3dArgs;
+    if (execute(["which", "setpriv"]).status == 0) {
+        vibe3dArgs = [
+            "setpriv", "--pdeathsig", "SIGKILL", "--",
+            vibe3d, "--test", "--http-port", port.to!string,
+        ];
+    } else {
+        vibe3dArgs = [
+            vibe3d, "--test", "--http-port", port.to!string,
+        ];
+    }
     writefln("[pmf] spawn: %s", vibe3dArgs.join(" "));
     stdout.flush();
     Pid vibe3dPid;
@@ -294,6 +301,8 @@ int main(string[] args) {
             setupTab();
             foreach (i; 0 .. 8) {
                 long dt = timeCmd(`{"id":"mesh.subpatch_toggle"}`);
+                progress(format("[pmf]     toggle %d/8: %d ms%s",
+                    i + 1, dt, (i % 2 == 0) ? " (measured)" : ""));
                 if (i % 2 == 0) perTab ~= dt;   // measures the prev build
             }
         }

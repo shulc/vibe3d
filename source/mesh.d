@@ -5716,7 +5716,33 @@ struct SubpatchPreview {
     /// position upload happens at all on the drag-frame fast path.
     bool lastRefreshSkipNonFace;
 
+    // Tab-toggle fast reactivation: when the user toggles subpatch OFF, keep the
+    // last preview mesh/trace around. If the next ON sees the exact same cage
+    // geometry + face topology + subpatch mask + depth, reuse it and pay only the
+    // preview GPU upload. This is deliberately stricter than topologyVersion:
+    // setSubpatch bumps topologyVersion on every toggle, so version equality
+    // cannot identify a true back-and-forth Tab reuse.
+    ulong reusablePreviewKey;
+    bool  reusablePreviewReady;
+
     import subpatch_osd : GpuFanOutTargets;
+
+    private ulong computeReusablePreviewKey(ref const Mesh source, int d) const {
+        import core.internal.hash : hashOf;
+        ulong h = hashOf(d);
+        h = hashOf(source.vertices.length, h);
+        h = hashOf(source.edges.length, h);
+        h = hashOf(source.faces.length, h);
+        h = hashOf(source.vertices, h);
+        h = hashOf(source.edges, h);
+        foreach (face; source.faces) {
+            h = hashOf(face.length, h);
+            h = hashOf(face, h);
+        }
+        foreach (fi; 0 .. source.faces.length)
+            h = hashOf(source.isFaceSubpatch(fi), h);
+        return h == 0 ? 1 : h;
+    }
 
     /// `targets` (when non-null) wires the GPU fan-out path: the
     /// position-only fast path attempts face, edge, vert dispatches
@@ -5782,6 +5808,18 @@ struct SubpatchPreview {
             sourceVersion = source.mutationVersion;
             return;
         }
+        if (!active && d > 0 && source.hasAnySubpatch()
+            && reusablePreviewReady
+            && reusablePreviewKey == computeReusablePreviewKey(source, d)
+            && mesh.vertices.length != 0)
+        {
+            depth                 = d;
+            sourceVersion         = source.mutationVersion;
+            sourceTopologyVersion = source.topologyVersion;
+            active                = true;
+            ++mesh.mutationVersion;
+            return;
+        }
         rebuild(source, d);
     }
 
@@ -5789,14 +5827,23 @@ struct SubpatchPreview {
         depth                 = d;
         sourceVersion         = source.mutationVersion;
         sourceTopologyVersion = source.topologyVersion;
-        cageVertPreview.length = 0;
-        osdAccel.clear();
-        if (d <= 0 || !source.hasAnySubpatch()) {
+        if (d <= 0) {
+            cageVertPreview.length = 0;
+            osdAccel.clear();
             mesh   = Mesh.init;
             trace  = SubpatchTrace.init;
             active = false;
+            reusablePreviewReady = false;
+            reusablePreviewKey   = 0;
             return;
         }
+        if (!source.hasAnySubpatch()) {
+            active = false;
+            return;
+        }
+
+        cageVertPreview.length = 0;
+        osdAccel.clear();
 
         // OsdAccel.buildPreview extracts the subpatch-marked subset
         // (the whole cage when `allSubpatch`, just a slice otherwise),
@@ -5811,10 +5858,14 @@ struct SubpatchPreview {
             mesh   = Mesh.init;
             trace  = SubpatchTrace.init;
             active = false;
+            reusablePreviewReady = false;
+            reusablePreviewKey   = 0;
             return;
         }
 
         active = true;
+        reusablePreviewKey   = computeReusablePreviewKey(source, d);
+        reusablePreviewReady = true;
         cageVertPreview = new uint[](source.vertices.length);
         cageVertPreview[] = uint.max;
         foreach (pi, origin; trace.vertOrigin) {
