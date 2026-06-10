@@ -54,6 +54,13 @@ void cmd(string s) {
         "cmd `" ~ s ~ "` failed: " ~ j.toString);
 }
 
+double publishedR(int axis) {
+    auto j = getJson("/api/toolpipe/eval");
+    auto t = "transform" in j.object;
+    assert(t !is null, "eval has no transform block: " ~ j.toString);
+    return (*t)["rotate"].array[axis].floating;
+}
+
 Vec3[] dumpVerts() {
     auto verts = getJson("/api/model")["vertices"].array;
     Vec3[] out_;
@@ -111,6 +118,14 @@ int[] setupScene() {
     cmd("tool.attr xfrm.transform S false");
     cmd("tool.attr xfrm.transform R true");
     return topFaceVerts(topFace);
+}
+
+int[] setupFalloffScene() {
+    auto verts = setupScene();
+    cmd("tool.pipe.attr falloff type radial");
+    cmd(`tool.pipe.attr falloff center "-0.5,0.5,-0.5"`);
+    cmd(`tool.pipe.attr falloff size "1.6,1.6,1.6"`);
+    return verts;
 }
 
 // Replica of source/handler.d:localFrame (89-94).
@@ -198,8 +213,7 @@ unittest { // principal-axis (Y) ring drag == numeric RY, per vertex
 
     // Recover the rotation angle the drag produced, then reproduce it through
     // the numeric path in a fresh scene.
-    float thetaRad = recoverYAngle(pre, postDrag, topVerts, center);
-    float thetaDeg = thetaRad * 180.0f / cast(float)PI;
+    double thetaDeg = publishedR(1);
 
     setupScene();
     auto preNum = dumpVerts();
@@ -224,4 +238,55 @@ unittest { // principal-axis (Y) ring drag == numeric RY, per vertex
         "rotate drag != numeric (contract broken): max per-vert drift = "
         ~ maxDiff.to!string ~ " at vertex " ~ worst.to!string
         ~ " (recovered RY = " ~ thetaDeg.to!string ~ "°)");
+}
+
+unittest { // falloff rotate drag is independent of motion-event granularity
+    setupFalloffScene();
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+
+    Vec3 center = Vec3(0, 0.5f, 0);
+    Vec3 axisY  = Vec3(0, 1, 0);
+    float radius = gizmoSize(center, vp);
+
+    Vec3 right, up;
+    localFrame(axisY, right, up);
+    Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+    float startAngle = arcStartAngle(axisY, camFwd, right, up);
+
+    float a0 = startAngle + cast(float)(PI / 2.0);
+    float a1 = a0 + 0.65f;
+    Vec3 w0 = center + right * (cos(a0) * radius) + up * (sin(a0) * radius);
+    Vec3 w1 = center + right * (cos(a1) * radius) + up * (sin(a1) * radius);
+
+    float x0f, y0f, x1f, y1f;
+    assert(projectToWindow(w0, vp, x0f, y0f), "falloff arc start off-camera");
+    assert(projectToWindow(w1, vp, x1f, y1f), "falloff arc end off-camera");
+
+    string coarse = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cast(int)x0f, cast(int)y0f,
+                                 cast(int)x1f, cast(int)y1f, 2);
+    string fine   = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 cast(int)x0f, cast(int)y0f,
+                                 cast(int)x1f, cast(int)y1f, 24);
+
+    playAndWait(coarse);
+    auto postCoarse = dumpVerts();
+
+    setupFalloffScene();
+    playAndWait(fine);
+    auto postFine = dumpVerts();
+
+    float maxDiff = 0;
+    int   worst = -1;
+    foreach (vi; 0 .. postCoarse.length) {
+        Vec3 diff = postCoarse[vi] - postFine[vi];
+        float m = sqrt(dot(diff, diff));
+        if (m > maxDiff) { maxDiff = m; worst = cast(int)vi; }
+    }
+    assert(maxDiff < 0.015f,
+        "falloff rotate changed significantly when the same drag endpoint was "
+        ~ "split into a different number of motion events; ACEN pivot was "
+        ~ "likely sampled from the angle-dependent preview mesh. max drift = "
+        ~ maxDiff.to!string ~ " at vertex " ~ worst.to!string);
 }

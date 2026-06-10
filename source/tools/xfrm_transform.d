@@ -605,7 +605,8 @@ public:
                     // difference surfaces only when a held non-identity rotate/
                     // scale also wants re-weighting (the reference re-Evaluates
                     // the WHOLE held op when falloff changes).
-                    applyTRS(dragBaseline);
+                    applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                             /*samplePipeFromBaseline=*/true);
                     needsGpuUpdate = true;
                 }
             } else if (history !is null
@@ -1799,7 +1800,8 @@ public:
                     // parity). The fast-path then merely skips the per-frame
                     // vertex re-upload — the GPU keeps the baseline buffer and
                     // u_model = wrapAboutPivot(fold) bridges the rotation.
-                    applyTRS(dragBaseline);
+                    applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                             /*samplePipeFromBaseline=*/true);
                     // P-F Phase 3b (MAJOR-4) — the own-bank fast-path
                     // `wrapAboutPivot(lastFoldMatrix) · buffer` is valid ONLY while
                     // the GPU buffer still holds the FROZEN run baseline
@@ -1831,7 +1833,8 @@ public:
                     headlessRotate = Vec3(0, 0, 0);
                     Vec3  viewAxisLocal = rotateSub.pendingRotateViewAxis;
                     float viewDegLocal  = deg;
-                    applyTRS(dragBaseline, viewAxisLocal, viewDegLocal);
+                    applyTRS(dragBaseline, viewAxisLocal, viewDegLocal,
+                             /*samplePipeFromBaseline=*/true);
                     // P-F Phase 3b (MAJOR-4) — same own-bank buffer-vs-baseline
                     // drop-out as the principal path: once a prior committed gesture
                     // re-uploaded the buffer (`runGpuBufferDirty`), the view-ring
@@ -2130,6 +2133,10 @@ public:
             Vec3 rotAbsEnd   = headlessRotate;
             rotateGestureStartKnown = false;
             if (!rotAbsKnown) rotAbsStart = rotAbsEnd;   // inert
+            if (acenAllowsClickRelocate()) {
+                if (auto ac = activeAcenStage())
+                    ac.setSoftPlaced(rotateSub.handler.center);
+            }
             rotateSub.wrapperFieldApplyHook  = () { headlessRotate = rotAbsEnd;   };
             rotateSub.wrapperFieldRevertHook = () { headlessRotate = rotAbsStart; };
             rotateSub.commitGesture();
@@ -2545,6 +2552,10 @@ public:
         bool pureRotatePreset = flagR && !flagT && !flagS;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureRotatePreset);
+        if (acenAllowsClickRelocate()) {
+            if (auto ac = activeAcenStage())
+                ac.setSoftPlaced(lastFoldPivot);
+        }
     }
 
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
@@ -2690,10 +2701,12 @@ public:
     // Captures the live falloff / symmetry / snap packets (overwriting
     // dragFalloff / dragSymmetry / dragSnap so a mid-edit falloff change takes
     // effect immediately), then snapshots a fresh full-mesh `dragBaseline` IFF
-    // the current one is stale (length != mesh.vertices.length — e.g. first edit
-    // of a run, or after a topology change). A non-stale baseline is KEPT so a
-    // subsequent edit replays from the run baseline that already has any prior
-    // cross-axis gesture baked in. Returns true when it captured fresh.
+    // the current run baseline is invalid or structurally stale. Length alone is
+    // not a validity signal: transform edits preserve vertex count, so a stale
+    // same-length baseline from a previous run must not be reused by property
+    // replay. A valid baseline is KEPT so a subsequent edit replays from the run
+    // baseline that already has any prior same-run history baked in. Returns true
+    // when it captured fresh.
     //
     // Does NOT call beginEdit() / buildVertexCacheIfNeeded() / seed the wrapper
     // selection-mutation tracking — those belong to the wrapper (Move) session
@@ -2706,10 +2719,11 @@ public:
         captureFalloffForDrag(vts);
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
-        if (dragBaseline.length != mesh.vertices.length) {
+        if (!runBaselineValid || dragBaseline.length != mesh.vertices.length) {
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
+            runBaselineValid = true;
             return true;
         }
         return false;

@@ -176,12 +176,122 @@ double dragYArrowAllVerts(int px) {
     return evalPivot().y;
 }
 
+Vec3 dragViewRingAllVerts(int px) {
+    auto selResp = postJson("/api/select",
+                            `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    assert(selResp["status"].str == "ok", "select-all failed");
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+
+    Vec3 pivot = evalPivot();
+    float cx, cy;
+    assert(projectToWindow(pivot, vp, cx, cy), "rotate pivot off-camera");
+
+    int x0 = cast(int)(cx + 95);
+    int y0 = cast(int)cy;
+    int x1 = x0;
+    int y1 = y0 - px;
+
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x0, y0, x1, y1, 20));
+    settle();
+    return evalPivot();
+}
+
+void makeAsymmetricCube() {
+    auto r = postJson("/api/command",
+        "mesh.move_vertex from:{0.5,0.5,0.5} to:{1.25,0.5,0.2}");
+    assert(r["status"].str == "ok", "asymmetry move_vertex failed: " ~ r.toString);
+}
+
 // Mean Y of all 8 verts — a proxy for the WEIGHTED moving-set centroid the old
 // computeCenter returned on mouse-up under falloff (the snap-back value).
 double meanVertY() {
     double s = 0;
     foreach (i; 0 .. 8) s += vertexPos(i)[1];
     return s / 8.0;
+}
+
+// ---------------------------------------------------------------------------
+// Rotate sibling: falloff-weighted rotate must keep the ring pivot fixed after
+// mouse-up. The rotate handler center does not move during the gesture; without
+// a display soft-pin, the next idle action-center recompute can jump to the
+// post-rotate weighted bbox center.
+// ---------------------------------------------------------------------------
+unittest {
+    establishCubeBaseline();
+    makeAsymmetricCube();
+    postJson("/api/script", "tool.set TransformRotate\n");
+
+    Vec3 pivBefore = evalPivot();
+    Vec3 pivAfter  = dragViewRingAllVerts(100);
+
+    assert(evalSoftPlaced(),
+        "Rotate mouse-up must set a display soft pin even without falloff; "
+        ~ "asymmetric bbox centers are angle-dependent");
+    assert(fabs(pivAfter.x - pivBefore.x) < 1e-3 &&
+           fabs(pivAfter.y - pivBefore.y) < 1e-3 &&
+           fabs(pivAfter.z - pivBefore.z) < 1e-3,
+        "Rotate must keep the published pivot at the gesture center on an "
+        ~ "asymmetric no-falloff mesh; before=("
+        ~ pivBefore.x.to!string ~ "," ~ pivBefore.y.to!string ~ ","
+        ~ pivBefore.z.to!string ~ ") after=("
+        ~ pivAfter.x.to!string ~ "," ~ pivAfter.y.to!string ~ ","
+        ~ pivAfter.z.to!string ~ ")");
+}
+
+unittest {
+    establishCubeBaseline();
+    postJson("/api/script",
+        "tool.set TransformRotate\n" ~
+        "tool.pipe.attr falloff type radial\n" ~
+        `tool.pipe.attr falloff center "-0.5,-0.5,-0.5"` ~ "\n" ~
+        `tool.pipe.attr falloff size "2,2,2"` ~ "\n");
+
+    Vec3 pivBefore = evalPivot();
+    Vec3 pivAfter  = dragViewRingAllVerts(100);
+
+    assert(evalSoftPlaced(),
+        "falloff Rotate mouse-up must set a display soft pin so the ring pivot "
+        ~ "does not jump on the idle action-center recompute");
+    assert(fabs(pivAfter.x - pivBefore.x) < 1e-3 &&
+           fabs(pivAfter.y - pivBefore.y) < 1e-3 &&
+           fabs(pivAfter.z - pivBefore.z) < 1e-3,
+        "falloff Rotate must keep the published pivot at the gesture center; "
+        ~ "before=(" ~ pivBefore.x.to!string ~ "," ~ pivBefore.y.to!string
+        ~ "," ~ pivBefore.z.to!string ~ ") after=("
+           ~ pivAfter.x.to!string ~ "," ~ pivAfter.y.to!string ~ ","
+           ~ pivAfter.z.to!string ~ ")");
+}
+
+unittest {
+    establishCubeBaseline();
+    postJson("/api/script",
+        "tool.set TransformRotate\n" ~
+        "tool.pipe.attr falloff type radial\n" ~
+        `tool.pipe.attr falloff center "-0.5,-0.5,-0.5"` ~ "\n" ~
+        `tool.pipe.attr falloff size "2,2,2"` ~ "\n");
+
+    Vec3 pivBefore = evalPivot();
+    auto r = postJson("/api/script?interactive=true",
+        "tool.attr TransformRotate RY 45\n");
+    assert(r["status"].str == "ok",
+        "interactive rotate property edit failed: " ~ r.toString);
+    settle();
+    Vec3 pivAfter = evalPivot();
+
+    assert(evalSoftPlaced(),
+        "falloff Rotate property edit must publish the matrix pivot as a display "
+        ~ "soft pin, matching the handle path");
+    assert(fabs(pivAfter.x - pivBefore.x) < 1e-3 &&
+           fabs(pivAfter.y - pivBefore.y) < 1e-3 &&
+           fabs(pivAfter.z - pivBefore.z) < 1e-3,
+        "falloff Rotate property edit must keep the published pivot fixed; "
+        ~ "before=(" ~ pivBefore.x.to!string ~ "," ~ pivBefore.y.to!string
+        ~ "," ~ pivBefore.z.to!string ~ ") after=("
+        ~ pivAfter.x.to!string ~ "," ~ pivAfter.y.to!string ~ ","
+        ~ pivAfter.z.to!string ~ ")");
 }
 
 // ---------------------------------------------------------------------------
