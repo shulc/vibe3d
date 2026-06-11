@@ -44,11 +44,46 @@ if [[ ! -f assets/icon/vibe3d.icns ]]; then
 fi
 
 rm -rf "$APP_PATH"
-mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$APP_PATH/Contents/Frameworks"
 
 cp -p ./vibe3d "$APP_PATH/Contents/MacOS/vibe3d"
 cp -p assets/icon/vibe3d.icns "$APP_PATH/Contents/Resources/vibe3d.icns"
 cp -R config "$APP_PATH/Contents/Resources/config"
+
+# Bundle SDL2 so the .app runs on a clean macOS without Homebrew. It is the
+# only non-system runtime dependency — every other dylib vibe3d links or
+# dlopens (OpenGL, AppKit, libc++, libobjc, CoreFoundation, Foundation,
+# libSystem) ships with macOS 11+. SDL2 in turn pulls in only system
+# frameworks, so the single dylib is self-contained. The app loads it from
+# Contents/Frameworks by explicit path (see bundledSDL2Path() in app.d).
+SDL2_DYLIB_NAME="libSDL2-2.0.0.dylib"
+find_sdl2() {
+    if [[ -n "${SDL2_DYLIB:-}" && -f "${SDL2_DYLIB}" ]]; then echo "${SDL2_DYLIB}"; return 0; fi
+    if command -v brew >/dev/null 2>&1; then
+        local prefix; prefix="$(brew --prefix sdl2 2>/dev/null || true)"
+        if [[ -n "$prefix" && -f "$prefix/lib/${SDL2_DYLIB_NAME}" ]]; then
+            echo "$prefix/lib/${SDL2_DYLIB_NAME}"; return 0
+        fi
+    fi
+    local d
+    for d in /opt/homebrew/opt/sdl2/lib /opt/homebrew/lib \
+             /usr/local/opt/sdl2/lib /usr/local/lib; do
+        if [[ -f "$d/${SDL2_DYLIB_NAME}" ]]; then echo "$d/${SDL2_DYLIB_NAME}"; return 0; fi
+    done
+    return 1
+}
+SDL2_SRC="$(find_sdl2 || true)"
+if [[ -z "${SDL2_SRC}" ]]; then
+    echo "[app] ${SDL2_DYLIB_NAME} not found (install via 'brew install sdl2' or set SDL2_DYLIB)" >&2
+    exit 1
+fi
+cp -L "${SDL2_SRC}" "$APP_PATH/Contents/Frameworks/${SDL2_DYLIB_NAME}"
+chmod u+w "$APP_PATH/Contents/Frameworks/${SDL2_DYLIB_NAME}"   # Homebrew copy is r--r--r--
+# Drop the absolute Homebrew install_name so the bundled copy is self-describing
+# (the app dlopens it by path, but a stray absolute reference is cleaner).
+install_name_tool -id "@rpath/${SDL2_DYLIB_NAME}" \
+    "$APP_PATH/Contents/Frameworks/${SDL2_DYLIB_NAME}" 2>/dev/null || true
+echo "[app] bundled SDL2 from ${SDL2_SRC}"
 
 cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

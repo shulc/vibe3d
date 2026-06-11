@@ -317,6 +317,32 @@ version (OSX) private void useAppBundleResourceCwd()
     }
 }
 
+/// Absolute path to the SDL2 dylib shipped inside a .app bundle
+/// (`Contents/Frameworks/libSDL2-2.0.0.dylib`, staged by
+/// tools/macos/build_app.sh), or null when not running from a bundle
+/// or the dylib isn't present. bindbc loads SDL2 via a bare-name
+/// `dlopen`, which on macOS searches only DYLD paths and the shared
+/// cache — never `@executable_path` — so a copy next to the binary
+/// is invisible unless we hand `loadSDL` the explicit path. Dev runs
+/// (no bundle) fall through to the default search and the system SDL2.
+version (OSX) private string bundledSDL2Path()
+{
+    import std.file : exists, thisExePath;
+    import std.path : baseName, buildNormalizedPath, dirName;
+    import std.string : endsWith;
+
+    string exeDir;
+    try exeDir = thisExePath().dirName;
+    catch (Exception) return null;
+
+    if (baseName(exeDir) != "MacOS") return null;
+    const contentsDir = dirName(exeDir);
+    if (!baseName(dirName(contentsDir)).endsWith(".app")) return null;
+
+    const dylib = buildNormalizedPath(contentsDir, "Frameworks", "libSDL2-2.0.0.dylib");
+    return exists(dylib) ? dylib : null;
+}
+
 /// Set the window/taskbar icon from the RGBA blob embedded at compile time
 /// (assets/icon/icon_64.rgba: 8-byte LE width/height header + RGBA8 pixels;
 /// regenerate with tools/icon/gen_icons.py). Covers X11 and Windows — on
@@ -507,7 +533,16 @@ void main(string[] args) {
 
     bool playbackMode = playbackFile.length > 0;
 
-    if (loadSDL() != sdlSupport) { writeln("Failed to load SDL2"); return; }
+    // Prefer the SDL2 bundled in the .app (self-contained release); fall back
+    // to the system/dev SDL2 otherwise. See bundledSDL2Path() for the why.
+    version (OSX) {
+        import std.string : toStringz;
+        const sdlBundled = bundledSDL2Path();
+        const sdlResult  = sdlBundled !is null ? loadSDL(sdlBundled.toStringz) : loadSDL();
+        if (sdlResult != sdlSupport) { writeln("Failed to load SDL2"); return; }
+    } else {
+        if (loadSDL() != sdlSupport) { writeln("Failed to load SDL2"); return; }
+    }
     // Declare per-monitor DPI awareness on Windows (no-op elsewhere and on
     // SDL < 2.24). Without it, a display scale above 100% makes DWM render
     // the window at 96 DPI and bitmap-stretch the result — the whole UI
