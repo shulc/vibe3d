@@ -532,6 +532,71 @@ unittest { // First-corner vertex snap builds the base coplanar with the face
     }
 }
 
+unittest { // Edge size-handle snaps the moved face to geometry on its axis ONLY
+    // Free-axis projection for a handle: drag the +X face handle toward the
+    // reference cube's +X face — the moved face must land on x=0.5 while the
+    // other axis (Z) and the opposite face stay put.
+    resetForBoxSnap();                         // default cube + top-down cam + prim.cube
+    cmd("tool.pipe.attr snap enabled false");  // build the box freely first
+
+    int ax, ay, bx, by;
+    projectOrDie(Vec3(-0.2f, 0, -0.2f), ax, ay, "base a");
+    projectOrDie(Vec3( 0.2f, 0,  0.2f), bx, by, "base b");
+    dragPixels(ax, ay, bx, by);                // small base on the XZ plane
+    int ox, oy;
+    projectOrDie(Vec3(0, 0, 0), ox, oy, "origin");
+    dragPixels(ox, oy, ox, oy - 70);           // give it height
+
+    cmd("tool.pipe.attr snap enabled true");
+    cmd("tool.pipe.attr snap types vertex");
+    cmd("tool.pipe.attr snap innerRange 45");
+    cmd("tool.pipe.attr snap outerRange 75");
+
+    double cy = qf("cenY"), cz0 = qf("cenZ"), sz0 = qf("sizeZ");
+    double hxw = qf("cenX") + qf("sizeX") * 0.5;   // +X face = the edge handle
+    int hx, hy, tx, ty;
+    projectOrDie(Vec3(cast(float)hxw, cast(float)cy, cast(float)cz0), hx, hy, "+X handle");
+    projectOrDie(Vec3(0.5f,           cast(float)cy, cast(float)cz0), tx, ty, "cube +X");
+    dragPixels(hx, hy, tx, ty);
+
+    assert(approx(qf("cenX") + qf("sizeX") * 0.5, 0.5, 1e-2),
+        "edge handle should snap the +X face to x=0.5, got "
+        ~ (qf("cenX") + qf("sizeX") * 0.5).to!string);
+    assert(approx(qf("cenZ"), cz0, 1e-2) && approx(qf("sizeZ"), sz0, 1e-2),
+        "the perpendicular Z axis must be untouched by a +X handle snap: "
+        ~ "cenZ " ~ cz0.to!string ~ "->" ~ qf("cenZ").to!string ~
+        " sizeZ " ~ sz0.to!string ~ "->" ~ qf("sizeZ").to!string);
+    cmd("tool.set prim.cube off");
+}
+
+unittest { // Height snap aligns the top face to the snap target's level
+    // The construction height drag, when snapped, must put the TOP face on the
+    // snapped vertex's normal level (not merely add the drag distance from the
+    // click). Build a flat base at y=0, then snap the height to the cube's top
+    // corner (y=0.5): the top must land at y=0.5.
+    resetForBoxSnap();                          // default cube + top-down cam
+    cmd("tool.pipe.attr snap enabled false");
+    int ax, ay, bx, by;
+    projectOrDie(Vec3(0.05f, 0, 0.05f), ax, ay, "base a");
+    projectOrDie(Vec3(0.45f, 0, 0.45f), bx, by, "base b");
+    dragPixels(ax, ay, bx, by);                 // flat base on the XZ plane, y=0
+
+    cmd("tool.pipe.attr snap enabled true");
+    cmd("tool.pipe.attr snap types vertex");
+    cmd("tool.pipe.attr snap innerRange 45");
+    cmd("tool.pipe.attr snap outerRange 80");
+    int hx, hy, tx, ty;
+    projectOrDie(Vec3(-0.3f, 0, -0.3f),  hx, hy, "height start (off the box)");
+    projectOrDie(Vec3( 0.5f, 0.5f, 0.5f), tx, ty, "cube top corner");
+    dragPixels(hx, hy, tx, ty);
+
+    double top = qf("cenY") + qf("sizeY") * 0.5;
+    assert(approx(top, 0.5, 1e-2),
+        "height snap should align the top face to the snapped vertex level "
+        ~ "y=0.5, got top=" ~ top.to!string);
+    cmd("tool.set prim.cube off");
+}
+
 unittest { // Box Ctrl+Z ladder: height -> base -> no pending box
     resetForBox();
 

@@ -2162,6 +2162,12 @@ public:
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (e.button != SDL_BUTTON_LEFT) return false;
 
+        // A drag is ending — drop the snap overlay so the highlight doesn't
+        // linger frozen at the last snapped point after the mouse is released.
+        // It re-appears on the next hover (Idle preview) or drag.
+        lastSnap = SnapResult.init;
+        clearLastSnap();
+
         if (edgeDragIdx >= 0) {
             recordLiveDragEnd();
             edgeDragIdx = -1;
@@ -2251,6 +2257,10 @@ public:
             Vec3 delta = screenAxisDelta(e.x, e.y, edgeLastMX, edgeLastMY,
                                          edgeH[edgeDragIdx].pos, moveAxisWorld, cachedVp, skip);
             if (!skip) applyEdgeDelta(edgeDragIdx, delta);
+            // Snap the moved face to the nearest target on its axis (the flip
+            // inside applyEdgeDelta may have toggled edgeDragIdx, so re-read it).
+            lastSnap = snapMovedEdge(edgeDragIdx, e.x, e.y);
+            publishLastSnap(lastSnap);
             edgeLastMX = e.x;
             edgeLastMY = e.y;
             return true;
@@ -2265,6 +2275,8 @@ public:
                                  moverDragAxis, mover.center, cachedVp, skip,
                                  frame.axis1, frame.normal, frame.axis2);
             if (!skip) applyMoverDelta(delta);
+            lastSnap = snapMover(moverDragAxis, e.x, e.y);
+            publishLastSnap(lastSnap);
             moverLastMX = e.x;
             moverLastMY = e.y;
             return true;
@@ -2324,6 +2336,10 @@ public:
                     }
                 }
                 uploadCuboid();
+                // Snap the moved top/bottom face to a target on the normal axis
+                // (heightHDragIdx may have flipped above, so re-read it).
+                lastSnap = snapHeightFace(heightHDragIdx, e.x, e.y);
+                publishLastSnap(lastSnap);
             }
             return true;
         }
@@ -2339,9 +2355,17 @@ public:
             {
                 // Snap the dragged base-corner to the closest snap
                 // target. Falls through to raw `hit` when no snap fires.
+                Vec3 hitRaw = hit;
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
                 publishLastSnap(lastSnap);
+                // Free-axis projection: the base corner has 2 DOF (the two
+                // in-plane axes), so adopt the snap target's in-plane coords
+                // but keep the plane-normal coord on the base plane — an edge
+                // snap must not drag the base off its plane. Matches as many
+                // of the snap point's coords as the base drag allows.
+                if (lastSnap.snapped)
+                    hit -= planeNormal * dot(hit - hitRaw, planeNormal);
                 currentPoint = hit;
                 if (dragUniform) syncParamsFromUniformDrag();
                 else             syncParamsFromBaseDrag();
@@ -2388,10 +2412,16 @@ public:
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
                 publishLastSnap(lastSnap);
-                // Signed projection of drag onto planeNormal — sign decides
-                // which side of the base the cuboid grows on; size is always
-                // positive (|signedH|).
-                float signedH = dot(hit - heightDragStart, planeNormal);
+                // Signed projection onto planeNormal — sign decides which side
+                // of the base the cuboid grows on; size is always positive.
+                // Free drag measures the delta from where the height drag was
+                // grabbed (heightDragStart); a SNAP instead measures from the
+                // base so the top face lands exactly on the snap target's
+                // normal level (height aligns to the snapped axis), not merely
+                // by the drag distance from the click point.
+                float signedH = lastSnap.snapped
+                    ? dot(hit - baseAnchor,      planeNormal)
+                    : dot(hit - heightDragStart, planeNormal);
                 float newH    = abs(signedH);
                 Vec3 newCen   = baseAnchor + planeNormal * (signedH * 0.5f);
                 params_.cenX = newCen.x;
@@ -2765,6 +2795,65 @@ private:
         uploadPreview();
     }
 
+    // Snap the moved box center onto the nearest snap target on the mover's
+    // free axes (free-axis projection). Arrows 0/1/2 free a single axis;
+    // the centerBox (3) frees the two axes spanning the most-camera-facing
+    // plane (its locked axis matches planeDragDelta's most-facing pick).
+    SnapResult snapMover(int axisIdx, int sx, int sy) {
+        bool f1, fn, f2;
+        if      (axisIdx == 0) f1 = true;
+        else if (axisIdx == 1) fn = true;
+        else if (axisIdx == 2) f2 = true;
+        else {
+            Vec3 cb = Vec3(cachedVp.view[2], cachedVp.view[6], cachedVp.view[10]);
+            float a1 = abs(dot(cb, frame.axis1));
+            float an = abs(dot(cb, frame.normal));
+            float a2 = abs(dot(cb, frame.axis2));
+            int lock = (a1 >= an && a1 >= a2) ? 0 : (an >= a1 && an >= a2) ? 1 : 2;
+            f1 = lock != 0; fn = lock != 1; f2 = lock != 2;
+        }
+        Vec3 hitLocal = toLocalP(mover.center);
+        auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
+                                *mesh, EditMode.Vertices);
+        if (sr.snapped) {
+            Vec3 cen = cenVec();
+            if (f1) cen = cen - planeAxis1 * dot(cen, planeAxis1)
+                              + planeAxis1 * dot(hitLocal, planeAxis1);
+            if (fn) cen = cen - planeNormal * dot(cen, planeNormal)
+                              + planeNormal * dot(hitLocal, planeNormal);
+            if (f2) cen = cen - planeAxis2 * dot(cen, planeAxis2)
+                              + planeAxis2 * dot(hitLocal, planeAxis2);
+            params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
+            uploadPreview();
+        }
+        return sr;
+    }
+
+    // Snap a height handle's moved face (idx 1 = top, idx 0 = bottom) onto the
+    // nearest snap target along the plane normal — free-axis projection on the
+    // single normal axis, with the opposite face held fixed. No-op without a
+    // candidate near the cursor.
+    SnapResult snapHeightFace(int idx, int sx, int sy) {
+        Vec3 botL = baseCentroid();
+        Vec3 topL = botL + planeNormal * currentHeight();
+        Vec3 movedL = (idx == 1) ? topL : botL;
+        Vec3 oppL   = (idx == 1) ? botL : topL;
+        Vec3 hitLocal = movedL;
+        auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
+                                *mesh, EditMode.Vertices);
+        if (sr.snapped) {
+            float t = dot(hitLocal, planeNormal);   // snap target normal coord
+            float o = dot(oppL, planeNormal);       // held opposite face
+            Vec3  cen = cenVec();
+            cen = cen - planeNormal * dot(cen, planeNormal)
+                      + planeNormal * ((t + o) * 0.5f);
+            params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
+            writeSizeParam(planeNormal, abs(t - o));
+            uploadCuboid();
+        }
+        return sr;
+    }
+
     // Color by world axis direction.
     static Vec3 axisColor(Vec3 axis) {
         if (abs(axis.x) > 0.5f) return Vec3(0.9f, 0.2f, 0.2f);
@@ -2942,7 +3031,40 @@ private:
     }
     Vec3 toWorldP(Vec3 p)  const { return transformPoint(frame.toWorld, p); }
     Vec3 toWorldD(Vec3 d)  const { return transformDir  (frame.toWorld, d); }
+    Vec3 toLocalP(Vec3 p)  const { return transformPoint(frame.toLocal, p); }
     Vec3 toLocalD(Vec3 d)  const { return transformDir  (frame.toLocal, d); }
+
+    // Snap an edge size-handle's moved face onto the nearest snap target along
+    // the handle's single free axis. Free-axis projection: only the moveAxis
+    // coordinate is taken from the snap point — the opposite (un-dragged) face
+    // and the other two axes are untouched, so the face slides to the target
+    // without leaving its plane. No-op when no candidate is near the cursor.
+    SnapResult snapMovedEdge(int idx, int sx, int sy) {
+        Vec3 moveAxis; float faceSign;
+        final switch (idx) {
+            case 0: moveAxis = planeAxis2; faceSign = -1.0f; break;
+            case 1: moveAxis = planeAxis1; faceSign = +1.0f; break;
+            case 2: moveAxis = planeAxis2; faceSign = +1.0f; break;
+            case 3: moveAxis = planeAxis1; faceSign = -1.0f; break;
+        }
+        // Cursor world = current moved-face position (anchors the overlay on
+        // the handle); snapLocalHit picks a candidate near the cursor pixel.
+        Vec3 hitLocal = toLocalP(edgeH[idx].pos);
+        auto sr = snapLocalHit(hitLocal, frame, sx, sy, cachedVp,
+                                *mesh, EditMode.Vertices);
+        if (sr.snapped) {
+            Vec3  cen  = cenVec();
+            float size = sizeAlong(moveAxis);
+            float o    = dot(cen, moveAxis) - faceSign * size * 0.5f; // un-moved face
+            float t    = dot(hitLocal, moveAxis);                     // snap target
+            float newCenAxis = (t + o) * 0.5f;
+            cen = cen - moveAxis * dot(cen, moveAxis) + moveAxis * newCenAxis;
+            params_.cenX = cen.x; params_.cenY = cen.y; params_.cenZ = cen.z;
+            writeSizeParam(moveAxis, abs(t - o));
+            uploadPreview();
+        }
+        return sr;
+    }
 
     // Build a preview/commit mesh directly from params_ (no sync needed).
     // Mesh is emitted in LOCAL workplane space; callers transform vertices
