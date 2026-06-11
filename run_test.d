@@ -59,6 +59,8 @@ __gshared string scratchDir;
 __gshared bool   keepVibe;
 __gshared bool   useColor;
 __gshared int    runLockFd = -1;  // held for the whole run; see acquireRunLock
+__gshared string projLibPath;  // prebuilt project test-lib (see buildProjectLib); "" => -i fallback
+__gshared string moldFlag;     // " -L-fuse-ld=mold" for the lib link path; "" when mold unusable
 
 // Machine-aware default worker count. See the call site in main() for the
 // rationale; kept as a free function so run_all.d can mirror the same formula.
@@ -330,14 +332,19 @@ bool dubBuild() {
 //
 // `__gshared` + lazy init so the (slowish) `dub describe` runs at most once
 // across all workers, and only if a source-backed test is present.
-__gshared string g_sourceTestFlags;     // set once; "" means "not computed / none"
-__gshared bool   g_sourceTestFlagsDone;
+// Harvested once and split in two so the project test-lib can be linked in the
+// right order: COMPILE flags (-I / -J / -version) are position-independent,
+// while the LINK TAIL (lflags, -l libs, dep .a archives) is order-sensitive and
+// must come AFTER the project lib on the command line so its undefined symbols
+// resolve against the deps. The `-i` fallback path just concatenates the two.
+__gshared string g_compileFlags;
+__gshared string g_linkTail;
+__gshared bool   g_sourceFlagsDone;
 
-string sourceTestFlags() {
+void harvestSourceFlags() {
     synchronized {
-        if (g_sourceTestFlagsDone) return g_sourceTestFlags;
-        g_sourceTestFlagsDone = true;
-        string[] parts;
+        if (g_sourceFlagsDone) return;
+        g_sourceFlagsDone = true;
         // Each `--data=<x> --data-list` emits one item per line; dub prints a
         // few leading "Warning" lines to stderr which 2>/dev/null drops.
         string gather(string kind, string prefix) {
@@ -352,12 +359,11 @@ string sourceTestFlags() {
             }
             return acc;
         }
-        string flags;
-        flags ~= gather("import-paths",        "-I=");
-        flags ~= gather("string-import-paths", "-J=");
-        flags ~= gather("versions",            "-version=");
-        flags ~= gather("lflags",              "-L");
-        flags ~= gather("libs",                "-L-l");
+        g_compileFlags ~= gather("import-paths",        "-I=");
+        g_compileFlags ~= gather("string-import-paths", "-J=");
+        g_compileFlags ~= gather("versions",            "-version=");
+        g_linkTail     ~= gather("lflags",              "-L");
+        g_linkTail     ~= gather("libs",                "-L-l");
         // linker-files (.a archives) are passed verbatim.
         {
             auto rr = executeShell(
@@ -365,13 +371,15 @@ string sourceTestFlags() {
             if (rr.status == 0)
                 foreach (line; rr.output.splitLines) {
                     auto s = line.strip;
-                    if (s.length) flags ~= " " ~ s;
+                    if (s.length) g_linkTail ~= " " ~ s;
                 }
         }
-        g_sourceTestFlags = flags;
-        return g_sourceTestFlags;
     }
 }
+
+string sourceCompileFlags() { harvestSourceFlags(); return g_compileFlags; }
+string sourceLinkTail()     { harvestSourceFlags(); return g_linkTail; }
+string sourceTestFlags()    { harvestSourceFlags(); return g_compileFlags ~ g_linkTail; }
 
 // A test is "source-backed" if it imports any first-party project module.
 // Heuristic: a top-level `import <mod>` / `import <mod> :` whose module is one
@@ -400,6 +408,65 @@ bool isSourceBackedTest(string path) {
         }
     }
     return false;
+}
+
+/// Build all modeling project source (minus app.d's `main`) into a static lib
+/// ONCE per run, so each source-backed test links it instead of recompiling the
+/// whole project graph via `dmd -i` — ≈6× faster per test and ≈6× less peak RAM
+/// (so far more workers fit in the same memory), and it removes the `-i` + dep
+/// archive duplicate symbols that block mold. Returns the lib path, or "" on
+/// failure (callers fall back to the -i compile). Built with -unittest to match
+/// the test compile; as a static archive only referenced members are pulled, so
+/// a test no longer re-runs its *imported* project modules' unittests — those
+/// are covered by the separate `dub test` step, and the test's own asserts are
+/// unchanged (verified: identical assertion output, just fewer module unittests).
+string buildProjectLib(string scratch) {
+    auto rr = executeShell(
+        "dub describe --config=modeling --data=source-files --data-list 2>/dev/null");
+    if (rr.status != 0) return "";
+    string[] srcs;
+    foreach (line; rr.output.splitLines) {
+        auto s = line.strip;
+        // Exclude app.d: it carries the real `main`, which would clash with the
+        // test binary's own `main`. Every other modeling module compiles clean
+        // without WithRender (render/* bodies are version-gated to empty).
+        if (s.length && !s.endsWith("/app.d") && !s.endsWith("\\app.d"))
+            srcs ~= s;
+    }
+    if (srcs.empty) return "";
+    const lib = buildPath(scratch, "libvibe3d_test.a");
+    auto r = executeShell(format("dmd -lib -unittest%s %s -of=%s 2>&1",
+                                 sourceCompileFlags(), srcs.join(" "), lib));
+    if (r.status != 0 || !exists(lib)) {
+        stderr.writeln(yellow("project test-lib build failed; "
+            ~ "falling back to per-test -i compile"));
+        if (r.output.length) stderr.writeln(dim(r.output));
+        return "";
+    }
+    return lib;
+}
+
+/// Probe ONCE whether dmd can link through mold (much faster than bfd/gold for
+/// the lib-link path). Needs mold on PATH and a cc new enough for
+/// `-fuse-ld=mold` (gcc>=12 / clang); otherwise returns "" and we keep the
+/// default linker. Only used on the project-lib path — the `-i` path links the
+/// project AND the dep archives, which double-defines symbols that mold (unlike
+/// GNU ld) rejects; the prebuilt lib has no such duplication.
+string probeMoldFlag() {
+    if (executeShell("command -v mold").status != 0) return "";
+    const probe = buildPath(tempDir(), format("vibe3d_mold_probe_%d", getpid()));
+    void cleanup() {
+        foreach (ext; ["", ".d", ".o"])
+            try { if (exists(probe ~ ext)) std.file.remove(probe ~ ext); }
+            catch (Exception) {}
+    }
+    scope(exit) cleanup();
+    try {
+        std.file.write(probe ~ ".d", "void main(){}\n");
+        if (executeShell(format("dmd -L-fuse-ld=mold -of=%s %s.d 2>&1", probe, probe)).status == 0)
+            return " -L-fuse-ld=mold";
+    } catch (Exception) {}
+    return "";
 }
 
 /// Compile each test in `paths` into `outDir`. Source is read AS-IS unless
@@ -451,8 +518,17 @@ string[] compileTests(string[] paths, string outDir, ushort port) {
         // the bare-path tests. HTTP-driver tests keep the original cheap line.
         string cmd;
         if (isSourceBackedTest(p)) {
-            cmd = format("dmd -unittest -i -J=tests -I=%s -I=tests%s%s %s -of=%s 2>&1",
-                         outDir, helpers, sourceTestFlags(), src, of);
+            if (projLibPath.length) {
+                // Link the prebuilt project lib instead of recompiling it via
+                // `-i`. Order is load-bearing: test.o, then the project lib,
+                // then the dep archives/link tail (mold is order-strict).
+                cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s%s %s %s%s%s -of=%s 2>&1",
+                             outDir, helpers, sourceCompileFlags(), src,
+                             projLibPath, sourceLinkTail(), moldFlag, of);
+            } else {
+                cmd = format("dmd -unittest -i -J=tests -I=%s -I=tests%s%s %s -of=%s 2>&1",
+                             outDir, helpers, sourceTestFlags(), src, of);
+            }
         } else {
             cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s %s -w -of=%s 2>&1",
                          outDir, helpers, src, of);
@@ -856,6 +932,19 @@ int main(string[] args) {
     writefln("Compiling %d test%s and booting %d vibe3d instance%s...",
         tests.length, tests.length == 1 ? "" : "s",
         j, j == 1 ? "" : "s");
+    // Source-backed tests: build the project once into a shared static lib and
+    // link it (≈6× faster + ≈6× less RAM per test than recompiling via `dmd -i`,
+    // and it unlocks mold). Done once here, single-threaded, before workers fan
+    // out; the lib + flag are read-only thereafter. HTTP-driver tests are
+    // unaffected. On lib-build failure projLibPath stays "" and we fall back.
+    if (tests.canFind!isSourceBackedTest) {
+        projLibPath = buildProjectLib(scratchDir);
+        if (projLibPath.length) {
+            moldFlag = probeMoldFlag();
+            writeln(dim("Built project test-lib for source-backed tests"
+                ~ (moldFlag.length ? " (linking with mold)." : ".")));
+        }
+    }
     bool allUp = true;
     foreach (i, ref w; parallel(workers, 1)) {
         if (!prepareWorker(w)) {
