@@ -2881,6 +2881,21 @@ public:
     public Vec3 publishedRotate()    const { return headlessRotate; }
     public Vec3 publishedScale()     const { return run.s; }
 
+    // Phase 5a (rotate sub-tool re-scope) — the wrapper-truth rotate state the
+    // wrapped RotateTool reads instead of its own `angleAccum`/`propDeg` second
+    // accumulator. `runRotateEuler()` is the LIVE run-total euler (= the derived
+    // display `headlessRotate`, in DEGREES); `gestureStartRotateEuler()` is the
+    // run orientation captured at THIS gesture's mouse-down (`gestureStart.r`,
+    // decomposed to the same ZYX euler, in DEGREES). Both are the matrix-truth
+    // view (eulerZYXFromMatrix), so a wrapped read of them never diverges from
+    // what the panel actually shows — unlike the sub-tool's gizmo-basis
+    // decomposition, which drifts across cross-axis multi-gesture runs.
+    public Vec3 runRotateEuler() const { return headlessRotate; }
+    public Vec3 gestureStartRotateEuler() const {
+        import math : eulerZYXFromMatrix;
+        return eulerZYXFromMatrix(gestureStart.r);
+    }
+
     // P-F Phase 1 — the FROZEN per-run gizmo frame, for assertion via
     // /api/toolpipe/eval. `valid` is false until the first applyTRS of a run
     // freezes it; a relocate resets it (resetRun) so the next apply re-freezes.

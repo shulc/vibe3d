@@ -494,9 +494,34 @@ public:
     // the panel reads back — to the pre-edit value in lockstep with the geometry.
     public bool cancelSessionIfOpen(out Vec3 outDeg) {
         if (!editIsOpen()) return false;
+        // STANDALONE accumulator restore (wrapperRef is null): the
+        // (origVertices, angleAccum) invariant must hold again once the verts
+        // are restored, so peel the sub-tool accumulator back to its session
+        // start. In the WRAPPED role this is inert bookkeeping — the geometry
+        // is reverted from the wrapper's editBaseline (cancelOpenSessionGeometry),
+        // never from (origVertices, angleAccum) — but keeping it costs nothing.
         angleAccum = preEditAngleAccum;
         propDeg    = preEditPropDeg;
-        outDeg     = preEditPropDeg;
+        // Phase 5a — the pre-edit PANEL value returned to the wrapper (which
+        // snaps its `headlessRotate` display mirror to it) comes from the
+        // WRAPPER TRUTH in the wrapped role, NOT this sub-tool's `propDeg`
+        // second accumulator. `gestureStartRotateEuler()` is the matrix-truth
+        // run orientation at this session's mouse-down (eulerZYXFromMatrix of
+        // gestureStart.r, degrees) — exactly the value the panel was showing
+        // when the session opened. The sub-tool's gizmo-basis `preEditPropDeg`
+        // would drift from that across a cross-axis multi-gesture run; the
+        // wrapper truth is what the forms panel reads back, so this keeps the
+        // restored display locked to geometry. STANDALONE (no wrapper) keeps
+        // returning `preEditPropDeg` — the only accumulator it has.
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef) {
+                outDeg = wrap.gestureStartRotateEuler();
+                cancelOpenSessionGeometry();
+                return true;
+            }
+        }
+        outDeg = preEditPropDeg;
         cancelOpenSessionGeometry();
         return true;
     }
@@ -1103,7 +1128,25 @@ private:
                 // dragBaseline-with-baked-history. The edit SESSION stays on this
                 // sub-tool (its own beginEdit/commitEdit) — the run-baseline entry
                 // does NOT open the wrapper session (MS-5).
-                wrap.applyRotateAbsoluteFromRun(angleAccum);
+                //
+                // Phase 5a — feed the WRAPPER TRUTH, not this sub-tool's
+                // `angleAccum` second accumulator. The panel path
+                // (applyRotatePanelValue) already wrote the wrapper's
+                // `headlessRotate` to the same value it set `angleAccum` to, so
+                // the two are equal there. But the falloff-refire ARM in update()
+                // re-enters here at idle on the PERSISTENT accumulator, where
+                // `angleAccum` (gizmo-basis decomposition) drifts from the
+                // matrix-truth euler across a cross-axis run. `runRotateEuler()`
+                // is eulerZYXFromMatrix(run.r) in degrees → radians here, so
+                // applyRotateAbsoluteFromRun recomposes run.r against the TRUE run
+                // orientation (an identity recompose). Standalone (no wrapper)
+                // still drives geometry from `angleAccum` via the kernel below.
+                import std.math : PI;
+                Vec3 wrapDeg = wrap.runRotateEuler();
+                wrap.applyRotateAbsoluteFromRun(
+                    Vec3(wrapDeg.x * cast(float)(PI / 180.0),
+                         wrapDeg.y * cast(float)(PI / 180.0),
+                         wrapDeg.z * cast(float)(PI / 180.0)));
                 return;
             }
         }
