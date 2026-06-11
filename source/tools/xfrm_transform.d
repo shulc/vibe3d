@@ -42,7 +42,7 @@ module tools.xfrm_transform;
 // mouse delta onto the gizmo's shared axes and writes the basis-
 // LOCAL scalar into `moveSub.pendingTranslateDelta`. The wrapper
 // drains that on every motion event, accumulates into
-// `headlessTranslate`, and reapplies the chain from the drag-start
+// `run.t`, and reapplies the chain from the drag-start
 // baseline. Under ACEN.Local + axis.local the same basis-local
 // scalar then flows to `applyTranslatePerCluster` — one scalar per
 // cluster, applied along each cluster's OWN signed fwd. This kills
@@ -136,6 +136,22 @@ alias VertexEditFactory = MeshVertexEdit delegate();
 // wins over a co-located gizmo arrow — matching the click-dispatch order.
 private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20, FALLOFF_BASE = 100;
 
+// Canonical run-state for the wrapper transform: translation Vec3, rotation
+// as a matrix-truth float[16] (R is matrix-truth — euler is a derived view),
+// and a per-component scale Vec3. Defaults are the identity transform
+// (t = 0, r = identity, s = 1), so `XformState.init` is the identity state.
+// Phase 1 of the state-unification refactor migrates only `t` and `s` into
+// this struct; `r` is wired in a later phase (rotate state stays on
+// `headlessRotate`/`runRotMatrix` for now).
+struct XformState {
+    Vec3 t = Vec3(0, 0, 0);
+    // Inline identity literal (matches math.identityMatrix); a field
+    // initializer cannot CTFE-cast the `immutable float[16]` constant to a
+    // mutable field, so the literal is spelled out here.
+    float[16] r = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1];
+    Vec3 s = Vec3(1, 1, 1);
+}
+
 class XfrmTransformTool : TransformTool {
 public:
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
@@ -154,9 +170,13 @@ public:
     // Headless TRS attrs — always exposed regardless of flag state
     // so scripted callers can set TX with R=1 S=1 without first
     // flipping flags. Defaults: 0 for translate / rotate, 1 for scale.
-    Vec3 headlessTranslate = Vec3(0, 0, 0);
+    // Run-absolute transform state. `run.t` (translate) and `run.s` (scale)
+    // are the canonical TRS truth; `headlessRotate` remains the rotate display
+    // until rotate migrates into `run.r` in a later phase. `gestureStart` is
+    // the per-gesture snapshot of `run` captured at mouse-down.
+    XformState run;
+    XformState gestureStart;
     Vec3 headlessRotate    = Vec3(0, 0, 0);
-    Vec3 headlessScale     = Vec3(1, 1, 1);
 
     // Attr-state baseline captured at session OPEN (the closed->open
     // transition in beginEdit() below). cancelUncommittedEdit() restores these
@@ -206,7 +226,7 @@ public:
     private bool gestureSoftStartPlaced = false;
     private Vec3 gestureSoftStartCenter = Vec3(0, 0, 0);
 
-    // P-F Phase 2 — per-GESTURE run-absolute Move snapshot. `headlessTranslate`
+    // P-F Phase 2 — per-GESTURE run-absolute Move snapshot. `run.t`
     // is now run-absolute and `beginEdit` (the SESSION open) fires only once per
     // session, so attrBaseTranslate captures the SESSION start, not each gesture.
     // The per-gesture undo hook needs THIS gesture's run-absolute START value
@@ -218,7 +238,7 @@ public:
     private Vec3 moveGestureStartSnapshot  = Vec3(0, 0, 0);
 
     // P-F Phase 3a — per-GESTURE run-absolute Scale snapshot, the Scale twin of
-    // moveGestureStartSnapshot. `headlessScale` is now run-absolute (the field
+    // moveGestureStartSnapshot. `run.s` is now run-absolute (the field
     // holds the run-total factor across same-bank gestures, base ⊗ this-gesture
     // factor). The per-gesture undo hook needs THIS gesture's run-absolute START
     // factor (the run total before this gesture's drain). Captured at every Scale
@@ -227,7 +247,7 @@ public:
     // back to inert (start == end ⇒ the hook does not move the field on undo).
     // DISTINCT from the sub-tool accumulator anchor `dragStartScaleAccum`
     // (scale.d:509, anchors the PANEL-path scaleAccum) — this lives on the WRAPPER
-    // and feeds ONLY the undo hook (never the fold; composeFor reads headlessScale
+    // and feeds ONLY the undo hook (never the fold; composeFor reads run.s
     // directly).
     private bool scaleGestureStartKnown     = false;
     private Vec3 scaleGestureStartSnapshot  = Vec3(1, 1, 1);
@@ -373,9 +393,9 @@ public:
         // (and resetRun() below skips its own hadRun field-zero for the same
         // reason). activate() leaves the flag false → identical zeroing as before.
         if (!resyncPreserveDisplayFields) {
-            headlessTranslate     = Vec3(0, 0, 0);
+            run.t     = Vec3(0, 0, 0);
             headlessRotate        = Vec3(0, 0, 0);
-            headlessScale         = Vec3(1, 1, 1);
+            run.s         = Vec3(1, 1, 1);
             // MATRIX-AS-TRUTH — the rotate truth resets with its derived display.
             runRotMatrix          = identityMatrix;
         }
@@ -583,9 +603,9 @@ public:
         //    in-session Ctrl+Z contract holds.
         if (activeDrag is null
             && dragBaseline.length == mesh.vertices.length
-            && (headlessTranslate.x != 0
-             || headlessTranslate.y != 0
-             || headlessTranslate.z != 0)) {
+            && (run.t.x != 0
+             || run.t.y != 0
+             || run.t.z != 0)) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
                 // P-C: the trigger now spans the whole pipe config — falloff,
@@ -777,15 +797,15 @@ public:
                          &handlePresentation,
                          [["compact", "Compact"], ["full", "Full"]],
                          "compact").hidden(),
-            Param.float_("TX", "Translate X", &headlessTranslate.x, 0.0f),
-            Param.float_("TY", "Translate Y", &headlessTranslate.y, 0.0f),
-            Param.float_("TZ", "Translate Z", &headlessTranslate.z, 0.0f),
+            Param.float_("TX", "Translate X", &run.t.x, 0.0f),
+            Param.float_("TY", "Translate Y", &run.t.y, 0.0f),
+            Param.float_("TZ", "Translate Z", &run.t.z, 0.0f),
             Param.float_("RX", "Rotate X",    &headlessRotate.x,    0.0f).angle(),
             Param.float_("RY", "Rotate Y",    &headlessRotate.y,    0.0f).angle(),
             Param.float_("RZ", "Rotate Z",    &headlessRotate.z,    0.0f).angle(),
-            Param.float_("SX", "Scale X",     &headlessScale.x,     1.0f),
-            Param.float_("SY", "Scale Y",     &headlessScale.y,     1.0f),
-            Param.float_("SZ", "Scale Z",     &headlessScale.z,     1.0f),
+            Param.float_("SX", "Scale X",     &run.s.x,     1.0f),
+            Param.float_("SY", "Scale Y",     &run.s.y,     1.0f),
+            Param.float_("SZ", "Scale Z",     &run.s.z,     1.0f),
         ];
     }
 
@@ -795,7 +815,7 @@ public:
     // reEvaluate() seam (a plain `interactive` tool.attr per axis). The legacy
     // moveSub/rotateSub/scaleSub.drawProperties() sliders must therefore NOT
     // also render, or two live widgets would fight over the same per-frame
-    // edit (headlessTranslate / the rotate-scale activation deltas) and the
+    // edit (run.t / the rotate-scale activation deltas) and the
     // panel would show each value row TWICE — once readable (form, left labels)
     // and once with the old right-of-widget labels (the unreadability the
     // rework targets). app.d raises this latch for the frame in which it drew
@@ -1275,9 +1295,9 @@ public:
     }
 
     private void resetGestureAttrs() {
-        headlessTranslate = Vec3(0, 0, 0);
+        run.t = Vec3(0, 0, 0);
         headlessRotate    = Vec3(0, 0, 0);
-        headlessScale     = Vec3(1, 1, 1);
+        run.s     = Vec3(1, 1, 1);
         // MATRIX-AS-TRUTH — a fresh-run / re-bake reset clears the rotate truth too.
         runRotMatrix      = identityMatrix;
     }
@@ -1323,11 +1343,11 @@ public:
             // start bookkeeping is always cleared (re-primed at the next gesture's
             // begin*DragSession), only the published display field is preserved.
             if (!resyncPreserveDisplayFields) {
-                headlessTranslate        = Vec3(0, 0, 0);
+                run.t        = Vec3(0, 0, 0);
                 // P-F Phase 3a — Scale is run-absolute: a geometry-run boundary
                 // that ended an ACTIVE run resets the SCALE display field to
                 // identity with the geometry baseline (G8 relocate->1).
-                headlessScale            = Vec3(1, 1, 1);
+                run.s            = Vec3(1, 1, 1);
                 // P-F Phase 3b — Rotate is run-absolute (same-axis): a geometry-
                 // run boundary that ended an ACTIVE run resets the ROTATE display
                 // field to identity with the geometry baseline (G8 relocate->0).
@@ -1351,24 +1371,24 @@ public:
     private bool bankIsNonIdentity(DragBank bank) {
         final switch (bank) {
             case DragBank.None:   return false;
-            case DragBank.Move:   return headlessTranslate.x != 0
-                                       || headlessTranslate.y != 0
-                                       || headlessTranslate.z != 0;
+            case DragBank.Move:   return run.t.x != 0
+                                       || run.t.y != 0
+                                       || run.t.z != 0;
             case DragBank.Rotate: return headlessRotate.x != 0
                                        || headlessRotate.y != 0
                                        || headlessRotate.z != 0;
-            case DragBank.Scale:  return headlessScale.x != 1
-                                       || headlessScale.y != 1
-                                       || headlessScale.z != 1;
+            case DragBank.Scale:  return run.s.x != 1
+                                       || run.s.y != 1
+                                       || run.s.z != 1;
         }
     }
 
     private void resetBankAttr(DragBank bank) {
         final switch (bank) {
             case DragBank.None:   break;
-            case DragBank.Move:   headlessTranslate = Vec3(0, 0, 0); break;
+            case DragBank.Move:   run.t = Vec3(0, 0, 0); break;
             case DragBank.Rotate: headlessRotate    = Vec3(0, 0, 0); break;
-            case DragBank.Scale:  headlessScale     = Vec3(1, 1, 1); break;
+            case DragBank.Scale:  run.s     = Vec3(1, 1, 1); break;
         }
     }
 
@@ -1396,10 +1416,10 @@ public:
     private void beginRunGesture(DragBank bank) {
         // P-F Phase 2/3a — Move AND Scale are RUN-ABSOLUTE. A same-bank Move or
         // Scale repeat must NOT re-bake the prior gesture into `dragBaseline` and
-        // must NOT zero its field (`headlessTranslate` / `headlessScale`): the run
+        // must NOT zero its field (`run.t` / `run.s`): the run
         // keeps ONE frozen baseline and the field accumulates the run total across
-        // gestures. Move's drain does `headlessTranslate += pending`; Scale's drain
-        // (1677 `headlessScale = f`) writes the within-run absolute factor anchored
+        // gestures. Move's drain does `run.t += pending`; Scale's drain
+        // (1677 `run.s = f`) writes the within-run absolute factor anchored
         // at the run-start accumulator (dragStartScaleAccum), so a same-axis repeat
         // multiplies into the run total. Scale factors commute per-axis ⇒ no
         // cross-axis hazard, fully run-absolute exactly like Move.
@@ -1510,7 +1530,7 @@ public:
     //     stable for the drag's duration). Drag fast-path is the
     //     unconstrained whole-mesh case; everything else routes
     //     through `applyTRS` per frame.
-    //   - `headlessTranslate`: zeroed so this drag's accumulated
+    //   - `run.t`: zeroed so this drag's accumulated
     //     basis-local delta starts from 0.
     //   - `editBaseline()`: opened idempotently via
     //     `beginEdit()` — captures pre-tool-session positions on
@@ -1536,8 +1556,8 @@ public:
         // P-F Phase 2 — capture THIS gesture's run-absolute START (the run total
         // before this gesture's drain). AFTER beginRunGesture so a fresh run (just
         // zeroed) snapshots 0 and a same-bank repeat snapshots the held run total.
-        // The Move commit hook restores pre/post of headlessTranslate from this.
-        moveGestureStartSnapshot = headlessTranslate;
+        // The Move commit hook restores pre/post of run.t from this.
+        moveGestureStartSnapshot = run.t;
         moveGestureStartKnown    = true;
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
@@ -1662,7 +1682,7 @@ public:
     //     re-evaluates see a stable packet (mirrors move/rotate).
     //   - `dragBaseline`: full-mesh dup AFTER any prior panel scale is
     //     already baked into `mesh.vertices`.
-    //   - `headlessScale`: reset to identity (1,1,1) — this drag's
+    //   - `run.s`: reset to identity (1,1,1) — this drag's
     //     within-drag absolute factor accumulates from there.
     //   - `scaleDragActive` / `scaleDragFastPath`: drag-owns-geometry flag +
     //     the once-per-drag GPU-skip predicate.
@@ -1678,18 +1698,18 @@ public:
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
-        // cross-bank scale reuses the run baseline + resets ONLY headlessScale,
+        // cross-bank scale reuses the run baseline + resets ONLY run.s,
         // so held T/R survive into the composed fold. For Scale (run-absolute,
         // Phase 3a) a scale-after-scale does NOT re-bake/zero: the run keeps ONE
-        // frozen baseline and headlessScale accumulates the run-total factor.
+        // frozen baseline and run.s accumulates the run-total factor.
         beginRunGesture(DragBank.Scale);
         // P-F Phase 3a — capture THIS gesture's run-absolute START factor (the run
         // total before this gesture's drain). AFTER beginRunGesture so a fresh run
         // (just zeroed to identity) snapshots (1,1,1) and a same-bank repeat
         // snapshots the held run-total factor. The Scale commit hook restores
-        // pre/post of headlessScale from this. DISTINCT from the sub-tool
+        // pre/post of run.s from this. DISTINCT from the sub-tool
         // accumulator anchor dragStartScaleAccum — undo-only, never a fold input.
-        scaleGestureStartSnapshot = headlessScale;
+        scaleGestureStartSnapshot = run.s;
         scaleGestureStartKnown    = true;
 
         auto cp = queryClusterPivots(vts);
@@ -1719,7 +1739,7 @@ public:
                 // Drain the basis-local scalar moveSub produced this
                 // motion event (drag-axis branch in
                 // `MoveTool.onMouseMotion`) into the wrapper's
-                // `headlessTranslate`. Idle / hover branches in
+                // `run.t`. Idle / hover branches in
                 // moveSub leave `pendingTranslateDelta` at zero, so
                 // the drain is a no-op on those.
                 Vec3 pending = moveSub.pendingTranslateDelta;
@@ -1729,10 +1749,10 @@ public:
                 // via `applyTRS`'s preset flags (composeFor folds T·R·S from one
                 // run baseline). Pre-Phase-2 this drain force-zeroed R/S so the
                 // single-bank `applyTRSForBank(Move)` saw only translate.
-                headlessTranslate = headlessTranslate + pending;
+                run.t = run.t + pending;
 
                 // Visual: the gizmo center moves along the GLOBAL
-                // basis projection of `headlessTranslate` (same
+                // basis projection of `run.t` (same
                 // projection `applyTRS` does in the non-per-cluster
                 // branch). Per-cluster doesn't have a single
                 // visible "gizmo center" — the gizmo follows the
@@ -1746,7 +1766,7 @@ public:
                 // Single per-frame mesh mutation through applyTRS with the
                 // PRESET flags (apply-path Phase 2 — no per-bank force). For a
                 // single-bank Move preset this folds T only; for a composed
-                // Transform preset it folds the held R/S too. headlessTranslate
+                // Transform preset it folds the held R/S too. run.t
                 // carries the running basis-local scalar; under ACEN.Local it
                 // flows into `applyTranslatePerCluster`, otherwise into the
                 // global-basis branch.
@@ -1929,22 +1949,22 @@ public:
             if (r && scaleSub.pendingScaleValid) {
                 scaleSub.pendingScaleValid = false;
                 Vec3 f = scaleSub.pendingScale;
-                // P-F Phase 3a — headlessScale is RUN-ABSOLUTE: it holds the
+                // P-F Phase 3a — run.s is RUN-ABSOLUTE: it holds the
                 // run-total factor = run-start base ⊗ this-gesture factor. The
                 // producer's `pendingScale` (f) is the WITHIN-GESTURE absolute
                 // factor only (dragScaleAccum, reset to 1 at this drag's start,
                 // scale.d:510), so the drain multiplies it per-axis by the run
                 // total captured at this gesture's mouse-down
                 // (scaleGestureStartSnapshot). For a fresh run the snapshot is
-                // identity ⇒ headlessScale = f (byte-identical to pre-3a). For a
+                // identity ⇒ run.s = f (byte-identical to pre-3a). For a
                 // same-bank repeat the snapshot is the held run total ⇒ the factors
                 // multiply into the run total (mirrors the producer's own
                 // scaleAccum.x = dragStartScaleAccum.x * scaleFactor at
                 // scale.d:694). Per-axis factors commute ⇒ no cross-axis hazard.
                 // The held T/R are NOT touched — they compose into the fold via
                 // the preset flags. composeFor (3253) reads this FULL run-absolute
-                // headlessScale against the FROZEN dragBaseline — no divide.
-                headlessScale = Vec3(scaleGestureStartSnapshot.x * f.x,
+                // run.s against the FROZEN dragBaseline — no divide.
+                run.s = Vec3(scaleGestureStartSnapshot.x * f.x,
                                      scaleGestureStartSnapshot.y * f.y,
                                      scaleGestureStartSnapshot.z * f.z);
 
@@ -1956,7 +1976,7 @@ public:
                 // P-F Phase 3a (MAJOR-4) — the own-bank fast-path
                 // `wrapAboutPivot(lastFoldMatrix) · buffer` is valid ONLY while the
                 // GPU buffer still holds the FROZEN run baseline (lastFoldMatrix is
-                // built from the FULL run-absolute headlessScale against that
+                // built from the FULL run-absolute run.s against that
                 // baseline). Once a prior committed gesture in this run uploaded the
                 // buffer (`runGpuBufferDirty`), buffer ≠ frozen baseline and the
                 // fast-path would DOUBLE-APPLY — drop to a CPU re-upload (mirrors the
@@ -2262,14 +2282,14 @@ public:
             // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; the
             // NEXT same-bank Scale own-bank fast-path in this run must drop to a
             // CPU re-upload (its lastFoldMatrix is built from the FULL run-absolute
-            // headlessScale against the frozen baseline → wrapAboutPivot(fold) ×
+            // run.s against the frozen baseline → wrapAboutPivot(fold) ×
             // this transformed buffer would double-scale).
             runGpuBufferDirty = true;
 
             // P-F Phase 3a (MAJOR-5) — uniform field-snapshot undo hook. The
             // gesture-START is THIS gesture's run-absolute snapshot (captured at
             // scale mouse-down, scaleGestureStartSnapshot); the END is the current
-            // run-total factor (headlessScale). Splice them onto the scaleSub
+            // run-total factor (run.s). Splice them onto the scaleSub
             // gesture entry through the wrapper-field hook pair so an in-session
             // Ctrl+Z restores the panel SX/SY/SZ to the run total BEFORE this
             // gesture (mergeRun first.revert/last.apply splices to run-START /
@@ -2280,11 +2300,11 @@ public:
             // mid-run refire does not strand the field. DISJOINT wrapper field.
             bool scaleAbsKnown = scaleGestureStartKnown;
             Vec3 scaleAbsStart = scaleGestureStartSnapshot;
-            Vec3 scaleAbsEnd   = headlessScale;
+            Vec3 scaleAbsEnd   = run.s;
             scaleGestureStartKnown = false;
             if (!scaleAbsKnown) scaleAbsStart = scaleAbsEnd;   // inert
-            scaleSub.wrapperFieldApplyHook  = () { headlessScale = scaleAbsEnd;   };
-            scaleSub.wrapperFieldRevertHook = () { headlessScale = scaleAbsStart; };
+            scaleSub.wrapperFieldApplyHook  = () { run.s = scaleAbsEnd;   };
+            scaleSub.wrapperFieldRevertHook = () { run.s = scaleAbsStart; };
 
             // Per-gesture commit (record+consolidate, Phase 2): mirrors the
             // rotate path above — each scale drag bakes a tagged in-session entry
@@ -2322,7 +2342,7 @@ public:
     // pre-chain vertex array (e.g. drag-down snapshot for live drags,
     // current `mesh.vertices.dup` for the one-shot numeric path) and
     // `applyTRS` rebuilds `mesh.vertices` from it (T → R → S, using
-    // `headlessTranslate` / `headlessRotate` / `headlessScale` as
+    // `run.t` / `headlessRotate` / `run.s` as
     // attributes).
     //
     // Apply-path Phase 2: the former `applyTRSForBank(bank, …)` shim — which
@@ -2430,8 +2450,8 @@ public:
         // dormant `pow(scale, passes)` path (no matrix form, F2) keeps the legacy
         // per-pass `else` chain below.
         //
-        // The decomposed state fields (headlessTranslate / headlessRotate /
-        // headlessScale) + the transient view-ring params (viewAxis / viewAngleDeg,
+        // The decomposed state fields (run.t / headlessRotate /
+        // run.s) + the transient view-ring params (viewAxis / viewAngleDeg,
         // MS-3.4) remain the input attributes that BUILD the matrix.
         // `mesh.vertices` already holds the restored baseline.
         {
@@ -2450,12 +2470,12 @@ public:
                 return s;
             }
 
-            bool hasT = flagT && (headlessTranslate.x != 0
-                              || headlessTranslate.y != 0
-                              || headlessTranslate.z != 0);
-            bool hasS = flagS && (headlessScale.x != 1
-                              || headlessScale.y != 1
-                              || headlessScale.z != 1);
+            bool hasT = flagT && (run.t.x != 0
+                              || run.t.y != 0
+                              || run.t.z != 0);
+            bool hasS = flagS && (run.s.x != 1
+                              || run.s.y != 1
+                              || run.s.z != 1);
 
             // MS-4.3/4.4 — fold: compose T->R->S into ONE pivot-relative matrix
             // (per cluster in the ACEN.Local case) and apply it once with ONE
@@ -2484,9 +2504,9 @@ public:
                     float[16][] clusterM;
                     clusterM.length = ap.right.length;
                     foreach (cid; 0 .. ap.right.length) {
-                        Vec3 wd = ap.right[cid] * headlessTranslate.x
-                                + ap.up[cid]    * headlessTranslate.y
-                                + ap.fwd[cid]   * headlessTranslate.z;
+                        Vec3 wd = ap.right[cid] * run.t.x
+                                + ap.up[cid]    * run.t.y
+                                + ap.fwd[cid]   * run.t.z;
                         clusterM[cid] = translationMatrix(wd);
                     }
                     FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
@@ -2498,9 +2518,9 @@ public:
                     // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
                     // LIVE position (source == weightVerts == current scratch),
                     // matching applyTranslateIncremental.
-                    Vec3 delta = bX * headlessTranslate.x
-                               + bY * headlessTranslate.y
-                               + bZ * headlessTranslate.z;
+                    Vec3 delta = bX * run.t.x
+                               + bY * run.t.y
+                               + bZ * run.t.z;
                     applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
                                      pivot, translationMatrix(delta),
                                      blendModeForMeasure(),
@@ -2562,7 +2582,7 @@ public:
                     applyScaleFromActivation(mesh, vertexIndicesToProcess,
                                              activation, pivot,
                                              bX, bY, bZ,
-                                             headlessScale,
+                                             run.s,
                                              dragFalloff, cachedVp,
                                              cp, ap, dragSymmetry, toProcess,
                                              baseline);
@@ -2581,15 +2601,15 @@ public:
                             clusterM[cid] = pivotScaleMatrixBasis(
                                 Vec3(0, 0, 0),
                                 ap.right[cid], ap.up[cid], ap.fwd[cid],
-                                headlessScale.x, headlessScale.y,
-                                headlessScale.z);
+                                run.s.x, run.s.y,
+                                run.s.z);
                     }
                     applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
                                      pivot,
                                      pivotScaleMatrixBasis(Vec3(0, 0, 0),
                                          bX, bY, bZ,
-                                         headlessScale.x, headlessScale.y,
-                                         headlessScale.z),
+                                         run.s.x, run.s.y,
+                                         run.s.z),
                                      blendModeForMeasure(),
                                      dragFalloff, cachedVp, cp, ap, clusterM,
                                      dragSymmetry, toProcess,
@@ -2628,7 +2648,7 @@ public:
     // session (MS-5: the R/S undo entry must stay on the sub-tool, which owns its
     // own beginEdit/commitEdit — the sub-tool's applyRotatePanelValue /
     // applyScalePanelValue already opened it before calling here). headlessRotate
-    // / headlessScale are read ABSOLUTELY by applyTRS, exactly as the gizmo path.
+    // / run.s are read ABSOLUTELY by applyTRS, exactly as the gizmo path.
     public void applyRotateAbsoluteFromRun(Vec3 angleAccumRad) {
         import std.math : PI;
         import math : matrixFromEulerZYX;
@@ -2658,7 +2678,7 @@ public:
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
         captureBaselinePacketsNoSession();
         vertexCacheDirty = true;
-        headlessScale = scaleAccum;
+        run.s = scaleAccum;
         bool pureScalePreset = flagS && !flagT && !flagR;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureScalePreset);
@@ -2719,7 +2739,7 @@ public:
     // Idempotent setup: opens a tool-session edit if one isn't yet
     // open, AND opens a "panel drag" baseline if no gizmo drag is
     // currently active (= panel and gizmo drag both feed the same
-    // `headlessTranslate`, the same `applyTRS` evaluate, and the
+    // `run.t`, the same `applyTRS` evaluate, and the
     // same `editBaseline()` for the final undo entry).
     //
     // No-op when no T flag — panel sliders for X/Y/Z only apply
@@ -2734,15 +2754,15 @@ public:
         // Delta path: capture/open the session, accumulate the slider's
         // per-frame diff onto the live translate, then replay from the session
         // baseline. captureDragBaselineIfStale() reports whether it captured a
-        // fresh `dragBaseline` this call; we zero `headlessTranslate` ONLY then
+        // fresh `dragBaseline` this call; we zero `run.t` ONLY then
         // (the first-active-frame — accumulation starts from zero). Zeroing on
         // every call would wipe the prior cumulative. The += sits between the
         // capture and applyTRS, so we can't reuse replayTranslateFromBaseline()
         // (which does capture-then-apply with nothing in between).
         bool freshBaseline = captureDragBaselineIfStale();
         if (freshBaseline)
-            headlessTranslate = Vec3(0, 0, 0);
-        headlessTranslate = headlessTranslate + basisLocalDelta;
+            run.t = Vec3(0, 0, 0);
+        run.t = run.t + basisLocalDelta;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0, /*samplePipeFromBaseline=*/true);
         needsGpuUpdate = true;
     }
@@ -2754,7 +2774,7 @@ public:
     // current one is stale (length mismatch). Returns true when it captured a
     // fresh baseline this call.
     //
-    // CRITICAL: this body does NOT zero `headlessTranslate`. The zeroing is
+    // CRITICAL: this body does NOT zero `run.t`. The zeroing is
     // coupled to the delta accumulation and lives in applyMovePanelDelta()'s
     // prologue (gated on the returned bool). If it lived here, reEvaluate()
     // acting as a session-opener would wipe the just-injected absolute
@@ -2789,7 +2809,7 @@ public:
 
         // `fresh` reflects whether captureBaselinePacketsNoSession snapshotted a
         // new dragBaseline this call (used by applyMovePanelDelta to gate the
-        // headlessTranslate zero-on-first-active-frame).
+        // run.t zero-on-first-active-frame).
         return fresh;
     }
 
@@ -2833,8 +2853,8 @@ public:
 
     // Value-driven replay (Decision D1): open the session if needed, capture a
     // fresh baseline if stale, then re-run applyTRS from `dragBaseline` reading
-    // the CURRENT (already-injected) `headlessTranslate` ABSOLUTELY — no delta
-    // accumulation, no zeroing of `headlessTranslate`. Keys off `dragBaseline`
+    // the CURRENT (already-injected) `run.t` ABSOLUTELY — no delta
+    // accumulation, no zeroing of `run.t`. Keys off `dragBaseline`
     // (full-mesh, length-equal to mesh.vertices), NOT editBaseline() which is
     // partial and reordered (see :277-282) and would trip applyTRS's length
     // assert. Shared by reEvaluate() and the panel-delta path's setup.
@@ -2873,14 +2893,14 @@ public:
     public bool dragInFlight() const { return activeDrag !is null; }
 
     // P-F introspection seam (test-only): the LIVE published transform attrs the
-    // panel binds (headlessTranslate/Rotate/Scale, the TX..SZ Param.float_
+    // panel binds (run.t/Rotate/Scale, the TX..SZ Param.float_
     // pointees). The /api/toolpipe/eval provider emits these so the run-absolute
     // panel-display contract can be asserted from a unit test without poking the
     // panel struct. Read-only — never mutates tool state. (Phase 1 extends this
     // with the companion frozen run-frame accessor.)
-    public Vec3 publishedTranslate() const { return headlessTranslate; }
+    public Vec3 publishedTranslate() const { return run.t; }
     public Vec3 publishedRotate()    const { return headlessRotate; }
-    public Vec3 publishedScale()     const { return headlessScale; }
+    public Vec3 publishedScale()     const { return run.s; }
 
     // P-F Phase 1 — the FROZEN per-run gizmo frame, for assertion via
     // /api/toolpipe/eval. `valid` is false until the first applyTRS of a run
@@ -2988,9 +3008,9 @@ public:
         bool wasOpen = editIsOpen();
         super.beginEdit();
         if (!wasOpen && editIsOpen()) {
-            attrBaseTranslate = headlessTranslate;
+            attrBaseTranslate = run.t;
             attrBaseRotate    = headlessRotate;
-            attrBaseScale     = headlessScale;
+            attrBaseScale     = run.s;
             // Freeze the action-center pin baseline alongside the attr/vertex
             // baseline. A click-away / element-pick relocate fired
             // setUserPlaced() on the preceding mouse-down (BEFORE this session
@@ -3086,7 +3106,7 @@ public:
         // composes into the same closure without clobber.
         bool moveAbsKnown   = moveGestureStartKnown;
         Vec3 moveAbsStart   = moveGestureStartSnapshot;
-        Vec3 moveAbsEnd     = headlessTranslate;
+        Vec3 moveAbsEnd     = run.t;
         moveGestureStartKnown = false;
         if (!moveAbsKnown) moveAbsStart = moveAbsEnd;   // inert
 
@@ -3176,7 +3196,7 @@ public:
                 // P-F: restore the gesture-END run-absolute Move field so the
                 // panel TX/TY/TZ track the redone geometry (run total after this
                 // gesture). DISJOINT wrapper field — composes without clobber.
-                headlessTranslate = moveAbsEnd;
+                run.t = moveAbsEnd;
             },
             // revert (undo): restore the gesture-START pin + SOFT pin + run pipe
             // config + publish. The gesture-START soft state is typically cleared
@@ -3195,7 +3215,7 @@ public:
                 // in-session Ctrl+Z steps the panel TX/TY/TZ back one gesture (the
                 // run total BEFORE this gesture). mergeRun first.revert/last.apply
                 // splices these to run-START / run-END at the drop.
-                headlessTranslate = moveAbsStart;
+                run.t = moveAbsStart;
             },
         );
         recordCommit(cmd);
@@ -3273,10 +3293,10 @@ public:
     // (already-injected) headless attrs, ABSOLUTELY (Decision D1). Per active
     // flag:
     //   - flagT → replayTranslateFromBaseline() (equivalent to applyMovePanelDelta
-    //     minus the delta accumulation / headlessTranslate zeroing).
+    //     minus the delta accumulation / run.t zeroing).
     //   - flagR → rotateSub.applyRotatePanelValue(headlessRotate) — re-runs the
     //     absolute rotate from RotateTool's origVertices baseline.
-    //   - flagS → scaleSub.applyScalePanelValue(headlessScale) — re-runs the
+    //   - flagS → scaleSub.applyScalePanelValue(run.s) — re-runs the
     //     absolute scale from ScaleTool's activationVertices baseline.
     // (forms plan Phase 5b widened this body from the prior T-only seam — the
     // gate, trigger sites and the `interactive` discriminator are unchanged.)
@@ -3304,10 +3324,10 @@ public:
         // hasT/hasS guards inside applyTRS.
         bool hasR = flagR && (headlessRotate.x != 0 || headlessRotate.y != 0
                                                      || headlessRotate.z != 0);
-        bool hasS = flagS && (headlessScale.x != 1 || headlessScale.y != 1
-                                                    || headlessScale.z != 1);
+        bool hasS = flagS && (run.s.x != 1 || run.s.y != 1
+                                                    || run.s.z != 1);
         if (hasR) rotateSub.applyRotatePanelValue(headlessRotate);
-        if (hasS) scaleSub.applyScalePanelValue(headlessScale);
+        if (hasS) scaleSub.applyScalePanelValue(run.s);
     }
 
     // ----- Test-only headless session opener (re-eval plan D5, Phase 3) -----
@@ -3316,7 +3336,7 @@ public:
     // hasUncommittedEdit()==true so a subsequent `tool.attr` write hits the
     // already-live reEvaluate() branch (test 1b-absolute / test 2). Runs the
     // same beginEdit() + dragBaseline capture as the panel/attr replay path but
-    // applies nothing: headlessTranslate stays at its current value (0 on a
+    // applies nothing: run.t stays at its current value (0 on a
     // fresh tool), so captureDragBaselineIfStale() snapshots the mesh and opens
     // the session without moving a vertex. Reached only via the testMode-gated
     // `tool.beginSession` command; production opens the session via a gizmo drag
@@ -3352,7 +3372,7 @@ public:
     //
     // Hide the WHOLE schema panel (all 12 params: the T/R/S bools plus
     // TX..TZ / RX..RZ / SX..SZ, :361-376) so the legacy drawProperties()
-    // X/Y/Z sliders remain the SINGLE live widget driving headlessTranslate.
+    // X/Y/Z sliders remain the SINGLE live widget driving run.t.
     // Without this, app.d would render BOTH the schema panel (writing the TX
     // pointer directly) AND drawProperties() every frame for the transform
     // tool — two live widgets bound to the same translate state, a same-frame
@@ -3388,7 +3408,7 @@ public:
         // the D6 whole-open-run-cancel contract. Each sub-tool restores its own
         // geometry baseline + Tool-Properties accumulator and returns the
         // pre-edit PANEL value so we can snap the wrapper's headlessRotate /
-        // headlessScale mirror (the attr the panel reads back) to it in lockstep
+        // run.s mirror (the attr the panel reads back) to it in lockstep
         // — the sub-tools own their geometry session but NOT those wrapper
         // fields, so the mirror restore has to happen here. Mirrors the attrBase*
         // discipline below; no-op (returns false) when the slot has no open
@@ -3396,7 +3416,7 @@ public:
         // inside each cancelSessionIfOpen → cancelOpenSessionGeometry).
         Vec3 subDeg, subFactors;
         if (rotateSub.cancelSessionIfOpen(subDeg))     headlessRotate = subDeg;
-        if (scaleSub.cancelSessionIfOpen(subFactors))  headlessScale  = subFactors;
+        if (scaleSub.cancelSessionIfOpen(subFactors))  run.s  = subFactors;
 
         suppressCommit = true;
         scope(exit) suppressCommit = false;
@@ -3425,16 +3445,16 @@ public:
 
             // Restore the headless TRS attrs to their session-start values so the
             // Tool-Properties panel / config form (which read params() — the live
-            // &headlessTranslate.x etc. pointers — per frame) snap back in
+            // &run.t.x etc. pointers — per frame) snap back in
             // lockstep with the geometry. Without this the verts revert but the
             // numeric fields keep the stale edited numbers. Captured on the
             // closed->open transition in beginEdit() above. (headlessRotate /
-            // headlessScale were already snapped above from the sub-tool's
+            // run.s were already snapped above from the sub-tool's
             // pre-edit panel value when its session was open; if the wrapper froze
             // them too, attrBase* holds the identical session-start value.)
-            headlessTranslate = attrBaseTranslate;
+            run.t = attrBaseTranslate;
             headlessRotate    = attrBaseRotate;
-            headlessScale     = attrBaseScale;
+            run.s     = attrBaseScale;
 
             // Restore the action-center pin to its session-start state. A
             // click-away / element-pick relocate that opened this gesture moved
@@ -3471,7 +3491,7 @@ public:
     // now-current mesh on the next update().
     //
     // P-F Phase 3 — the ONE difference from activate()'s reset: the run-absolute
-    // DISPLAY fields (headlessTranslate/Rotate/Scale) must be PRESERVED here, not
+    // DISPLAY fields (run.t/Rotate/Scale) must be PRESERVED here, not
     // zeroed. history.undo()/redo() runs BEFORE this and fires the per-gesture
     // revert/apply hooks (moveAbsStart/End at :3050/:3031, rotAbsStart/End at
     // :2116/:2117, scaleAbsStart/End at :2173/:2174), which set each field to the
@@ -3621,16 +3641,16 @@ private:
     // and the CPU re-upload (cross-bank: the held bank's mouse-up replaced the
     // GPU buffer with the transformed mesh, so the fold's baseline-relative
     // matrix can no longer reconstruct the pose — drop out of the fast-path).
-    // Mirrors the `flagR && headlessRotate!=0` / `flagS && headlessScale!=1`
+    // Mirrors the `flagR && headlessRotate!=0` / `flagS && run.s!=1`
     // gates `applyTRS` uses for `composeFor`, so the GPU path switches exactly
     // when the CPU fold starts composing a held rotate/scale factor.
     bool heldRotateOrScaleNonIdentity() const {
         const bool heldRot = flagR && (headlessRotate.x != 0
                                     || headlessRotate.y != 0
                                     || headlessRotate.z != 0);
-        const bool heldScl = flagS && (headlessScale.x != 1
-                                    || headlessScale.y != 1
-                                    || headlessScale.z != 1);
+        const bool heldScl = flagS && (run.s.x != 1
+                                    || run.s.y != 1
+                                    || run.s.z != 1);
         return heldRot || heldScl;
     }
 
@@ -3666,7 +3686,7 @@ private:
         import std.math : PI;
         // Compose S·R·T. R/S use the rotate/scale frame (ax/ay/az); the TRANSLATE
         // term uses its OWN basis (tx/ty/tz) so P-F can project the run-absolute
-        // headlessTranslate along the FROZEN run-frame (the global path) while the
+        // run.t along the FROZEN run-frame (the global path) while the
         // scale term keeps its per-frame / per-cluster frame untouched. For the
         // per-cluster path tx/ty/tz == ax/ay/az (the cluster's own axes — M5
         // geometry unchanged). The GLOBAL rotate factor is runRotMatrix (matrix-as-
@@ -3674,7 +3694,7 @@ private:
         // viewAxis/viewAngleDeg params are vestigial (the live global path no longer
         // threads a transient view rotation through the fold).
         //
-        // P-F (c): headlessTranslate is RUN-ABSOLUTE and the run baseline
+        // P-F (c): run.t is RUN-ABSOLUTE and the run baseline
         // (dragBaseline) is FROZEN at the run start (never re-baked across same-
         // bank gestures), so the T term is the FULL field projected once against
         // the frozen baseline — geometry = baseline + full-run-translate. This is
@@ -3698,9 +3718,9 @@ private:
                              Vec3 tx, Vec3 ty, Vec3 tz) {
             float[16] M = identityMatrix;
             if (hasT)
-                M = translationMatrix(tx * headlessTranslate.x
-                                    + ty * headlessTranslate.y
-                                    + tz * headlessTranslate.z);    // T (rightmost)
+                M = translationMatrix(tx * run.t.x
+                                    + ty * run.t.y
+                                    + tz * run.t.z);    // T (rightmost)
             if (flagR) {
                 if (useRotM) {
                     M = matMul4(rotM, M);   // world rotation matrix (truth)
@@ -3717,13 +3737,13 @@ private:
             }
             if (hasS)
                 M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), ax, ay, az,
-                                                  headlessScale.x, headlessScale.y,
-                                                  headlessScale.z), M);   // S (leftmost)
+                                                  run.s.x, run.s.y,
+                                                  run.s.z), M);   // S (leftmost)
             return M;
         }
 
         // P-F Phase 2 — the GLOBAL fold's TRANSLATE term projects the run-absolute
-        // headlessTranslate along the FROZEN run-frame (runFrameR/U/F), so the
+        // run.t along the FROZEN run-frame (runFrameR/U/F), so the
         // displayed run-absolute components sum along a stable axis across same-
         // bank gestures even though currentBasis (bX/bY/bZ) re-derives per frame.
         // The frozen frame is captured at the run's first applyTRS (M6); it is
@@ -4234,18 +4254,18 @@ private:
         // uniform hook family on the refire entry IDENTICALLY to the gesture-commit
         // entry, or mergeRun first.revert/last.apply would strand the field: an
         // in-session Ctrl+Z after a snap/falloff mid-run refire would restore
-        // geometry but leave headlessTranslate/headlessScale at the post-refire
+        // geometry but leave run.t/run.s at the post-refire
         // value (panel desyncs from geometry). A refire re-grades geometry under
         // the SAME transform, so the field does NOT change across it — snapshot the
         // CURRENT run-absolute fields as BOTH pre and post (pre == post). When the
         // refire entry is merged with the gesture entries, the field endpoints
         // splice coherently because every entry in the run carries the field hook.
-        // DISJOINT from the pipe-config restores. (Move's headlessTranslate is
+        // DISJOINT from the pipe-config restores. (Move's run.t is
         // included here too — closing the latent Phase-2 gap; Phase 3b adds
         // headlessRotate so all three banks carry their run-absolute field across a
         // refire.)
-        Vec3 tFieldCopy = headlessTranslate;
-        Vec3 sFieldCopy = headlessScale;
+        Vec3 tFieldCopy = run.t;
+        Vec3 sFieldCopy = run.s;
         Vec3 rFieldCopy = headlessRotate;
         // MATRIX-AS-TRUTH — carry the rotate truth (runRotMatrix) across the refire
         // too (pre == post: a refire re-grades geometry under the SAME transform, so
@@ -4259,8 +4279,8 @@ private:
                 if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(postFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
-                headlessTranslate = tFieldCopy;
-                headlessScale     = sFieldCopy;
+                run.t = tFieldCopy;
+                run.s     = sFieldCopy;
                 headlessRotate    = rFieldCopy;
                 runRotMatrix      = rMatCopy;
             },
@@ -4270,8 +4290,8 @@ private:
                 if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(preFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
-                headlessTranslate = tFieldCopy;
-                headlessScale     = sFieldCopy;
+                run.t = tFieldCopy;
+                run.s     = sFieldCopy;
                 headlessRotate    = rFieldCopy;
                 runRotMatrix      = rMatCopy;
             },
@@ -4302,7 +4322,7 @@ private:
     // (apply-path unification Phase 2): captured ONCE at the run's
     // FIRST gizmo gesture and reused by every subsequent gesture in the
     // same geometry run, so the held banks' run-absolutes
-    // (`headlessTranslate`/`headlessRotate`/`headlessScale`) compose
+    // (`run.t`/`headlessRotate`/`run.s`) compose
     // through ONE `applyFold` from one original baseline (the reference
     // "Evaluate-from-original" shape) rather than re-baselining off the
     // progressively-mutated mesh per gesture. The per-frame `applyTRS`
@@ -4376,7 +4396,7 @@ private:
     // (`scaleDragFastPath`, draws GPU buffer × wrapAboutPivot(lastFoldMatrix))
     // is valid ONLY while the GPU buffer still holds the frozen run baseline:
     // `lastFoldMatrix` is composed RELATIVE to that baseline from the FULL
-    // run-absolute headlessScale, so `wrapAboutPivot(fold) · buffer` reconstructs
+    // run-absolute run.s, so `wrapAboutPivot(fold) · buffer` reconstructs
     // the CPU pose only when buffer == frozen baseline. The moment ANY prior
     // committed gesture in this run did `gpu.upload(*mesh)` (mouse-up), the buffer
     // becomes the already-transformed mesh ≠ frozen baseline, and the fast-path
@@ -4423,7 +4443,7 @@ private:
     // `accumulatedWorldDelta`: total world-space translate for the
     // current drag, used to drive `gpuMatrix = translation(...)`
     // when the fast-path is active. Reset at drag start. Tracks the
-    // SAME basis projection that `headlessTranslate` accumulates,
+    // SAME basis projection that `run.t` accumulates,
     // but expanded into a world vector for the matrix; we recompute
     // it here so the fast-path doesn't need to look at the chain's
     // per-cluster behaviour (the predicate guarantees single-cluster

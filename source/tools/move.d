@@ -646,17 +646,17 @@ public:
         // which sets `wrapperRef` at `activate()`.
         Vec3 ax = handler.axisX, ay = handler.axisY, az = handler.axisZ;
 
-        // The wrapper's `headlessTranslate` is the BASIS-LOCAL
+        // The wrapper's `run.t` is the BASIS-LOCAL
         // cumulative for the current drag. With dragAxis >= 0 we
         // mirror that into propInput so the sliders track the live
         // drag. Outside a drag, propInput stays at whatever the
         // last slider edit left it (= 0 after a tool-session
         // commit, since reactivate zeroes the wrapper's
-        // headlessTranslate).
+        // run.t).
         import tools.xfrm_transform : XfrmTransformTool;
         auto wrap = cast(XfrmTransformTool) wrapperRef;
         if (wrap !is null && dragAxis >= 0) {
-            propInput = wrap.headlessTranslate;
+            propInput = wrap.run.t;
         }
         Vec3 propBefore = propInput;
 
