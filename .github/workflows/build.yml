@@ -233,41 +233,13 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      # ---- nfde submodule (all platforms; first-pass dub build clones the
-      #      nativefiledialog-extended repo, then we init its own submodules
-      #      before the real Build step runs cmake) ----
-
-      - name: First-pass build (Linux/macOS — fetches nfde, expected to fail)
-        if: runner.os != 'Windows'
-        run: dub build --compiler=ldc2 --build=release || true
-
-      - name: Initialize nativefiledialog-extended submodules (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
-          if [ -d "$NFD_DIR" ]; then
-            cd "$NFD_DIR"
-            git submodule update --init --recursive
-          fi
-
-      # PowerShell (not bash) — the self-hosted Windows runner has no Git Bash.
-      - name: First-pass build (Windows — fetches nfde, expected to fail)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          dub build --compiler=ldc2 --build=release
-          exit 0   # first pass is expected to fail (nfde submodule not yet inited)
-
-      - name: Initialize nativefiledialog-extended submodules (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $nfd = "$env:DUB_HOME\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
-          if (Test-Path $nfd) {
-            Push-Location $nfd
-            git submodule update --init --recursive
-            Pop-Location
-          }
+      # nfde's nativefiledialog-extended checkout (+ its wayland-protocols
+      # submodule on Linux) is provisioned once in the persistent dub cache on
+      # each self-hosted runner, so a single Build pass is enough. The old
+      # two-pass dance (a throwaway build to clone nfde, then a submodule init)
+      # is gone — on the ReleaseBuild path that first pass compiled vibe3d
+      # WITHOUT -d-version=ReleaseBuild and left stale objects for the real
+      # build to trip over.
 
       # ---- Build ----
 
@@ -405,36 +377,8 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: First-pass build (Linux/macOS — fetches nfde, expected to fail)
-        if: runner.os != 'Windows'
-        run: dub build --compiler=ldc2 --build=release || true
-
-      # PowerShell (not bash) — the self-hosted Windows runner has no Git Bash.
-      - name: First-pass build (Windows — fetches nfde, expected to fail)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          dub build --compiler=ldc2 --build=release
-          exit 0   # first pass is expected to fail (nfde submodule not yet inited)
-
-      - name: Initialize nativefiledialog-extended submodules (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
-          if [ -d "$NFD_DIR" ]; then
-            cd "$NFD_DIR" && git submodule update --init --recursive
-          fi
-
-      - name: Initialize nativefiledialog-extended submodules (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $nfd = "$env:DUB_HOME\packages\nfde\0.1.3\nfde\nativefiledialog-extended"
-          if (Test-Path $nfd) {
-            Push-Location $nfd
-            git submodule update --init --recursive
-            Pop-Location
-          }
+      # nfde is provisioned once in each runner's persistent dub cache (see the
+      # note in the `build` job); the bundle scripts do a single build pass.
 
       # `shell:` can't take a ${{ matrix.* }} expression (GitHub rejects the whole
       # workflow file), so the bundle step is split per-OS with a literal shell.

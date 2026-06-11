@@ -30,17 +30,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: 'First-pass build (fetches nfde and clones NFD repo, expected to fail)'
-      run: dub build --compiler=dmd || true
-
-    - name: 'Initialize nativefiledialog-extended submodules'
-      run: |
-        NFD_DIR="$HOME/.dub/packages/nfde/0.1.3/nfde/nativefiledialog-extended"
-        if [ -d "$NFD_DIR" ]; then
-          cd "$NFD_DIR"
-          git submodule update --init --recursive
-        fi
-
+    # nfde's nativefiledialog-extended checkout + its wayland-protocols submodule
+    # live in the runner's persistent dub cache, so a single Build pass suffices
+    # (the old throwaway first-pass build that cloned nfde is no longer needed).
     - name: 'Build'
       run: dub build --compiler=dmd
 
