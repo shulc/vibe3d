@@ -259,6 +259,15 @@ public:
     // resetRun at every run boundary.
     private bool runPriorRotateWasViewRing  = false;
 
+    // Matrix-as-truth — is THIS rotate gesture running under per-cluster
+    // ACEN.Local (cp.active && ap.active)? Captured at rotate mouse-down (in
+    // beginRotateDragSession, BEFORE beginRunGesture) and read by
+    // rotateRunNeedsRebake. The matrix-truth model (runRotMatrix) is GLOBAL-only;
+    // the per-cluster path STAYS LEGACY (re-bakes every cross-axis / view-ring
+    // gesture so its field carries ONE live axis per cluster). False for the global
+    // / no-cluster path → NOTHING re-bakes there (runRotMatrix accumulates it all).
+    private bool rotateGesturePerClusterLocal = false;
+
     // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
     // and consumed by commitEdit ONLY when a real edit command was built. A
     // zero-motion off-gizmo relocate CLICK opens a moveSub session (so the mouse-up
@@ -367,6 +376,8 @@ public:
             headlessTranslate     = Vec3(0, 0, 0);
             headlessRotate        = Vec3(0, 0, 0);
             headlessScale         = Vec3(1, 1, 1);
+            // MATRIX-AS-TRUTH — the rotate truth resets with its derived display.
+            runRotMatrix          = identityMatrix;
         }
         activeDrag                = null;
         dragBaseline.length       = 0;
@@ -1267,6 +1278,8 @@ public:
         headlessTranslate = Vec3(0, 0, 0);
         headlessRotate    = Vec3(0, 0, 0);
         headlessScale     = Vec3(1, 1, 1);
+        // MATRIX-AS-TRUTH — a fresh-run / re-bake reset clears the rotate truth too.
+        runRotMatrix      = identityMatrix;
     }
 
     // P-F — geometry-run boundary reset. Factored so EVERY `runBaselineValid =
@@ -1319,6 +1332,9 @@ public:
                 // run boundary that ended an ACTIVE run resets the ROTATE display
                 // field to identity with the geometry baseline (G8 relocate->0).
                 headlessRotate           = Vec3(0, 0, 0);
+                // MATRIX-AS-TRUTH — reset the rotate truth alongside its derived
+                // display (a relocate / selection-change boundary starts fresh).
+                runRotMatrix             = identityMatrix;
             }
             moveGestureStartKnown    = false;
             moveGestureStartSnapshot = Vec3(0, 0, 0);
@@ -1449,19 +1465,30 @@ public:
     // published at mouse-down.
     private bool rotateRunNeedsRebake() {
         immutable int ax = rotateSub.dragAxis;
-        // View-ring this gesture, or any gesture after a view-ring → always re-bake.
-        if (ax == 3) return true;
-        if (runPriorRotateWasViewRing) return true;
-        // Principal gesture: re-bake only if the held field carries a non-zero
-        // component on a DIFFERENT axis than this one (cross-axis). Same-axis (or
-        // an identity field) accumulates run-absolutely → no re-bake.
-        immutable bool hx = headlessRotate.x != 0;
-        immutable bool hy = headlessRotate.y != 0;
-        immutable bool hz = headlessRotate.z != 0;
-        if (ax == 0) return hy || hz;   // dragging X: any held Y/Z is cross-axis
-        if (ax == 1) return hx || hz;   // dragging Y: any held X/Z is cross-axis
-        if (ax == 2) return hx || hy;   // dragging Z: any held X/Y is cross-axis
-        return bankIsNonIdentity(DragBank.Rotate);   // defensive (ax<0): legacy
+        // The PER-CLUSTER ACEN.Local path STAYS LEGACY (the matrix-truth model is
+        // GLOBAL-only — a single world rotation matrix re-applied about each
+        // cluster's diverged local axes diverges). It keeps the per-gesture cross-
+        // axis re-bake AND the view-ring re-bake (the view-ring is folded onto the
+        // global runRotMatrix, which the per-cluster fold does not consume), so its
+        // field carries ONE live axis per cluster gesture.
+        if (rotateGesturePerClusterLocal) {
+            if (ax == 3) return true;                 // view-ring → re-bake
+            if (runPriorRotateWasViewRing) return true;
+            immutable bool hx = headlessRotate.x != 0;
+            immutable bool hy = headlessRotate.y != 0;
+            immutable bool hz = headlessRotate.z != 0;
+            if (ax == 0) return hy || hz;   // dragging X: any held Y/Z is cross-axis
+            if (ax == 1) return hx || hz;   // dragging Y: any held X/Z is cross-axis
+            if (ax == 2) return hx || hy;   // dragging Z: any held X/Y is cross-axis
+            return bankIsNonIdentity(DragBank.Rotate);   // defensive (ax<0): legacy
+        }
+        // MATRIX-AS-TRUTH (global path) — NOTHING re-bakes. runRotMatrix is the
+        // world-space accumulated rotation; cross-axis AND view-ring gestures fold
+        // their increment onto it (about the frozen ring axis / captured world
+        // axis), and composeFor applies it directly. History lives in the matrix +
+        // the frozen baseline, not in re-baked geometry. Only a genuinely fresh run
+        // re-captures (beginRunGesture via !runBaselineValid).
+        return false;
     }
 
     // Capture the per-drag state that `applyTRS` and the fast-path
@@ -1579,6 +1606,16 @@ public:
         // field; a CROSS-axis / view-ring transition re-bakes (rotateRunNeedsRebake
         // reads rotateSub.dragAxis, settled above). beginRunGesture MUST run BEFORE
         // the view-ring flag is updated below so it sees the PRIOR gesture's value.
+        //
+        // Matrix-as-truth: capture whether this gesture is per-cluster ACEN.Local
+        // BEFORE beginRunGesture, so rotateRunNeedsRebake can keep the per-cluster
+        // path on the LEGACY cross-axis re-bake while the GLOBAL path takes the
+        // no-rebake matrix-truth branch (runRotMatrix accumulates everything).
+        {
+            auto cpRb = queryClusterPivots(vts);
+            auto apRb = queryClusterAxes(vts);
+            rotateGesturePerClusterLocal = cpRb.active && apRb.active;
+        }
         beginRunGesture(DragBank.Rotate);
 
         // P-F Phase 3b — capture THIS gesture's run-absolute START angle (the run
@@ -1588,6 +1625,11 @@ public:
         // pre/post of headlessRotate from this. DISTINCT from the sub-tool
         // accumulator anchor (angleAccum) — undo-only, never a fold input.
         rotateGestureStartSnapshot = headlessRotate;
+        // MATRIX-AS-TRUTH — snapshot the run orientation BEFORE this gesture; the
+        // drain composes this gesture's incremental ring rotation onto it, and the
+        // undo revert hook restores it. (A fresh run / re-bake just set runRotMatrix
+        // to identity via resetGestureAttrs, so the snapshot is identity there.)
+        runRotMatrixGestureStart   = runRotMatrix;
         rotateGestureStartKnown    = true;
         // Track whether THIS gesture is a view-ring, for the NEXT gesture's
         // post-view-ring re-bake decision. Set AFTER beginRunGesture consumed the
@@ -1773,27 +1815,52 @@ public:
                 rotateSub.pendingRotateAxis = -1;
                 if (ax >= 0 && ax <= 2) {
                     import std.math : PI;
-                    float deg = ang * 180.0f / cast(float)PI;
-                    // P-F Phase 3b — headlessRotate is RUN-ABSOLUTE for repeated
-                    // SAME-AXIS principal gestures. The producer's `ang`
+                    import math : eulerZYXFromMatrix;
+                    // MATRIX-AS-TRUTH — `runRotMatrix` is the run's world-space
+                    // accumulated rotation (the TRUTH); `headlessRotate` is DERIVED
+                    // from it for the panel only. The producer's `ang`
                     // (pendingRotateAngle = totalAngle) is the WITHIN-GESTURE angle
                     // only (totalAngle resets to 0 at every drag start, rotate.d
-                    // ~601/695), so the drain ADDS it to the run total captured at
-                    // this gesture's mouse-down (rotateGestureStartSnapshot) — a
-                    // single-axis Euler add is EXACT (same-axis rotations
-                    // commute/add). On a CROSS-axis / view-ring transition
-                    // beginRunGesture re-baked + zeroed the field, so the snapshot is
-                    // 0 ⇒ the new axis starts fresh against the baked pose (no double,
-                    // no loss). The OTHER Euler axes are zeroed (a same-axis run holds
-                    // only ONE axis; a cross-axis gesture re-baked the others into
-                    // geometry). composeFor (the applyTRS rotate build) reads this
-                    // FULL run-absolute headlessRotate against the FROZEN dragBaseline
-                    // — no subtract. The held T/S are NOT zeroed — they compose into
-                    // the fold via the preset flags.
-                    headlessRotate = Vec3(0, 0, 0);
-                    if      (ax == 0) headlessRotate.x = rotateGestureStartSnapshot.x + deg;
-                    else if (ax == 1) headlessRotate.y = rotateGestureStartSnapshot.y + deg;
-                    else              headlessRotate.z = rotateGestureStartSnapshot.z + deg;
+                    // ~601/695). So we compose THIS gesture's incremental rotation
+                    // about the ACTUAL PHYSICAL RING AXIS — the FROZEN gizmo basis
+                    // axis runFrameR/U/F[ax] — onto the orientation captured at this
+                    // gesture's mouse-down (runRotMatrixGestureStart), IN gesture
+                    // order:
+                    //     runRotMatrix = R(frozenRingAxis, ang) · runRotMatrixGestureStart
+                    // Composing about the REAL ring axis (not a world canon axis) is
+                    // what fixes the non-world-basis bug: on an oblique global basis
+                    // (single-cluster acen=local→global, tilted workplane) the matrix
+                    // is the true world orientation about the displayed ring, and
+                    // composeFor applies it DIRECTLY (no Rz·Ry·Rx rebuild about a
+                    // possibly-different frame). The run baseline + run basis + pivot
+                    // stay FROZEN — NO re-bake. The held T/S are NOT touched (they
+                    // compose via the preset flags). (Per-cluster acen=local does NOT
+                    // reach the matrix path — it re-bakes per cross-axis gesture via
+                    // rotateRunNeedsRebake and stays on the legacy per-cluster fold.)
+                    //
+                    // The frozen run frame is captured at the run's first applyTRS
+                    // (M6). On the VERY FIRST motion of a fresh run the freeze has
+                    // not happened yet (applyTRS below does it), so fall back to the
+                    // live currentBasis axis for THIS frame — it equals the
+                    // about-to-be-frozen frame (currentBasis is what M6 freezes).
+                    Vec3 ringAxis;
+                    if (runFrameValid) {
+                        ringAxis = ax == 0 ? runFrameR
+                                 : ax == 1 ? runFrameU
+                                           : runFrameF;
+                    } else {
+                        Vec3 lbX, lbY, lbZ;
+                        currentBasis(lbX, lbY, lbZ, vts);
+                        ringAxis = ax == 0 ? lbX
+                                 : ax == 1 ? lbY
+                                           : lbZ;
+                    }
+                    runRotMatrix = matMul4(
+                        pivotRotationMatrix(Vec3(0, 0, 0), ringAxis, ang),
+                        runRotMatrixGestureStart);
+                    // DERIVE the panel euler from the truth (display only; lossy at
+                    // gimbal is acceptable — the matrix is never lossy).
+                    headlessRotate = eulerZYXFromMatrix(runRotMatrix);
 
                     // CPU is rebuilt from the run baseline EVERY frame so it
                     // is never stale at mouseUp (round-1/3 B3; landed-move
@@ -1823,17 +1890,23 @@ public:
                     }
                 } else if (ax == 3) {
                     import std.math : PI;
-                    float deg = ang * 180.0f / cast(float)PI;
-                    // Absolute-from-baseline: the running view-axis angle this
-                    // drag has accumulated, about the camera-forward axis the
-                    // producer captured. The Euler slot is zeroed (the view-ring
-                    // rotation is a TRANSIENT applyTRS param, MS-3.4); the held
-                    // T/S are NOT zeroed (apply-path Phase 2 — they compose via
-                    // the preset flags).
-                    headlessRotate = Vec3(0, 0, 0);
+                    import math : eulerZYXFromMatrix;
+                    // MATRIX-AS-TRUTH — the view-ring rotates about an ARBITRARY
+                    // world axis (the camera-forward the producer captured). With
+                    // the matrix model that is no longer a special transient param:
+                    // we FOLD it onto runRotMatrix exactly like a principal ring,
+                    // composing THIS gesture's within-gesture angle about the
+                    // captured world axis onto runRotMatrixGestureStart. The fold
+                    // then applies runRotMatrix directly, so the view-ring rotation
+                    // now appears in the DERIVED panel euler (cumulative) — fixing
+                    // the prior "view-ring → panel shows 0" gap. No transient
+                    // viewAxis/viewAngleDeg param is threaded for the live path.
                     Vec3  viewAxisLocal = rotateSub.pendingRotateViewAxis;
-                    float viewDegLocal  = deg;
-                    applyTRS(dragBaseline, viewAxisLocal, viewDegLocal,
+                    runRotMatrix = matMul4(
+                        pivotRotationMatrix(Vec3(0, 0, 0), viewAxisLocal, ang),
+                        runRotMatrixGestureStart);
+                    headlessRotate = eulerZYXFromMatrix(runRotMatrix);
+                    applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                              /*samplePipeFromBaseline=*/true);
                     // P-F Phase 3b (MAJOR-4) — same own-bank buffer-vs-baseline
                     // drop-out as the principal path: once a prior committed gesture
@@ -2131,14 +2204,30 @@ public:
             bool rotAbsKnown = rotateGestureStartKnown;
             Vec3 rotAbsStart = rotateGestureStartSnapshot;
             Vec3 rotAbsEnd   = headlessRotate;
+            // MATRIX-AS-TRUTH — the TRUTH (runRotMatrix) is what the hook restores;
+            // headlessRotate is re-derived from it so the panel + the matrix never
+            // drift. Capture the gesture-START matrix (runRotMatrixGestureStart) and
+            // the gesture-END matrix (current runRotMatrix).
+            float[16] rotMatStart = runRotMatrixGestureStart;
+            float[16] rotMatEnd   = runRotMatrix;
             rotateGestureStartKnown = false;
-            if (!rotAbsKnown) rotAbsStart = rotAbsEnd;   // inert
+            if (!rotAbsKnown) {
+                rotAbsStart = rotAbsEnd;       // inert (no preceding mouse-down)
+                rotMatStart = rotMatEnd;
+            }
             if (acenAllowsClickRelocate()) {
                 if (auto ac = activeAcenStage())
                     ac.setSoftPlaced(rotateSub.handler.center);
             }
-            rotateSub.wrapperFieldApplyHook  = () { headlessRotate = rotAbsEnd;   };
-            rotateSub.wrapperFieldRevertHook = () { headlessRotate = rotAbsStart; };
+            // Restore the TRUTH (runRotMatrix) and re-derive the panel euler from it
+            // so the matrix + display stay locked together across undo/redo. (The
+            // rotAbsEnd/Start euler values are still used as the derived target; we
+            // assign them directly to avoid a redundant decompose of an identical
+            // matrix, and they ARE eulerZYXFromMatrix(rotMat*) by construction.)
+            rotateSub.wrapperFieldApplyHook  = () {
+                runRotMatrix = rotMatEnd;   headlessRotate = rotAbsEnd;   };
+            rotateSub.wrapperFieldRevertHook = () {
+                runRotMatrix = rotMatStart; headlessRotate = rotAbsStart; };
             rotateSub.commitGesture();
             // Clear the wrapper-field hooks so a later sub-tool commit with no
             // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
@@ -2542,11 +2631,19 @@ public:
     // / headlessScale are read ABSOLUTELY by applyTRS, exactly as the gizmo path.
     public void applyRotateAbsoluteFromRun(Vec3 angleAccumRad) {
         import std.math : PI;
+        import math : matrixFromEulerZYX;
         captureBaselinePacketsNoSession();
         vertexCacheDirty = true;
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
+        // MATRIX-AS-TRUTH (setEuler semantics) — a numeric/panel RX/RY/RZ write is
+        // an ABSOLUTE orientation set, so RECOMPOSE the truth from the written euler.
+        // matrixFromEulerZYX pins to the SAME Rz·Ry·Rx convention the global fold
+        // applies (composeFor consumes runRotMatrix directly), so a bare write of
+        // RZ=90 lands as an exact 90° world-Z rotation. This is the ONLY place a
+        // panel/numeric edit feeds runRotMatrix; the gizmo drain feeds it directly.
+        runRotMatrix = matrixFromEulerZYX(headlessRotate);
         // Euler-slot path: applyTRS defaults the transient view-ring rotation
         // to zero (MS-3.4), so a prior view-ring drag cannot re-apply on top.
         bool pureRotatePreset = flagR && !flagT && !flagS;
@@ -2598,6 +2695,7 @@ public:
 
     override bool applyHeadless() {
         import toolpipe.packets : SubjectPacket;
+        import math : matrixFromEulerZYX;
         SubjectPacket subj;
         VectorStack vts;
         buildLocalVts(subj, vts);
@@ -2605,8 +2703,12 @@ public:
         captureSymmetryForDrag(vts);
         captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
         vertexCacheDirty = true;
-        // Numeric path uses RX/RY/RZ (Euler slot) only — the view-ring rotation
-        // has no numeric attr, so applyTRS's transient param defaults to zero.
+        // MATRIX-AS-TRUTH — the numeric/headless path injects RX/RY/RZ into
+        // headlessRotate via the attr system (no gizmo drain ran), so RECOMPOSE the
+        // rotate truth from the injected euler (setEuler semantics) before the fold
+        // reads runRotMatrix. The Euler slot is the only numeric rotate input (the
+        // view-ring has no numeric attr), so matrixFromEulerZYX is the exact truth.
+        runRotMatrix = matrixFromEulerZYX(headlessRotate);
         return applyTRS(mesh.vertices.dup);
     }
 
@@ -3564,11 +3666,13 @@ private:
         import std.math : PI;
         // Compose S·R·T. R/S use the rotate/scale frame (ax/ay/az); the TRANSLATE
         // term uses its OWN basis (tx/ty/tz) so P-F can project the run-absolute
-        // headlessTranslate along the FROZEN run-frame (the global path) while R/S
-        // keep their per-frame / per-cluster frame untouched (Phase 3 migrates
-        // R/S). For the per-cluster path tx/ty/tz == ax/ay/az (the cluster's own
-        // axes — M5 geometry unchanged). `withView` folds the global view-ring
-        // rotation in (per-cluster frames get no view rotation).
+        // headlessTranslate along the FROZEN run-frame (the global path) while the
+        // scale term keeps its per-frame / per-cluster frame untouched. For the
+        // per-cluster path tx/ty/tz == ax/ay/az (the cluster's own axes — M5
+        // geometry unchanged). The GLOBAL rotate factor is runRotMatrix (matrix-as-
+        // truth), with the view-ring already folded in at the drain; the unused
+        // viewAxis/viewAngleDeg params are vestigial (the live global path no longer
+        // threads a transient view rotation through the fold).
         //
         // P-F (c): headlessTranslate is RUN-ABSOLUTE and the run baseline
         // (dragBaseline) is FROZEN at the run start (never re-baked across same-
@@ -3579,25 +3683,37 @@ private:
         // the stored field value (run-absolute vs per-gesture) and the T basis
         // (frozen vs per-frame) changed. At idle (bare-write) the field is read
         // absolutely exactly as before.
-        float[16] composeFor(Vec3 ax, Vec3 ay, Vec3 az,
-                             Vec3 tx, Vec3 ty, Vec3 tz, bool withView) {
+        // `ax/ay/az` are the SCALE axes; `tx/ty/tz` the TRANSLATE axes. The ROTATE
+        // factor is supplied two ways:
+        //   - GLOBAL path (useRotM=true): `rotM` is runRotMatrix DIRECTLY — the
+        //     run's world-space accumulated rotation (matrix-as-truth), an origin-
+        //     fixed rotation re-pivoted by applyXformMatrix. No per-axis Euler
+        //     rebuild, no frame re-interpretation: the matrix already encodes the
+        //     gesture-order rotation about the real (possibly non-world) ring axes.
+        //   - PER-CLUSTER legacy (useRotM=false): per-axis Euler about the cluster's
+        //     own rx/ry/rz, exactly as before (its field carries ONE live axis).
+        float[16] composeFor(bool useRotM, float[16] rotM,
+                             Vec3 rx, Vec3 ry, Vec3 rz,
+                             Vec3 ax, Vec3 ay, Vec3 az,
+                             Vec3 tx, Vec3 ty, Vec3 tz) {
             float[16] M = identityMatrix;
             if (hasT)
                 M = translationMatrix(tx * headlessTranslate.x
                                     + ty * headlessTranslate.y
                                     + tz * headlessTranslate.z);    // T (rightmost)
-            void rot(Vec3 axis, float deg) {
-                if (deg == 0) return;
-                M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
-                                                deg * cast(float)(PI / 180.0)), M);
-            }
             if (flagR) {
-                rot(ax, headlessRotate.x);
-                rot(ay, headlessRotate.y);
-                rot(az, headlessRotate.z);
-                if (withView && viewAngleDeg != 0
-                    && (viewAxis.x != 0 || viewAxis.y != 0 || viewAxis.z != 0))
-                    rot(viewAxis, viewAngleDeg);
+                if (useRotM) {
+                    M = matMul4(rotM, M);   // world rotation matrix (truth)
+                } else {
+                    void rot(Vec3 axis, float deg) {
+                        if (deg == 0) return;
+                        M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis,
+                                        deg * cast(float)(PI / 180.0)), M);
+                    }
+                    rot(rx, headlessRotate.x);
+                    rot(ry, headlessRotate.y);
+                    rot(rz, headlessRotate.z);
+                }
             }
             if (hasS)
                 M = matMul4(pivotScaleMatrixBasis(Vec3(0, 0, 0), ax, ay, az,
@@ -3611,31 +3727,51 @@ private:
         // displayed run-absolute components sum along a stable axis across same-
         // bank gestures even though currentBasis (bX/bY/bZ) re-derives per frame.
         // The frozen frame is captured at the run's first applyTRS (M6); it is
-        // valid by the time we reach here. R/S still use the per-frame bX/bY/bZ
-        // (Phase 3 migrates them). Under acen=None / world-fixed axes the frozen
-        // frame equals the live basis, so geometry is unchanged; the freeze only
-        // matters under a per-frame-drifting basis (acen=local).
+        // valid by the time we reach here.
         Vec3 tX = runFrameValid ? runFrameR : bX;
         Vec3 tY = runFrameValid ? runFrameU : bY;
         Vec3 tZ = runFrameValid ? runFrameF : bZ;
-        float[16] M = composeFor(bX, bY, bZ, tX, tY, tZ, /*withView=*/true);
+
+        // MATRIX-AS-TRUTH — the GLOBAL rotate factor is `runRotMatrix` directly (the
+        // run's world-space accumulated rotation, composed about the real frozen
+        // ring axes at the drain; the view-ring is already folded into it). It is an
+        // ORIGIN-fixed world rotation; composeFor multiplies it into the S·R·T fold
+        // and applyXformMatrix re-applies the pivot as `pivot + M·(v - pivot)`. No
+        // per-axis Euler rebuild, no rotate-frame argument, no frame re-interpretation
+        // (the matrix already encodes the rotation about the physical ring axes —
+        // fixing the prior euler-as-truth basis bug on a non-world global basis).
+        //
+        // The APPLY PIVOT stays the LIVE `pivot` (= queryActionCenter sampled from
+        // the frozen baseline via samplePipeFromBaseline). It is ALREADY stable for
+        // the run on the global path (b6d1be4: rotate value edits read a stable pivot
+        // from the baseline; with the baseline frozen all-run the sampled pivot
+        // equals runFrameOrigin every frame). Keeping the live pivot avoids perturbing
+        // the SHARED-fold Move/Scale terms.
+        float[16] M = composeFor(/*useRotM=*/true, runRotMatrix,
+                                 Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,0),
+                                 bX, bY, bZ, tX, tY, tZ);
 
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
         lastFoldMatrix = M;
         lastFoldPivot  = pivot;
 
-        // Per-cluster: one composed matrix per cluster, in its own frame. The
-        // translate term keeps the cluster's OWN axes (M5: per-cluster geometry
-        // is unchanged — the displayed run-absolute is the single gizmo-frame
-        // value, asserted independently for multi-cluster).
+        // Per-cluster (ACEN.Local): one composed matrix per cluster, in its OWN
+        // per-frame frame about its OWN pivot. This path STAYS LEGACY — the single
+        // global runRotMatrix is a WORLD rotation; re-applied about each cluster's
+        // diverged local axes it would diverge, so the matrix-truth model is
+        // GLOBAL-only. Here rotate (per-axis Euler about the cluster frame, NOT the
+        // matrix), scale AND translate all use the cluster's per-frame axes (M5:
+        // geometry unchanged), and rotateRunNeedsRebake still re-bakes cross-axis /
+        // view-ring under acen=local (the field carries ONE live axis per cluster).
         float[16][] clusterM = null;
         if (cp.active && ap.active) {
             clusterM = new float[16][](ap.right.length);
             foreach (cid; 0 .. ap.right.length)
-                clusterM[cid] = composeFor(ap.right[cid], ap.up[cid], ap.fwd[cid],
+                clusterM[cid] = composeFor(/*useRotM=*/false, identityMatrix,
                                            ap.right[cid], ap.up[cid], ap.fwd[cid],
-                                           /*withView=*/false);
+                                           ap.right[cid], ap.up[cid], ap.fwd[cid],
+                                           ap.right[cid], ap.up[cid], ap.fwd[cid]);
         }
 
         // Source = restored baseline gathered ordinal-parallel to the moving set;
@@ -4111,6 +4247,11 @@ private:
         Vec3 tFieldCopy = headlessTranslate;
         Vec3 sFieldCopy = headlessScale;
         Vec3 rFieldCopy = headlessRotate;
+        // MATRIX-AS-TRUTH — carry the rotate truth (runRotMatrix) across the refire
+        // too (pre == post: a refire re-grades geometry under the SAME transform, so
+        // the orientation does not change), or an in-session Ctrl+Z after a mid-run
+        // snap/falloff tweak would strand runRotMatrix while restoring headlessRotate.
+        float[16] rMatCopy = runRotMatrix;
         cmd.setHooks(
             // apply (redo): restore the POST-tweak pipe config + the run-absolute
             // fields (unchanged across the refire) + publish.
@@ -4121,6 +4262,7 @@ private:
                 headlessTranslate = tFieldCopy;
                 headlessScale     = sFieldCopy;
                 headlessRotate    = rFieldCopy;
+                runRotMatrix      = rMatCopy;
             },
             // revert (undo): restore the PRE-tweak pipe config + the run-absolute
             // fields + publish.
@@ -4131,6 +4273,7 @@ private:
                 headlessTranslate = tFieldCopy;
                 headlessScale     = sFieldCopy;
                 headlessRotate    = rFieldCopy;
+                runRotMatrix      = rMatCopy;
             },
         );
 
@@ -4205,6 +4348,28 @@ private:
     Vec3 runFrameR      = Vec3(1, 0, 0);
     Vec3 runFrameU      = Vec3(0, 1, 0);
     Vec3 runFrameF      = Vec3(0, 0, 1);
+
+    // MATRIX-AS-TRUTH rotate — the run-scoped, world-space accumulated rotation.
+    // This is the SINGLE SOURCE OF TRUTH for the global-path rotate factor: the
+    // fold (composeFor / applyFold) applies `runRotMatrix` DIRECTLY (an origin-
+    // fixed world rotation re-pivoted by applyXformMatrix), and the panel field
+    // `headlessRotate` is DERIVED from it every frame (eulerZYXFromMatrix) for
+    // display only — never the other way round during a gesture. Composed about
+    // the ACTUAL frozen gizmo ring axis (runFrameR/U/F[ax]) in gesture order, so
+    // a NON-WORLD global basis (oblique acen=local→global single cluster, tilted
+    // workplane, screen axis) rotates about the real physical ring axis — the bug
+    // the prior euler-as-truth model had (it composed about world canon axes but
+    // applied about the frozen runFrame). A numeric/panel RX/RY/RZ write RECOMPOSES
+    // it (matrixFromEulerZYX(headlessRotate) — setEuler semantics). Reset to
+    // identity at every run boundary alongside headlessRotate.
+    float[16] runRotMatrix            = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    // Per-GESTURE snapshot of runRotMatrix captured at rotate mouse-down (the run
+    // orientation BEFORE this gesture). The drain composes THIS gesture's
+    // incremental ring rotation onto it (the producer emits a within-gesture
+    // angle, totalAngle reset to 0 at every drag start), and the undo revert hook
+    // restores it. The matrix twin of rotateGestureStartSnapshot (which stays as
+    // the DERIVED euler display snapshot for the panel undo hook).
+    float[16] runRotMatrixGestureStart = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
     // P-F Phase 3a (MAJOR-4) — GPU buffer-vs-frozen-baseline invariant. With the
     // Scale baseline now FROZEN for the whole run, the Scale OWN-bank fast-path
