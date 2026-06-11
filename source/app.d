@@ -1377,6 +1377,28 @@ void main(string[] args) {
         }
     }
 
+    // Bare named falloff sub-tools: falloff.<type> sets the falloff (WGHT)
+    // stage's `type` and keeps the active transform tool (NOT a tool that
+    // replaces the active tool, NOT a transform bundle). Same write path as
+    // the status-bar Falloff pulldown (`tool.pipe.attr falloff type <type>`),
+    // so the on-switch auto-size + state-publish + live re-eval side-effects
+    // are identical. The two BUNDLE presets falloff.element / falloff.selection
+    // (base xfrm.transform + pipe.falloff.type) live in config/tool_presets.yaml
+    // and stay separate.
+    {
+        import commands.falloff : FalloffPresetCommand;
+        // IIFE capture by value — same closure-over-loop-variable trap the
+        // actr.* block above documents.
+        Command delegate() makeFalloffFactory(string ty) {
+            return () => cast(Command)
+                new FalloffPresetCommand(&mesh, cameraView, editMode, toolHost, ty);
+        }
+        static immutable string[] falloffTypes =
+            ["linear", "radial", "cylinder", "screen", "lasso"];
+        foreach (ty; falloffTypes)
+            reg.commandFactories["falloff." ~ ty] = makeFalloffFactory(ty);
+    }
+
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh, cameraView, editMode);
     reg.commandFactories["select.more"]           = () => cast(Command) new SelectMore(&mesh, cameraView, editMode);
