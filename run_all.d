@@ -92,9 +92,17 @@ import core.stdc.stdlib : exit;
 
 // Machine-aware default worker count, mirroring run_test.d's defaultJobs():
 // clamp(totalCPUs/4, 4, 12). Each worker boots its own engine instance, so we
-// scale with the host without going 1:1 with cores. CI pins -j 1 explicitly
-// (the ~4 GiB runner VM OOMs under parallel `dmd -i` test compiles).
-int defaultJobs() { return clamp(cast(int)totalCPUs / 4, 4, 12); }
+// scale with the host without going 1:1 with cores. VIBE3D_TEST_JOBS pins it
+// per host (export it in your shell rc); an explicit -j still overrides. CI
+// passes -j$(nproc) — the prebuilt-lib test path keeps per-worker RAM low.
+int defaultJobs() {
+    import std.conv : to;
+    const env = environment.get("VIBE3D_TEST_JOBS", "");
+    if (env.length) {
+        try { const n = env.to!int; if (n >= 1) return n; } catch (Exception) {}
+    }
+    return clamp(cast(int)totalCPUs / 4, 4, 12);
+}
 
 bool useColor = true;
 string red(string s)    => useColor ? "\033[31m" ~ s ~ "\033[0m" : s;

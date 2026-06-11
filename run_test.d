@@ -64,8 +64,14 @@ __gshared string moldFlag;     // " -L-fuse-ld=mold" for the lib link path; "" w
 
 // Machine-aware default worker count. See the call site in main() for the
 // rationale; kept as a free function so run_all.d can mirror the same formula.
+// VIBE3D_TEST_JOBS pins it per host (e.g. export it in your shell rc) so you
+// don't have to pass -j every time; an explicit -j still overrides.
 int defaultJobs() {
     import std.algorithm : clamp;
+    const env = environment.get("VIBE3D_TEST_JOBS", "");
+    if (env.length) {
+        try { const n = env.to!int; if (n >= 1) return n; } catch (Exception) {}
+    }
     return clamp(cast(int)totalCPUs / 4, 4, 12);
 }
 
