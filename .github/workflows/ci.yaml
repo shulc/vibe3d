@@ -53,16 +53,17 @@ jobs:
       # run_all.d --only unit fans out to ./run_test.d. --no-build reuses the
       # ./vibe3d binary from the Build step. The whole thing runs under one
       # Xvfb display so each spawned `vibe3d --test` gets a GL context.
-      # -j 1 because the runner VM has only ~4 GiB RAM: each worker compiles
-      # its test slice with `dmd -i` (pulls the whole project source), so
-      # -j 4 means 4 concurrent dmd+ld peaking well past physical RAM — the
-      # kernel OOM-killed dmd mid-run and took the runner service down with
-      # it (observed 2026-06-06). One worker keeps the peak under control.
+      # -j was pinned to 1 on the ~4 GiB runner because each source-backed test
+      # compiled with `dmd -i` peaked ~1.6 GiB, so -j4 OOM-killed dmd and took
+      # the runner service down (2026-06-06). run_test.d now builds the project
+      # once into a shared lib and links the tests against it (~0.25 GiB/worker),
+      # so the per-worker peak no longer scales with parallelism — -j$(nproc) is
+      # safe (the one-time lib build's ~1.6 GiB spike is sequential, pre-fanout).
       # tee the output so the next step can build a pass/fail table; pipefail
       # keeps the test exit code (not tee's) as the step result.
       run: |
         set -o pipefail
-        xvfb-run -a ./run_all.d --only unit --no-build -j 1 2>&1 | tee integration.log
+        xvfb-run -a ./run_all.d --only unit --no-build -j "$(nproc)" 2>&1 | tee integration.log
 
     - name: 'Test results summary'
       # Parse run_test.d's per-test lines ("PASS  [wN]  name" / "FAIL ...") into a
