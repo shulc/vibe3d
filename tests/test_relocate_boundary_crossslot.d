@@ -150,8 +150,18 @@ void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
     float sx1, sy1, sx2, sy2;
     projectToWindow(Vec3(pivot.x + size / 6.0f, pivot.y, pivot.z), vp, sx1, sy1);
     projectToWindow(Vec3(pivot.x + size,        pivot.y, pivot.z), vp, sx2, sy2);
-    gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
-    gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    // Grab the +X move arrow well INSIDE its length (0.4 of the way from the
+    // shaft base to the tip). The principal-axis rotate rings have radius
+    // == `size`, so the Y-ring's circle passes THROUGH the arrow TIP region
+    // (+X·size): a grab near the tip lands within the ring's 8 px hit-test
+    // tolerance. In the compact Transform presentation the registration order
+    // makes the rotate ring win an overlap (scale → rotate → move priority),
+    // so a tip-side grab would resolve to the rotate ring, not the move arrow.
+    // 0.4·shaft keeps the click on the bare arrow shaft, clear of every ring,
+    // at both the origin pivot AND the off-origin relocated pivot this test
+    // uses — pinning the gesture to the Move bank the scenario intends.
+    gx = cast(int)(sx1 + 0.4f * (sx2 - sx1));
+    gy = cast(int)(sy1 + 0.4f * (sy2 - sy1));
     double dx = sx2 - sx1, dy = sy2 - sy1;
     double len = sqrt(dx*dx + dy*dy);
     ux = dx / len; uy = dy / len;
