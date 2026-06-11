@@ -1,28 +1,21 @@
-// Phase 0 repro — Rotate handle->panel CROSS-AXIS loses the baked axis.
+// Rotate handle->panel CROSS-AXIS must PRESERVE the baked axis.
 //
-// THIS TEST IS EXPECTED TO FAIL ON THE CURRENT BUILD (Phase 0 of the transform-
-// tool sync fix). It pins the bug; it does NOT fix it.
-//
-// Scenario (R-only transform, top face selected, ACEN.Auto):
+// Scenario (R-only transform, top face selected):
 //   1. A gizmo ring gesture about X bakes a rotation rxHeld (published RX != 0).
-//   2. A gizmo ring gesture about Y is a CROSS axis: the engine re-bakes the held
-//      X into the geometry and the run-absolute field now holds only RY (this is
-//      the current cross-axis re-bake contract; see the rotate run-absolute suite
-//      case (c)). At this point the GEOMETRY carries BOTH X and Y.
+//   2. A gizmo ring gesture about Y is a CROSS axis. Under the cumulative-Euler
+//      model (Phase 1) the run-absolute field holds the FULL cumulative ZYX Euler
+//      of R_Y(b)·R_X(a) — RX is RETAINED in the field (no cross-axis re-bake on the
+//      global path). At this point the GEOMETRY carries BOTH X and Y.
 //   3. WHILE the wrapper session is still open (the gizmo mouse-up does NOT commit
 //      / drop the tool), a PANEL edit writes RY to a NEW absolute angle via
-//      `tool.attr xfrm.transform RY <newAngle>`.
+//      `tool.attr xfrm.transform RY <newAngle>`. composeFor recomposes Rz·Ry·Rx
+//      with the new RY component against the FROZEN run baseline/basis/pivot.
 //
-// CURRENT BUGGY BEHAVIOR: the panel edit re-applies the full euler from the
-// SESSION-START baseline (the original cube), DISCARDING the baked X. The geometry
-// jumps to "RY(newAngle) from the bare cube" and the X rotation is lost.
-//
-// EXPECTED (the assert that should FAIL now): the panel RY edit must PRESERVE the
-// baked X, i.e. the geometry must equal the sequential "bake RX(rxHeld) then apply
-// RY(newAngle) on top". We reproduce the expected geometry with
-// numericRotateSeqRef("RX", rxHeld, "RY", newAngle) and require a tight match; and
-// we require the geometry NOT to equal numericRotateRef RY-from-cube (the buggy
-// pose). The two references must differ (otherwise the test is vacuous), AND the
+// EXPECTED: the panel RY edit PRESERVES the baked X. With X-then-Y the cumulative
+// ZYX decomposition is exactly (a, b, 0), so the panel RY edit yields the geometry
+// "bake RX(rxHeld) then apply RY(newAngle) on top" — equal to
+// numericRotateSeqRef("RX", rxHeld, "RY", newAngle) — and NOT the RY-from-cube pose
+// (X lost). The two references must differ (otherwise the test is vacuous), AND the
 // live geometry must match the SEQUENTIAL one.
 //
 // Discipline (from the rotate run-absolute template): NO selection drain after
@@ -323,18 +316,26 @@ void runCrossAxisPanelCase(bool localAcen) {
     assert(fabs(rxHeld) > 5.0,
         "X gesture left a meaningful published RX; got " ~ rxHeld.to!string);
 
-    // Gesture 2 about Y — CROSS axis: re-bakes the held X into geometry, the field
-    // now holds only RY. After this both X and Y live in the geometry.
+    // Gesture 2 about Y — CROSS axis. CUMULATIVE-EULER (Phase 1): the field now
+    // holds the FULL cumulative ZYX Euler of R_Y(b)·R_X(a), so the held X is
+    // RETAINED in the FIELD (no cross-axis re-bake on the global path). Both modes
+    // here select a SINGLE top face, which resolves to the GLOBAL single-frame path
+    // (a single selection is not multi-cluster), so acen=local does NOT engage the
+    // per-cluster legacy re-bake — the basis is the world-aligned face frame and the
+    // cumulative model applies. (The per-cluster legacy re-bake is exercised by the
+    // multi-cluster fixtures, e.g. test_rotate_crossaxis_localbasis scene (2).)
     principalRingGesture(1, autoPivot, floor + 2);
     assert(undoCount() == floor + 2,
         "Y cross-axis gesture records a second in-session entry");
     double ryHeld = publishedR(1);
     assert(fabs(ryHeld) > 5.0,
         "Y gesture left a published RY; got " ~ ryHeld.to!string);
-    // Cross-axis re-bake zeroes the held X in the FIELD (geometry carries the X).
-    assert(fabs(publishedR(0)) < 1e-2,
-        "cross-axis re-bake zeroes the held RX in the FIELD (geometry carries the "
-        ~ "X); published RX should be 0, got " ~ publishedR(0).to!string);
+    // The held X is RETAINED in the FIELD (cumulative-Euler, no cross-axis re-bake).
+    assert(fabs(publishedR(0)) > 1.0,
+        (localAcen ? "[acen=local] " : "[acen=auto] ")
+        ~ "cumulative-Euler RETAINS the held RX in the FIELD (full ZYX "
+        ~ "decomposition, no cross-axis re-bake); published RX should be nonzero, "
+        ~ "got " ~ publishedR(0).to!string);
 
     // PANEL edit of RY to a NEW absolute angle WHILE the session is open.
     double newAngle = ryHeld + 25.0;

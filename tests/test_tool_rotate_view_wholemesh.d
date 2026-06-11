@@ -174,3 +174,52 @@ unittest { // rotate full presentation: view ring rotates whole cube rigidly
 unittest { // bare Transform compact presentation includes screen-space rotate
     runViewRingWholeMesh("Transform");
 }
+
+// Published cumulative rotate euler (deg) off /api/toolpipe/eval.
+double publishedRotateAxis(int axis) {
+    auto j = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe/eval"));
+    auto t = "transform" in j.object;
+    assert(t !is null,
+        "eval has no transform block (no transform tool active?): " ~ j.toString);
+    return (*t)["rotate"].array[axis].floating;
+}
+
+// MATRIX-AS-TRUTH — a view-ring drag now FOLDS its arbitrary-axis rotation onto
+// runRotMatrix, so the DERIVED panel euler (transform.rotate) is the cumulative
+// orientation and reads NON-ZERO after the drag. Under the prior euler-as-truth
+// model the view-ring was a transient axis-angle param never stored in the Euler
+// field, so the panel showed (0,0,0) after a pure view-ring drag — the gap this
+// fixes. (The tool is left ACTIVE — no `tool.set off` — so the live run's published
+// rotate is still observable on the eval seam.)
+unittest { // view-ring drag → panel cumulative euler is non-zero
+    post("http://localhost:8080/api/reset", "");
+    auto setResp = post("http://localhost:8080/api/script", "tool.set rotate");
+    assert(parseJSON(cast(string)setResp)["status"].str == "ok",
+        "tool.set rotate failed: " ~ cast(string)setResp);
+
+    // Pristine: no rotation applied yet ⇒ published euler is identity.
+    foreach (k; 0 .. 3)
+        assert(approx(publishedRotateAxis(k), 0.0, 1e-4),
+            "pre-drag published rotate axis " ~ k.to!string ~ " should be 0");
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    Vec3 pivot = Vec3(0, 0, 0);
+    int x0, y0, x1, y1;
+    viewRingGrab(pivot, vp, x0, y0, x1, y1);
+    string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              x0, y0, x1, y1, 20);
+    playAndWait(log);
+
+    // The view-ring rotation folded onto runRotMatrix ⇒ at least one euler
+    // component is materially non-zero (a real arc was dragged).
+    double mag = 0.0;
+    foreach (k; 0 .. 3) {
+        double v = publishedRotateAxis(k);
+        if (fabs(v) > mag) mag = fabs(v);
+    }
+    assert(mag > 1.0,
+        "view-ring drag should publish a non-zero cumulative euler (matrix-truth "
+        ~ "folds the view rotation into the panel value); max |component| = "
+        ~ mag.to!string);
+}

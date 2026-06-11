@@ -1,6 +1,6 @@
 module math;
 
-import std.math : tan, sin, cos, sqrt, PI, abs, acos;
+import std.math : tan, sin, cos, sqrt, PI, abs, acos, asin, atan2;
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -136,6 +136,78 @@ Vec3 scaleAlongBasis(Vec3 v, Vec3 pivot, Vec3 ax, Vec3 ay, Vec3 az,
     float b = d.x*ay.x + d.y*ay.y + d.z*ay.z;
     float c = d.x*az.x + d.y*az.y + d.z*az.z;
     return pivot + ax*(a*sx) + ay*(b*sy) + az*(c*sz);
+}
+
+// ---------------------------------------------------------------------------
+// Cumulative-euler helpers for the rotate panel.
+//
+// matrixFromEulerZYX / eulerZYXFromMatrix are exact inverses and pin to the
+// SAME convention the transform tool's `composeFor` (tools/xfrm_transform.d)
+// uses for its rotate factor. composeFor starts from identity and LEFT-
+// multiplies the per-axis factors in order X, then Y, then Z:
+//   M = R(Z) * ( R(Y) * ( R(X) * I ) )
+// via `M = matMul4(pivotRotationMatrix(origin, axis, rad), M)`, skipping any
+// factor whose angle is 0. The net rotation is therefore world R = Rz·Ry·Rx.
+// We rebuild that exact product here by reusing pivotRotationMatrix + matMul4
+// (no hand-rolled parallel matrix), so the layout/handedness is identical by
+// construction. Angles are DEGREES; deg.x=RX about basis X, deg.y=RY, deg.z=RZ.
+// ---------------------------------------------------------------------------
+
+// Build R = Rz·Ry·Rx about the ORIGIN from euler degrees, matching composeFor's
+// left-multiply sequence (and its zero-angle skip) bit-for-bit.
+float[16] matrixFromEulerZYX(Vec3 deg) {
+    enum float D2R = cast(float)(PI / 180.0);
+    float[16] M = identityMatrix;
+    void rot(Vec3 axis, float d) {
+        if (d == 0) return;   // exact zero-angle skip, as composeFor does
+        M = matMul4(pivotRotationMatrix(Vec3(0, 0, 0), axis, d * D2R), M);
+    }
+    rot(Vec3(1, 0, 0), deg.x);   // RX (rightmost factor)
+    rot(Vec3(0, 1, 0), deg.y);   // RY
+    rot(Vec3(0, 0, 1), deg.z);   // RZ (leftmost factor)
+    return M;
+}
+
+// Decompose a rotation matrix (column-major, m[row + col*4], 3×3 block at
+// indices 0,1,2,4,5,6,8,9,10) into ZYX euler DEGREES such that
+// matrixFromEulerZYX(eulerZYXFromMatrix(M)) ≈ M for any rotation M.
+//
+// With R = Rz·Ry·Rx and R[row][col] stored at m[row + col*4]:
+//   R[2][0] = m[2]  = -sin(ry)
+//   R[2][1] = m[6]  =  sin(rx)*cos(ry)
+//   R[2][2] = m[10] =  cos(rx)*cos(ry)
+//   R[1][0] = m[1]  =  cos(ry)*sin(rz)
+//   R[0][0] = m[0]  =  cos(ry)*cos(rz)
+// so ry = asin(-m[2]); away from gimbal-lock,
+//   rx = atan2(m[6], m[10]),  rz = atan2(m[1], m[0]).
+//
+// Gimbal lock (cos(ry) → 0, i.e. ry → ±90°): rx and rz become a single coupled
+// DOF. Canonical convention: pin rz = 0 and fold the rotation into rx. There
+//   R[0][1] = m[4] = -cos(rx ∓ rz)·... collapses; with rz=0 the recoverable
+// angle is rx = atan2(-m[4], m[5]) at ry=+90°, and rx = atan2(m[4], m[5]) at
+// ry=-90° (signs follow from the product with sy=±1). Both are captured by
+// atan2(sy*m[4]... — implemented explicitly below.
+Vec3 eulerZYXFromMatrix(float[16] M) {
+    enum float R2D = cast(float)(180.0 / PI);
+    float sy = -M[2];                 // -R[2][0] = sin(ry)
+    if (sy > 1.0f) sy = 1.0f;
+    if (sy < -1.0f) sy = -1.0f;
+    float ry = asin(sy);
+    float rx, rz;
+    // cos(ry): gimbal-lock when this is ~0.
+    float cy = sqrt(M[6]*M[6] + M[10]*M[10]); // = |cos(ry)| via R[2][1],R[2][2]
+    if (cy > 1e-6f) {
+        rx = atan2(M[6], M[10]);      // atan2(R[2][1], R[2][2])
+        rz = atan2(M[1], M[0]);       // atan2(R[1][0], R[0][0])
+    } else {
+        // Singular: pin rz = 0, fold remaining rotation into rx.
+        // At ry=+90° (sy=+1): R[0][1]=m[4]=sin(rx-rz), R[1][1]=m[5]=cos(rx-rz).
+        // At ry=-90° (sy=-1): R[0][1]=m[4]=-sin(rx+rz), R[1][1]=m[5]=cos(rx+rz).
+        rz = 0.0f;
+        if (sy > 0.0f) rx = atan2(M[4], M[5]);
+        else           rx = atan2(-M[4], M[5]);
+    }
+    return Vec3(rx * R2D, ry * R2D, rz * R2D);
 }
 
 // ---------------------------------------------------------------------------
@@ -785,6 +857,74 @@ unittest { // matrixFromQuat(identity) == identity matrix
     auto m = matrixFromQuat(Quat.identity());
     foreach (i, v; identityMatrix)
         assert(isClose(m[i], v, 1e-6f));
+}
+
+// ---- Cumulative-euler ZYX helpers ----
+
+unittest { // matrixFromEulerZYX((0,0,0)) == identity (exact)
+    auto m = matrixFromEulerZYX(Vec3(0, 0, 0));
+    foreach (i, v; identityMatrix)
+        assert(m[i] == v, "zero euler must be exact identity");
+}
+
+unittest { // CONVENTION MATCH: helper == explicit composeFor-order matMul4 chain
+    enum float D2R = cast(float)(PI / 180.0);
+    // A spread of angle triples, incl. some with zero components (skip path).
+    Vec3[] cases = [
+        Vec3(30, 0, 0), Vec3(0, 45, 0), Vec3(0, 0, 60),
+        Vec3(17, -33, 52), Vec3(-80, 25, -10), Vec3(0, 89.9f, 0),
+    ];
+    foreach (deg; cases) {
+        auto a = matrixFromEulerZYX(deg);
+        // Mirror composeFor: identity, left-mul X, then Y, then Z (skip zero).
+        float[16] b = identityMatrix;
+        if (deg.x != 0)
+            b = matMul4(pivotRotationMatrix(Vec3(0,0,0), Vec3(1,0,0), deg.x*D2R), b);
+        if (deg.y != 0)
+            b = matMul4(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), deg.y*D2R), b);
+        if (deg.z != 0)
+            b = matMul4(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,0,1), deg.z*D2R), b);
+        foreach (i; 0 .. 16)
+            assert(a[i] == b[i], "helper must be bit-equal to composeFor chain");
+    }
+}
+
+unittest { // SINGLE-AXIS + known multi-axis round-trips
+    auto rx = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(30, 0, 0)));
+    assert(isClose(rx.x, 30, 1e-4f, 1e-4f) && isClose(rx.y, 0, 1e-4f, 1e-4f)
+        && isClose(rx.z, 0, 1e-4f, 1e-4f));
+    auto ry = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(0, 30, 0)));
+    assert(isClose(ry.x, 0, 1e-4f, 1e-4f) && isClose(ry.y, 30, 1e-4f, 1e-4f)
+        && isClose(ry.z, 0, 1e-4f, 1e-4f));
+    auto rz = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(0, 0, 30)));
+    assert(isClose(rz.x, 0, 1e-4f, 1e-4f) && isClose(rz.y, 0, 1e-4f, 1e-4f)
+        && isClose(rz.z, 30, 1e-4f, 1e-4f));
+    // Known multi-axis (well away from gimbal): angles recover directly.
+    auto m = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(20, -35, 50)));
+    assert(isClose(m.x, 20, 1e-3f, 1e-3f) && isClose(m.y, -35, 1e-3f, 1e-3f)
+        && isClose(m.z, 50, 1e-3f, 1e-3f));
+}
+
+unittest { // ROUNDTRIP: matrixFromEulerZYX∘eulerZYXFromMatrix ≈ id (incl. near-gimbal)
+    Vec3[] cases = [
+        Vec3(0, 0, 0), Vec3(13, 27, 41), Vec3(-66, 12, 88),
+        Vec3(170, -150, 95), Vec3(45, 45, 45), Vec3(-12, 78, -34),
+        // Near-gimbal pitch:
+        Vec3(33, 89.9f, -21), Vec3(-50, -89.9f, 17),
+        Vec3(33, 90.0f, -21), Vec3(-50, -90.0f, 17),
+        Vec3(0, 90.0f, 0),    Vec3(60, 90.0f, 0),
+    ];
+    float maxErr = 0;
+    foreach (deg; cases) {
+        auto M = matrixFromEulerZYX(deg);
+        auto M2 = matrixFromEulerZYX(eulerZYXFromMatrix(M));
+        foreach (i; 0 .. 16) {
+            float e = abs(M[i] - M2[i]);
+            if (e > maxErr) maxErr = e;
+            assert(e < 1e-4f, "euler ZYX roundtrip exceeded tolerance");
+        }
+    }
+    assert(maxErr < 1e-4f);
 }
 
 unittest { // applyAffine: translation matrix moves a point by t

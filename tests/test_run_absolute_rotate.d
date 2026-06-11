@@ -491,11 +491,16 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (c) CROSS-AXIS RE-BAKE — Y gesture then X gesture is SEQUENTIAL.
+// (c) CROSS-AXIS CUMULATIVE EULER — Y gesture then X gesture.
 //
-// Geometry after RY-then-RX == R_X applied on the R_Y-rotated mesh (the held Y is
-// PRESERVED in the re-baked baseline). The published field after the cross-axis
-// gesture is the NEW axis only (RX != 0, RY == 0 — geometry carries the Y).
+// CUMULATIVE-EULER (Phase 1): the GLOBAL path no longer re-bakes cross-axis. After
+// RY-then-RX, headlessRotate holds the FULL cumulative ZYX Euler of the gesture-
+// order orientation (R_X·R_Y), so BOTH RY (retained, from the prior gesture's
+// decomposition) AND RX are nonzero in the published field. The GEOMETRY is
+// UNCHANGED from the old re-bake result — R_X applied on the R_Y-rotated mesh —
+// because composeFor rebuilds Rz·Ry·Rx from the cumulative Euler about the frozen
+// run basis/pivot, and the decompose↔recompose roundtrip reproduces the same
+// orientation. This case validates geometry-neutrality of the cumulative model.
 // ---------------------------------------------------------------------------
 unittest {
     setupRotateScene();
@@ -512,25 +517,41 @@ unittest {
         "X gesture records a second in-session entry (run continues)");
     double rxAfter = publishedR(0);
     double ryAfter = publishedR(1);
+    double rzAfter = publishedR(2);
     auto afterYX = dumpVerts();
 
-    // Published field after the cross-axis gesture = NEW axis only (the held Y
-    // re-baked into geometry, the field zeroed then took the X angle).
+    // FIELD (flipped for cumulative Euler): RX is the new axis angle and RY is
+    // RETAINED — both are part of the cumulative ZYX decomposition of R_X·R_Y (no
+    // cross-axis re-bake, no field-zero on the global path). NOTE: under cumulative
+    // ZYX the published RX/RY/RZ are the DECOMPOSED Euler of the gesture-order
+    // orientation, NOT the raw per-gesture drag angles — so the geometry reference
+    // below replays the FULL published Euler in ONE session (panel→geometry
+    // roundtrip) rather than the raw-angle sequential bake.
     assert(fabs(rxAfter) > 5.0,
         "cross-axis: the published RX is the new axis angle; got " ~ rxAfter.to!string);
-    assert(fabs(ryAfter) < 1e-2,
-        "cross-axis re-bake zeroes the held RY in the FIELD (geometry carries the "
-        ~ "Y); published RY should be 0, got " ~ ryAfter.to!string);
+    assert(fabs(ryAfter) > 1.0,
+        "cumulative-Euler: the held RY is RETAINED in the FIELD (part of the "
+        ~ "cumulative ZYX decomposition, NOT re-baked away); published RY should be "
+        ~ "nonzero, got " ~ ryAfter.to!string);
 
-    // GEOMETRY = R_X(rxAfter) applied on the R_Y(ryHeld)-rotated mesh (sequential).
-    // Reproduce with TWO separate numeric sessions (bake RY + drop, re-open + RX),
-    // faithfully mirroring the interactive cross-axis re-bake.
-    auto numRef = numericRotateSeqRef("RY", ryHeld, "RX", rxAfter);
+    // GEOMETRY-NEUTRALITY: the live cumulative geometry == the FULL published Euler
+    // (RX,RY,RZ) replayed as one numeric ZYX session. composeFor rebuilds Rz·Ry·Rx
+    // from the cumulative Euler about the frozen run basis/pivot, so feeding the
+    // published panel value back through the numeric path reproduces the live drag
+    // EXACTLY — the cumulative-Euler panel↔geometry contract. (The independent
+    // gesture-order check vs the raw drag angles lives in
+    // test_rotate_crossaxis_localbasis scene (1), which is 0-diff.)
+    auto numRef = numericRotateRef([
+        format(`tool.attr xfrm.transform RX %.6f`, rxAfter),
+        format(`tool.attr xfrm.transform RY %.6f`, ryAfter),
+        format(`tool.attr xfrm.transform RZ %.6f`, rzAfter),
+    ]);
 
     float diff = maxVertDiff(afterYX, numRef);
     assert(diff < 3e-2,
-        "cross-axis geometry == R_X on the R_Y-rotated mesh (sequential; held Y "
-        ~ "preserved, not lost, not doubled): max per-vert diff = " ~ diff.to!string);
+        "cross-axis geometry == full published Euler replayed numerically "
+        ~ "(cumulative Euler panel↔geometry roundtrip; geometry-neutral): "
+        ~ "max per-vert diff = " ~ diff.to!string);
     // And it is NOT the same as the Y-only pose (the X gesture really advanced it).
     assert(maxVertDiff(afterYX, afterY) > 0.02,
         "the cross-axis X gesture advanced the geometry beyond the Y-only pose");
