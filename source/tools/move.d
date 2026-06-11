@@ -49,7 +49,7 @@ class MoveTool : TransformTool {
     // `XfrmTransformTool.applyTRS` flow. `MoveTool.onMouseMotion`'s
     // drag-axis path writes the basis-LOCAL drag delta here and
     // returns; the wrapper reads it, accumulates into
-    // `headlessTranslate`, and calls `applyTRS(dragBaseline)`. This
+    // `run.t`, and calls `applyTRS(dragBaseline)`. This
     // routes every per-frame translate through the same kernels the
     // numeric `tool.attr move T<axis>` + `tool.doApply` path uses, so
     // per-cluster magnitudes can't diverge.
@@ -120,7 +120,7 @@ public:
     // (`XfrmTransformTool.params()` at xfrm_transform.d), since
     // factory ids `move` / `xfrm.transform` etc. all route to the
     // wrapper. `tool.attr <id> TX` writes into the wrapper's
-    // `headlessTranslate`, then `tool.doApply` → `applyHeadless()`
+    // `run.t`, then `tool.doApply` → `applyHeadless()`
     // → `applyTRS(mesh.vertices.dup)` uses it.
 
     // Phase 3 — MoveTool is only ever instantiated by
@@ -611,7 +611,7 @@ public:
         //
         // MoveTool's drag-axis path no longer mutates geometry. It
         // produces ONE basis-local scalar (projected onto the gizmo's
-        // shared axes — same basis as `headlessTranslate`'s
+        // shared axes — same basis as `run.t`'s
         // interpretation in `XfrmTransformTool.applyTRS`) and parks it
         // in `pendingTranslateDelta`. The wrapper drains this on every
         // motion event, accumulates into `headlessTranslate`, and
@@ -674,7 +674,7 @@ public:
             // localDiff is the slider edit's basis-local delta this
             // frame. Hand it to the wrapper, which captures (idempotent)
             // a drag baseline + edit baseline, accumulates into its
-            // `headlessTranslate`, and runs `applyTRS`.
+            // `run.t`, and runs `applyTRS`.
             Vec3 localDiff = propInput - propBefore;
             if (localDiff.x != 0 || localDiff.y != 0 || localDiff.z != 0) {
                 wrap.applyMovePanelDelta(localDiff);
@@ -698,7 +698,7 @@ public:
     // `applyAbsoluteFromBaseline` / `applyPerClusterDelta` helpers
     // were deleted. The drag-axis branch produces a basis-local
     // gesture scalar (parked in `pendingTranslateDelta`); the
-    // wrapper drains, accumulates into `headlessTranslate`, and
+    // wrapper drains, accumulates into `run.t`, and
     // runs the single `applyTRS(dragBaseline)` evaluate which
     // dispatches into the same `xform_kernels.applyTranslate*` /
     // `applyTranslatePerCluster` routines those wrappers used to
