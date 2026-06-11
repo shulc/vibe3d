@@ -58,6 +58,9 @@ enum LOCK_UN = 8;   // unlock
 // ---------------------------------------------------------------------------
 
 __gshared int[]  vibePids;     // worker PIDs to kill on signal / cleanup
+__gshared ushort g_attachPort; // --attach: drive an already-running endpoint
+                               // (e.g. the visual_test_proxy) instead of
+                               // spawning our own vibe3d. 0 = normal mode.
 __gshared string scratchDir;
 __gshared bool   keepVibe;
 __gshared bool   useColor;
@@ -589,9 +592,15 @@ bool waitForHttpReady(string logPath, ushort port) {
         Thread.sleep(100.msecs);
     }
     if (!listening) return false;
+    return httpProbe(port);
+}
+
+// Poll /api/camera until it answers 200 (or we give up). Used both after we
+// spawn vibe3d and, in --attach mode, to wait for the external endpoint.
+bool httpProbe(ushort port, int tries = 100) {
     string probe = format("curl -s -o /dev/null -w '%%{http_code}' " ~
                           "http://localhost:%d/api/camera", port);
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < tries; ++i) {
         auto r = executeShell(probe);
         if (r.status == 0 && r.output.strip == "200") return true;
         Thread.sleep(100.msecs);
@@ -650,6 +659,16 @@ bool prepareWorker(ref Worker w) {
     mkdirRecurse(w.scratch);
     w.bins = compileTests(w.tests, w.scratch, w.port);
     if (w.bins is null) return false;
+    if (g_attachPort != 0) {
+        // Attach mode: an external endpoint (the visual_test_proxy → a visible
+        // vibe3d) already listens on w.port. Don't kill or spawn anything — just
+        // wait for it to answer. It stays alive after the run (never in vibePids).
+        if (!httpProbe(w.port)) {
+            stderr.writefln(red("attach: nothing answering on http://localhost:%d"), w.port);
+            return false;
+        }
+        return true;
+    }
     killStaleVibe(w.port);
     w.logPath = buildPath(w.scratch, "vibe3d.log");
     w.vibePid = startVibe(w.port, w.logPath);
@@ -829,6 +848,7 @@ int main(string[] args) {
     // hosts still get 4; huge hosts cap at 12 so we don't spawn a swarm of
     // GL instances. An explicit `-j N` always overrides this default.
     int j = defaultJobs();
+    int attach = 0;
     string[] exclude;
     auto helpInfo = getopt(args,
         config.bundling,
@@ -838,8 +858,19 @@ int main(string[] args) {
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
+        "attach",     "drive an already-running endpoint on this port (e.g. "
+                    ~ "tools/visual_test_proxy.py) instead of spawning vibe3d; "
+                    ~ "forces -j1, leaves the endpoint running",              &attach,
         "exclude",    "skip a test by name (repeatable). Same name forms as "
                     ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude);
+
+    // --attach: target a pre-launched endpoint (visual proxy / external vibe3d).
+    // Single worker on that one port; never kill or spawn an instance.
+    if (attach != 0) {
+        g_attachPort = cast(ushort)attach;
+        port = cast(ushort)attach;
+        j = 1;
+    }
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run_test.d [options] [test_name...]");

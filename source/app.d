@@ -384,6 +384,13 @@ void main(string[] args) {
     else
         bool startHttpServer = true;
     bool testMode = false;
+    // --visible: pair with --test to WATCH a driven session. Keeps all of
+    // --test's HTTP/injection plumbing (play-events, mouseOverride, real-input
+    // drop) but maps the window and presents real frames via SwapWindow
+    // instead of the headless glFlush. Lets a human eyeball what a test gesture
+    // does on screen; never used by the -j parallel runner (the hidden+no-swap
+    // path exists precisely to avoid the multi-window compositor swap-park).
+    bool visibleTest = false;
     // --perf: benchmark mode. Disables vsync (SDL_GL_SetSwapInterval(0)) and
     // fast-forwards event replay (ignores recorded timestamps, drains every
     // due event per tick) so the perf harness can churn its matrix in
@@ -424,6 +431,8 @@ void main(string[] args) {
             command.g_testMode = true;  // gate testMode-only commands (re-eval D5)
         } else if (args[i] == "--perf") {
             perfMode = true;
+        } else if (args[i] == "--visible") {
+            visibleTest = true;
         } else if (args[i] == "--no-http") {
             startHttpServer = false;
         } else if (args[i] == "--http-port") {
@@ -669,7 +678,10 @@ void main(string[] args) {
     // Mesa/EGL/compositor lock contention occasionally parks one instance's
     // main thread forever in SDL_GL_SwapWindow (HTTP thread alive, main loop
     // dead ⇒ the worker hangs). HIDDEN + vsync-off (below) removes that.
-    auto visFlag = command.g_testMode ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
+    // --visible overrides the headless hide so a driven --test session is
+    // watchable; without it --test stays hidden (parallel-runner default).
+    auto visFlag = (command.g_testMode && !visibleTest)
+        ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
     SDL_Window* window = SDL_CreateWindow(
         "Vibe3d",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
@@ -703,7 +715,9 @@ void main(string[] args) {
     // refresh rate; --test disables it too so a hidden test window never blocks
     // in SwapWindow waiting on a compositor vblank it isn't even presenting to
     // (the -j8 swap-park hang). Normal runs keep vsync on to avoid tearing.
-    SDL_GL_SetSwapInterval((perfMode || command.g_testMode) ? 0 : 1);
+    // A --visible test session keeps vsync ON so the watched frames pace to the
+    // display and the loop doesn't busy-spin; hidden --test stays vsync-off.
+    SDL_GL_SetSwapInterval((perfMode || (command.g_testMode && !visibleTest)) ? 0 : 1);
     glEnable(GL_DEPTH_TEST);
     glViewport(0, 0, fbW, fbH);
 
@@ -5481,7 +5495,7 @@ void main(string[] args) {
         // drives Mesa's swap/buffer-management locks. Skipping the swap removes
         // the contention point entirely. --perf still presents (it benchmarks
         // the real frame path on a single, non-contended instance).
-        if (!(testMode && !perfMode))
+        if (!(testMode && !perfMode && !visibleTest))
             SDL_GL_SwapWindow(window);
         else
             // No present, but still flush this frame's GL commands to the
@@ -5495,6 +5509,6 @@ void main(string[] args) {
         // 8 cores pinned on busy-render. A 4ms floor caps the test loop at
         // ~250 FPS — far faster than any event-replay or HTTP poll needs, while
         // leaving the CPU free for the sibling workers. --perf stays uncapped.
-        if (testMode && !perfMode) SDL_Delay(4);
+        if (testMode && !perfMode && !visibleTest) SDL_Delay(4);
     }
 }
