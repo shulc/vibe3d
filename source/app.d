@@ -4531,7 +4531,11 @@ void main(string[] args) {
         if (activeTool !is null && (!command.g_testMode || g_toolPropertiesShown)) {
             pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSize(ImVec2(220, 110), ImGuiCond.FirstUseEver);
+            // Default tall enough to show a typical tool form (e.g. the box's
+            // Position/Size/Segments/Radius groups) plus the per-stage sections
+            // (Falloff, Snap, ...) without manual resizing. FirstUseEver keeps
+            // the user's own resize sticky in a normal run.
+            ImGui.SetNextWindowSize(ImVec2(260, 520), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties")) {
                 // Config-driven forms (Phase 4/5): when the forms panel is
                 // enabled (default; disable with VIBE3D_FORMS=0) AND a loaded form matches the active
@@ -4596,7 +4600,11 @@ void main(string[] args) {
                         auto stage = cast(Stage)s;
                         if (stage is null) continue;
                         if (stage.params().length == 0) continue;
-                        if (ImGui.CollapsingHeader(stage.displayName())) {
+                        // Default-open so the extra stage sections (Action
+                        // Center, Falloff, Snap, ...) are expanded without a
+                        // click; the user can still collapse any of them.
+                        if (ImGui.CollapsingHeader(stage.displayName(),
+                                                   ImGuiTreeNodeFlags.DefaultOpen)) {
                             // Phase 6: prefer a config-driven stage form (bound
                             // to the stage via whenStage:, looked up by the
                             // stage's id()) over the legacy drawProvider path —
