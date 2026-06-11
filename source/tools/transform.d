@@ -661,7 +661,7 @@ protected:
     /// this sub-tool's gesture-commit hook closures alongside the accumulator +
     /// pipe-config restores (uniform hook family). The R/S sub-tool accumulator
     /// hooks restore the SUB-TOOL panel state (scaleAccum/propScale, angleAccum/
-    /// propDeg) — NOT the WRAPPER `headlessScale`/`headlessRotate` that
+    /// propDeg) — NOT the WRAPPER `run.s`/`headlessRotate` that
     /// `composeFor` folds. So the wrapper sets these two delegates right before it
     /// calls `commitGesture()`: `wrapperFieldApplyHook` restores the gesture-END
     /// run-absolute field (redo follows the geometry), `wrapperFieldRevertHook`
