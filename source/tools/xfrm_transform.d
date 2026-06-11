@@ -75,7 +75,7 @@ import operator : VectorStack;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix, matMul4, wrapAboutPivot;
+               identityMatrix, matMul4, wrapAboutPivot, eulerZYXFromMatrix;
 import editmode : EditMode;
 import mesh;
 import handler  : ToolHandles;
@@ -226,50 +226,25 @@ public:
     private bool gestureSoftStartPlaced = false;
     private Vec3 gestureSoftStartCenter = Vec3(0, 0, 0);
 
-    // P-F Phase 2 — per-GESTURE run-absolute Move snapshot. `run.t`
-    // is now run-absolute and `beginEdit` (the SESSION open) fires only once per
-    // session, so attrBaseTranslate captures the SESSION start, not each gesture.
-    // The per-gesture undo hook needs THIS gesture's run-absolute START value
-    // (the run total before this gesture's drain). Captured at every Move mouse-
-    // down (beginMoveDragSession), gated by `moveGestureStartKnown` so a commit
-    // with no preceding mouse-down (a relocate-boundary no-op cmd) falls back to
-    // inert (start == end ⇒ the hook does not move the field on undo).
+    // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
+    // THIS gesture's mouse-down lives in `gestureStart` (one struct snapshot,
+    // captured in every begin*DragSession after beginRunGesture). The per-gesture
+    // undo hook restores `gestureStart` (run-START) on revert and `run` (run-END)
+    // on apply; since a single gesture's drain only touches its OWN bank's field
+    // (Move → run.t, Rotate → run.r, Scale → run.s), the inactive banks have
+    // start == end and restoring them is an identity no-op — so the whole-struct
+    // restore is byte-equivalent to the former per-bank field restores, and is
+    // strictly more coherent across the mergeRun first.revert/last.apply splice
+    // (every entry carries the full struct).
+    //
+    // The three `*GestureStartKnown` flags survive PER-BANK: each gates the inert
+    // fallback (a commit with no preceding mouse-down — e.g. a relocate-boundary
+    // no-op cmd — falls back to start == end so the hook does not move the field
+    // on undo) for its bank's commit site, which fires independently. They are
+    // set at the matching begin*DragSession and cleared at the matching commit.
     private bool moveGestureStartKnown     = false;
-    private Vec3 moveGestureStartSnapshot  = Vec3(0, 0, 0);
-
-    // P-F Phase 3a — per-GESTURE run-absolute Scale snapshot, the Scale twin of
-    // moveGestureStartSnapshot. `run.s` is now run-absolute (the field
-    // holds the run-total factor across same-bank gestures, base ⊗ this-gesture
-    // factor). The per-gesture undo hook needs THIS gesture's run-absolute START
-    // factor (the run total before this gesture's drain). Captured at every Scale
-    // mouse-down (beginScaleDragSession), gated by `scaleGestureStartKnown` so a
-    // commit with no preceding mouse-down (a relocate-boundary no-op cmd) falls
-    // back to inert (start == end ⇒ the hook does not move the field on undo).
-    // DISTINCT from the sub-tool accumulator anchor `dragStartScaleAccum`
-    // (scale.d:509, anchors the PANEL-path scaleAccum) — this lives on the WRAPPER
-    // and feeds ONLY the undo hook (never the fold; composeFor reads run.s
-    // directly).
-    private bool scaleGestureStartKnown     = false;
-    private Vec3 scaleGestureStartSnapshot  = Vec3(1, 1, 1);
-
-    // P-F Phase 3b — per-GESTURE run-absolute Rotate snapshot, the Rotate twin of
-    // moveGestureStartSnapshot / scaleGestureStartSnapshot. Rotations do NOT
-    // commute, so `headlessRotate` is run-absolute ONLY across REPEATED SAME-AXIS
-    // principal gestures: the producer emits the WITHIN-GESTURE angle (totalAngle,
-    // reset to 0 at every drag start), so a same-axis repeat ADDS this gesture's
-    // angle to the run total captured at this gesture's mouse-down
-    // (rotateGestureStartSnapshot) — single-axis Euler add is EXACT (same-axis
-    // rotations commute/add). A CROSS-axis gesture or any gesture after a view-ring
-    // forces a re-bake (the held rotation is baked into dragBaseline, the field
-    // zeros) so the new axis starts fresh against the baked pose — no fixed-order
-    // Euler corruption, graceful geometry-carried fallback. Captured at every Rotate
-    // mouse-down (beginRotateDragSession), gated by rotateGestureStartKnown so a
-    // commit with no preceding mouse-down (a relocate-boundary no-op cmd) falls back
-    // to inert (start == end ⇒ the hook does not move the field on undo). DISTINCT
-    // from the sub-tool accumulator anchor (angleAccum) — undo-only, never a fold
-    // input (composeFor reads headlessRotate directly).
-    private bool rotateGestureStartKnown    = false;
-    private Vec3 rotateGestureStartSnapshot = Vec3(0, 0, 0);
+    private bool scaleGestureStartKnown    = false;
+    private bool rotateGestureStartKnown   = false;
 
     // P-F Phase 3b — did the PRIOR rotate gesture in this run drive the view-ring
     // (ax==3)? The view-ring angle is a transient applyTRS axis-angle param, NEVER
@@ -1356,14 +1331,14 @@ public:
                 // display (a relocate / selection-change boundary starts fresh).
                 run.r             = identityMatrix;
             }
-            moveGestureStartKnown    = false;
-            moveGestureStartSnapshot = Vec3(0, 0, 0);
-            scaleGestureStartKnown    = false;
-            scaleGestureStartSnapshot = Vec3(1, 1, 1);
+            // P-F Phase 3 — the per-gesture snapshot is the WHOLE `gestureStart`
+            // struct (re-captured at the next gesture's begin*DragSession); only
+            // the per-bank "known" flags need clearing at a run boundary.
+            moveGestureStartKnown   = false;
+            scaleGestureStartKnown  = false;
             // The view-ring run flag clears so the next run's first principal
             // gesture does not see a stale post-view-ring re-bake demand.
-            rotateGestureStartKnown    = false;
-            rotateGestureStartSnapshot = Vec3(0, 0, 0);
+            rotateGestureStartKnown = false;
             runPriorRotateWasViewRing  = false;
         }
     }
@@ -1553,12 +1528,14 @@ public:
         // capture once per geometry run (or re-baseline a same-bank repeat),
         // preserving held R/S into the fold on a cross-bank move gesture.
         beginRunGesture(DragBank.Move);
-        // P-F Phase 2 — capture THIS gesture's run-absolute START (the run total
-        // before this gesture's drain). AFTER beginRunGesture so a fresh run (just
-        // zeroed) snapshots 0 and a same-bank repeat snapshots the held run total.
-        // The Move commit hook restores pre/post of run.t from this.
-        moveGestureStartSnapshot = run.t;
-        moveGestureStartKnown    = true;
+        // P-F Phase 3 — capture THIS gesture's run-absolute START (the WHOLE run
+        // state before this gesture's drain). AFTER beginRunGesture so a fresh run
+        // (just zeroed) snapshots the identity state and a same-bank repeat
+        // snapshots the held run total. The unified commit hook restores
+        // gestureStart (run-START) / run (run-END); for a Move gesture only run.t
+        // changes, so the R/S fields of the snapshot are inert (start == end).
+        gestureStart          = run;
+        moveGestureStartKnown = true;
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
@@ -1638,19 +1615,18 @@ public:
         }
         beginRunGesture(DragBank.Rotate);
 
-        // P-F Phase 3b — capture THIS gesture's run-absolute START angle (the run
-        // total before this gesture's drain). AFTER beginRunGesture so a fresh run
-        // or a re-baked transition (just zeroed) snapshots 0 and a same-axis repeat
-        // snapshots the held run-total angle. The Rotate commit hook restores
-        // pre/post of headlessRotate from this. DISTINCT from the sub-tool
-        // accumulator anchor (angleAccum) — undo-only, never a fold input.
-        rotateGestureStartSnapshot = headlessRotate;
-        // MATRIX-AS-TRUTH — snapshot the run orientation BEFORE this gesture; the
-        // drain composes this gesture's incremental ring rotation onto it, and the
-        // undo revert hook restores it. (A fresh run / re-bake just set run.r
-        // to identity via resetGestureAttrs, so the snapshot is identity there.)
-        gestureStart.r   = run.r;
-        rotateGestureStartKnown    = true;
+        // P-F Phase 3 — capture THIS gesture's run-absolute START (the WHOLE run
+        // state before this gesture's drain). AFTER beginRunGesture so a fresh run
+        // or a re-baked transition (just zeroed) snapshots the identity state and a
+        // same-axis repeat snapshots the held run orientation. The drain composes
+        // this gesture's incremental ring rotation onto gestureStart.r (the run
+        // orientation BEFORE this gesture), and the unified commit hook restores
+        // gestureStart (run-START) / run (run-END). For a Rotate gesture only run.r
+        // (and its derived euler) changes, so the T/S fields of the snapshot are
+        // inert (start == end). DISTINCT from the sub-tool accumulator anchor
+        // (angleAccum) — undo-only, never a fold input.
+        gestureStart            = run;
+        rotateGestureStartKnown = true;
         // Track whether THIS gesture is a view-ring, for the NEXT gesture's
         // post-view-ring re-bake decision. Set AFTER beginRunGesture consumed the
         // prior value above.
@@ -1703,14 +1679,16 @@ public:
         // Phase 3a) a scale-after-scale does NOT re-bake/zero: the run keeps ONE
         // frozen baseline and run.s accumulates the run-total factor.
         beginRunGesture(DragBank.Scale);
-        // P-F Phase 3a — capture THIS gesture's run-absolute START factor (the run
-        // total before this gesture's drain). AFTER beginRunGesture so a fresh run
-        // (just zeroed to identity) snapshots (1,1,1) and a same-bank repeat
-        // snapshots the held run-total factor. The Scale commit hook restores
-        // pre/post of run.s from this. DISTINCT from the sub-tool
-        // accumulator anchor dragStartScaleAccum — undo-only, never a fold input.
-        scaleGestureStartSnapshot = run.s;
-        scaleGestureStartKnown    = true;
+        // P-F Phase 3 — capture THIS gesture's run-absolute START (the WHOLE run
+        // state before this gesture's drain). AFTER beginRunGesture so a fresh run
+        // (just zeroed to identity) snapshots the identity state and a same-bank
+        // repeat snapshots the held run-total factor. The unified commit hook
+        // restores gestureStart (run-START) / run (run-END); for a Scale gesture
+        // only run.s changes, so the T/R fields of the snapshot are inert
+        // (start == end). DISTINCT from the sub-tool accumulator anchor
+        // dragStartScaleAccum — undo-only, never a fold input.
+        gestureStart           = run;
+        scaleGestureStartKnown = true;
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -1954,19 +1932,19 @@ public:
                 // producer's `pendingScale` (f) is the WITHIN-GESTURE absolute
                 // factor only (dragScaleAccum, reset to 1 at this drag's start,
                 // scale.d:510), so the drain multiplies it per-axis by the run
-                // total captured at this gesture's mouse-down
-                // (scaleGestureStartSnapshot). For a fresh run the snapshot is
-                // identity ⇒ run.s = f (byte-identical to pre-3a). For a
-                // same-bank repeat the snapshot is the held run total ⇒ the factors
-                // multiply into the run total (mirrors the producer's own
+                // total captured at this gesture's mouse-down (gestureStart.s, the
+                // scale component of the per-gesture run snapshot). For a fresh run
+                // the snapshot is identity ⇒ run.s = f (byte-identical to pre-3a).
+                // For a same-bank repeat the snapshot is the held run total ⇒ the
+                // factors multiply into the run total (mirrors the producer's own
                 // scaleAccum.x = dragStartScaleAccum.x * scaleFactor at
                 // scale.d:694). Per-axis factors commute ⇒ no cross-axis hazard.
                 // The held T/R are NOT touched — they compose into the fold via
                 // the preset flags. composeFor (3253) reads this FULL run-absolute
                 // run.s against the FROZEN dragBaseline — no divide.
-                run.s = Vec3(scaleGestureStartSnapshot.x * f.x,
-                                     scaleGestureStartSnapshot.y * f.y,
-                                     scaleGestureStartSnapshot.z * f.z);
+                run.s = Vec3(gestureStart.s.x * f.x,
+                             gestureStart.s.y * f.y,
+                             gestureStart.s.z * f.z);
 
                 // CPU is rebuilt from the run baseline EVERY frame so it is
                 // never stale at mouseUp. The fast-path then merely skips the
@@ -2205,49 +2183,38 @@ public:
             // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
             // now pops one gesture rather than cancelling the whole open run.
             //
-            // P-F Phase 3b (MAJOR-5) — uniform field-snapshot undo hook (the Rotate
-            // twin of the Scale hook below / the Move hook). The gesture-START is
-            // THIS gesture's run-absolute snapshot (captured at rotate mouse-down,
-            // rotateGestureStartSnapshot); the END is the current run-total angle
-            // (headlessRotate). Splice them onto the rotateSub gesture entry through
-            // the wrapper-field hook pair so an in-session Ctrl+Z restores the panel
-            // RX/RY/RZ to the run total BEFORE this gesture (mergeRun
+            // P-F Phase 3 (MAJOR-5) — unified WHOLE-STRUCT undo hook (identical
+            // across all three banks + the refire). xfStart is THIS gesture's
+            // run-START snapshot (captured at rotate mouse-down, gestureStart);
+            // xfEnd is the current run-total state. Splice them onto the rotateSub
+            // gesture entry through the wrapper-field hook pair so an in-session
+            // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
             // first.revert/last.apply splices to run-START / run-END at the drop),
-            // and redo restores the post-gesture run total. Gated by
+            // and redo restores the post-gesture run state. Gated by
             // rotateGestureStartKnown so a commit with no preceding mouse-down leaves
-            // start == end (inert). The SAME pre/post is recorded IDENTICALLY in
-            // recordPipeRefire so a snap/falloff mid-run refire does not strand the
-            // field. DISJOINT wrapper field (only headlessRotate). On a cross-axis /
-            // view-ring re-bake the snapshot was 0 (re-bake zeroed the field), so the
-            // hook restores the field to 0 for the new-axis run-segment — consistent
-            // with the geometry baseline (the prior axis is carried in geometry).
+            // xfStart == xfEnd (inert). The SAME pre/post is recorded IDENTICALLY in
+            // recordPipeRefire so a snap/falloff mid-run refire does not strand it.
+            // A Rotate gesture only changes run.r (+ its derived euler); the T/S
+            // fields are equal between xfStart and xfEnd, so restoring the WHOLE
+            // struct is byte-equivalent to restoring run.r alone. On a cross-axis /
+            // view-ring re-bake xfStart.r was identity (re-bake zeroed it), so the
+            // hook restores the orientation to identity for the new-axis run-segment
+            // — consistent with the geometry baseline (the prior axis is carried in
+            // geometry). MATRIX-AS-TRUTH: run.r is the truth, headlessRotate is
+            // re-derived (eulerZYXFromMatrix) so the panel + matrix never drift.
             bool rotAbsKnown = rotateGestureStartKnown;
-            Vec3 rotAbsStart = rotateGestureStartSnapshot;
-            Vec3 rotAbsEnd   = headlessRotate;
-            // MATRIX-AS-TRUTH — the TRUTH (run.r) is what the hook restores;
-            // headlessRotate is re-derived from it so the panel + the matrix never
-            // drift. Capture the gesture-START matrix (gestureStart.r) and
-            // the gesture-END matrix (current run.r).
-            float[16] rotMatStart = gestureStart.r;
-            float[16] rotMatEnd   = run.r;
+            XformState xfStart = gestureStart;
+            XformState xfEnd   = run;
             rotateGestureStartKnown = false;
-            if (!rotAbsKnown) {
-                rotAbsStart = rotAbsEnd;       // inert (no preceding mouse-down)
-                rotMatStart = rotMatEnd;
-            }
+            if (!rotAbsKnown) xfStart = xfEnd;   // inert (no preceding mouse-down)
             if (acenAllowsClickRelocate()) {
                 if (auto ac = activeAcenStage())
                     ac.setSoftPlaced(rotateSub.handler.center);
             }
-            // Restore the TRUTH (run.r) and re-derive the panel euler from it
-            // so the matrix + display stay locked together across undo/redo. (The
-            // rotAbsEnd/Start euler values are still used as the derived target; we
-            // assign them directly to avoid a redundant decompose of an identical
-            // matrix, and they ARE eulerZYXFromMatrix(rotMat*) by construction.)
             rotateSub.wrapperFieldApplyHook  = () {
-                run.r = rotMatEnd;   headlessRotate = rotAbsEnd;   };
+                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r); };
             rotateSub.wrapperFieldRevertHook = () {
-                run.r = rotMatStart; headlessRotate = rotAbsStart; };
+                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r); };
             rotateSub.commitGesture();
             // Clear the wrapper-field hooks so a later sub-tool commit with no
             // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
@@ -2286,25 +2253,29 @@ public:
             // this transformed buffer would double-scale).
             runGpuBufferDirty = true;
 
-            // P-F Phase 3a (MAJOR-5) — uniform field-snapshot undo hook. The
-            // gesture-START is THIS gesture's run-absolute snapshot (captured at
-            // scale mouse-down, scaleGestureStartSnapshot); the END is the current
-            // run-total factor (run.s). Splice them onto the scaleSub
+            // P-F Phase 3 (MAJOR-5) — unified WHOLE-STRUCT undo hook (identical to
+            // the Rotate hook above / the Move hook). xfStart is THIS gesture's
+            // run-START snapshot (captured at scale mouse-down, gestureStart);
+            // xfEnd is the current run-total state. Splice them onto the scaleSub
             // gesture entry through the wrapper-field hook pair so an in-session
-            // Ctrl+Z restores the panel SX/SY/SZ to the run total BEFORE this
-            // gesture (mergeRun first.revert/last.apply splices to run-START /
-            // run-END at the drop), and redo restores the post-gesture run total.
-            // Gated by scaleGestureStartKnown so a commit with no preceding
-            // mouse-down leaves start == end (inert). The same pre/post is recorded
-            // IDENTICALLY in recordPipeRefire (3747-region) so a snap/falloff
-            // mid-run refire does not strand the field. DISJOINT wrapper field.
+            // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
+            // first.revert/last.apply splices to run-START / run-END at the drop),
+            // and redo restores the post-gesture run state. Gated by
+            // scaleGestureStartKnown so a commit with no preceding mouse-down leaves
+            // xfStart == xfEnd (inert). The same pre/post is recorded IDENTICALLY in
+            // recordPipeRefire (3747-region) so a snap/falloff mid-run refire does
+            // not strand it. A Scale gesture only changes run.s; the T/R fields are
+            // equal between xfStart and xfEnd, so the whole-struct restore is
+            // byte-equivalent to restoring run.s alone.
             bool scaleAbsKnown = scaleGestureStartKnown;
-            Vec3 scaleAbsStart = scaleGestureStartSnapshot;
-            Vec3 scaleAbsEnd   = run.s;
+            XformState xfStart = gestureStart;
+            XformState xfEnd   = run;
             scaleGestureStartKnown = false;
-            if (!scaleAbsKnown) scaleAbsStart = scaleAbsEnd;   // inert
-            scaleSub.wrapperFieldApplyHook  = () { run.s = scaleAbsEnd;   };
-            scaleSub.wrapperFieldRevertHook = () { run.s = scaleAbsStart; };
+            if (!scaleAbsKnown) xfStart = xfEnd;   // inert
+            scaleSub.wrapperFieldApplyHook  = () {
+                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r); };
+            scaleSub.wrapperFieldRevertHook = () {
+                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r); };
 
             // Per-gesture commit (record+consolidate, Phase 2): mirrors the
             // rotate path above — each scale drag bakes a tagged in-session entry
@@ -3097,18 +3068,22 @@ public:
         }
         gesturePinStartKnown = false;
 
-        // P-F Phase 2 — run-absolute Move field START/END for the per-gesture undo
-        // hook. START = this gesture's run-absolute snapshot (captured at mouse-
-        // down); END = the field's current run total. Gated by moveGestureStartKnown
-        // so a commit with no preceding mouse-down (a no-op relocate cmd) leaves
-        // start == end ⇒ the hook is inert (no field jump on undo). DISJOINT from
-        // the pin / soft-pin / pipe-config hooks (a wrapper field vs stage state) —
-        // composes into the same closure without clobber.
-        bool moveAbsKnown   = moveGestureStartKnown;
-        Vec3 moveAbsStart   = moveGestureStartSnapshot;
-        Vec3 moveAbsEnd     = run.t;
+        // P-F Phase 3 — run-absolute WHOLE-STRUCT START/END for the per-gesture undo
+        // hook (the Move arm of the unified hook; the Rotate/Scale arms live at the
+        // gizmo mouse-up sites above). xfStart = this gesture's run-START snapshot
+        // (captured at mouse-down, gestureStart); xfEnd = the current run-total
+        // state. Gated by moveGestureStartKnown so a commit with no preceding
+        // mouse-down (a no-op relocate cmd) leaves xfStart == xfEnd ⇒ the hook is
+        // inert (no field jump on undo). A Move gesture only changes run.t; the R/S
+        // fields are equal between xfStart and xfEnd, so the whole-struct restore is
+        // byte-equivalent to restoring run.t alone. DISJOINT from the pin / soft-pin
+        // / pipe-config hooks (a wrapper struct vs stage state) — composes into the
+        // same closure without clobber.
+        bool moveAbsKnown    = moveGestureStartKnown;
+        XformState moveXfStart = gestureStart;
+        XformState moveXfEnd   = run;
         moveGestureStartKnown = false;
-        if (!moveAbsKnown) moveAbsStart = moveAbsEnd;   // inert
+        if (!moveAbsKnown) moveXfStart = moveXfEnd;   // inert
 
         // Base commit discards the frozen pin snapshot, then builds + records the
         // cmd via recordCommit. We replicate the body so we can splice setHooks
@@ -3193,10 +3168,12 @@ public:
                 if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
-                // P-F: restore the gesture-END run-absolute Move field so the
-                // panel TX/TY/TZ track the redone geometry (run total after this
-                // gesture). DISJOINT wrapper field — composes without clobber.
-                run.t = moveAbsEnd;
+                // P-F Phase 3: restore the gesture-END run state so the panel
+                // TX/TY/TZ (+ RX/RY/RZ + SX/SY/SZ) track the redone geometry (run
+                // total after this gesture). headlessRotate is re-derived from
+                // run.r so the panel + matrix stay locked. DISJOINT wrapper struct —
+                // composes without clobber.
+                run = moveXfEnd; headlessRotate = eulerZYXFromMatrix(run.r);
             },
             // revert (undo): restore the gesture-START pin + SOFT pin + run pipe
             // config + publish. The gesture-START soft state is typically cleared
@@ -3211,11 +3188,12 @@ public:
                 if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
-                // P-F: restore the gesture-START run-absolute Move field so an
-                // in-session Ctrl+Z steps the panel TX/TY/TZ back one gesture (the
-                // run total BEFORE this gesture). mergeRun first.revert/last.apply
-                // splices these to run-START / run-END at the drop.
-                run.t = moveAbsStart;
+                // P-F Phase 3: restore the gesture-START run state so an in-session
+                // Ctrl+Z steps the panel back one gesture (the run total BEFORE this
+                // gesture). headlessRotate is re-derived from run.r. mergeRun
+                // first.revert/last.apply splices these to run-START / run-END at the
+                // drop.
+                run = moveXfStart; headlessRotate = eulerZYXFromMatrix(run.r);
             },
         );
         recordCommit(cmd);
@@ -3491,11 +3469,13 @@ public:
     // now-current mesh on the next update().
     //
     // P-F Phase 3 — the ONE difference from activate()'s reset: the run-absolute
-    // DISPLAY fields (run.t/Rotate/Scale) must be PRESERVED here, not
+    // DISPLAY state (run + the derived headlessRotate) must be PRESERVED here, not
     // zeroed. history.undo()/redo() runs BEFORE this and fires the per-gesture
-    // revert/apply hooks (moveAbsStart/End at :3050/:3031, rotAbsStart/End at
-    // :2116/:2117, scaleAbsStart/End at :2173/:2174), which set each field to the
-    // reverted-to step's run total. Zeroing here (as resetTransientState() and
+    // whole-struct revert/apply hooks (the unified hook restores gestureStart /
+    // run — the Move arm in commitEdit, the Rotate/Scale arms at the gizmo mouse-up
+    // sites), which set the run state to the reverted-to step's run total. The
+    // refire entry carries the same whole-struct hook. Zeroing here (as
+    // resetTransientState() and
     // resetRun() do on every non-resync path) would clobber that, snapping the
     // panel to identity while the geometry sits at the reverted-to pose. The flag
     // gates BOTH zeroing sites (resetTransientState's field-zero AND resetRun's
@@ -4250,50 +4230,35 @@ private:
         FalloffPacket  preFCopy  = preF,  postFCopy  = postF;
         SnapPacket     preSnCopy = preSn, postSnCopy = postSn;
         SymmetryPacket preSyCopy = preSy, postSyCopy = postSy;
-        // P-F Phase 2/3a (MAJOR-5) — the run-absolute WRAPPER fields join the
-        // uniform hook family on the refire entry IDENTICALLY to the gesture-commit
-        // entry, or mergeRun first.revert/last.apply would strand the field: an
-        // in-session Ctrl+Z after a snap/falloff mid-run refire would restore
-        // geometry but leave run.t/run.s at the post-refire
-        // value (panel desyncs from geometry). A refire re-grades geometry under
-        // the SAME transform, so the field does NOT change across it — snapshot the
-        // CURRENT run-absolute fields as BOTH pre and post (pre == post). When the
-        // refire entry is merged with the gesture entries, the field endpoints
-        // splice coherently because every entry in the run carries the field hook.
-        // DISJOINT from the pipe-config restores. (Move's run.t is
-        // included here too — closing the latent Phase-2 gap; Phase 3b adds
-        // headlessRotate so all three banks carry their run-absolute field across a
-        // refire.)
-        Vec3 tFieldCopy = run.t;
-        Vec3 sFieldCopy = run.s;
-        Vec3 rFieldCopy = headlessRotate;
-        // MATRIX-AS-TRUTH — carry the rotate truth (run.r) across the refire
-        // too (pre == post: a refire re-grades geometry under the SAME transform, so
-        // the orientation does not change), or an in-session Ctrl+Z after a mid-run
-        // snap/falloff tweak would strand run.r while restoring headlessRotate.
-        float[16] rMatCopy = run.r;
+        // P-F Phase 3 (MAJOR-5) — the run-absolute WRAPPER state joins the unified
+        // hook family on the refire entry IDENTICALLY to the gesture-commit entry,
+        // or mergeRun first.revert/last.apply would strand it: an in-session Ctrl+Z
+        // after a snap/falloff mid-run refire would restore geometry but leave the
+        // run state (run.t/run.r/run.s) at the post-refire value (panel desyncs from
+        // geometry). A refire re-grades geometry under the SAME transform, so the
+        // run state does NOT change across it — snapshot the CURRENT WHOLE struct as
+        // BOTH pre and post (pre == post). When the refire entry is merged with the
+        // gesture entries, the struct endpoints splice coherently because every
+        // entry in the run carries the whole-struct hook. DISJOINT from the
+        // pipe-config restores. headlessRotate is re-derived from run.r so the panel
+        // + matrix stay locked.
+        XformState xfNow = run;
         cmd.setHooks(
-            // apply (redo): restore the POST-tweak pipe config + the run-absolute
-            // fields (unchanged across the refire) + publish.
+            // apply (redo): restore the POST-tweak pipe config + the run state
+            // (unchanged across the refire) + publish.
             () {
                 if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(postFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
-                run.t = tFieldCopy;
-                run.s     = sFieldCopy;
-                headlessRotate    = rFieldCopy;
-                run.r      = rMatCopy;
+                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
             },
-            // revert (undo): restore the PRE-tweak pipe config + the run-absolute
-            // fields + publish.
+            // revert (undo): restore the PRE-tweak pipe config + the run state +
+            // publish.
             () {
                 if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(preFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
-                run.t = tFieldCopy;
-                run.s     = sFieldCopy;
-                headlessRotate    = rFieldCopy;
-                run.r      = rMatCopy;
+                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
             },
         );
 
@@ -4384,13 +4349,13 @@ private:
     // (matrixFromEulerZYX(headlessRotate) — setEuler semantics). Reset to identity
     // at every run boundary alongside headlessRotate.
     //
-    // The per-GESTURE snapshot of `run.r` captured at rotate mouse-down (the run
-    // orientation BEFORE this gesture) lives in `gestureStart.r`. The drain
-    // composes THIS gesture's incremental ring rotation onto it (the producer
-    // emits a within-gesture angle, totalAngle reset to 0 at every drag start),
-    // and the undo revert hook restores it. The matrix twin of
-    // rotateGestureStartSnapshot (which stays as the DERIVED euler display
-    // snapshot for the panel undo hook).
+    // The per-GESTURE snapshot of the WHOLE run state captured at rotate mouse-down
+    // (the run orientation BEFORE this gesture, plus T/S) lives in `gestureStart`.
+    // The drain composes THIS gesture's incremental ring rotation onto
+    // `gestureStart.r` (the producer emits a within-gesture angle, totalAngle reset
+    // to 0 at every drag start), and the unified undo revert hook restores the
+    // whole `gestureStart` struct (the inactive T/S banks restore to an unchanged
+    // value — an identity no-op).
 
     // P-F Phase 3a (MAJOR-4) — GPU buffer-vs-frozen-baseline invariant. With the
     // Scale baseline now FROZEN for the whole run, the Scale OWN-bank fast-path
