@@ -473,8 +473,31 @@ public:
     // value in lockstep with the geometry.
     public bool cancelSessionIfOpen(out Vec3 outFactors) {
         if (!editIsOpen()) return false;
+        // STANDALONE accumulator restore (wrapperRef is null): the
+        // (activationVertices, scaleAccum) invariant must hold again once the
+        // verts are restored, so peel the sub-tool accumulator back to its
+        // session start. In the WRAPPED role this is inert bookkeeping — the
+        // geometry is reverted from the wrapper's editBaseline
+        // (cancelOpenSessionGeometry), never from (activationVertices,
+        // scaleAccum) — but keeping it costs nothing.
         scaleAccum = preEditScaleAccum;
         propScale  = preEditPropScale;
+        // Phase 5b — the pre-edit PANEL value returned to the wrapper (which
+        // snaps its `headlessScale`/`run.s` display mirror to it) comes from the
+        // WRAPPER TRUTH in the wrapped role, NOT this sub-tool's `propScale`
+        // second accumulator. `gestureStartScaleFactor()` is the run-total scale
+        // factor at this session's mouse-down (`gestureStart.s`) — the value the
+        // panel was showing when the session opened, and exactly the factor the
+        // wrapper assigns to its `run.s` truth on cancel. STANDALONE (no wrapper)
+        // keeps returning `preEditPropScale` — the only accumulator it has.
+        if (wrapperRef !is null) {
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef) {
+                outFactors = wrap.gestureStartScaleFactor();
+                cancelOpenSessionGeometry();
+                return true;
+            }
+        }
         outFactors = preEditPropScale;
         cancelOpenSessionGeometry();
         return true;
@@ -967,7 +990,18 @@ private:
                 // against dragBaseline-with-baked-history. The edit SESSION stays
                 // on this sub-tool — the run-baseline entry does NOT open the
                 // wrapper session (MS-5).
-                wrap.applyScaleAbsoluteFromRun(scaleAccum);
+                //
+                // Phase 5b — feed the WRAPPER TRUTH, not this sub-tool's
+                // `scaleAccum` second accumulator. The panel path
+                // (applyScalePanelValue) already wrote the wrapper's `run.s` to the
+                // same value it set `scaleAccum` to, so the two coincide there. But
+                // the falloff-refire ARM in update() re-enters here at idle on the
+                // PERSISTENT accumulator; `runScaleFactor()` is the wrapper's
+                // run-total factor (`run.s`, the panel-bound truth), so
+                // applyScaleAbsoluteFromRun re-applies the TRUE run scale (an
+                // identity re-publish of `run.s`). Standalone (no wrapper) still
+                // drives geometry from `scaleAccum` via the kernel below.
+                wrap.applyScaleAbsoluteFromRun(wrap.runScaleFactor());
                 return;
             }
         }
