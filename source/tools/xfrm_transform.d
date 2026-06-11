@@ -368,11 +368,10 @@ public:
         // (and resetRun() below skips its own hadRun field-zero for the same
         // reason). activate() leaves the flag false → identical zeroing as before.
         if (!resyncPreserveDisplayFields) {
-            run.t     = Vec3(0, 0, 0);
-            headlessRotate        = Vec3(0, 0, 0);
-            run.s         = Vec3(1, 1, 1);
-            // MATRIX-AS-TRUTH — the rotate truth resets with its derived display.
-            run.r          = identityMatrix;
+            // Struct-init reset — t=(0,0,0)/r=identity/s=(1,1,1). The rotate truth
+            // resets with its derived euler display.
+            run = XformState.init;
+            headlessRotate = Vec3(0, 0, 0);
         }
         activeDrag                = null;
         dragBaseline.length       = 0;
@@ -1270,11 +1269,10 @@ public:
     }
 
     private void resetGestureAttrs() {
-        run.t = Vec3(0, 0, 0);
-        headlessRotate    = Vec3(0, 0, 0);
-        run.s     = Vec3(1, 1, 1);
-        // MATRIX-AS-TRUTH — a fresh-run / re-bake reset clears the rotate truth too.
-        run.r      = identityMatrix;
+        // Struct-init reset — t=(0,0,0)/r=identity/s=(1,1,1) per XformState field
+        // defaults. Also refresh the derived euler display (identity ⇒ 0).
+        run = XformState.init;
+        headlessRotate = Vec3(0, 0, 0);
     }
 
     // P-F — geometry-run boundary reset. Factored so EVERY `runBaselineValid =
@@ -1318,18 +1316,13 @@ public:
             // start bookkeeping is always cleared (re-primed at the next gesture's
             // begin*DragSession), only the published display field is preserved.
             if (!resyncPreserveDisplayFields) {
-                run.t        = Vec3(0, 0, 0);
-                // P-F Phase 3a — Scale is run-absolute: a geometry-run boundary
-                // that ended an ACTIVE run resets the SCALE display field to
-                // identity with the geometry baseline (G8 relocate->1).
-                run.s            = Vec3(1, 1, 1);
-                // P-F Phase 3b — Rotate is run-absolute (same-axis): a geometry-
-                // run boundary that ended an ACTIVE run resets the ROTATE display
-                // field to identity with the geometry baseline (G8 relocate->0).
-                headlessRotate           = Vec3(0, 0, 0);
-                // MATRIX-AS-TRUTH — reset the rotate truth alongside its derived
-                // display (a relocate / selection-change boundary starts fresh).
-                run.r             = identityMatrix;
+                // P-F Phase 3a/3b — a geometry-run boundary that ended an ACTIVE
+                // run resets the WHOLE run to identity with the geometry baseline
+                // (G8 relocate->0 for T/R, relocate->1 for S). Struct-init reset:
+                // t=(0,0,0)/r=identity/s=(1,1,1) per XformState field defaults,
+                // plus the derived euler display (identity ⇒ 0).
+                run = XformState.init;
+                headlessRotate = Vec3(0, 0, 0);
             }
             // P-F Phase 3 — the per-gesture snapshot is the WHOLE `gestureStart`
             // struct (re-captured at the next gesture's begin*DragSession); only
@@ -1343,15 +1336,30 @@ public:
         }
     }
 
+    // Matrix-truth identity test for the rotate run. Gates the "is a rotation
+    // held?" checks on `run.r` (the truth) rather than the DERIVED euler
+    // `headlessRotate`: at a gimbal-lock pose the decomposed euler can read zero
+    // while `run.r` is a genuine non-identity orientation, so an euler test would
+    // mis-detect a held rotation as "none". The matrix accumulates float drift
+    // across composed gestures, so this is an epsilon-tolerant element-wise
+    // compare against the identity literal, not an exact `==`.
+    private bool runRotIsIdentity() const {
+        import std.math : abs;
+        enum float eps = 1e-6f;
+        foreach (i; 0 .. 16)
+            if (abs(run.r[i] - identityMatrix[i]) > eps)
+                return false;
+        return true;
+    }
+
     private bool bankIsNonIdentity(DragBank bank) {
         final switch (bank) {
             case DragBank.None:   return false;
             case DragBank.Move:   return run.t.x != 0
                                        || run.t.y != 0
                                        || run.t.z != 0;
-            case DragBank.Rotate: return headlessRotate.x != 0
-                                       || headlessRotate.y != 0
-                                       || headlessRotate.z != 0;
+            // Gimbal-correct: test the rotate truth `run.r`, not the derived euler.
+            case DragBank.Rotate: return !runRotIsIdentity();
             case DragBank.Scale:  return run.s.x != 1
                                        || run.s.y != 1
                                        || run.s.z != 1;
@@ -3300,6 +3308,15 @@ public:
         // preset) would open an idle session that the OTHER slot's geometry then
         // dirties, recording a spurious "Rotate"/"Scale" entry. Mirrors the
         // hasT/hasS guards inside applyTRS.
+        //
+        // This gate STAYS on the DERIVED euler `headlessRotate` (NOT the matrix
+        // `run.r`), unlike the held-rotation identity checks elsewhere: on the
+        // headless attr / panel re-eval path the param write lands the new value
+        // into `headlessRotate` first, while `run.r` is only RECOMPOSED INSIDE
+        // applyRotatePanelValue (setEuler). So at this gate `headlessRotate` is the
+        // freshly-written truth and `run.r` is still the stale pre-edit matrix —
+        // gating on `run.r` would skip a genuine panel rotate. (Gimbal lock cannot
+        // false-zero here: the value just came FROM the euler the user/script set.)
         bool hasR = flagR && (headlessRotate.x != 0 || headlessRotate.y != 0
                                                      || headlessRotate.z != 0);
         bool hasS = flagS && (run.s.x != 1 || run.s.y != 1
@@ -3625,9 +3642,8 @@ private:
     // gates `applyTRS` uses for `composeFor`, so the GPU path switches exactly
     // when the CPU fold starts composing a held rotate/scale factor.
     bool heldRotateOrScaleNonIdentity() const {
-        const bool heldRot = flagR && (headlessRotate.x != 0
-                                    || headlessRotate.y != 0
-                                    || headlessRotate.z != 0);
+        // Gimbal-correct: test the rotate truth `run.r`, not the derived euler.
+        const bool heldRot = flagR && !runRotIsIdentity();
         const bool heldScl = flagS && (run.s.x != 1
                                     || run.s.y != 1
                                     || run.s.z != 1);
