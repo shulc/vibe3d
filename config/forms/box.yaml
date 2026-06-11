@@ -1,0 +1,51 @@
+# Tool Properties form for the Box primitive (prim.cube).
+#
+# Config-driven Tool Properties (same mechanism as config/forms/transform.yaml):
+# each value control binds to a command line carrying exactly one `?` — reading
+# queries the tool's params(), writing executes the command with `?` filled in.
+# Loaded at startup by source/forms.d (loadForms) and strict-validated against
+# the box tool's params() (validateForms) — a misspelt attr fails loud at boot.
+#
+# A matching tool form fully replaces the legacy schema panel (source/app.d:
+# the propertyPanel.draw fallback only runs when NO form matches the active
+# tool), so this form carries the full visible parameter set. `axis` is
+# intentionally omitted — it is auto-picked from the workplane normal at
+# construction time and hidden from the panel.
+#
+# Layout: Position / Size / Segments as inline X·Y·Z clusters, then a Radius
+# block for the rounded-edge controls (corner radius, its subdivision count,
+# and the sharp-ring toggle).
+
+forms:
+  - id: box.shape
+    label: Box
+    showLabel: false
+    whenTool:
+      - prim.cube
+    category: toolprops/main
+    ordinal: 150.40
+    rows:
+      - group: Position
+        style: inline
+        rows:
+          - { control: "tool.attr prim.cube cenX ?", label: X }
+          - { control: "tool.attr prim.cube cenY ?", label: Y }
+          - { control: "tool.attr prim.cube cenZ ?", label: Z }
+      - group: Size
+        style: inline
+        rows:
+          - { control: "tool.attr prim.cube sizeX ?", label: X }
+          - { control: "tool.attr prim.cube sizeY ?", label: Y }
+          - { control: "tool.attr prim.cube sizeZ ?", label: Z }
+      - group: Segments
+        style: inline
+        rows:
+          - { control: "tool.attr prim.cube segmentsX ?", label: X }
+          - { control: "tool.attr prim.cube segmentsY ?", label: Y }
+          - { control: "tool.attr prim.cube segmentsZ ?", label: Z }
+      - group: Radius
+        style: block
+        rows:
+          - { control: "tool.attr prim.cube radius ?",    label: Radius }
+          - { control: "tool.attr prim.cube segmentsR ?", label: Segments }
+          - { control: "tool.attr prim.cube sharp ?",     label: Sharp }
