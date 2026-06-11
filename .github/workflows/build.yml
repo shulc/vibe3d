@@ -11,6 +11,10 @@ on:
         description: 'Also build the with-render variant (slow: pulls Blender LFS, builds Cycles, bundles RPR/Cycles libs)'
         type: boolean
         default: false
+      nightly:
+        description: 'Publish as the rolling "nightly" pre-release (delete + recreate the nightly tag with these assets, ignoring the 24h commit-age gate)'
+        type: boolean
+        default: false
   # Nightly build: publishes a single rolling "nightly" pre-release (modeling
   # only — with-render is disabled for the regular build for now) and skips when
   # there were no commits in the last 24h. The runner must be online at this
@@ -37,9 +41,10 @@ jobs:
       - uses: actions/checkout@v4
       - id: decide
         env:
-          EVENT:     ${{ github.event_name }}
-          IN_TAG:    ${{ inputs.tag }}
-          IN_RENDER: ${{ inputs.with_render }}
+          EVENT:      ${{ github.event_name }}
+          IN_TAG:     ${{ inputs.tag }}
+          IN_RENDER:  ${{ inputs.with_render }}
+          IN_NIGHTLY: ${{ inputs.nightly }}
         run: |
           if [ "$EVENT" = "schedule" ]; then
             # with_render disabled for the regular nightly for now (render
@@ -52,6 +57,11 @@ jobs:
               should_run=false
               echo "No commits in the last 24h — skipping nightly."
             fi
+          elif [ "$IN_NIGHTLY" = "true" ]; then
+            # Manual nightly: same rolling-prerelease path as the cron (release
+            # job deletes + recreates the nightly tag), but always runs (no 24h
+            # commit-age gate) and honors the with_render input.
+            tag=nightly; with_render="$IN_RENDER"; nightly=true; should_run=true
           else
             tag="$IN_TAG"; with_render="$IN_RENDER"; nightly=false; should_run=true
           fi
