@@ -1136,13 +1136,13 @@ private:
                 // the two are equal there. But the falloff-refire ARM in update()
                 // re-enters here at idle on the PERSISTENT accumulator, where
                 // `angleAccum` (gizmo-basis decomposition) drifts from the
-                // matrix-truth euler across a cross-axis run. `runRotateEuler()`
+                // matrix-truth euler across a cross-axis run. `publishedRotate()`
                 // is eulerZYXFromMatrix(run.r) in degrees → radians here, so
                 // applyRotateAbsoluteFromRun recomposes run.r against the TRUE run
                 // orientation (an identity recompose). Standalone (no wrapper)
                 // still drives geometry from `angleAccum` via the kernel below.
                 import std.math : PI;
-                Vec3 wrapDeg = wrap.runRotateEuler();
+                Vec3 wrapDeg = wrap.publishedRotate();
                 wrap.applyRotateAbsoluteFromRun(
                     Vec3(wrapDeg.x * cast(float)(PI / 180.0),
                          wrapDeg.y * cast(float)(PI / 180.0),

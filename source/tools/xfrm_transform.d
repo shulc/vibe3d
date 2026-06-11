@@ -2636,7 +2636,7 @@ public:
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
-        // MATRIX-AS-TRUTH (setEuler semantics) — a numeric/panel RX/RY/RZ write is
+        // MATRIX-AS-TRUTH (recompose-from-euler semantics) — a numeric/panel RX/RY/RZ write is
         // an ABSOLUTE orientation set, so RECOMPOSE the truth from the written euler.
         // matrixFromEulerZYX pins to the SAME Rz·Ry·Rx convention the global fold
         // applies (composeFor consumes run.r directly), so a bare write of
@@ -2704,7 +2704,7 @@ public:
         vertexCacheDirty = true;
         // MATRIX-AS-TRUTH — the numeric/headless path injects RX/RY/RZ into
         // headlessRotate via the attr system (no gizmo drain ran), so RECOMPOSE the
-        // rotate truth from the injected euler (setEuler semantics) before the fold
+        // rotate truth from the injected euler (recompose-from-euler) before the fold
         // reads run.r. The Euler slot is the only numeric rotate input (the
         // view-ring has no numeric attr), so matrixFromEulerZYX is the exact truth.
         run.r = matrixFromEulerZYX(headlessRotate);
@@ -2883,14 +2883,13 @@ public:
 
     // Phase 5a (rotate sub-tool re-scope) — the wrapper-truth rotate state the
     // wrapped RotateTool reads instead of its own `angleAccum`/`propDeg` second
-    // accumulator. `runRotateEuler()` is the LIVE run-total euler (= the derived
-    // display `headlessRotate`, in DEGREES); `gestureStartRotateEuler()` is the
-    // run orientation captured at THIS gesture's mouse-down (`gestureStart.r`,
-    // decomposed to the same ZYX euler, in DEGREES). Both are the matrix-truth
-    // view (eulerZYXFromMatrix), so a wrapped read of them never diverges from
-    // what the panel actually shows — unlike the sub-tool's gizmo-basis
-    // decomposition, which drifts across cross-axis multi-gesture runs.
-    public Vec3 runRotateEuler() const { return headlessRotate; }
+    // accumulator. The LIVE run-total euler is `publishedRotate()` above (= the
+    // derived display `headlessRotate`, in DEGREES). `gestureStartRotateEuler()`
+    // is the run orientation captured at THIS gesture's mouse-down
+    // (`gestureStart.r`, decomposed to the same ZYX euler, in DEGREES). Both are
+    // the matrix-truth view (eulerZYXFromMatrix), so a wrapped read of them never
+    // diverges from what the panel actually shows — unlike the sub-tool's
+    // gizmo-basis decomposition, which drifts across cross-axis multi-gesture runs.
     public Vec3 gestureStartRotateEuler() const {
         import math : eulerZYXFromMatrix;
         return eulerZYXFromMatrix(gestureStart.r);
@@ -2899,14 +2898,13 @@ public:
     // Phase 5b (scale sub-tool re-scope) — the wrapper-truth scale state the
     // wrapped ScaleTool reads instead of its own `scaleAccum`/`propScale` second
     // accumulator. Unlike rotate there is no euler/matrix view: `run.s` IS the
-    // per-axis run-total factor directly. `runScaleFactor()` is the LIVE run-total
-    // (= the displayed value `run.s`); `gestureStartScaleFactor()` is the run-total
+    // per-axis run-total factor directly, so the LIVE run-total is just
+    // `publishedScale()` above. `gestureStartScaleFactor()` is the run-total
     // factor captured at THIS gesture's mouse-down (`gestureStart.s`, the scale
     // component of the per-gesture run snapshot). A wrapped read of these never
     // diverges from what the panel shows — they ARE the panel-bound truth (SX..SZ
     // bind `&run.s.*`), unlike the sub-tool's own accumulator which is only the
     // standalone-path / legacy-panel mirror.
-    public Vec3 runScaleFactor()          const { return run.s; }
     public Vec3 gestureStartScaleFactor() const { return gestureStart.s; }
 
     // P-F Phase 1 — the FROZEN per-run gizmo frame, for assertion via
@@ -3341,7 +3339,7 @@ public:
         // `run.r`), unlike the held-rotation identity checks elsewhere: on the
         // headless attr / panel re-eval path the param write lands the new value
         // into `headlessRotate` first, while `run.r` is only RECOMPOSED INSIDE
-        // applyRotatePanelValue (setEuler). So at this gate `headlessRotate` is the
+        // applyRotatePanelValue (recompose-from-euler). So at this gate `headlessRotate` is the
         // freshly-written truth and `run.r` is still the stale pre-edit matrix —
         // gating on `run.r` would skip a genuine panel rotate. (Gimbal lock cannot
         // false-zero here: the value just came FROM the euler the user/script set.)
@@ -4390,7 +4388,7 @@ private:
     // about the real physical ring axis — the bug the prior euler-as-truth model
     // had (it composed about world canon axes but applied about the frozen
     // runFrame). A numeric/panel RX/RY/RZ write RECOMPOSES it
-    // (matrixFromEulerZYX(headlessRotate) — setEuler semantics). Reset to identity
+    // (matrixFromEulerZYX(headlessRotate) — recompose-from-euler). Reset to identity
     // at every run boundary alongside headlessRotate.
     //
     // The per-GESTURE snapshot of the WHOLE run state captured at rotate mouse-down
