@@ -7,8 +7,11 @@
  *   ./run_test.d -v test_bevel       # verbose output
  *   ./run_test.d --keep              # leave vibe3d running after the run
  *   ./run_test.d --no-build          # skip `dub build`
- *   ./run_test.d -j 4                # 4 parallel workers (each its own
- *                                      vibe3d instance on a private port)
+ *   ./run_test.d -j N                # override the worker count (each worker
+ *                                      gets its own vibe3d on a private port)
+ *
+ * With no -j the worker count auto-scales: clamp(totalCPUs/4, 4, 12), or the
+ * VIBE3D_TEST_JOBS env var when set. An explicit -j always wins.
  */
 
 module run_test;

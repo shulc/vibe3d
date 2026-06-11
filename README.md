@@ -121,13 +121,17 @@ gated behind `VIBE3D_RPR_ALLOW_GPU=1`). Render code is fully isolated behind a
 Unit tests are D programs that drive a running vibe3d instance through its HTTP API:
 
 ```sh
-./run_test.d                     # all unit tests (single worker)
-./run_test.d -j 4                # parallel — 4 workers
+./run_test.d                     # all unit tests (auto-scaled workers)
+./run_test.d -j N                # override the worker count
 ./run_test.d test_pen            # one test (also: pen, tests/test_pen.d)
 ./run_test.d -v test_pen         # stream the test's stdout/stderr
 ./run_test.d --keep              # leave vibe3d running after tests finish
 ./run_test.d --no-build          # skip `dub build`
 ```
+
+With no `-j`, the worker count auto-scales to the host (`clamp(nCPU/4, 4, 12)`).
+Pin a per-machine default by exporting `VIBE3D_TEST_JOBS` (e.g. in your shell
+rc); an explicit `-j` still overrides it.
 
 Test files live in `tests/test_*.d`; recorded event sessions in `tests/events/*.log`.
 
