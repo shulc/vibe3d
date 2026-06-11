@@ -1808,6 +1808,12 @@ private:
     //   hpOrigin / hpn : valid during DrawingHeight and heightH re-drag.
     Vec3    startPoint;
     Vec3    currentPoint;
+    // Origin of the base construction plane. Defaults to the workplane origin
+    // (0,0,0 in local frame), but when the FIRST corner snaps to a target the
+    // plane relocates to that point — so the whole base is built coplanar with
+    // the snapped vertex's face instead of straddling the origin-plane and the
+    // face (which left the base drawn at the half-offset between them).
+    Vec3    basePlaneOrigin;
     Vec3    hpn;
     Vec3    hpOrigin;        // plane origin for height ray-plane intersect (drag anchor)
     Vec3    heightDragStart; // world hit at second LMB press
@@ -2086,6 +2092,11 @@ public:
             publishLastSnap(lastSnap);
             startPoint   = hit;
             currentPoint = hit;
+            // Relocate the base construction plane to the (possibly snapped)
+            // first corner. If snap pulled the corner onto a face vertex, the
+            // base now lies in that face's plane; with no snap this is just the
+            // workplane hit, so the unsnapped path is unchanged.
+            basePlaneOrigin = hit;
             // Ctrl at the first click jumps straight into a 3D uniform cube
             // (center = click point, drag = half-extent applied to all three
             // axes), skipping the BaseSet → DrawingHeight stage. Otherwise
@@ -2324,7 +2335,7 @@ public:
         if (state == BoxState.DrawingBase) {
             Vec3 hit;
             if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  Vec3(0,0,0), planeNormal, hit))
+                                  basePlaneOrigin, planeNormal, hit))
             {
                 // Snap the dragged base-corner to the closest snap
                 // target. Falls through to raw `hit` when no snap fires.

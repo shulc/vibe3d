@@ -190,6 +190,23 @@ void resetForBoxCamera(double elevation) {
     cmd("tool.set prim.cube");
 }
 
+// Default cube present (snap reference) + box tool + vertex snap armed at a
+// MODERATE range: a click ON a cube vertex snaps, but a drag a face-width away
+// stays free. Used to reproduce the "base drawn at the half-offset" snap bug.
+void resetForBoxSnap() {
+    auto r = postJson("/api/reset", "");          // default cube = snap target
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    cmd("history.clear");
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok", "camera set failed: " ~ r.toString);
+    cmd("tool.set prim.cube");
+    cmd("tool.pipe.attr snap enabled true");
+    cmd("tool.pipe.attr snap types vertex");
+    cmd("tool.pipe.attr snap innerRange 30");
+    cmd("tool.pipe.attr snap outerRange 45");
+}
+
 void resetForRotatedWorkplaneBox() {
     auto r = postJson("/api/reset?empty=true", "");
     assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
@@ -471,6 +488,48 @@ unittest { // Box active undo steps live edits; drop collapses to one history en
     playCtrlZ();
     assert(undoLen() == 0, "post-drop Ctrl+Z should pop the single box entry");
     assert(vertCount() == 0, "post-drop Ctrl+Z should remove the committed box");
+}
+
+unittest { // First-corner vertex snap builds the base coplanar with the face
+    // Regression: snapping the FIRST base corner to a cube vertex used to leave
+    // the construction plane pinned through the workplane origin, so the dragged
+    // (free) corner hit the origin-plane while the start corner sat on the face
+    // — the base committed at the HALF-OFFSET between them instead of in the
+    // snapped vertex's face plane. The base plane must relocate to the snap.
+    resetForBoxSnap();
+    auto f = boxFrame();
+    Vec3 camBack = cameraBack();
+    // The camera-facing face along the construction normal (the one the user
+    // sees and snaps to); its corners are real cube vertices.
+    float s = dotD(camBack, f.planeNormal) >= 0.0 ? 1.0f : -1.0f;
+    Vec3 faceCenter = f.planeNormal * cast(float)(0.5 * s);
+    Vec3 cornerV    = faceCenter + f.planeAxis1 * 0.5f + f.planeAxis2 * 0.5f;
+
+    int cvx, cvy, fcx, fcy;
+    projectOrDie(cornerV,    cvx, cvy, "camera-facing face corner");
+    projectOrDie(faceCenter, fcx, fcy, "camera-facing face center");
+
+    // Base drag: first corner ON the cube vertex (snaps), opposite corner to
+    // the face center — a poly center, no vertex within the 45px snap range, so
+    // it stays free. This is exactly the recorded gesture's geometry.
+    dragPixels(cvx, cvy, fcx, fcy);
+    cmd("tool.set prim.cube off");                // base-only commit: +1 polygon
+
+    auto m = getJson("/api/model");
+    auto faces = m["faces"].array;
+    assert(faces.length == 7,
+        "expected 6 cube + 1 base face, got " ~ faces.length.to!string);
+    double expected = dotD(cornerV, f.planeNormal);   // the snapped face's offset
+    auto baseFace = faces[6].array;                   // the appended base polygon
+    assert(baseFace.length == 4, "base polygon should be a quad");
+    foreach (vi; baseFace) {
+        Vec3 v = vertexAt(m, cast(size_t)vi.integer);
+        double off = dotD(v, f.planeNormal);
+        assert(approx(off, expected, 1e-3),
+            "base vertex off the snapped face plane: offset=" ~ off.to!string ~
+            " expected=" ~ expected.to!string ~
+            " (base drawn at the half-offset instead of in the face plane)");
+    }
 }
 
 unittest { // Box Ctrl+Z ladder: height -> base -> no pending box
