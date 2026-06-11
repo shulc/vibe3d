@@ -2896,6 +2896,19 @@ public:
         return eulerZYXFromMatrix(gestureStart.r);
     }
 
+    // Phase 5b (scale sub-tool re-scope) — the wrapper-truth scale state the
+    // wrapped ScaleTool reads instead of its own `scaleAccum`/`propScale` second
+    // accumulator. Unlike rotate there is no euler/matrix view: `run.s` IS the
+    // per-axis run-total factor directly. `runScaleFactor()` is the LIVE run-total
+    // (= the displayed value `run.s`); `gestureStartScaleFactor()` is the run-total
+    // factor captured at THIS gesture's mouse-down (`gestureStart.s`, the scale
+    // component of the per-gesture run snapshot). A wrapped read of these never
+    // diverges from what the panel shows — they ARE the panel-bound truth (SX..SZ
+    // bind `&run.s.*`), unlike the sub-tool's own accumulator which is only the
+    // standalone-path / legacy-panel mirror.
+    public Vec3 runScaleFactor()          const { return run.s; }
+    public Vec3 gestureStartScaleFactor() const { return gestureStart.s; }
+
     // P-F Phase 1 — the FROZEN per-run gizmo frame, for assertion via
     // /api/toolpipe/eval. `valid` is false until the first applyTRS of a run
     // freezes it; a relocate resets it (resetRun) so the next apply re-freezes.
