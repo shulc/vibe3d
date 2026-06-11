@@ -172,6 +172,72 @@ unittest { // huge range fires on a cube vert
 }
 
 // -------------------------------------------------------------------------
+// Visibility gate: vertex snap must skip OCCLUDED (hidden) verts. Looking
+// straight down -Z, the +Z face (z=+0.5) is visible and the -Z face
+// (z=-0.5) is hidden behind it. Under perspective the farther back verts
+// project NEARER screen center than the front ones, so a cursor-at-center
+// snap with huge range would grab a hidden z=-0.5 vertex without the gate.
+// The snap must land on a visible front vertex (z=+0.5) instead.
+// -------------------------------------------------------------------------
+
+// Straight-down-(-Z) occlusion setup shared by every snap-type gate test:
+// the +Z face (z=+0.5) is visible, the -Z face + its edges / centers / verts
+// (z=-0.5) are hidden behind it. Huge range + cursor at the TRUE viewport
+// center (the principal point), where the farther back elements project
+// NEAREST — so without the gate the snap grabs the hidden z=-0.5 element.
+// With the gate it must land on the visible front geometry (z=+0.5).
+JSONValue occludedSnap(string types) {
+    resetCube();
+    postJson("/api/camera",
+        `{"azimuth":0.0,"elevation":0.0,"distance":3.0,"focus":{"x":0,"y":0,"z":0}}`);
+    postJson("/api/command", "tool.pipe.attr snap enabled true");
+    postJson("/api/command", "tool.pipe.attr snap types " ~ types);
+    postJson("/api/command", "tool.pipe.attr snap innerRange 999999");
+    postJson("/api/command", "tool.pipe.attr snap outerRange 999999");
+    auto cam = getJson("/api/camera");
+    int cx = cast(int)(cam["vpX"].integer + cam["width"].integer / 2);
+    int cy = cast(int)(cam["vpY"].integer + cam["height"].integer / 2);
+    return querySnap(0.0, 0.0, 0.0, cx, cy);
+}
+
+unittest { // vertex snap skips hidden back-facing/occluded verts
+    auto sr = occludedSnap("vertex");
+    assert(sr["snapped"].type == JSONType.true_,
+        "expected a snap to a visible vertex, got " ~ sr.toString);
+    assert(approx(sr["worldPos"].array[2].floating, 0.5),
+        "vertex snap must pick a VISIBLE front vertex (z=+0.5), not a hidden "
+        ~ "back one (z=-0.5); got " ~ sr.toString);
+}
+
+unittest { // edge snap skips hidden back edges
+    auto sr = occludedSnap("edge");
+    assert(sr["snapped"].type == JSONType.true_, "expected an edge snap, got " ~ sr.toString);
+    assert(approx(sr["worldPos"].array[2].floating, 0.5),
+        "edge snap must land on a VISIBLE front edge (z=+0.5), got " ~ sr.toString);
+}
+
+unittest { // edgeCenter snap skips hidden back edges
+    auto sr = occludedSnap("edgeCenter");
+    assert(sr["snapped"].type == JSONType.true_, "expected an edgeCenter snap, got " ~ sr.toString);
+    assert(approx(sr["worldPos"].array[2].floating, 0.5),
+        "edgeCenter snap must land on a VISIBLE front edge midpoint (z=+0.5), got " ~ sr.toString);
+}
+
+unittest { // polygon snap skips the hidden back face
+    auto sr = occludedSnap("polygon");
+    assert(sr["snapped"].type == JSONType.true_, "expected a polygon snap, got " ~ sr.toString);
+    assert(approx(sr["worldPos"].array[2].floating, 0.5),
+        "polygon snap must land on the VISIBLE front face (z=+0.5), got " ~ sr.toString);
+}
+
+unittest { // polyCenter snap skips the hidden back face center
+    auto sr = occludedSnap("polyCenter");
+    assert(sr["snapped"].type == JSONType.true_, "expected a polyCenter snap, got " ~ sr.toString);
+    assert(approx(sr["worldPos"].array[2].floating, 0.5),
+        "polyCenter snap must land on the VISIBLE front face center (z=+0.5), got " ~ sr.toString);
+}
+
+// -------------------------------------------------------------------------
 // 7.3a: excludeVerts removes candidates.
 // -------------------------------------------------------------------------
 
