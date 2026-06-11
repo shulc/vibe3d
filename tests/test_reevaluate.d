@@ -134,11 +134,20 @@ void drainAndReset() {
             if (undoCount() == 0) break;
             postJson("/api/undo", "");
         }
-        // Confirm the baseline took: v6 = (0.5, 0.5, 0.5).
-        auto v = vertexAt(6);
-        if (approxEqual(v[0], 0.5) && approxEqual(v[1], 0.5)
-            && approxEqual(v[2], 0.5))
-            return;
+        // Confirm the baseline took: the cube has 8 verts and v6 = (0.5,0.5,0.5).
+        // GUARD the length before indexing [6]: under the documented -j1
+        // cross-test bleed a preceding test can leave the mesh momentarily EMPTY
+        // (its geometry not yet reset on the shared worker instance), and reading
+        // vertexAt(6) on a 0-length array would throw ArrayIndexError BEFORE this
+        // retry loop could re-reset. Treat a short/empty mesh as "not pristine
+        // yet" and keep retrying — exactly what the loop is for.
+        auto verts = getJson("/api/model")["vertices"].array;
+        if (verts.length >= 8) {
+            auto a = verts[6].array;
+            if (approxEqual(a[0].floating, 0.5) && approxEqual(a[1].floating, 0.5)
+                && approxEqual(a[2].floating, 0.5))
+                return;
+        }
         Thread.sleep(20.msecs);
     }
     // Last reset stands; the test's own assertions will report if it's bad.
