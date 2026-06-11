@@ -115,11 +115,50 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // walk, so visiting them in ascending index order with consider()'s
     // strict-`<` reproduces the old linear scan's winner + tie-break
     // (smallest pixel distance, ties → lowest index) byte-for-byte.
+    // Shared visibility gate (front-facing + unoccluded), computed once per
+    // call and consulted by every GEOMETRIC snap type so snap never cements to
+    // hidden back-facing / occluded geometry (the reported "snaps to invisible
+    // vertex" bug, and the same hole for edges / centers / faces). It's the
+    // CPU front-facing + occlusion test the selection path used before the GPU
+    // id-buffer. Empty when the mesh has no faces (nothing can occlude) so
+    // point/edge-only geometry snaps unfiltered.
+    bool[] vis;
+    if (mesh.faces.length > 0
+        && (cfg.enabledTypes & (SnapType.Vertex | SnapType.Edge
+              | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter)))
+        vis = mesh.visibleVertices(vp.eye, vp);
+
+    bool vertVisible(uint vi) {
+        return vis.length == 0 || (vi < vis.length && vis[vi]);
+    }
+    // Edge / edge-midpoint: visible only when BOTH endpoints are visible. The
+    // occlusion-aware vertex mask already folds in front-facing + depth, so a
+    // hidden back edge has at least one hidden endpoint and drops out, while a
+    // silhouette edge (both ends shared with a front face) survives.
+    bool edgeVisible(uint a, uint b) {
+        return vis.length == 0
+            || (a < vis.length && b < vis.length && vis[a] && vis[b]);
+    }
+    // Face / face-center: visible only when the face is front-facing AND all
+    // its corners are visible (rejects back faces directly, occluded ones via
+    // the corner mask). Conservative for large partly-hidden faces — fine for
+    // a snap gate. Same front-facing sign convention as Mesh.visibleVertices.
+    bool faceVisible(const(uint)[] face) {
+        if (vis.length == 0) return true;
+        if (face.length < 3) return false;
+        Vec3 fn = cross(mesh.vertices[face[1]] - mesh.vertices[face[0]],
+                        mesh.vertices[face[2]] - mesh.vertices[face[0]]);
+        if (dot(fn, mesh.vertices[face[0]] - vp.eye) >= 0) return false;
+        foreach (v; face) if (v >= vis.length || !vis[v]) return false;
+        return true;
+    }
+
     if (cfg.enabledTypes & SnapType.Vertex) {
         auto cands = queryCandidateGrid(Kind.Vertex, mesh, vp, sx, sy,
                                         cfg.outerRangePx, excludeVerts);
         foreach (vi; cands)
-            consider(mesh.vertices[vi], cast(int)vi, SnapType.Vertex);
+            if (vertVisible(vi))
+                consider(mesh.vertices[vi], cast(int)vi, SnapType.Vertex);
     }
 
     // Edge candidates (7.3b) — closest point on each edge segment in
@@ -137,6 +176,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                         cfg.outerRangePx, excludeVerts);
         foreach (ei; cands) {
             auto edge = mesh.edges[ei];
+            if (!edgeVisible(edge[0], edge[1])) continue;
             float px0, py0, ndcZ0, px1, py1, ndcZ1;
             Vec3 a = mesh.vertices[edge[0]];
             Vec3 b = mesh.vertices[edge[1]];
@@ -163,6 +203,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                         cfg.outerRangePx, excludeVerts);
         foreach (ei; cands) {
             auto edge = mesh.edges[ei];
+            if (!edgeVisible(edge[0], edge[1])) continue;
             Vec3 mid = (mesh.vertices[edge[0]] + mesh.vertices[edge[1]]) * 0.5f;
             consider(mid, cast(int)ei, SnapType.EdgeCenter);
         }
@@ -181,6 +222,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                         cfg.outerRangePx, excludeVerts);
         foreach (fi; cands) {
             auto face = mesh.faces[fi];
+            if (!faceVisible(face)) continue;
             Vec3 hit;
             if (closestOnPolygonSurface(face, mesh, sx, sy, vp, hit))
                 consider(hit, cast(int)fi, SnapType.Polygon);
@@ -195,6 +237,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         foreach (fi; cands) {
             auto face = mesh.faces[fi];
             if (face.length == 0) continue;
+            if (!faceVisible(face)) continue;
             Vec3 c = Vec3(0, 0, 0);
             foreach (vi; face) c += mesh.vertices[vi];
             c = c / cast(float)face.length;
