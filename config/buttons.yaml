@@ -7,7 +7,7 @@ panels:
           - { label: "Open…",    action: { kind: command, id: file.open } }
           - { label: Save,       action: { kind: command, id: file.save } }
           - { label: "Save As…", action: { kind: command, id: file.saveAs } }
-          - label: "Import ▸"
+          - label: "Import ›"
             action:
               kind: popup
               items:
@@ -15,7 +15,7 @@ panels:
                 - { label: "OBJ…",   action: { kind: command, id: "file.import.obj"  } }
                 - { label: "glTF…",  action: { kind: command, id: "file.import.gltf" } }
                 - { label: "FBX…",   action: { kind: command, id: "file.import.fbx"  } }
-          - label: "Export ▸"
+          - label: "Export ›"
             action:
               kind: popup
               items:
