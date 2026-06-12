@@ -1,6 +1,6 @@
 module toolpipe.pipeline;
 
-import std.algorithm : sort, remove;
+import std.algorithm : sort, remove, SwapStrategy;
 import std.array     : array;
 import std.conv      : to;
 
@@ -64,6 +64,31 @@ public:
         if (auto op = cast(Operator)s) plug(op, /*replace=*/true);
     }
 
+    /// Register an ADDITIONAL stage of an existing task WITHOUT replacing
+    /// the same-task stage already present — the stacking counterpart to
+    /// `add()`'s single-slot-per-task replace semantics. Use this for the
+    /// second-and-beyond instances of a stackable task (today only Wght /
+    /// falloff stacks); `add()` stays the single/primary path that callers
+    /// like the pulldown and `*.<type>` commands target.
+    ///
+    /// Each stacked instance MUST carry a UNIQUE `id()` so `findById` can
+    /// resolve it — `findByTask` keeps returning the FIRST (primary) for
+    /// backward compat, while `findAllByTask` yields every instance.
+    ///
+    /// `s` is appended to `stages_` and the list re-sorted by ordinal.
+    /// The sort is STABLE, so same-ordinal same-task instances keep their
+    /// insertion order (deterministic pipeline order). When `s` also
+    /// implements Operator it is APPENDED to its task slot (`plug` with
+    /// `replace=false`) — the slot-list keeps every plugged operator so
+    /// `evaluate(VectorStack)` walks all stacked instances in order.
+    void addStacked(Stage s) {
+        stages_ ~= s;
+        // STABLE so same-ordinal same-task instances keep insertion order
+        // (the primary, added first, stays ahead of later-stacked extras).
+        stages_.sort!((a, b) => a.ordinal() < b.ordinal(), SwapStrategy.stable);
+        if (auto op = cast(Operator)s) plug(op, /*replace=*/false);
+    }
+
     /// Remove a stage (matched by reference identity). Returns true if
     /// found and removed.
     bool removeStage(Stage s) {
@@ -95,10 +120,29 @@ public:
         return null;
     }
 
+    /// Return EVERY registered stage with the given task, in pipeline
+    /// (ordinal) order. The stacking counterpart to `findByTask` (which
+    /// returns only the first / primary): callers that must iterate all
+    /// stacked instances of a task (e.g. a future weight combiner walking
+    /// every falloff contributor) use this. With the single/primary path
+    /// only one stage per task is registered, so this yields a 1-element
+    /// slice equivalent to `[findByTask(task)]`.
+    Stage[] findAllByTask(TaskCode task) {
+        Stage[] hits;
+        foreach (s; stages_)
+            if (s.taskCode() == task)
+                hits ~= s;
+        return hits;
+    }
+
     /// Return the stage with the given `id()` (e.g. "falloff",
     /// "actionCenter", "snap", "symmetry"), or null. Used by the
     /// tool-preset loader to apply attrs by stage name, mirroring
     /// the `tool.pipe.attr <stageId> ...` HTTP wire format.
+    ///
+    /// Returns the FIRST id match. Stacked same-task instances (added via
+    /// `addStacked`) must therefore each carry a UNIQUE `id()` to be
+    /// addressable here (the primary keeps the bare id, e.g. "falloff").
     Stage findById(string id) {
         foreach (s; stages_)
             if (s.id() == id)
