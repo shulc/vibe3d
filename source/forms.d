@@ -228,6 +228,33 @@ struct Binding {
     string[]  positionals;   // all positional tokens as raw strings
 }
 
+/// Rebind a namespaced control's TARGET id to the live id, returning the
+/// rewritten Binding. A form line carries a CANONICAL target — the tool family
+/// id (`xfrm.transform`) or the stage family id (`falloff`) — but the same form
+/// serves many live ids: every XfrmTransformTool activation (move/rotate/…),
+/// and every stacked FalloffStage instance (`falloff`, `falloff#1`, …). The
+/// write must name the LIVE id or it lands on the wrong target. `positionals[0]`
+/// is the target token; rewriting it (and `targetId`) is sufficient because the
+/// line is reconstructed from positionals. An empty id keeps the literal target
+/// (plain commands and callers that pass none). Tool/stage are mutually
+/// exclusive by namespace, so at most one rebind applies.
+Binding rebindBindingTarget(Binding b, string activeToolId, string stageId)
+{
+    if (b.namespace == Namespace.tool && activeToolId.length
+        && b.positionals.length >= 1)
+    {
+        b.positionals[0] = activeToolId;
+        b.targetId       = activeToolId;
+    }
+    else if (b.namespace == Namespace.stage && stageId.length
+             && b.positionals.length >= 1)
+    {
+        b.positionals[0] = stageId;
+        b.targetId       = stageId;
+    }
+    return b;
+}
+
 /// The query sentinel token. A control line marks its value slot with this.
 enum string kQuerySentinel = "?";
 

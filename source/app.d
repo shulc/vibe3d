@@ -4670,8 +4670,14 @@ void main(string[] args) {
                             // drawProvider. stage.drawProperties() still runs in
                             // both cases (shape popup / auto-size buttons aren't
                             // form rows).
+                            // Look the form up by the stage FAMILY id (not the
+                            // unique id), so stacked falloff instances
+                            // ("falloff#1", …) all resolve the one "falloff"
+                            // form; FormsPanel filters its rows against this
+                            // instance's params() and the stage.id() passed
+                            // below rebinds the write to the right instance.
                             auto stageForm = g_formsPanelEnabled
-                                           ? formByStage(stage.id()) : null;
+                                           ? formByStage(stage.formFamilyId()) : null;
                             if (stageForm !is null) {
                                 // A malformed row must degrade to the legacy
                                 // panel, NOT throw mid-ImGui-frame (an escaping
@@ -4682,7 +4688,9 @@ void main(string[] args) {
                                 try {
                                     formsPanel.draw(*stageForm, stage,
                                                     commandHandlerDelegate,
-                                                    formsInteractiveDispatch);
+                                                    formsInteractiveDispatch,
+                                                    /*activeToolId=*/"",
+                                                    /*stageId=*/stage.id());
                                 } catch (Exception e) {
                                     warnStageFormOnce(stage.id(), e.msg);
                                     propertyPanel.drawProvider(stage);
