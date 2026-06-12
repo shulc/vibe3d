@@ -95,7 +95,9 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import perf_probe : g_perf, Cat;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
-import toolpipe.stages.falloff : FalloffStage;
+import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
+                                 snapshotFalloffSet, restoreFalloffSet,
+                                 restoreFalloffSetFromCombined;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
@@ -3181,10 +3183,12 @@ public:
         // pin endpoints. The gesture never changes the pipe config, so the
         // snapshot is the same on apply and revert here; it exists purely so the
         // merged first.revert carries it.
-        FalloffPacket  fSnap;  bool haveF  = false;
+        // FALLOFF is SET-aware: snapshot every active instance's config keyed
+        // by stage identity (1-element = the prior single-stage path,
+        // byte-identical). SNAP + SYMMETRY stay SINGLE.
+        FalloffSetSnapshot fSnap = snapshotFalloffSet(activeFalloffStages());
         SnapPacket     snSnap; bool haveSn = false;
         SymmetryPacket sySnap; bool haveSy = false;
-        if (auto fs = activeFalloffStage())  { fSnap  = fs.snapshotConfigToPacket(); haveF  = true; }
         if (auto sn = activeSnapStage())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
         if (auto sy = activeSymmetryStage()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
 
@@ -3199,7 +3203,7 @@ public:
                     ac.restorePinState(endPlaced, endCenter);
                     ac.restoreSoftPlaced(softEndPlaced, softEndCenter);
                 }
-                if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
+                restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
                 // P-F Phase 3: restore the gesture-END run state so the panel
@@ -3219,7 +3223,7 @@ public:
                     ac.restorePinState(startPlaced, startCenter);
                     ac.restoreSoftPlaced(softStartPlaced, softStartCenter);
                 }
-                if (haveF)  if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(fSnap);
+                restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
                 // P-F Phase 3: restore the gesture-START run state so an in-session
@@ -3960,6 +3964,21 @@ private:
                g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
     }
 
+    // The WHOLE active falloff SET (every TaskCode.Wght stage, pipe order) —
+    // the wrapper's plural accessor for its set-aware gesture-commit + refire
+    // config-restore hooks. WRAPPER-owned (kept vtable-separate from the base
+    // TransformTool's `final falloffStagesForHooks()` for the same SEGV reason
+    // as activeFalloffStage vs falloffStageForHooks). With a single active
+    // falloff this is a 1-element slice ⇒ snapshot/restore byte-identical.
+    FalloffStage[] activeFalloffStages() const {
+        FalloffStage[] set;
+        if (g_pipeCtx is null) return set;
+        foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght))
+            if (auto fs = cast(FalloffStage) s)
+                set ~= fs;
+        return set;
+    }
+
     // The single ACEN stage — source of truth for the gizmo pivot. Used to
     // freeze / restore the user-placed pin across an in-session edit cancel
     // (see beginEdit() / cancelUncommittedEdit()).
@@ -4289,7 +4308,13 @@ private:
             // apply (redo): restore the POST-tweak pipe config + the run state
             // (unchanged across the refire) + publish.
             () {
-                if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(postFCopy);
+                // FALLOFF set-aware: the captured pre/post packets are the
+                // COMBINED published packet. For a single falloff that IS the
+                // primary's config (restored directly, byte-identical); for a
+                // multi-falloff Composite each stage is restored from the
+                // matching contributor (pipe-order positional, same order the
+                // combiner builds contributors and findAllByTask yields).
+                restoreFalloffSetFromCombined(activeFalloffStages(), postFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
                 run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
@@ -4297,7 +4322,7 @@ private:
             // revert (undo): restore the PRE-tweak pipe config + the run state +
             // publish.
             () {
-                if (auto fs = activeFalloffStage())  fs.restoreConfigFromPacket(preFCopy);
+                restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
                 run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
