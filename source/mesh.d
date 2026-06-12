@@ -4617,16 +4617,14 @@ struct VertexDartRange {
 /// build-loops time (treat non-manifold edges as boundaries so twins
 /// stay well-defined) — log once so the issue stays visible without
 /// being a hard stop.
-private __gshared bool maxStepsWarned = false;
 private void warnMaxStepsExceeded(string rangeName) nothrow {
-    if (maxStepsWarned) return;
-    maxStepsWarned = true;
+    import log : logWarnOnce;
+    import std.format : format;
     try {
-        import std.stdio : stderr;
-        stderr.writefln(
-            "[mesh] %s: MAX_STEPS exceeded — non-manifold cage edges " ~
+        logWarnOnce("mesh", "maxSteps", format(
+            "%s: MAX_STEPS exceeded — non-manifold cage edges " ~
             "(walk truncated; selection / loop ops may be incomplete).",
-            rangeName);
+            rangeName));
     } catch (Exception) {}
 }
 

@@ -48,10 +48,10 @@ struct GpuFanOutTargets {
 /// Phase 3 VBO refactor lands (see doc/osd_gpu_evaluator_phase3.md).
 float runGlEvaluatorSmokeTest() {
     import bindbc.opengl;
-    import std.stdio : stderr;
+    import log : logWarn;
 
     void warn(string s) {
-        try { stderr.writeln("[osd_gl_smoke] ", s); stderr.flush(); }
+        try logWarn("subpatch", "gl_smoke: " ~ s);
         catch (Exception) {}
     }
 
@@ -118,9 +118,10 @@ float runGlEvaluatorSmokeTest() {
         if (d > maxDelta) maxDelta = d;
     }
     try {
-        stderr.writefln("[osd_gl_smoke] OK: %d limit verts, max "
-                        ~ "|CPU - GPU| = %.6g", limitVerts, maxDelta);
-        stderr.flush();
+        import log : logInfo;
+        import std.format : format;
+        logInfo("subpatch", format("gl_smoke: OK: %d limit verts, max "
+                        ~ "|CPU - GPU| = %.6g", limitVerts, maxDelta));
     } catch (Exception) {}
     return maxDelta;
 }
@@ -526,7 +527,7 @@ private import bindbc.opengl;
 /// Generic GLSL compile helper — returns 0 on failure, logging the
 /// compile error to stderr.
 private GLuint compileShaderStage(GLenum stage, string src) {
-    import std.stdio  : stderr;
+    import log        : logWarn;
     import std.string : toStringz;
     import std.conv   : to;
     GLuint sh = glCreateShader(stage);
@@ -539,7 +540,7 @@ private GLuint compileShaderStage(GLenum stage, string src) {
     if (!ok) {
         char[1024] log;
         glGetShaderInfoLog(sh, 1024, null, log.ptr);
-        try stderr.writeln("[osd fan-out] shader compile: ", log[].to!string);
+        try logWarn("subpatch", "fan-out shader compile: " ~ log[].to!string);
         catch (Exception) {}
         glDeleteShader(sh);
         return 0;
@@ -554,7 +555,7 @@ private GLuint linkTfProgram(string vertSrc, string fragSrc,
                               const(char*)[] varyings,
                               GLenum bufferMode)
 {
-    import std.stdio : stderr;
+    import log       : logWarn;
     import std.conv  : to;
     GLuint vs = compileShaderStage(GL_VERTEX_SHADER,   vertSrc);
     if (!vs) return 0;
@@ -573,7 +574,7 @@ private GLuint linkTfProgram(string vertSrc, string fragSrc,
     if (!ok) {
         char[1024] log;
         glGetProgramInfoLog(prog, 1024, null, log.ptr);
-        try stderr.writeln("[osd fan-out] program link: ", log[].to!string);
+        try logWarn("subpatch", "fan-out program link: " ~ log[].to!string);
         catch (Exception) {}
         glDeleteProgram(prog);
         return 0;
@@ -938,14 +939,15 @@ struct OsdAccel {
             projected /= 4L;
         }
         if (effectiveLevel != level) {
-            import std.stdio : stderr;
+            import log        : logWarn;
+            import std.format : format;
             try {
-                stderr.writefln(
-                    "[subpatch_osd] capping subpatch depth %d -> %d "
+                logWarn("subpatch", format(
+                    "capping subpatch depth %d -> %d "
                     ~ "(cage %d faces, projected %d limit faces exceeds %d)",
                     level, effectiveLevel, nf,
                     cast(long)nf * (1L << (2 * level)),
-                    MAX_LIMIT_FACES);
+                    MAX_LIMIT_FACES));
             } catch (Exception) {}
         }
 

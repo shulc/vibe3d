@@ -8,6 +8,7 @@ import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
+import log : logInfo, logWarn, logError;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -181,18 +182,14 @@ private int countSelected(bool[] sel) {
     return n;
 }
 
-// Set of stage ids whose config-driven form has already thrown once. A broken
-// stage form degrades to the legacy drawProvider every frame; this gate keeps
-// the diagnostic to a single stderr line per stage instead of per-frame spam.
-// Main-thread only (the Tool Properties draw loop), so no locking needed.
-private __gshared bool[string] g_stageFormWarned;
-
+// A broken stage form degrades to the legacy drawProvider every frame; the
+// log service's once-gate keeps the diagnostic to a single line per stage
+// instead of per-frame spam.
 private void warnStageFormOnce(string stageId, string msg) {
-    import std.stdio : stderr;
-    if (stageId in g_stageFormWarned) return;
-    g_stageFormWarned[stageId] = true;
-    stderr.writeln("[forms] stage form for '", stageId,
-                   "' failed to draw; falling back to legacy panel: ", msg);
+    import log : logWarnOnce;
+    logWarnOnce("forms", stageId,
+                "stage form for '" ~ stageId ~
+                "' failed to draw; falling back to legacy panel: " ~ msg);
 }
 
 
@@ -603,7 +600,7 @@ void main(string[] args) {
         // drags through /api/play-events → tickEventPlayer).
         if (perfMode) httpServer.setPlayerFastForward(true);
         httpServer.start();
-        writeln("HTTP server starting on port ", httpPort);
+        logInfo("http", "HTTP server starting on port " ~ httpPort.to!string);
     }
     scope(exit) {
         if (httpServer !is null && httpServer.running) {
@@ -3281,11 +3278,11 @@ void main(string[] args) {
                 recLog.open("recording.jsonl");
                 recLog.writeViewportMeta(layout.vpX, layout.vpY,
                                          layout.vpW, layout.vpH, kFovY);
-                stderr.writeln("[REC] started → recording.jsonl");
+                logInfo("rec", "started → recording.jsonl");
                 break;
             case SDLK_F2:
                 recLog.close();
-                stderr.writeln("[REC] stopped");
+                logInfo("rec", "stopped");
                 break;
             // Esc no longer quits — Ctrl+Q (file.quit) is the canonical
             // exit shortcut now. Leaving Esc unbound here means the key

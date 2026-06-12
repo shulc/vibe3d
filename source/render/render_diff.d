@@ -20,8 +20,9 @@ import std.file      : readText;
 import std.format    : format;
 import std.json;
 import std.math      : PI;
-import std.stdio     : File, stderr, writeln;
+import std.stdio     : File, writeln;
 import core.thread   : Thread, msecs, seconds;
+import log           : logError;
 import core.time     : MonoTime, dur;
 
 import render.backend;
@@ -262,7 +263,7 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
     try {
         rc = parseCase(casePath);
     } catch (Exception e) {
-        stderr.writeln("render_diff: failed to parse case: ", e.msg);
+        logError("render", "render_diff: failed to parse case: " ~ e.msg);
         return 1;
     }
 
@@ -278,7 +279,7 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
     cfg.samples = rc.samples;
 
     if (!bridge.init(backendName, cfg)) {
-        stderr.writeln("render_diff: bridge.init failed: ", bridge.lastError);
+        logError("render", "render_diff: bridge.init failed: " ~ bridge.lastError);
         return 1;
     }
 
@@ -305,7 +306,7 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
     if (rc.mesh.kind == "cube") {
         buildCube(rc.mesh.size, xyz, tris);
     } else {
-        stderr.writeln("render_diff: unsupported mesh kind: ", rc.mesh.kind);
+        logError("render", "render_diff: unsupported mesh kind: " ~ rc.mesh.kind);
         return 1;
     }
 
@@ -349,13 +350,13 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
 
     // ---- Render ----
     if (!bridge.sync(scene)) {
-        stderr.writeln("render_diff: bridge.sync failed: ", bridge.lastError);
+        logError("render", "render_diff: bridge.sync failed: " ~ bridge.lastError);
         bridge.shutdown();
         return 1;
     }
     bridge.resize(rc.width, rc.height);
     if (!bridge.resetAccumulation()) {
-        stderr.writeln("render_diff: bridge.resetAccumulation failed: ", bridge.lastError);
+        logError("render", "render_diff: bridge.resetAccumulation failed: " ~ bridge.lastError);
         bridge.shutdown();
         return 1;
     }
@@ -365,7 +366,7 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
     const auto deadline = MonoTime.currTime + dur!"minutes"(5);
     while (bridge.progress() < 1.0f) {
         if (MonoTime.currTime > deadline) {
-            stderr.writeln("render_diff: render timed out");
+            logError("render", "render_diff: render timed out");
             bridge.shutdown();
             return 1;
         }
@@ -380,7 +381,7 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
     float[] pixels;
     int rw, rh;
     if (!bridge.grabPixels(pixels, rw, rh) || rw != rc.width || rh != rc.height) {
-        stderr.writeln(format(
+        logError("render", format(
             "render_diff: grabPixels failed or dim mismatch (got %dx%d, expected %dx%d)",
             rw, rh, rc.width, rc.height));
         bridge.shutdown();
@@ -390,7 +391,7 @@ int runRenderDiff(string casePath, string backendName, string outputPath)
     try {
         writePPM(outputPath, pixels, rw, rh);
     } catch (Exception e) {
-        stderr.writeln("render_diff: PPM write failed: ", e.msg);
+        logError("render", "render_diff: PPM write failed: " ~ e.msg);
         bridge.shutdown();
         return 1;
     }

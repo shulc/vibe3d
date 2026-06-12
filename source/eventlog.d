@@ -2,7 +2,7 @@ module eventlog;
 
 import bindbc.sdl;
 import std.json;
-import std.stdio : writeln, writefln, File;
+import std.stdio : File;
 
 // ---------------------------------------------------------------------------
 // SDL call wrappers — replaced by mocks in unittest builds
@@ -241,7 +241,12 @@ struct EventPlayer {
     bool open(string path) {
         import std.file;
         try { return load(readText(path)); }
-        catch (Exception) { writefln("EventPlayer: cannot open '%s'", path); return false; }
+        catch (Exception) {
+            import log : logWarn;
+            import std.format : format;
+            logWarn("eventlog", format("EventPlayer: cannot open '%s'", path));
+            return false;
+        }
 
     }
 
@@ -341,7 +346,11 @@ struct EventPlayer {
         freq         = _perfFreq();
         active       = entries.length > 0;
         idx          = 0;
-        writefln("EventPlayer: loaded %d events", entries.length);
+        {
+            import log : logInfo;
+            import std.format : format;
+            logInfo("eventlog", format("EventPlayer: loaded %d events", entries.length));
+        }
         return true;
     }
 
@@ -440,7 +449,10 @@ struct EventPlayer {
         }
         if (idx >= entries.length) {
             active = false;
-            writeln("EventPlayer: playback finished");
+            {
+                import log : logInfo;
+                logInfo("eventlog", "EventPlayer: playback finished");
+            }
             return false;
         }
         return true;

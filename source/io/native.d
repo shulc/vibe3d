@@ -1,12 +1,20 @@
 module io.native;
 
-import std.stdio     : stderr, writefln;
 import std.file      : exists, read, write;
 import std.json      : JSONValue, JSONType, parseJSON, JSONException;
 import std.conv      : to;
+import std.format    : format;
 
 import mesh;
 import math;
+import log : logWarn, logInfo;
+
+// Diagnostics for the native reader funnel through the "io" log subsystem.
+// The "V3D" label stays in the message body so the .v3d origin is still
+// visible in the `[io] V3D: …` echo. Levels: structural rejects and tolerant
+// "ignoring …" notices are warnings; the path/ready status lines are info.
+private void v3dWarn(string msg) nothrow { try logWarn("io", "V3D: " ~ msg); catch (Exception) {} }
+private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); catch (Exception) {} }
 
 // ---------------------------------------------------------------------------
 // Native .v3d document format (JSON)
@@ -124,10 +132,10 @@ void writeV3d(ref const Mesh mesh, string path)
 /// out-of-range vertex index. On success `mesh` holds the reconstructed scene.
 bool readV3d(string path, ref Mesh mesh)
 {
-    stderr.writefln("[V3D] readV3d: path=%s", path);
+    v3dInfo(format("readV3d: path=%s", path));
 
     if (!exists(path)) {
-        stderr.writefln("[V3D] file does not exist");
+        v3dWarn("file does not exist");
         return false;
     }
 
@@ -142,12 +150,12 @@ bool readV3d(string path, ref Mesh mesh)
         try {
             doc = parseJSON(cast(string) read(path));
         } catch (JSONException e) {
-            stderr.writefln("[V3D] reject: malformed JSON: %s", e.msg);
+            v3dWarn(format("reject: malformed JSON: %s", e.msg));
             return false;
         }
 
         if (doc.type != JSONType.object) {
-            stderr.writefln("[V3D] reject: top-level value is not a JSON object");
+            v3dWarn("reject: top-level value is not a JSON object");
             return false;
         }
 
@@ -159,21 +167,21 @@ bool readV3d(string path, ref Mesh mesh)
             if (vp.type == JSONType.integer)
                 ver = cast(int) vp.integer;
             else {
-                stderr.writefln("[V3D] reject: formatVersion is not an integer");
+                v3dWarn("reject: formatVersion is not an integer");
                 return false;
             }
         } else {
-            stderr.writefln("[V3D] no formatVersion; assuming v%d", ver);
+            v3dInfo(format("no formatVersion; assuming v%d", ver));
         }
         if (ver > kV3dFormatVersion || ver < 1) {
-            stderr.writefln("[V3D] reject: unsupported formatVersion %d "
-                            ~ "(this build reads 1..%d)", ver, kV3dFormatVersion);
+            v3dWarn(format("reject: unsupported formatVersion %d "
+                            ~ "(this build reads 1..%d)", ver, kV3dFormatVersion));
             return false;
         }
 
         auto mp = "mesh" in doc;
         if (mp is null || mp.type != JSONType.object) {
-            stderr.writefln("[V3D] reject: missing or non-object \"mesh\"");
+            v3dWarn("reject: missing or non-object \"mesh\"");
             return false;
         }
         JSONValue m = *mp;
@@ -181,14 +189,14 @@ bool readV3d(string path, ref Mesh mesh)
         // --- vertices (required) ---
         auto vp = "vertices" in m;
         if (vp is null || vp.type != JSONType.array) {
-            stderr.writefln("[V3D] reject: missing or non-array \"vertices\"");
+            v3dWarn("reject: missing or non-array \"vertices\"");
             return false;
         }
         Vec3[] verts;
         verts.reserve(vp.array.length);
         foreach (i, vj; vp.array) {
             if (vj.type != JSONType.array || vj.array.length < 3) {
-                stderr.writefln("[V3D] reject: vertex %d is not an [x,y,z] triple", i);
+                v3dWarn(format("reject: vertex %d is not an [x,y,z] triple", i));
                 return false;
             }
             verts ~= Vec3(jsonFloat(vj.array[0]),
@@ -199,21 +207,21 @@ bool readV3d(string path, ref Mesh mesh)
         // --- faces (required) ---
         auto fp = "faces" in m;
         if (fp is null || fp.type != JSONType.array) {
-            stderr.writefln("[V3D] reject: missing or non-array \"faces\"");
+            v3dWarn("reject: missing or non-array \"faces\"");
             return false;
         }
         uint[][] polys;
         polys.reserve(fp.array.length);
         foreach (i, fj; fp.array) {
             if (fj.type != JSONType.array) {
-                stderr.writefln("[V3D] reject: face %d is not an array", i);
+                v3dWarn(format("reject: face %d is not an array", i));
                 return false;
             }
             uint[] face;
             face.reserve(fj.array.length);
             foreach (ij; fj.array) {
                 if (ij.type != JSONType.integer && ij.type != JSONType.uinteger) {
-                    stderr.writefln("[V3D] reject: face %d has a non-integer index", i);
+                    v3dWarn(format("reject: face %d has a non-integer index", i));
                     return false;
                 }
                 // std.json parses integer literals >= 2^63 as uinteger; reading
@@ -231,11 +239,11 @@ bool readV3d(string path, ref Mesh mesh)
         }
 
         if (verts.length == 0) {
-            stderr.writefln("[V3D] reject: no vertices");
+            v3dWarn("reject: no vertices");
             return false;
         }
         if (polys.length == 0) {
-            stderr.writefln("[V3D] reject: no polygons");
+            v3dWarn("reject: no polygons");
             return false;
         }
 
@@ -244,8 +252,8 @@ bool readV3d(string path, ref Mesh mesh)
         foreach (fi, face; polys)
             foreach (idx; face)
                 if (idx >= nv) {
-                    stderr.writefln("[V3D] reject: face %d references vertex %d "
-                                    ~ "(only %d verts)", fi, idx, nv);
+                    v3dWarn(format("reject: face %d references vertex %d "
+                                    ~ "(only %d verts)", fi, idx, nv));
                     return false;
                 }
 
@@ -259,7 +267,7 @@ bool readV3d(string path, ref Mesh mesh)
                 foreach (bj; sp.array)
                     faceSubpatch ~= (bj.type == JSONType.true_);
             } else {
-                stderr.writefln("[V3D] ignoring non-array \"faceSubpatch\"");
+                v3dWarn("ignoring non-array \"faceSubpatch\"");
             }
         }
 
@@ -277,7 +285,7 @@ bool readV3d(string path, ref Mesh mesh)
                         faceMaterial ~= 0u;
                 }
             } else {
-                stderr.writefln("[V3D] ignoring non-array \"faceMaterial\"");
+                v3dWarn("ignoring non-array \"faceMaterial\"");
             }
         }
 
@@ -303,7 +311,7 @@ bool readV3d(string path, ref Mesh mesh)
                     surfaces ~= s;
                 }
             } else {
-                stderr.writefln("[V3D] ignoring non-array \"surfaces\"");
+                v3dWarn("ignoring non-array \"surfaces\"");
             }
         }
 
@@ -331,16 +339,16 @@ bool readV3d(string path, ref Mesh mesh)
         foreach (fi; 0 .. mesh.faces.length)
             mesh.faceMaterial[fi] = (fi < faceMaterial.length) ? faceMaterial[fi] : 0u;
 
-        stderr.writefln("[V3D] mesh ready: %d verts, %d edges, %d faces, "
+        v3dInfo(format("mesh ready: %d verts, %d edges, %d faces, "
                         ~ "%d marked subpatch, %d surfaces",
                         mesh.vertices.length, mesh.edges.length,
-                        mesh.faces.length, subpatchCount, mesh.surfaces.length);
+                        mesh.faces.length, subpatchCount, mesh.surfaces.length));
         return true;
     } catch (JSONException e) {
         // Backstop for any typed std.json access not guarded above. mesh is
         // only mutated at the commit step (after all rejects), so on a throw
         // before commit the caller's mesh is left intact.
-        stderr.writefln("[V3D] reject: malformed JSON structure: %s", e.msg);
+        v3dWarn(format("reject: malformed JSON structure: %s", e.msg));
         return false;
     }
 }

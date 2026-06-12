@@ -18,6 +18,7 @@ import perf_probe : g_perf;
 import bindbc.sdl;
 import eventlog;
 import argstring : parseArgstring, ParsedLine;
+import log : logInfo, logWarn, logError;
 
 /**
  * Simple HTTP server implementation for D applications
@@ -476,18 +477,19 @@ class HttpServer {
      */
     public void start() {
         if (isRunning) {
-            stderr.writeln("Server is already running");
+            logWarn("http", "Server is already running");
             return;
         }
 
         serverThread = new Thread({
+            import std.format : format;
             try {
                 serverSocket = new TcpSocket();
                 serverSocket.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, 1);
                 serverSocket.bind(new InternetAddress(port));
                 serverSocket.listen(10);
 
-                stderr.writeln("HTTP server started on port ", port);
+                logInfo("http", format("HTTP server started on port %d", port));
                 isRunning = true;
 
                 while (isRunning) {
@@ -496,12 +498,12 @@ class HttpServer {
                         handleClient(clientSocket);
                     } catch (Exception e) {
                         if (isRunning) {
-                            stderr.writeln("Error accepting client: ", e.msg);
+                            logWarn("http", "Error accepting client: " ~ e.msg);
                         }
                     }
                 }
             } catch (Exception e) {
-                stderr.writeln("Error starting server: ", e.msg);
+                logError("http", "Error starting server: " ~ e.msg);
             }
         });
 
@@ -513,7 +515,7 @@ class HttpServer {
      */
     public void stop() {
         if (!isRunning) {
-            stderr.writeln("Server is not running");
+            logWarn("http", "Server is not running");
             return;
         }
 
@@ -536,7 +538,7 @@ class HttpServer {
             serverThread.join();
         }
 
-        stderr.writeln("HTTP server stopped");
+        logInfo("http", "HTTP server stopped");
     }
 
     /**
@@ -567,7 +569,7 @@ class HttpServer {
             if (raw.length == 0) return;
 
             string headerPart = cast(string)raw[0 .. headerEnd].idup;
-            stderr.writeln("Received request: ", headerPart.split("\n")[0]);
+            logInfo("http", "Received request: " ~ headerPart.split("\n")[0]);
 
             // Parse Content-Length from headers
             size_t contentLength = 0;
@@ -592,7 +594,7 @@ class HttpServer {
             string responseStr = formatResponse(response);
             client.send(responseStr);
         } catch (Exception e) {
-            stderr.writeln("Error handling client: ", e.msg);
+            logWarn("http", "Error handling client: " ~ e.msg);
         } finally {
             client.close();
         }
