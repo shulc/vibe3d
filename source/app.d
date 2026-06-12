@@ -3362,6 +3362,13 @@ void main(string[] args) {
         history.recordCoalescing(cmd);
     }
 
+    // Forward-declared here (before the mouse handlers that capture it) and
+    // assigned after pickVertices / pickEdges / pickFaces are defined further
+    // down. handleMouseButtonDown / handleMouseMotion call it to pick at the
+    // cursor immediately on press and on each drag motion; at call time the
+    // delegate is bound.
+    void delegate(int mx, int my) doSelectPickAt;
+
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         // Viewport click → drop ImGui keyboard focus. The viewport is
         // raw OpenGL drawn under ImGui, so SDL clicks here don't reach
@@ -3452,6 +3459,23 @@ void main(string[] args) {
             }
             lastMouseX = btn.x;
             lastMouseY = btn.y;
+
+            // Pick immediately on press for select clicks. A stationary
+            // click (button pressed and released with no intervening motion
+            // event) otherwise relies on a render frame landing during the
+            // brief hold to run the per-frame picker (pickEdges, line ~5597).
+            // A CPU-starved host can skip that frame — under CI `-j $(nproc)`
+            // the trailing shift+click in selection_edges_add.log occasionally
+            // failed to add its edge ("expected 3 selected edges, got 2").
+            // Drags already pick per motion event (see handleMouseMotion);
+            // this makes the zero-motion case just as deterministic. selectEdge
+            // / deselectEdge are idempotent, so a later hold-frame pick of the
+            // same element is harmless.
+            if ((dragMode == DragMode.Select
+              || dragMode == DragMode.SelectAdd
+              || dragMode == DragMode.SelectRemove)
+                && doSelectPickAt !is null)
+                doSelectPickAt(btn.x, btn.y);
         }
     }
 
@@ -3689,11 +3713,6 @@ void main(string[] args) {
         if (wheel.y == 0) return;
         cameraView.zoom(wheel.y * 10);
     }
-
-    // Delegate is forward-declared here and assigned after pickVertices /
-    // pickEdges / pickFaces are defined further down. handleMouseMotion
-    // captures it by reference; at call time the delegate is bound.
-    void delegate(int mx, int my) doSelectPickAt;
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
         // Keep the queryMouse override in lockstep with the latest motion
