@@ -1,0 +1,381 @@
+// User-preference persistence: a single, flat, versioned JSON file in the
+// user config directory that survives across sessions. One app, one file —
+// no plugin ABI, no registered-client atom tree; the goal is simply "state
+// persists across sessions in one user config file".
+//
+// What persists (schema v1): the main window size, a recent-files MRU list,
+// the last directory used in a file dialog, and sticky tool-option defaults
+// keyed by preset id. Camera / view / edit-mode / per-document state are
+// deliberately NOT persisted here (see doc).
+//
+// Format follows io/native.d: versioned (`version` key), tolerant `parseJSON`
+// read with `JSONException` handling, JSON write. std.json — NOT dyaml (dyaml
+// is load-only in this project; prefs is machine-written + machine-read).
+//
+// Threading: main-thread only, same stance as io/doc_state.d. There is no
+// cross-thread access — the menu, the file commands and the app shutdown all
+// run on the main thread.
+//
+// Concurrency across instances: last writer wins. Accepted for a single-user
+// desktop app in v1.
+//
+// Reader durability: loadPrefs NEVER throws. Missing file → defaults;
+// malformed JSON → logWarn("prefs", …) + defaults; unknown keys ignored; a
+// `version` greater than we know → best-effort read of recognized keys.
+module prefs;
+
+import std.json   : JSONValue, JSONType, parseJSON, JSONException;
+import std.file   : exists, read, write, mkdirRecurse;
+import std.path   : buildPath, absolutePath;
+import std.process : environment;
+import std.format : format;
+
+import log : logWarn;
+
+// ---------------------------------------------------------------------------
+// Schema
+// ---------------------------------------------------------------------------
+
+/// The schema version the writer emits and the highest the reader fully
+/// understands. A file written by a newer vibe3d (higher `version`) is read
+/// best-effort: recognized keys only.
+enum int kPrefsVersion = 1;
+
+/// Cap on the recent-files MRU list.
+enum size_t kRecentFilesMax = 10;
+
+/// Persisted user preferences (schema v1). Field order mirrors the JSON
+/// shape: `version`, `window`, `recentFiles`, `lastDir`, `toolDefaults`.
+struct Prefs {
+    /// Schema version of the loaded document (kPrefsVersion for a fresh struct).
+    int version_ = kPrefsVersion;
+
+    /// Main window size in EXACT physical pixels (already post-uiScale). 0/0
+    /// means "unset" — the app falls back to its default + uiScale growth.
+    struct Window { int w; int h; }
+    Window window;
+
+    /// Most-recently-used file paths, newest first, absolute, capped at
+    /// kRecentFilesMax.
+    string[] recentFiles;
+
+    /// Last directory used in a file dialog (absolute), seeded into the next
+    /// dialog's defaultPath.
+    string lastDir;
+
+    /// Sticky tool-option defaults: presetId -> (attrName -> value-string).
+    /// Captured on clean tool drop, re-applied at activation so they override
+    /// config/tool_presets.yaml. TOOL-LEVEL attrs only — never pipe-stage.
+    string[string][string] toolDefaults;
+}
+
+/// Module-level live preferences. Loaded once at startup, mutated by the
+/// note* helpers + sticky-default capture, written at clean shutdown.
+__gshared Prefs g_prefs;
+
+// ---------------------------------------------------------------------------
+// File location
+// ---------------------------------------------------------------------------
+
+/// The directory holding `prefs.json`. Resolution order:
+///   1. $VIBE3D_CONFIG_DIR  (tests, multi-instance debugging — highest)
+///   2. platform user-config dir + "/vibe3d"
+/// Only Linux is exercised in v1; the macOS / Windows branches compile but
+/// are stubs.
+string prefsDir() {
+    if (auto over = environment.get("VIBE3D_CONFIG_DIR"))
+        if (over.length > 0) return over;
+
+    version (OSX) {
+        // ~/Library/Application Support/vibe3d
+        const home = environment.get("HOME", "");
+        return buildPath(home, "Library", "Application Support", "vibe3d");
+    } else version (Windows) {
+        // %APPDATA%\vibe3d
+        const appData = environment.get("APPDATA", "");
+        return buildPath(appData, "vibe3d");
+    } else {
+        // Linux / other POSIX: $XDG_CONFIG_HOME/vibe3d else ~/.config/vibe3d
+        if (auto xdg = environment.get("XDG_CONFIG_HOME"))
+            if (xdg.length > 0) return buildPath(xdg, "vibe3d");
+        const home = environment.get("HOME", "");
+        return buildPath(home, ".config", "vibe3d");
+    }
+}
+
+private string prefsFilePath(string dir) { return buildPath(dir, "prefs.json"); }
+
+// ---------------------------------------------------------------------------
+// Read
+// ---------------------------------------------------------------------------
+
+/// Load preferences from `dir`/prefs.json into a Prefs struct. NEVER throws:
+/// missing file → defaults; malformed JSON → logWarn + defaults; unknown keys
+/// ignored; a higher `version` is read best-effort (recognized keys only).
+/// The explicit `dir` lets unittests inject a tempDir without touching
+/// ~/.config; the `loadPrefs()` wrapper uses `prefsDir()`.
+Prefs loadPrefs(string dir) {
+    Prefs p;  // defaults
+    const path = prefsFilePath(dir);
+
+    if (!exists(path)) return p;
+
+    JSONValue doc;
+    try {
+        doc = parseJSON(cast(string) read(path));
+    } catch (JSONException e) {
+        logWarn("prefs", format("malformed prefs.json, using defaults: %s", e.msg));
+        return p;
+    } catch (Exception e) {
+        logWarn("prefs", format("could not read prefs.json, using defaults: %s", e.msg));
+        return p;
+    }
+
+    if (doc.type != JSONType.object) {
+        logWarn("prefs", "prefs.json top-level value is not an object, using defaults");
+        return p;
+    }
+
+    // Any unguarded typed std.json access below (e.g. .integer on a value
+    // std.json stored as uinteger) throws JSONException. Wrap the whole
+    // field-extraction body so a hand-mangled file degrades to whatever was
+    // parsed so far rather than crashing startup. Each block is independently
+    // tolerant; this is the structural backstop.
+    try {
+        if (auto vp = "version" in doc)
+            if (vp.type == JSONType.integer) p.version_ = cast(int) vp.integer;
+
+        if (auto wp = "window" in doc)
+            if (wp.type == JSONType.object) {
+                if (auto a = "w" in *wp) if (a.type == JSONType.integer) p.window.w = cast(int) a.integer;
+                if (auto a = "h" in *wp) if (a.type == JSONType.integer) p.window.h = cast(int) a.integer;
+            }
+
+        if (auto rp = "recentFiles" in doc)
+            if (rp.type == JSONType.array)
+                foreach (ref e; rp.array)
+                    if (e.type == JSONType.string) {
+                        if (p.recentFiles.length >= kRecentFilesMax) break;
+                        p.recentFiles ~= e.str;
+                    }
+
+        if (auto lp = "lastDir" in doc)
+            if (lp.type == JSONType.string) p.lastDir = lp.str;
+
+        if (auto tp = "toolDefaults" in doc)
+            if (tp.type == JSONType.object)
+                foreach (presetId, attrsJson; tp.object)
+                    if (attrsJson.type == JSONType.object) {
+                        string[string] attrs;
+                        foreach (attrName, valJson; attrsJson.object)
+                            if (valJson.type == JSONType.string)
+                                attrs[attrName] = valJson.str;
+                        if (attrs.length > 0) p.toolDefaults[presetId] = attrs;
+                    }
+    } catch (JSONException e) {
+        logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
+    }
+
+    return p;
+}
+
+// ---------------------------------------------------------------------------
+// Write
+// ---------------------------------------------------------------------------
+
+/// Serialize `p` to `dir`/prefs.json (creating `dir` if needed). The `dir`
+/// param lets unittests target a tempDir; the `savePrefs()` wrapper uses
+/// `prefsDir()`. Always writes `version: kPrefsVersion` (the writer's schema).
+/// Throws only on filesystem failure (caller at shutdown swallows — a failed
+/// save is non-fatal).
+void savePrefs(ref const Prefs p, string dir) {
+    JSONValue doc = JSONValue(cast(JSONValue[string]) null);
+    doc["version"] = JSONValue(kPrefsVersion);
+
+    JSONValue win = JSONValue(cast(JSONValue[string]) null);
+    win["w"] = JSONValue(p.window.w);
+    win["h"] = JSONValue(p.window.h);
+    doc["window"] = win;
+
+    JSONValue[] recent;
+    foreach (f; p.recentFiles) recent ~= JSONValue(f);
+    doc["recentFiles"] = JSONValue(recent);
+
+    doc["lastDir"] = JSONValue(p.lastDir);
+
+    JSONValue td = JSONValue(cast(JSONValue[string]) null);
+    foreach (presetId, attrs; p.toolDefaults) {
+        JSONValue av = JSONValue(cast(JSONValue[string]) null);
+        foreach (k, v; attrs) av[k] = JSONValue(v);
+        td[presetId] = av;
+    }
+    doc["toolDefaults"] = td;
+
+    mkdirRecurse(dir);
+    write(prefsFilePath(dir), doc.toPrettyString());
+}
+
+// ---------------------------------------------------------------------------
+// Global-state wrappers (use prefsDir())
+// ---------------------------------------------------------------------------
+
+/// Load `g_prefs` from the resolved user-config dir. Wrapper over
+/// `loadPrefs(prefsDir())`.
+void loadPrefs() { g_prefs = loadPrefs(prefsDir()); }
+
+/// Write `g_prefs` to the resolved user-config dir. Wrapper over
+/// `savePrefs(g_prefs, prefsDir())`.
+void savePrefs() { savePrefs(g_prefs, prefsDir()); }
+
+// ---------------------------------------------------------------------------
+// Mutators (main-thread only)
+// ---------------------------------------------------------------------------
+
+/// MRU-push `path` onto g_prefs.recentFiles: store the absolute path, dedupe
+/// (an existing entry moves to the front), cap at kRecentFilesMax.
+void prefsNoteRecentFile(string path) {
+    if (path.length == 0) return;
+    string abs;
+    try abs = absolutePath(path);
+    catch (Exception) abs = path;
+
+    // Dedupe: drop any existing occurrence, then prepend.
+    string[] kept;
+    foreach (f; g_prefs.recentFiles)
+        if (f != abs) kept ~= f;
+    g_prefs.recentFiles = abs ~ kept;
+    if (g_prefs.recentFiles.length > kRecentFilesMax)
+        g_prefs.recentFiles = g_prefs.recentFiles[0 .. kRecentFilesMax];
+}
+
+/// Record `path`'s directory as the last-used dialog directory (absolute).
+/// Accepts either a directory or a file path — callers pass dirName(chosen).
+void prefsNoteLastDir(string path) {
+    if (path.length == 0) return;
+    try g_prefs.lastDir = absolutePath(path);
+    catch (Exception) g_prefs.lastDir = path;
+}
+
+// ---------------------------------------------------------------------------
+// Unittests — injected tempDir; NEVER touch ~/.config.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    import std.file : tempDir, rmdirRecurse, mkdirRecurse;
+    import std.path : buildPath;
+
+    // A fresh, unique scratch dir per test, cleaned on scope exit.
+    private string makeScratch(string tag) {
+        import std.random : uniform;
+        auto d = buildPath(tempDir(), format("vibe3d_prefs_ut_%s_%d", tag, uniform(0, int.max)));
+        mkdirRecurse(d);
+        return d;
+    }
+
+    // try/catch can't sit directly inside a scope(exit); call this instead.
+    private void cleanScratch(string dir) nothrow {
+        try rmdirRecurse(dir); catch (Exception) {}
+    }
+}
+
+// round-trip: a fully populated Prefs serializes and parses back identically.
+unittest {
+    auto dir = makeScratch("roundtrip");
+    scope(exit) cleanScratch(dir);
+
+    Prefs p;
+    p.window = Prefs.Window(1426, 966);
+    p.recentFiles = ["/abs/a.v3d", "/abs/b.obj"];
+    p.lastDir = "/abs/dir";
+    p.toolDefaults["bevel"] = ["width": "0.25", "segments": "4"];
+
+    savePrefs(p, dir);
+    auto q = loadPrefs(dir);
+
+    assert(q.version_ == kPrefsVersion);
+    assert(q.window.w == 1426 && q.window.h == 966);
+    assert(q.recentFiles == ["/abs/a.v3d", "/abs/b.obj"]);
+    assert(q.lastDir == "/abs/dir");
+    assert(q.toolDefaults["bevel"]["width"] == "0.25");
+    assert(q.toolDefaults["bevel"]["segments"] == "4");
+}
+
+// missing file → defaults, no throw.
+unittest {
+    auto dir = makeScratch("missing");
+    scope(exit) cleanScratch(dir);
+    // No prefs.json written.
+    auto p = loadPrefs(dir);
+    assert(p.version_ == kPrefsVersion);
+    assert(p.window.w == 0 && p.window.h == 0);
+    assert(p.recentFiles.length == 0);
+    assert(p.lastDir.length == 0);
+    assert(p.toolDefaults.length == 0);
+}
+
+// malformed JSON → defaults, no throw.
+unittest {
+    auto dir = makeScratch("malformed");
+    scope(exit) cleanScratch(dir);
+    write(buildPath(dir, "prefs.json"), "{ this is not valid json ]]");
+    auto p = loadPrefs(dir);   // must not throw
+    assert(p.window.w == 0 && p.window.h == 0);
+    assert(p.recentFiles.length == 0);
+}
+
+// non-object top level → defaults.
+unittest {
+    auto dir = makeScratch("nonobject");
+    scope(exit) cleanScratch(dir);
+    write(buildPath(dir, "prefs.json"), "[1,2,3]");
+    auto p = loadPrefs(dir);
+    assert(p.window.w == 0 && p.recentFiles.length == 0);
+}
+
+// unknown keys are ignored; recognized keys still read.
+unittest {
+    auto dir = makeScratch("unknown");
+    scope(exit) cleanScratch(dir);
+    write(buildPath(dir, "prefs.json"),
+        `{ "version": 1, "window": {"w": 800, "h": 600},
+           "futureKey": {"nested": true}, "anotherUnknown": [1,2,3],
+           "lastDir": "/x" }`);
+    auto p = loadPrefs(dir);
+    assert(p.window.w == 800 && p.window.h == 600);
+    assert(p.lastDir == "/x");
+}
+
+// a higher `version` is tolerated: recognized keys read best-effort.
+unittest {
+    auto dir = makeScratch("future");
+    scope(exit) cleanScratch(dir);
+    write(buildPath(dir, "prefs.json"),
+        format(`{ "version": %d, "window": {"w": 1024, "h": 768},
+                  "recentFiles": ["/r.v3d"] }`, kPrefsVersion + 99));
+    auto p = loadPrefs(dir);
+    assert(p.version_ == kPrefsVersion + 99);
+    assert(p.window.w == 1024 && p.window.h == 768);
+    assert(p.recentFiles == ["/r.v3d"]);
+}
+
+// MRU dedupe (existing entry moves to front) + cap at kRecentFilesMax.
+unittest {
+    // Operate on the global through the note helper; reset around the test.
+    auto saved = g_prefs;
+    scope(exit) g_prefs = saved;
+    g_prefs = Prefs.init;
+
+    // Absolute paths so dedupe compares stably (the helper absolutePath()s).
+    prefsNoteRecentFile("/abs/a.v3d");
+    prefsNoteRecentFile("/abs/b.v3d");
+    prefsNoteRecentFile("/abs/a.v3d");   // dedupe → a moves to front
+    assert(g_prefs.recentFiles == ["/abs/a.v3d", "/abs/b.v3d"]);
+
+    // Cap: push more than the limit; oldest fall off the tail.
+    g_prefs.recentFiles = null;
+    foreach (i; 0 .. kRecentFilesMax + 5)
+        prefsNoteRecentFile(format("/abs/f%d.v3d", i));
+    assert(g_prefs.recentFiles.length == kRecentFilesMax);
+    // Newest push is at the front.
+    assert(g_prefs.recentFiles[0] == format("/abs/f%d.v3d", kRecentFilesMax + 4));
+}

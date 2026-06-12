@@ -6,7 +6,9 @@ import std.json : JSONValue;
 import registry         : Registry;
 import tool             : Tool, ToolFlag;
 import toolpipe.pipeline : g_pipeCtx;
+import toolpipe.stage   : parseInto;
 import params : Param, injectParamsInto;
+import prefs  : g_prefs;
 
 // ---------------------------------------------------------------------------
 // Tool presets — declarative `<base tool> + <per-pipe-stage attrs>` bundles.
@@ -163,6 +165,26 @@ private void applyToolAttrs(Tool t, string[string] attrs, string presetId) {
     }
 }
 
+// Apply the user's sticky tool-option defaults (persisted in prefs under this
+// preset id) onto a freshly built tool, AFTER the preset's YAML attrs — so a
+// sticky value overrides config/tool_presets.yaml (that is the point). Each
+// stored value is a wire string re-applied through the same parseInto path the
+// stage attr setter uses. Unknown attrs (a stale prefs entry naming a param the
+// tool no longer exposes) are skipped silently — never throws, so a stale
+// prefs file can't block tool activation. Inert when no sticky entry exists.
+private void applyStickyToolDefaults(Tool t, string presetId) {
+    auto sticky = presetId in g_prefs.toolDefaults;
+    if (sticky is null) return;
+    auto schema = t.params();
+    foreach (name, valueStr; *sticky) {
+        foreach (ref p; schema)
+            if (p.name == name) {
+                if (parseInto(p, valueStr)) t.onParamChanged(name);
+                break;
+            }
+    }
+}
+
 /// Register every preset as a factory + preActivate hook in `reg`.
 /// The factory just constructs the base tool (pure — no toolpipe
 /// mutation); the preActivate hook applies the preset's pipe attrs
@@ -193,6 +215,8 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 t.presetFlags = presetCopy.flags;
                 if (presetCopy.toolAttrs.length > 0)
                     applyToolAttrs(t, presetCopy.toolAttrs, presetCopy.id);
+                // Sticky user defaults override the YAML attrs above.
+                applyStickyToolDefaults(t, presetCopy.id);
                 return t;
             };
         }
