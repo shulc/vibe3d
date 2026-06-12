@@ -35,14 +35,15 @@ struct FormatInfo {
 }
 
 /// The registry. Order is the order the formats appear in dialogs and
-/// menus. FBX is import-only (B4: FBX export is deferred/fragile).
+/// menus. FBX now exports too (binary "fbx"); see io.scene_export for the
+/// unit-scale handling that keeps our export->import round-trip in meters.
 immutable FormatInfo[] formats = [
     FormatInfo(".v3d",  "vibe3d Document",   FormatKind.native,    true,  true,  ""),
     FormatInfo(".lwo",  "LightWave Object",  FormatKind.lwoNative, true,  true,  ""),
     FormatInfo(".obj",  "Wavefront OBJ",     FormatKind.assimp,    true,  true,  "obj"),
     FormatInfo(".gltf", "glTF",              FormatKind.assimp,    true,  true,  "gltf2"),
     FormatInfo(".glb",  "glTF Binary",       FormatKind.assimp,    true,  true,  "glb2"),
-    FormatInfo(".fbx",  "FBX",               FormatKind.assimp,    true,  false, ""),
+    FormatInfo(".fbx",  "FBX",               FormatKind.assimp,    true,  true,  "fbx"),
 ];
 
 /// Normalize an arbitrary path/extension to a lowercase dot-prefixed

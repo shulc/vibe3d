@@ -69,7 +69,7 @@ bool exportViaAssimp(ref const Mesh mesh, string path, string formatId) {
     // --- build the aiScene from GC-allocated, locally-rooted storage ---
     // Every array / struct below is held in a local that outlives the
     // aiExportScene call (see module header on GC-liveness).
-    SceneStorage st = buildScene(mesh);
+    SceneStorage st = buildScene(mesh, unitScaleFor(formatId));
 
     const aiReturn rc = aiExportScene(
         st.scene, formatId.toStringz, path.toStringz, 0u);
@@ -119,6 +119,41 @@ private void logSupportedFormats(string requested) {
 }
 
 // ---------------------------------------------------------------------------
+// unit normalization (FBX is centimetre-based; OBJ/glTF are unit=1)
+// ---------------------------------------------------------------------------
+
+/// Geometry scale to apply to exported vertex positions for `formatId`.
+///
+/// FBX convention: an FBX file carries a `UnitScaleFactor` in its global
+/// metadata, and the de-facto unit for FBX produced by every major DCC
+/// (Blender / Maya / Unreal) is the CENTIMETRE. assimp's FBX *exporter*
+/// likewise writes into a centimetre unit context but does NOT rescale the
+/// geometry we hand it — it copies our metre-space vertices verbatim into a
+/// file that *declares* centimetres. So a 1 m cube (±0.5) would land as a file
+/// claiming a ±0.5 cm model: ANY cm-honouring reader (Blender/Maya/Unreal) sees
+/// a 1 cm cube, and our own importer — which runs aiProcess_GlobalScale and
+/// honours the declared cm unit — shrinks it ×0.01 back to ±0.005 (the observed
+/// ×100 round-trip discrepancy).
+///
+/// The conventional, correct fix every DCC uses: scale geometry metres→cm (×100)
+/// on FBX export, so the WRITTEN values match the cm unit the file declares.
+/// Then external cm-readers get the right real-world size, and our import
+/// (×0.01 via GlobalScale) round-trips exactly (×100 export · ×0.01 import = 1).
+/// This is unit normalization, not a geometry hack, and is localized to the FBX
+/// export path only — OBJ/glTF declare unit=1 and already round-trip exact, so
+/// they get ×1.
+///
+/// NOTE (long-term): the cleaner fix is to have assimp *declare metres* via an
+/// export property (Exporter::SetPropertyFloat AI_CONFIG_GLOBAL_SCALE / a
+/// hypothetical `aiExportSceneWithProperties`), so no geometry rescale is
+/// needed. The bindbc-assimp6 C binding exposes no export-property API today
+/// (only aiExportScene), so the ×100 cm normalization here is the correct
+/// behaviour until that binding/upstream work lands.
+private double unitScaleFor(string formatId) {
+    return (formatId == "fbx" || formatId == "fbxa") ? 100.0 : 1.0;
+}
+
+// ---------------------------------------------------------------------------
 // aiScene construction
 // ---------------------------------------------------------------------------
 
@@ -149,7 +184,11 @@ private struct SceneStorage {
 
 /// Build a single-mesh aiScene mirroring `mesh`. All storage lives in the
 /// returned `SceneStorage`; the embedded `aiScene` references into it.
-private SceneStorage buildScene(ref const Mesh mesh) {
+///
+/// `unitScale` rescales the exported vertex positions for the target format's
+/// unit convention (see `unitScaleFor`): 100.0 for FBX (metres→centimetres),
+/// 1.0 for OBJ/glTF.
+private SceneStorage buildScene(ref const Mesh mesh, double unitScale) {
     SceneStorage st;
 
     // Heap-allocate every aggregate assimp dereferences by address, so the
@@ -160,10 +199,13 @@ private SceneStorage buildScene(ref const Mesh mesh) {
     st.material = new aiMaterial;
     st.nameProp = new aiMaterialProperty;
 
-    // --- vertices: verbatim copy, no flip (B3) ---
+    // --- vertices: verbatim copy, no flip (B3), scaled to the format unit ---
+    // unitScale is 1.0 for OBJ/glTF (unit=1) and 100.0 for FBX (metres→cm) so
+    // the written values match the cm unit the FBX file declares.
+    const float s = cast(float) unitScale;
     st.verts.length = mesh.vertices.length;
     foreach (i, v; mesh.vertices)
-        st.verts[i] = aiVector3D(v.x, v.y, v.z);
+        st.verts[i] = aiVector3D(v.x * s, v.y * s, v.z * s);
 
     // --- faces: one aiFace per polygon, native arity (A3) ---
     // Drop degenerate faces (<3 verts) — mirrors the importer/native policy and

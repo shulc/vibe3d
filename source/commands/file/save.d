@@ -98,8 +98,7 @@ class FileSave : Command {
         // Dispatch by extension via the format registry (single source of
         // truth — see io.formats). Native .v3d and unknown / non-exportable
         // rows fall back to writeV3d; .lwo uses our clean-room writer; assimp
-        // rows take the registry's exporter id (B4: FBX write is deferred,
-        // so the .fbx row is non-exportable and lands in the default).
+        // rows (obj/gltf/glb/fbx) take the registry's exporter id.
         const ext = extension(path).toLower;
         const fi  = formatFor(ext);
         if (fi !is null && fi.kind == FormatKind.lwoNative) {
