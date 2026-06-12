@@ -1,100 +1,12 @@
 module lwo;
 
-import std.stdio     : File, stderr, writefln;
+import std.stdio     : stderr, writefln;
 import std.file      : read, exists, getSize;
 import std.exception : enforce;
 import std.algorithm : min;
 
 import mesh;
 import math;
-
-// ---------------------------------------------------------------------------
-// LWO2 export
-// ---------------------------------------------------------------------------
-// Produces a minimal but valid LWO2 file:
-//   FORM <size> LWO2
-//     PNTS <size>          -- float32 BE x/y/z per vertex
-//     POLS <size>          -- "FACE" tag + (uint16 numVerts + VX indices) per face
-//
-// VX encoding: index < 0xFF00  →  2 bytes (uint16 BE)
-//              index >= 0xFF00 →  4 bytes (0xFF, then 3-byte index BE)
-
-void exportLWO(ref const Mesh mesh, string path)
-{
-    ubyte[] pnts;
-    foreach (v; mesh.vertices) {
-        writeF32(pnts, v.x);
-        writeF32(pnts, v.y);
-        writeF32(pnts, v.z);
-    }
-
-    ubyte[] pols;
-    writeTag(pols, "FACE");
-    foreach (face; mesh.faces) {
-        writeU16(pols, cast(ushort) face.length);
-        foreach (idx; face)
-            writeVX(pols, idx);
-    }
-
-    // MG5 — Material Groups round-trip. When the mesh carries
-    // surfaces, emit TAGS + one SURF per surface + PTAG type=SURF
-    // mapping each face to its surface index. Skipped when
-    // `surfaces` is empty so the writer's output stays a pure
-    // PNTS+POLS file (back-compat with the pre-MG5 export).
-    ubyte[] tags;
-    ubyte[] ptag;
-    ubyte[][] surfChunks;
-    if (mesh.surfaces.length > 0) {
-        foreach (i, ref s; mesh.surfaces) {
-            // TAGS body: the same nul-terminated, even-padded name as the loader expects.
-            appendName(tags, s.name);
-            // One SURF chunk per surface — name + empty source + the
-            // sub-chunks we round-trip (COLR / DIFF / SPEC / GLOS / TRAN).
-            ubyte[] surfBody;
-            appendName(surfBody, s.name);
-            appendName(surfBody, "");
-            ubyte[] colrBody;
-            writeF32(colrBody, s.baseColor.x);
-            writeF32(colrBody, s.baseColor.y);
-            writeF32(colrBody, s.baseColor.z);
-            writeVX(colrBody, 0);            // envelope ref = none
-            appendSurfSubChunk(surfBody, "COLR", colrBody);
-            appendF32SubChunk(surfBody, "DIFF", s.diffuseAmount);
-            appendF32SubChunk(surfBody, "SPEC", s.specularAmount);
-            appendF32SubChunk(surfBody, "GLOS", s.glossiness);
-            appendF32SubChunk(surfBody, "TRAN", 1.0f - s.opacity);
-            surfChunks ~= surfBody;
-        }
-        writeTag(ptag, "SURF");
-        foreach (fi, _; mesh.faces) {
-            writeVX(ptag, cast(uint) fi);
-            const ushort tagIdx = (fi < mesh.faceMaterial.length)
-                ? cast(ushort) mesh.faceMaterial[fi]
-                : cast(ushort) 0;
-            writeU16(ptag, tagIdx);
-        }
-    }
-
-    // LWO2 spec ordering: TAGS before PNTS before POLS before PTAG,
-    // SURF chunks after the geometry block. Our loader doesn't
-    // enforce ordering — but Modeler does, so emit canonically.
-    ubyte[] body;
-    if (tags.length > 0) appendChunk(body, "TAGS", tags);
-    appendChunk(body, "PNTS", pnts);
-    appendChunk(body, "POLS", pols);
-    if (ptag.length > 0) appendChunk(body, "PTAG", ptag);
-    foreach (sc; surfChunks) appendChunk(body, "SURF", sc);
-
-    // FORM size = 4 bytes for "LWO2" + body length
-    ubyte[] out_;
-    writeTag(out_, "FORM");
-    writeU32(out_, cast(uint)(4 + body.length));
-    writeTag(out_, "LWO2");
-    out_ ~= body;
-
-    auto f = File(path, "wb");
-    f.rawWrite(out_);
-}
 
 // ---------------------------------------------------------------------------
 // LWO2 import
@@ -407,73 +319,6 @@ void parseSurfBody(const ubyte[] body, ref Surface surf)
         p = end;
         if (p & 1) p++;
     }
-}
-
-void writeU16(ref ubyte[] buf, ushort v) {
-    buf ~= cast(ubyte)(v >> 8);
-    buf ~= cast(ubyte)(v);
-}
-
-void writeU32(ref ubyte[] buf, uint v) {
-    buf ~= cast(ubyte)(v >> 24);
-    buf ~= cast(ubyte)(v >> 16);
-    buf ~= cast(ubyte)(v >>  8);
-    buf ~= cast(ubyte)(v);
-}
-
-void writeF32(ref ubyte[] buf, float v) {
-    writeU32(buf, *cast(uint*)&v);
-}
-
-void writeTag(ref ubyte[] buf, string tag)
-in (tag.length == 4)
-{
-    foreach (c; tag) buf ~= cast(ubyte) c;
-}
-
-// Variable-length index
-void writeVX(ref ubyte[] buf, uint idx) {
-    if (idx < 0xFF00) {
-        writeU16(buf, cast(ushort) idx);
-    } else {
-        buf ~= 0xFF;
-        buf ~= cast(ubyte)(idx >> 16);
-        buf ~= cast(ubyte)(idx >>  8);
-        buf ~= cast(ubyte)(idx);
-    }
-}
-
-void appendChunk(ref ubyte[] out_, string tag, const ubyte[] data) {
-    writeTag(out_, tag);
-    writeU32(out_, cast(uint) data.length);
-    out_ ~= data;
-    if (data.length & 1) out_ ~= 0;   // pad to even
-}
-
-/// Write a nul-terminated, even-padded string — the LWO2 S0 type used
-/// inside TAGS and at the head of SURF chunks.
-void appendName(ref ubyte[] out_, string s) {
-    foreach (c; s) out_ ~= cast(ubyte) c;
-    out_ ~= 0;
-    if (out_.length & 1) out_ ~= 0;
-}
-
-/// Append a SURF sub-chunk header (U2 size, big-endian) + body, padded
-/// to even.
-void appendSurfSubChunk(ref ubyte[] out_, string tag, const ubyte[] body) {
-    writeTag(out_, tag);
-    writeU16(out_, cast(ushort) body.length);
-    out_ ~= body;
-    if (body.length & 1) out_ ~= 0;
-}
-
-/// SURF sub-chunk holding a single F4 value + envelope-ref VX=0. Used
-/// for DIFF / SPEC / GLOS / TRAN.
-void appendF32SubChunk(ref ubyte[] out_, string tag, float v) {
-    ubyte[] body;
-    writeF32(body, v);
-    writeVX(body, 0);
-    appendSurfSubChunk(out_, tag, body);
 }
 
 ushort readU16(const ubyte[] buf, size_t off) {
