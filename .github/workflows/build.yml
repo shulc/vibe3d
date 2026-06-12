@@ -251,9 +251,6 @@ jobs:
       # WITHOUT -d-version=ReleaseBuild and left stale objects for the real
       # build to trip over.
 
-      - name: Refresh Assimp binding dependency
-        run: dub upgrade bindbc-assimp6
-
       # ---- Build ----
 
       - name: Build
@@ -392,9 +389,6 @@ jobs:
 
       # nfde is provisioned once in each runner's persistent dub cache (see the
       # note in the `build` job); the bundle scripts do a single build pass.
-
-      - name: Refresh Assimp binding dependency
-        run: dub upgrade bindbc-assimp6
 
       # `shell:` can't take a ${{ matrix.* }} expression (GitHub rejects the whole
       # workflow file), so the bundle step is split per-OS with a literal shell.
