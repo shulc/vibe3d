@@ -1,5 +1,8 @@
 module commands.file.load;
 
+import std.path : extension;
+import std.uni  : toLower;
+
 import nfde;
 
 import command;
@@ -7,6 +10,7 @@ import mesh;
 import view;
 import editmode;
 import lwo;
+import io.native : readV3d;
 import viewcache;
 import snapshot : MeshSnapshot;
 
@@ -36,11 +40,15 @@ class FileLoad : Command {
     override bool apply() {
         string path = explicitPath;
         if (path is null) {
+            // Native .v3d is the primary filter; LWO stays a secondary
+            // interchange option so existing .lwo files still open.
             version (Windows)
                 auto result = openDialog(path,
-                    [FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)]);
+                    [FilterItem(cast(const(ushort)*)"V3D"w.ptr, cast(const(ushort)*)"v3d"w.ptr),
+                     FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)]);
             else
-                auto result = openDialog(path, [FilterItem("LWO", "lwo")]);
+                auto result = openDialog(path,
+                    [FilterItem("V3D", "v3d"), FilterItem("LWO", "lwo")]);
             assert(result != Result.error, getError());
             if (path is null) return false;
         }
@@ -48,11 +56,16 @@ class FileLoad : Command {
         // whatever was open before the load. Heavy but file.load is a
         // discrete user action — paid once per load.
         snap = MeshSnapshot.capture(*mesh);
-        if (!importLWO(path, *mesh)) return false;
+        // Dispatch by extension: native .v3d vs. the LWO interchange bridge.
+        // Default (unknown / no extension) is native .v3d.
+        const bool ok = (extension(path).toLower == ".lwo")
+            ? importLWO(path, *mesh)
+            : readV3d(path, *mesh);
+        if (!ok) return false;
 
-        // importLWO has already rebuilt the mesh on a fresh struct (Mesh.init)
-        // and applied subpatch flags from PTCH chunks; grow selection arrays
-        // to match but don't clear isSubpatch.
+        // The reader has already rebuilt the mesh on a fresh struct (Mesh.init)
+        // and applied subpatch flags; grow selection arrays to match but don't
+        // clear isSubpatch.
         mesh.syncSelection();
         refreshCaches();
         return true;
