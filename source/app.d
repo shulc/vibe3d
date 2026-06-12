@@ -881,6 +881,27 @@ void main(string[] args) {
     EdgeCache edgeCache;
     edgeCache.resize(mesh.edges.length);
 
+    // Change-notification bus, Stage 2 — pick-cache subscriber state.
+    //
+    // `meshChangedFlags` accumulates the change classes the bus delivers
+    // THIS frame. The subscriber below (registered once at startup) ORs the
+    // flushed flags into it; the per-frame pick-cache invalidation block (down
+    // in the render loop, immediately after `changeBus.flush`) reads it, acts
+    // on Position / Geometry, then zeroes it for the next frame. Because the
+    // flush runs in the same frame just before that block (Design rule 2), the
+    // flag reflects exactly this frame's mesh mutations — replacing the old
+    // "invalidate every frame a tool is active" blanket sweep with precision.
+    //
+    // The subscriber is invalidate-only by the bus contract: it sets a flag
+    // and touches NOTHING else (no mesh read/mutate, no cache call). All the
+    // resize / invalidate / syncSelection work happens later on the main
+    // thread in the flag-driven block, never inside delivery.
+    uint meshChangedFlags = 0;
+    {
+        import change_bus : changeBus;
+        changeBus.onMeshChanged((uint flags) { meshChangedFlags |= flags; });
+    }
+
     // VisibilityCache (`mesh.visibleVertices`) is no longer used — the
     // lasso path that consumed it switched to `gpuSelect.elementVisibility`
     // (see `doc/lasso_gpu_pick_buffer_fix.md`). The CPU
@@ -1049,18 +1070,13 @@ void main(string[] args) {
         activeTool   = t;
         activeToolId = "";
         if (activeTool) activeTool.activate();
-        // deactivate() may have added geometry — sync selection arrays and caches.
-        mesh.syncSelection();
-        if (vertexCache.valid.length != mesh.vertices.length) {
-            vertexCache.resize(mesh.vertices.length);
-            vertexCache.invalidate();
-            faceCache.resize(mesh.vertices.length, mesh.faces.length);
-            faceCache.invalidate();
-        }
-        if (edgeCache.valid.length != mesh.edges.length) {
-            edgeCache.resize(mesh.edges.length);
-            edgeCache.invalidate();
-        }
+        // deactivate() may have added geometry. We no longer resize / invalidate
+        // / syncSelection the pick caches here (change-notification bus, Stage 2):
+        // any geometry a tool appended on deactivate went through mesh primitives
+        // that publish a Geometry change, so the per-frame bus flush drives the
+        // resize + invalidate + syncSelection in the loop's pick-cache block on
+        // the same frame (setActiveTool runs during event dispatch, before the
+        // flush). One source of truth, no duplicated resize logic.
     }
 
     // -------------------------------------------------------------------------
@@ -3636,20 +3652,12 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             activeTool.onMouseButtonUp(btn, vts);
         }
-        // When BoxTool commits a new face, resize selection + caches.
-        {
-            BoxTool bt = cast(BoxTool)activeTool;
-            if (bt !is null && bt.meshChanged) {
-                bt.meshChanged = false;
-                mesh.syncSelection();
-                vertexCache.resize(mesh.vertices.length);
-                vertexCache.invalidate();
-                faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                faceCache.invalidate();
-                edgeCache.resize(mesh.edges.length);
-                edgeCache.invalidate();
-            }
-        }
+        // When BoxTool commits a new face it appends geometry via mesh
+        // primitives (addVertex / addFace), which publish a Geometry change on
+        // the change-notification bus. The per-frame flush therefore delivers
+        // Geometry on this same frame (event dispatch precedes the flush), and
+        // the loop's pick-cache block does the resize + invalidate +
+        // syncSelection. No explicit hand-off needed here any more (Stage 2).
         if (btn.button == SDL_BUTTON_LEFT) {
             dragMode = DragMode.None;
             // LMB up — close any open selection edit session. If the LMB
@@ -5617,19 +5625,51 @@ void main(string[] args) {
             changeBus.flush(meshFlags, selDomains);
         }
 
-        // Invalidate caches when tools are active (they modify mesh).
+        // Invalidate the screen-space pick caches when the MESH actually
+        // changed this frame (change-notification bus, Stage 2). The bus
+        // flush just above OR-ed this frame's change classes into
+        // `meshChangedFlags` via the startup subscriber, so we now know
+        // precisely whether geometry moved — replacing the old blanket
+        // "invalidate every frame a tool is active" sweep (which racked up one
+        // `Cat.cacheInvalidate` sample per rendered frame of a drag even on
+        // frames where nothing moved).
+        //
+        //   • Geometry (Points|Polygons) → vertex/edge/face COUNTS changed:
+        //     resize the caches to the new mesh dimensions, re-sync the
+        //     selection arrays, invalidate, refresh the vertex cache. This
+        //     subsumes the two former synchronous resize sites — the
+        //     post-tool-deactivate blob in setActiveTool and the
+        //     BoxTool.meshChanged hand-off in handleMouseButtonUp — both of
+        //     which mutate via mesh primitives that publish Geometry, so the
+        //     flush delivers the flag on the SAME frame (event dispatch runs
+        //     before this block) and the resize lands here instead.
+        //   • Position only → coords moved, counts unchanged: just invalidate
+        //     + refresh; no resize / syncSelection needed.
+        //   • Camera-only frames keep their existing `needsUpdate(vp)`
+        //     16-float compare path (camera is not mesh state).
+        //
         // Perf (doc/perf_harness_plan.md): `cacheInvalidate` counts PER-FRAME
-        // screen-space cache invalidations, NOT per-edit. The first branch
-        // fires every frame a tool is active (the tool MAY have mutated the
-        // mesh; we cannot cheaply tell here), the second on camera-only frames
-        // that move the projection. So a long drag racks up one sample per
-        // rendered frame regardless of whether geometry actually moved — this
-        // is the cost of keeping the pick caches live during a drag, and the
-        // structurally-correct place to measure it is per frame, not per apply.
-        // No-op in the default build.
+        // invalidations; this is the structurally-correct place to measure
+        // them. No-op in the default build.
         {
+            import change_bus : MeshEditScope;
             auto zCache = g_perf.scope_(Cat.cacheInvalidate);
-            if (activeTool !is null && (vertexCache.valid.length > 0)) {
+            if (meshChangedFlags & MeshEditScope.Geometry) {
+                // Counts may have changed — match cache sizes to the mesh and
+                // re-sync selection before invalidating.
+                mesh.syncSelection();
+                if (vertexCache.valid.length != mesh.vertices.length) {
+                    vertexCache.resize(mesh.vertices.length);
+                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
+                }
+                if (edgeCache.valid.length != mesh.edges.length)
+                    edgeCache.resize(mesh.edges.length);
+                vertexCache.invalidate();
+                edgeCache.invalidate();
+                faceCache.invalidate();
+                vertexCache.update(vp);
+            } else if (meshChangedFlags & MeshEditScope.Position) {
+                // Coords moved, counts unchanged — invalidate without resize.
                 vertexCache.invalidate();
                 edgeCache.invalidate();
                 faceCache.invalidate();
@@ -5639,6 +5679,10 @@ void main(string[] args) {
                 vertexCache.update(vp);
             }
         }
+        // Consume this frame's mesh-change flags: the pick caches above are the
+        // only Stage-2 subscriber. (gpu_select / subpatch preview / render-dirty
+        // are converted in later stages and still poll their own version keys.)
+        meshChangedFlags = 0;
 
         pickVertices(vp, doingCameraDrag);
 

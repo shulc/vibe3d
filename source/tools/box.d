@@ -1888,8 +1888,6 @@ private:
     bool      paramBeforeValid;
 
 public:
-    bool meshChanged;
-
     this(Mesh* mesh, GpuMesh* gpu, LitShader litShader) {
         this.mesh      = mesh;
         this.gpu       = gpu;
@@ -1922,7 +1920,6 @@ public:
 
     override void activate() {
         state           = BoxState.Idle;
-        meshChanged     = false;
         moverDragAxis   = -1;
         edgeDragIdx     = -1;
         heightHDragIdx  = -1;
@@ -3153,7 +3150,9 @@ private:
         applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
-        meshChanged = true;
+        // buildBase appended geometry through mesh.addVertex / addFace, which
+        // publish a Geometry change on the change-notification bus; the app's
+        // per-frame flush drives the pick-cache resize. No explicit flag.
     }
 
     void setupHeightPlane() {
@@ -3191,7 +3190,9 @@ private:
         applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
         mesh.buildLoops();
         gpu.upload(*mesh);
-        meshChanged = true;
+        // buildCuboid appended geometry through mesh.addVertex / addFace, which
+        // publish a Geometry change on the change-notification bus; the app's
+        // per-frame flush drives the pick-cache resize. No explicit flag.
     }
 }
 
