@@ -7,6 +7,7 @@ import editmode;
 import viewcache;
 import math : Vec3, cross, Viewport;
 import params : Param;
+import change_bus : MeshEditScope;
 import std.math : cos;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
@@ -322,7 +323,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
             }
         }
 
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();
@@ -334,7 +335,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         if (touchedIdx.length == 0) return false;
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

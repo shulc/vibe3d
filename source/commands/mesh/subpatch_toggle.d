@@ -5,6 +5,7 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
+import change_bus : MeshEditScope;
 
 /// Mirror of the Tab-key handler in app.d: toggles isSubpatch on selected
 /// faces; if nothing is selected, inverts the flag on every face. Exposed as
@@ -59,9 +60,11 @@ class SubpatchToggle : Command, Operator {
     override bool revert() {
         if (!captured) return false;
         mesh.setFaceSubpatchFrom(origSubpatch);
-        ++mesh.mutationVersion;
-        // isSubpatch[] drives subpatch preview output topology — flag
-        // flip ⇒ topology invalidate.
+        // Marks-class flip (subpatch bit). isSubpatch[] drives subpatch preview
+        // OUTPUT topology, so we keep the topologyVersion bump explicitly
+        // (commitChange(Marks) alone bumps only mutationVersion). Counters end
+        // identical to the prior two raw lines.
+        mesh.commitChange(MeshEditScope.Marks);
         ++mesh.topologyVersion;
         return true;
     }

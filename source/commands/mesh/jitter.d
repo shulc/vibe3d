@@ -7,6 +7,7 @@ import editmode;
 import viewcache;
 import math : Vec3, Viewport;
 import params : Param;
+import change_bus : MeshEditScope;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -157,7 +158,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
             if (enableZ_) mesh.vertices[i].z += w * rangeZ_ * fw;
         }
 
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();
@@ -169,7 +170,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
         if (touchedIdx.length == 0) return false;
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

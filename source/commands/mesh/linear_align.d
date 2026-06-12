@@ -8,6 +8,7 @@ import editmode;
 import viewcache;
 import math : Vec3;
 import params : Param;
+import change_bus : MeshEditScope;
 
 import std.math : abs, sqrt;
 
@@ -112,7 +113,7 @@ class MeshLinearAlign : Command, Operator {
             mesh.vertices[i].z = centroid.z + t * axis.z;
         }
 
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();
@@ -124,7 +125,7 @@ class MeshLinearAlign : Command, Operator {
         if (touchedIdx.length == 0) return false;
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

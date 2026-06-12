@@ -8,6 +8,7 @@ import editmode;
 import viewcache;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
+import change_bus : MeshChangeAll;
 
 /// Replace the current mesh with a caller-supplied raw mesh (test-only,
 /// driven by `POST /api/load-mesh`). Mirrors `SceneReset`: snapshots the
@@ -98,6 +99,10 @@ class MeshLoadRaw : Command {
         mesh.resetSelection();
         *editModePtr = EditMode.Vertices;
         if (onResetTool !is null) onResetTool();
+        // Bulk transition: the whole mesh was REPLACED (test-only raw load) —
+        // every cache must invalidate. noteChange(All), after the `*mesh = m`
+        // swap reset the fresh struct's pending + counters to 0.
+        mesh.noteChange(MeshChangeAll);
         refreshCaches();
         return true;
     }

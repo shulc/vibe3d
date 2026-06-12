@@ -6,6 +6,7 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import params : Param;
+import change_bus : MeshEditScope;
 import view;
 import editmode;
 import viewcache;
@@ -229,7 +230,7 @@ class MeshVertexEdit : Command, Operator {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = after[i];
         }
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();
@@ -243,7 +244,7 @@ class MeshVertexEdit : Command, Operator {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = before[i];
         }
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

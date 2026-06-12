@@ -92,6 +92,7 @@ import tools.xform_kernels :
     BlendMode;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
+import change_bus : MeshEditScope;
 import perf_probe : g_perf, Cat;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
@@ -2597,6 +2598,15 @@ public:
                                      /*weightVerts=*/ baseline);
                 }
             }
+
+            // Change-notification (Stage 1): the dormant legacy per-pass /
+            // pow-scale chain also writes positions in place WITHOUT a version
+            // bump (mid-drag stability). Mirror applyFold's note so this path
+            // publishes Position too — ONE note for the whole T/R/S chain (never
+            // per pass, never per vertex). compoundPasses is 1.0 everywhere in
+            // the current tree, so this branch is dormant; the note keeps it
+            // correct if the pow path is ever re-enabled.
+            mesh.noteChange(MeshEditScope.Position);
             }  // MS-4.3 — close legacy per-pass else (per-cluster / pow-scale)
         }
 
@@ -3463,7 +3473,10 @@ public:
                 if (vid < mesh.vertices.length)
                     mesh.vertices[vid] = base[i];
             }
-            ++mesh.mutationVersion;
+            // Session cancel restores positions to the pre-edit baseline — a real
+            // version bump (not mid-drag), so commitChange (Position) reproduces
+            // the raw mutationVersion bump AND publishes the class.
+            mesh.commitChange(MeshEditScope.Position);
             gpu.upload(*mesh);
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate = false;
@@ -3843,6 +3856,16 @@ private:
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                          blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
                          clusterM, dragSymmetry, toProcess, /*weightVerts=*/ baseline);
+
+        // Change-notification (doc/change_notification_bus_plan, Stage 1): the
+        // drag apply moved positions in place WITHOUT bumping mutationVersion
+        // (mid-drag version stability is intentional — symmetry/falloff/snap
+        // caches keyed on mutationVersion must stay put). noteChange accumulates
+        // the Position class WITHOUT touching the counters, so subscribers see
+        // Position on exactly the frames geometry moved. ONE note per apply (both
+        // the global fold and the per-cluster clusterM path run through the single
+        // applyXformMatrix above) — never per vertex.
+        mesh.noteChange(MeshEditScope.Position);
     }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from

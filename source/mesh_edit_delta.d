@@ -163,7 +163,7 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsAfter;
                 haveEdgeSel = true;
             }
-        finalize(m, edgeSel, haveEdgeSel);
+        finalize(m, scope_, edgeSel, haveEdgeSel);
         return true;
     }
 
@@ -182,7 +182,7 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsBefore;
                 haveEdgeSel = true;
             }
-        finalize(m, edgeSel, haveEdgeSel);
+        finalize(m, scope_, edgeSel, haveEdgeSel);
         return true;
     }
 }
@@ -654,7 +654,8 @@ private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
 // finalize — the byte-identical tail of MeshSnapshot.restore (snapshot.d:97).
 // Re-derive edges + loops + map lengths, bump both version counters ONCE.
 // ---------------------------------------------------------------------------
-private void finalize(ref Mesh m, in uint[] edgeSelEnds = null, bool haveEdgeSel = false) {
+private void finalize(ref Mesh m, MeshEditScope scope_,
+                      in uint[] edgeSelEnds = null, bool haveEdgeSel = false) {
     // buildLoops() reads `edges` (it does NOT re-derive it), so rebuild the
     // deduplicated edge array from the restored faces FIRST — the same triplet
     // the topology mutators run, and the same canonical edge order the kernels
@@ -684,8 +685,15 @@ private void finalize(ref Mesh m, in uint[] edgeSelEnds = null, bool haveEdgeSel
         m.clearEdgeSelection();
         applyEdgeSelByEnds(m, edgeSelEnds);
     }
-    ++m.mutationVersion;
-    ++m.topologyVersion;
+    // Change-notification (Stage 1): publish the delta's own change scope so
+    // every tracked op AND its undo/redo emits its correct classes for free.
+    // commitChange(scope_) bumps mutationVersion (always) and topologyVersion
+    // (when scope_ carries a Geometry class). finalize ALWAYS rebuilds edges +
+    // loops, so it ALWAYS bumped topologyVersion before — preserve that
+    // unconditionally for the (currently impossible) non-Geometry tracked delta,
+    // keeping the counters byte-identical to the old two raw bumps.
+    m.commitChange(scope_);
+    if (!(scope_ & MeshEditScope.Geometry)) ++m.topologyVersion;
 }
 
 // Re-select the edges named by the flat vertex-index endpoint pairs

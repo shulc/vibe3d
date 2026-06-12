@@ -18,6 +18,7 @@ import io.doc_state : setCurrentDocPath;
 import io.assimp_runtime : isAssimpAvailable;
 import viewcache;
 import snapshot : MeshSnapshot;
+import change_bus : MeshChangeAll;
 
 /// How the load dialog is framed (asset-I/O Phase 6).
 ///   open         — File → Open: full "All supported" + native-primary
@@ -128,6 +129,10 @@ class FileLoad : Command {
         // and applied subpatch flags; grow selection arrays to match but don't
         // clear isSubpatch.
         mesh.syncSelection();
+        // Bulk transition: the loaded file REPLACED the whole mesh — every cache
+        // must invalidate. noteChange(All), after the reader rebuilt the mesh
+        // (the fresh struct reset pending + counters to 0).
+        mesh.noteChange(MeshChangeAll);
         refreshCaches();
         return true;
     }

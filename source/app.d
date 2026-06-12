@@ -824,6 +824,17 @@ void main(string[] args) {
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
+    // Bulk transition (change-notification bus, Stage 1): launching a recorded
+    // session (`--playback <file>`) is a fresh-scene boundary — note All once so
+    // the first frame's flush rebuilds every cache from the loaded state. (The
+    // replayed events themselves emit their own per-op classes afterward.) The
+    // HTTP /api/play-events test driver deliberately does NOT do this, so a
+    // replayed drag there stays Position-only.
+    if (playbackMode) {
+        import change_bus : MeshChangeAll;
+        mesh.noteChange(MeshChangeAll);
+    }
+
     // Subpatch preview: cached subdivision of the cage mesh, rebuilt lazily
     // when mesh.mutationVersion or depth changes. Depth is user-adjustable;
     // 3 matches LightWave default. Consumed by rendering and picking in
@@ -5575,6 +5586,32 @@ void main(string[] args) {
             import change_bus : changeBus;
             const meshFlags  = mesh.pendingChanges_;
             const selDomains = mesh.pendingSelDomains_;
+
+            // Shadow cross-check (Stage 1, debug builds only; retired in Stage
+            // 6). The bus trades blanket per-frame invalidation for precision, so
+            // a MISSED publisher (a mutation that bumped mutationVersion but
+            // forgot to noteChange/commitChange) would silently leave a stale
+            // cache. Catch it during burn-in: if mutationVersion advanced since
+            // the previous flush while NOTHING is pending, warn once-ish. Cheap
+            // (one ulong compare + a fired-flag) and compiled out of release.
+            debug {
+                import core.stdc.stdio : fprintf, stderr;
+                static ulong lastSeenMutVer = 0;
+                static bool  warnedMissedPublisher = false;
+                if (mesh.mutationVersion != lastSeenMutVer && meshFlags == 0) {
+                    if (!warnedMissedPublisher) {
+                        fprintf(stderr,
+                            "change_bus: MISSED PUBLISHER — mutationVersion " ~
+                            "advanced (%llu) with no pending change flags; a " ~
+                            "mutation site bumped the version but did not " ~
+                            "noteChange/commitChange.\n",
+                            cast(ulong)mesh.mutationVersion);
+                        warnedMissedPublisher = true;
+                    }
+                }
+                lastSeenMutVer = mesh.mutationVersion;
+            }
+
             mesh.pendingChanges_    = 0;
             mesh.pendingSelDomains_ = 0;
             changeBus.flush(meshFlags, selDomains);
