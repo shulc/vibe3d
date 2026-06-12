@@ -251,6 +251,19 @@ jobs:
       # WITHOUT -d-version=ReleaseBuild and left stale objects for the real
       # build to trip over.
 
+      - name: Drop cached Assimp binding dependency (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
+
+      - name: Drop cached Assimp binding dependency (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
+            "$env:DUB_HOME\packages\bindbc-assimp6", `
+            "$env:DUB_HOME\cache\bindbc-assimp6"
+
       # ---- Build ----
 
       - name: Build
@@ -389,6 +402,19 @@ jobs:
 
       # nfde is provisioned once in each runner's persistent dub cache (see the
       # note in the `build` job); the bundle scripts do a single build pass.
+
+      - name: Drop cached Assimp binding dependency (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
+
+      - name: Drop cached Assimp binding dependency (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
+            "$env:DUB_HOME\packages\bindbc-assimp6", `
+            "$env:DUB_HOME\cache\bindbc-assimp6"
 
       # `shell:` can't take a ${{ matrix.* }} expression (GitHub rejects the whole
       # workflow file), so the bundle step is split per-OS with a literal shell.
