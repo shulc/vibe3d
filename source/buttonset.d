@@ -43,11 +43,16 @@ struct Action {
 //                  `ImGui.Separator`. `label` ignored.
 //   - `header`   — non-interactive bold label that titles a sub-group
 //                  of items. Drawn as `ImGui.TextDisabled`. No action.
+//   - `dynamic`  — a placeholder the renderer expands into a runtime-
+//                  generated list of rows (keyed by `dynamicKind:`).
+//                  The config can't know these rows up front — e.g.
+//                  the live stack of falloff instances. No action /
+//                  label; the renderer owns the rows it emits.
 //
 // `kind: separator` is accepted as a YAML alias of `divider` (matches
 // the term used by config/statusline.yaml's grouping plan).
 // ---------------------------------------------------------------------------
-enum PopupItemKind { action, divider, header, submenu }
+enum PopupItemKind { action, divider, header, submenu, dynamic }
 
 /// Optional state-query attached to action items — when present, the
 /// row gets a checkmark indicator if the comparison matches.
@@ -78,6 +83,9 @@ struct PopupItem {
     PopupItem[]   subItems;     // valid for submenu only — children
                                 // rendered in a child popup
                                 // (BeginMenu/EndMenu).
+    string        dynamicKind;  // valid for dynamic only — selects the
+                                // runtime row provider (e.g.
+                                // "falloffStack").
 }
 
 // One-modifier override: when the corresponding key is held, the button
@@ -431,6 +439,16 @@ private PopupItem parsePopupItem(NodeT)(NodeT itemNode, string ctxLabel,
                 pi.label, ctxLabel, path));
         return pi;
     }
+    if (kindStr == "dynamic") {
+        if (!itemNode.containsKey("dynamicKind"))
+            throw new Exception(format(
+                "buttonset: popup dynamic item #%d for '%s' ('%s') is missing 'dynamicKind'",
+                idx, ctxLabel, path));
+        pi.kind        = PopupItemKind.dynamic;
+        pi.dynamicKind = itemNode["dynamicKind"].as!string;
+        return pi;
+    }
+
     if (kindStr != "action")
         throw new Exception(format(
             "buttonset: unknown popup item kind '%s' (#%d) for '%s' in '%s'",
