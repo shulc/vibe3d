@@ -144,6 +144,16 @@ abstract class Stage : ParamProvider {
     /// for HTTP / scripts; this is purely a UI presentation hook.
     string displayName() const { return id(); }
 
+    /// Stage-family id for Tool Properties FORM lookup. Defaults to id(), so a
+    /// stage's form is found by its own id. Stages that run as multiple
+    /// same-task INSTANCES (e.g. stacked FalloffStage: "falloff", "falloff#1",
+    /// …) override this to a shared family key ("falloff") so EVERY instance
+    /// resolves the one config form; FormsPanel then filters its rows against
+    /// the live instance's params() (per-type) and the write path rebinds the
+    /// stage-namespace target to the instance's real id() (see app.d per-stage
+    /// loop + forms_render.d stageId rebind).
+    string formFamilyId() const { return id(); }
+
     /// Custom ImGui block rendered AFTER the schema-driven params()
     /// inside the stage's collapsible section in Tool Properties.
     /// Use for controls that don't fit a single Param (multi-button

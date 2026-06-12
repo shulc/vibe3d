@@ -596,3 +596,25 @@ unittest {
     auto json = parseJSON(response);
     assert("azimuth" in json, "server not responsive — forms validation may have aborted boot");
 }
+
+unittest { // rebindBindingTarget: live tool / live stage instance / literal
+    // Tool-namespace control: the canonical family id is rebound to the live
+    // tool id (move/rotate/…); stageId is irrelevant.
+    auto t = parseBinding("tool.attr xfrm.transform TX ?");
+    assert(t.namespace == Namespace.tool && t.targetId == "xfrm.transform");
+    auto tr = rebindBindingTarget(t, "move", "falloff#1");
+    assert(tr.targetId == "move" && tr.positionals[0] == "move",
+        "tool binding must rebind to the live tool, ignoring stageId");
+
+    // Stage-namespace control: the family stage id "falloff" is rebound to the
+    // live stacked-instance id; activeToolId is irrelevant.
+    auto s = parseBinding("tool.pipe.attr falloff center ?");
+    assert(s.namespace == Namespace.stage && s.targetId == "falloff");
+    auto sr = rebindBindingTarget(s, "move", "falloff#1");
+    assert(sr.targetId == "falloff#1" && sr.positionals[0] == "falloff#1",
+        "stage binding must rebind to the live instance, ignoring activeToolId");
+
+    // Empty ids → the literal target is kept (single-stage / plain callers).
+    assert(rebindBindingTarget(s, "", "").targetId == "falloff");
+    assert(rebindBindingTarget(t, "", "").targetId == "xfrm.transform");
+}

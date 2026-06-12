@@ -203,6 +203,10 @@ class FalloffStage : Stage, Operator {
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Wght; }
     override string   id()       const                          { return instanceId_; }
+    // Every falloff instance (primary "falloff" + stacked "falloff#N") resolves
+    // the SAME config form; the per-instance params() filter + the stageId write
+    // rebind make each section show/edit its own type+config.
+    override string   formFamilyId() const                      { return "falloff"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWght; }
 
     /// Is this the compat anchor (`id() == "falloff"`)? The primary is never

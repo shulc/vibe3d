@@ -117,6 +117,14 @@ class FormsPanel {
     // Empty (the default / stage-form callers) => use the line's literal id.
     private string activeToolId_;
 
+    // Live STAGE id for the frame, set by draw(). Parallel to activeToolId_ but
+    // for the stage namespace: a `tool.pipe.attr falloff <attr>` control line
+    // names the canonical family id "falloff", but the same form is shown for
+    // every stacked FalloffStage instance ("falloff", "falloff#1", …). A write
+    // must name the LIVE instance or it lands on the primary, so writeValue
+    // rebinds the stage-namespace target to this id. Empty => literal id.
+    private string stageId_;
+
     /// Render `form` for the active provider. `provider` supplies the live
     /// params() snapshot (read once at the top of this call to bound re-query
     /// cost — the plan's per-frame-cost mitigation). `dispatch` fires cmd /
@@ -125,10 +133,11 @@ class FormsPanel {
     /// activeToolId_); pass "" for stage forms (their lines name the real stage).
     void draw(ref Form form, ParamProvider provider,
               DispatchFn dispatch, InteractiveDispatchFn idispatch,
-              string activeToolId = "")
+              string activeToolId = "", string stageId = "")
     {
         if (provider is null) return;
         activeToolId_ = activeToolId;
+        stageId_      = stageId;
 
         // ---- one params() snapshot per frame -----------------------------
         // The resolver reads from this name->Param map; falloff.params()
@@ -544,12 +553,11 @@ class FormsPanel {
         // id keep the literal target. positionals[0] is the target id (the
         // tokenized form parseBinding produced); substituteQuery rebuilds the
         // line from positionals, so rewriting that slot is sufficient.
-        if (b.namespace == Namespace.tool && activeToolId_.length
-            && b.positionals.length >= 1)
-        {
-            b.positionals[0] = activeToolId_;
-            b.targetId       = activeToolId_;
-        }
+        // Rebind the namespaced target to the live tool / stage id (the form
+        // carries the canonical family id; the live one must be written). See
+        // forms.rebindBindingTarget. Tool: validateForms' active-id guard;
+        // Stage: stacked FalloffStage instances share one form.
+        b = rebindBindingTarget(b, activeToolId_, stageId_);
         // Reconstruct the command line with the value in the `?` slot, then
         // parse it back through argstring so tokenization matches the wire.
         string line = substituteQuery(b, value);
