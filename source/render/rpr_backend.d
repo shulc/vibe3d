@@ -372,15 +372,15 @@ class RPRBackend : RenderBackend
         if (firstSt && wantNonCpu) {
             // Recoverable: retry on CPU and log so the user knows the
             // dropdown choice didn't survive.
-            import std.stdio : stderr;
+            import log        : logWarn;
+            import std.format : format;
             try {
-                stderr.writefln(
-                    "[rpr] non-CPU device %s init failed (rpr_status=%d); "
+                logWarn("render", format(
+                    "rpr: non-CPU device %s init failed (rpr_status=%d); "
                     ~ "falling back to CPU. Set VIBE3D_RPR_ALLOW_GPU=1 only "
                     ~ "on AMD or HIP-on-CUDA hosts; on NVIDIA this fallback "
                     ~ "is the safe default.",
-                    cfg.device, firstSt);
-                stderr.flush();
+                    cfg.device, firstSt));
             } catch (Exception) {}
             cfg.device = "cpu";
             if (auto st = rprCreateContext(RPR_VERSION_MAJOR_MINOR_REVISION,

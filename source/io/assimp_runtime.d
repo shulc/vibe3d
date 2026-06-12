@@ -17,10 +17,11 @@ module io.assimp_runtime;
 
 import std.file   : thisExePath;
 import std.path   : dirName, buildPath;
-import std.stdio  : stderr;
+import std.format : format;
 import std.string : toStringz, fromStringz;
 
 import bindbc.assimp;
+import log : logInfo, logWarn;
 
 private bool g_loaded = false;
 
@@ -45,7 +46,7 @@ void initAssimp() nothrow {
             const v = aiGetVersionMajor();
             const mi = aiGetVersionMinor();
             const p = aiGetVersionPatch();
-            stderr.writefln("[io] libassimp %s.%s.%s linked statically", v, mi, p);
+            logInfo("io", format("libassimp %s.%s.%s linked statically", v, mi, p));
         } catch (Exception) {}
         return;
     } else {
@@ -71,8 +72,8 @@ void initAssimp() nothrow {
         return;
     }
 
-    try stderr.writeln(
-        "[io] libassimp not found — OBJ/glTF/FBX import/export disabled "
+    try logWarn("io",
+        "libassimp not found — OBJ/glTF/FBX import/export disabled "
         ~ "(native .v3d and LWO save still work)");
     catch (Exception) {}
     } // version (BindAssimp_Static) else
@@ -119,8 +120,8 @@ private void report(string origin, string path) nothrow {
         const mi = aiGetVersionMinor();
         const p = aiGetVersionPatch();
         if (path.length)
-            stderr.writefln("[io] libassimp %s.%s.%s loaded (%s: %s)", v, mi, p, origin, path);
+            logInfo("io", format("libassimp %s.%s.%s loaded (%s: %s)", v, mi, p, origin, path));
         else
-            stderr.writefln("[io] libassimp %s.%s.%s loaded (%s)", v, mi, p, origin);
+            logInfo("io", format("libassimp %s.%s.%s loaded (%s)", v, mi, p, origin));
     } catch (Exception) {}
 }

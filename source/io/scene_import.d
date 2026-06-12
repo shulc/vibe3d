@@ -45,12 +45,13 @@ module io.scene_import;
 // + aiGetMaterialString, diffuse via AI_MATKEY_COLOR_DIFFUSE + aiGetMaterialColor.
 // The same global table is placed on every part; flattenToMesh dedups by name.
 
-import std.stdio  : stderr;
 import std.string : toStringz, fromStringz;
 import std.conv   : to;
 import std.math   : abs;
+import std.format : format;
 
 import bindbc.assimp;
+import log : logWarn;
 
 import math;
 import io.scene_ir;
@@ -74,15 +75,15 @@ private enum float weldEpsilon = 1e-5f;
 /// success.
 bool importViaAssimp(string path, ref ImportedScene scene) {
     if (!isAssimpAvailable()) {
-        try stderr.writeln("[io] assimp not loaded");
+        try logWarn("io", "assimp not loaded");
         catch (Exception) {}
         return false;
     }
 
     const(aiScene)* s = aiImportFile(path.toStringz, importFlags);
     if (s is null) {
-        try stderr.writefln("[io] assimp import failed: %s",
-                            aiGetErrorString().fromStringz);
+        try logWarn("io", format("assimp import failed: %s",
+                            aiGetErrorString().fromStringz));
         catch (Exception) {}
         return false;
     }

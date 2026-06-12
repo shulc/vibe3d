@@ -37,11 +37,12 @@ module io.scene_export;
 // Once `exportViaAssimp` returns, the locals go out of scope and the GC is
 // free to reclaim everything.
 
-import std.stdio  : stderr;
 import std.string : toStringz, fromStringz;
 import std.array  : appender;
+import std.format : format;
 
 import bindbc.assimp;
+import log : logWarn;
 
 import mesh : Mesh;
 import math : Vec3;
@@ -56,7 +57,7 @@ import io.assimp_runtime : isAssimpAvailable;
 /// export itself fails.
 bool exportViaAssimp(ref const Mesh mesh, string path, string formatId) {
     if (!isAssimpAvailable()) {
-        try stderr.writeln("[io] assimp not loaded — cannot export ", path);
+        try logWarn("io", "assimp not loaded — cannot export " ~ path);
         catch (Exception) {}
         return false;
     }
@@ -77,8 +78,8 @@ bool exportViaAssimp(ref const Mesh mesh, string path, string formatId) {
     // `st` (and everything it roots) stays alive until here — past the
     // synchronous export call.
     if (rc != aiReturn.SUCCESS) {
-        try stderr.writefln("[io] assimp export failed (%s -> %s): %s",
-                            formatId, path, aiGetErrorString().fromStringz);
+        try logWarn("io", format("assimp export failed (%s -> %s): %s",
+                            formatId, path, aiGetErrorString().fromStringz));
         catch (Exception) {}
         return false;
     }
@@ -112,9 +113,9 @@ private void logSupportedFormats(string requested) {
             if (i > 0) buf.put(", ");
             buf.put(d.id.fromStringz);
         }
-        stderr.writefln(
-            "[io] export format id '%s' not supported by this libassimp; "
-            ~ "available: %s", requested, buf.data);
+        logWarn("io", format(
+            "export format id '%s' not supported by this libassimp; "
+            ~ "available: %s", requested, buf.data));
     } catch (Exception) {}
 }
 

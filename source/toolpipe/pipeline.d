@@ -225,19 +225,17 @@ public:
     /// A correctly-configured pipeline produces zero warnings, so the set
     /// stays empty in the steady state.
     private static void checkRequiredPackets(Operator op, ref const VectorStack vts) {
-        static bool[string] warned;
+        import log : logWarnOnce;
+        import std.format : format;
         foreach (kind; op.requiredPackets()) {
             if (vts.has(kind)) continue;
             const opName = typeid(op).name;
             const key = opName ~ "|" ~ kind.to!string;
-            if (key in warned) continue;
-            warned[key] = true;
-            import std.stdio : stderr;
-            stderr.writefln(
-                "[toolpipe] WARNING: operator %s requires packet %s but " ~
+            logWarnOnce("toolpipe", key, format(
+                "WARNING: operator %s requires packet %s but " ~
                 "no earlier operator produced it (and the caller did not " ~
                 "supply it). Running anyway; operator must degrade gracefully.",
-                opName, kind.to!string);
+                opName, kind.to!string));
         }
     }
 

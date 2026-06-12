@@ -866,11 +866,13 @@ private void shadowCheckMeshChanged(const(Mesh)* m, bool busSaysChanged,
     const ulong mv = m.mutationVersion;
     const bool hashChanged = (h != shadowHash) || (mv != shadowVer);
     if (hashChanged != busSaysChanged && !g_hashMismatchWarned) {
-        stderr.writefln(
-            "[ipr] RENDER_HASH_CHECK MISMATCH (%s): bus=%s hash=%s "
+        import log        : logWarn;
+        import std.format : format;
+        logWarn("render", format(
+            "ipr: RENDER_HASH_CHECK MISMATCH (%s): bus=%s hash=%s "
             ~ "(hash %x/%x ver %d/%d) — change-bus signal diverged from the "
             ~ "vertex-hash shadow.",
-            label, busSaysChanged, hashChanged, h, shadowHash, mv, shadowVer);
+            label, busSaysChanged, hashChanged, h, shadowHash, mv, shadowVer));
         g_hashMismatchWarned = true;
     }
 }

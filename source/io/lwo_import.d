@@ -1,12 +1,19 @@
 module io.lwo_import;
 
-import std.stdio     : stderr, writefln;
 import std.file      : read, exists, getSize;
 import std.algorithm : min;
+import std.format    : format;
 
 import mesh;
 import math;
 import io.scene_ir;
+import log : logWarn, logInfo;
+
+// Diagnostics for the LWO reader funnel through the "io" log subsystem; the
+// "LWO" label stays in the message body (echoed as `[io] LWO: …`). Structural
+// rejects / skips are warnings; path + progress lines are info.
+private void lwoWarn(string msg) nothrow { try logWarn("io", "LWO: " ~ msg); catch (Exception) {} }
+private void lwoInfo(string msg) nothrow { try logInfo("io", "LWO: " ~ msg); catch (Exception) {} }
 
 // ---------------------------------------------------------------------------
 // LWO2 import — our own reader, emitting an ImportedScene.
@@ -29,37 +36,37 @@ import io.scene_ir;
 /// a missing file, bad header, or no geometry. The caller's `scene` is only
 /// populated on success.
 bool sceneFromLwo(string path, ref ImportedScene scene) {
-    stderr.writefln("[LWO] sceneFromLwo: path=%s", path);
+    lwoInfo(format("sceneFromLwo: path=%s", path));
 
     if (!exists(path)) {
-        stderr.writefln("[LWO] file does not exist");
+        lwoWarn("file does not exist");
         return false;
     }
-    stderr.writefln("[LWO] file size = %d bytes", getSize(path));
+    lwoInfo(format("file size = %d bytes", getSize(path)));
 
     ubyte[] data = cast(ubyte[]) read(path);
-    stderr.writefln("[LWO] read %d bytes", data.length);
+    lwoInfo(format("read %d bytes", data.length));
 
     if (data.length < 12) {
-        stderr.writefln("[LWO] reject: file too small (%d < 12)", data.length);
+        lwoWarn(format("reject: file too small (%d < 12)", data.length));
         return false;
     }
     if (data[0..4] != "FORM") {
-        stderr.writefln("[LWO] reject: missing FORM header, got %s",
-                        cast(string) data[0..4].idup);
+        lwoWarn(format("reject: missing FORM header, got %s",
+                        cast(string) data[0..4].idup));
         return false;
     }
     if (data[8..12] != "LWO2") {
-        stderr.writefln("[LWO] reject: not LWO2, header=%s",
-                        cast(string) data[8..12].idup);
+        lwoWarn(format("reject: not LWO2, header=%s",
+                        cast(string) data[8..12].idup));
         return false;
     }
 
     uint   formSize = readU32(data, 4);
     size_t end      = min(cast(size_t)(8 + formSize), data.length);
     size_t pos      = 12;   // first sub-chunk starts after "LWO2"
-    stderr.writefln("[LWO] formSize=%d, end=%d, parse from pos=%d",
-                    formSize, end, pos);
+    lwoInfo(format("formSize=%d, end=%d, parse from pos=%d",
+                    formSize, end, pos));
 
     // -----------------------------------------------------------------------
     // One PartBuild per LAYR. PNTS/POLS/PTAG accumulate into the CURRENT part;
@@ -99,9 +106,9 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         pos += 8;
         size_t chunkEnd = pos + sz;
         if (chunkEnd > end) {
-            stderr.writefln("[LWO] chunk %s size=%d overflows container " ~
+            lwoWarn(format("chunk %s size=%d overflows container " ~
                             "(pos=%d, end=%d), truncating",
-                            cast(string) tagBytes[].idup, sz, pos, end);
+                            cast(string) tagBytes[].idup, sz, pos, end));
             chunkEnd = end;
         }
 
@@ -129,8 +136,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 parts ~= pb;
             }
             layerSeen = true;
-            stderr.writefln("[LWO] LAYR '%s' -> part %d",
-                            layerName, parts.length - 1);
+            lwoInfo(format("LAYR '%s' -> part %d",
+                            layerName, parts.length - 1));
         } else if (tagBytes == "PNTS") {
             ensurePart();
             auto cur = &parts[$ - 1];
@@ -141,9 +148,9 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 float z = readF32(data, i + 8);
                 cur.verts ~= Vec3(x, y, z);
             }
-            stderr.writefln("[LWO] PNTS: part %d now %d verts (+%d)",
+            lwoInfo(format("PNTS: part %d now %d verts (+%d)",
                             parts.length - 1, cur.verts.length,
-                            cur.verts.length - count0);
+                            cur.verts.length - count0));
         } else if (tagBytes == "POLS" && chunkEnd - pos >= 4) {
             ensurePart();
             auto cur = &parts[$ - 1];
@@ -170,13 +177,13 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                         ++skippedByArity;
                     }
                 }
-                stderr.writefln("[LWO] POLS(%s): part %d now %d polys (+%d, skipped %d < 3-vert)",
+                lwoInfo(format("POLS(%s): part %d now %d polys (+%d, skipped %d < 3-vert)",
                                 isPtch ? "PTCH" : "FACE", parts.length - 1,
-                                cur.polys.length, cur.polys.length - count0, skippedByArity);
+                                cur.polys.length, cur.polys.length - count0, skippedByArity));
             } else {
                 ++nonFaceChunks;
-                stderr.writefln("[LWO] POLS: unsupported type %s, skipped",
-                                cast(string) polyType[].idup);
+                lwoWarn(format("POLS: unsupported type %s, skipped",
+                                cast(string) polyType[].idup));
             }
         } else if (tagBytes == "TAGS") {
             // TAGS body: a concatenation of null-terminated strings, each
@@ -190,7 +197,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 if (p < chunkEnd && (p & 1)) p++;  // pad to even
                 tags ~= name;
             }
-            stderr.writefln("[LWO] TAGS: %d tags", tags.length);
+            lwoInfo(format("TAGS: %d tags", tags.length));
         } else if (tagBytes == "SURF") {
             // SURF body: surface name (null-terminated, even-padded), then a
             // source-name (same encoding, often empty), then a stream of
@@ -209,22 +216,22 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             sb.name = name;
             sb.body = data[p .. chunkEnd].idup;
             surfBodies ~= sb;
-            stderr.writefln("[LWO] SURF '%s' (body %d bytes)",
-                            name, sb.body.length);
+            lwoInfo(format("SURF '%s' (body %d bytes)",
+                            name, sb.body.length));
         } else if (tagBytes == "PTAG") {
             // Stash on the CURRENT part; face indices are layer-local.
             ensurePart();
             auto cur = &parts[$ - 1];
             auto body = data[pos .. chunkEnd].dup;
             cur.ptagBodies ~= body;
-            stderr.writefln("[LWO] PTAG (part %d, size %d, type=%s)",
+            lwoInfo(format("PTAG (part %d, size %d, type=%s)",
                             parts.length - 1, sz,
                             body.length >= 4
                                 ? cast(string) body[0..4].idup
-                                : "?");
+                                : "?"));
         } else {
-            stderr.writefln("[LWO] skip chunk %s (size %d)",
-                            cast(string) tagBytes[].idup, sz);
+            lwoInfo(format("skip chunk %s (size %d)",
+                            cast(string) tagBytes[].idup, sz));
         }
 
         pos = chunkEnd;
@@ -263,8 +270,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
     foreach (pi, ref pb; parts) {
         if (pb.verts.length == 0 || pb.polys.length == 0) {
             // Skip empty/degenerate layers (e.g. a LAYR with no geometry).
-            stderr.writefln("[LWO] part %d empty (verts=%d polys=%d), skipped",
-                            pi, pb.verts.length, pb.polys.length);
+            lwoInfo(format("part %d empty (verts=%d polys=%d), skipped",
+                            pi, pb.verts.length, pb.polys.length));
             continue;
         }
 
@@ -274,8 +281,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         foreach (fi, face; pb.polys) {
             foreach (idx; face) {
                 if (idx >= nv) {
-                    stderr.writefln("[LWO] reject: part %d face %d references "
-                                    ~ "vertex %d (only %d verts)", pi, fi, idx, nv);
+                    lwoWarn(format("reject: part %d face %d references "
+                                    ~ "vertex %d (only %d verts)", pi, fi, idx, nv));
                     badIndex = true;
                     break;
                 }
@@ -311,15 +318,15 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         totalPolys += pb.polys.length;
     }
 
-    stderr.writefln("[LWO] parse done: %d part(s), verts=%d, polys=%d, "
+    lwoInfo(format("parse done: %d part(s), verts=%d, polys=%d, "
                     ~ "face-chunks=%d, ptch-chunks=%d, other-POLS=%d, "
                     ~ "skipped-by-arity=%d, %d global surfaces",
                     out_.parts.length, totalVerts, totalPolys,
                     faceChunks, subpatchChunks, nonFaceChunks, skippedByArity,
-                    globalSurfaces.length);
+                    globalSurfaces.length));
 
     if (out_.parts.length == 0) {
-        stderr.writefln("[LWO] reject: no usable geometry");
+        lwoWarn("reject: no usable geometry");
         return false;
     }
 
