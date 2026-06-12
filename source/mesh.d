@@ -8,6 +8,7 @@ import math;
 import shader;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
+import change_bus : SelDomain;
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -281,6 +282,20 @@ struct Mesh {
         noteChange(flags);
         ++mutationVersion;
         if (flags & MeshEditScope.Geometry) ++topologyVersion;
+    }
+
+    // Accumulate a SELECTION change (Stage 5): OR `Marks` into the mesh-class
+    // pending set AND the given selection-domain bit into pendingSelDomains_.
+    // Deliberately does NOT bump mutationVersion — selection is a Marks-class
+    // change, not a version-bumping geometry change, and the marks setters have
+    // always been version-stable (a property other systems rely on; e.g. the
+    // pick-cache geometry key and mid-drag version stability must not move when
+    // only the highlight changes). Safe inside loops (pure OR) — the bulk
+    // lasso/paint setters call it once after a compare-before-set guard so a
+    // no-op restore does not spuriously publish.
+    void noteSelectionChange(SelDomain domain) {
+        pendingChanges_     |= MeshEditScope.Marks;
+        pendingSelDomains_  |= cast(uint)domain;
     }
 
     // --- Mesh maps (generic per-element float attribute channels) ----------
@@ -3288,22 +3303,35 @@ struct Mesh {
         if (any) { commitChange(MeshEditScope.Marks); ++topologyVersion; }
     }
 
+    // The clear* setters compare-before-set too: only publish if at least one
+    // Select bit was actually set (clearing an already-empty selection is a
+    // no-op and must not publish — e.g. the unconditional clearVertex/Face
+    // calls topology mutators run on edge-only edits).
     void clearVertexSelection() {
+        bool any = false;
+        foreach (m; vertexMarks) if (m & Marks.Select) { any = true; break; }
         foreach (ref m; vertexMarks) m &= ~Marks.Select;
         vertexSelectionOrder[] = 0;
         vertexSelectionOrderCounter = 0;
+        if (any) noteSelectionChange(SelDomain.Vertex);
     }
     void clearEdgeSelection() {
+        bool any = false;
+        foreach (m; edgeMarks) if (m & Marks.Select) { any = true; break; }
         foreach (ref m; edgeMarks) m &= ~Marks.Select;
         edgeSelectionOrder[] = 0;
         edgeSelectionOrderCounter = 0;
+        if (any) noteSelectionChange(SelDomain.Edge);
     }
     void clearFaceSelection() {
         // Mask ONLY the Select bit — Subpatch shares this word and must
         // survive a selection clear.
+        bool any = false;
+        foreach (m; faceMarks) if (m & Marks.Select) { any = true; break; }
         foreach (ref m; faceMarks) m &= ~Marks.Select;
         faceSelectionOrder[] = 0;
         faceSelectionOrderCounter = 0;
+        if (any) noteSelectionChange(SelDomain.Face);
     }
 
     // --- Per-element selection-array resize primitives ---------------------
@@ -3459,7 +3487,13 @@ struct Mesh {
     // the exact triplet the topology mutators ran after a `rebuildEdges()`.
     void clearEdgeSelectionResize() {
         resizeEdgeSelection();
+        bool any = false;
+        foreach (m; edgeMarks) if (m & Marks.Select) { any = true; break; }
         foreach (ref m; edgeMarks) m &= ~Marks.Select;
+        // Publishes the Edge domain when a topology edit drops a live edge
+        // selection. The enclosing mutator already publishes Geometry; the
+        // selection-domain bit rides the same per-frame flush.
+        if (any) noteSelectionChange(SelDomain.Edge);
     }
 
     // Resize the per-face selection-bit array to `faces` length and drop every
@@ -3470,7 +3504,10 @@ struct Mesh {
         resizeFaceSelection();
         // Mask ONLY the Select bit — Subpatch shares this word and the
         // calling mutator has already written it (B3 ordering).
+        bool any = false;
+        foreach (m; faceMarks) if (m & Marks.Select) { any = true; break; }
         foreach (ref m; faceMarks) m &= ~Marks.Select;
+        if (any) noteSelectionChange(SelDomain.Face);
     }
 
     // --- Subpatch resize / write surface ----------------------------------
@@ -3499,30 +3536,49 @@ struct Mesh {
     // edges / faces, or the Subpatch flag) so the two face concepts stay
     // order-independent. `src` is treated as the new authoritative array;
     // the backing array is resized to `src.length`, then copied.
+    // The bulk setters COMPARE-BEFORE-SET for the bus publish (Stage 5): they
+    // already iterate, so detecting "did any Select bit actually flip" is free,
+    // and it stops a no-op restore (re-applying an identical selection — common
+    // on undo/redo snapshot replay) from spuriously publishing a selection
+    // change. A length change is itself a change. The Marks WRITE stays
+    // unconditional (cheap, and keeps the array length correct even on a
+    // value-identical-but-length-changed src).
     void setVerticesSelectedFrom(const bool[] src) {
+        bool changed = (vertexMarks.length != src.length);
         vertexMarks.length = src.length;
         foreach (i, s; src) {
+            const cur = (vertexMarks[i] & Marks.Select) != 0;
+            if (cur != s) changed = true;
             if (s) vertexMarks[i] |=  Marks.Select;
             else   vertexMarks[i] &= ~Marks.Select;
         }
+        if (changed) noteSelectionChange(SelDomain.Vertex);
     }
     void setEdgesSelectedFrom(const bool[] src) {
+        bool changed = (edgeMarks.length != src.length);
         edgeMarks.length = src.length;
         foreach (i, s; src) {
+            const cur = (edgeMarks[i] & Marks.Select) != 0;
+            if (cur != s) changed = true;
             if (s) edgeMarks[i] |=  Marks.Select;
             else   edgeMarks[i] &= ~Marks.Select;
         }
+        if (changed) noteSelectionChange(SelDomain.Edge);
     }
     void setFacesSelectedFrom(const bool[] src) {
         // Resize once, then touch ONLY the Select bit so this stays
         // order-independent with setFaceSubpatchFrom (B4 — snapshot restore
         // writes Select and Subpatch as two separate assigns). Resizing
         // preserves the Subpatch bit of any pre-existing entries.
+        bool changed = (faceMarks.length != src.length);
         faceMarks.length = src.length;
         foreach (i, s; src) {
+            const cur = (faceMarks[i] & Marks.Select) != 0;
+            if (cur != s) changed = true;
             if (s) faceMarks[i] |=  Marks.Select;
             else   faceMarks[i] &= ~Marks.Select;
         }
+        if (changed) noteSelectionChange(SelDomain.Face);
     }
     void setFaceSubpatchFrom(const bool[] src) {
         // Resize once, then touch ONLY the Subpatch bit (order-independent
@@ -3539,30 +3595,36 @@ struct Mesh {
         if ((vertexMarks[idx] & Marks.Select) == 0)
             vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
         vertexMarks[idx] |= Marks.Select;
+        noteSelectionChange(SelDomain.Vertex);
     }
     void deselectVertex(int idx) {
         vertexMarks[idx] &= ~Marks.Select;
         vertexSelectionOrder[idx] = 0;
+        noteSelectionChange(SelDomain.Vertex);
     }
 
     void selectEdge(int idx) {
         if ((edgeMarks[idx] & Marks.Select) == 0)
             edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
         edgeMarks[idx] |= Marks.Select;
+        noteSelectionChange(SelDomain.Edge);
     }
     void deselectEdge(int idx) {
         edgeMarks[idx] &= ~Marks.Select;
         edgeSelectionOrder[idx] = 0;
+        noteSelectionChange(SelDomain.Edge);
     }
 
     void selectFace(int idx) {
         if ((faceMarks[idx] & Marks.Select) == 0)
             faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
         faceMarks[idx] |= Marks.Select;
+        noteSelectionChange(SelDomain.Face);
     }
     void deselectFace(int idx) {
         faceMarks[idx] &= ~Marks.Select;
         faceSelectionOrder[idx] = 0;
+        noteSelectionChange(SelDomain.Face);
     }
 
     void clear() {
@@ -5112,6 +5174,80 @@ version (unittest) {
             if (ok) return true;
         }
         return false;
+    }
+}
+
+unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 5)
+    import change_bus : SelDomain;
+    import mesh_edit_delta : MeshEditScope;
+
+    // Single setters accumulate Marks + the matching domain bit, and stay
+    // version-stable (selection is not a version-bumping geometry change).
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+        const ver0 = m.mutationVersion;
+        const top0 = m.topologyVersion;
+
+        m.selectVertex(0);
+        assert(m.pendingChanges_ & MeshEditScope.Marks, "selectVertex notes Marks");
+        assert(m.pendingSelDomains_ & SelDomain.Vertex, "selectVertex notes Vertex domain");
+
+        m.selectEdge(0);
+        assert(m.pendingSelDomains_ & SelDomain.Edge, "selectEdge notes Edge domain");
+
+        m.selectFace(0);
+        assert(m.pendingSelDomains_ & SelDomain.Face, "selectFace notes Face domain");
+
+        // All three domains accumulate (OR), and NO version bump occurred —
+        // marks setters must remain version-stable.
+        assert(m.pendingSelDomains_ ==
+            (SelDomain.Vertex | SelDomain.Edge | SelDomain.Face),
+            "domains OR-accumulate");
+        assert(m.mutationVersion == ver0, "selection must NOT bump mutationVersion");
+        assert(m.topologyVersion == top0, "selection must NOT bump topologyVersion");
+    }
+
+    // Bulk setXSelectedFrom compares-before-set: a no-op re-apply of the SAME
+    // selection does not publish; a real change does.
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+        bool[] sel; sel.length = m.vertices.length;
+        sel[2] = true;
+
+        m.setVerticesSelectedFrom(sel);           // real change
+        assert(m.pendingSelDomains_ & SelDomain.Vertex, "first apply publishes");
+
+        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+        m.setVerticesSelectedFrom(sel);           // identical re-apply: no-op
+        assert(m.pendingSelDomains_ == 0,
+            "re-applying identical selection must NOT publish");
+        assert((m.pendingChanges_ & MeshEditScope.Marks) == 0,
+            "no-op restore must NOT note Marks");
+
+        sel[2] = false; sel[5] = true;            // actual change
+        m.setVerticesSelectedFrom(sel);
+        assert(m.pendingSelDomains_ & SelDomain.Vertex,
+            "a real selection change publishes again");
+    }
+
+    // clear* compares-before-set: clearing an already-empty selection is inert.
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+        m.clearFaceSelection();                   // nothing selected → inert
+        assert(m.pendingSelDomains_ == 0,
+            "clearing empty face selection must NOT publish");
+
+        m.selectFace(1);
+        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+        m.clearFaceSelection();                   // drops a live selection
+        assert(m.pendingSelDomains_ & SelDomain.Face,
+            "clearing a live face selection publishes Face");
     }
 }
 

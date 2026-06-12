@@ -898,9 +898,27 @@ void main(string[] args) {
     // resize / invalidate / syncSelection work happens later on the main
     // thread in the flag-driven block, never inside delivery.
     uint meshChangedFlags = 0;
+    // Change-notification bus, Stage 5 — selection subscriber state.
+    //
+    // `selChangedDomains` accumulates the selection domains (Vertex / Edge /
+    // Face bits) the bus delivers THIS frame. The selection consumer below ORs
+    // the flushed domains into it; the per-frame consume site (down in the
+    // render loop, alongside the pick-cache block) reads it and zeroes it.
+    //
+    // Today the selection highlight is drawn live every frame straight from the
+    // mesh marks (gpu.drawVertices/drawEdges read `mesh.selectedVertices` etc.
+    // each frame), and the screen-space pick caches key off GEOMETRY, not
+    // selection — so no concrete cache needs a selection-driven refresh right
+    // now. The consumer is therefore wired but minimal: it parks the domains in
+    // a frame-local flag, establishing the single selection-consumer seam the
+    // future layer panel (the plan's named future consumer) plugs into without
+    // inventing UI work now. The bus contract still holds (invalidate-only: the
+    // delegate touches nothing but the flag).
+    uint selChangedDomains = 0;
     {
         import change_bus : changeBus;
         changeBus.onMeshChanged((uint flags) { meshChangedFlags |= flags; });
+        changeBus.onSelectionChanged((uint domains) { selChangedDomains |= domains; });
     }
 
     // VisibilityCache (`mesh.visibleVertices`) is no longer used — the
@@ -5725,6 +5743,13 @@ void main(string[] args) {
         // consumers keep their internal version keys as backstops; the bus only
         // drives the trigger. (render-dirty / IPR is converted in Stage 4.)
         meshChangedFlags = 0;
+
+        // Consume this frame's selection-change domains (Stage 5). No live
+        // consumer acts on them yet (highlight reads marks directly; pick caches
+        // key off geometry), so this just clears the frame-local accumulator so
+        // it never carries stale domains into the next frame. The seam exists
+        // for the future layer panel.
+        selChangedDomains = 0;
 
         pickVertices(vp, doingCameraDrag);
 

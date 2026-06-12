@@ -15,8 +15,17 @@
 //   - /api/reset                → All bits (Position|Points|Polygons|Marks|Material)
 //   - a recorded transform drag → Position flushes > 0 with NO Geometry bits
 //
+// Stage 5 (selection publisher) cases appended below:
+//   - interactive vertex-select event log → Vertex domain ticks
+//   - /api/select polygons / edges        → Face / Edge domain ticks
+//   - select.more on an edge loop         → Edge domain ticks
+//   - undo of an interactive selection    → domain re-published (UI-undo class)
+//   - select.typeFrom (EditMode switch)   → publishes NO selection domain
+//
 // Change-class bit values mirror MeshEditScope (source/mesh_edit_delta.d):
 //   Position=1, Points=2, Polygons=4, Marks=8, Material=16, Geometry=Points|Polygons=6.
+// Selection-domain bit values mirror change_bus.SelDomain:
+//   Vertex=1, Edge=2, Face=4.
 
 import std.net.curl;
 import std.json;
@@ -37,6 +46,11 @@ enum uint MARKS    = 8;
 enum uint MATERIAL = 16;
 enum uint GEOMETRY = POINTS | POLYGONS;
 enum uint ALLBITS  = POSITION | POINTS | POLYGONS | MARKS | MATERIAL;
+
+// Selection-domain bits (change_bus.SelDomain).
+enum uint SEL_VERTEX = 1;
+enum uint SEL_EDGE   = 2;
+enum uint SEL_FACE   = 4;
 
 JSONValue getJson(string path) {
     return parseJSON(cast(string)get(baseUrl ~ path));
@@ -89,8 +103,9 @@ Changes settleAfter(Changes before) {
     return readChanges();
 }
 
-void playAndWait(string log) {
-    auto r = postJson("/api/play-events", log);
+// Replay an event log given its FILE PATH (reads the contents and posts them).
+void playAndWait(string logPath) {
+    auto r = postJson("/api/play-events", readText(logPath));
     assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
     foreach (i; 0 .. 400) {                // up to 40s headroom
         auto s = getJson("/api/play-events/status");
@@ -185,8 +200,7 @@ unittest {
 
     auto before = settleAfter(readChanges());
 
-    string log = readText("tests/events/acen_local_translate_drag.log");
-    playAndWait(log);
+    playAndWait("tests/events/acen_local_translate_drag.log");
 
     auto after = readChanges();
     assert(after.totalPosition > before.totalPosition,
@@ -195,4 +209,123 @@ unittest {
         && after.totalPolygons == before.totalPolygons,
         "a transform drag must NEVER publish Geometry (it moves positions in "
         ~ "place, no topology change)");
+}
+
+// ===========================================================================
+// Stage 5 — selection publisher (selectionChanged(domain)).
+// ===========================================================================
+
+// Drive a synchronous /api/select and assert success.
+void selectVia(string mode, int[] indices) {
+    import std.algorithm : map;
+    import std.array      : join;
+    import std.conv       : text;
+    string idxs = indices.length
+        ? indices.map!(i => text(i)).join(",")
+        : "";
+    auto j = postJson("/api/select",
+        `{"mode":"` ~ mode ~ `","indices":[` ~ idxs ~ `]}`);
+    assert(j["status"].str == "ok", "select failed: " ~ j.toString);
+}
+
+// An interactive vertex-select event log publishes the Vertex domain (and ONLY
+// Vertex — the recorded log is a points-mode click drag that touches no edge or
+// face selection).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    auto before = settleAfter(readChanges());
+
+    playAndWait("tests/events/selection_points.log");
+    auto after = settleAfter(before);
+
+    assert(after.totalSelVertex > before.totalSelVertex,
+        "interactive points-mode select must publish the Vertex domain");
+    assert(after.totalSelEdge == before.totalSelEdge,
+        "a points-mode select must NOT publish the Edge domain");
+    assert((after.lastSelDomains & SEL_VERTEX) != 0
+        || after.totalSelVertex > before.totalSelVertex,
+        "Vertex domain delivered");
+}
+
+// /api/select polygons → Face domain; /api/select edges → Edge domain. Each
+// mode routes through its own setXSelectedFrom, which publishes only its bit.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    auto before = settleAfter(readChanges());
+
+    selectVia("polygons", [0, 1, 2]);
+    auto afterFace = settleAfter(before);
+    assert(afterFace.totalSelFace > before.totalSelFace,
+        "polygon select must publish the Face domain");
+    assert(afterFace.totalSelVertex == before.totalSelVertex,
+        "polygon select must NOT publish the Vertex domain");
+
+    selectVia("edges", [0, 1]);
+    auto afterEdge = settleAfter(afterFace);
+    assert(afterEdge.totalSelEdge > afterFace.totalSelEdge,
+        "edge select must publish the Edge domain");
+}
+
+// A topology-select alias (select.loop) that GROWS the selection publishes the
+// correct domain. Edge mode + a single seed edge → select.loop adds the rest of
+// the loop → the Edge domain ticks.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("history.clear");
+    cmd("select.typeFrom edge");
+    selectVia("edges", [0]);                // seed one edge
+    auto before = settleAfter(readChanges());
+
+    cmd("select.loop");                     // grow the seed into a full loop
+    auto after = settleAfter(before);
+    assert(after.totalSelEdge > before.totalSelEdge,
+        "select.loop in edge mode must publish the Edge domain");
+}
+
+// Undo of an interactive selection (UI-undo class: MeshSelectionEdit) re-applies
+// the prior selection through setXSelectedFrom → the domain is re-published.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("history.clear");
+
+    // First interactive selection lands a MeshSelectionEdit on the undo stack.
+    playAndWait("tests/events/selection_points.log");
+    // A second, ADDING selection so the undo actually changes the marks back
+    // (a no-op restore would be compare-before-set away to nothing).
+    auto mid = settleAfter(readChanges());
+    playAndWait("tests/events/selection_add.log");
+    auto before = settleAfter(mid);
+
+    postJson("/api/undo", "");
+    auto after = settleAfter(before);
+    assert(after.totalSelVertex > before.totalSelVertex,
+        "undo of a vertex selection must re-publish the Vertex domain");
+}
+
+// An EditMode switch (select.typeFrom — the mode-only command) publishes NO
+// selection domain: mode is not selection content. (The type-current analog is
+// deferred to a later selection-type generalization survey item.)
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    // Seed a selection so there IS something whose "mode" could be (wrongly)
+    // construed as changing — then prove the mode switch alone is inert.
+    selectVia("polygons", [0]);
+    auto before = settleAfter(readChanges());
+
+    cmd("select.typeFrom edge");
+    cmd("select.typeFrom vertex");
+    cmd("select.typeFrom polygon");
+    // A mode switch accumulates nothing, so the per-frame flush stays a no-op
+    // (flushCount won't advance) — settleAfter would just spin to its timeout.
+    // A short fixed settle is enough to prove the counters did NOT move.
+    Thread.sleep(dur!"msecs"(300));
+    auto after = readChanges();
+
+    assert(after.totalSelVertex == before.totalSelVertex
+        && after.totalSelEdge  == before.totalSelEdge
+        && after.totalSelFace  == before.totalSelFace,
+        "an EditMode switch must publish NO selection domain; got "
+        ~ "V+" ~ to!string(after.totalSelVertex - before.totalSelVertex)
+        ~ " E+" ~ to!string(after.totalSelEdge - before.totalSelEdge)
+        ~ " F+" ~ to!string(after.totalSelFace - before.totalSelFace));
 }
