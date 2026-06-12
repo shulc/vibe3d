@@ -32,6 +32,7 @@ import shader;
 import viewcache;
 import perf_probe : g_perf, Cat;
 import lwo;
+import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 
 import tools.transform;
@@ -584,6 +585,12 @@ void main(string[] args) {
         _exit(0);
     }
     scope(exit) SDL_Quit();
+
+    // Load libassimp for OBJ/glTF/FBX (and LWO-via-assimp) interchange I/O.
+    // Dynamic dlopen — a missing library is non-fatal: native .v3d and the
+    // pure-D LWO writer still work. See doc/asset_io_plan.md Phase 0.
+    initAssimp();
+    scope(exit) shutdownAssimp();
 
     // Initialize HTTP server
     HttpServer httpServer;
