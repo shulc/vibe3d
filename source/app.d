@@ -132,7 +132,7 @@ import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
 import forms_render;
 
-version (WithRender) import render.render_mvp   : drawIPRPanel, shutdownIPR;
+version (WithRender) import render.render_mvp   : initIPR, drawIPRPanel, shutdownIPR;
 version (WithRender) import render.render_diff  : runRenderDiff;
 
 version (OSX) {
@@ -808,6 +808,7 @@ void main(string[] args) {
         ImGui_ImplSDL2_Shutdown();
         ImGui.DestroyContext();
     }
+    version (WithRender) initIPR();        // register IPR's change-bus subscriber (once)
     version (WithRender) scope(exit) shutdownIPR();
 
     Shader shader = new Shader();

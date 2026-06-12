@@ -27,6 +27,7 @@ import d_imgui.imgui_h;
 import mesh : Mesh, SubpatchPreview, Surface;
 import view : View;
 import math : Vec3;
+import change_bus : MeshChangeAll;   // modeling-side bus constant (boundary-safe)
 
 import render.backend;
 import render.scene;
@@ -114,19 +115,33 @@ private struct PanelState
     SubpatchPreview iprSubpatch;
     int             iprSubdivDepth = 3;
 
-    // Per-frame "input is moving NOW" diff (updates every frame, drives debounce).
+    // Mesh-change signal (Stage 4 — change-notification bus). The IPR formerly
+    // detected mesh mutation by recomputing an O(N) FNV `vertsHash` over every
+    // vertex EVERY FRAME plus a `mutationVersion` compare, because vibe3d's
+    // mutation tracking has two intentional gaps:
+    //   - transform tools (Move/Rotate/Scale) write mesh.vertices in place
+    //     WITHOUT bumping mutationVersion (keeps symmetry pair-tables / falloff
+    //     caches stable mid-drag; mesh.d:2991-3000) — only the hash caught those.
+    //   - topology-only changes (Tab → setSubpatch, split, ...) bump
+    //     mutationVersion but leave positions untouched — only the version
+    //     caught those.
+    // The change bus delivers BOTH as flag bits, so the per-frame O(N) hash is
+    // gone. The bus subscriber (registered in initIPR) ORs Position|Geometry|
+    // Marks|Material into the two accumulators below ON THE MAIN THREAD; the
+    // debounce / apply path reads-and-clears them, also on the main thread.
     //
-    // Two signals are needed because vibe3d's mesh-mutation tracking has two
-    // intentional gaps:
-    //   - transform tools (Move/Rotate/Scale) write into mesh.vertices in
-    //     place WITHOUT bumping mutationVersion (keeps symmetry pair-tables /
-    //     falloff caches stable mid-drag; see mesh.d:2991-3000).
-    //     Hash of vertex positions catches those.
-    //   - topology-only changes (Tab → setSubpatch, face split, ...) bump
-    //     mutationVersion but leave positions untouched. Hashing positions
-    //     alone would miss those, so we also gate on mutationVersion.
-    ulong  lastSeenVertsHash = ulong.max;
-    ulong  lastSeenMutationVersion = ulong.max;
+    // Two accumulators are needed because inputMoving and needsApply diff the
+    // mesh against TWO independent baselines (last-seen for debounce, applied
+    // for the worker push). A single mesh change must register in both until
+    // each is independently latched — captureLastSeen clears the first,
+    // cacheAppliedState clears the second (and, mirroring into last-seen, the
+    // first too). This reproduces exactly the old dual lastSeen/applied hash
+    // latch, with edge-accumulated flags in place of value fingerprints.
+    uint   modelChangedSinceSeen;    // for inputMoving (debounce baseline)
+    uint   modelChangedSinceApplied; // for needsApply / updateScene meshChanged
+
+    // Camera / framebuffer-size diff baselines. These are NOT mesh state, so
+    // they keep their value-compare form (unchanged by the bus).
     float  lastSeenAzimuth = float.nan;
     float  lastSeenElevation;
     float  lastSeenDistance;
@@ -134,9 +149,6 @@ private struct PanelState
     int    lastSeenFbW;
     int    lastSeenFbH;
 
-    // "What backend has" diff (updated when we actually sync to bridge)
-    ulong  appliedVertsHash = ulong.max;
-    ulong  appliedMutationVersion = ulong.max;
     float  appliedAzimuth = float.nan;
     float  appliedElevation;
     float  appliedDistance;
@@ -157,6 +169,36 @@ private enum Duration restartIdleThreshold = dur!"msecs"(50);
 
 bool isIPRPanelOpen() { return g.panelOpen; }
 void setIPRPanelOpen(bool v) { g.panelOpen = v; }
+
+/// Register the IPR's change-notification bus subscriber. Call ONCE at app
+/// startup, on the main thread, from a `version (WithRender)` block (the bus
+/// lives in modeling; this is the render side opting in — render imports
+/// modeling, never the reverse).
+///
+/// The subscriber is set-flag-only: it ORs the mesh-affecting change classes
+/// the renderer cares about (Position | Geometry | Marks | Material) into the
+/// render-side accumulators and touches NOTHING else — no mesh read/mutate, no
+/// bridge call, no re-flush. That honors the bus contract (subscribers are
+/// invalidate-only) and the render-boundary rule (render reacts to a modeling
+/// dirty-signal; it never calls back into modeling). Delivery runs on the main
+/// thread inside `changeBus.flush`, and the accumulators are read/cleared on
+/// the main thread in tick / updateSceneFromVibe3D — single-threaded ownership,
+/// no synchronisation needed.
+void initIPR()
+{
+    import change_bus : changeBus, MeshEditScope;
+    enum uint kRenderTriggers = MeshEditScope.Position
+                              | MeshEditScope.Geometry   // Points | Polygons
+                              | MeshEditScope.Marks       // Tab → subpatch
+                              | MeshEditScope.Material;
+    changeBus.onMeshChanged((uint flags) {
+        const uint relevant = flags & kRenderTriggers;
+        if (relevant) {
+            g.modelChangedSinceSeen    |= relevant;
+            g.modelChangedSinceApplied |= relevant;
+        }
+    });
+}
 
 /// Draw the panel + tick the backend if running. Call once per frame
 /// after `ImGui.NewFrame`.
@@ -665,12 +707,17 @@ private void teardownBridge() nothrow
     g.sceneMeshIds      = null;
     g.sceneMaterialIds  = null;
     g.sceneLightId      = 0;
-    g.lastSeenVertsHash       = ulong.max;
-    g.lastSeenMutationVersion = ulong.max;
+    // Force a full re-sync on the next session: a pending mesh change on both
+    // baselines, plus NaN camera baselines (any real camera value differs).
+    g.modelChangedSinceSeen    = MeshChangeAll;
+    g.modelChangedSinceApplied = MeshChangeAll;
     g.lastSeenAzimuth         = float.nan;
-    g.appliedVertsHash        = ulong.max;
-    g.appliedMutationVersion  = ulong.max;
     g.appliedAzimuth          = float.nan;
+    // Reset the shadow fingerprints too so the cross-check restarts clean.
+    g_shadowLastSeenHash = ulong.max;
+    g_shadowLastSeenVer  = ulong.max;
+    g_shadowAppliedHash  = ulong.max;
+    g_shadowAppliedVer   = ulong.max;
     g.lastBlitVersion         = 0;
     g.interopActive           = false;
     g.interopProbed           = false;
@@ -704,7 +751,7 @@ private void tick(const(Mesh)* m, View v)
         trace(format("state: moving=%s apply=%s idleMs=%d "
                      ~ "az=%.3f/%.3f el=%.3f/%.3f dist=%.3f/%.3f "
                      ~ "focus=(%.2f,%.2f,%.2f)/(%.2f,%.2f,%.2f) "
-                     ~ "fb=%dx%d/%dx%d  vhash=%x/%x",
+                     ~ "fb=%dx%d/%dx%d  chg=seen%x/appl%x",
                      moving, apply, idleMs,
                      v.azimuth, g.appliedAzimuth,
                      v.elevation, g.appliedElevation,
@@ -712,7 +759,7 @@ private void tick(const(Mesh)* m, View v)
                      v.focus.x, v.focus.y, v.focus.z,
                      g.appliedFocus.x, g.appliedFocus.y, g.appliedFocus.z,
                      g.fbW, g.fbH, g.appliedFbW, g.appliedFbH,
-                     vertsHash(m), g.appliedVertsHash));
+                     g.modelChangedSinceSeen, g.modelChangedSinceApplied));
         lastStateTrace = now;
     }
 
@@ -764,10 +811,38 @@ private void tick(const(Mesh)* m, View v)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Stage-4 shadow cross-check (debug, opt-in via VIBE3D_RENDER_HASH_CHECK=1).
+//
+// The change bus replaced the per-frame O(N) vertex hash with two flag bits.
+// To prove the bus matches the hash during burn-in, keep the hash alive ONLY
+// behind this env gate: when set, recompute the hash + a shadow lastSeen/applied
+// fingerprint and warn to stderr whenever the bus flag and the hash disagree
+// about whether the mesh changed. When the env is UNSET (the default), the hash
+// is NOT computed — that is the perf win. Deleted in Stage 6.
+//
+// All of this runs on the main thread alongside the flag consumers, so the
+// shadow fingerprints need no synchronisation.
+private __gshared bool g_hashCheck;
+private __gshared bool g_hashCheckEnvRead;
+private bool hashCheckEnabled()
+{
+    if (!g_hashCheckEnvRead) {
+        g_hashCheck = environment.get("VIBE3D_RENDER_HASH_CHECK") !is null;
+        g_hashCheckEnvRead = true;
+    }
+    return g_hashCheck;
+}
+
+private __gshared ulong g_shadowLastSeenHash = ulong.max;
+private __gshared ulong g_shadowLastSeenVer  = ulong.max;
+private __gshared ulong g_shadowAppliedHash  = ulong.max;
+private __gshared ulong g_shadowAppliedVer   = ulong.max;
+private __gshared bool  g_hashMismatchWarned;
+
 /// Cheap FNV-1a-flavoured fingerprint over the mesh's vertex positions.
-/// O(N) per frame but the inner loop is 3 XOR+rotate per vertex -well
-/// under a millisecond for cages up to ~50k verts. Catches mid-drag
-/// position changes that mesh.mutationVersion doesn't.
+/// Only invoked under the VIBE3D_RENDER_HASH_CHECK shadow gate now — in the
+/// default path the bus supplies the dirty signal and this is never called.
 private ulong vertsHash(const(Mesh)* m)
 {
     ulong h = m.vertices.length;
@@ -779,10 +854,33 @@ private ulong vertsHash(const(Mesh)* m)
     return h;
 }
 
+/// Shadow comparison: `busSaysChanged` is what the bus flag reports for this
+/// baseline; `hashChanged` is what the hash+version compare would report. Warn
+/// once if they ever disagree. `label` names the baseline (seen / applied).
+private void shadowCheckMeshChanged(const(Mesh)* m, bool busSaysChanged,
+                                    ref ulong shadowHash, ref ulong shadowVer,
+                                    string label)
+{
+    if (!hashCheckEnabled()) return;
+    const ulong h  = vertsHash(m);
+    const ulong mv = m.mutationVersion;
+    const bool hashChanged = (h != shadowHash) || (mv != shadowVer);
+    if (hashChanged != busSaysChanged && !g_hashMismatchWarned) {
+        stderr.writefln(
+            "[ipr] RENDER_HASH_CHECK MISMATCH (%s): bus=%s hash=%s "
+            ~ "(hash %x/%x ver %d/%d) — change-bus signal diverged from the "
+            ~ "vertex-hash shadow.",
+            label, busSaysChanged, hashChanged, h, shadowHash, mv, shadowVer);
+        g_hashMismatchWarned = true;
+    }
+}
+
 private bool inputMoving(const(Mesh)* m, View v)
 {
-    return vertsHash(m)     != g.lastSeenVertsHash ||
-           m.mutationVersion != g.lastSeenMutationVersion ||
+    const bool meshChanged = g.modelChangedSinceSeen != 0;
+    shadowCheckMeshChanged(m, meshChanged,
+        g_shadowLastSeenHash, g_shadowLastSeenVer, "seen");
+    return meshChanged ||
            v.azimuth   != g.lastSeenAzimuth   ||
            v.elevation != g.lastSeenElevation ||
            v.distance  != g.lastSeenDistance  ||
@@ -792,8 +890,10 @@ private bool inputMoving(const(Mesh)* m, View v)
 
 private bool needsApply(const(Mesh)* m, View v)
 {
-    return vertsHash(m)     != g.appliedVertsHash ||
-           m.mutationVersion != g.appliedMutationVersion ||
+    const bool meshChanged = g.modelChangedSinceApplied != 0;
+    shadowCheckMeshChanged(m, meshChanged,
+        g_shadowAppliedHash, g_shadowAppliedVer, "applied");
+    return meshChanged ||
            v.azimuth   != g.appliedAzimuth   ||
            v.elevation != g.appliedElevation ||
            v.distance  != g.appliedDistance  ||
@@ -803,8 +903,12 @@ private bool needsApply(const(Mesh)* m, View v)
 
 private void captureLastSeen(const(Mesh)* m, View v)
 {
-    g.lastSeenVertsHash       = vertsHash(m);
-    g.lastSeenMutationVersion = m.mutationVersion;
+    // Mesh changes up to now are "seen" — clear the debounce accumulator.
+    g.modelChangedSinceSeen = 0;
+    if (hashCheckEnabled()) {
+        g_shadowLastSeenHash = vertsHash(m);
+        g_shadowLastSeenVer  = m.mutationVersion;
+    }
     g.lastSeenAzimuth   = v.azimuth;
     g.lastSeenElevation = v.elevation;
     g.lastSeenDistance  = v.distance;
@@ -815,8 +919,13 @@ private void captureLastSeen(const(Mesh)* m, View v)
 
 private void cacheAppliedState(const(Mesh)* m, View v)
 {
-    g.appliedVertsHash       = vertsHash(m);
-    g.appliedMutationVersion = m.mutationVersion;
+    // We just pushed the current mesh to the worker — both baselines are now
+    // up to date, so clear both accumulators.
+    g.modelChangedSinceApplied = 0;
+    if (hashCheckEnabled()) {
+        g_shadowAppliedHash = vertsHash(m);
+        g_shadowAppliedVer  = m.mutationVersion;
+    }
     g.appliedAzimuth   = v.azimuth;
     g.appliedElevation = v.elevation;
     g.appliedDistance  = v.distance;
@@ -850,9 +959,10 @@ private void cacheAppliedState(const(Mesh)* m, View v)
 private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
 {
     const bool firstTime   = (g.sceneLightId == 0);
-    const bool meshChanged = !firstTime
-        && (vertsHash(m)     != g.appliedVertsHash
-         || m.mutationVersion != g.appliedMutationVersion);
+    // Mesh-affecting change since the last worker push? The bus accumulator
+    // mirrors the old (vertsHash || mutationVersion) compare against the
+    // applied baseline; it is cleared by cacheAppliedState after this push.
+    const bool meshChanged = !firstTime && (g.modelChangedSinceApplied != 0);
 
     // Pick the source mesh -subdivided when any face is flagged subpatch,
     // raw cage otherwise. IPR-owned SubpatchPreview rebuilds lazily; it
