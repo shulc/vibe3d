@@ -94,6 +94,12 @@ class SceneReset : Command {
         // unaffected.
         import toolpipe.pipeline : g_pipeCtx;
         if (g_pipeCtx !is null) {
+            // Drop every stacked extra falloff (`falloff#N`) FIRST so a reset
+            // returns the WGHT slot to exactly the single primary stage —
+            // matching the pre-stacking baseline (byte-stable). The primary
+            // survives and reset()s its config to None below.
+            import commands.falloff : removeStackedFalloffs;
+            removeStackedFalloffs();
             foreach (s; g_pipeCtx.pipeline.allMut())
                 s.reset();
         }

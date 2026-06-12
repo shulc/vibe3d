@@ -184,15 +184,37 @@ class FalloffStage : Stage, Operator {
     private size_t[] _adjOffset;      // length nV+1; neighbors of v are
                                       // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
 
-    this(Mesh* mesh = null, EditMode* editMode = null) {
-        this.mesh_     = mesh;
-        this.editMode_ = editMode;
+    // Unique stage id. The PRIMARY falloff keeps the bare "falloff" id so
+    // the status-bar pulldown, the `falloff.<type>` set-primary commands,
+    // and every `pipe.falloff.type` preset keep targeting it unchanged.
+    // Stacked extras (Phase 4 `falloff.add`) get "falloff#1", "falloff#2", …
+    // so `Pipeline.findById` can address each one (and `tool.pipe.attr
+    // falloff#1 …` works). Multi-falloff combine is type-agnostic; the id
+    // is purely the addressing handle.
+    private string instanceId_ = "falloff";
+
+    this(Mesh* mesh = null, EditMode* editMode = null,
+         string instanceId = "falloff") {
+        this.mesh_       = mesh;
+        this.editMode_   = editMode;
+        this.instanceId_ = instanceId;
         publishState();
     }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Wght; }
-    override string   id()       const                          { return "falloff"; }
+    override string   id()       const                          { return instanceId_; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWght; }
+
+    /// Is this the compat anchor (`id() == "falloff"`)? The primary is never
+    /// removable and never auto-cleared by `falloff.clear`; only the stacked
+    /// `falloff#N` extras are. Set once at construction.
+    bool isPrimary() const { return instanceId_ == "falloff"; }
+
+    /// Expose the mesh / editMode pointers so `falloff.add` can construct a
+    /// stacked instance sharing the primary's references (auto-size +
+    /// selection-weight math need them).
+    Mesh*     meshPtr()     { return mesh_; }
+    EditMode* editModePtr() { return editMode_; }
 
     /// Restore every mutable field to its declaration-time default.
     /// Invoked by SceneReset (= `/api/reset`) so a "start fresh" wipes
@@ -1184,6 +1206,13 @@ private:
     }
 
     void publishState() {
+        // Only the PRIMARY drives the shared status-bar Falloff pulldown
+        // state path. Stacked `falloff#N` extras must NOT clobber the
+        // primary's `falloff/*` popup-state (they render via the legacy
+        // Tool Properties panel, not the status pulldown). Guarding here
+        // keeps the pulldown a faithful mirror of the primary, exactly as
+        // before stacking existed.
+        if (!isPrimary()) return;
         // Drives the status-bar Falloff pulldown (added in 7.5f) — same
         // checked-state convention as the SNAP / ACEN pulldowns.
         setStatePath("falloff/type",  typeLabel());

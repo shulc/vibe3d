@@ -119,6 +119,7 @@ import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
+import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneRotateCommand, WorkplaneOffsetCommand,
                                 WorkplaneAlignToSelectionCommand;
@@ -1386,7 +1387,9 @@ void main(string[] args) {
     // (base xfrm.transform + pipe.falloff.type) live in config/tool_presets.yaml
     // and stay separate.
     {
-        import commands.falloff : FalloffPresetCommand;
+        import commands.falloff : FalloffPresetCommand,
+                                   FalloffAddCommand, FalloffRemoveCommand,
+                                   FalloffClearCommand;
         // IIFE capture by value — same closure-over-loop-variable trap the
         // actr.* block above documents.
         Command delegate() makeFalloffFactory(string ty) {
@@ -1397,6 +1400,16 @@ void main(string[] args) {
             ["linear", "radial", "cylinder", "screen", "lasso"];
         foreach (ty; falloffTypes)
             reg.commandFactories["falloff." ~ ty] = makeFalloffFactory(ty);
+
+        // Multi-falloff stacking verbs (Phase 4): add/remove/clear extra
+        // falloff instances. `falloff.add <type>` / `falloff.remove <id>`
+        // take a positional arg wired in injectToolCommandPositional below.
+        reg.commandFactories["falloff.add"] = () => cast(Command)
+            new FalloffAddCommand(&mesh, cameraView, editMode, toolHost);
+        reg.commandFactories["falloff.remove"] = () => cast(Command)
+            new FalloffRemoveCommand(&mesh, cameraView, editMode, toolHost);
+        reg.commandFactories["falloff.clear"] = () => cast(Command)
+            new FalloffClearCommand(&mesh, cameraView, editMode, toolHost);
     }
 
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh, cameraView, editMode);
@@ -2413,6 +2426,24 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             utp.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto fad = cast(FalloffAddCommand)cmd) {
+                // falloff.add <type>
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            fad.setTypeName(pos[0].str);
+                    }
+                }
+            } else if (auto frm = cast(FalloffRemoveCommand)cmd) {
+                // falloff.remove <id>
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            frm.setTargetId(pos[0].str);
                     }
                 }
             }
