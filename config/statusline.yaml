@@ -167,6 +167,13 @@ groups:
       # (dynamicLabel: true → "Linear" / "Radial" / etc.); falls back
       # to the static label when type=none. Pressed-state is "anything
       # but none".
+      # Click   → type pulldown for the PRIMARY falloff (below).
+      # Alt+click → falloff-stack manager: the live list of active
+      #   falloff instances (click one to drop it from the queue), an
+      #   Add submenu that stacks a new instance of the chosen type
+      #   (falloff.add <type>), and Clear Stacked. The active rows are
+      #   a `kind: dynamic` placeholder the renderer expands from the
+      #   live pipeline (the stacked ids can't be known up front).
       - label: "Falloff"
         action:
           kind: popup
@@ -200,6 +207,31 @@ groups:
             # Shape preset moved to Tool Properties → Falloff section
             # (Phase 7.9). Status-bar pulldown owns only the type, not
             # the per-type config.
+        alt:
+          label: "Falloff"
+          action:
+            kind: popup
+            items:
+              - { kind: header, label: "Active Falloffs" }
+              # Live rows: one per contributing instance. Click removes
+              # it from the queue (primary → type none; extra → remove).
+              - { kind: dynamic, dynamicKind: falloffStack }
+              - { kind: divider }
+              - kind: submenu
+                label: Add
+                # Stack a NEW falloff instance of the chosen type. Each
+                # add appends a "falloff#N" stage; the composite weight
+                # combiner (Mix Mode) blends all contributors.
+                items:
+                  - { label: Linear,    action: { kind: script, lines: ["falloff.add linear"] } }
+                  - { label: Radial,    action: { kind: script, lines: ["falloff.add radial"] } }
+                  - { label: Cylinder,  action: { kind: script, lines: ["falloff.add cylinder"] } }
+                  - { label: Screen,    action: { kind: script, lines: ["falloff.add screen"] } }
+                  - { label: Lasso,     action: { kind: script, lines: ["falloff.add lasso"] } }
+                  - { label: Element,   action: { kind: script, lines: ["falloff.add element"] } }
+                  - { label: Selection, action: { kind: script, lines: ["falloff.add selection"] } }
+              - { kind: divider }
+              - { label: "Clear Stacked", action: { kind: command, id: falloff.clear } }
       # Phase 7.6: Symmetry (SYMM) — MODO symmetry-popover parity.
       # Click   → master toggle (symmetry.toggle).
       # Alt+click → Options popup (axis pick + workplane).

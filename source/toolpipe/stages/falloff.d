@@ -214,6 +214,11 @@ class FalloffStage : Stage, Operator {
     /// `falloff#N` extras are. Set once at construction.
     bool isPrimary() const { return instanceId_ == "falloff"; }
 
+    /// Does this instance actually contribute (a real type is selected)?
+    /// The primary anchor stays plugged in with type None when no
+    /// falloff is active; UI that lists "active falloffs" gates on this.
+    bool isActive() const { return type != FalloffType.None; }
+
     /// Expose the mesh / editMode pointers so `falloff.add` can construct a
     /// stacked instance sharing the primary's references (auto-size +
     /// selection-weight math need them).

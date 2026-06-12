@@ -3989,6 +3989,73 @@ void main(string[] args) {
         return formatNeedsAssimp(ext);
     }
 
+    // Live falloff-stack rows for the Falloff button's Alt popup. Lists
+    // every contributing FalloffStage instance; clicking one removes it
+    // from the queue. The primary ("falloff") is the compat anchor and
+    // can't be deleted — clicking it instead resets its type to none
+    // (the equivalent "drop from the active set"). Stacked extras
+    // ("falloff#N") dispatch falloff.remove <id>.
+    //
+    // Defined BEFORE renderPopupItems: these are nested functions, and
+    // D processes in-function declarations in order — renderPopupItems
+    // (the caller) must see this name already declared.
+    void renderFalloffStackItems() {
+        if (g_pipeCtx is null) {
+            ImGui.TextDisabled("(no pipeline)");
+            return;
+        }
+        import toolpipe.stage          : TaskCode;
+        import toolpipe.stages.falloff : FalloffStage;
+        // Defer dispatch until after the loop — removing a stage mutates
+        // the pipeline; collect the chosen command line and run it once
+        // the menu walk is complete.
+        string pending;
+        int    shown = 0;
+        foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght)) {
+            auto fo = cast(FalloffStage) s;
+            if (fo is null) continue;
+            bool primary = fo.isPrimary();
+            // The anchor only counts as "active" when it carries a type;
+            // a stacked extra always has one (add requires it) — list it
+            // regardless so a degenerate none-typed extra is still
+            // removable.
+            if (primary && !fo.isActive()) continue;
+            ++shown;
+            string label = primary
+                         ? fo.displayName()
+                         : fo.displayName() ~ "  (" ~ fo.id() ~ ")";
+            if (ImGui.MenuItem(label, "", /*selected=*/false)) {
+                pending = primary
+                        ? "tool.pipe.attr falloff type none"
+                        : "falloff.remove " ~ fo.id();
+            }
+        }
+        if (shown == 0)
+            ImGui.TextDisabled("(no active falloff)");
+        if (pending.length > 0) {
+            Action a;
+            a.kind        = ActionKind.script;
+            a.scriptLines = [pending];
+            dispatchAction(a);
+        }
+    }
+
+    // Expand a `kind: dynamic` popup item into runtime-generated rows.
+    // The config declares only the provider key (dynamicKind:); the
+    // actual rows depend on live state the YAML can't enumerate. New
+    // providers add a branch here. Unknown keys render a disabled hint
+    // rather than throwing mid-frame.
+    void renderDynamicPopupItems(string kind) {
+        switch (kind) {
+            case "falloffStack":
+                renderFalloffStackItems();
+                break;
+            default:
+                ImGui.TextDisabled("(unknown dynamic '%s')", kind);
+                break;
+        }
+    }
+
     // Render the body of a popup (between `BeginPopup` and `EndPopup`).
     // Action items dispatch via `dispatchAction`; dividers/headers are
     // non-interactive.
@@ -4031,6 +4098,9 @@ void main(string[] args) {
                         ImGui.EndMenu();
                     }
                     break;
+                case PopupItemKind.dynamic:
+                    renderDynamicPopupItems(it.dynamicKind);
+                    break;
             }
         }
     }
@@ -4052,6 +4122,7 @@ void main(string[] args) {
                     break;
                 case PopupItemKind.divider:
                 case PopupItemKind.header:
+                case PopupItemKind.dynamic:
                     break;
             }
         }
