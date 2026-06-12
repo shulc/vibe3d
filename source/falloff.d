@@ -509,7 +509,8 @@ unittest { // Composite math: Linear × Radial under each Mix Mode
     a.start   = Vec3(0, 0, 0);
     a.end     = Vec3(0, 1, 0);
 
-    // Contributor B — Radial unit sphere, weight 0.5 at x=0.5 (linear shape).
+    // Contributor B — Radial unit sphere (linear shape), weight 0.5 at
+    // ellipsoid distance 0.5 from the center.
     FalloffPacket b;
     b.enabled = true;
     b.type    = FalloffType.Radial;
@@ -517,9 +518,11 @@ unittest { // Composite math: Linear × Radial under each Mix Mode
     b.center  = Vec3(0, 0, 0);
     b.size    = Vec3(1, 1, 1);
 
-    // Sample point: y=0.25 (A→0.75) AND x=0.5 (B→0.5). Confirm the
-    // standalone weights first so the combine asserts rest on known wᵢ.
-    Vec3 sample = Vec3(0.5f, 0.25f, 0);
+    // Sample point: y=0.25 (A→0.75, Linear ignores off-line x) AND a radial
+    // distance of 0.5 (B→0.5). Radial measures the full vector, so x is chosen
+    // as √(0.5² − 0.25²) = √0.1875 to land the sphere distance exactly on 0.5.
+    // Confirm the standalone weights first so the combine asserts rest on known wᵢ.
+    Vec3 sample = Vec3(sqrt(0.1875f), 0.25f, 0);
     immutable float wA = evaluateFalloff(a, sample, 0, vp);  // 0.75
     immutable float wB = evaluateFalloff(b, sample, 0, vp);  // 0.5
     assert(isClose(wA, 0.75f));
