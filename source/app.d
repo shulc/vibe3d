@@ -31,7 +31,7 @@ import view;
 import shader;
 import viewcache;
 import perf_probe : g_perf, Cat;
-import io.assimp_runtime : initAssimp, shutdownAssimp;
+import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 
 import tools.transform;
@@ -1449,10 +1449,48 @@ void main(string[] args) {
         reg.commandFactories["symmetry.toggle"] = () => cast(Command)
             new SymmetryToggleCommand(&mesh, cameraView, editMode);
     }
-    reg.commandFactories["file.load"] = () => cast(Command)
-        new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
-    reg.commandFactories["file.save"] = () => cast(Command)
-        new FileSave(&mesh, cameraView, editMode);
+    // File → Open (Ctrl+O): native-primary "All supported" dialog; a .v3d
+    // load becomes the current document. `file.load` is also the id the
+    // HTTP /api/command path drives via setPath(), so it must stay
+    // registered with the open framing (setPath bypasses the dialog).
+    reg.commandFactories["file.load"] = () {
+        auto c = new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
+        c.configure(FileLoadMode.open);
+        return cast(Command) c;
+    };
+    reg.commandFactories["file.open"] = reg.commandFactories["file.load"];
+    // File → Save (Ctrl+S): write to the remembered .v3d path, else prompt.
+    reg.commandFactories["file.save"] = () {
+        auto c = new FileSave(&mesh, cameraView, editMode);
+        c.configure(FileSaveMode.save);
+        return cast(Command) c;
+    };
+    // File → Save As (Ctrl+Shift+S): always prompt, native .v3d.
+    reg.commandFactories["file.saveAs"] = () {
+        auto c = new FileSave(&mesh, cameraView, editMode);
+        c.configure(FileSaveMode.saveAs);
+        return cast(Command) c;
+    };
+    // Import ▸ X — single-format open dialog -> FileLoad (importSingle mode
+    // leaves the current document untitled). One id per interchange format.
+    foreach (importExt; [".lwo", ".obj", ".gltf", ".fbx"]) {
+        immutable ext = importExt;
+        reg.commandFactories["file.import" ~ ext] = () {
+            auto c = new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
+            c.configure(FileLoadMode.importSingle, ext);
+            return cast(Command) c;
+        };
+    }
+    // Export ▸ X — single-format save dialog -> FileSave (exportSingle mode
+    // leaves the current document path untouched). FBX is import-only (B4).
+    foreach (exportExt; [".lwo", ".obj", ".gltf"]) {
+        immutable ext = exportExt;
+        reg.commandFactories["file.export" ~ ext] = () {
+            auto c = new FileSave(&mesh, cameraView, editMode);
+            c.configure(FileSaveMode.exportSingle, ext);
+            return cast(Command) c;
+        };
+    }
     // "File → New" = empty scene. Wraps SceneReset with the
     // already-supported `setEmpty(true)` mode; undo restores
     // whatever was open before.
@@ -3933,6 +3971,23 @@ void main(string[] args) {
         return resolveChecked(chk);
     }
 
+    // True when a File-menu Import/Export command id targets a format that
+    // routes through assimp (so it must be greyed out when libassimp is
+    // unavailable). Ids look like "file.import.obj" / "file.export.gltf";
+    // the trailing token is the extension consulted in the format registry.
+    static bool popupActionNeedsAssimp(string commandId) {
+        import std.algorithm.searching : startsWith, findSplitAfter;
+        import io.formats : formatNeedsAssimp;
+        if (!commandId.startsWith("file.import.") &&
+            !commandId.startsWith("file.export."))
+            return false;
+        // last dot-separated token = bare ext ("obj", "gltf", ...)
+        auto split = commandId.findSplitAfter("file.import.");
+        string ext = split[1].length ? split[1]
+                                     : commandId.findSplitAfter("file.export.")[1];
+        return formatNeedsAssimp(ext);
+    }
+
     // Render the body of a popup (between `BeginPopup` and `EndPopup`).
     // Action items dispatch via `dispatchAction`; dividers/headers are
     // non-interactive.
@@ -3951,8 +4006,23 @@ void main(string[] args) {
                     break;
                 case PopupItemKind.action:
                     bool checked = popupItemChecked(it.checked);
-                    if (ImGui.MenuItem(it.label, "", checked))
+                    // Availability gating (asset-I/O Phase 6): grey out
+                    // Import/Export items that route through assimp when the
+                    // dynamic libassimp isn't loaded. Native .v3d and LWO are
+                    // pure D and always enabled. The id encodes the target
+                    // ext (file.import.obj / file.export.gltf / ...).
+                    bool blocked = false;
+                    if (it.action.kind == ActionKind.command)
+                        blocked = popupActionNeedsAssimp(it.action.id)
+                                  && !isAssimpAvailable();
+                    if (blocked) ImGui.BeginDisabled(true);
+                    if (ImGui.MenuItem(it.label, "", checked) && !blocked)
                         dispatchAction(it.action);
+                    if (blocked) {
+                        ImGui.EndDisabled();
+                        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                            ImGui.SetTooltip("Requires libassimp — not loaded");
+                    }
                     break;
                 case PopupItemKind.submenu:
                     if (ImGui.BeginMenu(it.label)) {
