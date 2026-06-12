@@ -11,7 +11,7 @@ OpenGL 3.3 Core Profile, SDL2 and Dear ImGui.
 [![Latest release](https://img.shields.io/github/v/release/shulc/vibe3d?include_prereleases&sort=semver)](https://github.com/shulc/vibe3d/releases)
 ![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
-![vibe3d](https://github.com/user-attachments/assets/105f697f-b65f-45b1-b240-f20641aa7984)
+![vibe3d](https://github.com/user-attachments/assets/9d3df7bd-242b-4d0c-a8d4-b20f1180ccf9)
 
 <!-- TODO: replace/supplement with an animated GIF of interactive editing
      (gizmo drag → edge extrude → falloff deform). A short loop sells the
