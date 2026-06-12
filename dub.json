@@ -14,7 +14,8 @@
 		"SDL_2020",
 		"GL_33",
 		"IMGUI_OPENGL3",
-		"IMGUI_SDL2"
+		"IMGUI_SDL2",
+		"BindAssimp_Static"
 	],
 	"license": "MIT",
 	"name": "vibe3d",
@@ -55,7 +56,7 @@
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
 		},
 		"bindbc-assimp6": {
-			"version": "5d658095e866f4fe228db4afaaa745ee3d4e077a",
+			"version": "c652ebb7e8d0eaa37d1da58210ef8a30a53c61d3",
 			"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
 		},
 		"lwo2-writer": {
@@ -64,8 +65,10 @@
 		}
 	},
 	"subConfigurations": {
-		"lwo2-writer": "core"
+		"lwo2-writer": "core",
+		"bindbc-assimp6": "static"
 	},
+	"_comment-assimp-static": "assimp is static-linked via subConfigurations.bindbc-assimp6=static. ALL build+link config (per-platform preBuildCommands that build the minimal OBJ/glTF/FBX libassimp, lflags by explicit archive path, and stdc++/m) now lives in the bindbc-assimp6 `static` configuration — a clean clone auto-builds it, no manual prerequisite. The base BindAssimp_Static version below is for vibe3d's own source/io/* guards.",
 	"buildTypes": {
 		"profile-fp": {
 			"_comment": "Profiling build: -gs forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`.",

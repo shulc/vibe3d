@@ -34,6 +34,22 @@ bool isAssimpAvailable() nothrow @nogc { return g_loaded; }
 void initAssimp() nothrow {
     if (g_loaded) return;
 
+    version (BindAssimp_Static) {
+        // Statically linked: assimp's extern(C) symbols are inside this binary,
+        // so there is no library to dlopen and no candidate path to probe. The
+        // bindbc static config's loadAssimp() is a no-op stub that always
+        // reports `loaded`, so the bundled-candidate loop below would falsely
+        // claim a bundled path. Just mark available and report the version.
+        g_loaded = true;
+        try {
+            const v = aiGetVersionMajor();
+            const mi = aiGetVersionMinor();
+            const p = aiGetVersionPatch();
+            stderr.writefln("[io] libassimp %s.%s.%s linked statically", v, mi, p);
+        } catch (Exception) {}
+        return;
+    } else {
+
     // 1. Library bundled with the application (release builds).
     foreach (cand; bundledCandidates()) {
         if (cand.length == 0) continue;
@@ -59,6 +75,7 @@ void initAssimp() nothrow {
         "[io] libassimp not found — OBJ/glTF/FBX import/export disabled "
         ~ "(native .v3d and LWO save still work)");
     catch (Exception) {}
+    } // version (BindAssimp_Static) else
 }
 
 /// Unload libassimp at shutdown. Idempotent.
