@@ -5323,6 +5323,59 @@ void main(string[] args) {
             dl.AddLine(rmbPath[0], rmbPath[$ - 1], IM_COL32(0, 255, 255, 220), 1.0f);
         }
 
+        // Change-notification bus flush (doc/change_notification_bus_plan.md,
+        // Design rule 2): exactly ONE flush per frame, here — AFTER event
+        // dispatch, HTTP tickCommand, toolpipe evaluate, the ImGui panel pass
+        // (sliders / command buttons mutate the mesh during drawSidePanel /
+        // drawTabPanel / Tool Properties, all above), and any undo/redo for the
+        // frame; BEFORE the first bus consumer (subpatch preview, just below),
+        // the GPU upload, picking, and the pick-cache invalidation block. Drain
+        // the active mesh's accumulated change flags + selection domains into the
+        // bus and zero them.
+        //
+        // Ordering (Stage 3): the flush MUST precede the subpatch-preview gate
+        // below so that gate reads THIS frame's flags. The subpatch poll runs
+        // earlier in the loop body than the pick-cache block, so a single flush
+        // placed here feeds BOTH consumers the same frame's flags via the
+        // startup subscriber's `meshChangedFlags`, which is consumed (zeroed)
+        // only after the pick-cache block far below. Nothing between here and
+        // that block mutates the mesh (render + GPU upload are read-only / use
+        // mutationVersion directly), so one flush at this point is exact.
+        {
+            import change_bus : changeBus;
+            const meshFlags  = mesh.pendingChanges_;
+            const selDomains = mesh.pendingSelDomains_;
+
+            // Shadow cross-check (Stage 1, debug builds only; retired in Stage
+            // 6). The bus trades blanket per-frame invalidation for precision, so
+            // a MISSED publisher (a mutation that bumped mutationVersion but
+            // forgot to noteChange/commitChange) would silently leave a stale
+            // cache. Catch it during burn-in: if mutationVersion advanced since
+            // the previous flush while NOTHING is pending, warn once-ish. Cheap
+            // (one ulong compare + a fired-flag) and compiled out of release.
+            debug {
+                import core.stdc.stdio : fprintf, stderr;
+                static ulong lastSeenMutVer = 0;
+                static bool  warnedMissedPublisher = false;
+                if (mesh.mutationVersion != lastSeenMutVer && meshFlags == 0) {
+                    if (!warnedMissedPublisher) {
+                        fprintf(stderr,
+                            "change_bus: MISSED PUBLISHER — mutationVersion " ~
+                            "advanced (%llu) with no pending change flags; a " ~
+                            "mutation site bumped the version but did not " ~
+                            "noteChange/commitChange.\n",
+                            cast(ulong)mesh.mutationVersion);
+                        warnedMissedPublisher = true;
+                    }
+                }
+                lastSeenMutVer = mesh.mutationVersion;
+            }
+
+            mesh.pendingChanges_    = 0;
+            mesh.pendingSelDomains_ = 0;
+            changeBus.flush(meshFlags, selDomains);
+        }
+
         // Refresh subpatch preview if the cage or depth changed since last
         // frame. Bundle vibe3d's face / edge / vert VBOs so the fast
         // path can try OSD GPU fan-outs for each — when all three
@@ -5330,17 +5383,33 @@ void main(string[] args) {
         // the entire per-frame CPU position-upload pipeline is
         // skipped. When only the face fan-out works we still write
         // edges + verts CPU-side (Phase 3b fallback).
+        //
+        // Change-notification bus, Stage 3: gate the per-frame call on this
+        // frame's mesh-change flags instead of calling unconditionally. The
+        // preview must rebuild on Position (drag moved cage verts), Geometry
+        // (cage topology changed) AND Marks — Tab toggling the subpatch bit
+        // changes marks, not geometry, yet must rebuild the preview. The
+        // internal `sourceVersion` / `sourceTopologyVersion` early-outs inside
+        // rebuildIfStale stay as a correctness backstop during burn-in, so a
+        // missed flag degrades to "preview rebuilds a frame late at worst",
+        // never to a wrong preview.
         {
-            import subpatch_osd : GpuFanOutTargets;
-            GpuFanOutTargets targets = {
-                faceVbo:        gpu.faceVbo,
-                faceVertCount:  gpu.faceVertCount,
-                edgeVbo:        gpu.edgeVbo,
-                edgeSegCount:   gpu.edgeVertCount,
-                vertVbo:        gpu.vertVbo,
-                vertCount:      gpu.vertCount,
-            };
-            subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
+            import change_bus : MeshEditScope;
+            enum uint kSubpatchTriggers = MeshEditScope.Position
+                                        | MeshEditScope.Geometry
+                                        | MeshEditScope.Marks;
+            if (meshChangedFlags & kSubpatchTriggers) {
+                import subpatch_osd : GpuFanOutTargets;
+                GpuFanOutTargets targets = {
+                    faceVbo:        gpu.faceVbo,
+                    faceVertCount:  gpu.faceVertCount,
+                    edgeVbo:        gpu.edgeVbo,
+                    edgeSegCount:   gpu.edgeVertCount,
+                    vertVbo:        gpu.vertVbo,
+                    vertCount:      gpu.vertCount,
+                };
+                subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
+            }
         }
 
         // Re-upload GPU buffers when transitioning between cage/preview view
@@ -5582,49 +5651,6 @@ void main(string[] args) {
                                 dragMode == DragMode.Zoom  ||
                                 dragMode == DragMode.Pan);
 
-        // Change-notification bus flush (doc/change_notification_bus_plan.md,
-        // Design rule 2): exactly ONE flush per frame, here — AFTER event
-        // dispatch, HTTP tickCommand, toolpipe evaluate, and any undo/redo for
-        // the frame; BEFORE picking / preview / GPU upload. Drain the active
-        // mesh's accumulated change flags + selection domains into the bus and
-        // zero them. Stage 0: no subscribers are registered yet, so this is a
-        // behavioural no-op (flush early-returns when nothing is pending), but
-        // the wiring + timing are in place for later stages.
-        {
-            import change_bus : changeBus;
-            const meshFlags  = mesh.pendingChanges_;
-            const selDomains = mesh.pendingSelDomains_;
-
-            // Shadow cross-check (Stage 1, debug builds only; retired in Stage
-            // 6). The bus trades blanket per-frame invalidation for precision, so
-            // a MISSED publisher (a mutation that bumped mutationVersion but
-            // forgot to noteChange/commitChange) would silently leave a stale
-            // cache. Catch it during burn-in: if mutationVersion advanced since
-            // the previous flush while NOTHING is pending, warn once-ish. Cheap
-            // (one ulong compare + a fired-flag) and compiled out of release.
-            debug {
-                import core.stdc.stdio : fprintf, stderr;
-                static ulong lastSeenMutVer = 0;
-                static bool  warnedMissedPublisher = false;
-                if (mesh.mutationVersion != lastSeenMutVer && meshFlags == 0) {
-                    if (!warnedMissedPublisher) {
-                        fprintf(stderr,
-                            "change_bus: MISSED PUBLISHER — mutationVersion " ~
-                            "advanced (%llu) with no pending change flags; a " ~
-                            "mutation site bumped the version but did not " ~
-                            "noteChange/commitChange.\n",
-                            cast(ulong)mesh.mutationVersion);
-                        warnedMissedPublisher = true;
-                    }
-                }
-                lastSeenMutVer = mesh.mutationVersion;
-            }
-
-            mesh.pendingChanges_    = 0;
-            mesh.pendingSelDomains_ = 0;
-            changeBus.flush(meshFlags, selDomains);
-        }
-
         // Invalidate the screen-space pick caches when the MESH actually
         // changed this frame (change-notification bus, Stage 2). The bus
         // flush just above OR-ed this frame's change classes into
@@ -5678,10 +5704,25 @@ void main(string[] args) {
                 vertexCache.invalidate();
                 vertexCache.update(vp);
             }
+
+            // Change-notification bus, Stage 3 — gpu_select proactive
+            // invalidation. The GPU select buffer's per-mode slot key
+            // (mode, gpu.uploadVersion, view, proj, FBO size) is UNCHANGED:
+            // `uploadVersion` fingerprints exactly what is in the VBO and backs
+            // the mid-event-batch stale-VBO safety net (gpu_select.d:240-254).
+            // The bus only replaces the *trigger* side — until now the slots
+            // aged out lazily on the next pick when the key no longer matched.
+            // Clear them proactively the instant geometry/positions change this
+            // frame so the next pick never reads a slot rendered against a
+            // superseded VBO; the key remains the correctness backstop.
+            if (meshChangedFlags & (MeshEditScope.Position | MeshEditScope.Geometry))
+                gpuSelect.invalidate();
         }
-        // Consume this frame's mesh-change flags: the pick caches above are the
-        // only Stage-2 subscriber. (gpu_select / subpatch preview / render-dirty
-        // are converted in later stages and still poll their own version keys.)
+        // Consume this frame's mesh-change flags. Stage 2 subscriber = the
+        // screen-space pick caches; Stage 3 adds gpu_select (above) and gates
+        // the subpatch-preview rebuild earlier in the loop body. Both Stage 3
+        // consumers keep their internal version keys as backstops; the bus only
+        // drives the trigger. (render-dirty / IPR is converted in Stage 4.)
         meshChangedFlags = 0;
 
         pickVertices(vp, doingCameraDrag);
