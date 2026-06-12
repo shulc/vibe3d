@@ -22,6 +22,7 @@ panels:
                 - { label: "LWO…",   action: { kind: command, id: "file.export.lwo"  } }
                 - { label: "OBJ…",   action: { kind: command, id: "file.export.obj"  } }
                 - { label: "glTF…",  action: { kind: command, id: "file.export.gltf" } }
+                - { label: "FBX…",   action: { kind: command, id: "file.export.fbx"  } }
           - { label: Quit, action: { kind: command, id: file.quit } }
       - title: History
         buttons:

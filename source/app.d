@@ -1482,8 +1482,9 @@ void main(string[] args) {
         };
     }
     // Export ▸ X — single-format save dialog -> FileSave (exportSingle mode
-    // leaves the current document path untouched). FBX is import-only (B4).
-    foreach (exportExt; [".lwo", ".obj", ".gltf"]) {
+    // leaves the current document path untouched). FBX writes via assimp's
+    // binary FBX exporter (unit-scale handled in io.scene_export).
+    foreach (exportExt; [".lwo", ".obj", ".gltf", ".fbx"]) {
         immutable ext = exportExt;
         reg.commandFactories["file.export" ~ ext] = () {
             auto c = new FileSave(&mesh, cameraView, editMode);

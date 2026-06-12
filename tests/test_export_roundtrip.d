@@ -179,3 +179,75 @@ unittest {
 
     if (exists(path)) remove(path);
 }
+
+// ---------------------------------------------------------------------------
+// FBX — exact geometry, just like OBJ (counts, position SET within 1e-6 both
+// directions, quad arity). The .fbx row exports via assimp's BINARY "fbx"
+// exporter.
+//
+// FBX uses CENTIMETRES. An FBX file carries a `UnitScaleFactor` in its global
+// metadata, and the de-facto unit for FBX written by every major DCC
+// (Blender/Maya/Unreal) is the centimetre; assimp's FBX exporter writes into
+// that cm unit context too. vibe3d works in metres, so io.scene_export
+// NORMALIZES the unit on FBX export — it scales vertex positions metres→cm
+// (×100) so the written values match the cm unit the file declares (see
+// `unitScaleFor` in source/io/scene_export.d). External cm-readers then get the
+// correct real-world size, and our importer (which runs aiProcess_GlobalScale,
+// honouring the declared cm unit, ×0.01) round-trips EXACTLY:
+// ×100 export · ×0.01 import = identity.
+//
+// Because the scale now lives correctly in the exporter (not as a test fudge),
+// the round-trip is exact and we assert it the same way as OBJ: vertex POSITION
+// SET within 1e-6 in BOTH directions, no per-test scale factor. (Empirically the
+// deviation is 0.0 — ±0.5 and ×100/×0.01 are exactly representable in float32.)
+//
+// We use binary "fbx" (not ascii "fbxa"): it round-trips through this libassimp
+// cleanly — vertex count, face count and quad arity all survive.
+// ---------------------------------------------------------------------------
+
+unittest {
+    enum string path = "/tmp/vibe3d-test-export-roundtrip.fbx";
+    enum double EPS = 1e-6;
+    if (exists(path)) remove(path);
+
+    resetCube();
+    auto orig = model();
+    immutable long origV = orig["vertexCount"].integer;
+    immutable long origF = orig["faceCount"].integer;
+    assert(origV == 8 && origF == 6, "cube prerequisite (8v/6f)");
+    auto origPts = vertexSet(orig);
+
+    runCmd("file.save", `{"path":"` ~ path ~ `"}`);
+    assert(exists(path), "expected " ~ path ~ " after FBX export");
+    assert(getSize(path) > 0, "exported FBX is empty");
+
+    // Mutate so a failed reload can't pass on stale state.
+    runCmd("mesh.subdivide");
+    assert(model()["vertexCount"].integer != origV, "subdivide should change vert count");
+
+    runCmd("file.load", `{"path":"` ~ path ~ `"}`);
+    auto rt = model();
+
+    // Counts: binary FBX preserves the cube topology, so 8v / 6f come back.
+    assert(rt["vertexCount"].integer == origV,
+        "FBX round-trip vertexCount: expected " ~ origV.to!string
+        ~ ", got " ~ rt["vertexCount"].integer.to!string);
+    assert(rt["faceCount"].integer == origF,
+        "FBX round-trip faceCount: expected " ~ origF.to!string
+        ~ ", got " ~ rt["faceCount"].integer.to!string);
+
+    // Position set round-trips within 1e-6 — both directions = exact set match.
+    // The exporter's metres→cm normalization and the importer's cm→metres
+    // GlobalScale cancel, so no scale factor is applied here (unlike before).
+    auto rtPts = vertexSet(rt);
+    assertSubset(origPts, rtPts, EPS, "FBX orig->reloaded");
+    assertSubset(rtPts, origPts, EPS, "FBX reloaded->orig");
+
+    // Quad arity survives (binary FBX stores n-gon polygons; no triangulation).
+    foreach (i, f; rt["faces"].array)
+        assert(f.array.length == 4,
+            format("FBX round-trip face %d should stay a quad (4 corners), got %d",
+                   i, f.array.length));
+
+    if (exists(path)) remove(path);
+}
