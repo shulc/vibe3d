@@ -31,6 +31,11 @@ forms:
     whenStage: falloff
     showLabel: false
     rows:
+      # ---- Mix Mode: multi-falloff combine op (present for every active
+      #      type; unused for a single / first contributor, but the dropdown
+      #      stays visible so a stacked falloff can pick its combine). ----
+      - { control: "tool.pipe.attr falloff mix ?", label: Mix }
+
       # ---- Custom-shape tangents (only present when shape == Custom) ----
       - { control: "tool.pipe.attr falloff in ?",  label: In,  style: slider }
       - { control: "tool.pipe.attr falloff out ?", label: Out, style: slider }

@@ -123,9 +123,11 @@ struct WorkplanePacket {
     bool isAuto = true;
 }
 
-/// Falloff type — published by WGHT stage in phase 7.5. Single active
-/// type at a time (no Mix Mode in the MVP). The choice is stashed on the
-/// stage rather than using one tool per type.
+/// Falloff type — published by WGHT stage in phase 7.5. Originally one
+/// active type at a time; multi-falloff stacking adds `Composite` (a
+/// packet whose weight is the Mix-Mode combination of N sub-packets in
+/// `FalloffPacket.contributors`). The choice is stashed on the stage
+/// rather than using one tool per type.
 enum FalloffType : uint {
     None      = 0,   // 7.5a — packet present but `enabled = false`
     Linear    = 1,   // 7.5b
@@ -135,6 +137,26 @@ enum FalloffType : uint {
     Cylinder  = 5,   // Stage 12 — radial-perpendicular-to-axis (xfrm.vortex)
     Element   = 6,   // Stage 14.1 — sphere around picked element centroid (xfrm.elementMove preset)
     Selection = 7,   // D.7 — `falloff.selection`; selected=1.0, unselected decays by BFS hop distance from selection (xfrm.flex preset)
+    Composite = 8,   // multi-falloff — weight = Mix-Mode accumulation of `contributors` (each sub-packet carries its own `mix`)
+}
+
+/// Falloff Mix Mode — how a contributor's per-vertex weight combines with
+/// the running accumulator when multiple falloffs are stacked (see the
+/// Composite branch of `evaluateFalloff` in source/falloff.d). The FIRST
+/// contributor seeds the accumulator, so its `mix` is unused; every later
+/// contributor's `mix` selects the combine op against the accumulator.
+/// Wire keys (used by `tool.pipe.attr falloff mix <key>`): multiply / add
+/// / subtract / max / min.
+///
+/// Int-backed (NOT ubyte) so the FalloffStage Tool-Properties dropdown can
+/// bind it via `Param.intEnum_(cast(int*)&mix, ...)` — that helper takes an
+/// `int*` and writes 4 bytes through it, so the field must be int-sized.
+enum FalloffMix : int {
+    Multiply = 0,   // accum * w   (default)
+    Add      = 1,   // accum + w
+    Subtract = 2,   // accum - w
+    Max      = 3,   // max(accum, w)
+    Min      = 4,   // min(accum, w)
 }
 
 /// Element-falloff connectivity gate (Stage 14.4) — the `falloff.element`
@@ -316,6 +338,26 @@ struct FalloffPacket {
     // ignore this field; compounding only makes physical sense
     // for the multiplicative Scale formula.
     float compoundPasses = 1.0f;
+
+    // --- Multi-falloff stacking (Composite) ---
+    //
+    // This sub-packet's OWN Mix Mode — how its weight combines with the
+    // accumulator when it is contributor i≥1 inside a Composite (the
+    // first contributor's `mix` is unused; it seeds the accumulator).
+    // For a stand-alone (non-Composite) packet this field is irrelevant
+    // and stays at the default.
+    FalloffMix mix = FalloffMix.Multiply;
+
+    // Composite sub-packets. Only populated when `type == Composite`.
+    // Each entry is a VALUE COPY of a contributing falloff's packet (the
+    // combiner owns them outright — it never stores pointers/slices into
+    // another stage's live members, so the contributors outlive the
+    // stage that produced them and stay valid for the whole pipe walk).
+    // `evaluateFalloff` on a Composite accumulates the contributors'
+    // weights in order via each contributor's `mix` (see source/falloff.d).
+    // FLAT: contributors are never themselves Composite (the combiner
+    // flattens on build), so the accumulation is a single linear pass.
+    FalloffPacket[] contributors;
 }
 
 /// Symmetry packet — populated by SYMM stage in 7.6. v1 ships
