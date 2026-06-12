@@ -8,6 +8,7 @@ import editmode;
 import viewcache;
 import snapshot : MeshSnapshot;
 import subpatch_osd : catmullClarkOsd;
+import change_bus : MeshEditScope;
 
 class Subdivide : Command, Operator {
     mixin OperatorActrCommon;
@@ -65,6 +66,13 @@ class Subdivide : Command, Operator {
                 && prevSelectedFaces[parentFi])
                 mesh.selectFace(cast(int)k);
         }
+        // Change-notification (Stage 1): Catmull-Clark REPLACED the whole mesh
+        // (new verts AND faces) — publish the Geometry class (Points|Polygons).
+        // noteChange (not commitChange): the `*mesh = ...` swap reset the fresh
+        // struct's version counters to 0, and subdivide historically did not
+        // re-bump them; the bus only needs the class so caches rebuild. (Also
+        // keeps the Stage-1 shadow check quiet — the version DID change here.)
+        mesh.noteChange(MeshEditScope.Geometry);
         refreshCaches();
         return true;
     }

@@ -8,6 +8,7 @@ import editmode;
 import viewcache;
 import math : Vec3;
 import params : Param;
+import change_bus : MeshEditScope;
 
 import std.math : sqrt;
 
@@ -102,7 +103,7 @@ class MeshRadialAlign : Command, Operator {
             mesh.vertices[i].z = centroid.z + d.z * s;
         }
 
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();
@@ -114,7 +115,7 @@ class MeshRadialAlign : Command, Operator {
         if (touchedIdx.length == 0) return false;
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

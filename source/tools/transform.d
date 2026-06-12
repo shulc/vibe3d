@@ -4,6 +4,7 @@ import operator : VectorStack;
 import mesh;
 import editmode;
 import math : Vec3, Viewport;
+import change_bus : MeshEditScope;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
@@ -331,7 +332,10 @@ protected:
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = base[i];
         }
-        ++mesh.mutationVersion;
+        // Session cancel restores positions to the pre-edit baseline — a real
+        // version bump (not mid-drag), so commitChange (Position) reproduces the
+        // raw mutationVersion bump AND publishes the class.
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         gpuMatrix      = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
         propsDragging  = false;
@@ -416,6 +420,14 @@ protected:
 
     void uploadToGpu() {
         if (vertexProcessCount <= 0) return;
+        // Change-notification (Stage 1): every standalone deformer tool
+        // (Move/Rotate/Scale, bend/push) writes mesh.vertices in place mid-drag
+        // WITHOUT a version bump, then funnels through this ONE per-apply upload
+        // chokepoint. noteChange accumulates the Position class without touching
+        // the counters (preserving mid-drag version stability) — once per apply,
+        // never per vertex. (The unified XfrmTransformTool path also notes in
+        // applyFold; a second OR within the same frame is idempotent.)
+        mesh.noteChange(MeshEditScope.Position);
         if (vertexProcessCount < cast(int)(mesh.vertices.length * 0.8))
             gpu.uploadSelectedVertices(*mesh, toProcess);
         else

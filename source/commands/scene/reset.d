@@ -7,6 +7,7 @@ import editmode;
 import viewcache;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
+import change_bus : MeshChangeAll;
 
 /// Reset the scene to a chosen primitive
 /// (cube/diamond/octahedron/lshape/grid/subdivcube). Replaces the legacy
@@ -104,6 +105,12 @@ class SceneReset : Command {
                 s.reset();
         }
         if (onResetTool !is null) onResetTool();
+        // Bulk transition: the whole mesh was REPLACED — every cache must
+        // invalidate. noteChange(All) (the `*mesh = ...` above reset the new
+        // mesh's pending set + counters to 0, so this must come after it). We use
+        // noteChange (not commitChange) because the fresh mesh's version counters
+        // start at 0 by design; the bus only needs the All notification.
+        mesh.noteChange(MeshChangeAll);
         refreshCaches();
         return true;
     }

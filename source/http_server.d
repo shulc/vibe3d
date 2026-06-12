@@ -734,6 +734,35 @@ class HttpServer {
                                e.msg.replace("\"", "\\\"") ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
+        } else if (request.path == "/api/changes" && request.method == "GET") {
+            // Change-notification bus debug counters (Stage 1; test-only). Direct
+            // read of the process-wide __gshared bus from the HTTP thread — the
+            // counters are plain integers updated on the main thread at the
+            // per-frame flush, so a diagnostic racy read needs no lock (same
+            // contract as /api/perf). Tests read these counters as DELTAS across
+            // a step (the runner resets app state, not the bus, between test
+            // binaries — see the plan's reset caveat).
+            response.headers["Content-Type"] = "application/json";
+            if (!testMode) {
+                response.statusCode = 403;
+                response.body = `{"error":"changes is only available in --test mode"}`;
+            } else {
+                import change_bus : changeBus;
+                import std.format : format;
+                response.statusCode = 200;
+                response.body = format(
+                    `{"flushCount":%d,"lastFlushFlags":%d,"lastSelDomains":%d,` ~
+                    `"totalPosition":%d,"totalPoints":%d,"totalPolygons":%d,` ~
+                    `"totalMarks":%d,"totalMaterial":%d,` ~
+                    `"totalSelVertex":%d,"totalSelEdge":%d,"totalSelFace":%d}`,
+                    changeBus.flushCount, changeBus.lastFlushFlags,
+                    changeBus.lastSelDomains,
+                    changeBus.totalPosition, changeBus.totalPoints,
+                    changeBus.totalPolygons, changeBus.totalMarks,
+                    changeBus.totalMaterial,
+                    changeBus.totalSelVertex, changeBus.totalSelEdge,
+                    changeBus.totalSelFace);
+            }
         } else if (request.path == "/api/toolpipe/eval") {
             response.headers["Content-Type"] = "application/json";
             if (toolpipeEvalProvider is null) {

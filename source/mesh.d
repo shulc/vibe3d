@@ -2126,7 +2126,7 @@ struct Mesh {
             editRecorder_.recordEdgeSelByEnds(preEdgeSelEnds, postEdgeSelEnds);
         }
 
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         return exEdges.length;
     }
 
@@ -2651,7 +2651,7 @@ struct Mesh {
             editRecorder_.recordEdgeSelByEnds(preEdgeSelEnds, postEdgeSelEnds);
         }
 
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         return exEdges.length;
     }
 
@@ -2782,7 +2782,7 @@ struct Mesh {
         }
 
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         return newFaceIndices.length;
     }
 
@@ -2918,7 +2918,7 @@ struct Mesh {
         }
 
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         return newFaceIndices.length;
     }
 
@@ -3070,7 +3070,7 @@ struct Mesh {
         }
 
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         return toClone.length;
     }
 
@@ -3158,7 +3158,7 @@ struct Mesh {
         clearEdgeSelection();
 
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         return toClone.length;
     }
 
@@ -3171,7 +3171,7 @@ struct Mesh {
         if (key in edgeIndexMap) return;
         edgeIndexMap[key] = cast(uint)edges.length;
         edges ~= [a, b];
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Polygons);
     }
     /// Re-derive the deduplicated edge list AND `edgeIndexMap` from the
     /// current `faces` via `addEdge` (which also bumps the version
@@ -3197,7 +3197,7 @@ struct Mesh {
         faces ~= idx.dup;
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
             editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
@@ -3214,7 +3214,7 @@ struct Mesh {
                 edgeLookup[key] = cast(uint)(edges.length - 1);
             }
         }
-        ++mutationVersion; ++topologyVersion;
+        commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
             editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
@@ -3270,7 +3270,12 @@ struct Mesh {
         if (cur != on) {
             if (on) faceMarks[idx] |=  Marks.Subpatch;
             else    faceMarks[idx] &= ~Marks.Subpatch;
-            ++mutationVersion; ++topologyVersion;
+            // Subpatch is a Marks-class flip, but it also changes the subpatch
+            // preview's OUTPUT topology, so we keep the topologyVersion bump the
+            // old line carried (commitChange(Marks) alone would not, since Marks
+            // is not a Geometry class). Counters end identical to the raw line.
+            commitChange(MeshEditScope.Marks);
+            ++topologyVersion;
         }
     }
     void clearSubpatch() {
@@ -3278,7 +3283,9 @@ struct Mesh {
         foreach (m; faceMarks) if (m & Marks.Subpatch) { any = true; break; }
         // Mask ONLY the Subpatch bit — Select shares this word.
         foreach (ref m; faceMarks) m &= ~Marks.Subpatch;
-        if (any) { ++mutationVersion; ++topologyVersion; }
+        // Same as setSubpatch: Marks-class flip that also invalidates subpatch
+        // preview output topology — keep the topologyVersion bump explicitly.
+        if (any) { commitChange(MeshEditScope.Marks); ++topologyVersion; }
     }
 
     void clearVertexSelection() {
@@ -3435,7 +3442,13 @@ struct Mesh {
         const size_t base = elemIdx * m.dim;
         if (base + m.dim > m.data.length) return false;
         m.data[base .. base + m.dim] = values[];
-        ++mutationVersion;
+        // Mesh-map value write (UV / weight / crease — continuous per-element
+        // data). No dedicated Maps class exists yet (reserved until #5 UV work),
+        // and this is NOT a topology change, so we classify it as Material —
+        // the only non-Geometry tag-class flag — to preserve the version parity
+        // (mutationVersion bumps, topologyVersion does not). Reclassify to Maps
+        // when that flag lands. (See report: ambiguous site.)
+        commitChange(MeshEditScope.Material);
         return true;
     }
 

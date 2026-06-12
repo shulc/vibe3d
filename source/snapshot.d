@@ -5,6 +5,7 @@ import std.array : array;
 
 import mesh;
 import math;
+import change_bus : MeshChangeAll;
 
 // ---------------------------------------------------------------------------
 // MeshSnapshot — full pre-apply mesh + selection + subpatch state, used by
@@ -96,11 +97,11 @@ struct MeshSnapshot {
         mesh.meshMaps                    = meshMaps.map!(mm => mm.dup).array;
         mesh.buildLoops();
         mesh.resizeAllMeshMaps();
-        ++mesh.mutationVersion;
-        // Snapshot restore rebuilds the WHOLE mesh — topology may
-        // have changed across the undo/redo, so cached subpatch
-        // topology must invalidate.
-        ++mesh.topologyVersion;
+        // Snapshot restore rebuilds the WHOLE mesh — geometry, topology, marks
+        // and materials may all have changed across the undo/redo. Emit the
+        // bulk All mask (which includes Geometry, so commitChange bumps both
+        // mutationVersion and topologyVersion exactly as the old two lines did).
+        mesh.commitChange(MeshChangeAll);
     }
 }
 

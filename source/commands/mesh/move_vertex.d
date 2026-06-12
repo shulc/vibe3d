@@ -9,6 +9,7 @@ import shader;
 import viewcache;
 import math : Vec3;
 import params : Param;
+import change_bus : MeshEditScope;
 
 /// Move a vertex from one position to another, identified by current world
 /// coordinates (within EPS tolerance). Useful for test scenarios that need
@@ -62,6 +63,12 @@ class MeshMoveVertex : Command, Operator {
         origPos  = mesh.vertices[found];
         mesh.vertices[found] = to_;
 
+        // Change-notification (Stage 1): the forward apply moved a position but
+        // historically did NOT bump mutationVersion (only revert did). Preserve
+        // that exactly — noteChange publishes the Position class WITHOUT touching
+        // the counters, so the bus sees the move while the version stays put.
+        mesh.noteChange(MeshEditScope.Position);
+
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();
@@ -72,7 +79,7 @@ class MeshMoveVertex : Command, Operator {
     override bool revert() {
         if (movedIdx < 0 || movedIdx >= cast(int)mesh.vertices.length) return false;
         mesh.vertices[movedIdx] = origPos;
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         ec.invalidate();

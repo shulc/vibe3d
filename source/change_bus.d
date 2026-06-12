@@ -25,6 +25,19 @@ module change_bus;
 
 public import mesh_edit_delta : MeshEditScope;
 
+// Manifest "everything changed" mask for bulk transitions (scene reset, file
+// load, snapshot restore, playback start) where the whole mesh is replaced and
+// every cache must invalidate. This is NOT a member of MeshEditScope — that
+// enum is the change tracker's vocabulary and stays minimal; All is a bus-level
+// convenience OR of the concrete classes. (Geometry already folds Points|
+// Polygons, so this expands to Position|Points|Polygons|Marks|Material.)
+enum uint MeshChangeAll =
+      MeshEditScope.Position
+    | MeshEditScope.Points
+    | MeshEditScope.Polygons
+    | MeshEditScope.Marks
+    | MeshEditScope.Material;
+
 // Selection-domain bitfield. Mirrors MeshOpEntry.SelDomain's three members
 // (Vertex / Edge / Face) but as power-of-two flags so one flush can OR several
 // domains together (e.g. a command that touches vertex AND face selection).

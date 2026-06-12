@@ -7,6 +7,7 @@ import view;
 import editmode;
 import viewcache;
 import snapshot : MeshSnapshot;
+import change_bus : MeshEditScope;
 
 class SubdivideFaceted : Command, Operator {
     mixin OperatorActrCommon;
@@ -78,6 +79,11 @@ class SubdivideFaceted : Command, Operator {
                 ++cursor;
             }
         }
+        // Change-notification (Stage 1): facetedSubdivide REPLACED the whole
+        // mesh (new verts AND faces) — publish Geometry (Points|Polygons). Same
+        // rationale as mesh.subdivide: the `*mesh = ...` swap reset the version
+        // counters, so noteChange carries only the class.
+        mesh.noteChange(MeshEditScope.Geometry);
         refreshCaches();
         return true;
     }

@@ -8,6 +8,7 @@ import view;
 import editmode;
 import viewcache;
 import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
+import change_bus : MeshEditScope;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : SubjectPacket, SymmetryPacket;
 import toolpipe.stage    : TaskCode;
@@ -197,7 +198,7 @@ class MeshTransform : Command, Operator {
             applySymmetryMirror(mesh, symm, vmask, alsoTouched);
         }
 
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         fc.invalidate();
@@ -211,7 +212,7 @@ class MeshTransform : Command, Operator {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = touchedPrev[i];
         }
-        ++mesh.mutationVersion;
+        mesh.commitChange(MeshEditScope.Position);
         gpu.upload(*mesh);
         vc.invalidate();
         fc.invalidate();
