@@ -9,7 +9,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import lwo;
+import io.lwo_import : sceneFromLwo;
+import io.scene_ir   : ImportedScene, flattenToMesh;
 import io.native : readV3d;
 import viewcache;
 import snapshot : MeshSnapshot;
@@ -57,10 +58,16 @@ class FileLoad : Command {
         // discrete user action — paid once per load.
         snap = MeshSnapshot.capture(*mesh);
         // Dispatch by extension: native .v3d vs. the LWO interchange bridge.
-        // Default (unknown / no extension) is native .v3d.
-        const bool ok = (extension(path).toLower == ".lwo")
-            ? importLWO(path, *mesh)
-            : readV3d(path, *mesh);
+        // Default (unknown / no extension) is native .v3d. The LWO bridge goes
+        // through the scene-IR seam (parse -> ImportedScene -> flattenToMesh).
+        bool ok;
+        if (extension(path).toLower == ".lwo") {
+            ImportedScene sc;
+            ok = sceneFromLwo(path, sc);
+            if (ok) *mesh = flattenToMesh(sc);
+        } else {
+            ok = readV3d(path, *mesh);
+        }
         if (!ok) return false;
 
         // The reader has already rebuilt the mesh on a fresh struct (Mesh.init)

@@ -31,7 +31,6 @@ import view;
 import shader;
 import viewcache;
 import perf_probe : g_perf, Cat;
-import lwo;
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 
