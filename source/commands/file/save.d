@@ -10,6 +10,7 @@ import mesh;
 import view;
 import editmode;
 import io.lwo_export : exportLwo;
+import io.scene_export : exportViaAssimp;
 import io.native : writeV3d;
 
 class FileSave : Command {
@@ -34,21 +35,31 @@ class FileSave : Command {
             version (Windows)
                 auto result = saveDialog(path,
                     [FilterItem(cast(const(ushort)*)"V3D"w.ptr, cast(const(ushort)*)"v3d"w.ptr),
-                     FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)],
+                     FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr),
+                     FilterItem(cast(const(ushort)*)"OBJ"w.ptr, cast(const(ushort)*)"obj"w.ptr),
+                     FilterItem(cast(const(ushort)*)"glTF"w.ptr, cast(const(ushort)*)"gltf"w.ptr),
+                     FilterItem(cast(const(ushort)*)"glTF Binary"w.ptr, cast(const(ushort)*)"glb"w.ptr)],
                     "Untitled.v3d");
             else
                 auto result = saveDialog(path,
-                    [FilterItem("V3D", "v3d"), FilterItem("LWO", "lwo")],
+                    [FilterItem("V3D", "v3d"), FilterItem("LWO", "lwo"),
+                     FilterItem("OBJ", "obj"), FilterItem("glTF", "gltf"),
+                     FilterItem("glTF Binary", "glb")],
                     "Untitled.v3d");
             assert(result != Result.error, getError());
             if (path is null) return false;
         }
-        // Dispatch by extension: native .v3d vs. the LWO interchange bridge.
-        // Default (unknown / no extension) is native .v3d.
-        if (extension(path).toLower == ".lwo")
-            exportLwo(*mesh, path);
-        else
-            writeV3d(*mesh, path);
+        // Dispatch by extension: native .v3d vs. the interchange bridges.
+        // Default (unknown / no extension) is native .v3d. The assimp
+        // exporters take a format id, not an extension (B4: FBX write is
+        // deferred — no .fbx case here).
+        switch (extension(path).toLower) {
+            case ".lwo":  exportLwo(*mesh, path);                    break;
+            case ".obj":  if (!exportViaAssimp(*mesh, path, "obj"))   return false; break;
+            case ".gltf": if (!exportViaAssimp(*mesh, path, "gltf2")) return false; break;
+            case ".glb":  if (!exportViaAssimp(*mesh, path, "glb2"))  return false; break;
+            default:      writeV3d(*mesh, path);                     break;
+        }
         return true;
     }
 }
