@@ -768,6 +768,8 @@ void main(string[] args) {
                 0x0400, 0x052F, // Cyrillic + Cyrillic Supplement
                 0x2DE0, 0x2DFF, // Cyrillic Extended-A
                 0xA640, 0xA69F, // Cyrillic Extended-B
+                0x2018, 0x2026, // General Punctuation: smart quotes, • bullet, … ellipsis
+                0x2039, 0x203A, // ‹ › single angle quotes (popup-button chevron)
                 0x21E7, 0x21E7, // Shift: ⇧
                 0x2303, 0x2303, // Control: ⌃
                 0x2318, 0x2318, // Command: ⌘
@@ -776,7 +778,23 @@ void main(string[] args) {
             ];
             const(ImWchar)* glyphRanges = macGlyphRanges.ptr;
         } else {
-            auto glyphRanges = io.Fonts.GetGlyphRangesCyrillic();
+            // GetGlyphRangesCyrillic() covers only Latin + Cyrillic, so the
+            // General-Punctuation glyphs the UI relies on (… ellipsis in
+            // "Open…"/"LWO…" labels, › chevron in "Import ›"/"Export ›") never
+            // got rasterized and showed blank. Spell out a custom range that
+            // mirrors Cyrillic + the punctuation we actually use. Must persist
+            // until the atlas is built — hence `static immutable`.
+            static immutable ImWchar[] glyphRangesData = [
+                0x0020, 0x00FF, // Basic Latin + Latin-1 Supplement (incl. »)
+                0x0400, 0x044F, // Cyrillic
+                0x0450, 0x045F, // Cyrillic Supplement (common subset)
+                0x2DE0, 0x2DFF, // Cyrillic Extended-A
+                0xA640, 0xA69F, // Cyrillic Extended-B
+                0x2018, 0x2026, // General Punctuation: smart quotes, • bullet, … ellipsis
+                0x2039, 0x203A, // ‹ › single angle quotes (popup-button chevron)
+                0,
+            ];
+            const(ImWchar)* glyphRanges = glyphRangesData.ptr;
         }
         io.Fonts.AddFontFromMemoryTTF(cast(ubyte[]) interTtf, 14.0f * uiScale,
                                       &fontCfg, glyphRanges);
@@ -1473,25 +1491,35 @@ void main(string[] args) {
     };
     // Import ▸ X — single-format open dialog -> FileLoad (importSingle mode
     // leaves the current document untitled). One id per interchange format.
-    foreach (importExt; [".lwo", ".obj", ".gltf", ".fbx"]) {
-        immutable ext = importExt;
-        reg.commandFactories["file.import" ~ ext] = () {
+    //
+    // NOTE: a plain `foreach`-body closure would capture the loop variable by
+    // REFERENCE — in D every delegate would share one storage slot and see the
+    // LAST ext (.fbx), so every Import/Export item opened an FBX dialog. (The
+    // `immutable ext = importExt;` idiom does NOT create a fresh per-iteration
+    // binding in D.) Pass ext as a function parameter so each delegate closes
+    // over its own copy.
+    CommandFactory importFactory(string ext) {
+        return () {
             auto c = new FileLoad(&mesh, cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
             c.configure(FileLoadMode.importSingle, ext);
             return cast(Command) c;
         };
     }
+    foreach (importExt; [".lwo", ".obj", ".gltf", ".fbx"])
+        reg.commandFactories["file.import" ~ importExt] = importFactory(importExt);
     // Export ▸ X — single-format save dialog -> FileSave (exportSingle mode
     // leaves the current document path untouched). FBX writes via assimp's
-    // binary FBX exporter (unit-scale handled in io.scene_export).
-    foreach (exportExt; [".lwo", ".obj", ".gltf", ".fbx"]) {
-        immutable ext = exportExt;
-        reg.commandFactories["file.export" ~ ext] = () {
+    // binary FBX exporter (unit-scale handled in io.scene_export). Same
+    // per-ext closure-capture care as the import loop above.
+    CommandFactory exportFactory(string ext) {
+        return () {
             auto c = new FileSave(&mesh, cameraView, editMode);
             c.configure(FileSaveMode.exportSingle, ext);
             return cast(Command) c;
         };
     }
+    foreach (exportExt; [".lwo", ".obj", ".gltf", ".fbx"])
+        reg.commandFactories["file.export" ~ exportExt] = exportFactory(exportExt);
     // "File → New" = empty scene. Wraps SceneReset with the
     // already-supported `setEmpty(true)` mode; undo restores
     // whatever was open before.
