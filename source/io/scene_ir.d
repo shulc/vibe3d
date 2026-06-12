@@ -78,6 +78,10 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
         uint[] remap;
         remap.length = part.surfaces.length;
         foreach (si, ref isurf; part.surfaces) {
+            // Dedup is by NAME only: two genuinely-distinct materials that happen
+            // to share a name intentionally collapse to the first-seen one. That
+            // is an accepted loss for this lossy interchange seam (matches LWO's
+            // TAG-name model), NOT a bug to "fix" by keying on color/params.
             if (auto idx = isurf.name in nameToIndex) {
                 remap[si] = cast(uint) *idx;
             } else {

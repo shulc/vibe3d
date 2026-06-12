@@ -9,8 +9,9 @@ import command;
 import mesh;
 import view;
 import editmode;
-import io.lwo_import : sceneFromLwo;
-import io.scene_ir   : ImportedScene, flattenToMesh;
+import io.lwo_import    : sceneFromLwo;
+import io.scene_import  : importViaAssimp;
+import io.scene_ir      : ImportedScene, flattenToMesh;
 import io.native : readV3d;
 import viewcache;
 import snapshot : MeshSnapshot;
@@ -46,10 +47,12 @@ class FileLoad : Command {
             version (Windows)
                 auto result = openDialog(path,
                     [FilterItem(cast(const(ushort)*)"V3D"w.ptr, cast(const(ushort)*)"v3d"w.ptr),
-                     FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr)]);
+                     FilterItem(cast(const(ushort)*)"LWO"w.ptr, cast(const(ushort)*)"lwo"w.ptr),
+                     FilterItem(cast(const(ushort)*)"Mesh"w.ptr, cast(const(ushort)*)"obj,gltf,glb,fbx"w.ptr)]);
             else
                 auto result = openDialog(path,
-                    [FilterItem("V3D", "v3d"), FilterItem("LWO", "lwo")]);
+                    [FilterItem("V3D", "v3d"), FilterItem("LWO", "lwo"),
+                     FilterItem("Mesh", "obj,gltf,glb,fbx")]);
             assert(result != Result.error, getError());
             if (path is null) return false;
         }
@@ -61,9 +64,16 @@ class FileLoad : Command {
         // Default (unknown / no extension) is native .v3d. The LWO bridge goes
         // through the scene-IR seam (parse -> ImportedScene -> flattenToMesh).
         bool ok;
-        if (extension(path).toLower == ".lwo") {
+        const ext = extension(path).toLower;
+        if (ext == ".lwo") {
             ImportedScene sc;
             ok = sceneFromLwo(path, sc);
+            if (ok) *mesh = flattenToMesh(sc);
+        } else if (ext == ".obj" || ext == ".gltf" || ext == ".glb"
+                   || ext == ".fbx") {
+            // Interchange import (OBJ / glTF / FBX) through assimp -> scene-IR.
+            ImportedScene sc;
+            ok = importViaAssimp(path, sc);
             if (ok) *mesh = flattenToMesh(sc);
         } else {
             ok = readV3d(path, *mesh);
