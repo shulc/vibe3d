@@ -25,8 +25,9 @@ commands:
   mesh.remove:           "Cmd+Backspace"
   snap.toggle:           X
   file.new:              "Cmd+N"
-  file.load:             "Cmd+O"
+  file.open:             "Cmd+O"
   file.save:             "Cmd+S"
+  file.saveAs:           "Cmd+Shift+S"
   file.quit:             "Cmd+Q"
 
 editmodes:
