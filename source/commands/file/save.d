@@ -9,7 +9,7 @@ import command;
 import mesh;
 import view;
 import editmode;
-import lwo;
+import io.lwo_export : exportLwo;
 import io.native : writeV3d;
 
 class FileSave : Command {
@@ -46,7 +46,7 @@ class FileSave : Command {
         // Dispatch by extension: native .v3d vs. the LWO interchange bridge.
         // Default (unknown / no extension) is native .v3d.
         if (extension(path).toLower == ".lwo")
-            exportLWO(*mesh, path);
+            exportLwo(*mesh, path);
         else
             writeV3d(*mesh, path);
         return true;

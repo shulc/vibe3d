@@ -57,7 +57,14 @@
 		"bindbc-assimp6": {
 			"version": "5d658095e866f4fe228db4afaaa745ee3d4e077a",
 			"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+		},
+		"lwo2-writer": {
+			"version": "~master",
+			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
 		}
+	},
+	"subConfigurations": {
+		"lwo2-writer": "core"
 	},
 	"buildTypes": {
 		"profile-fp": {
