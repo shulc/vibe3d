@@ -11,7 +11,7 @@ import mesh : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape,
+import toolpipe.packets  : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                             LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
@@ -113,6 +113,15 @@ class FalloffStage : Stage, Operator {
     float in_  = 0.5f;
     float out_ = 0.5f;
 
+    // Multi-falloff Mix Mode. When this stage is stacked as a non-first
+    // contributor (Phase 4 add/remove verbs), its weight folds into the
+    // running accumulator via this op (see the Composite branch of
+    // evaluateFalloff). The primary / first contributor's `mix` is unused
+    // (it seeds the accumulator), but every instance carries the field so
+    // it round-trips through snapshot/restore and the forms UI. Default
+    // Multiply preserves single-falloff behaviour (irrelevant for one).
+    FalloffMix mix = FalloffMix.Multiply;
+
     // Optional refs for auto-size on `setAttr("type", ...)`. Phase 7.5a
     // shipped without them (None type doesn't auto-size); 7.5b wires
     // them in app.d's initToolPipe so Linear / Radial / Screen / Lasso
@@ -205,6 +214,7 @@ class FalloffStage : Stage, Operator {
         softBorderPx = 16;
         in_          = 0.5f;
         out_         = 0.5f;
+        mix          = FalloffMix.Multiply;
         anchorRing.length = 0;
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
@@ -276,7 +286,44 @@ class FalloffStage : Stage, Operator {
         }
         pkt.selectionWeights = selWeights_;
         pkt.compoundPasses   = 1.0f;
-        _publishedPacket = pkt;
+        pkt.mix              = mix;
+
+        // --- Multi-falloff combine (WGHT slot, last-writer-wins) ---
+        //
+        // The VectorStack's Falloff slot holds exactly one FalloffPacket;
+        // multiple FalloffStage instances run in pipe order and each
+        // REPLACES the slot. To stack them we read the packet a prior
+        // FalloffStage already published and fold ourselves in:
+        //
+        //   * prior is null  → we're the first (or only) active falloff:
+        //     publish OUR sub-packet directly. With exactly one active
+        //     falloff this is the verbatim pre-stacking packet, so the
+        //     geometry output is byte-for-byte identical (no Composite,
+        //     `mix` irrelevant for one).
+        //   * prior present  → build a Composite whose `contributors` are
+        //     (prior's contributors, if it is already a Composite — FLATTEN,
+        //     don't nest) ~ our sub-packet, and publish THAT (replacing the
+        //     slot). The last stacked FalloffStage to run thus publishes the
+        //     composite of all; every downstream consumer reads ONE packet
+        //     unchanged.
+        //
+        // Contributor lifetime: contributors are VALUE COPIES owned by this
+        // stage's `_publishedPacket` member (which persists past evaluate),
+        // so the published pointer + its contributors stay valid for the
+        // whole pipe walk and never alias another stage's live fields.
+        auto prior = vts.get!FalloffPacket();
+        if (prior is null) {
+            _publishedPacket = pkt;
+        } else {
+            FalloffPacket comp;
+            comp.enabled = true;
+            comp.type    = FalloffType.Composite;
+            if (prior.type == FalloffType.Composite)
+                comp.contributors = prior.contributors.dup ~ pkt;
+            else
+                comp.contributors = [*prior, pkt];
+            _publishedPacket = comp;
+        }
         vts.put(&_publishedPacket);
         return true;
     }
@@ -317,6 +364,7 @@ class FalloffStage : Stage, Operator {
         softBorderPx = p.softBorderPx;
         in_          = p.in_;
         out_         = p.out_;
+        mix          = p.mix;
         anchorRing   = p.anchorRing.dup;
         // The Selection-weight cache is keyed on (mutationVersion, editMode,
         // selectionSig, steps, shape, in_, out_); restoring config that changes
@@ -360,6 +408,7 @@ class FalloffStage : Stage, Operator {
         p.softBorderPx = softBorderPx;
         p.in_          = in_;
         p.out_         = out_;
+        p.mix          = mix;
         p.anchorRing   = anchorRing.dup;
         return p;
     }
@@ -397,7 +446,7 @@ class FalloffStage : Stage, Operator {
             "type", "shape", "start", "end", "center", "size", "axis",
             "dist", "anchorRing", "connect", "mode", "screenCx", "screenCy",
             "screenSize", "transparent", "lassoStyle", "lassoPoly",
-            "softBorder", "in", "out",
+            "softBorder", "in", "out", "mix",
         ];
     }
 
@@ -423,6 +472,7 @@ class FalloffStage : Stage, Operator {
             ["softBorder",   format("%g", softBorderPx)],
             ["in",           format("%g", in_)],
             ["out",          format("%g", out_)],
+            ["mix",          mixLabel()],
         ];
     }
 
@@ -500,7 +550,23 @@ class FalloffStage : Stage, Operator {
             IntEnumEntry(cast(int)ElementConnect.Material, "material", "Material"),
         ];
 
+        IntEnumEntry[] mixEntries = [
+            IntEnumEntry(cast(int)FalloffMix.Multiply, "multiply", "Multiply"),
+            IntEnumEntry(cast(int)FalloffMix.Add,      "add",      "Add"),
+            IntEnumEntry(cast(int)FalloffMix.Subtract, "subtract", "Subtract"),
+            IntEnumEntry(cast(int)FalloffMix.Max,      "max",      "Max"),
+            IntEnumEntry(cast(int)FalloffMix.Min,      "min",      "Min"),
+        ];
+
         Param[] ps;
+        // Mix Mode — multi-falloff stacking control. Present for EVERY
+        // active (non-None) type so each falloff section carries a Mix
+        // dropdown (the field is unused for a single / first contributor,
+        // but the UI + `mix ?` query path both resolve through params()).
+        ps ~= Param.intEnum_("mix", "Mix",
+                             cast(int*)&mix, mixEntries,
+                             cast(int)FalloffMix.Multiply);
+
         // Shape preset is rendered via drawProperties() as a status-bar-
         // style popup-button; kept out of the schema list. HTTP
         // `tool.pipe.attr falloff shape <v>`
@@ -562,6 +628,11 @@ class FalloffStage : Stage, Operator {
                 ps ~= Param.float_("dist", "Steps",
                                    &dist, 4.0f).min(1.0f);
                 break;
+            case FalloffType.Composite:
+                // A FalloffStage's own `type` is never Composite — that
+                // is a synthesized PACKET type the WGHT combiner publishes,
+                // not a value any single stage holds. No per-type config.
+                break;
         }
         return ps;
     }
@@ -592,6 +663,7 @@ class FalloffStage : Stage, Operator {
             case FalloffType.Cylinder:        return "Cylinder Falloff";
             case FalloffType.Element:         return "Element Falloff";
             case FalloffType.Selection:       return "Selection Falloff";
+            case FalloffType.Composite:       return "Falloff";  // never a stage's own type
         }
     }
 
@@ -976,6 +1048,16 @@ private:
             case "softBorder": softBorderPx = parseFloat(value); return true;
             case "in":         in_          = parseFloat(value); return true;
             case "out":        out_         = parseFloat(value); return true;
+            case "mix":
+                // Multi-falloff Mix Mode wire keys (5): multiply / add /
+                // subtract / max / min. Bogus values are refused so the
+                // field keeps its previous value (mirrors `connect`/`mode`).
+                if      (value == "multiply") { mix = FalloffMix.Multiply; return true; }
+                else if (value == "add")      { mix = FalloffMix.Add;      return true; }
+                else if (value == "subtract") { mix = FalloffMix.Subtract; return true; }
+                else if (value == "max")      { mix = FalloffMix.Max;      return true; }
+                else if (value == "min")      { mix = FalloffMix.Min;      return true; }
+                return false;
             case "lassoPoly":  return parseLassoPoly(value);
             case "lassoClear":
                 lassoPolyX.length = 0;
@@ -1046,6 +1128,7 @@ private:
             case FalloffType.Cylinder:        return "cylinder";
             case FalloffType.Element:         return "element";
             case FalloffType.Selection:       return "selection";
+            case FalloffType.Composite:       return "composite";  // never a stage's own type
         }
     }
 
@@ -1078,6 +1161,16 @@ private:
             case FalloffShape.EaseOut: return "easeOut";
             case FalloffShape.Smooth:  return "smooth";
             case FalloffShape.Custom:  return "custom";
+        }
+    }
+
+    string mixLabel() const {
+        final switch (mix) {
+            case FalloffMix.Multiply: return "multiply";
+            case FalloffMix.Add:      return "add";
+            case FalloffMix.Subtract: return "subtract";
+            case FalloffMix.Max:      return "max";
+            case FalloffMix.Min:      return "min";
         }
     }
 
@@ -1283,6 +1376,9 @@ private:
                 // selection switch ignores any prior `dist` value
                 // left by a previous Element session.
                 dist = 4.0f;
+                break;
+            case FalloffType.Composite:
+                // Never a stage's own type — nothing to auto-size.
                 break;
         }
     }

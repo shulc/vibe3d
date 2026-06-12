@@ -307,3 +307,52 @@ unittest { // lassoClear empties the polygon
     assert(a["lassoPoly"] == "",
         "lassoClear should empty polygon; got " ~ a["lassoPoly"]);
 }
+
+// -------------------------------------------------------------------------
+// Multi-falloff Mix Mode (Phase 2): `mix` attr round-trips the 5 wire keys,
+// defaults to multiply, and rejects bogus values.
+// -------------------------------------------------------------------------
+
+unittest { // mix defaults to multiply
+    resetCube();
+    auto a = getFalloffAttrs();
+    assert(a["mix"] == "multiply",
+        "default mix should be multiply; got " ~ a["mix"]);
+}
+
+unittest { // mix round-trips each of the 5 wire keys
+    resetCube();
+    foreach (key; ["add", "subtract", "max", "min", "multiply"]) {
+        auto r = postJson("/api/command",
+            "tool.pipe.attr falloff mix " ~ key);
+        assert(r["status"].str == "ok",
+            "set mix " ~ key ~ " failed: " ~ r.toString);
+        auto a = getFalloffAttrs();
+        assert(a["mix"] == key,
+            "mix should be " ~ key ~ "; got " ~ a["mix"]);
+    }
+}
+
+unittest { // bogus mix value refused — previous value retained
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff mix add");
+    // Refused write: the command dispatch returns an error and the field
+    // keeps its prior value.
+    cast(void)post(baseUrl ~ "/api/command",
+        "tool.pipe.attr falloff mix bogus");
+    auto a = getFalloffAttrs();
+    assert(a["mix"] == "add",
+        "bogus mix must be rejected, keeping 'add'; got " ~ a["mix"]);
+}
+
+unittest { // mix `?` query resolves via params() for an active type
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff type linear");
+    postJson("/api/command", "tool.pipe.attr falloff mix max");
+    // The forms-engine `?` read-back path resolves through the live,
+    // type-filtered params(); `mix` is exposed for every non-None type.
+    auto r = postJson("/api/command", `tool.pipe.attr falloff mix "?"`);
+    assert(r["status"].str == "ok",
+        "mix ? query should resolve for an active type: " ~ r.toString);
+    postJson("/api/command", "tool.pipe.attr falloff type none");
+}

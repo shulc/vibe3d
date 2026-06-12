@@ -126,6 +126,13 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
             // by the renderer); deferred to a possible "wireframe
             // gradient" overlay if a user surfaces a need.
             break;
+        case FalloffType.Composite:
+            // Multi-falloff combine packet — no single geometric shape
+            // to outline (it is the Mix-Mode product of N sub-falloffs,
+            // each with its own overlay). The per-contributor overlays
+            // are drawn from their own stages; the composite itself has
+            // nothing extra to render.
+            break;
     }
 }
 

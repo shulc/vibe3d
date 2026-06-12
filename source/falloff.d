@@ -6,7 +6,8 @@ import std.math      : sqrt;
 
 import math : Vec3, Viewport, projectToWindowFull, dot,
               pointInPolygon2D, closestOnSegment2DSquared;
-import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
+import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
+                          ElementConnect;
 
 // ---------------------------------------------------------------------------
 // Falloff math — Phase 7.5 of doc/phase7_plan.md / doc/falloff_plan.md.
@@ -57,7 +58,52 @@ float evaluateFalloff(const ref FalloffPacket cfg,
             return elementWeight(cfg, pos, vertIdx);
         case FalloffType.Selection:
             return selectionWeight(cfg, vertIdx);
+        case FalloffType.Composite:
+            return compositeWeight(cfg, pos, vertIdx, vp);
     }
+}
+
+/// Combine the Mix-Mode of two weights. `a` is the running accumulator,
+/// `b` the next contributor's clamped weight. The first contributor's
+/// `mix` is never consulted (it seeds `a`); only contributors i≥1 reach
+/// here. Results are NOT clamped per-step — Add/Subtract can leave [0,1]
+/// mid-accumulation and `compositeWeight` clamps once at the very end
+/// (so e.g. (0.6 + 0.6) then *0.5 reads the true 1.2 sum, not a clamped
+/// 1.0). Multiply/Max/Min already stay in-range for in-range inputs.
+float applyMix(FalloffMix mix, float a, float b) {
+    final switch (mix) {
+        case FalloffMix.Multiply: return a * b;
+        case FalloffMix.Add:      return a + b;
+        case FalloffMix.Subtract: return a - b;
+        case FalloffMix.Max:      return max(a, b);
+        case FalloffMix.Min:      return min(a, b);
+    }
+}
+
+/// Composite falloff: the multi-falloff combiner. Each contributor is a
+/// stand-alone sub-packet (never itself Composite — the WGHT combiner
+/// flattens on build). The first contributor SEEDS the accumulator with
+/// its clamped weight; every later contributor folds its clamped weight
+/// in via ITS OWN `mix`. The final accumulator is clamped to [0, 1]
+/// (Add/Subtract can overshoot the range). An empty contributor set
+/// degenerates to full influence (1.0) — matching the "no constraint"
+/// contract every other falloff uses for its degenerate case.
+private float compositeWeight(const ref FalloffPacket cfg,
+                              Vec3 pos, int vertIdx, const ref Viewport vp)
+{
+    if (cfg.contributors.length == 0) return 1.0f;
+    float accum = clamp01(evaluateFalloff(cfg.contributors[0], pos, vertIdx, vp));
+    foreach (i; 1 .. cfg.contributors.length) {
+        float w = clamp01(evaluateFalloff(cfg.contributors[i], pos, vertIdx, vp));
+        accum = applyMix(cfg.contributors[i].mix, accum, w);
+    }
+    return clamp01(accum);
+}
+
+private float clamp01(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
 }
 
 /// Selection falloff (D.7) — `falloff.selection`. The
@@ -442,6 +488,143 @@ unittest { // Selection (D.7): explicit weights array honored per-vert
     assert(isClose(evaluateFalloff(p, Vec3.init, -1, vp), 1.0f));
 }
 
+unittest { // Composite: empty contributor set → full influence
+    import std.math : isClose;
+    FalloffPacket p;
+    p.enabled = true;
+    p.type    = FalloffType.Composite;
+    Viewport vp;
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
+}
+
+unittest { // Composite math: Linear × Radial under each Mix Mode
+    import std.math : isClose;
+    Viewport vp;
+
+    // Contributor A — Linear along +Y, weight 0.75 at y=0.25 (linear shape).
+    FalloffPacket a;
+    a.enabled = true;
+    a.type    = FalloffType.Linear;
+    a.shape   = FalloffShape.Linear;
+    a.start   = Vec3(0, 0, 0);
+    a.end     = Vec3(0, 1, 0);
+
+    // Contributor B — Radial unit sphere, weight 0.5 at x=0.5 (linear shape).
+    FalloffPacket b;
+    b.enabled = true;
+    b.type    = FalloffType.Radial;
+    b.shape   = FalloffShape.Linear;
+    b.center  = Vec3(0, 0, 0);
+    b.size    = Vec3(1, 1, 1);
+
+    // Sample point: y=0.25 (A→0.75) AND x=0.5 (B→0.5). Confirm the
+    // standalone weights first so the combine asserts rest on known wᵢ.
+    Vec3 sample = Vec3(0.5f, 0.25f, 0);
+    immutable float wA = evaluateFalloff(a, sample, 0, vp);  // 0.75
+    immutable float wB = evaluateFalloff(b, sample, 0, vp);  // 0.5
+    assert(isClose(wA, 0.75f));
+    assert(isClose(wB, 0.5f));
+
+    FalloffPacket comp;
+    comp.enabled = true;
+    comp.type    = FalloffType.Composite;
+
+    // Helper: build a 2-contributor composite where B carries `m`.
+    FalloffPacket build(FalloffMix m) {
+        FalloffPacket c = comp;
+        FalloffPacket bb = b;
+        bb.mix = m;
+        c.contributors = [a, bb];   // a seeds (its mix ignored)
+        return c;
+    }
+
+    // evaluateFalloff takes `ref const` — bind each composite to a local.
+    float evalMix(FalloffMix m) {
+        auto c = build(m);
+        return evaluateFalloff(c, sample, 0, vp);
+    }
+    // Multiply (default): 0.75 * 0.5 = 0.375
+    assert(isClose(evalMix(FalloffMix.Multiply), 0.375f));
+    // Add: 0.75 + 0.5 = 1.25 → clamp01 → 1.0
+    assert(isClose(evalMix(FalloffMix.Add), 1.0f));
+    // Subtract: 0.75 - 0.5 = 0.25
+    assert(isClose(evalMix(FalloffMix.Subtract), 0.25f));
+    // Max: max(0.75, 0.5) = 0.75
+    assert(isClose(evalMix(FalloffMix.Max), 0.75f));
+    // Min: min(0.75, 0.5) = 0.5
+    assert(isClose(evalMix(FalloffMix.Min), 0.5f));
+}
+
+unittest { // Composite: single contributor == that contributor (byte-stable)
+    import std.math : isClose;
+    Viewport vp;
+    FalloffPacket lin;
+    lin.enabled = true;
+    lin.type    = FalloffType.Linear;
+    lin.shape   = FalloffShape.Linear;
+    lin.start   = Vec3(0, 0, 0);
+    lin.end     = Vec3(0, 1, 0);
+
+    FalloffPacket comp;
+    comp.enabled = true;
+    comp.type    = FalloffType.Composite;
+    comp.contributors = [lin];
+
+    foreach (yi; 0 .. 5) {
+        float y = yi * 0.25f;
+        Vec3 pos = Vec3(0, y, 0);
+        // Composite of one == the lone contributor, weight-for-weight.
+        assert(isClose(evaluateFalloff(comp, pos, 0, vp),
+                       evaluateFalloff(lin,  pos, 0, vp)));
+    }
+}
+
+unittest { // Composite: three contributors fold left-to-right via per-elem mix
+    import std.math : isClose;
+    Viewport vp;
+    // Three radial spheres of different sizes give three distinct weights
+    // at one sample; we only need deterministic wᵢ to check the fold ORDER.
+    FalloffPacket mk(float sz) {
+        FalloffPacket p;
+        p.enabled = true;
+        p.type    = FalloffType.Radial;
+        p.shape   = FalloffShape.Linear;
+        p.center  = Vec3(0, 0, 0);
+        p.size    = Vec3(sz, sz, sz);
+        return p;
+    }
+    Vec3 sample = Vec3(0.5f, 0, 0);
+    auto c0 = mk(1.0f);   // t=0.5 → 0.5
+    auto c1 = mk(2.0f);   // t=0.25 → 0.75
+    auto c2 = mk(4.0f);   // t=0.125 → 0.875
+    assert(isClose(evaluateFalloff(c0, sample, 0, vp), 0.5f));
+    assert(isClose(evaluateFalloff(c1, sample, 0, vp), 0.75f));
+    assert(isClose(evaluateFalloff(c2, sample, 0, vp), 0.875f));
+
+    // accum = 0.5; +0.75 = 1.25; *0.875 (no clamp mid-fold) = 1.09375;
+    // final clamp01 → 1.0. Proves per-step is UNCLAMPED, final IS clamped.
+    c1.mix = FalloffMix.Add;
+    c2.mix = FalloffMix.Multiply;
+    FalloffPacket comp;
+    comp.enabled = true;
+    comp.type    = FalloffType.Composite;
+    comp.contributors = [c0, c1, c2];
+    assert(isClose(evaluateFalloff(comp, sample, 0, vp), 1.0f));
+
+    // Reorder so the product happens first: accum=0.5; *0.875=0.4375;
+    // +0.75=1.1875 → clamp01 → 1.0. (Different intermediate, same clamp.)
+    // Use a smaller seed to land inside [0,1] and prove order matters.
+    auto d0 = mk(1.0f);          // 0.5
+    auto d1 = mk(4.0f); d1.mix = FalloffMix.Multiply;  // 0.875
+    auto d2 = mk(2.0f); d2.mix = FalloffMix.Subtract;  // 0.75
+    // accum=0.5; *0.875=0.4375; -0.75=-0.3125 → clamp01 → 0.0
+    FalloffPacket comp2;
+    comp2.enabled = true;
+    comp2.type    = FalloffType.Composite;
+    comp2.contributors = [d0, d1, d2];
+    assert(isClose(evaluateFalloff(comp2, sample, 0, vp), 0.0f));
+}
+
 // ---------------------------------------------------------------------------
 // falloffPacketsEqual — field-by-field equality check used by
 // CommandWrapperTool and the transform tools to detect live falloff
@@ -460,6 +643,7 @@ bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b) {
     if (a.enabled != b.enabled) return false;
     if (a.type    != b.type)    return false;
     if (a.shape   != b.shape)   return false;
+    if (a.mix     != b.mix)     return false;
     if (a.in_     != b.in_)     return false;
     if (a.out_    != b.out_)    return false;
     if (a.start.x  != b.start.x  || a.start.y  != b.start.y  || a.start.z  != b.start.z)  return false;
@@ -478,6 +662,15 @@ bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b) {
         if (a.lassoPolyX[i] != b.lassoPolyX[i]) return false;
     foreach (i; 0 .. a.lassoPolyY.length)
         if (a.lassoPolyY[i] != b.lassoPolyY[i]) return false;
+    // Composite contributors — refire correctness: a multi-falloff edit
+    // (a contributor's config / mix changed, or one added/removed) must
+    // be detected so the preview re-applies. Recurse field-wise; the
+    // contributors are flat (never themselves Composite) so this bottoms
+    // out in one level.
+    if (a.contributors.length != b.contributors.length) return false;
+    foreach (i; 0 .. a.contributors.length)
+        if (!falloffPacketsEqual(a.contributors[i], b.contributors[i]))
+            return false;
     return true;
 }
 
