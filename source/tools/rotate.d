@@ -400,10 +400,15 @@ public:
         // splices through mergeRun like the accums. The accum assignment + the
         // three config restores are INDEPENDENT mutations (local fields vs three
         // disjoint stages); none reads another, so they compose without clobber.
-        FalloffPacket  fSnap;  bool haveF  = false;
+        // FALLOFF is now SET-aware: snapshot every active falloff instance's
+        // config (1-element = the prior single-stage behaviour, byte-identical),
+        // keyed by stage identity so restore targets the same instances. SNAP +
+        // SYMMETRY stay SINGLE (one stage each).
+        import toolpipe.stages.falloff : FalloffSetSnapshot, snapshotFalloffSet,
+                                         restoreFalloffSet;
+        FalloffSetSnapshot fSnap = snapshotFalloffSet(falloffStagesForHooks());
         SnapPacket     snSnap; bool haveSn = false;
         SymmetryPacket sySnap; bool haveSy = false;
-        if (auto fs = falloffStageForHooks())  { fSnap  = fs.snapshotConfigToPacket(); haveF  = true; }
         if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
         if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
         // P-F Phase 3b (MAJOR-5) — capture the WRAPPER field-snapshot hooks (the
@@ -417,14 +422,14 @@ public:
         cmd.setHooks(
             () {
                 angleAccum = accAfter;  propDeg = propAfter;
-                if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
+                restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
                 if (wrapApply !is null) wrapApply();
             },
             () {
                 angleAccum = accBefore; propDeg = propBefore;
-                if (haveF)  if (auto fs = falloffStageForHooks())  fs.restoreConfigFromPacket(fSnap);
+                restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
                 if (wrapRevert !is null) wrapRevert();

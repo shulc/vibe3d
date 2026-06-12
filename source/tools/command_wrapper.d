@@ -120,13 +120,18 @@ abstract class CommandWrapperTool : Tool {
     // linear / radial / cylinder / element ignore it).
     private Viewport cachedVp;
 
-    // Last falloff packet seen by `pushFalloffToInner` — used by
+    // Last falloff config SET seen by `applyWithLivePipeline` — used by
     // `evaluate()` to detect live changes (the FalloffStage's panel
     // widgets fire onParamChanged on the stage, not on this Tool, so
     // the wrapper's own `paramsDirty` flag misses falloff edits and
     // the viewport doesn't refresh). Same pattern as MoveTool /
     // ScaleTool / RotateTool `falloffPacketsEqual`-based detection.
-    private FalloffPacket lastAppliedFalloff;
+    //
+    // SET-aware: one packet per ACTIVE falloff stage (in pipe order). A change
+    // fires when the COUNT differs (an instance added/removed) OR any per-stage
+    // config differs. With a single active falloff this is a 1-element array,
+    // identical to the prior single-packet behaviour.
+    private FalloffPacket[] lastAppliedFalloffs;
 
     // Lazy-built endpoint gizmo for draggable handles (linear start /
     // end, radial center + 6 size handles). Mirrors transform tools'
@@ -213,7 +218,7 @@ abstract class CommandWrapperTool : Tool {
         dragging = false;
         refireDriving_   = false;
         refireCommitted_ = false;
-        lastAppliedFalloff = FalloffPacket.init;
+        lastAppliedFalloffs.length = 0;
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
@@ -442,10 +447,11 @@ abstract class CommandWrapperTool : Tool {
                 VectorStack vts;
                 vts.put(&subj);
                 g_pipeCtx.pipeline.evaluate(vts);
-                import falloff : falloffPacketsEqual;
-                FalloffPacket fp;
-                if (auto p = vts.get!FalloffPacket()) fp = *p;
-                falloffChanged = !falloffPacketsEqual(fp, lastAppliedFalloff);
+                // SET-aware: compare the per-stage config set, so a tweak to
+                // ANY stacked falloff (or an add/remove) refreshes the preview,
+                // not just the primary. Single-falloff = 1-element compare.
+                falloffChanged = !falloffSetsEqual(currentFalloffConfigs(),
+                                                   lastAppliedFalloffs);
             }
         }
         if (!paramsDirty && !falloffChanged) return;
@@ -572,6 +578,35 @@ abstract class CommandWrapperTool : Tool {
     /// Falls back to the legacy `inner.apply()` if the inner Command
     /// doesn't implement Operator (defensive — every convolve command
     /// post-Phase-2 implements it).
+    // Per-stage falloff CONFIG snapshot for the live-change trigger — one
+    // FalloffPacket per ACTIVE falloff stage, in pipe order. Mirrors the R/S
+    // sub-tools' set-aware view: a change to ANY stacked instance (or an
+    // add/remove) is detected by comparing this set frame-to-frame. With a
+    // single active falloff this is a 1-element array (the primary's config),
+    // identical to the prior single-packet trigger.
+    private FalloffPacket[] currentFalloffConfigs() {
+        import toolpipe.pipeline       : g_pipeCtx;
+        import toolpipe.stage          : TaskCode;
+        import toolpipe.stages.falloff : FalloffStage;
+        FalloffPacket[] cfgs;
+        if (g_pipeCtx is null) return cfgs;
+        foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght))
+            if (auto fs = cast(FalloffStage) s)
+                cfgs ~= fs.snapshotConfigToPacket();
+        return cfgs;
+    }
+
+    // Set equality for the live-change trigger: a change fires when the COUNT
+    // differs (instance added/removed) or any per-stage config differs.
+    private static bool falloffSetsEqual(const FalloffPacket[] a,
+                                         const FalloffPacket[] b) {
+        import falloff : falloffPacketsEqual;
+        if (a.length != b.length) return false;
+        foreach (i; 0 .. a.length)
+            if (!falloffPacketsEqual(a[i], b[i])) return false;
+        return true;
+    }
+
     private bool applyWithLivePipeline() {
         import toolpipe.pipeline : g_pipeCtx;
         if (meshPtr is null) return false;
@@ -590,14 +625,12 @@ abstract class CommandWrapperTool : Tool {
         if (g_pipeCtx !is null)
             g_pipeCtx.pipeline.evaluate(vts);   // populate upstream packets
 
-        // Snapshot the applied falloff for the change-detection branch
-        // in evaluate(). Pointer-equality on the slot isn't enough
-        // because the pipe rewrites the same _publishedPacket every
-        // walk; copy-by-value semantics keep the comparison meaningful.
-        if (auto fp = vts.get!FalloffPacket())
-            lastAppliedFalloff = *fp;
-        else
-            lastAppliedFalloff = FalloffPacket.init;
+        // Snapshot the applied falloff SET for the change-detection branch
+        // in evaluate(). Per-stage config copies (by value) keep the
+        // comparison meaningful — the pipe rewrites the same _publishedPacket
+        // every walk, so a value snapshot of each stage's config is what makes
+        // the frame-to-frame compare detect a real change.
+        lastAppliedFalloffs = currentFalloffConfigs();
 
         // Dispatch through the Operator interface. evaluate(vts) returns
         // bool — true on a meaningful effect, false on a no-op rejection.

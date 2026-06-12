@@ -637,6 +637,29 @@ protected:
                g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
     }
 
+    /// The WHOLE active falloff SET (every TaskCode.Wght stage, in pipe
+    /// order), for the set-aware in-session re-grade undo/redo hooks. The
+    /// singular `falloffStageForHooks()` above returns only the primary; with
+    /// runtime falloff stacking the gesture-commit hooks must snapshot +
+    /// restore EVERY instance's config, or an in-session Ctrl+Z would strand
+    /// the secondaries at their post-tweak config. With a single active falloff
+    /// this is a 1-element slice equivalent to `[falloffStageForHooks()]`, so
+    /// the snapshot/restore stays byte-for-byte identical to the prior path.
+    ///
+    /// PARALLEL to (not a virtualization of) `falloffStageForHooks` — same
+    /// `final` + uniquely-named discipline that the vtable-collision note above
+    /// describes; the XfrmTransformTool wrapper keeps its OWN plural accessor.
+    final FalloffStage[] falloffStagesForHooks() const {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stage              : TaskCode;
+        FalloffStage[] set;
+        if (g_pipeCtx is null) return set;
+        foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght))
+            if (auto fs = cast(FalloffStage) s)
+                set ~= fs;
+        return set;
+    }
+
     /// P-C: the single SnapStage / SymmetryStage — the config sources of truth
     /// for the snap + symmetry banks. Used by the R/S commitEdit gesture-commit
     /// hooks to snapshot the RUN-START snap + symmetry config and compose a

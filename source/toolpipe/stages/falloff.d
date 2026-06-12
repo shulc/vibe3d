@@ -1412,3 +1412,85 @@ private:
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Set-aware falloff CONFIG snapshot / restore
+//
+// The single-stage `snapshotConfigToPacket` / `restoreConfigFromPacket` above
+// round-trip ONE FalloffStage's user-facing config. When multiple falloff
+// instances are stacked at runtime (`falloff.add radial`, …) the in-session
+// re-grade undo/redo hooks must snapshot + restore the WHOLE active set, not
+// just the primary, or an in-session Ctrl+Z would leave the secondary
+// instances at their post-tweak config while reverting the primary.
+//
+// `FalloffSetSnapshot` pairs each captured stage REFERENCE with its config
+// packet. Restore is keyed by identity (the captured stage ref), NOT by blind
+// index against a freshly-queried list, so it always targets the same instance
+// even if the pipe order shifts between snapshot and restore. The active set
+// does not change mid-gesture (add/remove is a pipeline mutation outside a
+// gesture), so the captured ref list stays valid for the hook's lifetime.
+//
+// SINGLE-FALLOFF BYTE-STABILITY: with exactly one falloff the snapshot is a
+// 1-element list and restore calls `restoreConfigFromPacket` on that one stage
+// — identical to the prior single-stage path.
+struct FalloffSetSnapshot {
+    FalloffStage[]  stages;   // captured instance refs (identity keys)
+    FalloffPacket[] cfgs;     // cfgs[i] = stages[i].snapshotConfigToPacket()
+
+    bool empty() const { return stages.length == 0; }
+    size_t count() const { return stages.length; }
+}
+
+/// Snapshot the CONFIG of every stage in `set` (typically
+/// `falloffStagesForHooks()` in pipe order). Each stage's config is captured
+/// via its own `snapshotConfigToPacket`; the stage ref is retained so restore
+/// can target the same instance by identity.
+FalloffSetSnapshot snapshotFalloffSet(FalloffStage[] set) {
+    FalloffSetSnapshot s;
+    foreach (st; set) {
+        if (st is null) continue;
+        s.stages ~= st;
+        s.cfgs   ~= st.snapshotConfigToPacket();
+    }
+    return s;
+}
+
+/// Restore every captured stage's config from the snapshot, keyed by the
+/// retained stage reference (identity), not by index against a re-query.
+void restoreFalloffSet(ref FalloffSetSnapshot s) {
+    foreach (i, st; s.stages) {
+        if (st is null) continue;
+        st.restoreConfigFromPacket(s.cfgs[i]);
+    }
+}
+
+/// Restore a falloff SET from a COMBINED published packet (the WGHT combiner's
+/// output). For a single active falloff the combined packet IS the primary's
+/// own config, so the one stage is restored from it directly (byte-identical to
+/// the prior `restoreConfigFromPacket(combined)` path). For a multi-falloff
+/// Composite the per-stage configs live in `combined.contributors`, built by
+/// the combiner in the SAME pipe order as `findAllByTask(Wght)` — so stage[i]
+/// is restored from `contributors[i]`. The stage set does not change across the
+/// re-grade window, so the positional pairing is stable.
+///
+/// `set` is the live stage list at restore time (e.g. `falloffStagesForHooks()`
+/// resolved inside the hook). Any length mismatch (stage count vs contributor
+/// count) falls back to restoring only what pairs up — defensive, never throws.
+void restoreFalloffSetFromCombined(FalloffStage[] set,
+                                   const ref FalloffPacket combined) {
+    if (set.length == 0) return;
+    if (combined.type == FalloffType.Composite) {
+        immutable size_t n = set.length < combined.contributors.length
+                           ? set.length : combined.contributors.length;
+        foreach (i; 0 .. n) {
+            if (set[i] is null) continue;
+            set[i].restoreConfigFromPacket(combined.contributors[i]);
+        }
+    } else {
+        // Single active falloff: the published packet is the primary's own
+        // config. Restore the first (primary) stage from it; any extra stages
+        // (shouldn't exist when the packet is non-Composite) are left as-is.
+        if (set[0] !is null)
+            set[0].restoreConfigFromPacket(combined);
+    }
+}
