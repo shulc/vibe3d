@@ -21,6 +21,15 @@ required for redistribution.
 | [dyaml](https://github.com/dlang-community/D-YAML) | 0.10.0 | BSL-1.0 | Ferdinand Majerech, dyaml contributors |
 | [nfde](https://github.com/inochi2d/nativefiledialog-d) | 0.1.3 | Zlib | nfde contributors; bundles `nativefiledialog-extended` (Zlib) |
 | [D-OpenSubdiv](https://github.com/shulc/D-OpenSubdiv) | ~main | BSL-1.0 (wrapper) | Alexander Shagarov; bundles **OpenSubdiv** (modified Apache 2.0) © Pixar |
+| [assimp](https://github.com/assimp/assimp) | 6.0.x (minimal: OBJ/glTF/FBX) | BSD-3-Clause | assimp team; **statically linked** into the executable |
+| [bindbc-assimp6](https://github.com/shulc/bindbc-assimp6) | ~master | BSL-1.0 (wrapper) | Alexander Shagarov; D bindings to the assimp C API |
+| [lwo2-writer](https://github.com/shulc/D-Lwo2Writer) | ~master | MIT | Alexander Shagarov; clean-room LWO2 writer |
+
+`assimp` is built as a **minimal static library** (only the OBJ / glTF / FBX
+importers + exporters — see `bindbc-assimp6`'s `tools/build_assimp_min.sh`)
+and linked into the vibe3d binary; BSD-3-Clause permits static linking and
+binary redistribution with the attribution in this file. No separate assimp
+shared library is shipped.
 
 ### Render build (`with-render` only)
 
@@ -291,7 +300,7 @@ Software.
 
 ## BSD 3-Clause License
 
-Applies to: OpenColorIO, OpenEXR, Imath.
+Applies to: OpenColorIO, OpenEXR, Imath, assimp.
 
 ```
 Redistribution and use in source and binary forms, with or without
@@ -329,13 +338,16 @@ Copyright Contributors to the OpenColorIO Project.
 
 OpenEXR, Imath
 Copyright Contributors to the OpenEXR Project.
+
+Open Asset Import Library (assimp)
+Copyright (c) 2006-2024, assimp team. All rights reserved.
 ```
 
 ---
 
 ## MIT License
 
-Applies to: Dear ImGui (vendored via `d_imgui`).
+Applies to: Dear ImGui (vendored via `d_imgui`), lwo2-writer.
 
 ```
 Copyright (c) 2014-2024 Omar Cornut
@@ -399,8 +411,9 @@ Copyright (c) 2014-2024 Bernard Teo and contributors.
 
 ## Boost Software License 1.0
 
-Applies to: D-Cycles, D-RadeonProRender (bindbc-rpr), D-OpenSubdiv wrappers,
-bindbc-sdl, bindbc-opengl, bindbc-common, bindbc-loader, dyaml.
+Applies to: D-Cycles, D-RadeonProRender (bindbc-rpr), D-OpenSubdiv,
+bindbc-assimp6 wrappers, bindbc-sdl, bindbc-opengl, bindbc-common,
+bindbc-loader, dyaml.
 
 ```
 Boost Software License - Version 1.0 - August 17th, 2003
