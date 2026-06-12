@@ -254,6 +254,35 @@ struct Mesh {
     /// positions.
     ulong     topologyVersion;
 
+    // --- Change-notification accumulation (doc/change_notification_bus_plan) -
+    // OR-accumulated change-class flags (MeshEditScope bits) and selection
+    // domains (change_bus.SelDomain bits) since the last per-frame flush. The
+    // main loop drains these into changeBus.flush(...) once per frame and then
+    // zeroes them. Pending state lives HERE (not on the bus) so that, when the
+    // layer/document model lands, each Layer.mesh can accumulate independently.
+    // Stage 0: populated by commitChange() at the converted version-bump sites;
+    // no subscribers consume it yet.
+    uint      pendingChanges_;     // MeshEditScope bits
+    uint      pendingSelDomains_;  // change_bus.SelDomain bits
+
+    // Accumulate-only: OR the given MeshEditScope flags into the pending set.
+    // Does NOT bump the version counters, so it is safe inside loops and safe
+    // mid-drag (where the intentional version-stability invariant must hold).
+    void noteChange(uint flags) {
+        pendingChanges_ |= flags;
+    }
+
+    // Accumulate + bump the version counters, reproducing EXACTLY the existing
+    // bump behaviour: mutationVersion always advances; topologyVersion advances
+    // only when the change carries a Geometry class (Points | Polygons). This
+    // is the drop-in replacement for the raw `++mutationVersion;
+    // ++topologyVersion;` lines at the internal mutation sites.
+    void commitChange(uint flags) {
+        noteChange(flags);
+        ++mutationVersion;
+        if (flags & MeshEditScope.Geometry) ++topologyVersion;
+    }
+
     // --- Mesh maps (generic per-element float attribute channels) ----------
     // Named, typed per-element float channels (UV, vertex weight, edge crease,
     // vertex color, …). ONE reusable home so each new continuous per-element
@@ -334,7 +363,9 @@ struct Mesh {
         // entries default to 0 (Default surface) which is the same
         // result the existing growth-and-don't-clear semantics gives
         // for `isSubpatch` after a non-importing geometry growth.
-        ++mutationVersion; ++topologyVersion;
+        // Geometry-class: array lengths re-sync to the (possibly new) geometry
+        // and selection marks are cleared. Bumps both counters as before.
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
     }
 
     // Bring each *SelectionOrderCounter up to the maximum value in its order array.
@@ -384,7 +415,9 @@ struct Mesh {
 
     uint addVertex(Vec3 v) {
         vertices ~= v;
-        ++mutationVersion; ++topologyVersion;
+        // Points-class: one vertex added. Bumps both counters (Points is a
+        // Geometry bit) exactly as the raw double-bump did.
+        commitChange(MeshEditScope.Points);
         const idx = cast(uint)(vertices.length - 1);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null) editRecorder_.recordAddVert(idx, v);
@@ -467,7 +500,8 @@ struct Mesh {
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        // Geometry-class: faces rewritten, edges + loops rebuilt.
+        commitChange(MeshEditScope.Geometry);
         return welded;
     }
 
@@ -484,7 +518,12 @@ struct Mesh {
             vertices[i] = target;
             any = true;
         }
-        if (any) { ++mutationVersion; ++topologyVersion; }
+        // Positions only move here, but the original double-bumped BOTH
+        // counters; preserve that EXACTLY by carrying a Geometry bit so
+        // commitChange still advances topologyVersion. (Semantic class is
+        // Position; the Geometry bit exists solely to reproduce the prior
+        // topology bump — see plan Stage 0 step 2.)
+        if (any) commitChange(MeshEditScope.Position | MeshEditScope.Geometry);
     }
 
     size_t weldCoincidentVertices(double epsSq = 1e-12) {
@@ -532,7 +571,8 @@ struct Mesh {
         if (isSubpatch.length > faces.length) resizeSubpatch();
         if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
 
-        ++mutationVersion; ++topologyVersion;
+        // Geometry-class: coincident verts merged, faces/edges rebuilt.
+        commitChange(MeshEditScope.Geometry);
         return welded;
     }
 
@@ -594,7 +634,9 @@ struct Mesh {
         resizeVertexSelection();
         // Edges have changed — clear edge selection for safety.
         clearEdgeSelectionResize();
-        ++mutationVersion; ++topologyVersion;
+        // Points-class: orphan verts removed + reindexed (Geometry bit keeps
+        // the topology bump).
+        commitChange(MeshEditScope.Points);
         return removed;
     }
     /// Drop the faces marked true in `mask`. Edges are rebuilt from the
@@ -669,7 +711,9 @@ struct Mesh {
         // of `loops` walks stale data and either reports wrong adjacency
         // or indexes out of bounds.)
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        // Geometry-class: faces removed, orphan verts compacted, edges/loops
+        // rebuilt.
+        commitChange(MeshEditScope.Geometry);
         return removed;
     }
 
@@ -758,7 +802,8 @@ struct Mesh {
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        // Geometry-class: verts dissolved out of faces, geometry rebuilt.
+        commitChange(MeshEditScope.Geometry);
         return dissolved;
     }
 
@@ -998,7 +1043,8 @@ struct Mesh {
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
-        ++mutationVersion; ++topologyVersion;
+        // Geometry-class: edge dissolve merged faces, geometry rebuilt.
+        commitChange(MeshEditScope.Geometry);
         return dissolved;
     }
 

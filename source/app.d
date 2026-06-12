@@ -5563,6 +5563,23 @@ void main(string[] args) {
                                 dragMode == DragMode.Zoom  ||
                                 dragMode == DragMode.Pan);
 
+        // Change-notification bus flush (doc/change_notification_bus_plan.md,
+        // Design rule 2): exactly ONE flush per frame, here — AFTER event
+        // dispatch, HTTP tickCommand, toolpipe evaluate, and any undo/redo for
+        // the frame; BEFORE picking / preview / GPU upload. Drain the active
+        // mesh's accumulated change flags + selection domains into the bus and
+        // zero them. Stage 0: no subscribers are registered yet, so this is a
+        // behavioural no-op (flush early-returns when nothing is pending), but
+        // the wiring + timing are in place for later stages.
+        {
+            import change_bus : changeBus;
+            const meshFlags  = mesh.pendingChanges_;
+            const selDomains = mesh.pendingSelDomains_;
+            mesh.pendingChanges_    = 0;
+            mesh.pendingSelDomains_ = 0;
+            changeBus.flush(meshFlags, selDomains);
+        }
+
         // Invalidate caches when tools are active (they modify mesh).
         // Perf (doc/perf_harness_plan.md): `cacheInvalidate` counts PER-FRAME
         // screen-space cache invalidations, NOT per-edit. The first branch
