@@ -243,6 +243,18 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Add Git Bash to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $gitBin = Join-Path $env:ProgramFiles "Git\bin"
+          if (-not (Test-Path (Join-Path $gitBin "bash.exe"))) {
+            Write-Output "::error::Git Bash not found at $gitBin"
+            exit 1
+          }
+          Add-Content $env:GITHUB_PATH $gitBin
+          $env:PATH = "$gitBin;$env:PATH"
+
       # nfde's nativefiledialog-extended checkout (+ its wayland-protocols
       # submodule on Linux) is provisioned once in the persistent dub cache on
       # each self-hosted runner, so a single Build pass is enough. The old
@@ -399,6 +411,18 @@ jobs:
       - name: Activate MSVC (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Add Git Bash to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $gitBin = Join-Path $env:ProgramFiles "Git\bin"
+          if (-not (Test-Path (Join-Path $gitBin "bash.exe"))) {
+            Write-Output "::error::Git Bash not found at $gitBin"
+            exit 1
+          }
+          Add-Content $env:GITHUB_PATH $gitBin
+          $env:PATH = "$gitBin;$env:PATH"
 
       # nfde is provisioned once in each runner's persistent dub cache (see the
       # note in the `build` job); the bundle scripts do a single build pass.
