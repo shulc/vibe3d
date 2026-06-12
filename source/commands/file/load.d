@@ -16,6 +16,7 @@ import io.native : readV3d;
 import io.formats;
 import io.doc_state : setCurrentDocPath;
 import io.assimp_runtime : isAssimpAvailable;
+import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 import viewcache;
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
@@ -69,19 +70,22 @@ class FileLoad : Command {
             : importFilterSpecs(isAssimpAvailable(), /*withAllSupported=*/true);
 
         string path;
+        // Seed the dialog at the last directory the user browsed to (prefs);
+        // null on a fresh profile lets nfde pick its platform default.
+        const startDir = g_prefs.lastDir;
         version (Windows) {
             import std.utf : toUTF16z;
             FilterItem[] items;
             foreach (ref f; fs)
                 items ~= FilterItem(cast(const(ushort)*)f.name.toUTF16z,
                                     cast(const(ushort)*)f.spec.toUTF16z);
-            auto result = openDialog(path, items);
+            auto result = openDialog(path, items, startDir);
         } else {
             import std.string : toStringz;
             FilterItem[] items;
             foreach (ref f; fs)
                 items ~= FilterItem(f.name.toStringz, f.spec.toStringz);
-            auto result = openDialog(path, items);
+            auto result = openDialog(path, items, startDir);
         }
         assert(result != Result.error, getError());
         return path;
@@ -89,6 +93,7 @@ class FileLoad : Command {
 
     override bool apply() {
         string path = explicitPath;
+        const fromDialog = path is null;
         if (path is null) {
             path = runOpenDialog();
             if (path is null) return false;
@@ -124,6 +129,16 @@ class FileLoad : Command {
         // prompts for a .v3d).
         if (mode == FileLoadMode.open && ext == ".v3d")
             setCurrentDocPath(path);
+
+        // Prefs: MRU-push every successful load (open + import); remember the
+        // directory only for dialog-driven loads (HTTP file.load with an
+        // explicit path must not move the user's last-dir). g_prefs mutators
+        // are inert when prefs is gated off — the globals just default-init.
+        prefsNoteRecentFile(path);
+        if (fromDialog) {
+            import std.path : dirName;
+            prefsNoteLastDir(dirName(path));
+        }
 
         // The reader has already rebuilt the mesh on a fresh struct (Mesh.init)
         // and applied subpatch flags; grow selection arrays to match but don't

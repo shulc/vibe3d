@@ -15,6 +15,7 @@ import io.native : writeV3d;
 import io.formats;
 import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath;
 import io.assimp_runtime : isAssimpAvailable;
+import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 
 /// How the save dialog is framed (asset-I/O Phase 6).
 ///   save         — File → Save: write to the remembered document path
@@ -66,19 +67,22 @@ class FileSave : Command {
         }
 
         string path;
+        // Seed the dialog at the last directory the user browsed to (prefs).
+        // saveDialog's signature is (path, filters, defaultName, defaultPath).
+        const startDir = g_prefs.lastDir;
         version (Windows) {
             import std.utf : toUTF16z;
             FilterItem[] items;
             foreach (ref f; fs)
                 items ~= FilterItem(cast(const(ushort)*)f.name.toUTF16z,
                                     cast(const(ushort)*)f.spec.toUTF16z);
-            auto result = saveDialog(path, items, defaultName);
+            auto result = saveDialog(path, items, defaultName, startDir);
         } else {
             import std.string : toStringz;
             FilterItem[] items;
             foreach (ref f; fs)
                 items ~= FilterItem(f.name.toStringz, f.spec.toStringz);
-            auto result = saveDialog(path, items, defaultName);
+            auto result = saveDialog(path, items, defaultName, startDir);
         }
         assert(result != Result.error, getError());
         return path;
@@ -86,13 +90,16 @@ class FileSave : Command {
 
     override bool apply() {
         string path = explicitPath;
+        bool fromDialog = false;
         if (path is null) {
             // File → Save with a remembered document writes straight to it,
             // no dialog. Otherwise (untitled, or Save As, or Export) prompt.
             if (mode == FileSaveMode.save && hasCurrentDoc())
                 path = currentDocPath();
-            else
+            else {
                 path = runSaveDialog();
+                fromDialog = true;
+            }
             if (path is null) return false;
         }
         // Dispatch by extension via the format registry (single source of
@@ -114,6 +121,17 @@ class FileSave : Command {
         // Interchange exports leave the document path untouched.
         if (mode != FileSaveMode.exportSingle && ext == ".v3d")
             setCurrentDocPath(path);
+
+        // Prefs: MRU-push a native Save / Save As (a real document the user
+        // would want in Recent); interchange exports are excluded (they leave
+        // the document untitled). Remember the directory for any dialog-driven
+        // save. Mutators are inert when prefs is gated off.
+        if (mode != FileSaveMode.exportSingle && ext == ".v3d")
+            prefsNoteRecentFile(path);
+        if (fromDialog) {
+            import std.path : dirName;
+            prefsNoteLastDir(dirName(path));
+        }
         return true;
     }
 }

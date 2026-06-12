@@ -229,7 +229,10 @@ string[2][] defaultStageListAttrs(Stage s) {
 
 // Parse `value` per `p.kind` and write into the Param's typed pointer.
 // Returns false on parse failure (caller surfaces as "rejected attr").
-private bool parseInto(ref Param p, string value) {
+// Public so the sticky tool-default path (prefs) can re-apply a stored
+// value-string onto a freshly built tool's Param[] — same string→param
+// machinery as the stage attr setter, no logic change beyond visibility.
+bool parseInto(ref Param p, string value) {
     final switch (p.kind) {
         case Param.Kind.Bool:
             if (value == "true"  || value == "1") { *p.bptr = true;  return true; }
@@ -267,7 +270,10 @@ private bool parseInto(ref Param p, string value) {
     }
 }
 
-private string stringifyParam(ref Param p) {
+// Stringify a Param's typed pointer-target to the same wire form `parseInto`
+// accepts. Public so the sticky tool-default capture path (prefs) can snapshot
+// a dropped tool's tool-level params — no logic change beyond visibility.
+string stringifyParam(ref Param p) {
     final switch (p.kind) {
         case Param.Kind.Bool:    return *p.bptr ? "true" : "false";
         case Param.Kind.Int:     return format("%d", *p.iptr);

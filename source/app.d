@@ -9,6 +9,7 @@ import std.json : JSONValue, JSONType;
 // HTTP server module
 import http_server;
 import log : logInfo, logWarn, logError;
+import prefs;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -538,6 +539,19 @@ void main(string[] args) {
         }
     }
 
+    // Load user preferences (window size, recent files, last dir, sticky tool
+    // defaults). Gated OFF in --test so the suite stays deterministic and never
+    // touches the user's real ~/.config — UNLESS VIBE3D_CONFIG_DIR is set
+    // (tests / multi-instance debugging that opt into an explicit scratch dir).
+    // imgui.ini follows the same precedent (IniFilename=null in --test).
+    bool prefsActive;
+    {
+        import std.process : environment;
+        prefsActive = !command.g_testMode
+                      || environment.get("VIBE3D_CONFIG_DIR", "").length > 0;
+    }
+    if (prefsActive) loadPrefs();
+
     bool playbackMode = playbackFile.length > 0;
 
     // Prefer the SDL2 bundled in the .app (self-contained release); fall back
@@ -665,11 +679,22 @@ void main(string[] args) {
     }
 
     int winW = cliWinW, winH = cliWinH;
-    // Grow the default window with the UI scale so the app opens at the
-    // same apparent size on a 125%/150% display. Explicit --window /
-    // --viewport sizes are exact pixel requests (external-harness
-    // contracts) and are never scaled.
-    if (!cliSizeExplicit && uiScale != 1.0f) {
+    // Persisted window size (when prefs is active and the user didn't pass an
+    // explicit --window/--viewport) takes precedence and is used as EXACT
+    // physical pixels: the stored value is already post-uiScale (it was
+    // captured from SDL_GetWindowSize last run), so the uiScale growth below
+    // is SKIPPED — re-applying it would inflate the window on every run.
+    // Explicit --window/--viewport always wins (external-harness contract).
+    const bool usePrefsWindow = prefsActive && !cliSizeExplicit
+                                && g_prefs.window.w > 0 && g_prefs.window.h > 0;
+    if (usePrefsWindow) {
+        winW = g_prefs.window.w;
+        winH = g_prefs.window.h;
+    } else if (!cliSizeExplicit && uiScale != 1.0f) {
+        // Grow the default window with the UI scale so the app opens at the
+        // same apparent size on a 125%/150% display. Explicit --window /
+        // --viewport sizes are exact pixel requests (external-harness
+        // contracts) and are never scaled.
         winW = cast(int)(winW * uiScale);
         winH = cast(int)(winH * uiScale);
     }
@@ -693,6 +718,22 @@ void main(string[] args) {
     );
     if (!window) { writefln("SDL_CreateWindow: %s", SDL_GetError()); return; }
     scope(exit) SDL_DestroyWindow(window);
+    // Persist preferences at clean shutdown. Registered AFTER the
+    // SDL_DestroyWindow guard so LIFO runs this FIRST — the window is still
+    // alive, so SDL_GetWindowSize returns the live size. Crash paths skip
+    // scope(exit) entirely and simply don't save (clean-shutdown-only, like
+    // imgui.ini). lastDir / recentFiles / toolDefaults are already in g_prefs.
+    // Captures the live window size into g_prefs and writes the file. A try/
+    // catch cannot sit lexically inside a scope(exit), so the body lives in
+    // this nested function that the guard below merely calls.
+    void persistPrefsOnExit() {
+        int sw, sh;
+        SDL_GetWindowSize(window, &sw, &sh);
+        if (sw > 0 && sh > 0) { g_prefs.window.w = sw; g_prefs.window.h = sh; }
+        try savePrefs();
+        catch (Exception e) logWarn("prefs", "could not write prefs.json: " ~ e.msg);
+    }
+    if (prefsActive) scope(exit) persistPrefsOnExit();
     setWindowIcon(window);
 
     version (OSX) {
@@ -1075,7 +1116,34 @@ void main(string[] args) {
         }
     }
 
+    // Sticky tool-option defaults: on a CLEAN tool drop (setActiveTool(null)
+    // with a known preset id), snapshot the dropped tool's TOOL-LEVEL params
+    // into g_prefs.toolDefaults[presetId], so the next activation of that
+    // preset starts from the user's last-used settings (re-applied in the
+    // preset factory, overriding the YAML). Captured here — before
+    // deactivate()/destroy() invalidates the tool's param pointers — only at a
+    // clean drop, never mid-gesture and never on crash (scope(exit)-free).
+    // Pipe-stage attrs (falloff / acen) are session state and are NOT captured.
+    void captureStickyToolDefaults() {
+        if (!prefsActive) return;
+        if (activeTool is null || activeToolId.length == 0) return;
+        import toolpipe.stage : stringifyParam;
+        import params : Param;
+        string[string] attrs;
+        foreach (ref p; activeTool.params()) {
+            // Array kinds don't round-trip through the string<->param path
+            // (stringifyParam/parseInto return ""/false for them); read-only
+            // params are derived display, not user settings. Skip both.
+            if (p.kind == Param.Kind.IntArray || p.kind == Param.Kind.Vec3Array)
+                continue;
+            if (p.readonly_) continue;
+            attrs[p.name] = stringifyParam(p);
+        }
+        if (attrs.length > 0) g_prefs.toolDefaults[activeToolId] = attrs;
+    }
+
     void setActiveTool(Tool t) {
+        if (t is null) captureStickyToolDefaults();
         if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
         // next tool starts from defaults. For tool switches via
