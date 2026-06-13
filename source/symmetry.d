@@ -4,6 +4,8 @@ import std.algorithm : sort, max;
 import std.math      : abs;
 
 import math : Vec3, dot;
+version (unittest) import math : reflectionMatrix, applyAffine;
+version (unittest) import std.math : isClose;
 import mesh : Mesh;
 import toolpipe.packets : SymmetryPacket;
 
@@ -41,6 +43,34 @@ bool symmetryPacketsEqual(const ref SymmetryPacket a, const ref SymmetryPacket b
 Vec3 mirrorPosition(const ref SymmetryPacket sp, Vec3 pos) pure nothrow @nogc @safe {
     float d = dot(pos - sp.planePoint, sp.planeNormal);
     return pos - sp.planeNormal * (2.0f * d);
+}
+
+unittest { // reflectionMatrix (math.d) is consistent with mirrorPosition here
+    // The Stage-2 mirror pass builds S via math.reflectionMatrix; it MUST
+    // reproduce mirrorPosition for the same plane so the matrix path and the
+    // existing point-mirror agree. Cover origin + off-origin + oblique planes.
+    struct PlaneCase { Vec3 p0; Vec3 n; }
+    PlaneCase[] planes = [
+        PlaneCase(Vec3(0,0,0),     Vec3(1,0,0)),
+        PlaneCase(Vec3(2.5f,0,0),  Vec3(1,0,0)),
+        PlaneCase(Vec3(0,-1.3f,0), Vec3(0,1,0)),
+        PlaneCase(Vec3(1,2,-0.5f), Vec3(0.7071068f, 0.7071068f, 0)), // unit oblique
+    ];
+    Vec3[] pts = [Vec3(1,0,0), Vec3(-2,3,1), Vec3(0.5f,-0.5f,4), Vec3(3,3,3)];
+    foreach (pc; planes) {
+        SymmetryPacket sp;
+        sp.planePoint  = pc.p0;
+        sp.planeNormal = pc.n;       // already unit in each case
+        auto S = reflectionMatrix(pc.p0, pc.n);
+        foreach (x; pts) {
+            auto a = applyAffine(S, x);
+            auto b = mirrorPosition(sp, x);
+            assert(isClose(a.x, b.x, 1e-5f, 1e-5f)
+                && isClose(a.y, b.y, 1e-5f, 1e-5f)
+                && isClose(a.z, b.z, 1e-5f, 1e-5f),
+                "reflectionMatrix must match mirrorPosition for the same plane");
+        }
+    }
 }
 
 /// Project a world-space point onto the plane described by `sp`. Used
