@@ -118,6 +118,88 @@ final class LayerAdd : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
+// layer.reorder — move the layer at `from` to position `to`; the others shift
+// to fill. Model undo (changes layers[] STRUCTURE like add/delete).
+//
+// The ACTIVE layer is preserved by OBJECT IDENTITY, not by index: after the
+// move, activeIndex is recomputed so it still points at the SAME Layer object
+// it did before. A pure reorder that keeps the same active layer therefore does
+// NOT fire the active-layer switch hook (the same mesh is on screen — no
+// tool-drop / cache-invalidation), via the shared fireSwitchIfChanged-by-object
+// mechanism. revert() moves the layer back to its original slot.
+// ---------------------------------------------------------------------------
+
+final class LayerReorder : LayerCommandBase {
+    private int    fromArg = -1;
+    private int    toArg   = -1;
+    private size_t fromIdx;
+    private size_t toIdx;
+    private bool   applied;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
+         void delegate(size_t, size_t) onSwitch) {
+        super(mesh, view, editMode, doc, onSwitch);
+    }
+
+    override string name()  const { return "layer.reorder"; }
+    override string label() const { return "Reorder Layer"; }
+    // Model-undo class: like add/delete this mutates the layers[] structure,
+    // not merely a UI flag — it belongs on the geometry-undo class so the
+    // history/panel treat a reorder as a structural document edit.
+
+    override Param[] params() {
+        return [ Param.int_("from", "From", &fromArg, -1),
+                 Param.int_("to",   "To",   &toArg,   -1) ];
+    }
+
+    // Move the layer at `src` to index `dst`, shifting the rest to fill, and
+    // re-point activeIndex at whatever Layer object was active before. Returns
+    // the (pre-move) active Layer + its index so the caller can decide whether
+    // the switch hook fires.
+    private void moveLayer(size_t src, size_t dst) {
+        auto prevLayer = doc.active();
+        auto moved = doc.layers[src];
+        // Splice out, then splice in at the destination.
+        doc.layers = doc.layers[0 .. src] ~ doc.layers[src + 1 .. $];
+        doc.layers = doc.layers[0 .. dst] ~ moved ~ doc.layers[dst .. $];
+        // Recompute activeIndex from the layer OBJECT (identity-preserving).
+        foreach (i, l; doc.layers)
+            if (l is prevLayer) { doc.activeIndex = i; break; }
+    }
+
+    override bool apply() {
+        size_t n = doc.layers.length;
+        // Bounds + no-op guards. Out-of-range or from==to is a graceful
+        // failure (dispatch reports an error; nothing mutates, no undo entry).
+        if (fromArg < 0 || toArg < 0) return false;
+        fromIdx = cast(size_t)fromArg;
+        toIdx   = cast(size_t)toArg;
+        if (fromIdx >= n || toIdx >= n) return false;
+        if (fromIdx == toIdx)           return false;
+
+        auto prevLayer = doc.active();
+        size_t prevIndex = doc.activeIndex;
+        moveLayer(fromIdx, toIdx);
+        applied = true;
+        // Identity-preserving: a pure reorder keeps the same active Layer, so
+        // this is a no-op. It only fires if the active object genuinely changed
+        // (it should not, here — the guard documents the invariant).
+        fireSwitchIfChanged(prevLayer, prevIndex);
+        return true;
+    }
+
+    override bool revert() {
+        if (!applied) return false;
+        auto prevLayer = doc.active();
+        size_t prevIndex = doc.activeIndex;
+        // Reverse the move: the layer now sits at toIdx; put it back at fromIdx.
+        moveLayer(toIdx, fromIdx);
+        fireSwitchIfChanged(prevLayer, prevIndex);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // layer.delete — remove a layer (default active). Refuses the LAST layer.
 // Model undo: stores the removed Layer + its index + the prior activeIndex.
 // ---------------------------------------------------------------------------
