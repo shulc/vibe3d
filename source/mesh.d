@@ -81,10 +81,17 @@ enum MapDomain {
 }
 
 /// Conventional name of the per-corner (PolyVertex-domain) UV map. Centralised
-/// here so import / export / `.v3d` codec all key on the same literal. Exactly
-/// one UV map in v1; additional sets later are additional named PolyVertex maps
-/// ("uv2", …) — the registry already supports N named maps, so nothing here
-/// forecloses multi-set.
+/// here so import / export / `.v3d` codec all key on the same literal. v1 scope
+/// is a SINGLE UV set under this name; additional sets later are additional named
+/// PolyVertex maps ("uv2", …) — the registry already supports N named maps, so
+/// nothing here forecloses multi-set.
+///
+/// This domain is LIVE end-to-end as of the UV-maps milestone: assimp import
+/// captures per-corner UV (pre-weld, so seams survive the positional weld), the
+/// `.v3d` v4 codec round-trips it losslessly, and assimp export re-splits at UV
+/// seams. LWO UV import + export remain pending follow-ups (they require
+/// extending the out-of-tree LWO writer dependency; see the `meshMaps` field
+/// comment and doc/uv_maps_plan.md Stage 6).
 enum string kUvMapName = "uv";
 
 /// A generic named, typed per-element float attribute channel — the single
@@ -322,6 +329,15 @@ struct Mesh {
     // Point/Edge maps are RESIZED (not value-remapped) across destructive edits
     // that renumber those elements: length stays correct so reads never go out
     // of bounds, but values do not follow elements to new indices.
+    //
+    // PolyVertex (per-corner) UV is now LIVE end-to-end: assimp import populates
+    // the "uv" map (per-corner, captured pre-weld so seams survive), the `.v3d`
+    // v4 codec round-trips it, and assimp export re-splits at UV seams. v1 scope
+    // is a SINGLE UV set (kUvMapName == "uv"); the registry already supports N
+    // named PolyVertex maps, so multi-set is a later additive change. LWO UV
+    // import + export are pending follow-ups (they need the out-of-tree LWO
+    // writer dependency to learn VMAP/VMAD UV channels — see doc/uv_maps_plan.md
+    // Stage 6); LWO geometry imports/exports today WITHOUT its UV.
     //
     // PolyVertex (per-corner) maps additionally have a value-RELOCATE lifecycle
     // — corner identity is not positional, so the per-corner values are made to
