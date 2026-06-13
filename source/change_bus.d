@@ -24,6 +24,7 @@ module change_bus;
 // ---------------------------------------------------------------------------
 
 public import mesh_edit_delta : MeshEditScope;
+import seltype : SelType;
 
 // Manifest "everything changed" mask for bulk transitions (scene reset, file
 // load, snapshot restore, playback start) where the whole mesh is replaced and
@@ -85,6 +86,11 @@ struct ChangeBus {
     void delegate(uint flags)[]   meshSubs;
     void delegate(uint domains)[] selSubs;
     void delegate(uint kinds)[]   layerSubs;
+    // The current-type channel — the `Current(type)` analog the layer-change
+    // (Stage-5) work deferred to selection-types #4. Carries the newly-current
+    // SelType when the front of the recent-ordering flips. Delivered LAST, after
+    // the mesh/sel/layer channels (see flush). Invalidate-only, no unsubscribe.
+    void delegate(SelType t)[]    currentTypeSubs;
 
     // Reentrancy guard: a subscriber must not re-enter flush (nor mutate the
     // mesh, which could note new changes mid-delivery). The assert turns a
@@ -99,6 +105,7 @@ struct ChangeBus {
     uint  lastFlushFlags;    // mesh flags of the most recent delivered flush
     uint  lastSelDomains;    // selection domains of the most recent delivery
     uint  lastLayerKinds;    // layer-change kinds of the most recent delivery
+    SelType lastCurrentType; // the type made current by the most recent delivery
 
     // Per-class running totals — how many flushes carried each mesh class.
     ulong totalPosition;
@@ -121,6 +128,11 @@ struct ChangeBus {
     ulong totalLayerBackground;
     ulong totalLayerActive;
 
+    // Current-type channel total: how many flushes carried a current-type flip
+    // (the `Current(type)` analog). Distinct from selectionChanged — a type
+    // switch is NOT selection content, so this ticks while sel/mesh stay zero.
+    ulong currentTypeChanged;
+
     // --- Registration -----------------------------------------------------
     void onMeshChanged(void delegate(uint flags) dg) {
         if (dg !is null) meshSubs ~= dg;
@@ -138,15 +150,28 @@ struct ChangeBus {
         if (dg !is null) layerSubs ~= dg;
     }
 
+    // Register a current-type subscriber. Fires when the front of the recent
+    // selection-type ordering flips (the `Current(type)` analog), delivered
+    // LAST of the four channels. Invalidate-only, no unsubscribe (v1).
+    void onCurrentTypeChanged(void delegate(SelType t) dg) {
+        if (dg !is null) currentTypeSubs ~= dg;
+    }
+
     // --- Flush ------------------------------------------------------------
-    // Deliver accumulated mesh flags + selection domains + layer kinds to
-    // subscribers. If all three are zero there is nothing to deliver, so return
-    // early (no counter bump, no subscriber call). Documented fixed delivery
-    // order: meshChanged → selectionChanged → layerChanged. layerChanged fires
-    // LAST so a subscriber reacting to ActiveChanged sees the new mesh's
-    // content/selection invalidation already signalled first.
-    void flush(uint meshFlags, uint selDomains, uint layerKinds) {
-        if (meshFlags == 0 && selDomains == 0 && layerKinds == 0) return;
+    // Deliver accumulated mesh flags + selection domains + layer kinds + an
+    // optional current-type flip to subscribers. If all four are empty there is
+    // nothing to deliver, so return early (no counter bump, no subscriber call).
+    // Documented fixed delivery order:
+    //   meshChanged → selectionChanged → layerChanged → currentTypeChanged.
+    // currentTypeChanged fires LAST so a subscriber reacting to a type flip sees
+    // the mesh/selection/layer invalidation already signalled first.
+    //
+    // `typeChanged` gates the current-type channel: when true, `newType` is the
+    // type promoted to current. (SelType has no None sentinel, hence the bool.)
+    void flush(uint meshFlags, uint selDomains, uint layerKinds,
+               bool typeChanged = false, SelType newType = SelType.Vertex) {
+        if (meshFlags == 0 && selDomains == 0 && layerKinds == 0 && !typeChanged)
+            return;
 
         assert(!flushing_,
             "change_bus: subscriber re-entered flush (subscribers are " ~
@@ -177,12 +202,16 @@ struct ChangeBus {
         if (layerKinds & LayerChange.BackgroundChanged) ++totalLayerBackground;
         if (layerKinds & LayerChange.ActiveChanged)     ++totalLayerActive;
 
+        if (typeChanged) { ++currentTypeChanged; lastCurrentType = newType; }
+
         if (meshFlags != 0)
             foreach (dg; meshSubs) dg(meshFlags);
         if (selDomains != 0)
             foreach (dg; selSubs) dg(selDomains);
         if (layerKinds != 0)
             foreach (dg; layerSubs) dg(layerKinds);
+        if (typeChanged)
+            foreach (dg; currentTypeSubs) dg(newType);
     }
 }
 
@@ -201,6 +230,26 @@ __gshared uint pendingLayerChanges;
 // site. Called by the layer commands + the active-switch hook + FileLoad.
 void noteLayerChange(uint kinds) {
     pendingLayerChanges |= kinds;
+}
+
+// Current-type pending accumulator. The current selection type is DOCUMENT/
+// session-level (it lives in app.d scene state, not on any Mesh), so — like
+// pendingLayerChanges — it accumulates in module-level globals beside the bus
+// and is drained read-and-zeroed at the single per-frame flush site (app.d).
+// `pendingCurrentType` holds the most-recent flip's target; `pendingCurrentType_set`
+// is the "has a flip pending" flag (SelType has no None sentinel). Multiple
+// flips within one frame coalesce to the LAST one — only the final current type
+// matters to a subscriber that re-polls the order.
+__gshared SelType pendingCurrentType;
+__gshared bool    pendingCurrentTypeSet;
+
+// Record a current-type flip into the frame's pending state. Does NOT deliver —
+// delivery is the single flush site. Called by app.d's geometry-type switch
+// funnel (and, later, the item-select path) whenever touchSelType flips the
+// front type. Mirrors noteLayerChange's accumulate-only contract.
+void noteCurrentType(SelType t) {
+    pendingCurrentType    = t;
+    pendingCurrentTypeSet = true;
 }
 
 // ===========================================================================
@@ -391,6 +440,90 @@ unittest {
 
     bus.flush(0, 0, LayerChange.Removed);
     assert(tripped, "re-entering flush from a layer subscriber must assert");
+}
+
+// ===========================================================================
+// Current-type channel (currentTypeChanged) — the fourth bus channel. Same
+// no-op / coalesce / order contracts, mirrored for current-type flips.
+// ===========================================================================
+
+// A current-type-only flush (mesh/sel/layer all zero) is NOT swallowed by the
+// early-out, delivers the new SelType once, and bumps the counter.
+unittest {
+    ChangeBus bus;
+    int  meshCalls = 0, typeCalls = 0;
+    SelType seen = SelType.Vertex;
+    bus.onMeshChanged((uint) { ++meshCalls; });
+    bus.onCurrentTypeChanged((SelType t) { seen = t; ++typeCalls; });
+
+    bus.flush(0, 0, 0, true, SelType.Polygon);
+
+    assert(meshCalls == 0, "no mesh delivery when meshFlags==0");
+    assert(typeCalls == 1, "current-type delivery must not be swallowed by the early-out");
+    assert(seen == SelType.Polygon, "delivers the newly-current type");
+    assert(bus.flushCount == 1);
+    assert(bus.currentTypeChanged == 1, "currentTypeChanged counter ticks");
+    assert(bus.lastCurrentType == SelType.Polygon);
+}
+
+// `typeChanged == false` carries NO current-type flip even with a non-default
+// newType — the counter must not tick (it would otherwise false-positive every
+// frame that does a mesh/sel edit).
+unittest {
+    ChangeBus bus;
+    int typeCalls = 0;
+    bus.onCurrentTypeChanged((SelType) { ++typeCalls; });
+
+    bus.flush(MeshEditScope.Marks, 0, 0);              // 3-arg: typeChanged defaults false
+    bus.flush(MeshEditScope.Marks, 0, 0, false, SelType.Edge); // explicit false
+    assert(typeCalls == 0, "no current-type delivery when typeChanged is false");
+    assert(bus.currentTypeChanged == 0, "counter does not tick without a flip");
+}
+
+// Current-type is delivered LAST, after mesh/sel/layer.
+unittest {
+    ChangeBus bus;
+    int order = 0, meshOrder = -1, selOrder = -1, layerOrder = -1, typeOrder = -1;
+    bus.onMeshChanged((uint) { meshOrder = order++; });
+    bus.onSelectionChanged((uint) { selOrder = order++; });
+    bus.onLayerChanged((uint) { layerOrder = order++; });
+    bus.onCurrentTypeChanged((SelType) { typeOrder = order++; });
+
+    bus.flush(MeshEditScope.Marks, SelDomain.Vertex,
+              LayerChange.ActiveChanged, true, SelType.Edge);
+
+    assert(meshOrder == 0 && selOrder == 1 && layerOrder == 2 && typeOrder == 3,
+        "delivery order: mesh → sel → layer → currentType");
+}
+
+// A current-type flip alone (no mesh/sel) ticks currentTypeChanged but NOT the
+// selection or mesh counters — a mode switch is not selection content.
+unittest {
+    ChangeBus bus;
+    bus.flush(0, 0, 0, true, SelType.Edge);
+    assert(bus.currentTypeChanged == 1);
+    assert(bus.totalSelVertex == 0 && bus.totalSelEdge == 0 && bus.totalSelFace == 0,
+        "a type flip publishes NO selection domain");
+    assert(bus.totalPosition == 0 && bus.totalMarks == 0,
+        "a type flip publishes NO mesh change");
+}
+
+// noteCurrentType records the LAST flip into the module-level pending state and
+// is pure accumulate (no delivery). Drains read-and-zero like the flush site.
+unittest {
+    pendingCurrentTypeSet = false;
+    pendingCurrentType    = SelType.Vertex;
+    noteCurrentType(SelType.Edge);
+    noteCurrentType(SelType.Polygon);             // coalesce to the LAST flip
+    assert(pendingCurrentTypeSet, "a flip is pending");
+    assert(pendingCurrentType == SelType.Polygon, "coalesces to the last type");
+
+    // Drain semantics mirror the app.d flush site.
+    bool drainedSet = pendingCurrentTypeSet;
+    SelType drainedType = pendingCurrentType;
+    pendingCurrentTypeSet = false;
+    assert(drainedSet && drainedType == SelType.Polygon);
+    assert(!pendingCurrentTypeSet, "drain clears the pending flag");
 }
 
 // noteLayerChange OR-accumulates into the module-level pending word and is pure

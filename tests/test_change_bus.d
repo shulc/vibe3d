@@ -85,6 +85,8 @@ struct Changes {
     ulong totalLayerAdded, totalLayerRemoved, totalLayerReordered,
           totalLayerRenamed, totalLayerVisible, totalLayerBackground,
           totalLayerActive;
+    ulong currentTypeChanged;            // selection-types Stage 1
+    string lastCurrentType;
 }
 
 Changes readChanges() {
@@ -109,6 +111,8 @@ Changes readChanges() {
     c.totalLayerVisible    = j["totalLayerVisible"].integer;
     c.totalLayerBackground = j["totalLayerBackground"].integer;
     c.totalLayerActive     = j["totalLayerActive"].integer;
+    c.currentTypeChanged   = j["currentTypeChanged"].integer;
+    c.lastCurrentType      = j["lastCurrentType"].str;
     return c;
 }
 
@@ -333,32 +337,66 @@ unittest {
         "undo of a vertex selection must re-publish the Vertex domain");
 }
 
-// An EditMode switch (select.typeFrom — the mode-only command) publishes NO
-// selection domain: mode is not selection content. (The type-current analog is
-// deferred to a later selection-type generalization survey item.)
+// A selection-TYPE switch (select.typeFrom — the mode-only command) publishes
+// NO selection domain and NO mesh change: a type switch is not selection
+// CONTENT. Selection-types Stage 1: it DOES now publish the `currentTypeChanged`
+// signal (the `Current(type)` analog deferred from the change-bus Stage-5 work).
+// So the refined contract is: type switches that FLIP the current type tick
+// currentTypeChanged, while mesh + selection counters stay frozen.
 unittest {
     post(baseUrl ~ "/api/reset", "");
     // Seed a selection so there IS something whose "mode" could be (wrongly)
-    // construed as changing — then prove the mode switch alone is inert.
+    // construed as changing — then prove the mode switch alone publishes only
+    // the current-type signal.
     selectVia("polygons", [0]);
     auto before = settleAfter(readChanges());
 
+    // Three switches; each lands on a type different from the prior current, so
+    // each FLIPS the front and ticks currentTypeChanged exactly once.
     cmd("select.typeFrom edge");
     cmd("select.typeFrom vertex");
     cmd("select.typeFrom polygon");
-    // A mode switch accumulates nothing, so the per-frame flush stays a no-op
-    // (flushCount won't advance) — settleAfter would just spin to its timeout.
-    // A short fixed settle is enough to prove the counters did NOT move.
-    Thread.sleep(dur!"msecs"(300));
-    auto after = readChanges();
+    // A type flip now accumulates a current-type change, so the per-frame flush
+    // DOES advance (unlike the pre-Stage-1 inert no-op). settleAfter is valid.
+    auto after = settleAfter(before);
 
+    // (1) UNCHANGED contract: no selection domain, no mesh change.
     assert(after.totalSelVertex == before.totalSelVertex
         && after.totalSelEdge  == before.totalSelEdge
         && after.totalSelFace  == before.totalSelFace,
-        "an EditMode switch must publish NO selection domain; got "
+        "a type switch must publish NO selection domain; got "
         ~ "V+" ~ to!string(after.totalSelVertex - before.totalSelVertex)
         ~ " E+" ~ to!string(after.totalSelEdge - before.totalSelEdge)
         ~ " F+" ~ to!string(after.totalSelFace - before.totalSelFace));
+    assert(meshCountersUnchanged(before, after),
+        "a type switch must publish NO mesh change");
+
+    // (2) NEW contract: the current-type signal ticks on the flips, and the last
+    // current type reported is the final switch target (polygon).
+    assert(after.currentTypeChanged > before.currentTypeChanged,
+        "a front-flipping type switch must tick currentTypeChanged");
+    assert(after.lastCurrentType == "polygon",
+        "lastCurrentType reflects the final switch target; got "
+        ~ after.lastCurrentType);
+}
+
+// A redundant type switch (to the type already current) does NOT flip the front,
+// so it ticks NOTHING — proves the same-type no-op contract (keys 1/2/3 pressed
+// for the mode you are already in do not drop the tool or note a change).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("select.typeFrom polygon");            // make polygon current
+    auto before = settleAfter(readChanges());
+
+    cmd("select.typeFrom polygon");            // already current → no flip
+    cmd("select.typeFrom polygon");
+    Thread.sleep(dur!"msecs"(300));            // nothing accumulates → no new flush
+    auto after = readChanges();
+
+    assert(after.currentTypeChanged == before.currentTypeChanged,
+        "a switch to the already-current type must NOT tick currentTypeChanged");
+    assert(meshCountersUnchanged(before, after),
+        "a redundant type switch must publish nothing");
 }
 
 // ===========================================================================
