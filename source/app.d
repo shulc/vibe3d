@@ -1234,7 +1234,7 @@ void main(string[] args) {
     //   5. noteChange(MeshChangeAll) on the NEW active mesh so the per-frame
     //      bus flush invalidates every subscriber exactly as a file load does.
     void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
-        import change_bus : MeshChangeAll;
+        import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
         // 1. tool-drop (same path as Esc / scene.reset's onResetTool).
         setActiveTool(null);
@@ -1250,8 +1250,16 @@ void main(string[] args) {
         // 4. blanket-invalidate the snap grids (address keys are the primary
         //    defense; symmetry + subpatch preview self-invalidate on address).
         invalidateSnapGrids();
-        // 5. publish a bulk change on the new active mesh.
+        // 5. publish a bulk change on the new active mesh. (The required cache
+        //    refresh stays MeshChangeAll — the on-screen geometry is a different
+        //    mesh; the scope-down rider is deliberately NOT taken here.)
         active.noteChange(MeshChangeAll);
+        // 6. publish the SEMANTIC layer event. This hook is the SINGLE funnel
+        //    that fires iff the active Layer OBJECT genuinely changed, so it is
+        //    the ONE place ActiveChanged is emitted — add/delete/select/reorder
+        //    route their active-change through here and must NOT emit it
+        //    themselves (no double-count).
+        noteLayerChange(LayerChange.ActiveChanged);
     };
 
     // Visibility of the floating Command-History panel (drawn in the main
@@ -5846,7 +5854,17 @@ void main(string[] args) {
                 layer.mesh.pendingSelDomains_ = 0;
             }
 
-            changeBus.flush(meshFlags, selDomains);
+            // Layer-structural changes are DOCUMENT-level, not per-mesh, so they
+            // accumulate in a module-level word (change_bus.pendingLayerChanges)
+            // rather than on any Mesh. Drain read-and-zero here, in the same
+            // single flush site, and deliver it as flush's third arg (delivered
+            // LAST, after meshChanged + selectionChanged). The next frame drains
+            // it again, so it survives /api/reset without stranding.
+            import change_bus : pendingLayerChanges;
+            uint layerKinds = pendingLayerChanges;
+            pendingLayerChanges = 0;
+
+            changeBus.flush(meshFlags, selDomains, layerKinds);
         }
 
         // Refresh subpatch preview if the cage or depth changed since last

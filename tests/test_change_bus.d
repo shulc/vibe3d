@@ -52,6 +52,15 @@ enum uint SEL_VERTEX = 1;
 enum uint SEL_EDGE   = 2;
 enum uint SEL_FACE   = 4;
 
+// Layer-change kind bits (change_bus.LayerChange).
+enum uint LAYER_ADDED       = 1 << 0;
+enum uint LAYER_REMOVED     = 1 << 1;
+enum uint LAYER_REORDERED   = 1 << 2;
+enum uint LAYER_RENAMED     = 1 << 3;
+enum uint LAYER_VISIBILITY  = 1 << 4;
+enum uint LAYER_BACKGROUND  = 1 << 5;
+enum uint LAYER_ACTIVE      = 1 << 6;
+
 JSONValue getJson(string path) {
     return parseJSON(cast(string)get(baseUrl ~ path));
 }
@@ -70,8 +79,12 @@ struct Changes {
     ulong flushCount;
     uint  lastFlushFlags;
     uint  lastSelDomains;
+    uint  lastLayerKinds;
     ulong totalPosition, totalPoints, totalPolygons, totalMarks, totalMaterial;
     ulong totalSelVertex, totalSelEdge, totalSelFace;
+    ulong totalLayerAdded, totalLayerRemoved, totalLayerReordered,
+          totalLayerRenamed, totalLayerVisible, totalLayerBackground,
+          totalLayerActive;
 }
 
 Changes readChanges() {
@@ -80,6 +93,7 @@ Changes readChanges() {
     c.flushCount     = j["flushCount"].integer;
     c.lastFlushFlags = cast(uint)j["lastFlushFlags"].integer;
     c.lastSelDomains = cast(uint)j["lastSelDomains"].integer;
+    c.lastLayerKinds = cast(uint)j["lastLayerKinds"].integer;
     c.totalPosition  = j["totalPosition"].integer;
     c.totalPoints    = j["totalPoints"].integer;
     c.totalPolygons  = j["totalPolygons"].integer;
@@ -88,7 +102,24 @@ Changes readChanges() {
     c.totalSelVertex = j["totalSelVertex"].integer;
     c.totalSelEdge   = j["totalSelEdge"].integer;
     c.totalSelFace   = j["totalSelFace"].integer;
+    c.totalLayerAdded      = j["totalLayerAdded"].integer;
+    c.totalLayerRemoved    = j["totalLayerRemoved"].integer;
+    c.totalLayerReordered  = j["totalLayerReordered"].integer;
+    c.totalLayerRenamed    = j["totalLayerRenamed"].integer;
+    c.totalLayerVisible    = j["totalLayerVisible"].integer;
+    c.totalLayerBackground = j["totalLayerBackground"].integer;
+    c.totalLayerActive     = j["totalLayerActive"].integer;
     return c;
+}
+
+// True iff none of the mesh-change per-class counters moved between two reads —
+// the anti-spurious-mesh-fire assertion for pure document-state layer ops.
+bool meshCountersUnchanged(Changes before, Changes after) {
+    return after.totalPosition == before.totalPosition
+        && after.totalPoints   == before.totalPoints
+        && after.totalPolygons == before.totalPolygons
+        && after.totalMarks    == before.totalMarks
+        && after.totalMaterial == before.totalMaterial;
 }
 
 // Wait until at least one more flush has been delivered since `before`, so the
@@ -328,4 +359,150 @@ unittest {
         ~ "V+" ~ to!string(after.totalSelVertex - before.totalSelVertex)
         ~ " E+" ~ to!string(after.totalSelEdge - before.totalSelEdge)
         ~ " F+" ~ to!string(after.totalSelFace - before.totalSelFace));
+}
+
+// ===========================================================================
+// Layer channel — layerChanged(uint kinds).
+// ===========================================================================
+
+// layer.add bumps Added AND Active (add makes the new layer active), once each,
+// both bits carried in ONE delivery (coalesce: the command emits Added, the
+// switch hook emits ActiveChanged in the same frame).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.add name:B");
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerAdded == before.totalLayerAdded + 1,
+        "layer.add must bump Added exactly once");
+    assert(after.totalLayerActive == before.totalLayerActive + 1,
+        "layer.add makes the new layer active → bump Active once");
+    // Both bits coalesce into the same delivery.
+    assert((after.lastLayerKinds & (LAYER_ADDED | LAYER_ACTIVE))
+        == (LAYER_ADDED | LAYER_ACTIVE),
+        "add must deliver Added|Active in one flush; got "
+        ~ to!string(after.lastLayerKinds));
+}
+
+// layer.delete of the ACTIVE layer bumps Removed AND Active (the active object
+// changed). Set up: add B (active), then delete B → active falls back to A.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("layer.add name:B");                 // B (index 1) is now active
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.delete");                      // delete the active layer (B)
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerRemoved == before.totalLayerRemoved + 1,
+        "delete of active layer must bump Removed");
+    assert(after.totalLayerActive == before.totalLayerActive + 1,
+        "delete of the ACTIVE layer changes the active object → bump Active");
+}
+
+// layer.delete of a NON-active layer bumps Removed but NOT Active (the active
+// Layer object is unchanged — only its index may shift). Set up: A,B,C with C
+// active; delete B (index 1) — C stays active (same object).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("layer.add name:B");                 // index 1, active
+    cmd("layer.add name:C");                 // index 2, active
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.delete index:1");              // delete B (non-active)
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerRemoved == before.totalLayerRemoved + 1,
+        "delete of non-active layer must bump Removed");
+    assert(after.totalLayerActive == before.totalLayerActive,
+        "deleting a non-active layer must NOT bump Active (same active object)");
+}
+
+// layer.reorder bumps Reordered and does NOT bump Active (identity-preserving:
+// the active Layer object is unchanged, only re-pointed by index).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("layer.add name:B");                 // index 1
+    cmd("layer.add name:C");                 // index 2, active
+    cmd("layer.select index:0");             // A active again
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.reorder from:2 to:0");         // move C to front; A stays active
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerReordered == before.totalLayerReordered + 1,
+        "reorder must bump Reordered");
+    assert(after.totalLayerActive == before.totalLayerActive,
+        "a pure reorder is identity-preserving → must NOT bump Active");
+}
+
+// layer.select (to a DIFFERENT layer) bumps Active only. It still also refreshes
+// the active mesh (MeshChangeAll) — that mesh-counter movement is unchanged
+// behaviour and not asserted-against here (the select switches the mesh).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("layer.add name:B");                 // B active
+    cmd("layer.select index:0");             // A active
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.select index:1");             // switch to B
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerActive == before.totalLayerActive + 1,
+        "select to a different layer must bump Active");
+    assert(after.totalLayerAdded == before.totalLayerAdded
+        && after.totalLayerRemoved == before.totalLayerRemoved
+        && after.totalLayerReordered == before.totalLayerReordered,
+        "a pure select must bump NO structural layer kind");
+    assert((after.lastLayerKinds & LAYER_ACTIVE) != 0,
+        "select must deliver ActiveChanged; got " ~ to!string(after.lastLayerKinds));
+}
+
+// layer.rename bumps Renamed and does NOT bump ANY mesh-change counter (it is a
+// pure document-state change touching no mesh-pending state).
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.rename name:Renamed");         // rename the active layer
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerRenamed == before.totalLayerRenamed + 1,
+        "rename must bump Renamed");
+    assert(meshCountersUnchanged(before, after),
+        "rename must NOT bump any mesh-change counter (pure document state)");
+    assert(after.totalLayerActive == before.totalLayerActive,
+        "rename must NOT bump Active (no active-layer switch)");
+}
+
+// layer.setVisible bumps VisibilityChanged, no mesh counters.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.setVisible value:false");
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerVisible == before.totalLayerVisible + 1,
+        "setVisible must bump VisibilityChanged");
+    assert(meshCountersUnchanged(before, after),
+        "setVisible must NOT bump any mesh-change counter (pure document state)");
+}
+
+// layer.setBackground bumps BackgroundChanged, no mesh counters.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+    cmd("layer.add name:B");                 // need >1 layer to set a background
+    cmd("layer.select index:0");             // A active so B can be background
+    auto before = settleAfter(readChanges());
+
+    cmd("layer.setBackground index:1 value:true");
+    auto after = settleAfter(before);
+
+    assert(after.totalLayerBackground == before.totalLayerBackground + 1,
+        "setBackground must bump BackgroundChanged");
+    assert(meshCountersUnchanged(before, after),
+        "setBackground must NOT bump any mesh-change counter (pure document state)");
 }

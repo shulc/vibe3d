@@ -795,16 +795,25 @@ class HttpServer {
                 response.statusCode = 200;
                 response.body = format(
                     `{"flushCount":%d,"lastFlushFlags":%d,"lastSelDomains":%d,` ~
+                    `"lastLayerKinds":%d,` ~
                     `"totalPosition":%d,"totalPoints":%d,"totalPolygons":%d,` ~
                     `"totalMarks":%d,"totalMaterial":%d,` ~
-                    `"totalSelVertex":%d,"totalSelEdge":%d,"totalSelFace":%d}`,
+                    `"totalSelVertex":%d,"totalSelEdge":%d,"totalSelFace":%d,` ~
+                    `"totalLayerAdded":%d,"totalLayerRemoved":%d,` ~
+                    `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
+                    `"totalLayerVisible":%d,"totalLayerBackground":%d,` ~
+                    `"totalLayerActive":%d}`,
                     changeBus.flushCount, changeBus.lastFlushFlags,
-                    changeBus.lastSelDomains,
+                    changeBus.lastSelDomains, changeBus.lastLayerKinds,
                     changeBus.totalPosition, changeBus.totalPoints,
                     changeBus.totalPolygons, changeBus.totalMarks,
                     changeBus.totalMaterial,
                     changeBus.totalSelVertex, changeBus.totalSelEdge,
-                    changeBus.totalSelFace);
+                    changeBus.totalSelFace,
+                    changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
+                    changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
+                    changeBus.totalLayerVisible, changeBus.totalLayerBackground,
+                    changeBus.totalLayerActive);
             }
         } else if (request.path == "/api/toolpipe/eval") {
             response.headers["Content-Type"] = "application/json";
