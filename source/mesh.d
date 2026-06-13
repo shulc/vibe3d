@@ -65,16 +65,27 @@ struct Surface {
 ///
 ///   Point      — one value-tuple per vertex (`data.length == vertices.length * dim`).
 ///   Edge       — one value-tuple per deduplicated edge (`data.length == edges.length * dim`).
-///   PolyVertex — one value-tuple per face-corner (per-loop). RESERVED: not
-///                implemented in v1. Corner-domain channels need a stable
-///                corner enumeration that survives topology edits (loops are
-///                rebuilt wholesale by `buildLoops`), so `addMeshMap` rejects
-///                this domain with a clear message rather than half-wiring it.
+///   PolyVertex — one value-tuple per face-corner (per-loop). The discontinuous
+///                per-corner domain (UV seams, per-corner color). Corner `c` of
+///                face `fi` is loop index `faceLoop[fi] + c` (CSR layout — see
+///                `faceCornerLoop`), so `data.length == loops.length * dim`. The
+///                loop index space is rebuilt wholesale by `buildLoops`, so the
+///                per-corner values must be RELOCATED across face-mutating edits
+///                (not merely length-resized): see the two-mechanism lifecycle on
+///                `remapPolyVertexMaps` (arity-preserving) and
+///                `rebuildPolyVertexAtFace` (arity-changing).
 enum MapDomain {
     Point,
     Edge,
     PolyVertex,
 }
+
+/// Conventional name of the per-corner (PolyVertex-domain) UV map. Centralised
+/// here so import / export / `.v3d` codec all key on the same literal. Exactly
+/// one UV map in v1; additional sets later are additional named PolyVertex maps
+/// ("uv2", …) — the registry already supports N named maps, so nothing here
+/// forecloses multi-set.
+enum string kUvMapName = "uv";
 
 /// A generic named, typed per-element float attribute channel — the single
 /// reusable home for continuous per-element data (UV, vertex weight, edge
@@ -303,14 +314,36 @@ struct Mesh {
     // vertex color, …). ONE reusable home so each new continuous per-element
     // attribute does not become a bespoke parallel array. Each `MeshMap`'s
     // `data` runs parallel to the element array named by its `domain` (Point ↔
-    // vertices, Edge ↔ edges) and is kept length-correct in lock-step with
-    // topology by `resizeMeshMaps`, hooked into the same resize primitives the
-    // selection/marks arrays use (`resizeVertexSelection` / `resizeEdgeSelection`).
+    // vertices, Edge ↔ edges, PolyVertex ↔ loops/face-corners) and is kept
+    // length-correct in lock-step with topology by `resizeMeshMaps` (Point/Edge,
+    // hooked into `resizeVertexSelection` / `resizeEdgeSelection`) and
+    // `resizePolyVertexMaps` (PolyVertex, hooked into `buildLoops`).
     //
-    // NOTE: maps are RESIZED (not value-remapped) across destructive edits that
-    // renumber elements (weld / delete / dissolve). Length stays correct so
-    // reads never go out of bounds, but values do not follow vertices to their
-    // new indices — full value-remapping is out of scope for v1.
+    // Point/Edge maps are RESIZED (not value-remapped) across destructive edits
+    // that renumber those elements: length stays correct so reads never go out
+    // of bounds, but values do not follow elements to new indices.
+    //
+    // PolyVertex (per-corner) maps additionally have a value-RELOCATE lifecycle
+    // — corner identity is not positional, so the per-corner values are made to
+    // follow their corners across face-mutating edits via two mechanisms:
+    //   (a) arity-PRESERVING relocate funnel `remapPolyVertexMaps` — wired in
+    //       `deleteFacesByMask`; `compactUnreferenced` preserves face order +
+    //       arity so it is identity-on-corners (no relocation needed).
+    //   (b) arity-CHANGING per-face rewrite (build `oldLoopOfNewLoop` at the
+    //       rewrite site, then call the same funnel) — wired in
+    //       `dissolveVerticesByMask`, `weldCoincidentVertices` (which does NOT
+    //       call buildLoops), and `removeEdgesByMask`/edge-dissolve-merge. The
+    //       short-edge-weld callers ride `weldCoincidentVertices`.
+    //   append — `addFace`/`addFaceFast` grow+zero-fill the new corners
+    //       ATOMICALLY (GAP-3, no element-count window).
+    //   snapshot restore — values come back via the captured map `dup`.
+    // v1 DROP set (write-once-then-lose tail — length-correct resize, values
+    // ZEROED, a documented limitation, each covered by a "dropped, no crash"
+    // test): subdivide (Catmull-Clark UV interpolation is a non-goal), every
+    // primitive factory rebuild, `extrudeEdgesByMask`, edge-extend, bridge,
+    // subpatch cage build, and any future bevel-family op. These end in
+    // `buildLoops`, so `resizePolyVertexMaps` makes them length-correct + zeroed.
+    // (See doc/uv_maps_plan.md D5 for the full per-mutator classification.)
     //
     // Discrete polygon tags (`faceMaterial`, a per-face surface INDEX) are
     // deliberately NOT mesh maps: a float channel cannot represent an integer
@@ -560,21 +593,46 @@ struct Mesh {
             if (remap[i] != cast(int)i) ++welded;
         if (welded == 0) return 0;
 
+        // PolyVertex remap, mechanism (b): the corner-collapse below rewrites
+        // each face's corner LIST (consecutive-dup drop + wrap-around-dup drop +
+        // sub-3 face drop). Track which OLD corner each surviving NEW corner came
+        // from so per-corner values follow the survivors. This mutator does NOT
+        // call buildLoops, so the relocate cannot ride a tail funnel — it is done
+        // here from `oldFaceLoop` captured before `faces` is rewritten. (This is
+        // the same corner-drop logic the positional import-weld uses; getting it
+        // right here is exactly the GAP-4 keying.)
+        const bool remapUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        uint[] oldLoopOfNewLoop;
+
         uint[][] newFaces;
         newFaces.reserve(faces.length);
-        foreach (ref face; faces) {
+        foreach (fi, ref face; faces) {
             uint[] f;
+            uint[] srcCorner; // old corner index that produced each kept corner
             f.reserve(face.length);
-            foreach (vid; face) {
+            foreach (k, vid; face) {
                 uint mapped = (vid < remap.length) ? cast(uint)remap[vid] : vid;
-                if (f.length == 0 || f[$ - 1] != mapped) f ~= mapped;
+                if (f.length == 0 || f[$ - 1] != mapped) {
+                    f ~= mapped;
+                    if (remapUv) srcCorner ~= cast(uint)k;
+                }
             }
             // Wrap-around dup: last == first means the face cycles back to
             // its start through a remapped corner.
-            if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
-            if (f.length >= 3) newFaces ~= f;
+            if (f.length > 1 && f[$ - 1] == f[0]) {
+                f = f[0 .. $ - 1];
+                if (remapUv) srcCorner = srcCorner[0 .. $ - 1];
+            }
+            if (f.length >= 3) {
+                newFaces ~= f;
+                if (remapUv)
+                    foreach (sc; srcCorner)
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
+            }
         }
         faces = newFaces;
+        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
 
         rebuildEdges();
 
@@ -685,6 +743,13 @@ struct Mesh {
         uint[]   droppedFaceMat;
         uint[]   droppedFaceSub;
         const bool recDelete = editRecorder_ !is null;
+        // PolyVertex remap, mechanism (a): surviving faces keep their corner
+        // count, so corner `c` of a kept face maps to old loop
+        // oldFaceLoop[oldFi]+c. Build `oldLoopOfNewLoop` in NEW-face/new-corner
+        // (CSR) order while filtering, then relocate before the tail buildLoops.
+        const bool remapUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        uint[] oldLoopOfNewLoop;
         foreach (i, ref f; faces) {
             if (mask[i]) {
                 ++removed;
@@ -700,6 +765,9 @@ struct Mesh {
             keptSubpatch ~= (i < isSubpatch.length        ? isSubpatch[i]        : false);
             keptOrder    ~= (i < faceSelectionOrder.length ? faceSelectionOrder[i] : 0);
             keptMaterial ~= (i < faceMaterial.length      ? faceMaterial[i]      : 0u);
+            if (remapUv)
+                foreach (c; 0 .. f.length)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)i, cast(uint)c);
         }
         if (removed == 0) return 0;
         if (recDelete)
@@ -709,6 +777,11 @@ struct Mesh {
         setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
+        // PolyVertex relocate (a): per-corner values follow their surviving
+        // corners. Done now (before the tail buildLoops); the loop layout this
+        // produces is exactly what buildLoops rebuilds from the new `faces`, so
+        // its resizePolyVertexMaps is then a length-correct no-op.
+        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
         // Selection bits don't survive index changes; clear and let caller
         // restore as needed.
         clearFaceSelectionResize();
@@ -769,11 +842,21 @@ struct Mesh {
         uint[][] removedFaceLists;
         uint[]   removedFaceMat;
         uint[]   removedFaceSub;
+        // PolyVertex remap, mechanism (b): a masked corner is dropped from its
+        // face's corner LIST, so new corner `j` of a surviving face came from a
+        // specific OLD corner `k` (its position in the old face). Build
+        // `oldLoopOfNewLoop` in NEW-face/new-corner (CSR) order so a planted UV
+        // follows the surviving corner even as the face changes arity.
+        const bool remapUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        uint[] oldLoopOfNewLoop;
         foreach (fi, ref f; faces) {
             uint[] kept;
-            foreach (vid; f) {
+            uint[] keptCorner; // old corner index of each kept corner (mech b)
+            foreach (k, vid; f) {
                 if (vid < mask.length && mask[vid]) continue;
                 kept ~= vid;
+                if (remapUv) keptCorner ~= cast(uint)k;
             }
             if (kept.length >= 3) {
                 if (recDis && kept.length != f.length) {
@@ -785,6 +868,9 @@ struct Mesh {
                 newSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
                 newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
                 newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+                if (remapUv)
+                    foreach (kc; keptCorner)
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, kc);
             } else if (recDis) {
                 // Degenerate face dropped — reconstruct it on revert at its
                 // post-shrink position in the new face array.
@@ -806,6 +892,9 @@ struct Mesh {
         setFaceSubpatchFrom(newSubpatch);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
+        // PolyVertex relocate (b): per-corner values follow surviving corners
+        // through the arity change. Before the tail buildLoops/compact.
+        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
         clearFaceSelectionResize();
 
         // Rebuild edges from the new faces (some edges are gone, some
@@ -871,6 +960,14 @@ struct Mesh {
                 selectedEdgeKeys[edgeKeyOrdered(edges[i][0], edges[i][1])] = true;
         if (selectedEdgeKeys.length == 0) return 0;
 
+        // PolyVertex remap, mechanism (b): merging faces rewrites the corner
+        // LIST (the merged poly is a boundary walk). Capture the OLD CSR corner
+        // offsets so each merged-poly corner — and each kept face's corner — can
+        // be traced to an old loop index. Built into `oldLoopOfNewLoop` in the
+        // final [kept ++ merged] face order below.
+        const bool remapUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+
         // Build face → face union-find via selected edges.
         size_t nFaces = faces.length;
         int[] parent;  parent.length = nFaces;
@@ -933,19 +1030,26 @@ struct Mesh {
         bool[]   newPolySubpatch;
         int[]    newPolyOrder;
         uint[]   newPolyMaterial;
+        // Parallel to newPolyList: the OLD loop index that produced each merged
+        // corner (mechanism b). `~0u` ⇒ no traceable source ⇒ zero-fill.
+        uint[][] newPolySrcLoop;
         foreach (root, comp; componentFaces) {
             if (comp.length < 2) continue;
 
             // Gather directed half-edges from the component, dropping
             // half-edges whose edge was actually dissolved (interior); selected
-            // boundary edges survive on the merged boundary.
+            // boundary edges survive on the merged boundary. `outSrc` carries the
+            // OLD loop index of the half-edge's START corner, parallel to `outAt`.
             uint[][uint] outAt;  // outAt[u] = list of `v` for each surviving u→v
+            uint[][uint] outSrc; // outSrc[u][i] = old loop index of u→v's start
             foreach (fi; comp) {
                 auto f = faces[fi];
                 foreach (k; 0 .. f.length) {
                     uint a = f[k], b = f[(k + 1) % f.length];
                     if (edgeKeyOrdered(a, b) in dissolvedEdgeKeys) continue;
                     outAt[a] ~= b;
+                    if (remapUv)
+                        outSrc[a] ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, cast(uint)k);
                 }
             }
 
@@ -958,13 +1062,29 @@ struct Mesh {
             foreach (k; outAt.byKey) { startV = k; break; }
 
             uint[] poly;
+            uint[] polySrc; // old loop index per poly corner (mechanism b)
             uint cur = startV;
             while (true) {
                 poly ~= cur;
                 auto p = cur in outAt;
-                if (p is null || (*p).length == 0) break;
+                if (p is null || (*p).length == 0) {
+                    if (remapUv) polySrc ~= ~0u; // dangling start ⇒ zero-fill
+                    break;
+                }
                 uint nxt = (*p)[0];
                 *p = (*p)[1 .. $];
+                if (remapUv) {
+                    // Consume the parallel source entry. The corner just pushed
+                    // (`cur`) is the START of this consumed half-edge, so its old
+                    // loop index is the source for this poly corner.
+                    auto ps = cur in outSrc;
+                    if (ps !is null && (*ps).length > 0) {
+                        polySrc ~= (*ps)[0];
+                        *ps = (*ps)[1 .. $];
+                    } else {
+                        polySrc ~= ~0u;
+                    }
+                }
                 if (nxt == startV) break;
                 cur = nxt;
             }
@@ -982,6 +1102,7 @@ struct Mesh {
             newPolySubpatch  ~= (firstFi < cast(int)isSubpatch.length        ? isSubpatch[firstFi]        : false);
             newPolyOrder     ~= (firstFi < cast(int)faceSelectionOrder.length ? faceSelectionOrder[firstFi] : 0);
             newPolyMaterial  ~= (firstFi < cast(int)faceMaterial.length      ? faceMaterial[firstFi]      : 0u);
+            if (remapUv) newPolySrcLoop ~= polySrc;
         }
 
         // Compact: drop faces, append merged polygons.
@@ -1006,6 +1127,8 @@ struct Mesh {
         bool[]   keptSubpatch;
         int[]    keptOrder;
         uint[]   keptMaterial;
+        // PolyVertex relocate accumulator, in final [kept ++ merged] CSR order.
+        uint[] oldLoopOfNewLoop;
         foreach (fi; 0 .. nFaces) {
             if (dropFace[fi]) {
                 if (recRemoveEdges) {
@@ -1024,6 +1147,10 @@ struct Mesh {
             keptSubpatch ~= (fi < isSubpatch.length        ? isSubpatch[fi]        : false);
             keptOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             keptMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
+            // Kept faces preserve arity → corner c maps to old loop fi/c (a).
+            if (remapUv)
+                foreach (c; 0 .. faces[fi].length)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, cast(uint)c);
         }
         // Tail range start = number of kept (non-dropped) faces.
         const size_t firstMerged = keptFaces.length;
@@ -1032,6 +1159,9 @@ struct Mesh {
             keptSubpatch ~= newPolySubpatch[i];
             keptOrder    ~= newPolyOrder[i];
             keptMaterial ~= newPolyMaterial[i];
+            // Merged poly corners → the old loop traced during the boundary
+            // walk (~0u where the walk could not trace a source) (b).
+            if (remapUv) oldLoopOfNewLoop ~= newPolySrcLoop[i];
         }
         if (recRemoveEdges) {
             // RemoveFaces FIRST, then AddFaces — on revert (LIFO) the appended
@@ -1049,6 +1179,9 @@ struct Mesh {
         setFaceSubpatchFrom(keptSubpatch);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
+        // PolyVertex relocate (b): per-corner values follow the merged/kept
+        // corners. Before the tail buildLoops (which then no-ops the resize).
+        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
         clearFaceSelectionResize();
 
         // Rebuild edges + compact orphan verts.
@@ -3212,6 +3345,13 @@ struct Mesh {
         faces ~= idx.dup;
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
+        // GAP-3 atomic append: addFace does NOT call buildLoops, so without
+        // this the PolyVertex element count (loops.length) would lag the new
+        // face's corners until some later buildLoops. The new face's corners are
+        // appended LAST in CSR loop order, so growing each PolyVertex map by
+        // `idx.length * dim` zeros at the END keeps element-major alignment and
+        // the invariant `data.length == Σ face-arities * dim` holds immediately.
+        growPolyVertexMapsForAppendedCorners(idx.length);
         commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
@@ -3229,10 +3369,26 @@ struct Mesh {
                 edgeLookup[key] = cast(uint)(edges.length - 1);
             }
         }
+        // GAP-3 atomic append — see addFace.
+        growPolyVertexMapsForAppendedCorners(idx.length);
         commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
             editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
+    }
+
+    // Grow every PolyVertex map by `nCorners` zero-filled elements at the END —
+    // the corners an appended face contributes (which are last in CSR loop
+    // order). Keeps `data.length == Σ face-arities * dim` true with NO window,
+    // even though `addFace`/`addFaceFast` defer the loops rebuild. No-op when no
+    // PolyVertex map is registered.
+    private void growPolyVertexMapsForAppendedCorners(size_t nCorners) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const size_t old = m.data.length;
+            m.data.length = old + nCorners * m.dim;
+            m.data[old .. $] = 0.0f; // float.init is NaN
+        }
     }
     // Non-allocating "any bit set?" scans straight over the marks arrays.
     // These run per-frame / per-drag-event from the toolpipe stages and
@@ -3370,6 +3526,24 @@ struct Mesh {
         }
     }
 
+    // Address a face-corner as a PolyVertex element (loop) index. `buildLoops`
+    // lays loops out CSR-style — `faceLoop[fi]` is the first loop of face `fi`,
+    // and corner `c` is at `faceLoop[fi] + c`. This is the canonical
+    // `(face, corner) → element` mapping for the PolyVertex domain; import /
+    // export / codec address corners through this helper rather than
+    // hard-coding the CSR formula. Bounds-guarded: returns `~0u` (size_t.max)
+    // for an out-of-range face or corner so callers can detect it instead of
+    // indexing past `loops`.
+    size_t faceCornerLoop(uint fi, uint corner) const {
+        if (fi >= faceLoop.length) return size_t.max;
+        const size_t base = faceLoop[fi];
+        // The face's corner count is the gap to the next face's first loop
+        // (or to `loops.length` for the last face).
+        const size_t end = (fi + 1 < faceLoop.length) ? faceLoop[fi + 1] : loops.length;
+        if (base + corner >= end) return size_t.max;
+        return base + corner;
+    }
+
     // Grow/shrink every registered map of `domain` so its `data.length`
     // matches `elementCount(domain) * dim`. New trailing slots default to 0.
     // Same grow-and-keep discipline as the selection/marks resize primitives:
@@ -3390,6 +3564,101 @@ struct Mesh {
             resizeMeshMapData(m);
     }
 
+    // Bring every PolyVertex map's `data` in step with the current loop layout,
+    // called from `buildLoops` AFTER `loops` is rebuilt. The rule distinguishes
+    // a relocate/append (values already placed) from a topology REWRITE (drop):
+    //
+    //   * If `data.length` ALREADY equals `loops.length * dim`, the values were
+    //     placed deliberately just before this `buildLoops` — by
+    //     `remapPolyVertexMaps` (mechanism a/b) or the atomic `addFace` append,
+    //     or are simply unchanged across a benign rebuild — so KEEP them.
+    //   * Otherwise the face/loop topology was rewritten WITHOUT a relocate (the
+    //     DROP class: primitive rebuilds, subdivide, extrude, edge-extend,
+    //     bridge, subpatch cage). The old per-corner values are meaningless in
+    //     the new corner space, so ZERO the whole map at the new length. This is
+    //     the conscious, length-correct, value-dropped behaviour (D5 drop set);
+    //     leaving stale leading values in new corner slots would be silent
+    //     corruption.
+    //
+    // No-op when no PolyVertex map is registered.
+    void resizePolyVertexMaps() {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const size_t want = loops.length * m.dim;
+            if (m.data.length == want) continue; // relocate/append/unchanged → keep
+            // Topology rewritten without a relocate ⇒ drop (length-correct, zeroed).
+            m.data.length = want;
+            m.data[] = 0.0f;
+        }
+    }
+
+    // --- PolyVertex remap lifecycle (the two mechanisms) ------------------
+    // Mechanism (a) — arity-PRESERVING relocate funnel. For mutators that drop /
+    // compact / reorder whole faces but KEEP each surviving face's corner count.
+    // `oldLoopOfNewLoop[newLoopIdx] = oldLoopIdx` (or `~0u` ⇒ a brand-new corner,
+    // zero-filled). Each PolyVertex map's `data` is rebuilt to the new
+    // `oldLoopOfNewLoop.length * dim` by gathering `old.data[oldIdx*dim .. ]`
+    // (or zeros on `~0u`). Call this BEFORE the tail `buildLoops` (which then
+    // sees a length-correct map and no-ops in `resizePolyVertexMaps`).
+    //
+    // The caller builds `oldLoopOfNewLoop` from `oldFaceLoop` (the CSR offsets
+    // captured at mutator entry, before `faces` is rewritten): for each surviving
+    // new face whose old face index is `oldFi`, corner `c` came from old loop
+    // `oldFaceLoop[oldFi] + c`.
+    void remapPolyVertexMaps(const uint[] oldLoopOfNewLoop) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const ubyte dim = m.dim;
+            float[] nd;
+            nd.length = oldLoopOfNewLoop.length * dim;
+            nd[] = 0.0f;
+            foreach (newIdx, oldIdx; oldLoopOfNewLoop) {
+                if (oldIdx == ~0u) continue; // brand-new corner ⇒ zero
+                const size_t ob = cast(size_t)oldIdx * dim;
+                if (ob + dim > m.data.length) continue; // defensive
+                nd[newIdx * dim .. newIdx * dim + dim] = m.data[ob .. ob + dim];
+            }
+            m.data = nd;
+        }
+    }
+
+    // Mechanism (b) — arity-CHANGING per-face rewrite. For mutators that rewrite
+    // a face's corner LIST (weld / dissolve / edge-merge), new corner `j` of a
+    // rewritten face came from old corner `k` of the SAME old face (or is brand
+    // new). The only place that knows the old→new corner correspondence is the
+    // loop that builds the new face, so each such mutator builds an
+    // `oldLoopOfNewLoop` array IN NEW-FACE / NEW-CORNER ORDER (the same CSR order
+    // `buildLoops` will lay down): for new corner `j` of a new face whose old
+    // face index is `oldFi`, push `oldFaceLoopIndex(oldFi, k)` for the kept old
+    // corner `k`, or `~0u` for a brand-new corner. It then calls
+    // `remapPolyVertexMaps(oldLoopOfNewLoop)` — the SAME funnel as (a); the two
+    // mechanisms differ only in how `oldLoopOfNewLoop` is constructed, not in the
+    // relocate step. `oldFaceLoopIndex` resolves (oldFi, corner) against the
+    // OLD CSR offsets captured at mutator entry.
+    static uint oldFaceLoopIndex(const uint[] oldFaceLoop, uint oldFi, uint corner) {
+        if (oldFi >= oldFaceLoop.length) return ~0u;
+        return oldFaceLoop[oldFi] + corner;
+    }
+
+    // True iff at least one PolyVertex map is registered. Mutators take the
+    // remap path only when this is true — otherwise the (cheap) capture +
+    // funnel work is skipped entirely (the common case: no UV map). The drop
+    // class needs no guard: `resizePolyVertexMaps` inside `buildLoops` is itself
+    // a no-op when no PolyVertex map exists.
+    bool hasPolyVertexMap() const {
+        foreach (ref m; meshMaps)
+            if (m.domain == MapDomain.PolyVertex) return true;
+        return false;
+    }
+
+    // Capture the CSR corner offsets for the CURRENT faces, to be consulted by
+    // `oldFaceLoopIndex` while rebuilding `oldLoopOfNewLoop`. The live `faceLoop`
+    // is valid at any topology-mutator entry (the prior op left it in step with
+    // `faces` via `buildLoops`), so this is just a defensive `.dup`.
+    uint[] captureFaceLoop() const {
+        return faceLoop.dup;
+    }
+
     // Grow/shrink one map's data to `elementCount(domain) * dim`, zero-filling
     // any newly grown slots. `float.init` is NaN in D, so an explicit zero is
     // required for new entries to read back as 0 (the documented default).
@@ -3407,11 +3676,11 @@ struct Mesh {
     MeshMap* addMeshMap(string name, ubyte dim, MapDomain domain) {
         if (name.length == 0) return null;
         if (dim == 0) return null;
-        if (domain == MapDomain.PolyVertex) {
-            // RESERVED — see MapDomain.PolyVertex. Corner-domain channels are
-            // not implemented in v1; reject rather than half-wire them.
-            return null;
-        }
+        // PolyVertex (per-corner) is live: sized to `loops.length * dim` via
+        // `elementCount` below, same as Point/Edge. Its values are relocated
+        // across face-mutating edits by the two-mechanism lifecycle
+        // (remapPolyVertexMaps / rebuildPolyVertexAtFace); see the meshMaps
+        // field comment for the wired vs drop sets.
         if (meshMap(name) !is null) return null; // names are unique per mesh
         MeshMap m;
         m.name   = name;
@@ -4535,6 +4804,14 @@ struct Mesh {
                 foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
             }
         }
+
+        // PolyVertex (per-corner) maps run parallel to `loops`. Now that the
+        // loop layout is rebuilt, bring every such map to `loops.length * dim`.
+        // For mutators that already relocated values (remapPolyVertexMaps) this
+        // is a length-correct no-op; for the DROP class (primitive rebuilds,
+        // subdivide, extrude, …) this is the conscious length-correct,
+        // value-zeroed behaviour. No-op when no PolyVertex map is registered.
+        resizePolyVertexMaps();
     }
 
 }
