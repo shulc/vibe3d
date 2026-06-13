@@ -320,6 +320,88 @@ unittest { // setVisible / setBackground reflected in /api/layers
 }
 
 // ---------------------------------------------------------------------------
+// layer.reorder — move a layer; the order changes, the ACTIVE layer is
+// preserved by IDENTITY (its index may move but it stays active), undo restores
+// both the order and the active layer; bad args are graceful no-ops.
+// ---------------------------------------------------------------------------
+
+// Build a clean three-layer document A/B/C (each a distinct name), A active.
+void threeLayerDoc() {
+    resetCube();                       // layer 0 = "Layer 1" (cube)
+    cmd(`layer.rename index:0 name:"A"`);
+    cmd("layer.add name:B");           // layer 1 = B, active
+    cmd("layer.add name:C");           // layer 2 = C, active
+    cmd("layer.select index:0");       // A active again
+    clearHistory();
+}
+
+string[] layerNames() {
+    string[] names;
+    foreach (l; getLayers()["layers"].array) names ~= l["name"].str;
+    return names;
+}
+
+string activeName() {
+    auto ls = getLayers();
+    return ls["layers"].array[cast(size_t)ls["active"].integer]["name"].str;
+}
+
+unittest { // reorder a NON-active layer: order changes, active stays A
+    threeLayerDoc();                   // [A, B, C], A active
+    assert(layerNames() == ["A", "B", "C"]);
+    assert(activeName() == "A");
+
+    // Move C (index 2) to the front (index 0): [C, A, B].
+    cmd("layer.reorder from:2 to:0");
+    assert(layerNames() == ["C", "A", "B"],
+        "reorder C→front: got " ~ layerNames().to!string);
+    // A was active and stays active by identity, though its index moved 0→1.
+    assert(activeName() == "A", "active layer preserved by identity (A)");
+    assert(activeLayer() == 1, "A's index followed the move (now 1)");
+
+    // Undo restores the original order AND the active layer.
+    undoOk("undo reorder");
+    assert(layerNames() == ["A", "B", "C"], "undo restores order");
+    assert(activeName() == "A", "undo restores active layer");
+    assert(activeLayer() == 0, "A back at index 0");
+}
+
+unittest { // reorder the ACTIVE layer itself: its index moves, it stays active
+    threeLayerDoc();                   // [A, B, C], A active
+    cmd("layer.select index:0");       // A active (already, explicit)
+    clearHistory();
+
+    // Move A (the active layer, index 0) to the end (index 2): [B, C, A].
+    cmd("layer.reorder from:0 to:2");
+    assert(layerNames() == ["B", "C", "A"],
+        "reorder active A→end: got " ~ layerNames().to!string);
+    assert(activeName() == "A", "active layer (A) still active after moving it");
+    assert(activeLayer() == 2, "A's active index moved to the tail");
+
+    undoOk("undo reorder of active layer");
+    assert(layerNames() == ["A", "B", "C"], "undo restores order");
+    assert(activeName() == "A", "undo keeps A active");
+    assert(activeLayer() == 0, "A back at index 0");
+}
+
+unittest { // out-of-range and from==to are graceful no-ops
+    threeLayerDoc();                   // [A, B, C], A active
+    auto before = layerNames();
+
+    auto r1 = cmdMayFail("layer.reorder from:0 to:0");
+    assert(r1["status"].str != "ok", "from==to must be refused");
+    auto r2 = cmdMayFail("layer.reorder from:5 to:0");
+    assert(r2["status"].str != "ok", "from out-of-range must be refused");
+    auto r3 = cmdMayFail("layer.reorder from:0 to:9");
+    assert(r3["status"].str != "ok", "to out-of-range must be refused");
+    auto r4 = cmdMayFail("layer.reorder from:-1 to:1");
+    assert(r4["status"].str != "ok", "negative from must be refused");
+
+    assert(layerNames() == before, "no-op reorders leave the order untouched");
+    assert(activeName() == "A", "no-op reorders leave the active layer untouched");
+}
+
+// ---------------------------------------------------------------------------
 // BLOCKER 1 — cross-layer DISPLAY guard. Different vertex counts: editing /
 // reverting the background layer A must never resize/refresh the GLOBAL pick
 // caches against A while B is active. A subsequent interactive pick on the

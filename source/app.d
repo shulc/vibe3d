@@ -1561,11 +1561,13 @@ void main(string[] args) {
     {
         import commands.layer.commands : LayerAdd, LayerDelete, LayerSelect,
                                           LayerRename, LayerSetVisible,
-                                          LayerSetBackground;
+                                          LayerSetBackground, LayerReorder;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.delete"] = () => cast(Command)
             new LayerDelete(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.reorder"] = () => cast(Command)
+            new LayerReorder(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.select"] = () => cast(Command)
             new LayerSelect(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.rename"] = () => cast(Command)
@@ -5047,6 +5049,29 @@ void main(string[] args) {
                             `{"index":` ~ to!string(idx) ~ `,"value":`
                             ~ (bg ? "true" : "false") ~ `}`);
                 }
+
+                // Reorder buttons — Up moves the row toward index 0, Down toward
+                // the tail. Both dispatch layer.reorder through the same
+                // undo-safe delegate (never mutating `document` directly). Up is
+                // disabled on the first row, Down on the last.
+                ImGui.SameLine();
+                ImGui.BeginDisabled(i == 0);
+                if (ImGui.SmallButton("Up")) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.reorder",
+                            `{"from":` ~ to!string(idx)
+                            ~ `,"to":` ~ to!string(idx - 1) ~ `}`);
+                }
+                ImGui.EndDisabled();
+                ImGui.SameLine();
+                ImGui.BeginDisabled(i + 1 >= document.layers.length);
+                if (ImGui.SmallButton("Dn")) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.reorder",
+                            `{"from":` ~ to!string(idx)
+                            ~ `,"to":` ~ to!string(idx + 1) ~ `}`);
+                }
+                ImGui.EndDisabled();
 
                 ImGui.PopID();
             }
