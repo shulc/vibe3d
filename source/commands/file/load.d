@@ -13,7 +13,7 @@ import editmode;
 import document : Document, Layer;
 import io.lwo_import    : sceneFromLwo;
 import io.scene_import  : importViaAssimp;
-import io.scene_ir      : ImportedScene, flattenToMesh;
+import io.scene_ir      : ImportedScene, flattenToMesh, toLayers;
 import io.native : readV3d;
 import io.formats;
 import io.doc_state : setCurrentDocPath;
@@ -44,6 +44,7 @@ class FileLoad : Command {
     private Layer[]          prevLayers;
     private size_t           prevActiveIndex;
     private bool             docSnapped;     // true when prevLayers was captured
+    private bool             multiLayer;     // true for a layered (multi-part) interchange import
     private FileLoadMode     mode = FileLoadMode.open;
     private string           singleExt;     // import-single target ext (e.g. ".obj")
 
@@ -130,20 +131,35 @@ class FileLoad : Command {
             if (document.activeIndex >= document.layers.length)
                 document.activeIndex = document.layers.length - 1;
         } else {
-            // Interchange import keeps the active-mesh path (NOT layered — that
-            // is Stage 3). Snapshot just the active mesh for undo.
-            snap = MeshSnapshot.capture(*mesh);
-            if (ext == ".lwo") {
-                ImportedScene sc;
+            // Interchange import through the scene-IR seam (Stage 3): parse the
+            // file into an ImportedScene, THEN decide how to land it.
+            //   * parts.length <= 1 → flatten into the active mesh, exactly as
+            //     before (single-part imports are byte-identical to pre-Stage-3).
+            //   * parts.length  > 1 → build a layered document via `toLayers`
+            //     (first part active/foreground, the rest visible background)
+            //     and replace the WHOLE layer list in place — the same pattern
+            //     as the native .v3d load above.
+            ImportedScene sc;
+            if (ext == ".lwo")
                 ok = sceneFromLwo(path, sc);
-                if (ok) *mesh = flattenToMesh(sc);
-            } else {
-                // Interchange import (OBJ / glTF / FBX) through assimp -> scene-IR.
-                ImportedScene sc;
-                ok = importViaAssimp(path, sc);
-                if (ok) *mesh = flattenToMesh(sc);
-            }
+            else
+                ok = importViaAssimp(path, sc);   // OBJ / glTF / FBX via assimp
             if (!ok) return false;
+
+            if (sc.parts.length > 1) {
+                // Layered (multi-part) interchange import: replace the document.
+                multiLayer      = true;
+                prevLayers      = document.layers.dup;   // shallow: Layer refs kept
+                prevActiveIndex = document.activeIndex;
+                docSnapped      = true;
+                *document       = toLayers(sc);
+                if (document.activeIndex >= document.layers.length)
+                    document.activeIndex = document.layers.length - 1;
+            } else {
+                // Single-part (or empty) import: keep the active-mesh path.
+                snap = MeshSnapshot.capture(*mesh);
+                *mesh = flattenToMesh(sc);
+            }
         }
 
         // Document-path memory: a successful NATIVE load (File → Open of a
@@ -163,11 +179,16 @@ class FileLoad : Command {
             prefsNoteLastDir(dirName(path));
         }
 
-        // From here on operate on the NEW active mesh. For the native path the
-        // layer list was replaced, so the active mesh sits at a fresh heap
-        // address — resolve it through the document rather than the fire-time
-        // `*mesh` pointer (which still points at the prior layer).
-        Mesh* active = isNative ? document.activeMesh() : mesh;
+        // From here on operate on the NEW active mesh. For a document-replacing
+        // load (native .v3d, or a multi-part interchange import that built
+        // layers) the layer list was replaced, so the active mesh sits at a
+        // fresh heap address — resolve it through the document rather than the
+        // fire-time `*mesh` pointer (which still points at the prior layer).
+        // A single-part interchange import mutated `*mesh` in place, so it stays
+        // the active mesh. Freshly built BACKGROUND layers keep clean
+        // pendingChanges_ + unseeded shadow stamps (lazy-seeded on first flush);
+        // only the ACTIVE mesh gets noteChange below.
+        Mesh* active = docSnapped ? document.activeMesh() : mesh;
 
         // The reader rebuilt the mesh on a fresh struct (Mesh.init) and applied
         // subpatch flags; grow selection arrays to match but don't clear

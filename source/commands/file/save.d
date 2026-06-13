@@ -10,6 +10,7 @@ import mesh;
 import view;
 import editmode;
 import document : Document;
+import io.scene_ir : flattenDocument;
 import io.lwo_export : exportLwo;
 import io.scene_export : exportViaAssimp;
 import io.native : writeV3d;
@@ -112,9 +113,15 @@ class FileSave : Command {
         const ext = extension(path).toLower;
         const fi  = formatFor(ext);
         if (fi !is null && fi.kind == FormatKind.lwoNative) {
-            exportLwo(*mesh, path);
+            // Interchange export stays single-mesh: flatten the VISIBLE layers
+            // into one Mesh (flattenDocument). A single-layer document flattens
+            // to a byte-identical copy of the active mesh, so single-layer LWO
+            // export is unchanged.
+            auto flat = flattenDocument(*document);
+            exportLwo(flat, path);
         } else if (fi !is null && fi.kind == FormatKind.assimp && fi.canExport) {
-            if (!exportViaAssimp(*mesh, path, fi.assimpExportId)) return false;
+            auto flat = flattenDocument(*document);
+            if (!exportViaAssimp(flat, path, fi.assimpExportId)) return false;
         } else {
             // Native .v3d is the layered source of truth: serialize the WHOLE
             // document (every layer + the active index) as formatVersion 2.

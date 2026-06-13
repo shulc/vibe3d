@@ -1,11 +1,21 @@
-// Multi-layer LWO import regression guard.
+// Multi-layer LWO import regression guard (layered, layers Stage 3).
 //
 // LWO POLS indices are relative to the CURRENT layer's PNTS — each LAYR chunk
 // resets the point base. The old importLWO concatenated all PNTS / all POLS
 // into one array, so a second layer's faces pointed at the WRONG vertices
 // (off by the first layer's point count). io.lwo_import now starts a fresh
-// ImportedPart per LAYR; flattenToMesh re-offsets each part's faces by the
-// running vertex count, so the merged mesh is correct.
+// ImportedPart per LAYR.
+//
+// Since layers Stage 3 a multi-part interchange import NO LONGER flattens: each
+// LWO LAYR becomes its own document Layer (first active/foreground, the rest
+// visible background). The per-part face re-offset that used to run at import
+// now runs only on EXPORT (flattenDocument). This test pins both:
+//   * import keeps the two layers separate — each layer's faces stay
+//     LAYER-LOCAL (the quad is [0,1,2,3], the triangle is [0,1,2], NOT
+//     re-offset), and each layer's geometry matches its raw LWO coords;
+//   * a flat re-export of the document re-offsets layer 1's triangle past
+//     layer 0's verts (the 7-vert / 2-face merge — the original offset-bug
+//     witness, now exercised on the export path).
 //
 // Fixture (LWO2):
 //   FORM <size> LWO2
@@ -15,16 +25,11 @@
 //     LAYR 1 "tri"
 //     PNTS  3 verts  (a triangle at z=+5, well away from layer 0)
 //     POLS  FACE  1 tri   [0,1,2]            (layer-local indices)
-//
-// Assertions: merged mesh has 7 verts (4+3) and 2 faces; the triangle face
-// resolves to vertices 4,5,6 (offset applied) whose positions match layer 1's
-// raw coords. Under the OLD code the triangle face would be [0,1,2] pointing
-// at layer-0 verts (geometry collapsed / wrong) — this test fails on that.
 
 import std.net.curl;
 import std.json;
 import std.conv   : to;
-import std.file   : write;
+import std.file   : write, remove, exists;
 import std.format : format;
 import std.math   : fabs;
 
@@ -170,69 +175,117 @@ JSONValue model() {
     return parseJSON(get("http://localhost:8080/api/model"));
 }
 
+JSONValue modelLayer(int n) {
+    return parseJSON(get("http://localhost:8080/api/model?layer=" ~ n.to!string));
+}
+
+JSONValue layers() {
+    return parseJSON(get("http://localhost:8080/api/layers"));
+}
+
+void saveOk(string path) {
+    auto resp = post("http://localhost:8080/api/command",
+        "file.save path:\"" ~ path ~ "\"");
+    auto j = parseJSON(resp);
+    assert(j["status"].str == "ok", "file.save failed: " ~ resp);
+}
+
+void resetApp() { post("http://localhost:8080/api/reset", ""); }
+
+double[] vat(JSONValue m, long i) {
+    auto a = m["vertices"].array[i].array;
+    return [a[0].floating, a[1].floating, a[2].floating];
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-unittest {  // both layers' vertices merge: 4 + 3 = 7
+unittest {  // the two LWO layers import as TWO document layers (no flattening)
     writeFixture();
     loadFixture();
-    auto m = model();
-    assert(m["vertexCount"].integer == 7,
-        "expected 7 verts (4+3), got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 2,
-        "expected 2 faces (quad+tri), got " ~ m["faceCount"].integer.to!string);
+
+    auto L = layers();
+    auto ls = L["layers"].array;
+    assert(ls.length == 2,
+        "2-layer LWO should import as 2 layers, got " ~ ls.length.to!string);
+    assert(L["active"].integer == 0, "first layer must be active");
+    assert(ls[0]["background"].type == JSONType.false_,
+        "layer 0 (active) is foreground");
+    assert(ls[1]["background"].type == JSONType.true_,
+        "layer 1 is background reference geometry");
+
+    // Layer 0: the quad (4 verts / 1 face); layer 1: the triangle (3 / 1).
+    assert(ls[0]["vertexCount"].integer == 4 && ls[0]["faceCount"].integer == 1,
+        "layer 0 should be the 4-vert quad");
+    assert(ls[1]["vertexCount"].integer == 3 && ls[1]["faceCount"].integer == 1,
+        "layer 1 should be the 3-vert triangle");
 }
 
-unittest {  // layer-1's triangle resolves to the OFFSET verts 4,5,6
+unittest {  // each layer keeps LAYER-LOCAL face indices + its own raw geometry
     writeFixture();
     loadFixture();
-    auto m = model();
 
-    auto faces = m["faces"].array;
-    assert(faces.length == 2, "expected 2 faces");
-
-    // The quad (4 indices) is face 0; the triangle (3 indices) is face 1.
-    auto quad = faces[0].array;
-    auto tri  = faces[1].array;
-    assert(quad.length == 4, "face 0 should be the 4-vert quad");
-    assert(tri.length  == 3, "face 1 should be the 3-vert triangle");
-
-    // Triangle indices must be OFFSET past layer 0's 4 verts → 4,5,6.
-    // (The OLD concatenation bug would leave them at 0,1,2.)
-    auto t0 = tri[0].integer, t1 = tri[1].integer, t2 = tri[2].integer;
-    assert(t0 == 4 && t1 == 5 && t2 == 6,
-        format("triangle should resolve to verts 4,5,6, got %d,%d,%d",
-               t0, t1, t2));
-
-    // All indices in range — no out-of-range / degenerate faces.
-    auto verts = m["vertices"].array;
-    assert(verts.length == 7, "expected 7 vertex tuples");
-    foreach (f; faces)
-        foreach (idx; f.array)
-            assert(idx.integer >= 0 && idx.integer < 7,
-                "face index out of range: " ~ idx.integer.to!string);
-
-    // The triangle verts must carry layer-1's z=+5 coords (geometry matches
-    // the second layer, not a stale copy of the first).
-    auto vat(long i) {
-        auto a = verts[i].array;
-        return [a[0].floating, a[1].floating, a[2].floating];
+    // --- layer 0: the quad, indices [0,1,2,3], z=0 ---
+    auto m0 = modelLayer(0);
+    auto f0 = m0["faces"].array;
+    assert(f0.length == 1 && f0[0].array.length == 4, "layer 0 = one quad");
+    foreach (k, idx; f0[0].array) {
+        assert(idx.integer == k,
+            "layer 0 quad indices are layer-local (NOT re-offset)");
+        assert(approxEqual(vat(m0, idx.integer)[2], 0.0),
+            "layer 0 quad verts are at z=0");
     }
-    foreach (k, idx; [t0, t1, t2]) {
-        auto p = vat(idx);
+
+    // --- layer 1: the triangle, indices [0,1,2] (layer-LOCAL, not 4,5,6) ---
+    auto m1 = modelLayer(1);
+    auto f1 = m1["faces"].array;
+    assert(f1.length == 1 && f1[0].array.length == 3, "layer 1 = one triangle");
+    foreach (k, idx; f1[0].array) {
+        assert(idx.integer == k,
+            format("layer 1 tri indices must be LAYER-LOCAL [0,1,2], got %d at %d",
+                   idx.integer, k));
+        auto p = vat(m1, idx.integer);
         assert(approxEqual(p[0], triVerts[k * 3 + 0])
             && approxEqual(p[1], triVerts[k * 3 + 1])
             && approxEqual(p[2], triVerts[k * 3 + 2]),
-            format("tri vert %d (mesh idx %d) = %s, expected %s",
-                   k, idx, p.to!string,
+            format("layer 1 tri vert %d = %s, expected %s", k, p.to!string,
                    [triVerts[k*3], triVerts[k*3+1], triVerts[k*3+2]].to!string));
     }
+}
 
-    // And the quad verts must carry layer-0's z=0 coords.
-    foreach (k; 0 .. 4) {
-        auto p = vat(quad[k].integer);
-        assert(approxEqual(p[2], 0.0),
-            format("quad vert %d z = %f, expected 0", k, p[2]));
+unittest {  // EXPORT flattens the two layers: re-offset triangle → verts 4,5,6
+    writeFixture();
+    loadFixture();
+
+    // Flatten via OBJ export, then re-import the merged file (one object → one
+    // layer of 7 verts). This is the original offset-bug witness, now on the
+    // export path: layer 1's triangle must land on the OFFSET verts 4,5,6.
+    const flat = "/tmp/vibe3d_test_lwo_multilayer_flat.obj";
+    if (exists(flat)) remove(flat);
+    saveOk(flat);
+    assert(exists(flat), "OBJ export should write a file");
+
+    resetApp();
+    auto resp = post("http://localhost:8080/api/command",
+        "file.load path:\"" ~ flat ~ "\"");
+    assert(parseJSON(resp)["status"].str == "ok", "flat reload failed: " ~ resp);
+
+    auto m = model();
+    assert(m["vertexCount"].integer == 7,
+        "flattened export = 7 verts (4+3), got " ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 2,
+        "flattened export = 2 faces (quad+tri), got " ~ m["faceCount"].integer.to!string);
+
+    // Both clusters survive the flatten: a z=0 quad and a z=+5 triangle.
+    bool sawZ0 = false, sawZ5 = false;
+    foreach (v; m["vertices"].array) {
+        const z = v.array[2].floating;
+        if (approxEqual(z, 0.0)) sawZ0 = true;
+        if (approxEqual(z, 5.0)) sawZ5 = true;
     }
+    assert(sawZ0 && sawZ5,
+        "flattened export must contain BOTH layers' geometry (z=0 quad + z=5 tri)");
+
+    remove(flat);
 }

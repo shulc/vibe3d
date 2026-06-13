@@ -15,6 +15,7 @@ module io.scene_ir;
 
 import mesh;
 import math;
+import document : Document, Layer;
 
 /// A material as recovered from an interchange file, before mapping onto the
 /// vibe3d `Surface`. Defaults mirror `mesh.Surface`'s defaults.
@@ -158,6 +159,200 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
 
     // Surfaces + per-face material. Grow faceMaterial to one entry per face;
     // entries beyond what we accumulated default to 0.
+    m.surfaces = mergedSurfaces;
+    m.faceMaterial.length = m.faces.length;
+    foreach (fi; 0 .. m.faces.length)
+        m.faceMaterial[fi] = (fi < allMaterial.length) ? allMaterial[fi] : 0u;
+
+    return m;
+}
+
+// ---------------------------------------------------------------------------
+// toLayers — the layered (non-flattening) adapter (layers Stage 3)
+// ---------------------------------------------------------------------------
+
+/// Build ONE Mesh from a SINGLE imported part. This is the per-part body of
+/// `flattenToMesh` with the cross-part concatenation removed: no vertex offset
+/// (face indices are already part-local), and surfaces are kept part-local
+/// (deduped by name WITHIN the part, first-seen order — mirrors flattenToMesh's
+/// dedup but scoped to one part). Validation (drop <3-vert / out-of-range
+/// faces) and the subpatch / material carry-over match flattenToMesh exactly,
+/// so a single-part scene routed through `toLayers` yields the SAME mesh that
+/// `flattenToMesh` would have produced.
+private Mesh partToMesh(const ref ImportedPart part) {
+    // --- per-part surface dedup by name, first-seen order ---
+    Surface[]       surfaces;
+    size_t[string]  nameToIndex;
+    uint[]          remap;
+    remap.length = part.surfaces.length;
+    foreach (si, ref isurf; part.surfaces) {
+        if (auto idx = isurf.name in nameToIndex) {
+            remap[si] = cast(uint) *idx;
+        } else {
+            const newIdx = cast(uint) surfaces.length;
+            surfaces ~= toSurface(isurf);
+            nameToIndex[isurf.name] = newIdx;
+            remap[si] = newIdx;
+        }
+    }
+
+    // --- collect valid faces (no vertex offset — indices are part-local) ---
+    uint[][] faces;
+    bool[]   subpatch;   // parallel to faces
+    uint[]   material;   // parallel to faces (remapped to part-local surfaces)
+    foreach (localFace, face; part.faces) {
+        if (face.length < 3) continue;                 // drop degenerate
+        bool bad = false;
+        foreach (idx; face)
+            if (idx >= part.vertices.length) { bad = true; break; }
+        if (bad) continue;                             // skip out-of-range face
+
+        faces ~= face.dup;
+
+        subpatch ~= (localFace < part.faceSubpatch.length)
+            ? part.faceSubpatch[localFace] : false;
+
+        const localMat = (localFace < part.faceMaterial.length)
+            ? part.faceMaterial[localFace] : 0u;
+        material ~= (localMat < remap.length) ? remap[localMat] : 0u;
+    }
+
+    // Empty part => fresh empty mesh (mirrors flattenToMesh's empty-scene path).
+    if (part.vertices.length == 0)
+        return Mesh.init;
+
+    Mesh m = Mesh.init;
+    m.vertices = part.vertices.dup;
+    uint[ulong] edgeLookup;
+    foreach (face; faces)
+        m.addFaceFast(edgeLookup, face);
+    m.buildLoops();
+
+    // Subpatch flags (never read the allocating `isSubpatch` @property in a loop).
+    m.resizeSubpatch();
+    foreach (fi, flag; subpatch)
+        m.setFaceSubpatch(fi, flag);
+
+    // Surfaces + per-face material.
+    m.surfaces = surfaces;
+    m.faceMaterial.length = m.faces.length;
+    foreach (fi; 0 .. m.faces.length)
+        m.faceMaterial[fi] = (fi < material.length) ? material[fi] : 0u;
+
+    return m;
+}
+
+/// The layered adapter: one Layer per part — the replacement for
+/// `flattenToMesh` "the day layers land". Each part keeps its own geometry,
+/// surfaces and subpatch flags (no cross-part merge, no flattening). The part's
+/// `name` becomes the layer name (empty ⇒ "Layer N"). The first part is the
+/// ACTIVE foreground layer; every other part is `visible = true,
+/// background = true` reference geometry, so the edit target is unambiguous and
+/// the rest is immediately listed (drawn in a later stage).
+///
+/// `flattenToMesh` REMAINS for flat consumers (single-part fast path + flat
+/// exporters via `flattenDocument`); this is the lossless import path.
+///
+/// An empty scene (no parts) returns a one-layer bootstrap document wrapping an
+/// empty mesh, so the `layers.length >= 1` invariant always holds.
+Document toLayers(const ref ImportedScene scene) {
+    import std.conv : to;
+
+    if (scene.parts.length == 0)
+        return Document.bootstrap(Mesh.init);
+
+    Layer[] layers;
+    layers.length = scene.parts.length;
+    foreach (pi, ref part; scene.parts) {
+        auto l = new Layer;
+        l.mesh       = partToMesh(part);
+        l.name       = part.name.length ? part.name
+                                        : "Layer " ~ to!string(pi + 1);
+        l.visible    = true;
+        l.background = (pi != 0);   // first part active/foreground; rest background
+        layers[pi] = l;
+    }
+
+    Document d;
+    d.layers      = layers;
+    d.activeIndex = 0;
+    return d;
+}
+
+// ---------------------------------------------------------------------------
+// flattenDocument — merge VISIBLE layers for flat (interchange) export
+// ---------------------------------------------------------------------------
+
+/// Concatenate every VISIBLE layer's mesh into one flat Mesh for the
+/// single-mesh interchange exporters (OBJ / glTF / FBX / LWO). The inverse seam
+/// of `toLayers`: surfaces are deduped by name across visible layers (first-seen
+/// order, same policy as `flattenToMesh`), vertices concatenated with a running
+/// offset, subpatch + material carried over. Hidden layers are skipped.
+///
+/// A single-layer (visible) document flattens to a byte-identical copy of that
+/// layer's mesh, so single-layer export is unchanged from pre-Stage-3 behavior.
+Mesh flattenDocument(const ref Document doc) {
+    // --- merge surfaces across visible layers: dedup by name, first-seen ---
+    Surface[]      mergedSurfaces;
+    size_t[string] nameToIndex;
+
+    Vec3[]   allVerts;
+    uint[][] allFaces;
+    bool[]   allSubpatch;
+    uint[]   allMaterial;
+
+    uint vertexOffset = 0;
+    foreach (l; doc.layers) {
+        if (!l.visible) continue;
+        const ref Mesh src = l.mesh;
+
+        // Per-layer surface remap into the merged table.
+        uint[] remap;
+        remap.length = src.surfaces.length;
+        foreach (si, ref s; src.surfaces) {
+            if (auto idx = s.name in nameToIndex) {
+                remap[si] = cast(uint) *idx;
+            } else {
+                const newIdx = cast(uint) mergedSurfaces.length;
+                Surface cp = s;                       // value copy of the const Surface
+                mergedSurfaces ~= cp;
+                nameToIndex[s.name] = newIdx;
+                remap[si] = newIdx;
+            }
+        }
+
+        foreach (fi; 0 .. src.faces.length) {
+            auto face = src.faces[fi];
+            if (face.length < 3) continue;            // drop degenerate
+            uint[] offset;
+            offset.length = face.length;
+            foreach (k, idx; face)
+                offset[k] = idx + vertexOffset;
+            allFaces ~= offset;
+
+            allSubpatch ~= src.isFaceSubpatch(fi);
+
+            const localMat = (fi < src.faceMaterial.length) ? src.faceMaterial[fi] : 0u;
+            allMaterial ~= (localMat < remap.length) ? remap[localMat] : 0u;
+        }
+        allVerts ~= src.vertices.dup;
+        vertexOffset += cast(uint) src.vertices.length;
+    }
+
+    if (allVerts.length == 0)
+        return Mesh.init;
+
+    Mesh m = Mesh.init;
+    m.vertices = allVerts;
+    uint[ulong] edgeLookup;
+    foreach (face; allFaces)
+        m.addFaceFast(edgeLookup, face);
+    m.buildLoops();
+
+    m.resizeSubpatch();
+    foreach (fi, flag; allSubpatch)
+        m.setFaceSubpatch(fi, flag);
+
     m.surfaces = mergedSurfaces;
     m.faceMaterial.length = m.faces.length;
     foreach (fi; 0 .. m.faces.length)
