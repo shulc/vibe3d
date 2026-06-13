@@ -72,9 +72,14 @@ void drainHistory() {
     }
 }
 
-// Pristine cube + (near-)empty undo stack. /api/reset is itself undoable, so
-// drain BEFORE the reset (draining only after it would undo our own reset and
-// restore a prior test's dirty mesh); verify GEOMETRY, not just vertex count.
+void clearHistory() {
+    auto r = postJson("/api/command", "history.clear");
+    assert(r["status"].str == "ok", "history.clear failed: " ~ r.toString);
+}
+
+// Pristine cube + empty selection + empty undo stack. /api/reset is itself
+// undoable, so do not drain history after it; that can undo our own reset and
+// restore a prior test's dirty mesh/selection.
 void establishCubeBaseline() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -91,6 +96,13 @@ void establishCubeBaseline() {
             && fabs(c[1].floating - 0.5) < 1e-3
             && fabs(c[2].floating - 0.5) < 1e-3;
     }
+    bool selectionPristine() {
+        auto s = getJson("/api/selection");
+        return s["mode"].str == "vertices"
+            && s["selectedVertices"].array.length == 0
+            && s["selectedEdges"].array.length == 0
+            && s["selectedFaces"].array.length == 0;
+    }
     foreach (attempt; 0 .. 8) {
         postJson("/api/script", "tool.set move off");
         foreach (_; 0 .. 200) {
@@ -100,12 +112,16 @@ void establishCubeBaseline() {
         Thread.sleep(120.msecs);
         drainHistory();
         postJson("/api/reset", "");
-        drainHistory();
-        if (cubePristine()) return;
+        postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+        clearHistory();
+        if (cubePristine() && selectionPristine()) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
-    assert(cubePristine(), "could not establish pristine cube baseline");
+    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    clearHistory();
+    assert(cubePristine() && selectionPristine(),
+        "could not establish pristine cube baseline");
 }
 
 // The published action-center center (the gizmo pivot source of truth).
