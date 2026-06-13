@@ -99,8 +99,8 @@ private:
     // the live click-outside snap preview now.)
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        super(mesh, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        super(meshSrc, gpu, editMode);
         handler = new MoveHandler(Vec3(0, 0, 0));
         cachedCenter = Vec3(0, 0, 0);
     }

@@ -1,5 +1,6 @@
 module commands.mesh.edge_extend;
 
+import display_sync : refreshDisplay;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -109,12 +110,6 @@ class MeshEdgeExtend : Command, Operator {
     }
 
     private void refreshCaches() {
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length);
-        vc.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length);
-        fc.invalidate();
-        ec.resize(mesh.edges.length);
-        ec.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 }

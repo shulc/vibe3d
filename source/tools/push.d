@@ -25,8 +25,8 @@ private:
     float headlessDist = 0.0f;
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        super(mesh, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        super(meshSrc, gpu, editMode);
     }
 
     override string name() const { return "Push"; }

@@ -179,7 +179,7 @@ class FalloffAddCommand : Command {
                 "falloff.add: no primary falloff (WGHT) stage registered");
 
         string newId = allocFalloffId();
-        auto fo = new FalloffStage(primary.meshPtr(), primary.editModePtr(),
+        auto fo = new FalloffStage(() => primary.meshPtr(), primary.editModePtr(),
                                    newId);
         // Register FIRST: addStacked → plug() → Operator.reset() restores the
         // stage's fields to defaults (type = None). So the type MUST be set

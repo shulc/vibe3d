@@ -39,7 +39,12 @@ public:
 protected:
     bool          active;
 
-    Mesh*     mesh;
+    // Seam 3: the mesh is resolved through a delegate so the same long-lived
+    // tool instance can be retargeted (Stage 0b) without re-touching any body.
+    // Stage 0a: app.d passes `() => &mesh` against the still-global mesh, so
+    // `mesh` resolves identically to the old raw field — provably neutral.
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*  gpu;
     EditMode* editMode;
 
@@ -120,8 +125,8 @@ protected:
     // so the gizmo (= selection centroid) must be recomputed.
     ulong  lastMutationVersion;
 
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        this.mesh     = mesh;
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        this.meshSrc_ = meshSrc;
         this.gpu      = gpu;
         this.editMode = editMode;
     }

@@ -1,5 +1,6 @@
 module commands.mesh.split_edge;
 
+import display_sync : refreshDisplay;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -79,20 +80,14 @@ class MeshSplitEdge : Command, Operator {
         mesh.buildLoops();
         mesh.resetSelection();
 
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length); vc.invalidate();
-        ec.resize(mesh.edges.length);    ec.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length); fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length); vc.invalidate();
-        ec.resize(mesh.edges.length);    ec.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length); fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 }

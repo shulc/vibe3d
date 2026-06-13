@@ -89,8 +89,8 @@ public:
     // locally where needed. Null for any standalone (unit-test) instance.
     TransformTool wrapperRef;
 
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        super(mesh, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        super(meshSrc, gpu, editMode);
         handler = new RotateHandler(Vec3(0, 0, 0));
     }
 

@@ -1,5 +1,6 @@
 module commands.mesh.vertex_edit;
 
+import display_sync : refreshDisplay;
 import std.conv : to;
 
 import command;
@@ -92,6 +93,10 @@ class MeshVertexEdit : Command, Operator {
     override CompareResult compareOp(const Command prev) const {
         auto p = cast(const(MeshVertexEdit))prev;
         if (p is null) return CompareResult.Different;
+        // Target-mesh equality (layers seam, switch-hook step 2a): never
+        // coalesce two delta edits recorded on different layers' meshes. With
+        // one mesh this is identity in Stage 0a; load-bearing once layers exist.
+        if (p.mesh !is this.mesh) return CompareResult.Different;
         if (p.editLabel != this.editLabel) return CompareResult.Different;
         if (p.indices.length != this.indices.length)
             return CompareResult.Different;
@@ -231,10 +236,7 @@ class MeshVertexEdit : Command, Operator {
                 mesh.vertices[vid] = after[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        ec.invalidate();
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         if (onApplyHook !is null) onApplyHook();
         return true;
     }
@@ -245,10 +247,7 @@ class MeshVertexEdit : Command, Operator {
                 mesh.vertices[vid] = before[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        ec.invalidate();
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         if (onRevertHook !is null) onRevertHook();
         return true;
     }

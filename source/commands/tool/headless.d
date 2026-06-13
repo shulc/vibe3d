@@ -1,5 +1,6 @@
 module commands.tool.headless;
 
+import display_sync : refreshDisplay;
 import command;
 import mesh;
 import view;
@@ -85,10 +86,6 @@ public:
 
 private:
     void refreshCaches() {
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length); vc.invalidate();
-        ec.resize(mesh.edges.length);    ec.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length);
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 }

@@ -1,5 +1,6 @@
 module commands.mesh.linear_align;
 
+import display_sync : refreshDisplay;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -114,10 +115,7 @@ class MeshLinearAlign : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        ec.invalidate();
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 
@@ -126,10 +124,7 @@ class MeshLinearAlign : Command, Operator {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        ec.invalidate();
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 }

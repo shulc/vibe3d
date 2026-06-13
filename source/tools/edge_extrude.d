@@ -109,7 +109,8 @@ void setUndoTrackerEnabled(bool on) {
 // ---------------------------------------------------------------------------
 class EdgeExtrudeTool : Tool {
 private:
-    Mesh*            mesh;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
@@ -170,9 +171,9 @@ private:
     enum Vec3 WIDTH_COLOR   = Vec3(0.9f, 0.2f, 0.2f);    // red
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
          VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        this.mesh      = mesh;
+        this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;

@@ -88,7 +88,8 @@ private enum PenState { Idle, Drawing }
 
 class PenTool : Tool {
 private:
-    Mesh*            mesh;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     LitShader        litShader;
 
@@ -140,9 +141,9 @@ private:
     SnapResult lastSnap;
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, LitShader litShader,
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader,
          VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        this.mesh      = mesh;
+        this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
         this.vc        = vc;

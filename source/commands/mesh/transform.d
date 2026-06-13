@@ -1,5 +1,6 @@
 module commands.mesh.transform;
 
+import display_sync : refreshDisplay;
 import std.json;
 
 import command;
@@ -199,10 +200,7 @@ class MeshTransform : Command, Operator {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        fc.invalidate();
-        ec.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 
@@ -213,10 +211,7 @@ class MeshTransform : Command, Operator {
                 mesh.vertices[vid] = touchedPrev[i];
         }
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        fc.invalidate();
-        ec.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 }
