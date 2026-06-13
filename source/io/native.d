@@ -302,7 +302,11 @@ bool readV3d(string path, ref Document document)
 
         // --- atomic swap: every layer parsed; commit into the document ---
         document.layers      = parsed;
-        document.activeIndex = activeIndex;
+        // Stage-0 lockstep: set primary + selected + activeIndex together so the
+        // SET-of-one invariant (primary ∈ layers ∧ primary.selected) holds after
+        // every load. (Stage 0 does not yet persist `selected` in .v3d; parsed
+        // layers default to deselected and setActive re-asserts the one.)
+        document.setActive(activeIndex);
 
         v3dInfo(format("document ready: %d layer(s), active=%d",
                         document.layers.length, document.activeIndex));

@@ -127,9 +127,9 @@ class FileLoad : Command {
             docSnapped      = true;
             ok = readV3d(path, *document);
             if (!ok) { docSnapped = false; prevLayers = null; return false; }
-            // readV3d clamps activeIndex into range already; defensive re-clamp.
-            if (document.activeIndex >= document.layers.length)
-                document.activeIndex = document.layers.length - 1;
+            // readV3d sets primary/selected/activeIndex in lockstep already;
+            // defensive re-clamp re-establishes the lockstep invariant.
+            document.setActive(document.activeIndex);
         } else {
             // Interchange import through the scene-IR seam (Stage 3): parse the
             // file into an ImportedScene, THEN decide how to land it.
@@ -153,8 +153,9 @@ class FileLoad : Command {
                 prevActiveIndex = document.activeIndex;
                 docSnapped      = true;
                 *document       = toLayers(sc);
-                if (document.activeIndex >= document.layers.length)
-                    document.activeIndex = document.layers.length - 1;
+                // toLayers sets primary/selected/activeIndex in lockstep;
+                // defensive re-clamp re-establishes the lockstep invariant.
+                document.setActive(document.activeIndex);
             } else {
                 // Single-part (or empty) import: keep the active-mesh path.
                 snap = MeshSnapshot.capture(*mesh);
@@ -216,8 +217,9 @@ class FileLoad : Command {
         if (docSnapped) {
             // Native path: restore the prior layer list + active index in place.
             document.layers      = prevLayers;
-            document.activeIndex = prevActiveIndex >= prevLayers.length
-                ? prevLayers.length - 1 : prevActiveIndex;
+            // Restore primary/selected/activeIndex in lockstep BEFORE reading
+            // activeMesh() (setActive clamps the index into range).
+            document.setActive(prevActiveIndex);
             auto active = document.activeMesh();
             active.noteChange(MeshChangeAll);
             // Undo restores the prior layer list — another whole-document change.
