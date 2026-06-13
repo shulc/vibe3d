@@ -1197,6 +1197,47 @@ void main(string[] args) {
     auto macroRecorder = new MacroRecorder();
     history.onRecord = &macroRecorder.onCommandRecorded;
 
+    // -------------------------------------------------------------------------
+    // Active-layer-switch hook (layers Stage 2). The single contract every
+    // layer-active change funnels through — fired by the layer.add / .delete /
+    // .select commands (and their undo/redo paths) whenever the active layer
+    // OBJECT changes. Order matters (see the design doc):
+    //   1. Drop the active tool FIRST — an edit scan is bound to a fixed
+    //      foreground layer; a transform session / live preview must never
+    //      straddle a switch.
+    //   2. Break the coalescing boundary — a selection/delta edit recorded on
+    //      the NEW layer must start a fresh history entry, never merge with the
+    //      prior layer's top entry. The compareOp target-mesh term (Stage 0a)
+    //      is the stateless half; this is the explicit barrier covering the
+    //      undo-of-layer.select case where an older SAME-mesh entry resurfaces.
+    //   3. Re-upload the new active mesh's GPU buffers (re-keys gpu_select via
+    //      uploadVersion) + invalidate the global pick caches.
+    //   4. Invalidate the version-keyed caches that could collide across layers
+    //      (snap grids; symmetry/subpatch self-invalidate via their new
+    //      mesh-address keys). Belt-and-braces beside the address keys.
+    //   5. noteChange(MeshChangeAll) on the NEW active mesh so the per-frame
+    //      bus flush invalidates every subscriber exactly as a file load does.
+    void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
+        import change_bus : MeshChangeAll;
+        import snap       : invalidateSnapGrids;
+        // 1. tool-drop (same path as Esc / scene.reset's onResetTool).
+        setActiveTool(null);
+        // 2. explicit coalesce barrier on the history.
+        history.breakCoalescing();
+        // 3. GPU re-upload + pick-cache resize/invalidate against the NEW mesh.
+        auto active = document.activeMesh();
+        gpu.upload(*active);
+        vertexCache.resize(active.vertices.length); vertexCache.invalidate();
+        edgeCache.resize(active.edges.length);      edgeCache.invalidate();
+        faceCache.resize(active.vertices.length, active.faces.length);
+        faceCache.invalidate();
+        // 4. blanket-invalidate the snap grids (address keys are the primary
+        //    defense; symmetry + subpatch preview self-invalidate on address).
+        invalidateSnapGrids();
+        // 5. publish a bulk change on the new active mesh.
+        active.noteChange(MeshChangeAll);
+    };
+
     // Visibility of the floating Command-History panel (drawn in the main
     // render loop). Toggled by the history.show command, wired below.
     bool showHistoryPanel = false;
@@ -1487,6 +1528,26 @@ void main(string[] args) {
     reg.commandFactories["ui.toolProperties"] = () => cast(Command)
         new UiToolPropertiesCommand(&mesh(), cameraView, editMode);
 
+    // layer.* commands (layers Stage 2) — mutate the one Document; the
+    // active-index movers (add/delete/select) fire onActiveLayerChanged.
+    {
+        import commands.layer.commands : LayerAdd, LayerDelete, LayerSelect,
+                                          LayerRename, LayerSetVisible,
+                                          LayerSetBackground;
+        reg.commandFactories["layer.add"] = () => cast(Command)
+            new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.delete"] = () => cast(Command)
+            new LayerDelete(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.select"] = () => cast(Command)
+            new LayerSelect(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.rename"] = () => cast(Command)
+            new LayerRename(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.setVisible"] = () => cast(Command)
+            new LayerSetVisible(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        reg.commandFactories["layer.setBackground"] = () => cast(Command)
+            new LayerSetBackground(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+    }
+
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
     // in the global tool pipe.
     reg.commandFactories["workplane.reset"] = () => cast(Command)
@@ -1665,6 +1726,7 @@ void main(string[] args) {
                                  &gpu, &vertexCache, &edgeCache, &faceCache,
                                  &editMode, &cameraView,
                                  () => setActiveTool(null));
+        c.setDocument(&document);
         c.setEmpty(true);
         return cast(Command) c;
     };
@@ -1765,10 +1827,13 @@ void main(string[] args) {
     reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
         new MeshBevelEdit(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
-    reg.commandFactories["scene.reset"] = () => cast(Command)
-        new SceneReset(&mesh(), cameraView, editMode, &gpu,
+    reg.commandFactories["scene.reset"] = () {
+        auto c = new SceneReset(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache,
                        &editMode, &cameraView, () => setActiveTool(null));
+        c.setDocument(&document);
+        return cast(Command) c;
+    };
     reg.commandFactories["scene.loadMesh"] = () => cast(Command)
         new MeshLoadRaw(&mesh(), cameraView, editMode, &gpu,
                         &vertexCache, &edgeCache, &faceCache,
@@ -2052,50 +2117,64 @@ void main(string[] args) {
             return verts;
         }
 
-        httpServer.setDetailedModelDataProvider(() {
-            // Создаём свежий массив вершин при КАЖДОМ запросе
-            float[] verts = new float[](mesh.vertices.length * 3);
-            for (size_t i = 0; i < mesh.vertices.length; i++) {
-                verts[i * 3] = mesh.vertices[i].x;
-                verts[i * 3 + 1] = mesh.vertices[i].y;
-                verts[i * 3 + 2] = mesh.vertices[i].z;
+        // Serialize ANY mesh to the detailed /api/model JSON. Extracted so the
+        // active-layer provider and the layer-aware ?layer=N provider share one
+        // body (layers Stage 2).
+        string meshToDetailedJson(ref Mesh m) {
+            float[] verts = new float[](m.vertices.length * 3);
+            for (size_t i = 0; i < m.vertices.length; i++) {
+                verts[i * 3]     = m.vertices[i].x;
+                verts[i * 3 + 1] = m.vertices[i].y;
+                verts[i * 3 + 2] = m.vertices[i].z;
             }
-
-            // Копируем edges, faces и subpatch-флаги (свежие копии)
-            uint[2][] edgesCopy = new uint[2][](mesh.edges.length);
-            for (size_t i = 0; i < mesh.edges.length; i++) {
-                edgesCopy[i] = mesh.edges[i];
-            }
-            uint[][] facesCopy = new uint[][](mesh.faces.length);
-            for (size_t i = 0; i < mesh.faces.length; i++) {
-                facesCopy[i] = mesh.faces[i].dup;
-            }
-            // isSubpatch parallel to faces — pad with false if shorter.
-            // Materialize the view once (it allocates per access).
-            auto subView = mesh.isSubpatch;
-            bool[] subCopy = new bool[](mesh.faces.length);
-            for (size_t i = 0; i < mesh.faces.length; i++)
+            uint[2][] edgesCopy = new uint[2][](m.edges.length);
+            for (size_t i = 0; i < m.edges.length; i++)
+                edgesCopy[i] = m.edges[i];
+            uint[][] facesCopy = new uint[][](m.faces.length);
+            for (size_t i = 0; i < m.faces.length; i++)
+                facesCopy[i] = m.faces[i].dup;
+            auto subView = m.isSubpatch;
+            bool[] subCopy = new bool[](m.faces.length);
+            for (size_t i = 0; i < m.faces.length; i++)
                 subCopy[i] = i < subView.length && subView[i];
-
-            // Material Groups (MG2): per-mesh surface registry + per-face
-            // index into it. faceMaterial is padded to faces.length with
-            // 0 (Default surface) so test consumers see a stable shape.
-            auto surfacesCopy = mesh.surfaces.dup;
-            uint[] matCopy = new uint[](mesh.faces.length);
-            for (size_t i = 0; i < mesh.faces.length; i++)
-                matCopy[i] = i < mesh.faceMaterial.length ? mesh.faceMaterial[i] : 0u;
-
+            auto surfacesCopy = m.surfaces.dup;
+            uint[] matCopy = new uint[](m.faces.length);
+            for (size_t i = 0; i < m.faces.length; i++)
+                matCopy[i] = i < m.faceMaterial.length ? m.faceMaterial[i] : 0u;
             return meshToJsonDetailed(
-                mesh.vertices.length,
-                mesh.edges.length,
-                mesh.faces.length,
-                verts,
-                edgesCopy,
-                facesCopy,
-                subCopy,
-                surfacesCopy,
-                matCopy
-            );
+                m.vertices.length, m.edges.length, m.faces.length,
+                verts, edgesCopy, facesCopy, subCopy, surfacesCopy, matCopy);
+        }
+
+        httpServer.setDetailedModelDataProvider(() => meshToDetailedJson(mesh));
+        // /api/model?layer=N — N<0 (default) → active layer; otherwise clamp
+        // into range. Same detailed JSON shape, just a different source layer.
+        httpServer.setLayerModelProvider((int layer) {
+            size_t idx = layer < 0 ? document.activeIndex : cast(size_t)layer;
+            if (idx >= document.layers.length) idx = document.layers.length - 1;
+            return meshToDetailedJson(document.layers[idx].mesh);
+        });
+        // GET /api/layers — index/name/visible/background/active + per-layer
+        // vertex & face counts.
+        httpServer.setLayersDataProvider(() {
+            import std.array  : appender;
+            import std.format : format;
+            import std.json   : JSONValue;
+            auto a = appender!string();
+            a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
+            foreach (i, l; document.layers) {
+                if (i > 0) a.put(",");
+                a.put(format(
+                    `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
+                    `"active":%s,"vertexCount":%d,"faceCount":%d}`,
+                    i, JSONValue(l.name).toString(),
+                    l.visible ? "true" : "false",
+                    l.background ? "true" : "false",
+                    i == document.activeIndex ? "true" : "false",
+                    l.mesh.vertices.length, l.mesh.faces.length));
+            }
+            a.put("]}");
+            return a.data;
         });
         httpServer.setCameraDataProvider(() => cameraView.toJson());
 

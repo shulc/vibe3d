@@ -454,6 +454,13 @@ private size_t kindCount(Kind k, const ref Mesh mesh) {
 
 private struct CandidateGrid {
     // Cache identity.
+    // Mesh ADDRESS is part of the key (layers Stage 2): two different layers'
+    // meshes can sit at the same `mutationVersion` (e.g. right after a
+    // layer.select swaps the snap source with no intervening mutation, or when
+    // an undo reverts a background layer back to a version another layer also
+    // holds). With one layer this term is constant ⇒ invisible. `size_t.max`
+    // forces a rebuild on first use.
+    size_t meshAddr = size_t.max;
     ulong  meshVersion = ulong.max;
     float[16] view;
     float[16] proj;
@@ -477,6 +484,17 @@ private __gshared CandidateGrid[Kind.max + 1] g_grids;
 private __gshared Mutex      g_vgridMutex;
 
 shared static this() { g_vgridMutex = new Mutex(); }
+
+/// Force every snap candidate grid to rebuild on next query. Belt-and-braces
+/// companion to the address-keyed staleness check (layers Stage 2): the
+/// active-layer-switch hook calls this so a grid built against the prior
+/// layer is never reused. The address key in CandidateGrid is the PRIMARY
+/// defense (it also covers undo re-populating a background layer's colliding
+/// key); this blanket drop is the secondary one.
+void invalidateSnapGrids() {
+    synchronized (g_vgridMutex)
+        foreach (ref g; g_grids) g.valid = false;
+}
 
 private bool sameViewport(const ref CandidateGrid g, const ref Viewport vp) {
     if (g.vpW != vp.width || g.vpH != vp.height
@@ -550,6 +568,7 @@ private bool projectElementCells(Kind k, int idx, const ref Mesh mesh,
 private void buildCandidateGrid(Kind k, const ref Mesh mesh,
                                 const ref Viewport vp, float cellPx) {
     auto g = &g_grids[k];
+    g.meshAddr    = cast(size_t)&mesh;
     g.meshVersion = mesh.mutationVersion;
     g.view[]      = vp.view[];
     g.proj[]      = vp.proj[];
@@ -696,6 +715,7 @@ private int[] queryCandidateGrid(Kind k, const ref Mesh mesh,
 
     // (Re)build if stale.
     if (!g.valid
+     || g.meshAddr    != cast(size_t)&mesh
      || g.meshVersion != mesh.mutationVersion
      || g.elemCount   != n
      || g.cellPx      != outerRangePx

@@ -21,18 +21,25 @@ import mesh : Mesh;
 
 struct VisibilityCache {
     private bool[]    visible_;
+    private size_t    meshAddr_ = size_t.max;  // layers Stage 2: see below
     private ulong     mutVer_   = ulong.max;
     private size_t    vertCount_;
     private Vec3      eye_;
     private float[16] view_;
     private bool      valid_    = false;
 
-    /// Return the cached visibility mask if the (mutationVersion, eye,
-    /// view-matrix) triple matches the last call; otherwise rebuild
+    /// Return the cached visibility mask if the (meshAddr, mutationVersion,
+    /// eye, view-matrix) tuple matches the last call; otherwise rebuild
     /// via `m.visibleVertices(eye, vp)` and refresh the keys.
+    ///
+    /// The mesh ADDRESS is part of the key (layers Stage 2): two layers'
+    /// meshes can collide on equal (mutationVersion, vertCount) — e.g. two
+    /// cubes, or a layer.select swapping the source with no mutation. With one
+    /// layer the address is constant ⇒ this term is invisible.
     bool[] get(const ref Mesh m, Vec3 eye, ref const Viewport vp) {
         if (matches(m, eye, vp)) return visible_;
         visible_  = m.visibleVertices(eye, vp).dup;
+        meshAddr_ = cast(size_t)&m;
         mutVer_   = m.mutationVersion;
         vertCount_= m.vertices.length;
         eye_      = eye;
@@ -51,6 +58,7 @@ struct VisibilityCache {
 private:
     bool matches(const ref Mesh m, Vec3 eye, ref const Viewport vp) const {
         if (!valid_) return false;
+        if (meshAddr_  != cast(size_t)&m)    return false;
         if (mutVer_    != m.mutationVersion) return false;
         if (vertCount_ != m.vertices.length) return false;
         if (eye_.x != eye.x || eye_.y != eye.y || eye_.z != eye.z) return false;
