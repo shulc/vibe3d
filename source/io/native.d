@@ -8,6 +8,7 @@ import std.format    : format;
 import mesh;
 import math;
 import document : Document, Layer;
+import seltype  : SelMode;
 import log : logWarn, logInfo;
 
 // Diagnostics for the native reader funnel through the "io" log subsystem.
@@ -25,26 +26,27 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // editor model: vertices, n-gon faces, per-face subpatch flags, the surface
 // registry and per-face material indices.
 //
-// v1 schema (legacy, still READ — never written any more):
+// v3 schema (current, the ONLY shape read or written — selection-types Stage 3).
+// It wraps one or more layers around the shared mesh sub-object. Two changes
+// from the retired v2 shape: the per-layer `selected` flag now persists the
+// item-selection SET (a layer's background state derives — see below), and the
+// document's edit target is named by `primaryLayer` (replacing `activeLayer`):
 //   {
-//     "formatVersion": 1,
-//     "mesh": { /* the mesh sub-object below */ }
-//   }
-//
-// v2 schema (current writer output) wraps one or more layers around the
-// SAME mesh sub-object — the per-layer "mesh" is byte-identical to v1's, so
-// there is a single mesh codec, not two:
-//   {
-//     "formatVersion": 2,
-//     "activeLayer": 0,
+//     "formatVersion": 3,
+//     "primaryLayer": 0,
 //     "layers": [
-//       { "name": "Layer 1", "visible": true, "background": false,
+//       { "name": "Layer 1", "visible": true, "selected": true,
 //         "mesh": { /* the mesh sub-object below */ } },
 //       ...
 //     ]
 //   }
 //
-// The shared "mesh" sub-object (identical in v1 and v2):
+// There is NO `background` key — `background(l) == l.visible && !l.selected`
+// derives at runtime (Stage 2b), so the file persists `selected` alone. There
+// is NO `activeLayer` key — `primaryLayer` indexes the primary (edit-target)
+// layer, which the reader forces selected + visible.
+//
+// The shared "mesh" sub-object (unchanged across every schema version):
 //   {
 //     "vertices":     [[x,y,z], ...],
 //     "faces":        [[i,j,k,...], ...],          // n-gon, vertex indices
@@ -54,17 +56,18 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 //                        "diffuse", "specular", "glossiness", "opacity" }, ...]
 //   }
 //
-// The reader is deliberately tolerant: unknown fields are ignored, missing
-// optional fields default sensibly, and an unrecognised `formatVersion` is
-// rejected with a clear message. This is a hard requirement — the format
-// must grow (editor state, layers, Shader Tree) without breaking old files.
-// A v1 file loads as ONE default-flag layer named "Layer 1" (active); a build
-// older than this one rejects v2 cleanly via the `ver > kV3dFormatVersion`
-// gate — the documented forward-compat contract, not a regression.
+// CLEAN BREAK (Stage 3 — no external clients, per the project directive): the
+// reader accepts EXACTLY `formatVersion == kV3dFormatVersion`. The legacy v1
+// (top-level `mesh`) and v2 (`activeLayer` + per-layer `background`) shapes are
+// no longer parsed — they are rejected cleanly at the version gate, leaving the
+// caller's document untouched. The reader stays tolerant WITHIN v3: unknown
+// fields are ignored and missing optional fields default sensibly, so the
+// format can keep growing (editor state, Shader Tree) without another break.
 
-/// The schema version the writer emits and the highest the reader accepts.
-/// Bumped to 2 when the layered document wrapper landed; v1 still loads.
-enum int kV3dFormatVersion = 2;
+/// The schema version the writer emits and the ONLY version the reader accepts.
+/// Bumped to 3 when item-selection persistence (`selected` + `primaryLayer`)
+/// landed; v1/v2 files are now rejected (deliberate break — no external clients).
+enum int kV3dFormatVersion = 3;
 
 // ---------------------------------------------------------------------------
 // Write
@@ -137,8 +140,8 @@ JSONValue meshToJson(ref const Mesh mesh)
 }
 
 /// Serialize a single `mesh` to a `.v3d` document at `path`. Wraps the mesh in
-/// a one-layer v2 document ("Layer 1", active, foreground) so single-mesh
-/// callers (interchange flatten paths, ad-hoc saves) still produce a valid v2
+/// a one-layer v3 document ("Layer 1", primary, selected) so single-mesh
+/// callers (interchange flatten paths, ad-hoc saves) still produce a valid v3
 /// file with exactly one mesh codec.
 void writeV3d(ref const Mesh mesh, string path)
 {
@@ -146,26 +149,28 @@ void writeV3d(ref const Mesh mesh, string path)
     writeV3d(doc, path);
 }
 
-/// Serialize a whole `Document` (every layer + the active index) to a `.v3d`
-/// document at `path` under `formatVersion: 2`. Each layer's `mesh` sub-object
-/// is byte-identical to the v1 mesh shape (shared `meshToJson` codec).
+/// Serialize a whole `Document` (every layer + which layer is primary) to a
+/// `.v3d` document at `path` under `formatVersion: 3`. Each layer persists its
+/// `selected` flag (the item-selection SET); `primaryLayer` names the edit
+/// target. There is NO `background` key (it derives from `visible && !selected`)
+/// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer's `mesh`
+/// sub-object goes through the shared `meshToJson` codec.
 void writeV3d(ref const Document document, string path)
 {
     JSONValue doc;
     doc["formatVersion"] = JSONValue(kV3dFormatVersion);
-    doc["activeLayer"]   = JSONValue(cast(long) document.activeIndex);
+    doc["primaryLayer"]  = JSONValue(cast(long) document.activeIndex);
 
     JSONValue[] layers;
     layers.reserve(document.layers.length);
     foreach (ref const layer; document.layers) {
         JSONValue lj;
-        lj["name"]       = JSONValue(layer.name);
-        lj["visible"]    = JSONValue(layer.visible);
-        // Stage 2b: `background` is derived (visible && !selected). The v2 file
-        // shape still carries a `background` key for back-compat until the Stage 3
-        // v3 rewrite; emit the DERIVED value so a round-trip is faithful.
-        lj["background"] = JSONValue(Document.background(layer));
-        lj["mesh"]       = meshToJson(layer.mesh);
+        lj["name"]     = JSONValue(layer.name);
+        lj["visible"]  = JSONValue(layer.visible);
+        // Stage 3: persist the item-selection SET directly. `background` is
+        // NOT written — it derives (visible && !selected) on load.
+        lj["selected"] = JSONValue(layer.selected);
+        lj["mesh"]     = meshToJson(layer.mesh);
         layers ~= lj;
     }
     doc["layers"] = JSONValue(layers);
@@ -180,14 +185,18 @@ void writeV3d(ref const Document document, string path)
 // ---------------------------------------------------------------------------
 
 /// Parse a `.v3d` document at `path` and rebuild a whole `Document`. Accepts
-/// both schema versions: v1 (top-level `mesh`) loads as ONE default-flag layer
-/// named "Layer 1" (active); v2 (a `layers` array) rebuilds every layer and
-/// clamps `activeLayer` into range. Returns false (logging via the io
-/// subsystem, like importLWO) on a missing file, malformed JSON, an unknown
-/// `formatVersion`, structurally wrong content, an empty `layers` array, or an
-/// out-of-range vertex index — and leaves the caller's `document` UNTOUCHED in
-/// every reject case (all layers are parsed into a temporary before the
-/// single atomic swap below).
+/// ONLY `formatVersion == kV3dFormatVersion` (v3) — the legacy v1/v2 shapes are
+/// rejected at the version gate (Stage 3 clean break). A v3 file carries a
+/// `layers` array (each entry persisting its `selected` flag) plus a
+/// `primaryLayer` index naming the edit target; the reader re-asserts the
+/// selection-set invariants via the Document mutators (`setActive` /
+/// `selectItem` / `setPrimary`), forcing the primary selected + visible if the
+/// file is inconsistent. Returns false (logging via the io subsystem, like
+/// importLWO) on a missing file, malformed JSON, a `formatVersion` other than
+/// v3, structurally wrong content, an empty `layers` array, or an out-of-range
+/// vertex index — and leaves the caller's `document` UNTOUCHED in every reject
+/// case (all layers are parsed into a temporary before the single atomic swap
+/// below).
 bool readV3d(string path, ref Document document)
 {
     v3dInfo(format("readV3d: path=%s", path));
@@ -216,10 +225,11 @@ bool readV3d(string path, ref Document document)
             return false;
         }
 
-        // Version dispatch. A number higher than this build supports means a
-        // file written by a newer vibe3d than we can parse — reject clearly
-        // rather than guess. Unknown fields elsewhere are ignored (tolerant).
-        int ver = 1;
+        // Version gate (Stage 3 clean break). The reader accepts EXACTLY v3 —
+        // a newer file we can't parse, OR a legacy v1/v2 file, is rejected here
+        // (the document is untouched). A missing `formatVersion` (the implicit
+        // v1 shape) is likewise rejected. Unknown fields WITHIN v3 are ignored.
+        int ver = 0;   // 0 = "no formatVersion key" → not v3 → reject
         if (auto vp = "formatVersion" in doc) {
             if (vp.type == JSONType.integer)
                 ver = cast(int) vp.integer;
@@ -227,92 +237,98 @@ bool readV3d(string path, ref Document document)
                 v3dWarn("reject: formatVersion is not an integer");
                 return false;
             }
-        } else {
-            v3dInfo(format("no formatVersion; assuming v%d", ver));
         }
-        if (ver > kV3dFormatVersion || ver < 1) {
+        if (ver != kV3dFormatVersion) {
             v3dWarn(format("reject: unsupported formatVersion %d "
-                            ~ "(this build reads 1..%d)", ver, kV3dFormatVersion));
+                            ~ "(this build reads only v%d)", ver, kV3dFormatVersion));
             return false;
         }
 
         // Build the parsed layers into a temporary; only swap into `document`
-        // once every layer parses cleanly (atomic — see the doc comment).
+        // once every layer parses cleanly (atomic — see the doc comment). Each
+        // layer's `selected` flag is parsed into the temporary `selected[]`
+        // alongside; the SET invariants are re-asserted via the Document
+        // mutators AFTER the swap.
         Layer[] parsed;
-        size_t  activeIndex = 0;
+        bool[]  selected;
 
-        if (auto lp = "layers" in doc) {
-            // --- v2: layered document ---
-            if (lp.type != JSONType.array) {
-                v3dWarn("reject: \"layers\" is not an array");
+        // --- v3: a `layers` array is required (no top-level-mesh fallback). ---
+        auto lp = "layers" in doc;
+        if (lp is null || lp.type != JSONType.array) {
+            v3dWarn("reject: missing or non-array \"layers\"");
+            return false;
+        }
+        if (lp.array.length == 0) {
+            v3dWarn("reject: empty \"layers\" array");
+            return false;
+        }
+        foreach (li, lj; lp.array) {
+            if (lj.type != JSONType.object) {
+                v3dWarn(format("reject: layer %d is not an object", li));
                 return false;
             }
-            if (lp.array.length == 0) {
-                v3dWarn("reject: empty \"layers\" array");
-                return false;
-            }
-            foreach (li, lj; lp.array) {
-                if (lj.type != JSONType.object) {
-                    v3dWarn(format("reject: layer %d is not an object", li));
-                    return false;
-                }
-                auto mp = "mesh" in lj;
-                if (mp is null || mp.type != JSONType.object) {
-                    v3dWarn(format("reject: layer %d missing or non-object \"mesh\"", li));
-                    return false;
-                }
-                auto layer = new Layer;
-                if (!meshFromJson(*mp, layer.mesh))
-                    return false;
-                // Flags + name (all optional; sensible defaults preserved).
-                layer.name = format("Layer %d", li + 1);
-                if (auto np = "name" in lj)
-                    if (np.type == JSONType.string && np.str.length > 0)
-                        layer.name = np.str;
-                layer.visible = true;
-                if (auto vbp = "visible" in lj)
-                    layer.visible = (vbp.type == JSONType.true_);
-                // Stage 2b: the per-layer `background` flag is GONE (background is
-                // derived from selection). The v2 `background` key is accepted but
-                // discarded — `setActive(activeIndex)` below re-asserts the
-                // SET-of-one selection regardless. (Selection round-trip arrives
-                // with the Stage 3 v3 format; v2 carried no `selected`.)
-                parsed ~= layer;
-            }
-            // activeLayer: optional; default 0; clamp into [0, layers-1].
-            if (auto ap = "activeLayer" in doc) {
-                long a = 0;
-                if (ap.type == JSONType.integer)        a = ap.integer;
-                else if (ap.type == JSONType.uinteger)  a = cast(long) ap.uinteger;
-                if (a < 0)                          a = 0;
-                if (a >= cast(long) parsed.length)  a = cast(long) parsed.length - 1;
-                activeIndex = cast(size_t) a;
-            }
-        } else {
-            // --- v1: single top-level mesh → one default-flag "Layer 1" ---
-            auto mp = "mesh" in doc;
+            auto mp = "mesh" in lj;
             if (mp is null || mp.type != JSONType.object) {
-                v3dWarn("reject: missing or non-object \"mesh\"");
+                v3dWarn(format("reject: layer %d missing or non-object \"mesh\"", li));
                 return false;
             }
             auto layer = new Layer;
             if (!meshFromJson(*mp, layer.mesh))
                 return false;
-            layer.name = "Layer 1";
+            // Name + flags (all optional; sensible defaults preserved).
+            layer.name = format("Layer %d", li + 1);
+            if (auto np = "name" in lj)
+                if (np.type == JSONType.string && np.str.length > 0)
+                    layer.name = np.str;
             layer.visible = true;
-            parsed ~= layer;
-            activeIndex = 0;
+            if (auto vbp = "visible" in lj)
+                layer.visible = (vbp.type == JSONType.true_);
+            // Stage 3: persist the item-selection SET. Default deselected; the
+            // mutator pass below re-asserts the ≥1-selected + primary invariants.
+            bool sel = false;
+            if (auto sp = "selected" in lj)
+                sel = (sp.type == JSONType.true_);
+            parsed   ~= layer;
+            selected ~= sel;
+        }
+
+        // primaryLayer: optional; default 0; clamp into [0, layers-1]. The
+        // primary is forced selected + visible below (handles an inconsistent
+        // file that named a deselected/hidden layer as primary).
+        size_t primaryIndex = 0;
+        if (auto pp = "primaryLayer" in doc) {
+            long a = 0;
+            if (pp.type == JSONType.integer)        a = pp.integer;
+            else if (pp.type == JSONType.uinteger)  a = cast(long) pp.uinteger;
+            if (a < 0)                          a = 0;
+            if (a >= cast(long) parsed.length)  a = cast(long) parsed.length - 1;
+            primaryIndex = cast(size_t) a;
         }
 
         // --- atomic swap: every layer parsed; commit into the document ---
-        document.layers      = parsed;
-        // Stage-0 lockstep: set primary + selected + activeIndex together so the
-        // SET-of-one invariant (primary ∈ layers ∧ primary.selected) holds after
-        // every load. (Stage 0 does not yet persist `selected` in .v3d; parsed
-        // layers default to deselected and setActive re-asserts the one.)
-        document.setActive(activeIndex);
+        document.layers  = parsed;
+        document.primary = parsed[primaryIndex];
 
-        v3dInfo(format("document ready: %d layer(s), active=%d",
+        // Re-assert the selection-set invariants via the Stage-0/2a mutators
+        // (never by writing raw fields). Start from a clean baseline: the
+        // primary is the edit target AND the single member of the set
+        // (setActive enforces exactly-one-selected + primary selected+visible).
+        document.setActive(primaryIndex);
+        // Force the primary visible if the file marked it hidden (an
+        // inconsistent file can't leave the edit target invisible).
+        if (!document.primary.visible)
+            document.primary.visible = true;
+        // Re-add every other layer the file marked selected (multi-select set);
+        // setPrimary at the end restores the file's primary as the edit target
+        // without dropping the rest of the set.
+        foreach (i, layer; parsed) {
+            if (i == primaryIndex) continue;
+            if (selected[i])
+                document.selectItem(layer, SelMode.Add);
+        }
+        document.setPrimary(document.layers[primaryIndex]);
+
+        v3dInfo(format("document ready: %d layer(s), primary=%d",
                         document.layers.length, document.activeIndex));
         return true;
     } catch (JSONException e) {
@@ -338,14 +354,14 @@ bool readV3d(string path, ref Mesh mesh)
 }
 
 // ---------------------------------------------------------------------------
-// Mesh sub-object codec (shared by v1 and every v2 layer)
+// Mesh sub-object codec (shared by every layer; unchanged across schema versions)
 // ---------------------------------------------------------------------------
 
 /// Rebuild `mesh` from a parsed `.v3d` "mesh" sub-object `m`. Returns false
 /// (logging the reason) on structurally wrong content or an out-of-range
 /// vertex index; `mesh` is mutated only at the commit step (after every
 /// reject), so on a false return the caller's mesh is left intact. Shared by
-/// the v1 single-mesh path and each v2 layer.
+/// every v3 layer (the mesh shape is identical across schema versions).
 private bool meshFromJson(JSONValue m, ref Mesh mesh)
 {
     // --- vertices (required) ---
