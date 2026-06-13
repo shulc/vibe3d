@@ -2183,7 +2183,10 @@ void main(string[] args) {
             return meshToDetailedJson(document.layers[idx].mesh);
         });
         // GET /api/layers — index/name/visible/background/active + per-layer
-        // vertex & face counts.
+        // vertex & face counts + the per-layer mutationVersion (a read-only
+        // diagnostic the Stage-6 cross-layer-undo torture test reads to confirm
+        // two identical layers genuinely share a version — the cache-key
+        // collision precondition the address-augmented keys defend against).
         httpServer.setLayersDataProvider(() {
             import std.array  : appender;
             import std.format : format;
@@ -2194,12 +2197,14 @@ void main(string[] args) {
                 if (i > 0) a.put(",");
                 a.put(format(
                     `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
-                    `"active":%s,"vertexCount":%d,"faceCount":%d}`,
+                    `"active":%s,"vertexCount":%d,"faceCount":%d,` ~
+                    `"mutationVersion":%d}`,
                     i, JSONValue(l.name).toString(),
                     l.visible ? "true" : "false",
                     l.background ? "true" : "false",
                     i == document.activeIndex ? "true" : "false",
-                    l.mesh.vertices.length, l.mesh.faces.length));
+                    l.mesh.vertices.length, l.mesh.faces.length,
+                    cast(ulong)l.mesh.mutationVersion));
             }
             a.put("]}");
             return a.data;
