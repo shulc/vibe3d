@@ -24,6 +24,13 @@ class MeshSelect : Command {
     private SelectionSnapshot snap;
     private EditMode          prevEditMode;
     private bool              captured;
+    // Selection-types Stage 5 (audit c): when the app installs this hook, the
+    // editMode write routes through the geometry-type funnel (touch the recent
+    // ordering + note the current-type flip) so EditMode is never written
+    // independently of SelType. Null (the default / unit-test path) falls back
+    // to a plain `*editModePtr =` write — behaviourally identical for callers
+    // that have no SelType ordering (the order is app-global state).
+    private void delegate(EditMode) promoteType;
 
     this(Mesh* mesh, ref View view, EditMode editMode, EditMode* editModePtr) {
         super(mesh, view, editMode);
@@ -35,6 +42,14 @@ class MeshSelect : Command {
 
     void setMode(string m)         { mode    = m; }
     void setIndices(int[] i)       { indices = i; }
+    MeshSelect setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }
+
+    // Set editMode to `m`, routing through the app funnel when installed so the
+    // SelType recent-ordering stays in lockstep; otherwise write directly.
+    private void applyEditMode(EditMode m) {
+        if (promoteType !is null) promoteType(m);
+        else                      *editModePtr = m;
+    }
 
     override bool apply() {
         mesh.syncSelection();
@@ -68,7 +83,7 @@ class MeshSelect : Command {
         int max;
         switch (mode) {
             case "vertices":
-                *editModePtr = EditMode.Vertices;
+                applyEditMode(EditMode.Vertices);
                 mesh.clearVertexSelection();
                 max = cast(int)mesh.vertices.length;
                 foreach (i; indices) {
@@ -82,7 +97,7 @@ class MeshSelect : Command {
                 }
                 break;
             case "edges":
-                *editModePtr = EditMode.Edges;
+                applyEditMode(EditMode.Edges);
                 mesh.clearEdgeSelection();
                 max = cast(int)mesh.edges.length;
                 foreach (i; indices) {
@@ -97,7 +112,7 @@ class MeshSelect : Command {
                 }
                 break;
             case "polygons":
-                *editModePtr = EditMode.Polygons;
+                applyEditMode(EditMode.Polygons);
                 mesh.clearFaceSelection();
                 max = cast(int)mesh.faces.length;
                 foreach (i; indices) {
@@ -171,7 +186,7 @@ class MeshSelect : Command {
     override bool revert() {
         if (!captured) return false;
         snap.restore(*mesh);
-        *editModePtr = prevEditMode;
+        applyEditMode(prevEditMode);   // lockstep on undo too
         return true;
     }
 }

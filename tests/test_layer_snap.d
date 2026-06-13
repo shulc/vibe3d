@@ -78,8 +78,8 @@ void moveVertexActive(double[3] from, double[3] to,
 // Returns the snap-target world pos.
 //
 // Stage 2b: the snap source is the DERIVED `visible && !selected` set, so the
-// state is produced via `layer.select mode:{add,remove}` (the retired
-// `layer.setBackground` would only be a thin alias now).
+// state is produced via `layer.select mode:{add,remove}` (the
+// `layer.setBackground` command was retired in Stage 5).
 Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
     post(baseUrl ~ "/api/reset", "");
 

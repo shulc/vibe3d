@@ -803,7 +803,7 @@ class HttpServer {
                     `"totalSelItem":%d,` ~
                     `"totalLayerAdded":%d,"totalLayerRemoved":%d,` ~
                     `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
-                    `"totalLayerVisible":%d,"totalLayerBackground":%d,` ~
+                    `"totalLayerVisible":%d,` ~
                     `"totalLayerActive":%d,` ~
                     `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
                     changeBus.flushCount, changeBus.lastFlushFlags,
@@ -816,7 +816,7 @@ class HttpServer {
                     changeBus.totalSelItem,
                     changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
                     changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
-                    changeBus.totalLayerVisible, changeBus.totalLayerBackground,
+                    changeBus.totalLayerVisible,
                     changeBus.totalLayerActive,
                     changeBus.currentTypeChanged,
                     selTypeToken(changeBus.lastCurrentType));

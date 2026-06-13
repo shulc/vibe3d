@@ -83,7 +83,7 @@ struct Changes {
     ulong totalPosition, totalPoints, totalPolygons, totalMarks, totalMaterial;
     ulong totalSelVertex, totalSelEdge, totalSelFace;
     ulong totalLayerAdded, totalLayerRemoved, totalLayerReordered,
-          totalLayerRenamed, totalLayerVisible, totalLayerBackground,
+          totalLayerRenamed, totalLayerVisible,
           totalLayerActive;
     ulong currentTypeChanged;            // selection-types Stage 1
     string lastCurrentType;
@@ -109,7 +109,6 @@ Changes readChanges() {
     c.totalLayerReordered  = j["totalLayerReordered"].integer;
     c.totalLayerRenamed    = j["totalLayerRenamed"].integer;
     c.totalLayerVisible    = j["totalLayerVisible"].integer;
-    c.totalLayerBackground = j["totalLayerBackground"].integer;
     c.totalLayerActive     = j["totalLayerActive"].integer;
     c.currentTypeChanged   = j["currentTypeChanged"].integer;
     c.lastCurrentType      = j["lastCurrentType"].str;
@@ -529,18 +528,29 @@ unittest {
         "setVisible must NOT bump any mesh-change counter (pure document state)");
 }
 
-// layer.setBackground bumps BackgroundChanged, no mesh counters.
+// Stage 5: the `BackgroundChanged` layer-channel kind is RETIRED. Backgrounding
+// a layer is now a pure item-selection event (`layer.select mode:remove`):
+// it rides the SEL channel (SelDomain.Item), bumps NO layer-channel counter and
+// NO mesh-change counter. This guards that retiring the kind didn't smuggle the
+// event onto another channel.
 unittest {
     post(baseUrl ~ "/api/reset", "");
-    cmd("layer.add name:B");                 // need >1 layer to set a background
-    cmd("layer.select index:0");             // A active so B can be background
+    cmd("layer.add name:B");                 // need >1 layer (B active + selected)
+    cmd("layer.select index:0 mode:add");    // A added ⇒ both selected, A primary
     auto before = settleAfter(readChanges());
 
-    cmd("layer.setBackground index:1 value:true");
+    cmd("layer.select index:1 mode:remove"); // deselect B ⇒ background
     auto after = settleAfter(before);
 
-    assert(after.totalLayerBackground == before.totalLayerBackground + 1,
-        "setBackground must bump BackgroundChanged");
+    // No LAYER-channel counter moves — backgrounding is not a layer-structural
+    // change. (Renamed/Visible/Active/Added/Removed/Reordered all flat.)
+    assert(after.totalLayerAdded      == before.totalLayerAdded
+        && after.totalLayerRemoved    == before.totalLayerRemoved
+        && after.totalLayerReordered  == before.totalLayerReordered
+        && after.totalLayerRenamed    == before.totalLayerRenamed
+        && after.totalLayerVisible    == before.totalLayerVisible
+        && after.totalLayerActive     == before.totalLayerActive,
+        "backgrounding must NOT bump any LAYER-channel counter (BackgroundChanged retired)");
     assert(meshCountersUnchanged(before, after),
-        "setBackground must NOT bump any mesh-change counter (pure document state)");
+        "backgrounding must NOT bump any mesh-change counter (pure document state)");
 }

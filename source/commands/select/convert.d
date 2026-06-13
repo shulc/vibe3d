@@ -24,6 +24,11 @@ import editmode;
 class SelectConvertCommand : Command {
     private EditMode* editModePtr;
     private string    targetType;
+    // Selection-types Stage 5 (audit c): route the editMode change through the
+    // app geometry-type funnel when installed, so EditMode stays in lockstep
+    // with the SelType recent-ordering. Null (default / unit test) writes the
+    // pointer directly — identical for callers without an ordering.
+    private void delegate(EditMode) promoteType;
 
     this(Mesh* mesh, ref View view, EditMode editMode, EditMode* editModePtr) {
         super(mesh, view, editMode);
@@ -34,6 +39,7 @@ class SelectConvertCommand : Command {
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     void setTargetType(string t) { targetType = t; }
+    SelectConvertCommand setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }
 
     override bool apply() {
         mesh.syncSelection();
@@ -59,7 +65,8 @@ class SelectConvertCommand : Command {
             default: assert(false);
         }
 
-        *editModePtr = dstMode;
+        if (promoteType !is null) promoteType(dstMode);  // lockstep with SelType
+        else                      *editModePtr = dstMode;
         return true;
     }
 

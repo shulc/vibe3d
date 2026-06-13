@@ -52,8 +52,10 @@ enum SelDomain : uint {
 
 // Layer-change bitfield — the third bus channel (layerChanged(uint kinds)).
 // Carries the kind(s) of LAYER-STRUCTURAL change a frame produced: layers
-// appearing/disappearing, reordering, per-row attribute edits (name/visible/
-// background) and the active(foreground)-layer switch. Like the mesh + sel
+// appearing/disappearing, reordering, per-row attribute edits (name/visible)
+// and the active(foreground)-layer switch. Foreground/background is DERIVED
+// from item selection, so it rides the SEL channel (SelDomain.Item), not here.
+// Like the mesh + sel
 // channels it is an event bitfield with NO per-layer payload — a subscriber
 // re-polls `document` / `/api/layers` for detail. Power-of-two members so a
 // frame that performs several layer ops coalesces them into one delivery.
@@ -64,13 +66,16 @@ enum LayerChange : uint {
     Reordered         = 1 << 2,  // layers[] order changed (reorder)
     Renamed           = 1 << 3,  // a layer's display name changed
     VisibilityChanged = 1 << 4,  // a layer's `visible` flag changed
-    BackgroundChanged = 1 << 5,  // a layer's `background` flag changed
+    // 1 << 5 retired (Stage 5): the transitional `BackgroundChanged` kind is
+    // gone — background is DERIVED (visible && !selected), so a foreground/
+    // background flip is just an item-selection change reported on the SEL
+    // channel (`SelDomain.Item`), never a distinct layer-channel kind.
     ActiveChanged     = 1 << 6,  // the active (foreground) layer changed
 }
 
 // Whole-document replacement mask (load / multi-part import): the layer list is
 // replaced wholesale AND the active layer changes. Mirrors MeshChangeAll's role
-// for the layer channel. Rename/visibility/background are deliberately NOT in
+// for the layer channel. Rename/visibility are deliberately NOT in
 // All — a freshly loaded document has a new list, it has not "renamed" a layer.
 enum uint LayerChangeAll =
       LayerChange.Added | LayerChange.Removed | LayerChange.Reordered
@@ -127,7 +132,6 @@ struct ChangeBus {
     ulong totalLayerReordered;
     ulong totalLayerRenamed;
     ulong totalLayerVisible;
-    ulong totalLayerBackground;
     ulong totalLayerActive;
 
     // Current-type channel total: how many flushes carried a current-type flip
@@ -202,7 +206,6 @@ struct ChangeBus {
         if (layerKinds & LayerChange.Reordered)         ++totalLayerReordered;
         if (layerKinds & LayerChange.Renamed)           ++totalLayerRenamed;
         if (layerKinds & LayerChange.VisibilityChanged) ++totalLayerVisible;
-        if (layerKinds & LayerChange.BackgroundChanged) ++totalLayerBackground;
         if (layerKinds & LayerChange.ActiveChanged)     ++totalLayerActive;
 
         if (typeChanged) { ++currentTypeChanged; lastCurrentType = newType; }
