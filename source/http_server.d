@@ -791,6 +791,7 @@ class HttpServer {
                 response.body = `{"error":"changes is only available in --test mode"}`;
             } else {
                 import change_bus : changeBus;
+                import seltype    : selTypeToken;
                 import std.format : format;
                 response.statusCode = 200;
                 response.body = format(
@@ -802,7 +803,8 @@ class HttpServer {
                     `"totalLayerAdded":%d,"totalLayerRemoved":%d,` ~
                     `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
                     `"totalLayerVisible":%d,"totalLayerBackground":%d,` ~
-                    `"totalLayerActive":%d}`,
+                    `"totalLayerActive":%d,` ~
+                    `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
                     changeBus.flushCount, changeBus.lastFlushFlags,
                     changeBus.lastSelDomains, changeBus.lastLayerKinds,
                     changeBus.totalPosition, changeBus.totalPoints,
@@ -813,7 +815,9 @@ class HttpServer {
                     changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
                     changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
                     changeBus.totalLayerVisible, changeBus.totalLayerBackground,
-                    changeBus.totalLayerActive);
+                    changeBus.totalLayerActive,
+                    changeBus.currentTypeChanged,
+                    selTypeToken(changeBus.lastCurrentType));
             }
         } else if (request.path == "/api/toolpipe/eval") {
             response.headers["Content-Type"] = "application/json";

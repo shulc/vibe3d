@@ -24,6 +24,7 @@ import eventlog;
 import handler;
 import tool;
 import editmode;
+import seltype;
 import toolpipe;
 import operator         : VectorStack;
 import toolpipe.packets : SubjectPacket;
@@ -1084,6 +1085,12 @@ void main(string[] args) {
 
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
+    // Selection-types Stage 1: the most-recent-first ordering of selection types
+    // is the "current type" authority. `editMode` stays the picking/draw
+    // authority and mirrors the current GEOMETRY type (it persists under Item).
+    // Item is never made current in Stage 1 — the ordering only ever holds a
+    // geometry type at the front here.
+    SelTypeOrder selTypeOrder;
     int activePanelIdx = 0;
 
     // RMB path trail
@@ -1197,6 +1204,35 @@ void main(string[] args) {
         // resize + invalidate + syncSelection in the loop's pick-cache block on
         // the same frame (setActiveTool runs during event dispatch, before the
         // flush). One source of truth, no duplicated resize logic.
+    }
+
+    // -------------------------------------------------------------------------
+    // Selection-types Stage 1: the single funnel for a GEOMETRY-type switch
+    // (keys 1/2/3 and the `select.typeFrom` command both route through here).
+    //
+    // Contract:
+    //   * Promote the matching SelType to the front of the recent ordering
+    //     (`touchSelType`). `editMode` is set in LOCKSTEP — it stays the
+    //     picking/draw authority and always mirrors the current geometry type.
+    //   * A switch that FLIPS the front type DROPS the active tool (B2 — mirrors
+    //     the documented tool-drop on a selection-mode change), routed through
+    //     the same `setActiveTool(null)` path the active-layer switch hook uses.
+    //   * A switch to the type that is ALREADY current does NOT flip the front,
+    //     so it does NOT drop the tool and does NOT note a current-type change.
+    //   * On a flip, note the current-type change on the bus
+    //     (`noteCurrentType`) so the per-frame flush delivers the
+    //     `currentTypeChanged` signal (delivered LAST, after mesh/sel/layer).
+    void switchGeometryType(EditMode mode) {
+        import change_bus : noteCurrentType;
+        const t = geometrySelType(mode);
+        const flipped = selTypeOrder.touch(t);
+        // editMode mirrors the geometry type unconditionally (idempotent when
+        // already that mode — keeps the lockstep invariant even on a no-flip).
+        editMode = mode;
+        if (flipped) {
+            setActiveTool(null);          // tool-drop on a front-flip (B2)
+            noteCurrentType(t);           // current-type changed (bus, drained at flush)
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1676,13 +1712,17 @@ void main(string[] args) {
     reg.commandFactories["select.connect"]        = () => cast(Command) new SelectConnect(&mesh(), cameraView, editMode);
     reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh(), cameraView, editMode);
     reg.commandFactories["select.typeFrom"]  = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode);
+        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode,
+                                  (EditMode m) => switchGeometryType(m));
     reg.commandFactories["select.vertex"]    = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode, "vertex");
+        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode, "vertex",
+                                  (EditMode m) => switchGeometryType(m));
     reg.commandFactories["select.edge"]      = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode, "edge");
+        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode, "edge",
+                                  (EditMode m) => switchGeometryType(m));
     reg.commandFactories["select.polygon"]   = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode, "polygon");
+        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode, "polygon",
+                                  (EditMode m) => switchGeometryType(m));
     reg.commandFactories["select.drop"]      = () => cast(Command)
         new SelectDropCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["select.element"]   = () => cast(Command)
@@ -2328,8 +2368,15 @@ void main(string[] args) {
                 case EditMode.Edges:    modeName = "edges";    break;
                 case EditMode.Polygons: modeName = "polygons"; break;
             }
-            return format(`{"mode":"%s","selectedVertices":%s,"selectedEdges":%s,"selectedFaces":%s}`,
+            // selType (Stage 1): the CURRENT selection type from the recent
+            // ordering — lowercase singular token (vertex/edge/polygon/item),
+            // matching the geometry payload's vocabulary. In Stage 1 it always
+            // tracks editMode (Item is never current yet) but it reports the
+            // authority, not editMode, so item selection surfaces it later.
+            return format(`{"mode":"%s","selType":"%s",` ~
+                `"selectedVertices":%s,"selectedEdges":%s,"selectedFaces":%s}`,
                 modeName,
+                selTypeToken(selTypeOrder.current()),
                 buildJsonArray(mesh.selectedVertices),
                 buildJsonArray(mesh.selectedEdges),
                 buildJsonArray(mesh.selectedFaces));
@@ -3294,6 +3341,14 @@ void main(string[] args) {
             }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
+            // Selection-types Stage 1: re-sync the SelType recent-ordering to the
+            // current geometry editMode after a reset. editMode is the persistent
+            // picking authority (scene.reset does not change it), so aligning the
+            // order's front to it keeps the current-type deterministic across a
+            // reset: a subsequent `select.typeFrom X` flips iff X differs from
+            // the live editMode, with no dependency on a prior test's ordering
+            // (the order is otherwise session-persistent, like editMode itself).
+            selTypeOrder.touch(geometrySelType(editMode));
             history.record(cmd);
         });
 
@@ -3485,11 +3540,14 @@ void main(string[] args) {
                 return;
             }
             if (auto id = canon in shortcuts.editModeByCanon) {
-                setActiveTool(null);
+                // Route keys 1/2/3 through the selection-type funnel: it
+                // promotes the SelType, sets editMode in lockstep, and drops the
+                // active tool ONLY on a front-flip (pressing the key for the
+                // mode you are already in does NOT drop the tool — Stage 1 B2).
                 final switch (*id) {
-                    case "vertices": editMode = EditMode.Vertices; break;
-                    case "edges":    editMode = EditMode.Edges;    break;
-                    case "polygons": editMode = EditMode.Polygons; break;
+                    case "vertices": switchGeometryType(EditMode.Vertices); break;
+                    case "edges":    switchGeometryType(EditMode.Edges);    break;
+                    case "polygons": switchGeometryType(EditMode.Polygons); break;
                 }
                 return;
             }
@@ -3517,8 +3575,15 @@ void main(string[] args) {
             // an in-progress lasso, deselect, …) instead of killing the
             // session by accident.
             case SDLK_SPACE:
+                // Space drops an active tool; with no tool it cycles the
+                // geometry mode. Route the cycle through the selection-type
+                // funnel so selTypeOrder + the currentTypeChanged signal stay in
+                // sync (the cycle always flips the front, hence always notes a
+                // current-type change; the tool is already null so the in-funnel
+                // tool-drop is a no-op).
                 if (activeTool) setActiveTool(null);
-                else editMode = cast(EditMode)((cast(int)editMode + 1) % 3);
+                else switchGeometryType(
+                    cast(EditMode)((cast(int)editMode + 1) % 3));
                 break;
             case SDLK_TAB: {
                 // Toggle subpatch flag on selected faces; if nothing is
@@ -5864,7 +5929,18 @@ void main(string[] args) {
             uint layerKinds = pendingLayerChanges;
             pendingLayerChanges = 0;
 
-            changeBus.flush(meshFlags, selDomains, layerKinds);
+            // Current-type flips are session-level (the SelType recent-ordering
+            // lives in app scene state, not on any Mesh), so they accumulate in
+            // module-level globals beside the bus and drain read-and-zero here,
+            // at the same single flush site — delivered LAST (after mesh/sel/
+            // layer). Survives /api/reset like pendingLayerChanges.
+            import change_bus : pendingCurrentType, pendingCurrentTypeSet;
+            bool    typeChanged = pendingCurrentTypeSet;
+            SelType newType     = pendingCurrentType;
+            pendingCurrentTypeSet = false;
+
+            changeBus.flush(meshFlags, selDomains, layerKinds,
+                            typeChanged, newType);
         }
 
         // Refresh subpatch preview if the cage or depth changed since last
