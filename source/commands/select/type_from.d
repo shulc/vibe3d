@@ -17,6 +17,12 @@ class SelectTypeFromCommand : Command {
         this.editModePtr = editModePtr;
     }
 
+    this(Mesh* mesh, ref View view, EditMode editMode, EditMode* editModePtr,
+         string targetType) {
+        this(mesh, view, editMode, editModePtr);
+        this.targetType = targetType;
+    }
+
     override string name()  const { return "select.typeFrom"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 

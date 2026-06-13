@@ -1558,6 +1558,12 @@ void main(string[] args) {
     reg.commandFactories["select.between"]        = () => cast(Command) new SelectBetween(&mesh, cameraView, editMode);
     reg.commandFactories["select.typeFrom"]  = () => cast(Command)
         new SelectTypeFromCommand(&mesh, cameraView, editMode, &editMode);
+    reg.commandFactories["select.vertex"]    = () => cast(Command)
+        new SelectTypeFromCommand(&mesh, cameraView, editMode, &editMode, "vertex");
+    reg.commandFactories["select.edge"]      = () => cast(Command)
+        new SelectTypeFromCommand(&mesh, cameraView, editMode, &editMode, "edge");
+    reg.commandFactories["select.polygon"]   = () => cast(Command)
+        new SelectTypeFromCommand(&mesh, cameraView, editMode, &editMode, "polygon");
     reg.commandFactories["select.drop"]      = () => cast(Command)
         new SelectDropCommand(&mesh, cameraView, editMode);
     reg.commandFactories["select.element"]   = () => cast(Command)
@@ -4622,13 +4628,17 @@ void main(string[] args) {
                         if (dyn.length > 0) label = dyn;
                     }
 
-                    // Detect select.typeFrom <type> in the action's first
-                    // line for shortcut display + on-highlight. Positional
-                    // args land in params["_positional"] as a JSON array.
+                    // Detect edit-mode actions for shortcut display +
+                    // on-highlight. New status-line buttons use dedicated
+                    // command ids; legacy script buttons are still supported
+                    // through select.typeFrom's first argstring line.
                     string editModeId;
-                    if (action.kind == ActionKind.script
-                        && action.scriptLines.length > 0)
-                    {
+                    if (action.kind == ActionKind.command) {
+                        if      (action.id == "select.vertex")  editModeId = "vertices";
+                        else if (action.id == "select.edge")    editModeId = "edges";
+                        else if (action.id == "select.polygon") editModeId = "polygons";
+                    } else if (action.kind == ActionKind.script
+                               && action.scriptLines.length > 0) {
                         auto parsed = parseArgstring(action.scriptLines[0]);
                         if (!parsed.isEmpty
                             && parsed.commandId == "select.typeFrom"
@@ -4688,6 +4698,8 @@ void main(string[] args) {
                             case ActionKind.command:
                                 if (!tryOpenArgsDialog(action.id))
                                     runCommand(reg.commandFactories[action.id]());
+                                if (editModeId.length > 0)
+                                    setActiveTool(null);
                                 break;
                             case ActionKind.script:
                                 // typeFrom doesn't go through the args

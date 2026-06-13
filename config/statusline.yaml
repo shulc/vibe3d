@@ -2,17 +2,17 @@ groups:
   - title: editmode
     buttons:
       - label: Vertices
-        action: { kind: script, lines: ["select.typeFrom vertex"] }
+        action: { kind: command, id: select.vertex }
         alt:
           label: "Convert V"
           action: { kind: script, lines: ["select.convert vertex"] }
       - label: Edges
-        action: { kind: script, lines: ["select.typeFrom edge"] }
+        action: { kind: command, id: select.edge }
         alt:
           label: "Convert E"
           action: { kind: script, lines: ["select.convert edge"] }
       - label: Polygons
-        action: { kind: script, lines: ["select.typeFrom polygon"] }
+        action: { kind: command, id: select.polygon }
         alt:
           label: "Convert P"
           action: { kind: script, lines: ["select.convert polygon"] }
