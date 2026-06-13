@@ -895,8 +895,18 @@ unittest {
     cmd("tool.pipe.attr symmetry axis x");          // X plane (x=0)
     cmd("tool.pipe.attr falloff type radial");
     cmd("tool.pipe.attr falloff shape linear");
-    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`); // centered on v6
-    cmd(`tool.pipe.attr falloff size "1,1,1"`);     // tight: v6 in, far verts out
+    // Centre the radial falloff ON the symmetry plane (x=0), aligned with the
+    // v6/v7 row. v6 and its X-mirror v7 are then EQUIDISTANT from the centre →
+    // equal weight, so the `x6 = -x7` mirror relation holds. (Centring on v6
+    // itself — the pre-Stage-2 setup — made the falloff ASYMMETRIC about the
+    // plane: under the two-pass symmetry mirror v7 is now weighted at its OWN
+    // mirrored position, which for a v6-centred sphere of radius 1 is 0, so v7
+    // would correctly NOT move — the deliberate distance-falloff divergence of
+    // doc/symmetry_deform_plan.md #8, covered by tests/test_symm_falloff.d (b).
+    // This test exercises the refire/undo mechanics, so it uses a SYMMETRIC
+    // falloff where mirror == position-copy and the pair relation is stable.)
+    cmd(`tool.pipe.attr falloff center "0,0.5,0.5"`); // on x=0 plane, v6/v7 row
+    cmd(`tool.pipe.attr falloff size "1,1,1"`);     // v6/v7 partially weighted, far verts out
     settle();
     long floor = undoCount();
 
