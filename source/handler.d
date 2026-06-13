@@ -75,6 +75,23 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.locScreen = glGetUniformLocation(prog, "u_screenSize");
     g_thickLine.screenW   = cast(float)screenW;
     g_thickLine.screenH   = cast(float)screenH;
+
+    // The thick-line program reuses the basic `fragmentShaderSrc`, whose
+    // fragment colour is `u_color * u_dim` (layers Stage 5 dim feature).
+    // A GLSL uniform defaults to 0, so an unset `u_dim` renders every
+    // gizmo shaft / rotate ring / scale axis BLACK. These lines are never
+    // dimmed (the background-layer dim pass only touches the Shader /
+    // LitShader programs, never this one), so seed `u_dim` to the neutral
+    // 1.0 once here. Guarded for forward-compat in case the shared
+    // fragment shader ever drops the uniform.
+    GLint locDim = glGetUniformLocation(prog, "u_dim");
+    if (locDim >= 0) {
+        GLint prevProg;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+        glUseProgram(prog);
+        glUniform1f(locDim, 1.0f);
+        glUseProgram(prevProg);
+    }
 }
 
 // Upload a float[] (XYZ triples) to a fresh VAO with a single vec3 attribute at location 0.
