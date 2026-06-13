@@ -127,9 +127,11 @@ class FileLoad : Command {
             docSnapped      = true;
             ok = readV3d(path, *document);
             if (!ok) { docSnapped = false; prevLayers = null; return false; }
-            // readV3d sets primary/selected/activeIndex in lockstep already;
-            // defensive re-clamp re-establishes the lockstep invariant.
-            document.setActive(document.activeIndex);
+            // readV3d (Stage 3) already re-asserts the full selection-set
+            // invariants via the Document mutators: the persisted multi-select
+            // SET is restored, the primary is forced selected + visible, and
+            // ≥1 layer is selected. Do NOT re-clamp with setActive here — that
+            // would collapse the restored multi-select set back to one layer.
         } else {
             // Interchange import through the scene-IR seam (Stage 3): parse the
             // file into an ImportedScene, THEN decide how to land it.
