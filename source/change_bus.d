@@ -48,6 +48,32 @@ enum SelDomain : uint {
     Face   = 1 << 2,
 }
 
+// Layer-change bitfield — the third bus channel (layerChanged(uint kinds)).
+// Carries the kind(s) of LAYER-STRUCTURAL change a frame produced: layers
+// appearing/disappearing, reordering, per-row attribute edits (name/visible/
+// background) and the active(foreground)-layer switch. Like the mesh + sel
+// channels it is an event bitfield with NO per-layer payload — a subscriber
+// re-polls `document` / `/api/layers` for detail. Power-of-two members so a
+// frame that performs several layer ops coalesces them into one delivery.
+enum LayerChange : uint {
+    None              = 0,
+    Added             = 1 << 0,  // a layer appeared (add, or whole-list replace on load/import)
+    Removed           = 1 << 1,  // a layer was deleted
+    Reordered         = 1 << 2,  // layers[] order changed (reorder)
+    Renamed           = 1 << 3,  // a layer's display name changed
+    VisibilityChanged = 1 << 4,  // a layer's `visible` flag changed
+    BackgroundChanged = 1 << 5,  // a layer's `background` flag changed
+    ActiveChanged     = 1 << 6,  // the active (foreground) layer changed
+}
+
+// Whole-document replacement mask (load / multi-part import): the layer list is
+// replaced wholesale AND the active layer changes. Mirrors MeshChangeAll's role
+// for the layer channel. Rename/visibility/background are deliberately NOT in
+// All — a freshly loaded document has a new list, it has not "renamed" a layer.
+enum uint LayerChangeAll =
+      LayerChange.Added | LayerChange.Removed | LayerChange.Reordered
+    | LayerChange.ActiveChanged;
+
 // ---------------------------------------------------------------------------
 // The bus. A plain struct with one module-level __gshared instance: the module
 // import is the service locator (no singleton ceremony). All access is on the
@@ -58,6 +84,7 @@ struct ChangeBus {
     // helpers below; never removed in v1. flush() iterates these.
     void delegate(uint flags)[]   meshSubs;
     void delegate(uint domains)[] selSubs;
+    void delegate(uint kinds)[]   layerSubs;
 
     // Reentrancy guard: a subscriber must not re-enter flush (nor mutate the
     // mesh, which could note new changes mid-delivery). The assert turns a
@@ -71,6 +98,7 @@ struct ChangeBus {
     ulong flushCount;        // number of flushes that actually delivered
     uint  lastFlushFlags;    // mesh flags of the most recent delivered flush
     uint  lastSelDomains;    // selection domains of the most recent delivery
+    uint  lastLayerKinds;    // layer-change kinds of the most recent delivery
 
     // Per-class running totals — how many flushes carried each mesh class.
     ulong totalPosition;
@@ -84,6 +112,15 @@ struct ChangeBus {
     ulong totalSelEdge;
     ulong totalSelFace;
 
+    // Per-kind running totals for layer-structural changes.
+    ulong totalLayerAdded;
+    ulong totalLayerRemoved;
+    ulong totalLayerReordered;
+    ulong totalLayerRenamed;
+    ulong totalLayerVisible;
+    ulong totalLayerBackground;
+    ulong totalLayerActive;
+
     // --- Registration -----------------------------------------------------
     void onMeshChanged(void delegate(uint flags) dg) {
         if (dg !is null) meshSubs ~= dg;
@@ -93,13 +130,23 @@ struct ChangeBus {
         if (dg !is null) selSubs ~= dg;
     }
 
+    // Register a layer-change subscriber. Like the other channels, subscribers
+    // are invalidate-only (must NOT mutate the document or re-enter flush) and
+    // live for the app lifetime (no unsubscribe in v1). Delivered LAST, after
+    // meshChanged + selectionChanged (see flush).
+    void onLayerChanged(void delegate(uint kinds) dg) {
+        if (dg !is null) layerSubs ~= dg;
+    }
+
     // --- Flush ------------------------------------------------------------
-    // Deliver accumulated mesh flags + selection domains to subscribers. If
-    // both are zero there is nothing to deliver, so return early (no counter
-    // bump, no subscriber call). meshChanged delegates fire before selChanged
-    // delegates (documented fixed order).
-    void flush(uint meshFlags, uint selDomains) {
-        if (meshFlags == 0 && selDomains == 0) return;
+    // Deliver accumulated mesh flags + selection domains + layer kinds to
+    // subscribers. If all three are zero there is nothing to deliver, so return
+    // early (no counter bump, no subscriber call). Documented fixed delivery
+    // order: meshChanged → selectionChanged → layerChanged. layerChanged fires
+    // LAST so a subscriber reacting to ActiveChanged sees the new mesh's
+    // content/selection invalidation already signalled first.
+    void flush(uint meshFlags, uint selDomains, uint layerKinds) {
+        if (meshFlags == 0 && selDomains == 0 && layerKinds == 0) return;
 
         assert(!flushing_,
             "change_bus: subscriber re-entered flush (subscribers are " ~
@@ -110,6 +157,7 @@ struct ChangeBus {
         ++flushCount;
         lastFlushFlags = meshFlags;
         lastSelDomains = selDomains;
+        lastLayerKinds = layerKinds;
 
         if (meshFlags & MeshEditScope.Position) ++totalPosition;
         if (meshFlags & MeshEditScope.Points)   ++totalPoints;
@@ -121,15 +169,39 @@ struct ChangeBus {
         if (selDomains & SelDomain.Edge)   ++totalSelEdge;
         if (selDomains & SelDomain.Face)   ++totalSelFace;
 
+        if (layerKinds & LayerChange.Added)             ++totalLayerAdded;
+        if (layerKinds & LayerChange.Removed)           ++totalLayerRemoved;
+        if (layerKinds & LayerChange.Reordered)         ++totalLayerReordered;
+        if (layerKinds & LayerChange.Renamed)           ++totalLayerRenamed;
+        if (layerKinds & LayerChange.VisibilityChanged) ++totalLayerVisible;
+        if (layerKinds & LayerChange.BackgroundChanged) ++totalLayerBackground;
+        if (layerKinds & LayerChange.ActiveChanged)     ++totalLayerActive;
+
         if (meshFlags != 0)
             foreach (dg; meshSubs) dg(meshFlags);
         if (selDomains != 0)
             foreach (dg; selSubs) dg(selDomains);
+        if (layerKinds != 0)
+            foreach (dg; layerSubs) dg(layerKinds);
     }
 }
 
 // The one module-level instance. Main-thread access only (see header).
 __gshared ChangeBus changeBus;
+
+// Layer-change pending accumulator. Layer-structural changes are DOCUMENT-level,
+// not per-Mesh — there is no single Mesh that owns "a layer was added" — so the
+// accumulator is a module-level global beside the bus instance itself (the bus
+// IS global). Drained read-and-zeroed at the single per-frame flush site (app.d)
+// exactly like the per-mesh pending sets, then passed as flush's third arg.
+__gshared uint pendingLayerChanges;
+
+// OR-accumulate layer-change kinds into the frame's pending word (same coalesce
+// contract as mesh.noteChange). Does NOT deliver — delivery is the single flush
+// site. Called by the layer commands + the active-switch hook + FileLoad.
+void noteLayerChange(uint kinds) {
+    pendingLayerChanges |= kinds;
+}
 
 // ===========================================================================
 // In-module unittests. Each is fully self-contained: it constructs its own
@@ -150,7 +222,7 @@ unittest {
 
     const combined = MeshEditScope.Position | MeshEditScope.Points
                    | MeshEditScope.Polygons;
-    bus.flush(combined, 0);
+    bus.flush(combined, 0, 0);
 
     assert(calls == 1, "one delivery per flush");
     assert(seen == combined, "all coalesced bits delivered");
@@ -167,12 +239,12 @@ unittest {
     int calls = 0;
     bus.onMeshChanged((uint) { ++calls; });
 
-    bus.flush(MeshEditScope.Marks, 0);
+    bus.flush(MeshEditScope.Marks, 0, 0);
     assert(calls == 1);
     assert(bus.totalMarks == 1);
 
     // Second flush with nothing pending: no delivery.
-    bus.flush(0, 0);
+    bus.flush(0, 0, 0);
     assert(calls == 1, "zero-arg flush must not re-deliver");
     assert(bus.flushCount == 1, "no-op flush does not bump the counter");
 }
@@ -184,7 +256,7 @@ unittest {
     bus.onMeshChanged((uint) { ++meshCalls; });
     bus.onSelectionChanged((uint) { ++selCalls; });
 
-    bus.flush(0, 0);
+    bus.flush(0, 0, 0);
 
     assert(meshCalls == 0 && selCalls == 0);
     assert(bus.flushCount == 0);
@@ -200,7 +272,7 @@ unittest {
     bus.onMeshChanged((uint f) { meshSeen = f; meshOrder = order++; });
     bus.onSelectionChanged((uint d) { selSeen = d; selOrder = order++; });
 
-    bus.flush(MeshEditScope.Marks, SelDomain.Vertex | SelDomain.Face);
+    bus.flush(MeshEditScope.Marks, SelDomain.Vertex | SelDomain.Face, 0);
 
     assert(meshSeen == MeshEditScope.Marks);
     assert(selSeen == (SelDomain.Vertex | SelDomain.Face));
@@ -217,12 +289,123 @@ unittest {
     bool tripped = false;
     bus.onMeshChanged((uint) {
         try {
-            bus.flush(MeshEditScope.Position, 0); // illegal re-entry
+            bus.flush(MeshEditScope.Position, 0, 0); // illegal re-entry
         } catch (AssertError) {
             tripped = true;
         }
     });
 
-    bus.flush(MeshEditScope.Marks, 0);
+    bus.flush(MeshEditScope.Marks, 0, 0);
     assert(tripped, "re-entering flush from a subscriber must assert");
+}
+
+// ===========================================================================
+// Layer channel (layerChanged(uint kinds)) — same five contracts as the mesh +
+// sel channels, mirrored for the third channel.
+// ===========================================================================
+
+// Accumulate-coalesce: several layer kinds OR'd into one flush deliver once with
+// every bit set, bumping each per-kind counter exactly once.
+unittest {
+    ChangeBus bus;
+    uint seen = 0;
+    int  calls = 0;
+    bus.onLayerChanged((uint k) { seen |= k; ++calls; });
+
+    const combined = LayerChange.Added | LayerChange.ActiveChanged;
+    bus.flush(0, 0, combined);
+
+    assert(calls == 1, "one delivery per flush");
+    assert(seen == combined, "all coalesced layer bits delivered");
+    assert(bus.flushCount == 1);
+    assert(bus.lastLayerKinds == combined);
+    assert(bus.totalLayerAdded == 1 && bus.totalLayerActive == 1);
+    assert(bus.totalLayerRemoved == 0 && bus.totalLayerReordered == 0);
+}
+
+// A layer-only flush delivers once; a subsequent zero flush is a no-op.
+unittest {
+    ChangeBus bus;
+    int calls = 0;
+    bus.onLayerChanged((uint) { ++calls; });
+
+    bus.flush(0, 0, LayerChange.Reordered);
+    assert(calls == 1);
+    assert(bus.totalLayerReordered == 1);
+
+    bus.flush(0, 0, 0);
+    assert(calls == 1, "zero-arg flush must not re-deliver");
+    assert(bus.flushCount == 1, "no-op flush does not bump the counter");
+}
+
+// Layer kinds are delivered to layerSubs AFTER meshSubs and selSubs, with the
+// per-kind counters maintained. (meshChanged → selectionChanged → layerChanged.)
+unittest {
+    ChangeBus bus;
+    uint meshSeen = 0, selSeen = 0, layerSeen = 0;
+    int order = 0, meshOrder = -1, selOrder = -1, layerOrder = -1;
+    bus.onMeshChanged((uint f) { meshSeen = f; meshOrder = order++; });
+    bus.onSelectionChanged((uint d) { selSeen = d; selOrder = order++; });
+    bus.onLayerChanged((uint k) { layerSeen = k; layerOrder = order++; });
+
+    bus.flush(MeshEditScope.Marks, SelDomain.Vertex,
+              LayerChange.Renamed | LayerChange.ActiveChanged);
+
+    assert(meshSeen == MeshEditScope.Marks);
+    assert(selSeen == SelDomain.Vertex);
+    assert(layerSeen == (LayerChange.Renamed | LayerChange.ActiveChanged));
+    assert(meshOrder == 0 && selOrder == 1 && layerOrder == 2,
+        "layerChanged fires after meshChanged + selectionChanged");
+    assert(bus.totalLayerRenamed == 1 && bus.totalLayerActive == 1);
+}
+
+// A layer-only delivery (mesh + sel both zero) is NOT swallowed by the early-out
+// — the three-word zero check must consider layerKinds.
+unittest {
+    ChangeBus bus;
+    int meshCalls = 0, layerCalls = 0;
+    bus.onMeshChanged((uint) { ++meshCalls; });
+    bus.onLayerChanged((uint) { ++layerCalls; });
+
+    bus.flush(0, 0, LayerChange.VisibilityChanged);
+
+    assert(meshCalls == 0, "no mesh delivery when meshFlags==0");
+    assert(layerCalls == 1, "layer delivery must not be swallowed by the early-out");
+    assert(bus.flushCount == 1);
+    assert(bus.totalLayerVisible == 1);
+}
+
+// Reentrancy: a layer subscriber that re-enters flush trips the same guard.
+unittest {
+    import core.exception : AssertError;
+
+    ChangeBus bus;
+    bool tripped = false;
+    bus.onLayerChanged((uint) {
+        try {
+            bus.flush(0, 0, LayerChange.Added); // illegal re-entry
+        } catch (AssertError) {
+            tripped = true;
+        }
+    });
+
+    bus.flush(0, 0, LayerChange.Removed);
+    assert(tripped, "re-entering flush from a layer subscriber must assert");
+}
+
+// noteLayerChange OR-accumulates into the module-level pending word and is pure
+// accumulate (no delivery). Drains read-and-zero like the app.d flush site does.
+unittest {
+    pendingLayerChanges = 0;
+    noteLayerChange(LayerChange.Added);
+    noteLayerChange(LayerChange.ActiveChanged);
+    assert(pendingLayerChanges
+        == (LayerChange.Added | LayerChange.ActiveChanged),
+        "noteLayerChange coalesces kinds");
+
+    // Drain semantics mirror the app.d flush site.
+    uint drained = pendingLayerChanges;
+    pendingLayerChanges = 0;
+    assert(drained == (LayerChange.Added | LayerChange.ActiveChanged));
+    assert(pendingLayerChanges == 0, "drain zeroes the pending word");
 }

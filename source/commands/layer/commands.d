@@ -24,7 +24,7 @@ import view;
 import editmode;
 import params : Param;
 import document : Document, Layer;
-import change_bus : MeshChangeAll;
+import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
 
 // ---------------------------------------------------------------------------
 // Shared base — owns the Document* and the switch hook.
@@ -97,6 +97,9 @@ final class LayerAdd : LayerCommandBase {
         addedIndex  = doc.layers.length - 1;
         doc.activeIndex = addedIndex;
         applied = true;
+        // Structural kind from the command; ActiveChanged from the switch hook
+        // (add makes the new layer active), both coalescing into one delivery.
+        noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevActiveIndex);
         return true;
     }
@@ -112,6 +115,8 @@ final class LayerAdd : LayerCommandBase {
             doc.layers = doc.layers[0 .. addedIndex];
         doc.activeIndex = prevActiveIndex >= doc.layers.length
             ? doc.layers.length - 1 : prevActiveIndex;
+        // Undo of an add is a remove; ActiveChanged via the hook.
+        noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIdx);
         return true;
     }
@@ -182,8 +187,10 @@ final class LayerReorder : LayerCommandBase {
         moveLayer(fromIdx, toIdx);
         applied = true;
         // Identity-preserving: a pure reorder keeps the same active Layer, so
-        // this is a no-op. It only fires if the active object genuinely changed
-        // (it should not, here — the guard documents the invariant).
+        // the switch hook is a no-op. It only fires if the active object
+        // genuinely changed (it should not, here — the guard documents the
+        // invariant). The reorder kind is published regardless.
+        noteLayerChange(LayerChange.Reordered);
         fireSwitchIfChanged(prevLayer, prevIndex);
         return true;
     }
@@ -194,6 +201,7 @@ final class LayerReorder : LayerCommandBase {
         size_t prevIndex = doc.activeIndex;
         // Reverse the move: the layer now sits at toIdx; put it back at fromIdx.
         moveLayer(toIdx, fromIdx);
+        noteLayerChange(LayerChange.Reordered);
         fireSwitchIfChanged(prevLayer, prevIndex);
         return true;
     }
@@ -251,8 +259,10 @@ final class LayerDelete : LayerCommandBase {
         }
         doc.activeIndex = newActive;
         applied = true;
-        // The hook fires iff the active layer OBJECT changed (deleting a layer
-        // below the active one shifts the index but keeps the same mesh).
+        // Removed kind from the command; the hook contributes ActiveChanged iff
+        // the active layer OBJECT changed (deleting a layer below the active one
+        // shifts the index but keeps the same mesh → no ActiveChanged).
+        noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevActiveIndex);
         return true;
     }
@@ -268,6 +278,8 @@ final class LayerDelete : LayerCommandBase {
                                                    ~ doc.layers[removedIndex .. $];
         doc.activeIndex = prevActiveIndex >= doc.layers.length
             ? doc.layers.length - 1 : prevActiveIndex;
+        // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
+        noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIdx);
         return true;
     }
@@ -347,12 +359,16 @@ final class LayerRename : LayerCommandBase {
         prevName = doc.layers[target].name;
         doc.layers[target].name = nameArg;
         applied  = true;
+        // Pure document-state change: publish the kind, touch NO mesh-pending
+        // state (must not bump any mesh-change counter).
+        noteLayerChange(LayerChange.Renamed);
         return true;
     }
 
     override bool revert() {
         if (!applied) return false;
         doc.layers[target].name = prevName;
+        noteLayerChange(LayerChange.Renamed);
         return true;
     }
 }
@@ -387,12 +403,16 @@ final class LayerSetVisible : LayerCommandBase {
         prevVal = doc.layers[target].visible;
         doc.layers[target].visible = valueArg;
         applied = true;
+        // Pure document-state change: publish the kind, touch NO mesh-pending
+        // state (must not bump any mesh-change counter).
+        noteLayerChange(LayerChange.VisibilityChanged);
         return true;
     }
 
     override bool revert() {
         if (!applied) return false;
         doc.layers[target].visible = prevVal;
+        noteLayerChange(LayerChange.VisibilityChanged);
         return true;
     }
 }
@@ -427,12 +447,16 @@ final class LayerSetBackground : LayerCommandBase {
         prevVal = doc.layers[target].background;
         doc.layers[target].background = valueArg;
         applied = true;
+        // Pure document-state change: publish the kind, touch NO mesh-pending
+        // state (must not bump any mesh-change counter).
+        noteLayerChange(LayerChange.BackgroundChanged);
         return true;
     }
 
     override bool revert() {
         if (!applied) return false;
         doc.layers[target].background = prevVal;
+        noteLayerChange(LayerChange.BackgroundChanged);
         return true;
     }
 }

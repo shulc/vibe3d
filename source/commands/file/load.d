@@ -21,7 +21,7 @@ import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 import viewcache;
 import snapshot : MeshSnapshot;
-import change_bus : MeshChangeAll;
+import change_bus : MeshChangeAll, noteLayerChange, LayerChangeAll;
 
 /// How the load dialog is framed (asset-I/O Phase 6).
 ///   open         — File → Open: full "All supported" + native-primary
@@ -201,6 +201,13 @@ class FileLoad : Command {
         // shadow stamps; the per-layer flush lazily seeds them on first sight,
         // so a layered load does not trip the MISSED-PUBLISHER check.
         active.noteChange(MeshChangeAll);
+        // A document-replacing load (native .v3d, or a multi-part interchange
+        // import that built layers) replaces the WHOLE layer list AND changes
+        // the active layer — publish the whole-document layer mask. A single-
+        // part interchange import mutated only the active mesh in place (no
+        // layer-list change), so it emits no layer kind.
+        if (docSnapped)
+            noteLayerChange(LayerChangeAll);
         refreshActive(active);
         return true;
     }
@@ -213,6 +220,8 @@ class FileLoad : Command {
                 ? prevLayers.length - 1 : prevActiveIndex;
             auto active = document.activeMesh();
             active.noteChange(MeshChangeAll);
+            // Undo restores the prior layer list — another whole-document change.
+            noteLayerChange(LayerChangeAll);
             refreshActive(active);
             return true;
         }
