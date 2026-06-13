@@ -304,19 +304,36 @@ unittest { // rename reflected in /api/layers + undoable (UI class)
 }
 
 unittest { // setVisible / setBackground reflected in /api/layers
+    // Stage 2b: `background` is DERIVED (visible && !selected), and
+    // `layer.setBackground` is a thin alias over the item-selection mutator
+    // (value:true ⇒ Remove/deselect). To exercise a real foreground→background
+    // round-trip, hold BOTH layers selected first (mode:add) so backgrounding
+    // layer 1 is not the ≥1-selected no-op; then layer 1 is foreground, and
+    // setBackground value:true deselects it.
     resetCube();
-    cmd("layer.add");                  // layer 1 active
-    cmd("layer.setBackground index:1 value:true");
+    cmd("layer.add");                  // layer 1 active + selected (set-of-one)
+    cmd("layer.select index:0 mode:add");   // A added ⇒ both selected, A primary
+    // layer 1 is now SELECTED non-primary ⇒ foreground.
+    assert(getLayers()["layers"].array[1]["background"].type == JSONType.false_,
+        "layer 1 starts foreground (selected)");
+    cmd("layer.setBackground index:1 value:true");   // alias: Remove ⇒ deselect
     cmd("layer.setVisible index:1 value:false");
     auto l1 = getLayers()["layers"].array[1];
-    assert(l1["background"].type == JSONType.true_, "background flag set");
+    // Derived background requires visible; layer 1 is now hidden, so `background`
+    // is false — assert on the underlying `selected` bit (cleared = backgrounded).
+    assert(l1["selected"].type == JSONType.false_, "layer 1 deselected (backgrounded)");
     assert(l1["visible"].type == JSONType.false_, "visible flag cleared");
     undoOk("undo setVisible");
     assert(getLayers()["layers"].array[1]["visible"].type == JSONType.true_,
         "setVisible undo restores visible");
+    // Visible again + still deselected ⇒ derived background true.
+    assert(getLayers()["layers"].array[1]["background"].type == JSONType.true_,
+        "layer 1 is visible + deselected ⇒ derived background");
     undoOk("undo setBackground");
+    // Undo of the alias restores the prior selection (layer 1 selected again) ⇒
+    // foreground ⇒ derived background false.
     assert(getLayers()["layers"].array[1]["background"].type == JSONType.false_,
-        "setBackground undo restores foreground");
+        "setBackground undo restores foreground (selected)");
 }
 
 // ---------------------------------------------------------------------------

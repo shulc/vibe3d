@@ -269,8 +269,11 @@ Document toLayers(const ref ImportedScene scene) {
         l.name       = part.name.length ? part.name
                                         : "Layer " ~ to!string(pi + 1);
         l.visible    = true;
-        l.background = (pi != 0);   // first part active/foreground; rest background
-        l.selected   = (pi == 0);   // SET-of-one: first part selected (== active)
+        // Stage 2b: background is derived (visible && !selected) — set only the
+        // selected bit. First part is the active/foreground layer; the rest are
+        // deselected ⇒ derived background. `setActive(0)` below re-asserts the
+        // SET-of-one regardless.
+        l.selected   = (pi == 0);
         layers[pi] = l;
     }
 
