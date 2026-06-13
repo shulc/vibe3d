@@ -190,6 +190,30 @@ unittest { // undo of an item select (UI-undo) restores the prior set + primary.
     assert(isSelected(0) && !isSelected(1) && !isSelected(2));
 }
 
+unittest { // Stage 4 /api/selection final shape: selTypeOrder + items view.
+    threeLayers();
+    cmd("layer.select index:1 mode:add");        // A,B selected; B primary
+    auto sel = selection();
+    // selTypeOrder is the full most-recent-first ordering; the front matches
+    // selType (an item select made Item current).
+    assert("selTypeOrder" in sel, "/api/selection carries selTypeOrder");
+    auto order = sel["selTypeOrder"].array;
+    assert(order.length == 4, "selTypeOrder lists all four types");
+    assert(order[0].str == sel["selType"].str,
+        "selTypeOrder front == current selType");
+    assert(order[0].str == "item", "item select promotes item to the front");
+    // items mirrors /api/layers' per-layer {selected,primary} in layer order.
+    assert("items" in sel, "/api/selection carries an items view");
+    auto items = sel["items"].array;
+    assert(items.length == 3, "one items entry per layer");
+    assert(items[0]["selected"].type == JSONType.true_  && items[0]["primary"].type == JSONType.false_,
+        "A selected, not primary");
+    assert(items[1]["selected"].type == JSONType.true_  && items[1]["primary"].type == JSONType.true_,
+        "B selected + primary");
+    assert(items[2]["selected"].type == JSONType.false_ && items[2]["primary"].type == JSONType.false_,
+        "C neither selected nor primary");
+}
+
 unittest { // /api/reset restores a clean SET-of-one (cross-test bleed guard).
     threeLayers();
     cmd("layer.select index:1 mode:add");

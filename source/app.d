@@ -2405,13 +2405,35 @@ void main(string[] args) {
             }
             // selType (Stage 1): the CURRENT selection type from the recent
             // ordering — lowercase singular token (vertex/edge/polygon/item),
-            // matching the geometry payload's vocabulary. In Stage 1 it always
-            // tracks editMode (Item is never current yet) but it reports the
-            // authority, not editMode, so item selection surfaces it later.
-            return format(`{"mode":"%s","selType":"%s",` ~
+            // matching the geometry payload's vocabulary. `selTypeOrder` is the
+            // full most-recent-first ordering (front == current); `items` is the
+            // item (layer) selection view — one `{selected,primary}` entry per
+            // layer, in layer order. These are the Stage 4 final shapes; the
+            // geometry-selection arrays are unchanged.
+            import std.array : appender;
+            auto orderBuf = appender!string();
+            orderBuf.put("[");
+            foreach (oi, t; selTypeOrder.order) {
+                if (oi > 0) orderBuf.put(",");
+                orderBuf.put(`"` ~ selTypeToken(t) ~ `"`);
+            }
+            orderBuf.put("]");
+            auto itemsBuf = appender!string();
+            itemsBuf.put("[");
+            foreach (li, l; document.layers) {
+                if (li > 0) itemsBuf.put(",");
+                itemsBuf.put(format(`{"selected":%s,"primary":%s}`,
+                    l.selected ? "true" : "false",
+                    document.isPrimary(l) ? "true" : "false"));
+            }
+            itemsBuf.put("]");
+            return format(`{"mode":"%s","selType":"%s","selTypeOrder":%s,` ~
+                `"items":%s,` ~
                 `"selectedVertices":%s,"selectedEdges":%s,"selectedFaces":%s}`,
                 modeName,
                 selTypeToken(selTypeOrder.current()),
+                orderBuf.data,
+                itemsBuf.data,
                 buildJsonArray(mesh.selectedVertices),
                 buildJsonArray(mesh.selectedEdges),
                 buildJsonArray(mesh.selectedFaces));
@@ -5085,16 +5107,26 @@ void main(string[] args) {
                 int idx = cast(int)i;
                 ImGui.PushID(idx);
 
-                // Active selectable (radio-like). Selecting an already-active
-                // layer is a no-op switch (the command compares object identity),
-                // so guard against re-dispatching it every frame the row is held.
-                bool isActive = (i == document.activeIndex);
-                if (ImGui.Selectable("##active", isActive,
+                // Primary / selection indicator + exclusive-select handle
+                // (Stage 4). The primary layer is the single edit target; the
+                // `selected` layers form the foreground set. The marker shows
+                // both states at a glance:
+                //   ">"  primary (always selected + visible)
+                //   "*"  selected (foreground) but not primary
+                //   " "  deselected (derived background)
+                // Clicking this handle is an EXCLUSIVE select (`mode:set`):
+                // it makes this the sole selected layer AND the primary. The
+                // command compares object identity, so re-clicking the primary
+                // is a no-op switch; guard against re-dispatching every frame
+                // the row is held. Multi-select lives on the name (ctrl-click).
+                bool isPrimaryRow = document.isPrimary(l);
+                immutable marker = isPrimaryRow ? ">" : (l.selected ? "*" : " ");
+                if (ImGui.Selectable(marker, isPrimaryRow,
                                      ImGuiSelectableFlags.AllowItemOverlap,
                                      ImVec2(14, 0))) {
-                    if (!isActive && commandHandlerDelegate !is null)
+                    if (!isPrimaryRow && commandHandlerDelegate !is null)
                         commandHandlerDelegate("layer.select",
-                            `{"index":` ~ to!string(idx) ~ `}`);
+                            `{"index":` ~ to!string(idx) ~ `,"mode":"set"}`);
                 }
                 ImGui.SameLine();
 
@@ -5123,14 +5155,40 @@ void main(string[] args) {
                         layerRenameIndex = -1;
                     }
                 } else {
-                    // Plain label. Double-click opens the inline editor seeded
-                    // with the current name. The label also serves as the
-                    // drag-to-reorder handle (source + target, below).
-                    ImGui.Selectable(l.name.length ? l.name : "(unnamed)", false,
-                                     ImGuiSelectableFlags.AllowDoubleClick,
-                                     ImVec2(140, 0));
-                    if (ImGui.IsItemHovered()
-                        && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left)) {
+                    // Plain label — also the multi-select target (Stage 4).
+                    // It is highlighted when the layer is in the foreground
+                    // (selected) set, so the panel reflects the whole set, not
+                    // just the primary. Click semantics:
+                    //   plain click → `layer.select mode:set`    (exclusive
+                    //                 select + make primary)
+                    //   ctrl-click  → `layer.select mode:toggle` (add/remove
+                    //                 this layer from the foreground set;
+                    //                 removing the primary promotes another)
+                    // Double-click still opens the inline rename editor; the
+                    // label is also the drag-to-reorder handle (below). Every
+                    // path dispatches a `layer.*` command — no direct document
+                    // mutation — so it is undoable + headless-identical.
+                    bool nameClicked =
+                        ImGui.Selectable(l.name.length ? l.name : "(unnamed)",
+                                         l.selected,
+                                         ImGuiSelectableFlags.AllowDoubleClick,
+                                         ImVec2(140, 0));
+                    bool dbl = ImGui.IsItemHovered()
+                        && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
+                    if (nameClicked && !dbl && commandHandlerDelegate !is null) {
+                        // io.KeyCtrl is the frame's merged Ctrl-modifier state
+                        // (matches every other modifier read in the app).
+                        immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
+                        // Plain click on the already-primary row is a no-op
+                        // switch; skip it so a single-select drag-press doesn't
+                        // re-dispatch every frame. Ctrl-click always dispatches
+                        // (it must be able to deselect the primary too).
+                        if (io.KeyCtrl || !document.isPrimary(l))
+                            commandHandlerDelegate("layer.select",
+                                `{"index":` ~ to!string(idx) ~ `,"mode":`
+                                ~ mode ~ `}`);
+                    }
+                    if (dbl) {
                         layerRenameIndex = idx;
                         layerRenameBuf[] = 0;
                         auto src = l.name;
