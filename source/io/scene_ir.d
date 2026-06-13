@@ -39,6 +39,16 @@ struct ImportedPart {
     uint[]            faceMaterial; // index into surfaces; empty => all 0
     ImportedSurface[] surfaces;
     string            name;
+    // Per-CORNER UV stream (the discontinuous `"uv"` PolyVertex map source).
+    // Flat, parallel to the corners of `faces` in face-then-corner order, dim 2:
+    // length == Σ faces[k].length * 2; corner `c` of face `k` is at
+    // `(Σ faces[0..k].length + c) * 2 .. + 2`. EMPTY ⇒ no UV (the importer found
+    // none) — the same empty-means-default convention as `faceSubpatch` /
+    // `faceMaterial`. The assemblers carry this through the SAME skip-aware face
+    // drop they apply to `faces`, so when a face is dropped its UV corners drop
+    // too and the stream stays aligned with the emitted faces. After
+    // `buildLoops`, it seeds the `"uv"` map via `faceCornerLoop`.
+    float[]           uv;
 }
 
 /// The proto-layer model: a list of parts. When layers land this becomes the
@@ -57,6 +67,21 @@ private Surface toSurface(const ref ImportedSurface s) {
     o.glossiness     = s.glossiness;
     o.opacity        = s.opacity;
     return o;
+}
+
+/// Seed the `"uv"` PolyVertex map of `m` from a flat per-corner UV stream that is
+/// already in faces-as-built corner order (the CSR loop order `buildLoops` laid
+/// down). Called by every importer assembler AFTER `buildLoops`. A no-op when the
+/// scene carried no UV (`hasUv == false`) so a UV-less import never grows a map.
+/// The stream length is expected to be `loops.length * 2`; a defensive mismatch
+/// (e.g. an upstream bug) drops the map rather than misaligning corners.
+private void populateUvMap(ref Mesh m, const float[] uv, bool hasUv) {
+    if (!hasUv) return;
+    const size_t want = m.loops.length * 2;
+    if (uv.length != want) return;                 // defensive: refuse a misaligned stream
+    auto map = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    if (map is null) return;                        // name clash / empty mesh — leave UV-less
+    map.data[] = uv[];                              // corner order == loop order, 1:1
 }
 
 /// v1 adapter: merge every part of `scene` into a single Mesh.
@@ -100,17 +125,31 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
     uint[][] allFaces;
     bool[]   allSubpatch;   // parallel to allFaces
     uint[]   allMaterial;   // parallel to allFaces (already remapped to merged surfaces)
+    // Per-corner UV stream parallel to the SURVIVING corners of allFaces (dim 2),
+    // accumulated through the SAME face-drop logic so it stays index-aligned. A
+    // scene with no UV anywhere leaves this empty (no `"uv"` map is created).
+    float[]  allUv;
+    bool     anyUv = false;
 
     uint vertexOffset = 0;
     foreach (pi, ref part; scene.parts) {
         const remap = surfRemap[pi];
+        const bool partHasUv = part.uv.length > 0;
+        if (partHasUv) anyUv = true;
+        // Running corner base into THIS part's uv stream (face-then-corner order),
+        // advanced for EVERY local face (including dropped ones) so the slice for
+        // a surviving face is read at the right offset.
+        size_t cornerBase = 0;
         foreach (localFace, face; part.faces) {
-            // Validate before appending so allFaces / allSubpatch / allMaterial
-            // stay parallel. The LWO reader already validates upstream, but this
-            // generic seam also serves assimp (Phase 4), whose parts are not
+            const size_t faceBase = cornerBase;
+            cornerBase += face.length;                     // advance regardless of drop
+
+            // Validate before appending so allFaces / allSubpatch / allMaterial /
+            // allUv stay parallel. The LWO reader already validates upstream, but
+            // this generic seam also serves assimp (Phase 4), whose parts are not
             // pre-checked. Skip policy intentionally mirrors importLWO/native's
             // "drop < 3-vert faces"; we extend it to out-of-range indices here.
-            if (face.length < 3) continue;                 // drop degenerate
+            if (face.length < 3) continue;                 // drop degenerate (UV corners drop too)
             bool bad = false;
             foreach (idx; face)
                 if (idx >= part.vertices.length) { bad = true; break; }
@@ -132,6 +171,20 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
                 ? part.faceMaterial[localFace] : 0u;
             const mergedMat = (localMat < remap.length) ? remap[localMat] : 0u;
             allMaterial ~= mergedMat;
+
+            // UV corners for this surviving face. If THIS part has a UV stream,
+            // copy its slice (guarded against a short stream); if it has none,
+            // zero-fill so a multi-part scene where only some parts carry UV still
+            // yields one aligned stream. Skipped entirely when no part has UV.
+            if (anyUv) {
+                foreach (k; 0 .. face.length) {
+                    const size_t src = (faceBase + k) * 2;
+                    if (partHasUv && src + 2 <= part.uv.length)
+                        allUv ~= part.uv[src .. src + 2];
+                    else
+                        allUv ~= [0.0f, 0.0f];
+                }
+            }
         }
         allVerts ~= part.vertices;
         vertexOffset += cast(uint) part.vertices.length;
@@ -148,6 +201,11 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
     foreach (face; allFaces)
         m.addFaceFast(edgeLookup, face);
     m.buildLoops();
+
+    // Per-corner UV → the `"uv"` PolyVertex map. `allUv` is in faces-as-emitted
+    // corner order (face-then-corner), which is exactly the CSR loop order
+    // `buildLoops` just laid down, so `faceCornerLoop(fi, c)` indexes it 1:1.
+    populateUvMap(m, allUv, anyUv);
 
     // Apply per-face subpatch flags (parallel to faces). After resizeSubpatch
     // the subpatch storage is sized to m.faces.length == allSubpatch.length, and
@@ -200,8 +258,14 @@ private Mesh partToMesh(const ref ImportedPart part) {
     uint[][] faces;
     bool[]   subpatch;   // parallel to faces
     uint[]   material;   // parallel to faces (remapped to part-local surfaces)
+    float[]  uv;         // per-corner, parallel to SURVIVING corners of faces (dim 2)
+    const bool partHasUv = part.uv.length > 0;
+    size_t cornerBase = 0;
     foreach (localFace, face; part.faces) {
-        if (face.length < 3) continue;                 // drop degenerate
+        const size_t faceBase = cornerBase;
+        cornerBase += face.length;                     // advance regardless of drop
+
+        if (face.length < 3) continue;                 // drop degenerate (UV corners drop too)
         bool bad = false;
         foreach (idx; face)
             if (idx >= part.vertices.length) { bad = true; break; }
@@ -215,6 +279,16 @@ private Mesh partToMesh(const ref ImportedPart part) {
         const localMat = (localFace < part.faceMaterial.length)
             ? part.faceMaterial[localFace] : 0u;
         material ~= (localMat < remap.length) ? remap[localMat] : 0u;
+
+        if (partHasUv) {
+            foreach (k; 0 .. face.length) {
+                const size_t src = (faceBase + k) * 2;
+                if (src + 2 <= part.uv.length)
+                    uv ~= part.uv[src .. src + 2];
+                else
+                    uv ~= [0.0f, 0.0f];                 // defensive: short stream
+            }
+        }
     }
 
     // Empty part => fresh empty mesh (mirrors flattenToMesh's empty-scene path).
@@ -227,6 +301,9 @@ private Mesh partToMesh(const ref ImportedPart part) {
     foreach (face; faces)
         m.addFaceFast(edgeLookup, face);
     m.buildLoops();
+
+    // Per-corner UV → the `"uv"` PolyVertex map (corner order == loop order).
+    populateUvMap(m, uv, partHasUv);
 
     // Subpatch flags (never read the allocating `isSubpatch` @property in a loop).
     m.resizeSubpatch();
@@ -306,11 +383,21 @@ Mesh flattenDocument(const ref Document doc) {
     uint[][] allFaces;
     bool[]   allSubpatch;
     uint[]   allMaterial;
+    // Per-corner UV stream parallel to the surviving corners of allFaces (dim 2),
+    // read from each visible layer mesh's `"uv"` PolyVertex map and concatenated
+    // through the SAME face-drop logic. Empty when no visible layer carries a UV
+    // map — so a UV-less document flattens to a UV-less mesh (export unchanged).
+    float[]  allUv;
+    bool     anyUv = false;
 
     uint vertexOffset = 0;
     foreach (l; doc.layers) {
         if (!l.visible) continue;
         const ref Mesh src = l.mesh;
+        const(MeshMap)* srcUv = src.meshMap(kUvMapName);
+        const bool layerHasUv = srcUv !is null
+            && srcUv.domain == MapDomain.PolyVertex && srcUv.dim == 2;
+        if (layerHasUv) anyUv = true;
 
         // Per-layer surface remap into the merged table.
         uint[] remap;
@@ -329,7 +416,7 @@ Mesh flattenDocument(const ref Document doc) {
 
         foreach (fi; 0 .. src.faces.length) {
             auto face = src.faces[fi];
-            if (face.length < 3) continue;            // drop degenerate
+            if (face.length < 3) continue;            // drop degenerate (UV corners drop too)
             uint[] offset;
             offset.length = face.length;
             foreach (k, idx; face)
@@ -340,6 +427,24 @@ Mesh flattenDocument(const ref Document doc) {
 
             const localMat = (fi < src.faceMaterial.length) ? src.faceMaterial[fi] : 0u;
             allMaterial ~= (localMat < remap.length) ? remap[localMat] : 0u;
+
+            // UV corners for this surviving face, addressed through the source
+            // mesh's own CSR layout (faceCornerLoop) — not a running counter,
+            // because the source already has valid loops. Zero-fill when this
+            // layer has no UV but another visible layer does.
+            if (anyUv) {
+                foreach (uint k; 0 .. cast(uint) face.length) {
+                    if (layerHasUv) {
+                        const size_t loop = src.faceCornerLoop(cast(uint) fi, k);
+                        if (loop != size_t.max && loop * 2 + 2 <= srcUv.data.length)
+                            allUv ~= srcUv.data[loop * 2 .. loop * 2 + 2];
+                        else
+                            allUv ~= [0.0f, 0.0f];
+                    } else {
+                        allUv ~= [0.0f, 0.0f];
+                    }
+                }
+            }
         }
         allVerts ~= src.vertices.dup;
         vertexOffset += cast(uint) src.vertices.length;
@@ -354,6 +459,9 @@ Mesh flattenDocument(const ref Document doc) {
     foreach (face; allFaces)
         m.addFaceFast(edgeLookup, face);
     m.buildLoops();
+
+    // Per-corner UV → the flattened mesh's `"uv"` map (corner order == loop order).
+    populateUvMap(m, allUv, anyUv);
 
     m.resizeSubpatch();
     foreach (fi, flag; allSubpatch)

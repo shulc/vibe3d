@@ -172,19 +172,40 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
             Vec3(cast(float) v.x, cast(float) v.y, cast(float) v.z));
     }
 
+    // UV (decision A4 REVERSED for UV — GAP 4). assimp stores UV PER-VERTEX on
+    // its split vertices in `mTextureCoords[0]`; we capture a per-CORNER stream
+    // NOW, against the ORIGINAL (pre-weld) face corners, so the discontinuous UV
+    // survives the positional weld that is about to collapse the geometry. The
+    // stream is built in LOCK-STEP with the `faces` loop below (same `< 3` drop),
+    // then passed THROUGH `weldPositional` so it rides the IDENTICAL corner-drop /
+    // face-drop decisions and stays 1:1 with the surviving corners.
+    //   * `mNumUVComponents[0] >= 2` AND `mTextureCoords[0] !is null` ⇒ UV present.
+    //   * Normals stay discarded (out of scope for #5).
+    const bool hasUv = mesh.mNumUVComponents[0] >= 2
+                       && mesh.mTextureCoords[0] !is null;
+
     // Faces: keep arity (n-gon, A3); drop points / lines (< 3 indices).
     // Guard mFaces is null the way the vertex path guards mVertices: a
     // points-only / lines-only mesh can report mNumFaces but leave mFaces null.
     uint[][] faces;
+    float[]  uv;                       // per-corner (dim 2), parallel to `faces` corners
     if (mesh.mFaces !is null)
     foreach (fi; 0 .. mesh.mNumFaces) {
         const aiFace f = mesh.mFaces[fi];
-        if (f.mNumIndices < 3) continue;
+        if (f.mNumIndices < 3) continue;   // dropped here ⇒ its UV corners are never appended
         uint[] idx;
         idx.length = f.mNumIndices;
         foreach (k; 0 .. f.mNumIndices)
             idx[k] = f.mIndices[k];
         faces ~= idx;
+
+        if (hasUv) {
+            foreach (k; 0 .. f.mNumIndices) {
+                const uint vi = f.mIndices[k];
+                const t = mesh.mTextureCoords[0][vi];   // per-vertex UV at this corner's vertex
+                uv ~= [cast(float) t.x, cast(float) t.y];
+            }
+        }
     }
 
     // faceMaterial: every face shares this mesh's material index.
@@ -193,12 +214,14 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
     foreach (ref fm; faceMaterial)
         fm = mesh.mMaterialIndex;
 
-    // B5 — positional weld: collapse coincident verts, remap face indices.
-    weldPositional(verts, faces);
+    // B5 — positional weld: collapse coincident verts, remap face indices, and
+    // (GAP 4) carry the per-corner UV through the SAME corner/face drops.
+    weldPositional(verts, faces, uv);
 
     part.vertices     = verts;
     part.faces        = faces;
     part.faceMaterial = faceMaterial;
+    part.uv           = uv;            // empty when the source had no UV channel
     return part;
 }
 
@@ -210,8 +233,19 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
 /// vertex, rewriting `faces` to reference the survivors. O(n) via a quantised
 /// hash key (positions snapped to an epsilon grid). `verts` and `faces` are
 /// replaced in place.
-private void weldPositional(ref Vec3[] verts, ref uint[][] faces) {
+///
+/// GAP-4 (decision A4 reversed for UV): `uv` is an OPTIONAL per-corner stream
+/// (dim 2) parallel to the corners of `faces` BEFORE the weld. When non-empty it
+/// rides the IDENTICAL corner-collapse / wrap-dup / sub-3-face drops applied to
+/// `faces`, and is replaced in place with the stream parallel to the SURVIVING
+/// corners — so per-corner UV survives even though the geometry vertex it sat on
+/// is welded away. Pass an empty `uv` (the default) when the source had none.
+/// A NAIVE post-weld re-keying is WRONG: the weld drops corners, and dropped
+/// corners can't be recovered after the fact — capture pre-weld, ride the drops.
+private void weldPositional(ref Vec3[] verts, ref uint[][] faces,
+                            ref float[] uv) {
     if (verts.length == 0) return;
+    const bool hasUv = uv.length > 0;
 
     // Quantise to an integer grid one epsilon wide. Coincident verts (within
     // epsilon) land in the same cell key in the common case; the inverse-grid
@@ -242,24 +276,47 @@ private void weldPositional(ref Vec3[] verts, ref uint[][] faces) {
 
     // Rewrite faces through the remap; collapse runs of the now-identical
     // index (a weld can fold two corners of one face together → drop the dup),
-    // and drop faces that fall below 3 distinct corners.
+    // and drop faces that fall below 3 distinct corners. The per-corner UV
+    // stream (when present) rides every one of these decisions in lock-step.
     uint[][] out_;
+    float[]  out_uv;
+    size_t   uvCursor = 0;             // per-corner read cursor into the OLD `uv`
     foreach (face; faces) {
-        uint[] nf;
-        foreach (idx; face) {
+        uint[]  nf;
+        float[] nfUv;                  // surviving-corner UV for THIS face
+        foreach (k, idx; face) {
             const r = remap[idx];
-            if (nf.length == 0 || nf[$ - 1] != r)
+            // The UV for this original corner (read in lock-step, advancing the
+            // cursor even when the corner is about to be collapsed away).
+            float cu = 0.0f, cv = 0.0f;
+            if (hasUv && uvCursor + 2 <= uv.length) {
+                cu = uv[uvCursor];
+                cv = uv[uvCursor + 1];
+            }
+            if (hasUv) uvCursor += 2;
+            // Keep the corner only if it isn't a consecutive duplicate of the
+            // previous survivor (same geometry collapse the un-UV'd path does).
+            if (nf.length == 0 || nf[$ - 1] != r) {
                 nf ~= r;
+                if (hasUv) nfUv ~= [cu, cv];
+            }
         }
-        // close the wrap-around (last == first)
-        if (nf.length >= 2 && nf[0] == nf[$ - 1])
+        // close the wrap-around (last == first) — drop the trailing corner AND
+        // its UV so the two stay parallel.
+        if (nf.length >= 2 && nf[0] == nf[$ - 1]) {
             nf = nf[0 .. $ - 1];
-        if (nf.length >= 3)
+            if (hasUv) nfUv = nfUv[0 .. $ - 1];
+        }
+        // Drop sub-3-corner faces (and their UV) entirely.
+        if (nf.length >= 3) {
             out_ ~= nf;
+            if (hasUv) out_uv ~= nfUv;
+        }
     }
 
     verts = welded;
     faces = out_;
+    if (hasUv) uv = out_uv;            // now parallel to the surviving corners
 }
 
 // ---------------------------------------------------------------------------

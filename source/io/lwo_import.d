@@ -230,6 +230,13 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                                 ? cast(string) body[0..4].idup
                                 : "?"));
         } else {
+            // VMAP/VMAD TXUV (per-corner UV) are reachable here as ordinary IFF
+            // sub-chunks (bodies at data[pos..chunkEnd]), but projecting them onto
+            // the per-corner ImportedPart.uv stream is a feature in its own right
+            // (point→corners for continuous VMAP, (point,poly)→corner for
+            // discontinuous VMAD, both layer-local) and is DEFERRED to the LWO UV
+            // stage (uv_maps_plan §Stage 6) alongside LWO UV export. assimp import
+            // covers #5's "stop discarding UVs" goal in the meantime.
             lwoInfo(format("skip chunk %s (size %d)",
                             cast(string) tagBytes[].idup, sz));
         }
