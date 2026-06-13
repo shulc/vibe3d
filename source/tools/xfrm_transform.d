@@ -3907,12 +3907,15 @@ private:
     }
 
     // ---------------------------------------------------------------------
-    // Symmetry PASS B (doc/symmetry_deform_plan.md Stage 2). Runs AFTER the
-    // driver pass has written `mesh.vertices` for the selection. It mirrors
+    // Symmetry PASS B (doc/symmetry_deform_plan.md Stage 2 + 2b). Runs AFTER
+    // the driver pass has written `mesh.vertices` for the selection. It mirrors
     // the drag onto the paired sub-set so the editor carries exactly ONE
-    // symmetry model on the global fold path (the position-copy tails in
-    // xform_kernels.d and the per-cluster path are out of scope — kept for
-    // their own stages). Two behaviours, split by falloff CLASS:
+    // symmetry model on the GLOBAL fold path AND the PER-CLUSTER (ACEN.Local)
+    // fold path (Stage 2b — the live per-cluster translate/rotate/scale routes
+    // through applyFold → here with a non-null `clusterM`). The remaining
+    // position-copy tails (standalone kernels in xform_kernels.d:56/266 and the
+    // deformer tools' applySymmetryToDrag) are out of scope — kept for their own
+    // stages. Two behaviours, split by falloff CLASS:
     //
     //   • DISTANCE-based falloff (Linear/Radial/Screen/Lasso/Cylinder, or
     //     Element with no membership gate): a real second weighted apply of
@@ -3923,6 +3926,13 @@ private:
     //     so for a SYMMETRIC falloff (equal weights) it reproduces the old
     //     position-copy bit-for-bit (test_symm_during_drag anchor), while an
     //     ASYMMETRIC distance falloff gives each side its own attenuation.
+    //     Stage 2b — PER-CLUSTER (ACEN.Local, `clusterM` non-null): each mirror
+    //     vertex `mi` inherits its DRIVER's cluster `c`, reflected:
+    //     M'=Slin·clusterM[c]·Slin about S·clusterCenter[c]. Because the kernel
+    //     keys its per-cluster matrix on the vertex's OWN cluster, Pass B builds
+    //     a synthetic one-cluster-per-mirror-entry table (cpB/clusterMpB) so
+    //     `mi`'s synthetic cluster carries the reflected DRIVER operation, NOT
+    //     `mi`'s own cluster nor the UNREFLECTED `cp.centers[clusterOf[mi]]`.
     //
     //   • MEMBERSHIP / vid-keyed falloff (Selection, Element with a
     //     connect-mask / anchor-ring, or a Composite containing one): the
@@ -3984,9 +3994,16 @@ private:
         int[]  mirrorIndices;
         Vec3[] mirrorBaseline;
         int[]  mirrorDriverOf;
+        // Stage 2b — the DRIVER's cluster id per mirror entry (ACEN.Local).
+        // The mirror vertex inherits its DRIVER's reflected cluster operation,
+        // NOT its own cluster's. clusterOf is sampled from the driver `vi`
+        // (cp.clusterOf), parallel to mirrorIndices; -1 when the driver is in
+        // no cluster (global M applies on Pass B for that entry).
+        int[]  mirrorDriverCluster;
         mirrorIndices.reserve(vertexIndicesToProcess.length);
         mirrorBaseline.reserve(vertexIndicesToProcess.length);
         mirrorDriverOf.reserve(vertexIndicesToProcess.length);
+        mirrorDriverCluster.reserve(vertexIndicesToProcess.length);
 
         foreach (vi; vertexIndicesToProcess) {
             if (vi < 0 || vi >= cast(int)nv) continue;
@@ -4007,17 +4024,21 @@ private:
             mirrorIndices  ~= mi;
             mirrorBaseline ~= baseline[mi];          // mirror vert's OWN pre-drag pos
             mirrorDriverOf ~= vi;
+            // DRIVER's cluster (Stage 2b): read from the driver vi, NOT mi.
+            int dc = -1;
+            if (cp.active && vi < cast(int)cp.clusterOf.length) {
+                int c = cp.clusterOf[vi];
+                if (c >= 0 && c < cast(int)cp.centers.length) dc = c;
+            }
+            mirrorDriverCluster ~= dc;
         }
 
         if (mirrorIndices.length == 0) return;
 
-        // Reflected pivot + conjugated matrices (Stage 1 corrected formula):
+        // Reflected pivot + conjugated matrix (Stage 1 corrected formula):
         // pivotR = S·pivot (full affine), M' = Slin·M·Slin (linear-only,
-        // origin-fixing). Per-cluster matrices are reflected the same way; the
-        // mirror vert reuses ITS DRIVER's cluster matrix so the cluster's
-        // operation mirrors (Stage 2b would refine the cluster ASSIGNMENT;
-        // here the global M is the common case and clusterM is null unless
-        // ACEN.Local is active).
+        // origin-fixing). `Mp` is the GLOBAL mirror matrix used for non-cluster
+        // mirror verts (and the only matrix when clusterM is null).
         float[16] S    = reflectionMatrix(dragSymmetry.planePoint,
                                           dragSymmetry.planeNormal);
         float[16] Slin = reflectionMatrix(Vec3(0, 0, 0),
@@ -4025,24 +4046,83 @@ private:
         Vec3 pivotR    = applyAffine(S, pivot);
         float[16] Mp   = matMul4(Slin, matMul4(M, Slin));
 
-        float[16][] clusterMp = null;
-        if (clusterM !is null) {
-            clusterMp = new float[16][](clusterM.length);
-            foreach (cid; 0 .. clusterM.length)
-                clusterMp[cid] = matMul4(Slin, matMul4(clusterM[cid], Slin));
-        }
+        // Stage 2b — REFLECTED PER-CLUSTER mirror (ACEN.Local). The kernel
+        // resolves a per-cluster matrix + pivot from `clusterOf[vertex]`. For
+        // the mirror sub-set the vertex is `mi` but its operation is defined by
+        // its DRIVER's cluster `c`, reflected: M' = Slin·clusterM[c]·Slin about
+        // the reflected cluster pivot S·clusterCenter[c]. The kernel keys on
+        // the MIRROR vertex's own cluster, so we cannot reuse the driver-pass
+        // `cp`/`clusterMp` directly (that would use `clusterOf[mi]` + the
+        // UNREFLECTED `cp.centers[clusterOf[mi]]`). Instead we build a Pass-B-
+        // ONLY cluster table that gives EACH mirror entry its OWN synthetic
+        // cluster id `k`, whose center is the reflected DRIVER pivot and whose
+        // matrix is the reflected DRIVER cluster matrix. Mirror entries whose
+        // driver is in no cluster fall through to the global `Mp`/`pivotR`.
+        //
+        // When clusterM is null (global fold, the common case) Pass B stays a
+        // single global matrix over the whole mirror sub-set — byte-identical
+        // to Stage 2.
+        SymmetryPacket noSym;   // enabled == false (Pass B must not re-mirror)
 
-        // Pass B is a single-matrix weighted loop over the mirror sub-set with
-        // its OWN ordinal baseline — the kernel needs no per-vertex-matrix
-        // change. Distance falloffs read `weightVerts[mi]` (= mirrorBaseline,
-        // mesh-length-indexed via baseline) so each mirror vert is weighted at
-        // its OWN mirrored position. Symmetry is DISABLED for this call so it
-        // does not re-mirror. NB: pass the mesh-length `baseline` as weightVerts
-        // so the kernel's vid-indexed weight read matches the driver pass.
-        SymmetryPacket noSym;   // enabled == false
-        applyXformMatrix(mesh, mirrorIndices, mirrorBaseline, pivotR, Mp,
-                         blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
-                         clusterMp, noSym, toProcess, /*weightVerts=*/ baseline);
+        if (clusterM is null) {
+            // GLOBAL Pass B (Stage 2, unchanged): one matrix + one pivot over
+            // the mirror sub-set, each mirror vert weighted at its OWN mirrored
+            // baseline (weightVerts == mesh-length `baseline`).
+            applyXformMatrix(mesh, mirrorIndices, mirrorBaseline, pivotR, Mp,
+                             blendModeForMeasure(), dragFalloff, cachedVp,
+                             cp, ap, null, noSym, toProcess,
+                             /*weightVerts=*/ baseline);
+        } else {
+            // PER-CLUSTER Pass B (Stage 2b): synthetic one-cluster-per-mirror-
+            // entry table so the kernel hands each mirror vertex its DRIVER's
+            // reflected cluster operation. `cpB.centers` is padded to length ≥2
+            // so `ClusterPivots.active` stays true even for a single mirror
+            // vertex; `cpB.clusterOf` is mesh-length, all -1 except the mirror
+            // verts. `apB` is a parallel-length stub (the matrix kernel reads
+            // `clusterM` for the transform, not `ap`, but it must stay
+            // length-consistent / active). Mirror verts whose driver is
+            // unclustered (synthetic id -1 via clusterOf staying -1) take the
+            // global `Mp` about `pivotR`.
+            TransformTool.ClusterPivots cpB;
+            TransformTool.ClusterAxes   apB;
+            size_t nSyn = mirrorIndices.length < 2 ? 2 : mirrorIndices.length;
+            cpB.centers   = new Vec3[](nSyn);
+            apB.right     = new Vec3[](nSyn);
+            apB.up        = new Vec3[](nSyn);
+            apB.fwd       = new Vec3[](nSyn);
+            foreach (k; 0 .. nSyn) {
+                cpB.centers[k] = pivotR;          // harmless default for pads
+                apB.right[k]   = Vec3(1, 0, 0);
+                apB.up[k]      = Vec3(0, 1, 0);
+                apB.fwd[k]     = Vec3(0, 0, 1);
+            }
+            cpB.clusterOf = new int[](nv);
+            cpB.clusterOf[] = -1;
+
+            float[16][] clusterMpB = new float[16][](nSyn);
+            foreach (k; 0 .. nSyn) clusterMpB[k] = Mp;   // pad default = global
+
+            foreach (k, mi; mirrorIndices) {
+                int c = mirrorDriverCluster[k];
+                if (c < 0 || c >= cast(int)clusterM.length) {
+                    // Driver unclustered → leave clusterOf[mi] == -1 so the
+                    // kernel uses the global Mp about pivotR (cpB falls back).
+                    continue;
+                }
+                cpB.clusterOf[mi]  = cast(int)k;
+                cpB.centers[k]     = applyAffine(S, cp.centers[c]); // S·clusterPivot
+                clusterMpB[k]      = matMul4(Slin,
+                                             matMul4(clusterM[c], Slin)); // Slin·cM·Slin
+            }
+
+            // pivotFallback = pivotR (global mirror pivot) for any mirror vert
+            // not assigned a synthetic cluster. weightVerts == `baseline` so
+            // distance falloffs read each mirror vert's OWN mirrored weight.
+            applyXformMatrix(mesh, mirrorIndices, mirrorBaseline, pivotR, Mp,
+                             blendModeForMeasure(), dragFalloff, cachedVp,
+                             cpB, apB, clusterMpB, noSym, toProcess,
+                             /*weightVerts=*/ baseline);
+        }
 
         // Fold the mirror sub-set into the upload/undo touched set (replacing
         // the deleted tail's outAlsoTouched OR-in).
@@ -4159,11 +4239,14 @@ private:
             mesh.vertices[vi].y += worldDelta.y;
             mesh.vertices[vi].z += worldDelta.z;
         }
-        if (dragSymmetry.enabled
-            && dragSymmetry.pairOf.length == mesh.vertices.length) {
-            import symmetry : applySymmetryMirror;
-            applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
-        }
+        // Stage 2b (doc/symmetry_deform_plan.md): the per-cluster
+        // position-copy symmetry tail was DELETED here. The live per-cluster
+        // ACEN.Local drag routes through applyFold → applyFoldSymmetryMirror's
+        // reflected per-cluster Pass B (Slin·clusterM[c]·Slin about
+        // S·clusterPivot[c], c = driver's cluster), so this method (now with no
+        // live caller — the wrapper accumulates run.t and folds) carries no
+        // mirror. If it is ever re-wired into the live path it must mirror via
+        // applyFoldSymmetryMirror, NOT a position-copy.
     }
 
     // Connected-component BFS seeded at the picked vert, written into
