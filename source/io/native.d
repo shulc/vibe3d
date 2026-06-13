@@ -26,13 +26,16 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // editor model: vertices, n-gon faces, per-face subpatch flags, the surface
 // registry and per-face material indices.
 //
-// v3 schema (current, the ONLY shape read or written — selection-types Stage 3).
-// It wraps one or more layers around the shared mesh sub-object. Two changes
-// from the retired v2 shape: the per-layer `selected` flag now persists the
+// v4 schema (current, the ONLY shape read or written). It wraps one or more
+// layers around the shared mesh sub-object. The layer envelope is unchanged
+// from v3 (selection-types Stage 3): the per-layer `selected` flag persists the
 // item-selection SET (a layer's background state derives — see below), and the
-// document's edit target is named by `primaryLayer` (replacing `activeLayer`):
+// document's edit target is named by `primaryLayer` (replacing the old
+// `activeLayer`). v4 adds an optional per-corner `uvMaps` block to the shared
+// mesh sub-object (UV-maps Stage 3 — see below); only the version int changes
+// in the envelope:
 //   {
-//     "formatVersion": 3,
+//     "formatVersion": 4,
 //     "primaryLayer": 0,
 //     "layers": [
 //       { "name": "Layer 1", "visible": true, "selected": true,
@@ -46,36 +49,51 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // is NO `activeLayer` key — `primaryLayer` indexes the primary (edit-target)
 // layer, which the reader forces selected + visible.
 //
-// The shared "mesh" sub-object (unchanged across every schema version):
+// The shared "mesh" sub-object:
 //   {
 //     "vertices":     [[x,y,z], ...],
 //     "faces":        [[i,j,k,...], ...],          // n-gon, vertex indices
 //     "faceSubpatch": [bool, ...],                 // optional; default false
 //     "faceMaterial": [uint, ...],                 // optional; default 0
 //     "surfaces":     [{ "name", "baseColor":[r,g,b],
-//                        "diffuse", "specular", "glossiness", "opacity" }, ...]
+//                        "diffuse", "specular", "glossiness", "opacity" }, ...],
+//     "uvMaps":       [{ "name", "dim", "data":[u0,v0, u1,v1, ...] }, ...]
+//                                                  // optional (v4+); per-corner
 //   }
 //
-// CLEAN BREAK (Stage 3 — no external clients, per the project directive): the
-// reader accepts EXACTLY `formatVersion == kV3dFormatVersion`. The legacy v1
-// (top-level `mesh`) and v2 (`activeLayer` + per-layer `background`) shapes are
-// no longer parsed — they are rejected cleanly at the version gate, leaving the
-// caller's document untouched. The reader stays tolerant WITHIN v3: unknown
-// fields are ignored and missing optional fields default sensibly, so the
-// format can keep growing (editor state, Shader Tree) without another break.
+// `uvMaps` (v4 addition, UV-maps Stage 3) carries the PolyVertex (per-corner)
+// mesh maps — v1 of the feature has just the "uv" map (dim 2). `data` is the
+// flat float array in faces-as-written CORNER order: corner order == `faces`
+// order == CSR loop order (D6), so the (face, corner) → value correspondence is
+// implicit and no per-corner index is stored. `data.length` must equal
+// `Σ face arities * dim` for the faces as written (post degenerate-drop). The
+// reader is TOLERANT: a wrong-length or wrong-dim entry is ignored with a
+// warning (the file still loads, just without that map), matching the codec's
+// existing tolerant-within-version stance for the other optional arrays. The
+// key is omitted entirely when no PolyVertex map exists.
+//
+// CLEAN BREAK (no external clients, per the project directive): the reader
+// accepts EXACTLY `formatVersion == kV3dFormatVersion`. Every earlier shape —
+// v1 (top-level `mesh`), v2 (`activeLayer` + per-layer `background`), and v3
+// (no `uvMaps`) — is no longer parsed; they are rejected cleanly at the version
+// gate, leaving the caller's document untouched. The reader stays tolerant
+// WITHIN the current version: unknown fields are ignored and missing optional
+// fields default sensibly, so the format can keep growing (editor state, Shader
+// Tree) without another break.
 
 /// The schema version the writer emits and the ONLY version the reader accepts.
-/// Bumped to 3 when item-selection persistence (`selected` + `primaryLayer`)
-/// landed; v1/v2 files are now rejected (deliberate break — no external clients).
-enum int kV3dFormatVersion = 3;
+/// Was 3 when item-selection persistence (`selected` + `primaryLayer`) landed;
+/// bumped to 4 when the per-corner `uvMaps` block was added (UV-maps Stage 3).
+/// v3 and earlier files are now rejected (deliberate break — no external clients).
+enum int kV3dFormatVersion = 4;
 
 // ---------------------------------------------------------------------------
 // Write
 // ---------------------------------------------------------------------------
 
 /// Serialize one `Mesh` to the shared `.v3d` "mesh" sub-object (vertices /
-/// faces / subpatch / surfaces / faceMaterial). Identical bytes in v1 and v2,
-/// so the same codec serves the legacy single-mesh shape and each v2 layer.
+/// faces / subpatch / surfaces / faceMaterial / per-corner uvMaps). The same
+/// codec serves every layer's mesh sub-object.
 JSONValue meshToJson(ref const Mesh mesh)
 {
     JSONValue m;
@@ -136,12 +154,37 @@ JSONValue meshToJson(ref const Mesh mesh)
     }
     m["surfaces"] = JSONValue(surfaces);
 
+    // PolyVertex (per-corner) maps — v4 addition. Each registered PolyVertex
+    // map is emitted as one `uvMaps` entry { name, dim, data }; `data` is the
+    // flat float array in faces-as-written corner order (CSR loop order, D6).
+    // The writer below emits `faces` and this block from the SAME mesh, so the
+    // corner correspondence is implicit — no per-corner index in the JSON. v1
+    // of the feature only ever has the "uv" map, but we write whatever
+    // PolyVertex maps exist (forward-compatible for "uv2", …). Following the
+    // codec's optional-array convention (faceSubpatch/faceMaterial are always
+    // present), the key is omitted entirely when no PolyVertex map exists.
+    JSONValue[] uvMaps;
+    foreach (ref map; mesh.meshMaps) {
+        if (map.domain != MapDomain.PolyVertex) continue;
+        JSONValue uj;
+        uj["name"] = JSONValue(map.name);
+        uj["dim"]  = JSONValue(cast(long) map.dim);
+        JSONValue[] data;
+        data.reserve(map.data.length);
+        foreach (f; map.data)
+            data ~= JSONValue(f);
+        uj["data"] = JSONValue(data);
+        uvMaps ~= uj;
+    }
+    if (uvMaps.length > 0)
+        m["uvMaps"] = JSONValue(uvMaps);
+
     return m;
 }
 
 /// Serialize a single `mesh` to a `.v3d` document at `path`. Wraps the mesh in
-/// a one-layer v3 document ("Layer 1", primary, selected) so single-mesh
-/// callers (interchange flatten paths, ad-hoc saves) still produce a valid v3
+/// a one-layer document ("Layer 1", primary, selected) so single-mesh
+/// callers (interchange flatten paths, ad-hoc saves) still produce a valid
 /// file with exactly one mesh codec.
 void writeV3d(ref const Mesh mesh, string path)
 {
@@ -150,7 +193,7 @@ void writeV3d(ref const Mesh mesh, string path)
 }
 
 /// Serialize a whole `Document` (every layer + which layer is primary) to a
-/// `.v3d` document at `path` under `formatVersion: 3`. Each layer persists its
+/// `.v3d` document at `path` under `formatVersion: 4`. Each layer persists its
 /// `selected` flag (the item-selection SET); `primaryLayer` names the edit
 /// target. There is NO `background` key (it derives from `visible && !selected`)
 /// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer's `mesh`
@@ -185,15 +228,15 @@ void writeV3d(ref const Document document, string path)
 // ---------------------------------------------------------------------------
 
 /// Parse a `.v3d` document at `path` and rebuild a whole `Document`. Accepts
-/// ONLY `formatVersion == kV3dFormatVersion` (v3) — the legacy v1/v2 shapes are
-/// rejected at the version gate (Stage 3 clean break). A v3 file carries a
+/// ONLY `formatVersion == kV3dFormatVersion` (v4) — every earlier shape
+/// (v1/v2/v3) is rejected at the version gate (clean break). A v4 file carries a
 /// `layers` array (each entry persisting its `selected` flag) plus a
 /// `primaryLayer` index naming the edit target; the reader re-asserts the
 /// selection-set invariants via the Document mutators (`setActive` /
 /// `selectItem` / `setPrimary`), forcing the primary selected + visible if the
 /// file is inconsistent. Returns false (logging via the io subsystem, like
 /// importLWO) on a missing file, malformed JSON, a `formatVersion` other than
-/// v3, structurally wrong content, an empty `layers` array, or an out-of-range
+/// v4, structurally wrong content, an empty `layers` array, or an out-of-range
 /// vertex index — and leaves the caller's `document` UNTOUCHED in every reject
 /// case (all layers are parsed into a temporary before the single atomic swap
 /// below).
@@ -225,11 +268,11 @@ bool readV3d(string path, ref Document document)
             return false;
         }
 
-        // Version gate (Stage 3 clean break). The reader accepts EXACTLY v3 —
-        // a newer file we can't parse, OR a legacy v1/v2 file, is rejected here
-        // (the document is untouched). A missing `formatVersion` (the implicit
-        // v1 shape) is likewise rejected. Unknown fields WITHIN v3 are ignored.
-        int ver = 0;   // 0 = "no formatVersion key" → not v3 → reject
+        // Version gate (clean break). The reader accepts EXACTLY v4 — a newer
+        // file we can't parse, OR a legacy v1/v2/v3 file, is rejected here (the
+        // document is untouched). A missing `formatVersion` (the implicit v1
+        // shape) is likewise rejected. Unknown fields WITHIN v4 are ignored.
+        int ver = 0;   // 0 = "no formatVersion key" → not v4 → reject
         if (auto vp = "formatVersion" in doc) {
             if (vp.type == JSONType.integer)
                 ver = cast(int) vp.integer;
@@ -252,7 +295,7 @@ bool readV3d(string path, ref Document document)
         Layer[] parsed;
         bool[]  selected;
 
-        // --- v3: a `layers` array is required (no top-level-mesh fallback). ---
+        // --- a `layers` array is required (no top-level-mesh fallback). ---
         auto lp = "layers" in doc;
         if (lp is null || lp.type != JSONType.array) {
             v3dWarn("reject: missing or non-array \"layers\"");
@@ -361,7 +404,7 @@ bool readV3d(string path, ref Mesh mesh)
 /// (logging the reason) on structurally wrong content or an out-of-range
 /// vertex index; `mesh` is mutated only at the commit step (after every
 /// reject), so on a false return the caller's mesh is left intact. Shared by
-/// every v3 layer (the mesh shape is identical across schema versions).
+/// every layer (the mesh shape is identical across layers).
 private bool meshFromJson(JSONValue m, ref Mesh mesh)
 {
     // --- vertices (required) ---
@@ -493,6 +536,60 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
     }
 
+    // --- optional: uvMaps (v4 per-corner PolyVertex maps) ---
+    // Parse the well-formed entries into a staging list now; the actual map
+    // values can only be APPLIED once `loops` exists (after `buildLoops`
+    // below), since the PolyVertex domain is loop-keyed. Each staged entry's
+    // `data` is in faces-as-written corner order == CSR loop order (D6), so the
+    // length check `data.length == loops.length * dim` validates alignment and
+    // the apply is a 1:1 slice copy (no per-corner index). Tolerant: a
+    // wrong-dim / wrong-length / malformed entry is skipped WITH a warning so
+    // the file still loads (just without that map) — never crash, never
+    // misalign.
+    struct StagedUv { string name; ubyte dim; float[] data; }
+    StagedUv[] stagedUv;
+    if (auto uvp = "uvMaps" in m) {
+        if (uvp.type == JSONType.array) {
+            foreach (ui, uj; uvp.array) {
+                if (uj.type != JSONType.object) {
+                    v3dWarn(format("ignoring uvMaps[%d]: not an object", ui));
+                    continue;
+                }
+                // name (required, non-empty).
+                string nm;
+                if (auto np = "name" in uj)
+                    if (np.type == JSONType.string) nm = np.str;
+                if (nm.length == 0) {
+                    v3dWarn(format("ignoring uvMaps[%d]: missing/empty name", ui));
+                    continue;
+                }
+                // dim (required, >= 1).
+                long dimL = 0;
+                if (auto dp = "dim" in uj) {
+                    if (dp.type == JSONType.integer)       dimL = dp.integer;
+                    else if (dp.type == JSONType.uinteger) dimL = cast(long) dp.uinteger;
+                }
+                if (dimL < 1 || dimL > 255) {
+                    v3dWarn(format("ignoring uvMaps[%s]: invalid dim %d", nm, dimL));
+                    continue;
+                }
+                // data (required, flat float array).
+                auto dap = "data" in uj;
+                if (dap is null || dap.type != JSONType.array) {
+                    v3dWarn(format("ignoring uvMaps[%s]: missing/non-array data", nm));
+                    continue;
+                }
+                float[] data;
+                data.reserve(dap.array.length);
+                foreach (fj; dap.array)
+                    data ~= jsonFloat(fj);
+                stagedUv ~= StagedUv(nm, cast(ubyte) dimL, data);
+            }
+        } else {
+            v3dWarn("ignoring non-array \"uvMaps\"");
+        }
+    }
+
     // --- commit: rebuild the mesh on a fresh struct (mirrors importLWO) ---
     mesh = Mesh.init;
     mesh.vertices = verts;
@@ -517,10 +614,37 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     foreach (fi; 0 .. mesh.faces.length)
         mesh.faceMaterial[fi] = (fi < faceMaterial.length) ? faceMaterial[fi] : 0u;
 
+    // Apply the staged PolyVertex (per-corner) maps now that `loops` exists.
+    // `data` is in CSR loop order (D6), 1:1 with `mesh.loops`, so the alignment
+    // check is `data.length == loops.length * dim` and the fill is a direct
+    // slice copy — no per-corner re-keying. A wrong-length entry is skipped WITH
+    // a warning (tolerant: the rest of the file is already committed). The
+    // welded loop count rebuilt above (post degenerate-drop) is the authority a
+    // misaligned hand-written map is measured against.
+    int uvMapCount = 0;
+    foreach (ref su; stagedUv) {
+        const size_t want = mesh.loops.length * su.dim;
+        if (su.data.length != want) {
+            v3dWarn(format("ignoring uvMaps[%s]: data length %d != "
+                            ~ "%d loops * %d dim", su.name, su.data.length,
+                            mesh.loops.length, su.dim));
+            continue;
+        }
+        auto map = mesh.addMeshMap(su.name, su.dim, MapDomain.PolyVertex);
+        if (map is null) {
+            // name clash with an already-staged map, or an empty-loop mesh.
+            v3dWarn(format("ignoring uvMaps[%s]: could not register map", su.name));
+            continue;
+        }
+        map.data[] = su.data[];   // corner order == loop order, 1:1
+        ++uvMapCount;
+    }
+
     v3dInfo(format("mesh ready: %d verts, %d edges, %d faces, "
-                    ~ "%d marked subpatch, %d surfaces",
+                    ~ "%d marked subpatch, %d surfaces, %d uv map(s)",
                     mesh.vertices.length, mesh.edges.length,
-                    mesh.faces.length, subpatchCount, mesh.surfaces.length));
+                    mesh.faces.length, subpatchCount, mesh.surfaces.length,
+                    uvMapCount));
     return true;
 }
 
