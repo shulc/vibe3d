@@ -9,6 +9,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import document : Document;
 import io.lwo_export : exportLwo;
 import io.scene_export : exportViaAssimp;
 import io.native : writeV3d;
@@ -28,12 +29,14 @@ import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 enum FileSaveMode { save, saveAs, exportSingle }
 
 class FileSave : Command {
+    private Document*    document;       // layered source of truth for native .v3d
     private string       explicitPath;  // set via setPath() to skip the dialog
     private FileSaveMode mode = FileSaveMode.saveAs;
     private string       singleExt;     // export-single target ext (e.g. ".obj")
 
-    this(Mesh* mesh, ref View view, EditMode editMode) {
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* document) {
         super(mesh, view, editMode);
+        this.document = document;
     }
 
     override string name() const { return "File Save"; }
@@ -113,7 +116,11 @@ class FileSave : Command {
         } else if (fi !is null && fi.kind == FormatKind.assimp && fi.canExport) {
             if (!exportViaAssimp(*mesh, path, fi.assimpExportId)) return false;
         } else {
-            writeV3d(*mesh, path);
+            // Native .v3d is the layered source of truth: serialize the WHOLE
+            // document (every layer + the active index) as formatVersion 2.
+            // Interchange exports above stay single-mesh (active layer) — that
+            // is Stage 3's job.
+            writeV3d(*document, path);
         }
 
         // Document-path memory: a successful native Save / Save As becomes
