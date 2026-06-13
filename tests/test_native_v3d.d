@@ -179,11 +179,11 @@ unittest { // a wrong/future formatVersion is rejected cleanly
 unittest { // a face index >= 2^63 (parsed as uinteger by std.json) rejects cleanly
     // Critical durability case: such a literal must NOT throw an uncaught
     // JSONException when the reader pulls the index — it must degrade to a
-    // clean error with the prior cube left untouched. Fed through the v3 layer
+    // clean error with the prior cube left untouched. Fed through the v4 layer
     // shape so the mesh-codec index check (not the version gate) is exercised.
     enum string path = "/tmp/vibe3d-test-hugeindex.v3d";
     write(path,
-        `{"formatVersion":3,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
+        `{"formatVersion":4,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
         ~ `"selected":true,"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
         ~ `"faces":[[0,1,99999999999999999999]]}}]}`);
     scope(exit) if (exists(path)) remove(path);
@@ -218,7 +218,7 @@ unittest { // a non-object root is rejected cleanly
 unittest { // a non-array "vertices" is rejected cleanly
     enum string path = "/tmp/vibe3d-test-nonarrayverts.v3d";
     write(path,
-        `{"formatVersion":3,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
+        `{"formatVersion":4,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
         ~ `"selected":true,"mesh":{"vertices":42,"faces":[[0,1,2]]}}]}`);
     scope(exit) if (exists(path)) remove(path);
 
@@ -236,7 +236,7 @@ unittest { // a non-array "vertices" is rejected cleanly
 unittest { // a non-array "faces" is rejected cleanly
     enum string path = "/tmp/vibe3d-test-nonarrayfaces.v3d";
     write(path,
-        `{"formatVersion":3,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
+        `{"formatVersion":4,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
         ~ `"selected":true,"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
         ~ `"faces":"nope"}}]}`);
     scope(exit) if (exists(path)) remove(path);
@@ -255,7 +255,7 @@ unittest { // a non-array "faces" is rejected cleanly
 unittest { // an in-range-typed but out-of-range vertex index rejects cleanly
     enum string path = "/tmp/vibe3d-test-oob-index.v3d";
     write(path,
-        `{"formatVersion":3,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
+        `{"formatVersion":4,"primaryLayer":0,"layers":[{"name":"L","visible":true,`
         ~ `"selected":true,"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
         ~ `"faces":[[0,1,7]]}}]}`);
     scope(exit) if (exists(path)) remove(path);
