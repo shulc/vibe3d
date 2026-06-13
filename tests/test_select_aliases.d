@@ -134,6 +134,24 @@ unittest { // typeFrom unknown type returns error
         "typeFrom bogus: expected error, got: " ~ resp);
 }
 
+unittest { // dedicated edit-mode commands used by statusline buttons
+    resetCube();
+    postSelect("vertices", [0, 1]);
+
+    postCommand("select.polygon");
+    assert(editMode() == "polygons",
+        "select.polygon: expected mode=polygons, got " ~ editMode());
+    assertSet(selectedVerts(), [0, 1], "select.polygon: vert selection unchanged");
+
+    postCommand("select.edge");
+    assert(editMode() == "edges",
+        "select.edge: expected mode=edges, got " ~ editMode());
+
+    postCommand("select.vertex");
+    assert(editMode() == "vertices",
+        "select.vertex: expected mode=vertices, got " ~ editMode());
+}
+
 // ---------------------------------------------------------------------------
 // 2. select.drop — clears selection in given mode, keeps EditMode
 // ---------------------------------------------------------------------------
