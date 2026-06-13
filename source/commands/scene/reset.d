@@ -97,7 +97,9 @@ class SceneReset : Command {
             keep.visible    = true;
             keep.background = false;
             document.layers      = [ keep ];
-            document.activeIndex = 0;
+            // Stage-0 lockstep: one selected primary layer (the surviving
+            // active one) — setActive(0) re-asserts the SET-of-one.
+            document.setActive(0);
             docCollapsed    = true;
         }
 
@@ -170,8 +172,9 @@ class SceneReset : Command {
             keep.visible    = keptPrevVisible;
             keep.background = keptPrevBackground;
             document.layers      = prevLayers;
-            document.activeIndex = prevActiveIndex >= prevLayers.length
-                ? prevLayers.length - 1 : prevActiveIndex;
+            // Restore primary/selected/activeIndex in lockstep (setActive
+            // clamps the index into range).
+            document.setActive(prevActiveIndex);
         }
         // Camera state isn't snapshotted — undoing a reset doesn't restore
         // the camera, only the mesh. Viewport state isn't part of model

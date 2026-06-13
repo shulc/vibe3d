@@ -270,12 +270,15 @@ Document toLayers(const ref ImportedScene scene) {
                                         : "Layer " ~ to!string(pi + 1);
         l.visible    = true;
         l.background = (pi != 0);   // first part active/foreground; rest background
+        l.selected   = (pi == 0);   // SET-of-one: first part selected (== active)
         layers[pi] = l;
     }
 
     Document d;
     d.layers      = layers;
-    d.activeIndex = 0;
+    // Stage-0 lockstep: set primary + selected + activeIndex together. (Part 0
+    // is the active/foreground layer; setActive re-asserts the SET-of-one.)
+    d.setActive(0);
     return d;
 }
 

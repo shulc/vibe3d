@@ -95,7 +95,9 @@ final class LayerAdd : LayerCommandBase {
         l.background = false;
         doc.layers ~= l;
         addedIndex  = doc.layers.length - 1;
-        doc.activeIndex = addedIndex;
+        // Stage-0 lockstep: set primary + selected + activeIndex together,
+        // BEFORE fireSwitchIfChanged (the hook reads activeMesh() == primary).
+        doc.setActive(addedIndex);
         applied = true;
         // Structural kind from the command; ActiveChanged from the switch hook
         // (add makes the new layer active), both coalescing into one delivery.
@@ -113,8 +115,9 @@ final class LayerAdd : LayerCommandBase {
         // plain add-then-undo the layer carried no edits, so dropping it is safe.
         if (addedIndex < doc.layers.length)
             doc.layers = doc.layers[0 .. addedIndex];
-        doc.activeIndex = prevActiveIndex >= doc.layers.length
-            ? doc.layers.length - 1 : prevActiveIndex;
+        // setActive clamps an out-of-range index into the last layer (matching
+        // the prior explicit clamp) and re-establishes primary+selected.
+        doc.setActive(prevActiveIndex);
         // Undo of an add is a remove; ActiveChanged via the hook.
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIdx);
@@ -167,9 +170,12 @@ final class LayerReorder : LayerCommandBase {
         // Splice out, then splice in at the destination.
         doc.layers = doc.layers[0 .. src] ~ doc.layers[src + 1 .. $];
         doc.layers = doc.layers[0 .. dst] ~ moved ~ doc.layers[dst .. $];
-        // Recompute activeIndex from the layer OBJECT (identity-preserving).
+        // Recompute the active index from the layer OBJECT (identity-
+        // preserving): the same Layer stays active, so primary/selected do not
+        // change object — setActive re-points activeIndex + primary at it (the
+        // single selected layer is unchanged in the SET-of-one).
         foreach (i, l; doc.layers)
-            if (l is prevLayer) { doc.activeIndex = i; break; }
+            if (l is prevLayer) { doc.setActive(i); break; }
     }
 
     override bool apply() {
@@ -257,7 +263,9 @@ final class LayerDelete : LayerCommandBase {
         } else {
             newActive = prevActiveIndex;
         }
-        doc.activeIndex = newActive;
+        // Stage-0 lockstep: set primary + selected + activeIndex together,
+        // BEFORE fireSwitchIfChanged.
+        doc.setActive(newActive);
         applied = true;
         // Removed kind from the command; the hook contributes ActiveChanged iff
         // the active layer OBJECT changed (deleting a layer below the active one
@@ -276,8 +284,8 @@ final class LayerDelete : LayerCommandBase {
         if (removedIndex > doc.layers.length) removedIndex = doc.layers.length;
         doc.layers = doc.layers[0 .. removedIndex] ~ removed
                                                    ~ doc.layers[removedIndex .. $];
-        doc.activeIndex = prevActiveIndex >= doc.layers.length
-            ? doc.layers.length - 1 : prevActiveIndex;
+        // setActive clamps + re-establishes primary/selected in lockstep.
+        doc.setActive(prevActiveIndex);
         // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIdx);
@@ -312,7 +320,9 @@ final class LayerSelect : LayerCommandBase {
         prevActiveIndex = doc.activeIndex;
         auto prevLayer  = doc.active();
         newActiveIndex  = resolveIndex(indexArg);
-        doc.activeIndex = newActiveIndex;
+        // Stage-0 lockstep: primary + selected + activeIndex together, BEFORE
+        // fireSwitchIfChanged.
+        doc.setActive(newActiveIndex);
         applied = true;
         fireSwitchIfChanged(prevLayer, prevActiveIndex);
         return true;
@@ -322,8 +332,8 @@ final class LayerSelect : LayerCommandBase {
         if (!applied) return false;
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
-        doc.activeIndex = prevActiveIndex >= doc.layers.length
-            ? doc.layers.length - 1 : prevActiveIndex;
+        // setActive clamps + re-establishes primary/selected in lockstep.
+        doc.setActive(prevActiveIndex);
         fireSwitchIfChanged(prevLayer, prevIdx);
         return true;
     }
