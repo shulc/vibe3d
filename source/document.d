@@ -26,8 +26,9 @@ import seltype : SelMode;
 // `bool background` field is GONE; `background(l) == l.visible && !l.selected`
 // is now the SOLE (derived) source of truth, read by the snap source, both draw
 // guards, `/api/layers`, and the panel. There is no longer any path that can
-// desync background from `!selected` (the legacy `layer.setBackground` command
-// is retired to a thin alias over `selectItem`). `activeIndex` is now a DERIVED
+// desync background from `!selected` — the legacy `layer.setBackground` command
+// is GONE (Stage 5); callers dispatch `layer.select mode:add/remove` directly.
+// `activeIndex` is now a DERIVED
 // read-only accessor (`return index of primary`) — every former writer routes
 // through `setActive` / `selectItem` / `setPrimary`, which set `primary`; the
 // index follows the primary OBJECT by identity, so reorder/delete renumbering

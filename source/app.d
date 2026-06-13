@@ -1235,6 +1235,24 @@ void main(string[] args) {
         }
     }
 
+    // Selection-types Stage 5 (audit c): a programmatic SELECTION command that
+    // changes the active element type (`mesh.select` to a different mode,
+    // `select.convert`) must keep editMode and SelType in LOCKSTEP — editMode is
+    // never written independently of the recent-ordering. This is the same
+    // promotion `switchGeometryType` does (touch the order + note the front flip)
+    // but WITHOUT the key-1/2/3 tool-drop: a selection command does not change
+    // the *interaction* mode the way pressing a mode key does, so dropping the
+    // active tool here would be a behavior change (and break select-then-edit
+    // sequences). Installed as a hook into the two selection commands so they
+    // stop writing `*editModePtr` directly.
+    void promoteGeometryType(EditMode mode) {
+        import change_bus : noteCurrentType;
+        const t = geometrySelType(mode);
+        const flipped = selTypeOrder.touch(t);
+        editMode = mode;                  // lockstep with the order
+        if (flipped) noteCurrentType(t);  // current-type changed (no tool-drop)
+    }
+
     // -------------------------------------------------------------------------
     // Selection-types Stage 2a: an ITEM (layer) selection makes `SelType.Item`
     // the current type. Mirrors switchGeometryType's front-flip contract but
@@ -1629,7 +1647,7 @@ void main(string[] args) {
     {
         import commands.layer.commands : LayerAdd, LayerDelete, LayerSelect,
                                           LayerRename, LayerSetVisible,
-                                          LayerSetBackground, LayerReorder;
+                                          LayerReorder;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.delete"] = () => cast(Command)
@@ -1643,8 +1661,6 @@ void main(string[] args) {
             new LayerRename(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.setVisible"] = () => cast(Command)
             new LayerSetVisible(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
-        reg.commandFactories["layer.setBackground"] = () => cast(Command)
-            new LayerSetBackground(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
@@ -1753,7 +1769,8 @@ void main(string[] args) {
     reg.commandFactories["select.element"]   = () => cast(Command)
         new SelectElementCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["select.convert"]   = () => cast(Command)
-        new SelectConvertCommand(&mesh(), cameraView, editMode, &editMode);
+        (new SelectConvertCommand(&mesh(), cameraView, editMode, &editMode))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh(), cameraView, editMode);
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(), cameraView, editMode);
     {
@@ -1889,7 +1906,8 @@ void main(string[] args) {
         new MeshVertJoin(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.select"] = () => cast(Command)
-        new MeshSelect(&mesh(), cameraView, editMode, &editMode);
+        (new MeshSelect(&mesh(), cameraView, editMode, &editMode))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["mesh.transform"] = () => cast(Command)
         new MeshTransform(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
@@ -5058,10 +5076,12 @@ void main(string[] args) {
     // -------------------------------------------------------------------------
     //
     // Interactive layer manager. One row per `document.layers`:
-    //   - an "active" selectable (radio-like) → `layer.select index:N`
+    //   - a primary/selected indicator + name selectable → `layer.select`
+    //     (plain click mode:set, ctrl-click mode:toggle)
     //   - the layer name (double-click to rename in place → `layer.rename`)
     //   - a "V" (visible) checkbox     → `layer.setVisible index:N value:b`
-    //   - a "B" (background) checkbox   → `layer.setBackground index:N value:b`
+    //   - an "F" (foreground) checkbox → `layer.select index:N mode:add/remove`
+    //     (foreground == selected; background is the derived complement)
     // plus an "Add" button (`layer.add`) and a "Delete" button
     // (`layer.delete index:N`, disabled when only one layer remains — the
     // command refuses the last layer regardless, this just greys the affordance).

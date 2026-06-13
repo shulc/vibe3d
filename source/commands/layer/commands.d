@@ -11,7 +11,11 @@ module commands.layer.commands;
 //   layer.select        — UI-undo class (item selection is UI state)
 //   layer.rename        — UI-undo class
 //   layer.setVisible    — UI-undo class
-//   layer.setBackground — UI-undo class
+//
+// Foreground/background is DERIVED from item selection (background == visible &&
+// !selected), so there is NO `layer.setBackground` command — callers dispatch
+// `layer.select mode:add` (foreground) / `mode:remove` (background) directly.
+// (The transitional `layer.setBackground` alias retired in Stage 5.)
 //
 // The active-layer switch (add / delete / select all move activeIndex) funnels
 // through ONE app-installed hook `onSwitch(prev, next)` so tool-drop, the
@@ -535,79 +539,3 @@ final class LayerSetVisible : LayerCommandBase {
     }
 }
 
-// ---------------------------------------------------------------------------
-// layer.setBackground — RETIRED to a thin alias over the derived item-selection
-// model (Stage 2b). The third "background" state collapsed: background ==
-// visible && !selected. So setting a layer to background DESELECTS it; setting
-// it to foreground SELECTS it (Add). This class is kept ONLY as a compatibility
-// alias for ONE milestone — it re-expresses `value:true/false` as a
-// `selectItem(Remove/Add)` and still publishes the DEPRECATED
-// `LayerChange.BackgroundChanged` kind so `test_change_bus` keeps ticking
-// mid-migration. The enum value (and this whole class) retires in Stage 5; new
-// callers should dispatch `layer.select mode:remove`/`mode:add` directly. UI-undo
-// class: snapshots the full prior selection set + primary by identity (like
-// `layer.select`), since a Remove can promote the primary across several layers.
-// ---------------------------------------------------------------------------
-
-final class LayerSetBackground : LayerCommandBase {
-    private int    indexArg = -1;     // -1 → active
-    private bool   valueArg = true;   // true → make background (deselect)
-    // Full prior selection snapshot by layer OBJECT identity + the prior primary
-    // (mirrors LayerSelect — a single index can't capture a multi-foreground set).
-    private bool[Layer] prevSelected;
-    private Layer       prevPrimary;
-    private size_t      prevActiveIndex;
-    private bool        applied;
-
-    this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
-         void delegate(size_t, size_t) onSwitch) {
-        super(mesh, view, editMode, doc, onSwitch);
-    }
-
-    override string name()  const { return "layer.setBackground"; }
-    override string label() const { return "Set Layer Background"; }
-    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
-
-    override Param[] params() {
-        return [ Param.int_("index", "Index", &indexArg, -1),
-                 Param.bool_("value", "Background", &valueArg, true) ];
-    }
-
-    override bool apply() {
-        if (doc.layers.length == 0) return false;
-        prevActiveIndex = doc.activeIndex;
-        prevPrimary     = doc.active();
-        prevSelected    = null;
-        foreach (l; doc.layers) prevSelected[l] = l.selected;
-
-        size_t idx  = resolveIndex(indexArg);
-        auto   target = doc.layers[idx];
-        // background == !selected: value:true deselects (Remove); value:false
-        // selects (Add). Remove of the sole-selected layer is a guarded no-op in
-        // selectItem (the ≥1-selected invariant) — the alias still publishes
-        // BackgroundChanged regardless so the counter advances either way.
-        doc.selectItem(target, valueArg ? SelMode.Remove : SelMode.Add);
-        applied = true;
-        // Deprecated kind for one milestone (Stage 5 retires it). Pure document
-        // state — touch NO mesh-pending counter.
-        noteLayerChange(LayerChange.BackgroundChanged);
-        fireSwitchIfChanged(prevPrimary, prevActiveIndex);
-        return true;
-    }
-
-    override bool revert() {
-        if (!applied) return false;
-        auto   prevLayer = doc.active();
-        size_t prevIdx   = doc.activeIndex;
-        // Restore the exact prior selection set by identity (background derives).
-        foreach (l; doc.layers) {
-            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
-            l.selected  = wasSel;
-        }
-        if (prevPrimary !is null) doc.setPrimary(prevPrimary);
-        else                      doc.setActive(prevActiveIndex);
-        noteLayerChange(LayerChange.BackgroundChanged);
-        fireSwitchIfChanged(prevLayer, prevIdx);
-        return true;
-    }
-}
