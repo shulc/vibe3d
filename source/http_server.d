@@ -37,6 +37,14 @@ class HttpServer {
     private CameraDataProvider cameraDataProvider;
     private alias SelectionDataProvider = string delegate();
     private SelectionDataProvider selectionDataProvider;
+    // /api/layers (GET) — JSON layer list. /api/model?layer=N — a layer-aware
+    // detailed provider (N=-1 → active layer). Both marshal onto the main
+    // thread via the existing model epoch handshake (tickModel).
+    private alias LayersDataProvider = string delegate();
+    private LayersDataProvider layersDataProvider;
+    private alias LayerModelProvider = string delegate(int layer);
+    private LayerModelProvider layerModelProvider;
+    private int pendingModelLayer = -1;   // ?layer=N for the in-flight /api/model
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
     private alias ToolPipeProvider = string delegate();
@@ -296,6 +304,18 @@ class HttpServer {
 
     public void setSelectionDataProvider(SelectionDataProvider provider) {
         this.selectionDataProvider = provider;
+    }
+
+    /// GET /api/layers — JSON layer list (layers Stage 2).
+    public void setLayersDataProvider(LayersDataProvider provider) {
+        this.layersDataProvider = provider;
+    }
+
+    /// Layer-aware detailed model provider for /api/model?layer=N. When set, it
+    /// takes precedence for /api/model and receives the requested layer index
+    /// (-1 → active). Marshalled onto the main thread (tickModel).
+    public void setLayerModelProvider(LayerModelProvider provider) {
+        this.layerModelProvider = provider;
     }
 
     public void setRecordedEventsProvider(RecordedEventsProvider provider) {
@@ -664,14 +684,18 @@ class HttpServer {
             response.statusCode = 200;
             response.body = `{"status": "ok"}`;
             response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/model") {
-            bool haveProvider = (useDetailedProvider && detailedModelDataProvider !is null)
+        } else if (request.path.startsWith("/api/model")) {
+            bool haveProvider = (layerModelProvider !is null)
+                             || (useDetailedProvider && detailedModelDataProvider !is null)
                              || (modelDataProvider !is null);
             response.headers["Content-Type"] = "application/json";
             if (!haveProvider) {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Model data provider not set\"}";
             } else {
+                // ?layer=N selects a layer (default -1 → active). The
+                // layer-aware provider (when set) handles it on the main thread.
+                pendingModelLayer = parseQueryInt(request.path, "layer", -1);
                 // Marshal the serialisation onto the main thread (tickModel) so
                 // the provider never walks the mesh mid-mutation (torn read).
                 pendingModelDetailed = useDetailedProvider;
@@ -712,6 +736,23 @@ class HttpServer {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Selection data provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/layers" && request.method == "GET") {
+            // Layer list (layers Stage 2). Read-only; served straight from the
+            // HTTP thread like /api/selection — tests are quiescent when probing.
+            response.headers["Content-Type"] = "application/json";
+            if (layersDataProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = layersDataProvider();
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Layers data provider not set\"}";
             }
         } else if (request.path == "/api/perf/reset" && request.method == "POST") {
             // Zero all perf counters before a measured run. No-op in the
@@ -1593,7 +1634,11 @@ class HttpServer {
         long cmp = atomicLoad(modelCompletedEpoch);
         if (sub <= cmp) return;
         try {
-            if (pendingModelDetailed && detailedModelDataProvider !is null)
+            // Layer-aware provider wins when set (layers Stage 2): it serves
+            // ?layer=N, defaulting to the active layer for a bare /api/model.
+            if (layerModelProvider !is null)
+                pendingModelResult = layerModelProvider(pendingModelLayer);
+            else if (pendingModelDetailed && detailedModelDataProvider !is null)
                 pendingModelResult = detailedModelDataProvider();
             else if (modelDataProvider !is null)
                 pendingModelResult = modelDataProvider();

@@ -6,6 +6,7 @@ import mesh;
 import view;
 import editmode;
 import viewcache;
+import document : Document, Layer;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
@@ -22,6 +23,19 @@ class SceneReset : Command {
     private EditMode*        editModePtr;
     private View*            viewPtr;
     private void delegate()  onResetTool;
+    // Document handle (layers Stage 2): reset collapses the document to EXACTLY
+    // one default layer. Optional — null in unit/headless construction, where
+    // the single-layer write-in-place below is already one layer. Undo restores
+    // the prior layer list.
+    private Document*        document;
+    private Layer[]          prevLayers;
+    private size_t           prevActiveIndex;
+    private bool             docCollapsed;   // true when we replaced the layer list
+    // The kept active layer's original metadata (apply overwrites it to the
+    // default "Layer 1"/visible/foreground; revert restores these).
+    private string           keptPrevName;
+    private bool             keptPrevVisible;
+    private bool             keptPrevBackground;
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
@@ -54,6 +68,9 @@ class SceneReset : Command {
 
     void setPrimitive(string p) { primitive = p; emptyScene = false; }
     void setEmpty(bool b) { emptyScene = b; }
+    /// Install the document handle so reset collapses to one default layer.
+    /// app.d sets this on the scene.reset / file.new / scene.loadMesh factories.
+    void setDocument(Document* d) { document = d; }
     /// Integer arg for the dense perf meshes (grid side / subdiv levels).
     /// Pass -1 (the default) to let the factory pick its own default.
     void setPrimitiveParam(int p) { primParam = p; }
@@ -62,6 +79,27 @@ class SceneReset : Command {
         snap         = MeshSnapshot.capture(*mesh);
         prevEditMode = *editModePtr;
         captured     = true;
+
+        // Layers Stage 2: a reset collapses the document to EXACTLY one default
+        // layer (the "reset yields one layer" invariant every existing test
+        // depends on). The SURVIVING layer is the current ACTIVE one, so the
+        // fire-time `mesh` pointer stays valid for the `*mesh = ...` write
+        // below; the others are dropped (their geometry rides the prevLayers
+        // snapshot for undo). With one layer this is already a no-op.
+        if (document !is null && document.layers.length > 0) {
+            prevLayers      = document.layers.dup;   // shallow: Layer refs kept
+            prevActiveIndex = document.activeIndex;
+            auto keep       = document.active();     // the layer `mesh` points at
+            keptPrevName       = keep.name;
+            keptPrevVisible    = keep.visible;
+            keptPrevBackground = keep.background;
+            keep.name       = "Layer 1";
+            keep.visible    = true;
+            keep.background = false;
+            document.layers      = [ keep ];
+            document.activeIndex = 0;
+            docCollapsed    = true;
+        }
 
         if (emptyScene) {
             *mesh = Mesh.init;
@@ -118,8 +156,23 @@ class SceneReset : Command {
 
     override bool revert() {
         if (!captured) return false;
+        // Restore the kept active layer's pre-reset geometry first (the snapshot
+        // was captured against `*mesh`, which is the surviving active layer).
         snap.restore(*mesh);
         *editModePtr = prevEditMode;
+        // Then restore the full pre-reset layer list + active index (layers
+        // Stage 2). The kept layer object is still in prevLayers (shallow dup),
+        // so its just-restored geometry + restored name/flags ride back too.
+        if (docCollapsed && document !is null) {
+            // Restore the kept layer's original metadata, then the full list.
+            auto keep = document.active();
+            keep.name       = keptPrevName;
+            keep.visible    = keptPrevVisible;
+            keep.background = keptPrevBackground;
+            document.layers      = prevLayers;
+            document.activeIndex = prevActiveIndex >= prevLayers.length
+                ? prevLayers.length - 1 : prevActiveIndex;
+        }
         // Camera state isn't snapshotted — undoing a reset doesn't restore
         // the camera, only the mesh. Viewport state isn't part of model
         // undo.

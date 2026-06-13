@@ -5873,6 +5873,13 @@ struct SubpatchPreview {
     Mesh          mesh;
     SubpatchTrace trace;
     bool          active;
+    /// Source mesh ADDRESS this preview was last built against (layers Stage
+    /// 2). Two layers' cages can share an equal (mutationVersion,
+    /// topologyVersion) — e.g. a layer.select swaps the preview source with no
+    /// intervening mutation — so the address is part of the staleness key.
+    /// With one layer this is constant ⇒ invisible. `size_t.max` forces a
+    /// rebuild on first call.
+    size_t        sourceMeshAddr        = size_t.max;
     ulong         sourceVersion         = ulong.max;
     /// Last source.topologyVersion we built against. While
     /// `source.topologyVersion` is unchanged but mutationVersion
@@ -5946,11 +5953,16 @@ struct SubpatchPreview {
                          const(GpuFanOutTargets)* targets = null) {
         lastRefreshFannedOut    = false;
         lastRefreshSkipNonFace  = false;
-        if (sourceVersion == source.mutationVersion && depth == d)
+        const srcAddr = cast(size_t)&source;
+        if (sourceMeshAddr == srcAddr
+            && sourceVersion == source.mutationVersion && depth == d)
             return;
-        // Position-only fast path: cage topology + depth unchanged →
-        // ask OSD's stencil table for new limit positions.
+        // Position-only fast path: SAME source mesh, cage topology + depth
+        // unchanged → ask OSD's stencil table for new limit positions. A
+        // different source address (layer switch) must NOT take this path — the
+        // cached stencil table belongs to the prior layer's cage.
         if (active
+            && sourceMeshAddr == srcAddr
             && depth == d
             && sourceTopologyVersion == source.topologyVersion
             && osdAccel.valid)
@@ -5998,6 +6010,7 @@ struct SubpatchPreview {
                 osdAccel.refresh(source, mesh);
             }
             ++mesh.mutationVersion;
+            sourceMeshAddr = srcAddr;
             sourceVersion = source.mutationVersion;
             return;
         }
@@ -6007,6 +6020,7 @@ struct SubpatchPreview {
             && mesh.vertices.length != 0)
         {
             depth                 = d;
+            sourceMeshAddr        = srcAddr;
             sourceVersion         = source.mutationVersion;
             sourceTopologyVersion = source.topologyVersion;
             active                = true;
@@ -6018,6 +6032,7 @@ struct SubpatchPreview {
 
     void rebuild(ref const Mesh source, int d) {
         depth                 = d;
+        sourceMeshAddr        = cast(size_t)&source;
         sourceVersion         = source.mutationVersion;
         sourceTopologyVersion = source.topologyVersion;
         if (d <= 0) {

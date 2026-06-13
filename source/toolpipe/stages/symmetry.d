@@ -76,10 +76,12 @@ class SymmetryStage : Stage, Operator {
                 cachedPlaneNormal_ != pkt.planeNormal ||
                 cachedEpsilon_     != epsilonWorld;
             bool meshChanged =
+                cachedMeshAddr_        != cast(size_t)mesh_ ||
                 cachedMutationVersion_ != mesh_.mutationVersion;
             if (!cachedReady_ || planeChanged || meshChanged) {
                 rebuildPairing(*mesh_, pkt,
                                cachedPairOf_, cachedOnPlane_, cachedVertSign_);
+                cachedMeshAddr_        = cast(size_t)mesh_;
                 cachedMutationVersion_ = mesh_.mutationVersion;
                 cachedPlanePoint_      = pkt.planePoint;
                 cachedPlaneNormal_     = pkt.planeNormal;
@@ -132,6 +134,11 @@ private:
     // successful rebuild so a stage that's enabled mid-session can
     // publish a stale-empty packet for one frame before the cache
     // catches up on the next evaluate.
+    // Mesh ADDRESS companion to cachedMutationVersion_ (layers Stage 2): the
+    // pairing pair-table aliases across layers if the pointer rebinds to a
+    // mesh at an equal mutationVersion. With one layer this is constant ⇒
+    // invisible. `size_t.max` forces a rebuild on first evaluate.
+    size_t cachedMeshAddr_        = size_t.max;
     ulong  cachedMutationVersion_ = ulong.max;
     Vec3   cachedPlanePoint_      = Vec3(0, 0, 0);
     Vec3   cachedPlaneNormal_     = Vec3(0, 0, 0);

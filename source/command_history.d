@@ -236,6 +236,17 @@ final class CommandHistory {
     // operation owns the document — and to query that state via /api/undo/status.
     private bool _lockout = false;
 
+    // One-shot coalesce barrier. When set, the NEXT recordCoalescing() refuses
+    // to merge into the current top entry (it appends a fresh entry instead) and
+    // then clears the flag. Used by the active-layer-switch hook: a selection /
+    // delta edit recorded right after switching layers must start a fresh
+    // history entry rather than coalesce with the prior layer's top entry. The
+    // compareOp target-mesh equality term already prevents cross-mesh merges
+    // statelessly; this barrier is the explicit belt-and-braces for the case
+    // where an undo of layer.select resurfaces an older SAME-mesh entry as top
+    // and a new edit on that same mesh could otherwise merge across the switch.
+    private bool _coalesceBarrier = false;
+
     // Refire block state. One slot — refire blocks don't nest. fire()
     // checks `refireOpen` to decide whether to revert the previous live
     // command before applying the new one.
@@ -478,6 +489,14 @@ final class CommandHistory {
         // (no in-place coalesce — the block already collapses its children).
         if (blockDepth > 0) { record(cmd); return; }
 
+        // One-shot coalesce barrier (set by the active-layer-switch hook):
+        // refuse to merge into the current top, append a fresh entry instead.
+        if (_coalesceBarrier) {
+            _coalesceBarrier = false;
+            record(cmd);
+            return;
+        }
+
         // Try to merge into the current top entry. The merge is type-erased:
         // compareOp() decides COMPATIBLE, then the top command's mergeFrom()
         // folds `cmd`'s post-state in place (each coalescing command type —
@@ -514,6 +533,12 @@ final class CommandHistory {
         // fires onRecord).
         record(cmd);
     }
+
+    /// Arm a one-shot coalesce barrier: the NEXT recordCoalescing() will append
+    /// a fresh entry rather than merge into the current top, then disarm. Called
+    /// by the active-layer-switch hook so a selection/delta edit immediately
+    /// after a layer switch starts a new history entry on the new layer.
+    void breakCoalescing() { _coalesceBarrier = true; }
 
     /// Record `cmd` as ONE in-session entry of the run identified by `runId`.
     /// Identical to record() in every guard + side-effect (lockout / null /
