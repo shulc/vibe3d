@@ -200,3 +200,13 @@ double[3] vertexPos(int idx, string baseUrl = "http://localhost:8080") {
     auto v = j["vertices"].array[idx].array;
     return [v[0].floating, v[1].floating, v[2].floating];
 }
+
+// GET /api/snap/last — the most recent SnapResult any tool published during a
+// drag (snap_render.publishLastSnap). Carries snapped / highlighted /
+// targetType / targetIndex / targetSource (0 = active mesh, 1..N = background
+// snap source) + world positions. Lets a headless test assert the snap
+// visual-feedback wiring (which source/element the highlight resolves to)
+// without a screenshot diff.
+JSONValue fetchSnapLast(string baseUrl = "http://localhost:8080") {
+    return parseJSON(cast(string)get(baseUrl ~ "/api/snap/last"));
+}
