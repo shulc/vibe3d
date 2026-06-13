@@ -5016,7 +5016,8 @@ void main(string[] args) {
                     }
                 } else {
                     // Plain label. Double-click opens the inline editor seeded
-                    // with the current name.
+                    // with the current name. The label also serves as the
+                    // drag-to-reorder handle (source + target, below).
                     ImGui.Selectable(l.name.length ? l.name : "(unnamed)", false,
                                      ImGuiSelectableFlags.AllowDoubleClick,
                                      ImVec2(140, 0));
@@ -5028,6 +5029,48 @@ void main(string[] args) {
                         size_t n = src.length < layerRenameBuf.length - 1
                                  ? src.length : layerRenameBuf.length - 1;
                         layerRenameBuf[0 .. n] = src[0 .. n];
+                    }
+
+                    // ---- Drag-to-reorder ----
+                    // The label row is both a drag SOURCE (carries its own index)
+                    // and a drop TARGET (receives another row's index). Dropping
+                    // row `from` onto this row dispatches layer.reorder so the
+                    // dragged layer lands at THIS row's index — the others shift
+                    // to fill. The neutral payload type "VIBE3D_LAYER_ROW" (16
+                    // chars, under the 32-char d_imgui limit) tags the drag so
+                    // only layer rows accept it.
+                    //
+                    // `to`-index semantics: the layer.reorder command splices the
+                    // source layer OUT of the array, then splices it back IN at
+                    // index `to` of the POST-REMOVAL array. With `to = idx`, the
+                    // dragged row always lands at the target row's index for BOTH
+                    // up- and down-drags (verified against the splice path in
+                    // commands/layer/commands.d::moveLayer and the test_layers.d
+                    // reorder cases: from:2 to:0 on [A,B,C] -> [C,A,B];
+                    // from:0 to:2 -> [B,C,A]). No from<to adjustment is needed:
+                    // on a down-drag the source's removal already shifts the
+                    // target up by one, so inserting at `idx` lands the dragged
+                    // row exactly at the target's old visual slot.
+                    if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.None)) {
+                        int srcIdx = idx;
+                        ImGui.SetDragDropPayload("VIBE3D_LAYER_ROW",
+                                                 &srcIdx, srcIdx.sizeof);
+                        ImGui.Text(l.name.length ? l.name : "(unnamed)");
+                        ImGui.EndDragDropSource();
+                    }
+                    if (ImGui.BeginDragDropTarget()) {
+                        const(ImGuiPayload)* payload =
+                            ImGui.AcceptDragDropPayload("VIBE3D_LAYER_ROW");
+                        if (payload !is null
+                            && payload.Data !is null
+                            && payload.DataSize == cast(int)int.sizeof) {
+                            int fromIdx = *cast(const(int)*) payload.Data;
+                            if (fromIdx != idx && commandHandlerDelegate !is null)
+                                commandHandlerDelegate("layer.reorder",
+                                    `{"from":` ~ to!string(fromIdx)
+                                    ~ `,"to":` ~ to!string(idx) ~ `}`);
+                        }
+                        ImGui.EndDragDropTarget();
                     }
                 }
 
@@ -5049,29 +5092,6 @@ void main(string[] args) {
                             `{"index":` ~ to!string(idx) ~ `,"value":`
                             ~ (bg ? "true" : "false") ~ `}`);
                 }
-
-                // Reorder buttons — Up moves the row toward index 0, Down toward
-                // the tail. Both dispatch layer.reorder through the same
-                // undo-safe delegate (never mutating `document` directly). Up is
-                // disabled on the first row, Down on the last.
-                ImGui.SameLine();
-                ImGui.BeginDisabled(i == 0);
-                if (ImGui.SmallButton("Up")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("layer.reorder",
-                            `{"from":` ~ to!string(idx)
-                            ~ `,"to":` ~ to!string(idx - 1) ~ `}`);
-                }
-                ImGui.EndDisabled();
-                ImGui.SameLine();
-                ImGui.BeginDisabled(i + 1 >= document.layers.length);
-                if (ImGui.SmallButton("Dn")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("layer.reorder",
-                            `{"from":` ~ to!string(idx)
-                            ~ `,"to":` ~ to!string(idx + 1) ~ `}`);
-                }
-                ImGui.EndDisabled();
 
                 ImGui.PopID();
             }
