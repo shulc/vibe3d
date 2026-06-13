@@ -685,13 +685,15 @@ bool prepareWorker(ref Worker w) {
 // Re-establish a known-clean baseline on a worker's shared vibe3d BEFORE each
 // test binary runs. The runner reuses ONE `vibe3d --test` per worker across
 // that worker's whole slice of tests, so a preceding test can leave global
-// state dirty for the next one in three ways:
+// state dirty for the next one in four ways:
 //   1. an event-log replay (/api/play-events) is still DRAINING on the
 //      background event player when the test process exits — its queued
 //      mouse-move events keep firing into the next test's freshly-reset mesh;
 //   2. a tool was left active (a stray interactive session);
 //   3. the undo stack carries the prior test's entries (command_history caps
 //      at 50, which would pin any count-delta assertion).
+//   4. selection/edit mode can leak when a reset is undone while draining
+//      history.
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",
 // etc.). Resetting at the RUNNER level — between every binary — kills the whole
@@ -713,8 +715,8 @@ void resetBetweenTests(ushort port) {
         auto r = executeShell(cmd);
         return r.status == 0 ? r.output : "";
     }
-    // Mirror tests/test_reevaluate.d's drainAndReset: deactivate + drain-replay
-    // + reset + drain-undo, then VERIFY the cube is actually pristine, retrying
+    // Deactivate + drain-replay + reset + clear history, then VERIFY the cube
+    // and selection/edit-mode baseline are actually pristine, retrying
     // the whole sequence a few times if not. A still-queued replay can briefly
     // report finished BETWEEN its events, so a single drain pass is not enough;
     // the verify-and-retry closes that window — a transient bleed clears on
@@ -733,6 +735,17 @@ void resetBetweenTests(ushort port) {
             return fabs(v[0].floating - 0.5) < 1e-4
                 && fabs(v[1].floating - 0.5) < 1e-4
                 && fabs(v[2].floating - 0.5) < 1e-4;
+        } catch (Exception) { return false; }
+    }
+    bool selectionPristine() {
+        auto s = curl("GET", "/api/selection");
+        if (s.length == 0) return false;
+        try {
+            auto j = parseJSON(s);
+            return j["mode"].str == "vertices"
+                && j["selectedVertices"].array.length == 0
+                && j["selectedEdges"].array.length == 0
+                && j["selectedFaces"].array.length == 0;
         } catch (Exception) { return false; }
     }
     foreach (attempt; 0 .. 8) {
@@ -759,26 +772,20 @@ void resetBetweenTests(ushort port) {
         Thread.sleep(120.msecs);
         // 3. Reset to the pristine startup cube.
         curl("POST", "/api/reset");
-        // 3b. Normalize the edit mode back to Vertices. scene.reset rebuilds the
-        //     mesh but does NOT reset editMode, so a prior test that switched to
-        //     Edges/Polygons leaves it there — and a test like test_selection
-        //     that plays clicks assuming Vertices mode (its log carries no mode
-        //     key) then picks the wrong element type ("expected 2 selected
-        //     vertices, got 0"). An empty vertices-mode /api/select switches the
-        //     mode without selecting anything (MeshSelect sets editMode to match).
+        // 3b. Normalize the edit mode back to Vertices and keep all component
+        //     selections empty. SceneReset already does this; the explicit
+        //     select is a cheap guard for older/bisected app binaries.
         curl("POST", "/api/select", `{"mode":"vertices","indices":[]}`);
-        // 4. Drain the undo stack so count-delta assertions start from zero.
-        //    (The select above records a UI-undo entry; this drains it too.)
-        foreach (_; 0 .. 100) {
-            auto h = curl("GET", "/api/undo/status");
-            if (h.length == 0 || !h.canFind("\"canUndo\":true")) break;
-            curl("POST", "/api/undo");
-        }
-        if (cubePristine()) return;
+        // 4. Clear undo/redo without undoing the reset/select we just applied.
+        //    Undo-draining here can restore the prior test's mesh/selection.
+        curl("POST", "/api/command", "history.clear");
+        if (cubePristine() && selectionPristine()) return;
         Thread.sleep(20.msecs);
     }
     // Last reset stands; the test's own preamble (if any) gets the final word.
     curl("POST", "/api/reset");
+    curl("POST", "/api/select", `{"mode":"vertices","indices":[]}`);
+    curl("POST", "/api/command", "history.clear");
 }
 
 TestResult[] runWorker(ref Worker w, bool verbose) {
