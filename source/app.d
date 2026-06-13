@@ -2595,12 +2595,13 @@ void main(string[] args) {
 
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`
-              ~ `"targetIndex":%d,"worldPos":[%f,%f,%f],`
+              ~ `"targetIndex":%d,"targetSource":%d,"worldPos":[%f,%f,%f],`
               ~ `"highlightPos":[%f,%f,%f]}`,
                 sr.snapped ? "true" : "false",
                 sr.highlighted ? "true" : "false",
                 cast(int)sr.targetType,
                 sr.targetIndex,
+                sr.targetSource,
                 sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
                 sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
             return buf.data;
@@ -2618,12 +2619,13 @@ void main(string[] args) {
             auto sr = g_lastSnap;
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`
-              ~ `"targetIndex":%d,"worldPos":[%f,%f,%f],`
+              ~ `"targetIndex":%d,"targetSource":%d,"worldPos":[%f,%f,%f],`
               ~ `"highlightPos":[%f,%f,%f]}`,
                 sr.snapped ? "true" : "false",
                 sr.highlighted ? "true" : "false",
                 cast(int)sr.targetType,
                 sr.targetIndex,
+                sr.targetSource,
                 sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
                 sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
             return buf.data;

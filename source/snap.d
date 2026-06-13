@@ -35,6 +35,15 @@ struct SnapResult {
     bool     highlighted;       /// true iff any candidate within outerRange
     SnapType targetType  = SnapType.None;  /// which type fired (for feedback rendering)
     int      targetIndex = -1;             /// mesh element index (vert/edge/face) or -1
+    int      targetSource = 0;             /// source slot the winner came from:
+                                           /// 0 = active mesh (the `mesh` arg to
+                                           /// snapCursor); 1..N = the background
+                                           /// source `snapSource(targetSource)`
+                                           /// (layers Stage 5). Default 0 ⇒ the
+                                           /// single-layer / active-only path is
+                                           /// byte-identical to pre-Stage-5: every
+                                           /// winner is from slot 0 and reads as
+                                           /// "active mesh".
 }
 
 /// Config-equality for two SnapPackets — compares only the user-facing CONFIG
@@ -86,6 +95,34 @@ void setBackgroundSnapSources(const(Mesh)*[] sources) {
     }
 }
 
+/// Resolve a `SnapResult.targetSource` slot back to its source mesh, so the
+/// snap highlight renderer can draw the target element against the geometry it
+/// actually came from (layers Stage 5).
+///
+///   slot == 0      ⇒ null. Slot 0 is the active mesh, which is NOT held here
+///                    (it is the `mesh` argument to snapCursor); the caller
+///                    supplies it directly. Returning null keeps this accessor
+///                    purely about the background sources.
+///   slot 1..N      ⇒ `g_snapSources[slot-1]`, the SAME ordering the walk
+///                    assigned (slot i+1 = the i-th visible-background source
+///                    installed by setBackgroundSnapSources, which app.d fills
+///                    in document-layer index order). Out of range ⇒ null.
+///
+/// Bounds-checked and fail-soft: any miss (the source list shrank between the
+/// motion event that produced the result and this draw, e.g. a background layer
+/// was hidden) returns null so the highlight is harmlessly skipped — the same
+/// posture as the renderer's out-of-range index guard. Reads under g_vgridMutex
+/// (the same lock setBackgroundSnapSources and the query path take); called on
+/// the main thread by the renderer.
+const(Mesh)* snapSource(int slot) {
+    if (slot <= 0) return null;
+    synchronized (g_vgridMutex) {
+        size_t i = cast(size_t)(slot - 1);
+        if (i >= g_snapSources.length) return null;
+        return g_snapSources[i];
+    }
+}
+
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
@@ -109,16 +146,22 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     res.highlightPos = cursorWorld;
     res.targetType   = SnapType.None;
     res.targetIndex  = -1;
+    res.targetSource = 0;
     if (!cfg.enabled) return res;
 
     // Best (closest) candidate across all enabled types. Screen-space
     // distance — a pixel-range semantic.
-    float    bestDist  = float.infinity;
-    Vec3     bestWorld = cursorWorld;
-    int      bestIdx   = -1;
-    SnapType bestType  = SnapType.None;
+    float    bestDist   = float.infinity;
+    Vec3     bestWorld  = cursorWorld;
+    int      bestIdx    = -1;
+    int      bestSource = 0;   // source slot of the current winner (0 = active)
+    SnapType bestType   = SnapType.None;
 
-    void consider(Vec3 candWorld, int idx, SnapType type) {
+    // `slot` identifies which snap SOURCE this candidate came from (0 = active
+    // mesh, 1..N = background source). It is recorded on the winner so the
+    // highlight renderer can resolve the element against the right mesh — a
+    // source-local index alone is ambiguous across layers (layers Stage 5).
+    void consider(Vec3 candWorld, int idx, SnapType type, int slot) {
         float pxs, pys, ndcZ;
         // projectToWindowFull rejects behind-camera (w<=0) but does NOT
         // clip to the screen rectangle, which is exactly what we want
@@ -131,10 +174,11 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         float d  = sqrt(dx * dx + dy * dy);
         if (d > cfg.outerRangePx) return;
         if (d < bestDist) {
-            bestDist  = d;
-            bestWorld = candWorld;
-            bestIdx   = idx;
-            bestType  = type;
+            bestDist   = d;
+            bestWorld  = candWorld;
+            bestIdx    = idx;
+            bestSource = slot;
+            bestType   = type;
         }
     }
 
@@ -198,7 +242,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                             cfg.outerRangePx, exclude);
             foreach (vi; cands)
                 if (vertVisible(vi))
-                    consider(m.vertices[vi], cast(int)vi, SnapType.Vertex);
+                    consider(m.vertices[vi], cast(int)vi, SnapType.Vertex, slot);
         }
 
         // Edge candidates (7.3b) — closest point on each edge segment in
@@ -232,7 +276,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 // distance against the cursor anyway.
                 closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
                                            px0, py0, px1, py1, t);
-                consider(a + (b - a) * t, cast(int)ei, SnapType.Edge);
+                consider(a + (b - a) * t, cast(int)ei, SnapType.Edge, slot);
             }
         }
 
@@ -245,7 +289,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 auto edge = m.edges[ei];
                 if (!edgeVisible(edge[0], edge[1])) continue;
                 Vec3 mid = (m.vertices[edge[0]] + m.vertices[edge[1]]) * 0.5f;
-                consider(mid, cast(int)ei, SnapType.EdgeCenter);
+                consider(mid, cast(int)ei, SnapType.EdgeCenter, slot);
             }
         }
 
@@ -265,7 +309,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 if (!faceVisible(face)) continue;
                 Vec3 hit;
                 if (closestOnPolygonSurface(face, m, sx, sy, vp, hit))
-                    consider(hit, cast(int)fi, SnapType.Polygon);
+                    consider(hit, cast(int)fi, SnapType.Polygon, slot);
             }
         }
 
@@ -281,7 +325,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 Vec3 c = Vec3(0, 0, 0);
                 foreach (vi; face) c += m.vertices[vi];
                 c = c / cast(float)face.length;
-                consider(c, cast(int)fi, SnapType.PolyCenter);
+                consider(c, cast(int)fi, SnapType.PolyCenter, slot);
             }
         }
     }
@@ -329,7 +373,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             Vec3 snapped = cfg.workplaneCenter
                          + cfg.workplaneAxis1 * sa1
                          + cfg.workplaneAxis2 * sa2;
-            consider(snapped, -1, SnapType.Grid);
+            consider(snapped, -1, SnapType.Grid, 0);
         }
     }
 
@@ -344,7 +388,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         Vec3 hit;
         if (rayPlaneIntersect(vp.eye, ray,
                               cfg.workplaneCenter, cfg.workplaneNormal, hit))
-            consider(hit, -1, SnapType.Workplane);
+            consider(hit, -1, SnapType.Workplane, 0);
     }
 
     if (bestDist <= cfg.outerRangePx) {
@@ -352,6 +396,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         res.highlightPos = bestWorld;
         res.targetType   = bestType;
         res.targetIndex  = bestIdx;
+        res.targetSource = bestSource;
         if (bestDist <= cfg.innerRangePx) {
             res.snapped  = true;
             res.worldPos = bestWorld;

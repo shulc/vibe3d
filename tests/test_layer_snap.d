@@ -86,15 +86,40 @@ Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
     return Vec3(3.0f, -0.5f, -0.5f);
 }
 
-// Drag active-layer v0 along its X-arrow toward `targetPixel` with vertex-snap
-// enabled (huge range). Returns the post-drag position of active v0.
-double[3] dragV0Toward(Vec3 worldTarget, string baseUrl = "http://localhost:8080") {
+// POST /api/snap — a direct, deterministic probe of the multi-source snap walk
+// at an explicit cursor world-pos + screen pixel, with v0 excluded (mirroring
+// the live drag's self-exclusion). It runs the SAME snapCursor over the active
+// mesh + installed background sources the interactive drag does, and returns
+// the SnapResult JSON (now carrying targetSource). Used to assert the source
+// IDENTITY of the winner — /api/snap/last is cleared at mouse-up by the tool,
+// so it cannot be read post-drag.
+JSONValue probeSnap(Vec3 worldTarget, int sx, int sy,
+                    string baseUrl = "http://localhost:8080") {
+    string v3(Vec3 p) {
+        return format("[%.6f,%.6f,%.6f]", p.x, p.y, p.z);
+    }
+    string body_ = format(
+        `{"cursor":%s,"sx":%d,"sy":%d,"excludeVerts":[0]}`,
+        v3(worldTarget), sx, sy);
+    return parseJSON(cast(string)post(baseUrl ~ "/api/snap", body_));
+}
+
+// Result of a v0 drag: the post-drag active-v0 position + the SnapResult JSON
+// that the /api/snap probe reports at the same drag-target pixel.
+struct DragOutcome { double[3] pos; JSONValue snap; }
+
+// Drag active-layer v0 along its X-arrow toward `worldTarget` with snap
+// enabled (huge range), for the given snap candidate type(s). After the drag
+// it probes /api/snap at the drag-target pixel and returns both the post-drag
+// v0 position and that SnapResult (for source-identity assertions).
+DragOutcome dragV0Toward(Vec3 worldTarget, string snapTypes = "vertex",
+                         string baseUrl = "http://localhost:8080") {
     selectVerts([0]);
 
     string script =
         "tool.set move\n" ~
         "tool.pipe.attr snap enabled true\n" ~
-        "tool.pipe.attr snap types vertex\n" ~
+        "tool.pipe.attr snap types " ~ snapTypes ~ "\n" ~
         "tool.pipe.attr snap innerRange 999999\n" ~
         "tool.pipe.attr snap outerRange 999999\n";
     auto setResp = post(baseUrl ~ "/api/script", script);
@@ -126,30 +151,75 @@ double[3] dragV0Toward(Vec3 worldTarget, string baseUrl = "http://localhost:8080
                               x0, y0, x1, y1, 20);
     playAndWait(log);
 
-    return vertexPos(0);   // active layer = layer A
+    DragOutcome o;
+    o.pos  = vertexPos(0);                       // active layer = layer A
+    o.snap = probeSnap(worldTarget, x1, y1);     // source-identity probe
+    return o;
 }
 
 unittest { // POSITIVE: background-layer vertex IS a snap target
     Vec3 target = buildTwoLayers(true);     // B is visible + background
-    auto p0 = dragV0Toward(target);
+    auto o = dragV0Toward(target);
 
     // Axis-X drag: v0.x snaps to the background vertex's X (3.0); Y / Z stay.
-    assert(approx(p0[0], 3.0),
-        "v0.x should snap to background vertex X=3.0, got " ~ p0[0].to!string);
-    assert(approx(p0[1], -0.5),
-        "v0.y should stay at -0.5 (axis-X drag), got " ~ p0[1].to!string);
-    assert(approx(p0[2], -0.5),
-        "v0.z should stay at -0.5 (axis-X drag), got " ~ p0[2].to!string);
+    assert(approx(o.pos[0], 3.0),
+        "v0.x should snap to background vertex X=3.0, got " ~ o.pos[0].to!string);
+    assert(approx(o.pos[1], -0.5),
+        "v0.y should stay at -0.5 (axis-X drag), got " ~ o.pos[1].to!string);
+    assert(approx(o.pos[2], -0.5),
+        "v0.z should stay at -0.5 (axis-X drag), got " ~ o.pos[2].to!string);
+
+    // SOURCE IDENTITY (the highlight-fix data thread): the winning candidate
+    // came from a BACKGROUND source, so the SnapResult must name it
+    // (targetSource >= 1) — NOT report it as the active mesh (slot 0). Without
+    // the fix targetSource is always 0 and the cyan highlight is drawn against
+    // the wrong (active) mesh.
+    auto sr = o.snap;
+    assert(sr["highlighted"].type == JSONType.TRUE,
+        "expected a snap highlight, got " ~ sr.toString);
+    assert(sr["targetSource"].integer >= 1,
+        "background snap must report targetSource >= 1, got "
+        ~ sr["targetSource"].integer.to!string);
+    assert(sr["targetType"].integer == 1,   // SnapType.Vertex
+        "expected a Vertex snap (targetType=1), got "
+        ~ sr["targetType"].integer.to!string);
 }
 
 unittest { // NEGATIVE: a non-background (visible-only) layer does NOT snap
     Vec3 target = buildTwoLayers(false);    // B is visible but background=false
-    auto p0 = dragV0Toward(target);
+    auto o = dragV0Toward(target);
 
     // B is not a snap source, so v0 cannot reach X=3.0. With huge range it
     // snaps to the active layer's own nearest vertex in +X (v1 at X=0.5).
-    assert(!approx(p0[0], 3.0),
+    assert(!approx(o.pos[0], 3.0),
         "v0.x must NOT snap to non-background layer (got 3.0)");
-    assert(approx(p0[0], 0.5),
-        "v0.x should snap to active layer's own v1 X=0.5, got " ~ p0[0].to!string);
+    assert(approx(o.pos[0], 0.5),
+        "v0.x should snap to active layer's own v1 X=0.5, got " ~ o.pos[0].to!string);
+
+    // The snap came from the ACTIVE mesh — slot 0. This is the byte-identical
+    // common path: targetSource must stay 0.
+    auto sr = o.snap;
+    if (sr["highlighted"].type == JSONType.TRUE)
+        assert(sr["targetSource"].integer == 0,
+            "active-mesh snap must report targetSource == 0, got "
+            ~ sr["targetSource"].integer.to!string);
+}
+
+unittest { // EDGE variant: a background EDGE snap also names its source
+    Vec3 target = buildTwoLayers(true);     // B is visible + background
+    // Snap to edges only. The drag endpoint pixel is at the background
+    // layer's parked corner, so the nearest edge candidate is a background
+    // edge — the source identity must point at the background slot, locking
+    // the edge branch of drawTargetElementHighlight.
+    auto o = dragV0Toward(target, "edge");
+
+    auto sr = o.snap;
+    assert(sr["highlighted"].type == JSONType.TRUE,
+        "expected an edge highlight, got " ~ sr.toString);
+    assert(sr["targetSource"].integer >= 1,
+        "background edge snap must report targetSource >= 1, got "
+        ~ sr["targetSource"].integer.to!string);
+    assert(sr["targetType"].integer == 2,   // SnapType.Edge
+        "expected an Edge snap (targetType=2), got "
+        ~ sr["targetType"].integer.to!string);
 }

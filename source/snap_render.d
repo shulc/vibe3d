@@ -2,7 +2,7 @@ module snap_render;
 
 import math : Vec3, Viewport, projectToWindowFull;
 import mesh : Mesh;
-import snap : SnapResult;
+import snap : SnapResult, snapSource;
 import toolpipe.packets : SnapType;
 
 import ImGui = d_imgui;
@@ -67,7 +67,11 @@ private void drawTargetElementHighlight(ImGui.ImDrawList* dl,
                                         const ref Mesh mesh)
 {
     // Brighter cyan when actually snapped, dimmer when only highlighted —
-    // mirrors the yellow cursor marker's snapped-vs-pre-snap intensity.
+    // mirrors the yellow cursor marker's snapped-vs-pre-snap intensity. NOTE:
+    // the highlight is INTERACTION FEEDBACK drawn full-bright on top of the 3D
+    // scene; it is intentionally NOT dimmed to match a background layer's
+    // dimmed geometry pass — the targeted element must stay the most legible
+    // thing on screen regardless of which layer it lives on (layers Stage 5).
     immutable uint elemCol = result.snapped
         ? IM_COL32(0, 220, 255, 230)
         : IM_COL32(0, 220, 255, 150);
@@ -79,29 +83,41 @@ private void drawTargetElementHighlight(ImGui.ImDrawList* dl,
     int idx = result.targetIndex;
     auto t = result.targetType;
 
+    // Resolve the source the winning candidate came from (layers Stage 5).
+    // `targetIndex` is a SOURCE-LOCAL element index; indexing the active mesh
+    // for a background-source winner would highlight the wrong element (or be
+    // silently dropped by the range guard). Slot 0 = the active `mesh` arg
+    // (common path, byte-identical); slots 1..N resolve to their own source
+    // mesh via snap.snapSource. A null resolution (background source gone this
+    // frame) ⇒ skip — same fail-soft as the out-of-range guard.
+    const(Mesh)* m = (result.targetSource == 0)
+                   ? &mesh
+                   : snapSource(result.targetSource);
+    if (m is null) return;
+
     if (t == SnapType.Vertex) {
-        if (idx < 0 || idx >= cast(int)mesh.vertices.length) return;
+        if (idx < 0 || idx >= cast(int)m.vertices.length) return;
         ImVec2 pt;
-        if (!project(mesh.vertices[idx], vp, pt)) return;
+        if (!project(m.vertices[idx], vp, pt)) return;
         dl.AddCircleFilled(pt, 5.0f, elemCol, 16);
     }
     else if (t == SnapType.Edge || t == SnapType.EdgeCenter) {
-        if (idx < 0 || idx >= cast(int)mesh.edges.length) return;
-        auto edge = mesh.edges[idx];
+        if (idx < 0 || idx >= cast(int)m.edges.length) return;
+        auto edge = m.edges[idx];
         ImVec2 a, b;
-        if (!project(mesh.vertices[edge[0]], vp, a)) return;
-        if (!project(mesh.vertices[edge[1]], vp, b)) return;
+        if (!project(m.vertices[edge[0]], vp, a)) return;
+        if (!project(m.vertices[edge[1]], vp, b)) return;
         dl.AddLine(a, b, elemCol, lineThick);
     }
     else if (t == SnapType.Polygon || t == SnapType.PolyCenter) {
-        if (idx < 0 || idx >= cast(int)mesh.faces.length) return;
-        auto face = mesh.faces[idx];
+        if (idx < 0 || idx >= cast(int)m.faces.length) return;
+        auto face = m.faces[idx];
         if (face.length < 3) return;
         ImVec2[] pts;
         pts.length = face.length;
         foreach (i, vi; face) {
-            if (vi >= mesh.vertices.length) return;
-            if (!project(mesh.vertices[vi], vp, pts[i])) return;
+            if (vi >= m.vertices.length) return;
+            if (!project(m.vertices[vi], vp, pts[i])) return;
         }
         // Outline. Fill is risky for non-convex faces — skip the fill on
         // anything but tris/quads where convexity is virtually
