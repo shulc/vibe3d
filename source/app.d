@@ -119,6 +119,7 @@ import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
+import commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand;
@@ -1248,6 +1249,16 @@ void main(string[] args) {
     char[512] historyReplInput;  // null-terminated for ImGui.InputText
     historyReplInput[] = 0;
     bool historyReplLastWasError = false;
+
+    // Layers panel (layers Stage 4): rename-in-place state. `layerRenameIndex`
+    // is the layer index whose name is currently being edited inline (-1 = none,
+    // i.e. all rows show a plain label); `layerRenameBuf` is the null-terminated
+    // edit buffer fed to ImGui.InputText. Both reset when the edit commits or
+    // is cancelled. The panel is pure UI — every control dispatches a `layer.*`
+    // command through commandHandlerDelegate, never mutating `document` directly.
+    int layerRenameIndex = -1;
+    char[256] layerRenameBuf;
+    layerRenameBuf[] = 0;
     // Phase 4: substring filter for the History panel list.
     // Type-to-narrow — both command name and args searched (case-
     // sensitive substring).
@@ -1527,6 +1538,8 @@ void main(string[] args) {
         new ToolPanelEditCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["ui.toolProperties"] = () => cast(Command)
         new UiToolPropertiesCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.layerList"] = () => cast(Command)
+        new UiLayerListCommand(&mesh(), cameraView, editMode);
 
     // layer.* commands (layers Stage 2) — mutate the one Document; the
     // active-index movers (add/delete/select) fire onActiveLayerChanged.
@@ -2715,6 +2728,15 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             utp.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto ull = cast(UiLayerListCommand)cmd) {
+                // ui.layerList <show|hide> (test-only).
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            ull.setVisible(pos[0].str);
                     }
                 }
             } else if (auto fad = cast(FalloffAddCommand)cmd) {
@@ -4878,6 +4900,140 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
+    // Layers panel (layers Stage 4)
+    // -------------------------------------------------------------------------
+    //
+    // Interactive layer manager. One row per `document.layers`:
+    //   - an "active" selectable (radio-like) → `layer.select index:N`
+    //   - the layer name (double-click to rename in place → `layer.rename`)
+    //   - a "V" (visible) checkbox     → `layer.setVisible index:N value:b`
+    //   - a "B" (background) checkbox   → `layer.setBackground index:N value:b`
+    // plus an "Add" button (`layer.add`) and a "Delete" button
+    // (`layer.delete index:N`, disabled when only one layer remains — the
+    // command refuses the last layer regardless, this just greys the affordance).
+    //
+    // EVERY interaction dispatches through commandHandlerDelegate — the same
+    // path /api/command uses — so undo/history/coalescing all work. The panel
+    // NEVER mutates `document` directly. It is pure UI: no toolpipe, no mesh.
+    //
+    // Visibility mirrors Tool Properties: always shown in a normal run; in
+    // --test it is HIDDEN by default (so it cannot capture viewport drags) and
+    // is only drawn when `ui.layerList show` set g_layerListShown.
+    void drawLayerListPanel() {
+        import std.json : JSONValue;
+        import std.conv : to;
+        import std.string : fromStringz;
+
+        pushPanelChromeStyle();
+        ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 540),
+                               ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(ImVec2(260, 240), ImGuiCond.FirstUseEver);
+        if (ImGui.Begin("Layers")) {
+            // ---- Add button ----
+            if (ImGui.SmallButton("Add")) {
+                if (commandHandlerDelegate !is null)
+                    commandHandlerDelegate("layer.add", "{}");
+            }
+            ImGui.SameLine();
+            // ---- Delete button (disabled at one layer) ----
+            bool lastLayer = document.layers.length <= 1;
+            ImGui.BeginDisabled(lastLayer);
+            if (ImGui.SmallButton("Delete")) {
+                if (commandHandlerDelegate !is null)
+                    commandHandlerDelegate("layer.delete",
+                        `{"index":` ~ to!string(document.activeIndex) ~ `}`);
+            }
+            ImGui.EndDisabled();
+
+            ImGui.Separator();
+
+            // ---- One row per layer ----
+            foreach (i; 0 .. document.layers.length) {
+                auto l = document.layers[i];
+                int idx = cast(int)i;
+                ImGui.PushID(idx);
+
+                // Active selectable (radio-like). Selecting an already-active
+                // layer is a no-op switch (the command compares object identity),
+                // so guard against re-dispatching it every frame the row is held.
+                bool isActive = (i == document.activeIndex);
+                if (ImGui.Selectable("##active", isActive,
+                                     ImGuiSelectableFlags.AllowItemOverlap,
+                                     ImVec2(14, 0))) {
+                    if (!isActive && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.select",
+                            `{"index":` ~ to!string(idx) ~ `}`);
+                }
+                ImGui.SameLine();
+
+                // Name — double-click to rename in place.
+                if (layerRenameIndex == idx) {
+                    // Inline edit: Enter (or focus loss) commits, Esc cancels.
+                    if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
+                        ImGui.SetKeyboardFocusHere();
+                    ImGui.SetNextItemWidth(140);
+                    bool commit = ImGui.InputText("##rename", layerRenameBuf[],
+                                      ImGuiInputTextFlags.EnterReturnsTrue);
+                    bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
+                    // Commit on Enter or when the field loses focus (click away).
+                    if (!commit && !cancel
+                        && ImGui.IsItemDeactivatedAfterEdit())
+                        commit = true;
+                    if (commit) {
+                        string newName =
+                            cast(string) fromStringz(layerRenameBuf.ptr).dup;
+                        if (newName.length && commandHandlerDelegate !is null)
+                            commandHandlerDelegate("layer.rename",
+                                `{"index":` ~ to!string(idx) ~ `,"name":`
+                                ~ JSONValue(newName).toString() ~ `}`);
+                        layerRenameIndex = -1;
+                    } else if (cancel || ImGui.IsItemDeactivated()) {
+                        layerRenameIndex = -1;
+                    }
+                } else {
+                    // Plain label. Double-click opens the inline editor seeded
+                    // with the current name.
+                    ImGui.Selectable(l.name.length ? l.name : "(unnamed)", false,
+                                     ImGuiSelectableFlags.AllowDoubleClick,
+                                     ImVec2(140, 0));
+                    if (ImGui.IsItemHovered()
+                        && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left)) {
+                        layerRenameIndex = idx;
+                        layerRenameBuf[] = 0;
+                        auto src = l.name;
+                        size_t n = src.length < layerRenameBuf.length - 1
+                                 ? src.length : layerRenameBuf.length - 1;
+                        layerRenameBuf[0 .. n] = src[0 .. n];
+                    }
+                }
+
+                // Visible checkbox.
+                ImGui.SameLine();
+                bool vis = l.visible;
+                if (ImGui.Checkbox("V", &vis)) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.setVisible",
+                            `{"index":` ~ to!string(idx) ~ `,"value":`
+                            ~ (vis ? "true" : "false") ~ `}`);
+                }
+                // Background checkbox.
+                ImGui.SameLine();
+                bool bg = l.background;
+                if (ImGui.Checkbox("B", &bg)) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.setBackground",
+                            `{"index":` ~ to!string(idx) ~ `,"value":`
+                            ~ (bg ? "true" : "false") ~ `}`);
+                }
+
+                ImGui.PopID();
+            }
+        }
+        ImGui.End();
+        popPanelChromeStyle();
+    }
+
+    // -------------------------------------------------------------------------
     // Main loop
     // -------------------------------------------------------------------------
 
@@ -4984,6 +5140,14 @@ void main(string[] args) {
         drawTabPanel();
         drawStatusBar();
         version (WithRender) drawIPRPanel(&mesh(), cameraView);
+
+        // ---- Layers (floating) ----
+        // Same imgui-determinism rule as Tool Properties below: in --test this
+        // panel is hidden by default (a test opts in via `ui.layerList show`)
+        // so synthetic viewport drags are never captured by it. In a normal run
+        // it is always drawn (g_testMode false ⇒ guard passes).
+        if (!command.g_testMode || g_layerListShown)
+            drawLayerListPanel();
 
         // ---- Tool Properties (floating) ----
         // In --test mode this window is hidden by default so synthetic mouse
