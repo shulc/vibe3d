@@ -560,12 +560,14 @@ void applyXformMatrix(
         float[16] Mw = blendToIdentity(Mv, w, mode);
         mesh.vertices[vi] = pivot + applyAffine(Mw, base - pivot);
     }
-    // Symmetry mirror on the LIVE unified path (applyFold → here). Timed in
-    // its own category; the per-vertex loop above is the kernelApply work the
-    // caller (applyFold) scopes. See doc/perf_harness_plan.md.
-    if (dragSymmetry.enabled
-        && dragSymmetry.pairOf.length == mesh.vertices.length) {
-        auto zMirror = g_perf.scope_(Cat.symmetryMirror);
-        applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
-    }
+    // NOTE (doc/symmetry_deform_plan.md Stage 2): the GLOBAL-fold symmetry
+    // mirror tail that used to live here was DELETED. The live unified fold
+    // (XfrmTransformTool.applyFold) now owns the mirror as an explicit second
+    // pass (Pass B: M'=Slin·M·Slin about S·pivot for distance falloffs,
+    // position-copy for membership falloffs) and calls this kernel with a
+    // DISABLED `dragSymmetry`, so no mirror runs in-kernel. The fold therefore
+    // carries exactly ONE symmetry model. The dormant legacy pow-scale chain +
+    // per-cluster path retain their own position-copy mirror at their call
+    // sites (Stage 2b / Stage 4 scope). `dragSymmetry` / `toProcess` stay in
+    // the signature: callers still pass them, and the kernel ignores symmetry.
 }

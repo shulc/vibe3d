@@ -75,7 +75,8 @@ import operator : VectorStack;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix, matMul4, wrapAboutPivot, eulerZYXFromMatrix;
+               identityMatrix, matMul4, wrapAboutPivot, eulerZYXFromMatrix,
+               reflectionMatrix, applyAffine;
 import editmode : EditMode;
 import mesh;
 import handler  : ToolHandles;
@@ -2599,6 +2600,19 @@ public:
                 }
             }
 
+            // Symmetry mirror for the DORMANT legacy pow-scale chain. The
+            // in-kernel mirror tail was deleted in Stage 2 (the live fold owns
+            // the mirror via Pass B). This branch is only reached when
+            // compoundPasses != 1 (Selection-falloff scale pow — dormant in the
+            // current tree), so it keeps the legacy POSITION-COPY mirror at its
+            // own call site (per the plan: legacy/per-cluster paths retain
+            // position-copy until their own stage). One copy after the whole
+            // chain, OR-ing mirror verts into toProcess for upload/undo.
+            if (dragSymmetry.enabled
+                && dragSymmetry.pairOf.length == mesh.vertices.length) {
+                import symmetry : applySymmetryMirror;
+                applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+            }
             // Change-notification (Stage 1): the dormant legacy per-pass /
             // pow-scale chain also writes positions in place WITHOUT a version
             // bump (mid-drag stability). Mirror applyFold's note so this path
@@ -3853,9 +3867,33 @@ private:
         g_perf.count(Cat.vertsTouched, nProc);
         if (dragFalloff.enabled) g_perf.count(Cat.falloffEvalCount, nProc);
         auto zKernel = g_perf.scope_(Cat.kernelApply);
+        // PASS A — DRIVER pass. Transforms exactly the original selection with
+        // each driver's own falloff weight + matrix M. `dragSymmetry` is passed
+        // DISABLED so the in-kernel position-copy tail (now deleted) never runs:
+        // the symmetry mirror is owned by Pass B below, not the kernel.
+        SymmetryPacket noSym;   // enabled == false
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                          blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
-                         clusterM, dragSymmetry, toProcess, /*weightVerts=*/ baseline);
+                         clusterM, noSym, toProcess, /*weightVerts=*/ baseline);
+
+        // PASS B — MIRROR pass (symmetry, doc/symmetry_deform_plan.md Stage 2).
+        // The fold carries exactly ONE symmetry model: this two-pass mirror,
+        // NOT the old `applySymmetryMirror` position-copy tail (deleted from
+        // both global fold-path sites — the in-kernel tail in xform_kernels.d
+        // and this caller). For DISTANCE-based falloffs the mirror vertex is
+        // transformed with the conjugated matrix M'=Slin·M·Slin about the
+        // reflected pivot S·pivot, weighted at its OWN mirrored baseline — so
+        // an asymmetric distance falloff attenuates each side by its own
+        // position (the correctness divergence). For MEMBERSHIP / vid-keyed
+        // falloffs (Selection, Element with a connect-mask / anchor-ring,
+        // or any Composite containing one) own-weight would return ~0 and
+        // FREEZE the mirror side, so those keep the position-copy mirror (the
+        // safe floor — pick-sync already mirrored the selection, so the mirror
+        // pair is a member moving with the driver's full transform).
+        if (dragSymmetry.enabled
+            && dragSymmetry.pairOf.length == mesh.vertices.length) {
+            applyFoldSymmetryMirror(baseline, pivot, M, clusterM, cp, ap);
+        }
 
         // Change-notification (doc/change_notification_bus_plan, Stage 1): the
         // drag apply moved positions in place WITHOUT bumping mutationVersion
@@ -3866,6 +3904,183 @@ private:
         // the global fold and the per-cluster clusterM path run through the single
         // applyXformMatrix above) — never per vertex.
         mesh.noteChange(MeshEditScope.Position);
+    }
+
+    // ---------------------------------------------------------------------
+    // Symmetry PASS B (doc/symmetry_deform_plan.md Stage 2). Runs AFTER the
+    // driver pass has written `mesh.vertices` for the selection. It mirrors
+    // the drag onto the paired sub-set so the editor carries exactly ONE
+    // symmetry model on the global fold path (the position-copy tails in
+    // xform_kernels.d and the per-cluster path are out of scope — kept for
+    // their own stages). Two behaviours, split by falloff CLASS:
+    //
+    //   • DISTANCE-based falloff (Linear/Radial/Screen/Lasso/Cylinder, or
+    //     Element with no membership gate): a real second weighted apply of
+    //     M'=Slin·M·Slin about S·pivot over the mirror sub-set, each mirror
+    //     vert weighted at its OWN mirrored baseline. This is the kernel
+    //     identity Stage 1 proves (math.d "PER-VERTEX S·M·S equivalence"):
+    //     S·(pivot + M·(b−pivot)) = (S·pivot) + (Slin·M·Slin)·(S·b − S·pivot),
+    //     so for a SYMMETRIC falloff (equal weights) it reproduces the old
+    //     position-copy bit-for-bit (test_symm_during_drag anchor), while an
+    //     ASYMMETRIC distance falloff gives each side its own attenuation.
+    //
+    //   • MEMBERSHIP / vid-keyed falloff (Selection, Element with a
+    //     connect-mask / anchor-ring, or a Composite containing one): the
+    //     mirror vert's own vid-weight is ~0 under a one-sided pick, so the
+    //     two-pass own-weight model would FREEZE the mirror side. These keep
+    //     the position-copy mirror (`applySymmetryMirror`) — the mirror pair
+    //     is a member moving with the driver's full (weight-1) transform,
+    //     which is exactly what pick-sync's selection mirror intends.
+    //
+    // For BOTH paths the mirror sub-set is OR-ed into `toProcess` so the
+    // deferred GPU upload + undo touched-set cover the mirror side (replacing
+    // the deleted tail's `outAlsoTouched` OR-in). On-plane selected drivers
+    // are force-projected back onto the plane after Pass A (they are their own
+    // mirror; preserve the tested "center vertex stays on the plane" contract).
+    void applyFoldSymmetryMirror(Vec3[] baseline, Vec3 pivot, float[16] M,
+                                 float[16][] clusterM,
+                                 TransformTool.ClusterPivots cp,
+                                 TransformTool.ClusterAxes ap) {
+        import symmetry : applySymmetryMirror, projectOnPlane;
+        auto zMirror = g_perf.scope_(Cat.symmetryMirror);
+
+        const(int)[]  pairOf   = dragSymmetry.pairOf;
+        const(bool)[] onPlane  = dragSymmetry.onPlane;
+        const(int)[]  vertSign = dragSymmetry.vertSign;
+        const int     baseSide = dragSymmetry.baseSide;
+        const size_t  nv       = mesh.vertices.length;
+
+        // Force-project on-plane DRIVERS back onto the plane (Pass A moved
+        // them off). They are their own mirror — no Pass-B entry.
+        foreach (vi; vertexIndicesToProcess) {
+            if (vi < 0 || vi >= cast(int)nv) continue;
+            if (vi < cast(int)onPlane.length && onPlane[vi])
+                mesh.vertices[vi] = projectOnPlane(dragSymmetry, mesh.vertices[vi]);
+        }
+
+        // MEMBERSHIP / vid-keyed (or membership-tainted composite): keep
+        // position-copy for the mirror side (safe floor). `toProcess` is
+        // passed as both the selected mask AND the also-touched out-mask, so
+        // mirror writes fold into the upload/undo set exactly as the deleted
+        // tail did.
+        if (falloffIsMembershipKeyed(dragFalloff)) {
+            applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+            return;
+        }
+
+        // DISTANCE-based falloff (or none): build the mirror sub-set + its OWN
+        // baseline, then issue a second weighted apply (Pass B) with the
+        // conjugated matrix about the reflected pivot.
+        //
+        // Double-apply guard (§3): a vertex must be transformed exactly once
+        // across A∪B. When BOTH sides are selected, the base-side vertex is
+        // the driver (Pass A); the other side is its mirror (Pass B). Skip a
+        // mirror entry whose pair is itself a base-side driver (it is already
+        // covered by Pass A), and skip self / unpaired / on-plane verts.
+        // `vertSign` is the PRE-translate side, stable through a plane-crossing
+        // drag. The driver `vi` is recorded explicitly (mirrorDriverOf) rather
+        // than re-derived from pairOf[mi] — guards a loose-epsilon
+        // non-involutive pairing.
+        int[]  mirrorIndices;
+        Vec3[] mirrorBaseline;
+        int[]  mirrorDriverOf;
+        mirrorIndices.reserve(vertexIndicesToProcess.length);
+        mirrorBaseline.reserve(vertexIndicesToProcess.length);
+        mirrorDriverOf.reserve(vertexIndicesToProcess.length);
+
+        foreach (vi; vertexIndicesToProcess) {
+            if (vi < 0 || vi >= cast(int)nv) continue;
+            if (vi < cast(int)onPlane.length && onPlane[vi]) continue; // its own mirror
+            if (vi >= cast(int)pairOf.length) continue;
+            int mi = pairOf[vi];
+            if (mi < 0 || mi == vi || mi >= cast(int)nv) continue;     // unpaired / self
+            // Both sides selected → only the base-side vertex drives; the
+            // non-base side does NOT spawn a mirror entry from here (it will
+            // be the mirror of its own base-side partner).
+            bool mirrorAlsoSelected =
+                (mi < cast(int)toProcess.length) && toProcess[mi];
+            if (mirrorAlsoSelected) {
+                int iSign = (vi < cast(int)vertSign.length) ? vertSign[vi] : 0;
+                if (iSign != baseSide) continue;     // skip the non-base driver
+            }
+            if (mi >= cast(int)baseline.length) continue;
+            mirrorIndices  ~= mi;
+            mirrorBaseline ~= baseline[mi];          // mirror vert's OWN pre-drag pos
+            mirrorDriverOf ~= vi;
+        }
+
+        if (mirrorIndices.length == 0) return;
+
+        // Reflected pivot + conjugated matrices (Stage 1 corrected formula):
+        // pivotR = S·pivot (full affine), M' = Slin·M·Slin (linear-only,
+        // origin-fixing). Per-cluster matrices are reflected the same way; the
+        // mirror vert reuses ITS DRIVER's cluster matrix so the cluster's
+        // operation mirrors (Stage 2b would refine the cluster ASSIGNMENT;
+        // here the global M is the common case and clusterM is null unless
+        // ACEN.Local is active).
+        float[16] S    = reflectionMatrix(dragSymmetry.planePoint,
+                                          dragSymmetry.planeNormal);
+        float[16] Slin = reflectionMatrix(Vec3(0, 0, 0),
+                                          dragSymmetry.planeNormal);
+        Vec3 pivotR    = applyAffine(S, pivot);
+        float[16] Mp   = matMul4(Slin, matMul4(M, Slin));
+
+        float[16][] clusterMp = null;
+        if (clusterM !is null) {
+            clusterMp = new float[16][](clusterM.length);
+            foreach (cid; 0 .. clusterM.length)
+                clusterMp[cid] = matMul4(Slin, matMul4(clusterM[cid], Slin));
+        }
+
+        // Pass B is a single-matrix weighted loop over the mirror sub-set with
+        // its OWN ordinal baseline — the kernel needs no per-vertex-matrix
+        // change. Distance falloffs read `weightVerts[mi]` (= mirrorBaseline,
+        // mesh-length-indexed via baseline) so each mirror vert is weighted at
+        // its OWN mirrored position. Symmetry is DISABLED for this call so it
+        // does not re-mirror. NB: pass the mesh-length `baseline` as weightVerts
+        // so the kernel's vid-indexed weight read matches the driver pass.
+        SymmetryPacket noSym;   // enabled == false
+        applyXformMatrix(mesh, mirrorIndices, mirrorBaseline, pivotR, Mp,
+                         blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
+                         clusterMp, noSym, toProcess, /*weightVerts=*/ baseline);
+
+        // Fold the mirror sub-set into the upload/undo touched set (replacing
+        // the deleted tail's outAlsoTouched OR-in).
+        foreach (mi; mirrorIndices)
+            if (mi >= 0 && mi < cast(int)toProcess.length)
+                toProcess[mi] = true;
+    }
+
+    // Classify the active falloff as MEMBERSHIP / vid-keyed (true) vs
+    // DISTANCE-based (false) for the symmetry mirror pass. Membership-keyed
+    // falloffs return ~0 for verts outside a one-sided pick, so their mirror
+    // side must be position-copied (a member moving with the driver's full
+    // transform) rather than re-weighted at its own vid. A Composite is
+    // membership-keyed iff ANY contributor is (safe floor: the whole mirror
+    // side falls back to position-copy — §3/§4).
+    static bool falloffIsMembershipKeyed(const ref FalloffPacket fp) {
+        if (!fp.enabled) return false;
+        final switch (fp.type) {
+            case FalloffType.None:
+            case FalloffType.Linear:
+            case FalloffType.Radial:
+            case FalloffType.Screen:
+            case FalloffType.Lasso:
+            case FalloffType.Cylinder:
+                return false;
+            case FalloffType.Selection:
+                return true;   // reads selectionWeights[vid]
+            case FalloffType.Element:
+                // Pure sphere = distance; a connect-mask or anchor-ring makes
+                // it vid-keyed (zeroes off-component verts / pins picked verts).
+                return (fp.connect != ElementConnect.Off
+                         && fp.connectMask.length > 0)
+                    || fp.anchorRing.length > 0;
+            case FalloffType.Composite:
+                foreach (ref c; fp.contributors)
+                    if (falloffIsMembershipKeyed(c)) return true;
+                return false;
+        }
     }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from
