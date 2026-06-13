@@ -31,8 +31,8 @@ private:
     Vec3  headlessSpine    = Vec3(1, 0, 0);
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        super(mesh, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        super(meshSrc, gpu, editMode);
     }
 
     override string name() const { return "Bend"; }

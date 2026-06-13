@@ -301,11 +301,11 @@ public:
     // baseline, so the rotation is needed only during the synchronous per-frame
     // applyTRS call — a transient parameter is sufficient.
 
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        super(mesh, gpu, editMode);
-        moveSub   = new MoveTool  (mesh, gpu, editMode);
-        rotateSub = new RotateTool(mesh, gpu, editMode);
-        scaleSub  = new ScaleTool (mesh, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        super(meshSrc, gpu, editMode);
+        moveSub   = new MoveTool  (meshSrc, gpu, editMode);
+        rotateSub = new RotateTool(meshSrc, gpu, editMode);
+        scaleSub  = new ScaleTool (meshSrc, gpu, editMode);
         toolHandles = new ToolHandles();
     }
 

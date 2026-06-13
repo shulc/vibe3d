@@ -47,6 +47,11 @@ class MeshSelectionEdit : Command, Operator {
     override CompareResult compareOp(const Command prev) const {
         auto p = cast(const(MeshSelectionEdit))prev;
         if (p is null) return CompareResult.Different;
+        // Target-mesh equality (layers seam, switch-hook step 2a): two edits
+        // recorded on DIFFERENT layers' meshes must never coalesce into one
+        // entry spanning two meshes. With one mesh this is always true ⇒
+        // identity in Stage 0a; it becomes load-bearing once layers coexist.
+        if (p.mesh !is this.mesh) return CompareResult.Different;
         if (p.afterMode != this.beforeMode) return CompareResult.Different;
         return CompareResult.Compatible;
     }

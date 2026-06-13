@@ -123,7 +123,8 @@ private:
     // `mesh_` is required for pairing — null-mesh callers skip the
     // rebuild and publish an empty pair table (the editor never has a
     // null mesh; unit tests that bypass app.d's pipe init do).
-    Mesh*     mesh_;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     EditMode* editMode_;
 
     // Pairing cache. Rebuilt when (mesh.mutationVersion, plane,
@@ -141,8 +142,8 @@ private:
     bool   cachedReady_           = false;
 
 public:
-    this(Mesh* mesh = null, EditMode* editMode = null) {
-        this.mesh_     = mesh;
+    this(Mesh* delegate() meshSrc = null, EditMode* editMode = null) {
+        this.meshSrc_ = meshSrc;
         this.editMode_ = editMode;
         publishState();
     }

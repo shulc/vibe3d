@@ -150,12 +150,13 @@ private:
     // Direct mesh refs for Element / Local modes (face/edge/vertex
     // normals). Optional — the stage works without when only World /
     // Workplane / Auto modes are used.
-    Mesh*     mesh_;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     EditMode* editMode_;
 
 public:
-    this(Mesh* mesh = null, EditMode* editMode = null) {
-        this.mesh_     = mesh;
+    this(Mesh* delegate() meshSrc = null, EditMode* editMode = null) {
+        this.meshSrc_ = meshSrc;
         this.editMode_ = editMode;
         publishState();
     }

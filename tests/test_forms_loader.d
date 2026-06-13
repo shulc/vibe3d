@@ -316,7 +316,7 @@ unittest {
 
     Mesh m;
     EditMode em = EditMode.Vertices;
-    auto fs = new FalloffStage(&m, &em);
+    auto fs = new FalloffStage(() => &m, &em);
 
     auto universe = fs.knownAttrs();
     assert(universe.length > 0);

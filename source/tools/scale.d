@@ -96,8 +96,8 @@ public:
     // standalone (unit-test) instance, which keeps the legacy kernel path.
     TransformTool wrapperRef;
 
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode) {
-        super(mesh, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        super(meshSrc, gpu, editMode);
         handler = new ScaleHandler(Vec3(0, 0, 0));
         headX = new ScaleHeadHandle(handler.arrowX);
         headY = new ScaleHeadHandle(handler.arrowY);

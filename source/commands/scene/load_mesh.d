@@ -1,5 +1,6 @@
 module commands.scene.load_mesh;
 
+import display_sync : refreshDisplay;
 import command;
 import math : Vec3;
 import mesh;
@@ -116,13 +117,7 @@ class MeshLoadRaw : Command {
     }
 
     private void refreshCaches() {
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length);
-        vc.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length);
-        fc.invalidate();
-        ec.resize(mesh.edges.length);
-        ec.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 
     // Tiny @safe int-to-string for error messages without dragging

@@ -167,7 +167,8 @@ private:
     // on each pipeline pass walks the current selection arrays. Cheap —
     // centroid is O(verts) and only runs when a tool actually consumes
     // state.actionCenter (typically Move/Rotate/Scale's per-frame update).
-    Mesh*     mesh_;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     EditMode* editMode_;
     // Cached viewport from the last evaluate() — Screen mode needs it to
     // ray-cast the screen-center pixel onto the workplane. listAttrs()
@@ -210,8 +211,8 @@ private:
                                       // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
 
 public:
-    this(Mesh* mesh, EditMode* editMode) {
-        this.mesh_     = mesh;
+    this(Mesh* delegate() meshSrc, EditMode* editMode) {
+        this.meshSrc_ = meshSrc;
         this.editMode_ = editMode;
         publishState();
     }

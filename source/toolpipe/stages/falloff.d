@@ -128,7 +128,8 @@ class FalloffStage : Stage, Operator {
     // can pre-fit to the active selection. nullable: unit tests that
     // bypass the app-level wiring still work; auto-size becomes a
     // no-op.
-    private Mesh*     mesh_;
+    private Mesh* delegate() meshSrc_;
+    private @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     private EditMode* editMode_;
 
     // Last workplane normal cached at evaluate(). Used by autoSize() to
@@ -193,9 +194,9 @@ class FalloffStage : Stage, Operator {
     // is purely the addressing handle.
     private string instanceId_ = "falloff";
 
-    this(Mesh* mesh = null, EditMode* editMode = null,
+    this(Mesh* delegate() meshSrc = null, EditMode* editMode = null,
          string instanceId = "falloff") {
-        this.mesh_       = mesh;
+        this.meshSrc_ = meshSrc;
         this.editMode_   = editMode;
         this.instanceId_ = instanceId;
         publishState();

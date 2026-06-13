@@ -863,6 +863,15 @@ void main(string[] args) {
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
+    // Seam 2b — install the display-refresh resolver. Every mutating
+    // command's apply()/revert() routes its GPU upload + cache refresh
+    // through display_sync.refreshDisplay, which no-ops when the command's
+    // target mesh is not the one on screen. In Stage 0a there is exactly one
+    // mesh, so this resolver always matches the target ⇒ provably neutral.
+    // Stage 0b retargets it to `() => document.activeMesh()`.
+    import display_sync : activeMeshResolver;
+    activeMeshResolver = () => &mesh;
+
     // Bulk transition (change-notification bus, Stage 1): launching a recorded
     // session (`--playback <file>`) is a fresh-scene boundary — note All once so
     // the first frame's flush rebuilds every cache from the loaded state. (The
@@ -1240,11 +1249,11 @@ void main(string[] args) {
         import toolpipe.stages.snap      : SnapStage;
         import toolpipe.stages.falloff   : FalloffStage;
         import toolpipe.stages.symmetry  : SymmetryStage;
-        g_pipeCtx.pipeline.add(new SymmetryStage(&mesh, &editMode));
+        g_pipeCtx.pipeline.add(new SymmetryStage(() => &mesh, &editMode));
         g_pipeCtx.pipeline.add(new SnapStage());
-        g_pipeCtx.pipeline.add(new ActionCenterStage(&mesh, &editMode));
-        g_pipeCtx.pipeline.add(new AxisStage(&mesh, &editMode));
-        g_pipeCtx.pipeline.add(new FalloffStage(&mesh, &editMode));
+        g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh, &editMode));
+        g_pipeCtx.pipeline.add(new AxisStage(() => &mesh, &editMode));
+        g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh, &editMode));
     }
 
     // Main-loop flag — declared up here so command factories
@@ -1263,7 +1272,7 @@ void main(string[] args) {
     // etc.) have moved off them.
     reg.toolFactories["move"]   = () {
         import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
+        auto t = new XfrmTransformTool(() => &mesh, &gpu, &editMode);
         t.flagT = true; t.flagR = false; t.flagS = false;
         t.handleFamily = 0;
         t.handlePresentation = "full";
@@ -1272,7 +1281,7 @@ void main(string[] args) {
     };
     reg.toolFactories["rotate"] = () {
         import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
+        auto t = new XfrmTransformTool(() => &mesh, &gpu, &editMode);
         t.flagT = false; t.flagR = true; t.flagS = false;
         t.handleFamily = 1;
         t.handlePresentation = "full";
@@ -1281,7 +1290,7 @@ void main(string[] args) {
     };
     reg.toolFactories["scale"]  = () {
         import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
+        auto t = new XfrmTransformTool(() => &mesh, &gpu, &editMode);
         t.flagT = false; t.flagR = false; t.flagS = true;
         t.handleFamily = 2;
         t.handlePresentation = "full";
@@ -1290,17 +1299,17 @@ void main(string[] args) {
     };
     reg.toolFactories["xfrm.transform"] = () {
         import tools.xfrm_transform : XfrmTransformTool;
-        auto t = new XfrmTransformTool(&mesh, &gpu, &editMode);
+        auto t = new XfrmTransformTool(() => &mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.push"] = () {
-        auto t = new PushTool(&mesh, &gpu, &editMode);
+        auto t = new PushTool(() => &mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.bend"] = () {
-        auto t = new BendTool(&mesh, &gpu, &editMode);
+        auto t = new BendTool(() => &mesh, &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
@@ -1329,7 +1338,7 @@ void main(string[] args) {
         return cast(Tool)t;
     };
     reg.toolFactories["prim.cube"] = () {
-        auto t = new BoxTool(&mesh, &gpu, litShader);
+        auto t = new BoxTool(() => &mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -1339,7 +1348,7 @@ void main(string[] args) {
                                 "prim.cube", reg.toolFactories["prim.cube"]);
 
     reg.toolFactories["prim.sphere"] = () {
-        auto t = new SphereTool(&mesh, &gpu, litShader);
+        auto t = new SphereTool(() => &mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -1349,7 +1358,7 @@ void main(string[] args) {
                                 "prim.sphere", reg.toolFactories["prim.sphere"]);
 
     reg.toolFactories["prim.cylinder"] = () {
-        auto t = new CylinderTool(&mesh, &gpu, litShader);
+        auto t = new CylinderTool(() => &mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -1359,7 +1368,7 @@ void main(string[] args) {
                                 "prim.cylinder", reg.toolFactories["prim.cylinder"]);
 
     reg.toolFactories["prim.cone"] = () {
-        auto t = new ConeTool(&mesh, &gpu, litShader);
+        auto t = new ConeTool(() => &mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -1369,7 +1378,7 @@ void main(string[] args) {
                                 "prim.cone", reg.toolFactories["prim.cone"]);
 
     reg.toolFactories["prim.capsule"] = () {
-        auto t = new CapsuleTool(&mesh, &gpu, litShader);
+        auto t = new CapsuleTool(() => &mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -1379,7 +1388,7 @@ void main(string[] args) {
                                 "prim.capsule", reg.toolFactories["prim.capsule"]);
 
     reg.toolFactories["prim.torus"] = () {
-        auto t = new TorusTool(&mesh, &gpu, litShader);
+        auto t = new TorusTool(() => &mesh, &gpu, litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -1391,7 +1400,7 @@ void main(string[] args) {
     // Pen has no headless path — interactive only. Tool factory
     // only; no commandFactories entry. See doc/pen_plan.md.
     reg.toolFactories["pen"] = () {
-        auto t = new PenTool(&mesh, &gpu, litShader,
+        auto t = new PenTool(() => &mesh, &gpu, litShader,
                              &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
@@ -1403,7 +1412,7 @@ void main(string[] args) {
     // wired via the prim.cube registration template. Gated to Edges mode by
     // EdgeExtrudeTool.supportedModes().
     reg.toolFactories["edge.extrude"] = () {
-        auto t = new EdgeExtrudeTool(&mesh, &gpu, &editMode, litShader,
+        auto t = new EdgeExtrudeTool(() => &mesh, &gpu, &editMode, litShader,
                                      &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, edgeExtrudeEditFactory);
         return cast(Tool)t;
@@ -1414,7 +1423,7 @@ void main(string[] args) {
     // tool.doApply). Topology-creating tool: own typed edit factory
     // (MeshEdgeExtendEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
     reg.toolFactories["edge.extend"] = () {
-        auto t = new EdgeExtendTool(&mesh, &gpu, &editMode, litShader,
+        auto t = new EdgeExtendTool(() => &mesh, &gpu, &editMode, litShader,
                                     &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, edgeExtendEditFactory);
         return cast(Tool)t;

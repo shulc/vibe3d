@@ -99,7 +99,8 @@ void setUndoTrackerEnabled(bool on) {
 // ---------------------------------------------------------------------------
 class EdgeExtendTool : Tool {
 private:
-    Mesh*            mesh;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
@@ -154,9 +155,9 @@ private:
     PivotOverride dragPivotOverride_;
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
          VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
-        this.mesh      = mesh;
+        this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
@@ -166,7 +167,7 @@ public:
         // The embedded wrapper reuses the same mesh/gpu/editMode pointers. T/R/S
         // all on; for 4a only the Move bank's gesture is drained, but the Rotate/
         // Scale banks still render (4b consumes them).
-        xfrm = new XfrmTransformTool(mesh, gpu, editMode);
+        xfrm = new XfrmTransformTool(meshSrc, gpu, editMode);
     }
 
     /// Inject undo plumbing — called by app.d after construction. commitEdit()

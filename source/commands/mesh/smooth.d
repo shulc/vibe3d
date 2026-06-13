@@ -1,5 +1,6 @@
 module commands.mesh.smooth;
 
+import display_sync : refreshDisplay;
 import command;
 import mesh;
 import view;
@@ -324,10 +325,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         }
 
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        ec.invalidate();
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 
@@ -336,10 +334,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);
-        gpu.upload(*mesh);
-        vc.invalidate();
-        ec.invalidate();
-        fc.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
         return true;
     }
 }

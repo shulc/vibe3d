@@ -1,5 +1,6 @@
 module commands.file.load;
 
+import display_sync : refreshDisplay;
 import std.path : extension;
 import std.uni  : toLower;
 
@@ -160,12 +161,6 @@ class FileLoad : Command {
     }
 
     private void refreshCaches() {
-        gpu.upload(*mesh);
-        vc.resize(mesh.vertices.length);
-        vc.invalidate();
-        fc.resize(mesh.vertices.length, mesh.faces.length);
-        fc.invalidate();
-        ec.resize(mesh.edges.length);
-        ec.invalidate();
+        refreshDisplay(mesh, gpu, vc, ec, fc);
     }
 }

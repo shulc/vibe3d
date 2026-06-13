@@ -190,7 +190,8 @@ private enum CylinderState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSe
 
 class CylinderTool : Tool {
 private:
-    Mesh*               mesh;
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*            gpu;
     LitShader           litShader;
 
@@ -259,8 +260,8 @@ private:
     ];
 
 public:
-    this(Mesh* mesh, GpuMesh* gpu, LitShader litShader) {
-        this.mesh      = mesh;
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+        this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
         mover = new MoveHandler(Vec3(0, 0, 0));
