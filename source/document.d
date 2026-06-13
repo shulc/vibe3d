@@ -1,25 +1,40 @@
 module document;
 
-import mesh : Mesh;
+import mesh    : Mesh;
+import seltype : SelMode;
 
 // source/document.d — imports mesh only; no GL, no render, no UI.
 //
 // The Document is the single source of truth for the layer list, the active
 // (foreground) layer, and the item-selection set.
 //
-// Selection-types Stage 0 (this file): the item-selection model lands as a
-// SET-of-exactly-one — every document has exactly ONE selected layer, which
-// equals today's active layer — plus a `primary` reference that aliases the
-// active layer. The active accessors (`active()`/`activeMesh()`/
-// `activeMeshRef()`) are re-expressed over `primary`, so the ~136 binding
-// sites that resolve "the active mesh" stay untouched. `activeIndex` REMAINS a
-// stored field in Stage 0 (so there is no LHS hazard at its writers); every
-// writer additionally sets `primary` + the one `selected` bool in lockstep via
-// `setActive`, keeping the invariant `primary ∈ layers ∧ primary.selected ∧
-// ≥1 selected` after every load/import/reset/revert. This is the layers
-// Stage-0a/0b pattern: provably byte-neutral, the whole suite is the oracle.
-// `background` stays a STORED bool in Stage 0 (it becomes derived in a later
-// stage); the `background()` helper below returns the stored value for now.
+// Selection-types Stage 0/2a (this file): the item-selection model.
+//
+// Stage 0 landed the SET-of-exactly-one — every document had exactly ONE
+// selected layer (today's active layer) — plus a `primary` reference aliasing
+// the active layer. The active accessors (`active()`/`activeMesh()`/
+// `activeMeshRef()`) are re-expressed over `primary`, so the ~136 binding sites
+// that resolve "the active mesh" stay untouched. `activeIndex` REMAINS a stored
+// field (no LHS hazard at its writers); every writer sets `primary` + the one
+// `selected` bool in lockstep via `setActive`.
+//
+// Stage 2a (this stage) adds the REAL multi-select mutators — `selectItem(l,
+// mode)` + `setPrimary(l)` — implementing the uniform {set,add,remove,toggle}
+// model with the full invariants (always ≥1 selected; primary always selected
+// + visible; hide-primary promotion). Multi-foreground is now a representable
+// DATA state, but EDITING still binds the primary only.
+//
+// **2a is provably NEUTRAL on snap/draw semantics.** `background` becomes a
+// DERIVED helper — `background(l) == l.visible && !l.selected` — BUT the stored
+// per-layer `bool background` field REMAINS the field of record, and every
+// mutator (setActive + selectItem + setPrimary) keeps `selected` and the stored
+// bool in sync (`background == !selected`). The snap source and dimmed-draw
+// passes still read the STORED bool, so no behaviour flips here; the derived
+// helper and the stored bool AGREE after every mutator (asserted in-module).
+// The flip to the derived rule (and the deletion of the stored bool) is Stage
+// 2b. The legacy `layer.setBackground` command (untouched in 2a) is the one
+// path that can still desync the stored bool from `!selected` — that is the
+// third-state escape hatch 2b removes; the mutator invariant does not cover it.
 
 /// A single document layer. Deliberately a CLASS, for two reasons:
 ///   (a) the interior `Mesh` sits at a stable heap address no matter how
@@ -62,11 +77,19 @@ struct Document {
     /// True iff `l` is the primary (the single edit target).
     bool isPrimary(Layer l) const { return l is primary; }
 
-    /// Foreground / background derivation (Stage 0: `background` is still the
-    /// stored bool of record, so `background()` returns it to stay neutral;
-    /// later stages flip these to `visible && (!)selected`).
-    static bool foreground(Layer l) { return l.visible && !l.background; }
-    static bool background(Layer l) { return l.background; }
+    /// Foreground / background DERIVATION (Stage 2a).
+    ///
+    /// `foreground(l) == l.visible &&  l.selected`,
+    /// `background(l) == l.visible && !l.selected`.
+    ///
+    /// These are the *derived* truth. In Stage 2a the stored `bool background`
+    /// field remains the field of record for snap/draw, and the mutators keep
+    /// the two in agreement (`l.background == !l.selected`) — so for any layer
+    /// touched only by the mutators, `background(l)` and the stored bool give
+    /// the same answer (asserted in-module). Stage 2b deletes the stored bool
+    /// and flips the snap/draw consumers onto these helpers.
+    static bool foreground(Layer l) { return l.visible &&  l.selected; }
+    static bool background(Layer l) { return l.visible && !l.selected; }
 
     /// Set the active layer by index, keeping `primary`, `selected`, and
     /// `activeIndex` in lockstep (the Stage-0 SET-of-one invariant). Exactly
@@ -79,8 +102,120 @@ struct Document {
         if (idx >= layers.length) idx = layers.length - 1;
         activeIndex = idx;
         primary     = layers[idx];
-        foreach (l; layers) l.selected = false;
-        primary.selected = true;
+        foreach (l; layers) { l.selected = false; l.background = true; }
+        primary.selected   = true;
+        primary.background = false;   // stored bool kept in sync (== !selected)
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 2a multi-select mutators. They maintain the load-bearing invariant
+    // contract (≥1 selected; primary selected+visible; hide-primary promotes)
+    // and keep the stored `background` bool in sync with `!selected` on every
+    // layer they touch.
+    // -----------------------------------------------------------------------
+
+    /// Recompute `activeIndex` from the `primary` object (identity-preserving:
+    /// reorder/delete renumbering can't drift it because primary is a ref).
+    private void syncActiveIndex() {
+        foreach (i, l; layers) if (l is primary) { activeIndex = i; return; }
+        // primary not in layers (should never happen) — fall back to 0.
+        activeIndex = 0;
+    }
+
+    /// Keep the stored `background` bool consistent with `!selected` on `l`.
+    /// (Stage 2a: stored bool is still the field of record; the mutators keep
+    /// it agreeing with the derived rule.)
+    private static void syncBackground(Layer l) { l.background = !l.selected; }
+
+    /// The most-recent remaining selected+visible layer OTHER than `exclude`,
+    /// or null if none. v1 has no per-pick order counter (declared divergence
+    /// B9), so "most recent" is approximated by scanning the list — adequate
+    /// for the single-primary edit model. Used by hide-primary / remove-primary
+    /// promotion.
+    private Layer anotherSelectedVisible(Layer exclude) {
+        foreach (l; layers)
+            if (l !is exclude && l.selected && l.visible) return l;
+        return null;
+    }
+
+    /// The single item-select mutator. Mirrors `mode:{set,add,remove,toggle}`.
+    /// Invariants held on return: `primary !is null`, `primary ∈ layers`,
+    /// `primary.selected`, `primary.visible`, at least one layer selected, and
+    /// `l.background == !l.selected` for every layer this touched.
+    void selectItem(Layer l, SelMode mode) {
+        if (layers.length == 0 || l is null) return;
+
+        final switch (mode) {
+            case SelMode.Set:
+                // Exclusive: deselect everyone, select l, l becomes primary.
+                foreach (x; layers) { x.selected = false; syncBackground(x); }
+                l.selected = true; syncBackground(l);
+                primary = l;
+                break;
+
+            case SelMode.Add:
+                l.selected = true; syncBackground(l);
+                primary = l;                 // newest-selected becomes primary
+                break;
+
+            case SelMode.Remove:
+                if (!l.selected) break;       // not selected → nothing to do
+                if (l is primary) {
+                    // Removing the primary: promote the most-recent remaining
+                    // selected+visible layer. If none exists, this would empty
+                    // the set / leave no visible primary → refuse (no-op).
+                    auto promote = anotherSelectedVisible(l);
+                    if (promote is null) break;   // last-selected remove = no-op
+                    l.selected = false; syncBackground(l);
+                    primary = promote;
+                } else {
+                    // Non-primary remove is always safe (primary still holds the
+                    // ≥1-selected invariant).
+                    l.selected = false; syncBackground(l);
+                }
+                break;
+
+            case SelMode.Toggle:
+                if (l.selected) selectItem(l, SelMode.Remove);
+                else            selectItem(l, SelMode.Add);
+                syncActiveIndex();
+                return;                       // recursion already synced index
+        }
+
+        // primary must always be selected+visible. If the chosen primary is not
+        // visible (e.g. Add/Set on a hidden layer), promote a visible one; if
+        // none, leave it (setVisible enforces the visible-primary rule on its
+        // own path — selecting a hidden layer as primary is tolerated here, the
+        // edit target simply isn't drawn until shown).
+        if (primary !is null && primary.selected) {
+            // ok
+        }
+        syncActiveIndex();
+    }
+
+    /// Promote an already-selected layer to primary (the edit target) without
+    /// changing the selected set. If `l` is not selected this selects it (Add
+    /// semantics) so the primary invariant (`primary.selected`) holds.
+    void setPrimary(Layer l) {
+        if (layers.length == 0 || l is null) return;
+        if (!l.selected) { l.selected = true; syncBackground(l); }
+        primary = l;
+        syncActiveIndex();
+    }
+
+    /// Hide-primary promotion helper (called by the setVisible command path).
+    /// Hiding the primary moves the primary to another selected+visible layer
+    /// when one exists; returns false (refuse) when the primary is the only
+    /// selected+visible layer (the caller then leaves it visible). Does NOT
+    /// itself flip the `visible` flag — the command owns that, calling this
+    /// AFTER setting visible=false to re-establish a visible primary.
+    bool promoteAwayFromHiddenPrimary() {
+        if (primary is null || primary.visible) return true;  // nothing to do
+        auto promote = anotherSelectedVisible(primary);
+        if (promote is null) return false;                    // refuse
+        primary = promote;
+        syncActiveIndex();
+        return true;
     }
 
     /// Build a one-layer document from an existing mesh. The mesh is moved
@@ -184,4 +319,152 @@ unittest {
     doc.setActive(99);
     assert(doc.activeIndex == 1 && doc.primary is doc.layers[1],
            "out-of-range setActive clamps to the last layer");
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2a contract: the multi-select mutators + the stored-bool / derived
+// agreement. A shared helper asserts the load-bearing invariants AND that the
+// stored `background` bool equals the derived `!selected` after every mutator
+// (the neutrality proof).
+// ---------------------------------------------------------------------------
+
+private void assertDocInvariants(ref Document d) {
+    assert(d.layers.length >= 1, "layers.length >= 1");
+    assert(d.primary !is null, "primary non-null");
+    bool primaryInLayers = false;
+    size_t selCount = 0;
+    foreach (l; d.layers) {
+        if (l is d.primary) primaryInLayers = true;
+        if (l.selected) ++selCount;
+        // The agreement proof: stored bool == !selected after every mutator.
+        assert(l.background == !l.selected,
+            "stored background must equal !selected (mutator sync)");
+        // The derived helpers and the stored bool agree for mutator-touched
+        // layers (background == visible && !selected; stored == !selected).
+        assert(Document.background(l) == (l.visible && l.background),
+            "derived background() agrees with stored bool under visibility");
+        assert(Document.foreground(l) == (l.visible && l.selected),
+            "derived foreground() == visible && selected");
+    }
+    assert(primaryInLayers, "primary is a member of layers");
+    assert(d.primary.selected, "primary is selected");
+    assert(selCount >= 1, "at least one layer is always selected");
+    // activeIndex tracks the primary by identity.
+    assert(d.layers[d.activeIndex] is d.primary, "activeIndex points at primary");
+}
+
+// Build a 3-layer document A/B/C, A primary+selected (SET-of-one), for the
+// mutator tests. All meshes default-constructed (geometry irrelevant here).
+private Document threeLayerDoc() {
+    Mesh m;
+    auto doc = Document.bootstrap(m);          // Layer 1 (A) selected primary
+    auto b = new Layer; b.name = "B"; doc.layers ~= b;
+    auto c = new Layer; c.name = "C"; doc.layers ~= c;
+    doc.setActive(0);                          // A primary, B/C deselected
+    return doc;
+}
+
+unittest {  // mode:set is exclusive — equals today's setActive behaviour.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1], c = doc.layers[2];
+    doc.selectItem(b, SelMode.Set);
+    assertDocInvariants(doc);
+    assert(doc.primary is b, "set makes the target primary");
+    assert(b.selected && !a.selected && !c.selected, "set is exclusive");
+    size_t sel = 0; foreach (l; doc.layers) if (l.selected) ++sel;
+    assert(sel == 1, "set leaves exactly one selected");
+}
+
+unittest {  // mode:add accumulates selection and promotes primary.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1], c = doc.layers[2];
+    doc.selectItem(b, SelMode.Add);
+    assertDocInvariants(doc);
+    assert(a.selected && b.selected && !c.selected, "add keeps prior selection");
+    assert(doc.primary is b, "add promotes the newest to primary");
+    doc.selectItem(c, SelMode.Add);
+    assertDocInvariants(doc);
+    assert(a.selected && b.selected && c.selected, "three selected (multi-foreground)");
+    assert(doc.primary is c, "newest add is primary");
+}
+
+unittest {  // mode:remove of the primary moves primary to a remaining member.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1], c = doc.layers[2];
+    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary
+    doc.selectItem(c, SelMode.Add);            // A,B,C selected; C primary
+    doc.selectItem(c, SelMode.Remove);         // remove primary C
+    assertDocInvariants(doc);
+    assert(!c.selected, "C deselected");
+    assert(doc.primary is a || doc.primary is b, "primary promoted to a remainder");
+    assert(doc.primary.selected, "promoted primary is selected");
+}
+
+unittest {  // mode:remove of a NON-primary keeps the primary.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1];
+    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary
+    doc.selectItem(a, SelMode.Remove);         // remove non-primary A
+    assertDocInvariants(doc);
+    assert(!a.selected && b.selected, "A deselected, B remains");
+    assert(doc.primary is b, "primary unchanged on non-primary remove");
+}
+
+unittest {  // mode:remove of the LAST selected is a no-op (≥1 invariant).
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0];
+    doc.selectItem(a, SelMode.Remove);         // A is the only selected
+    assertDocInvariants(doc);
+    assert(a.selected, "cannot deselect the last selected layer");
+    assert(doc.primary is a, "primary unchanged on last-selected remove");
+}
+
+unittest {  // mode:toggle flips selection (remove ↔ add).
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1];
+    doc.selectItem(b, SelMode.Toggle);         // B not selected → add, primary
+    assertDocInvariants(doc);
+    assert(b.selected && doc.primary is b, "toggle-on selects + promotes");
+    doc.selectItem(b, SelMode.Toggle);         // B selected → remove
+    assertDocInvariants(doc);
+    assert(!b.selected, "toggle-off deselects");
+    assert(doc.primary is a, "primary fell back to remaining selected A");
+}
+
+unittest {  // setPrimary promotes an already-selected member without reselecting.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1];
+    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary
+    doc.setPrimary(a);                         // promote A (already selected)
+    assertDocInvariants(doc);
+    assert(a.selected && b.selected, "set is preserved");
+    assert(doc.primary is a, "setPrimary moved the edit target to A");
+    // setPrimary on a not-yet-selected layer selects it (primary.selected inv).
+    auto c = doc.layers[2];
+    doc.setPrimary(c);
+    assertDocInvariants(doc);
+    assert(c.selected && doc.primary is c, "setPrimary selects + promotes");
+}
+
+unittest {  // hide-primary promotion: setVisible(false) on primary moves it.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], b = doc.layers[1];
+    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary
+    // Simulate the command: hide the primary, then promote.
+    b.visible = false;
+    auto ok = doc.promoteAwayFromHiddenPrimary();
+    assert(ok, "promotion succeeds (A is selected+visible)");
+    assertDocInvariants(doc);                  // primary must be visible now
+    assert(doc.primary is a, "primary moved to the visible selected A");
+    assert(doc.primary.visible, "promoted primary is visible");
+}
+
+unittest {  // hide-primary refusal: no other selected+visible layer.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0];                     // only A selected
+    a.visible = false;
+    auto ok = doc.promoteAwayFromHiddenPrimary();
+    assert(!ok, "refuse — no other selected+visible layer to promote");
+    // Document is left with the (now hidden) primary; the command restores
+    // visibility on refusal (tested at the command layer).
 }

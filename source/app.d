@@ -1236,6 +1236,27 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
+    // Selection-types Stage 2a: an ITEM (layer) selection makes `SelType.Item`
+    // the current type. Mirrors switchGeometryType's front-flip contract but
+    // for the item type. Routed through the app-installed `onItemSelect` hook
+    // the layer.select command calls AFTER mutating the selection set, so the
+    // app's authoritative `selTypeOrder` (the source `/api/selection` reads)
+    // is promoted, not just the bus counter.
+    //
+    // Unlike the geometry-type switch, `editMode` is left UNCHANGED — it stays
+    // the most-recent GEOMETRY type so viewport picking/drawing keeps a defined
+    // mode under item selection (Design §1). A front-flip notes the current-type
+    // change on the bus; tool-drop on a genuine primary change is handled by
+    // onActiveLayerChanged (fired by the command's fireSwitchIfChanged), so this
+    // hook does NOT drop the tool itself.
+    void switchToItemType() {
+        import change_bus : noteCurrentType;
+        const flipped = selTypeOrder.touch(SelType.Item);
+        if (flipped)
+            noteCurrentType(SelType.Item);
+    }
+
+    // -------------------------------------------------------------------------
     // Registry + YAML config
     // -------------------------------------------------------------------------
 
@@ -1291,10 +1312,13 @@ void main(string[] args) {
         //    mesh; the scope-down rider is deliberately NOT taken here.)
         active.noteChange(MeshChangeAll);
         // 6. publish the SEMANTIC layer event. This hook is the SINGLE funnel
-        //    that fires iff the active Layer OBJECT genuinely changed, so it is
-        //    the ONE place ActiveChanged is emitted — add/delete/select/reorder
-        //    route their active-change through here and must NOT emit it
-        //    themselves (no double-count).
+        //    that fires iff the PRIMARY (active) Layer OBJECT genuinely changed
+        //    (Stage 2a: `active()` == `primary`, so `fireSwitchIfChanged` keys on
+        //    the primary identity — a multi-select add/remove that leaves the
+        //    primary put does NOT fire this). It is the ONE place ActiveChanged
+        //    is emitted — add/delete/select/reorder/setVisible-promote route
+        //    their primary-change through here and must NOT emit it themselves
+        //    (no double-count).
         noteLayerChange(LayerChange.ActiveChanged);
     };
 
@@ -1613,7 +1637,8 @@ void main(string[] args) {
         reg.commandFactories["layer.reorder"] = () => cast(Command)
             new LayerReorder(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.select"] = () => cast(Command)
-            new LayerSelect(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+            (new LayerSelect(&mesh(), cameraView, editMode, &document, onActiveLayerChanged))
+                .setItemSelectHook(&switchToItemType);
         reg.commandFactories["layer.rename"] = () => cast(Command)
             new LayerRename(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.setVisible"] = () => cast(Command)
@@ -2245,14 +2270,23 @@ void main(string[] args) {
             a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
             foreach (i, l; document.layers) {
                 if (i > 0) a.put(",");
+                // `background` reports the STORED bool (Stage 2a keeps it the
+                // field of record for snap/draw — neutral). `selected` +
+                // `primary` are the NEW #4 item-selection surface: `selected`
+                // is the per-layer foreground membership, `primary` marks the
+                // single edit target (== active). A test reads these to verify
+                // the multi-select set + which member is primary.
                 a.put(format(
                     `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
-                    `"active":%s,"vertexCount":%d,"faceCount":%d,` ~
+                    `"active":%s,"selected":%s,"primary":%s,` ~
+                    `"vertexCount":%d,"faceCount":%d,` ~
                     `"mutationVersion":%d}`,
                     i, JSONValue(l.name).toString(),
                     l.visible ? "true" : "false",
                     l.background ? "true" : "false",
                     i == document.activeIndex ? "true" : "false",
+                    l.selected ? "true" : "false",
+                    document.isPrimary(l) ? "true" : "false",
                     l.mesh.vertices.length, l.mesh.faces.length,
                     cast(ulong)l.mesh.mutationVersion));
             }
@@ -5928,6 +5962,14 @@ void main(string[] args) {
             import change_bus : pendingLayerChanges;
             uint layerKinds = pendingLayerChanges;
             pendingLayerChanges = 0;
+
+            // Item (layer) selection is a DOCUMENT-level selection domain (no
+            // owning Mesh), so it accumulates in a module-level word like the
+            // layer kinds and is OR-ed into the SELECTION word here, drained
+            // read-and-zero. Survives /api/reset like pendingLayerChanges.
+            import change_bus : pendingItemSelDomain;
+            selDomains |= pendingItemSelDomain;
+            pendingItemSelDomain = 0;
 
             // Current-type flips are session-level (the SelType recent-ordering
             // lives in app scene state, not on any Mesh), so they accumulate in
