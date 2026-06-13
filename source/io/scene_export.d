@@ -20,6 +20,19 @@ module io.scene_export;
 // supports triangles), so glTF output loses face arity — that's glTF-inherent,
 // not a vibe3d bug. OBJ round-trips arity exactly.
 //
+// UV (UV-maps #5, Stage 4 — decision D7): when the mesh carries the per-corner
+// `"uv"` PolyVertex map, we export it as assimp's per-VERTEX UV channel
+// (`mTextureCoords[0]`). assimp's aiMesh stores one UV per aiVertex, but our UV
+// is per-CORNER (discontinuous across seams), so a single geometry position that
+// holds N distinct UVs must become N aiVertices — we SPLIT at UV seams. The
+// builder dedupes (geometryVertexIndex, uv) pairs into one aiVertex each
+// (carrying the position + its uv) and rewrites every `aiFace.mIndices[corner]`
+// to point at the split vertex for that corner. This is the exact inverse of the
+// importer's positional weld (io.scene_import `weldPositional`): export splits at
+// seams, import re-welds, so an export→import round-trip returns to the welded
+// vertex count. When the mesh has NO `"uv"` map, the output is byte-identical to
+// the pre-Stage-4 path (no split, no `mTextureCoords`).
+//
 // Materials (decision A4 — interchange is lossy; fidelity lives in `.v3d`):
 // we attach exactly ONE default material so the OBJ / glTF exporters are
 // happy (both want at least one material the mesh can reference). We give it
@@ -44,7 +57,7 @@ import std.format : format;
 import bindbc.assimp;
 import log : logWarn;
 
-import mesh : Mesh;
+import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import math : Vec3;
 import io.assimp_runtime : isAssimpAvailable;
 
@@ -172,6 +185,7 @@ private struct SceneStorage {
     aiMesh*     mesh;            // new aiMesh
     aiMesh*[]   meshPtrs;        // scene.mMeshes
     aiVector3D[] verts;          // mesh.mVertices
+    aiVector3D[] uvs;            // mesh.mTextureCoords[0] (empty when no "uv" map)
     aiFace[]    faces;           // mesh.mFaces
     uint[][]    faceIndices;     // each aiFace.mIndices backing store
     aiNode*     root;            // new aiNode
@@ -200,35 +214,104 @@ private SceneStorage buildScene(ref const Mesh mesh, double unitScale) {
     st.material = new aiMaterial;
     st.nameProp = new aiMaterialProperty;
 
-    // --- vertices: verbatim copy, no flip (B3), scaled to the format unit ---
     // unitScale is 1.0 for OBJ/glTF (unit=1) and 100.0 for FBX (metres→cm) so
     // the written values match the cm unit the FBX file declares.
     const float s = cast(float) unitScale;
-    st.verts.length = mesh.vertices.length;
-    foreach (i, v; mesh.vertices)
-        st.verts[i] = aiVector3D(v.x * s, v.y * s, v.z * s);
 
-    // --- faces: one aiFace per polygon, native arity (A3) ---
-    // Drop degenerate faces (<3 verts) — mirrors the importer/native policy and
-    // keeps the prim-type shift `1u << (len-1)` from underflowing on len==0.
+    // UV channel (Stage 4, D7): present only when the mesh carries the per-corner
+    // `"uv"` PolyVertex map (dim 2). When present we split geometry verts at UV
+    // seams so each (vertex, uv) pair becomes one aiVertex carrying its own UV;
+    // when absent the vertex/face emission is byte-identical to the pre-Stage-4
+    // path.
+    const(MeshMap)* uvMap = mesh.meshMap(kUvMapName);
+    const bool hasUv = uvMap !is null
+                       && uvMap.domain == MapDomain.PolyVertex
+                       && uvMap.dim == 2;
+
     uint primTypes = 0;
     auto faces       = appender!(aiFace[]);
     auto faceIndices = appender!(uint[][]);
-    foreach (face; mesh.faces.range) {
-        if (face.length < 3) continue;     // skip degenerate face; emit nothing
-        uint[] idx;
-        idx.length = face.length;
-        foreach (k, vi; face)
-            idx[k] = vi;
-        faceIndices.put(idx);              // keep the backing store rooted
-        aiFace af;
-        af.mNumIndices = cast(uint) idx.length;
-        af.mIndices    = idx.ptr;
-        faces.put(af);
-        primTypes |= (idx.length > 3)
-            ? aiPrimitiveType.POLYGON
-            : cast(uint)(1u << (idx.length - 1));  // 3 verts -> TRIANGLE
+
+    if (!hasUv) {
+        // --- vertices: verbatim copy, no flip (B3), scaled to the format unit ---
+        st.verts.length = mesh.vertices.length;
+        foreach (i, v; mesh.vertices)
+            st.verts[i] = aiVector3D(v.x * s, v.y * s, v.z * s);
+
+        // --- faces: one aiFace per polygon, native arity (A3) ---
+        // Drop degenerate faces (<3 verts) — mirrors the importer/native policy
+        // and keeps the prim-type shift `1u << (len-1)` from underflowing on len==0.
+        foreach (face; mesh.faces.range) {
+            if (face.length < 3) continue; // skip degenerate face; emit nothing
+            uint[] idx;
+            idx.length = face.length;
+            foreach (k, vi; face)
+                idx[k] = vi;
+            faceIndices.put(idx);          // keep the backing store rooted
+            aiFace af;
+            af.mNumIndices = cast(uint) idx.length;
+            af.mIndices    = idx.ptr;
+            faces.put(af);
+            primTypes |= (idx.length > 3)
+                ? aiPrimitiveType.POLYGON
+                : cast(uint)(1u << (idx.length - 1));  // 3 verts -> TRIANGLE
+        }
+    } else {
+        // --- UV-split path (D7): one aiVertex per distinct (vertex, uv) pair ---
+        // assimp UV is per-vertex, ours is per-corner, so a position carrying N
+        // distinct UVs splits into N aiVertices. Faces are reindexed to the split
+        // vertices; the corner's UV is read via the source mesh's CSR loop layout
+        // (faceCornerLoop), exactly the addressing the .v3d codec and scene_ir use.
+        // This is the inverse of the importer's positional weld.
+        struct PairKey { uint vi; long ku, kv; }
+        uint[PairKey] splitOf;             // (vertex, quantised uv) -> aiVertex index
+        auto verts = appender!(aiVector3D[]);
+        auto uvs   = appender!(aiVector3D[]);
+        // Quantise UV to a grid so float equality is robust; same epsilon spirit
+        // as the importer's positional weld (the inverse of which this is).
+        enum double uvInv = 1.0e6;         // 1e-6 grid
+        import std.math : lround;
+
+        foreach (uint fi; 0 .. cast(uint) mesh.faces.length) {
+            auto face = mesh.faces[fi];
+            if (face.length < 3) continue; // skip degenerate face; emit nothing
+            uint[] idx;
+            idx.length = face.length;
+            foreach (uint k; 0 .. cast(uint) face.length) {
+                const uint vi = face[k];
+                // This corner's UV, addressed through the source CSR loop layout.
+                float u = 0.0f, vv = 0.0f;
+                const size_t loop = mesh.faceCornerLoop(fi, k);
+                if (loop != size_t.max && loop * 2 + 2 <= uvMap.data.length) {
+                    u  = uvMap.data[loop * 2];
+                    vv = uvMap.data[loop * 2 + 1];
+                }
+                const key = PairKey(vi, lround(u * uvInv), lround(vv * uvInv));
+                uint sv;
+                if (auto hit = key in splitOf) {
+                    sv = *hit;
+                } else {
+                    sv = cast(uint) verts.data.length;
+                    const p = mesh.vertices[vi];
+                    verts.put(aiVector3D(p.x * s, p.y * s, p.z * s));
+                    uvs.put(aiVector3D(u, vv, 0.0f));   // z unused (mNumUVComponents=2)
+                    splitOf[key] = sv;
+                }
+                idx[k] = sv;
+            }
+            faceIndices.put(idx);          // keep the backing store rooted
+            aiFace af;
+            af.mNumIndices = cast(uint) idx.length;
+            af.mIndices    = idx.ptr;
+            faces.put(af);
+            primTypes |= (idx.length > 3)
+                ? aiPrimitiveType.POLYGON
+                : cast(uint)(1u << (idx.length - 1));  // 3 verts -> TRIANGLE
+        }
+        st.verts = verts.data;
+        st.uvs   = uvs.data;
     }
+
     st.faces       = faces.data;
     st.faceIndices = faceIndices.data;
     // Always advertise POLYGON so exporters accept >3-vert faces even if the
@@ -243,6 +326,12 @@ private SceneStorage buildScene(ref const Mesh mesh, double unitScale) {
     st.mesh.mFaces          = st.faces.ptr;
     st.mesh.mMaterialIndex  = 0;
     setAiString(st.mesh.mName, "Mesh");
+    // UV channel 0 (Stage 4): present only on the split path; otherwise the
+    // aiMesh leaves mTextureCoords/mNumUVComponents zeroed (no-UV byte-identical).
+    if (hasUv) {
+        st.mesh.mTextureCoords[0]   = st.uvs.ptr;
+        st.mesh.mNumUVComponents[0] = 2;
+    }
 
     st.meshPtrs = [ st.mesh ];
 
