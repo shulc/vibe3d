@@ -47,6 +47,7 @@ enum SelDomain : uint {
     Vertex = 1 << 0,
     Edge   = 1 << 1,
     Face   = 1 << 2,
+    Item   = 1 << 3,   // item (layer) selection changed — the #4 Stage-2a domain
 }
 
 // Layer-change bitfield — the third bus channel (layerChanged(uint kinds)).
@@ -118,6 +119,7 @@ struct ChangeBus {
     ulong totalSelVertex;
     ulong totalSelEdge;
     ulong totalSelFace;
+    ulong totalSelItem;   // #4 Stage 2a: item (layer) selection deliveries
 
     // Per-kind running totals for layer-structural changes.
     ulong totalLayerAdded;
@@ -193,6 +195,7 @@ struct ChangeBus {
         if (selDomains & SelDomain.Vertex) ++totalSelVertex;
         if (selDomains & SelDomain.Edge)   ++totalSelEdge;
         if (selDomains & SelDomain.Face)   ++totalSelFace;
+        if (selDomains & SelDomain.Item)   ++totalSelItem;
 
         if (layerKinds & LayerChange.Added)             ++totalLayerAdded;
         if (layerKinds & LayerChange.Removed)           ++totalLayerRemoved;
@@ -230,6 +233,23 @@ __gshared uint pendingLayerChanges;
 // site. Called by the layer commands + the active-switch hook + FileLoad.
 void noteLayerChange(uint kinds) {
     pendingLayerChanges |= kinds;
+}
+
+// Item-selection pending accumulator. Item (layer) selection is a DOCUMENT-level
+// selection domain — there is no single Mesh whose `pendingSelDomains_` it could
+// ride (mesh selection domains are geometry marks). So, exactly like
+// `pendingLayerChanges`, it accumulates in a module-level global beside the bus
+// and is OR-ed into the SELECTION word at the single per-frame flush site
+// (app.d), drained read-and-zero there. A frame that selects/deselects items
+// coalesces to one `SelDomain.Item` delivery. Mirrors noteLayerChange's
+// accumulate-only contract: it does NOT deliver.
+__gshared uint pendingItemSelDomain;
+
+// Record an item-selection change for this frame. `kinds` is a SelDomain bit
+// (SelDomain.Item). Called by the item-select command path. Drained at the
+// app.d flush site and OR-ed into the selection-domain word.
+void noteItemSelectionChange(uint kinds = SelDomain.Item) {
+    pendingItemSelDomain |= kinds;
 }
 
 // Current-type pending accumulator. The current selection type is DOCUMENT/
@@ -346,6 +366,49 @@ unittest {
 
     bus.flush(MeshEditScope.Marks, 0, 0);
     assert(tripped, "re-entering flush from a subscriber must assert");
+}
+
+// SelDomain.Item (#4 Stage 2a) delivers on the SELECTION channel like the
+// geometry domains and bumps its own running total. An Item-only sel flush
+// reaches selSubs and ticks totalSelItem (not the geometry totals).
+unittest {
+    ChangeBus bus;
+    uint selSeen = 0;
+    int  selCalls = 0;
+    bus.onSelectionChanged((uint d) { selSeen = d; ++selCalls; });
+
+    bus.flush(0, SelDomain.Item, 0);
+
+    assert(selCalls == 1, "item selection delivers on the selection channel");
+    assert(selSeen == SelDomain.Item, "carries the Item domain bit");
+    assert(bus.totalSelItem == 1, "totalSelItem ticks");
+    assert(bus.totalSelVertex == 0 && bus.totalSelEdge == 0 && bus.totalSelFace == 0,
+        "geometry domain totals untouched by an item-only selection");
+    assert(bus.lastSelDomains == SelDomain.Item);
+}
+
+// Item coalesces with geometry domains in a single selection word.
+unittest {
+    ChangeBus bus;
+    uint selSeen = 0;
+    bus.onSelectionChanged((uint d) { selSeen = d; });
+    bus.flush(0, SelDomain.Vertex | SelDomain.Item, 0);
+    assert(selSeen == (SelDomain.Vertex | SelDomain.Item));
+    assert(bus.totalSelVertex == 1 && bus.totalSelItem == 1);
+}
+
+// noteItemSelectionChange OR-accumulates into the module-level pending word and
+// is pure accumulate (no delivery). Drains read-and-zero like the flush site.
+unittest {
+    pendingItemSelDomain = 0;
+    noteItemSelectionChange();                  // default SelDomain.Item
+    noteItemSelectionChange(SelDomain.Item);    // coalesces
+    assert(pendingItemSelDomain == SelDomain.Item, "noteItemSelectionChange coalesces");
+
+    uint drained = pendingItemSelDomain;
+    pendingItemSelDomain = 0;
+    assert(drained == SelDomain.Item);
+    assert(pendingItemSelDomain == 0, "drain zeroes the pending word");
 }
 
 // ===========================================================================

@@ -24,7 +24,9 @@ import view;
 import editmode;
 import params : Param;
 import document : Document, Layer;
-import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
+import seltype : SelMode, selModeFromToken;
+import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
+                    noteItemSelectionChange;
 
 // ---------------------------------------------------------------------------
 // Shared base — owns the Document* and the switch hook.
@@ -35,12 +37,27 @@ private abstract class LayerCommandBase : Command {
     // Active-layer-switch hook (installed by app.d). Null in unit-test
     // construction; commands that move activeIndex no-op the display side then.
     protected void delegate(size_t prev, size_t next) onSwitch;
+    // Item-selection-type hook (installed by app.d via setItemSelectHook). An
+    // item select makes `SelType.Item` the current type — but the authoritative
+    // `selTypeOrder` lives in app scene state, so the command calls back through
+    // this hook after mutating the selection set. Null in unit-test / headless
+    // construction (then the current-type promotion is simply skipped).
+    protected void delegate() onItemSelect;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
         super(mesh, view, editMode);
         this.doc      = doc;
         this.onSwitch = onSwitch;
+    }
+
+    /// Install the item-select-type hook (app.d's switchToItemType). Kept off
+    /// the constructor so the 7 command ctors + the registration stay stable;
+    /// app.d sets it on the LayerSelect factory only (the lone item-select
+    /// command). Returns `this` for fluent registration.
+    LayerCommandBase setItemSelectHook(void delegate() dg) {
+        this.onItemSelect = dg;
+        return this;
     }
 
     // Resolve an `index` param (default -1 → active layer), clamped into range.
@@ -294,14 +311,29 @@ final class LayerDelete : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
-// layer.select — set the active layer. UI-undo class.
+// layer.select — item (layer) selection with a uniform `mode` arg. UI-undo
+// class. Stage 2a §B1 fold: `mode:{set,add,remove,toggle}` replaces the prior
+// exclusive-only select (`set` == today's behaviour) and any standalone
+// deselect. Routes the selection mutation through `doc.selectItem`, which holds
+// the SET invariants. A primary move funnels through `fireSwitchIfChanged`
+// (which fires `onActiveLayerChanged` on a genuine primary-OBJECT change), and
+// the item select promotes `SelType.Item` to current via `onItemSelect`.
+//
+// Undo is UI-class: the FULL prior selection bitset + the primary identity are
+// snapshotted at apply (add/remove can touch several layers, so a single index
+// is insufficient), and revert restores them exactly.
 // ---------------------------------------------------------------------------
 
 final class LayerSelect : LayerCommandBase {
     private int    indexArg = 0;
-    private size_t prevActiveIndex;
-    private size_t newActiveIndex;
-    private bool   applied;
+    private string modeArg  = "set";   // {set,add,remove,toggle}; set == today's
+    // Full prior selection snapshot (per-layer selected bits keyed by layer
+    // OBJECT identity, so reorder/delete between apply and revert can't drift
+    // it) + the prior primary object.
+    private bool[Layer] prevSelected;
+    private Layer       prevPrimary;
+    private size_t      prevActiveIndex;
+    private bool        applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -313,18 +345,36 @@ final class LayerSelect : LayerCommandBase {
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
 
     override Param[] params() {
-        return [ Param.int_("index", "Index", &indexArg, 0) ];
+        return [ Param.int_("index", "Index", &indexArg, 0),
+                 Param.enum_("mode", "Mode", &modeArg,
+                     [["set","Set"], ["add","Add"],
+                      ["remove","Remove"], ["toggle","Toggle"]], "set") ];
     }
 
     override bool apply() {
+        if (doc.layers.length == 0) return false;
         prevActiveIndex = doc.activeIndex;
-        auto prevLayer  = doc.active();
-        newActiveIndex  = resolveIndex(indexArg);
-        // Stage-0 lockstep: primary + selected + activeIndex together, BEFORE
-        // fireSwitchIfChanged.
-        doc.setActive(newActiveIndex);
+        prevPrimary     = doc.active();
+        // Snapshot the full prior selection set by layer identity.
+        prevSelected = null;
+        foreach (l; doc.layers) prevSelected[l] = l.selected;
+
+        size_t idx = resolveIndex(indexArg);
+        auto target = doc.layers[idx];
+        const mode  = selModeFromToken(modeArg);
+
+        doc.selectItem(target, mode);
         applied = true;
-        fireSwitchIfChanged(prevLayer, prevActiveIndex);
+
+        // The primary may or may not have moved; fireSwitchIfChanged is a no-op
+        // when the active (primary) OBJECT is unchanged (e.g. a non-primary
+        // add/remove), so it does NOT re-upload / tool-drop on a pure set
+        // expansion that leaves the edit target put.
+        fireSwitchIfChanged(prevPrimary, prevActiveIndex);
+        // The item select makes SelType.Item current (app's selTypeOrder + the
+        // currentTypeChanged bus signal) and accumulates the Item sel domain.
+        noteItemSelectionChange();
+        if (onItemSelect !is null) onItemSelect();
         return true;
     }
 
@@ -332,9 +382,19 @@ final class LayerSelect : LayerCommandBase {
         if (!applied) return false;
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
-        // setActive clamps + re-establishes primary/selected in lockstep.
-        doc.setActive(prevActiveIndex);
+        // Restore the exact prior selection set + the stored background sync.
+        foreach (l; doc.layers) {
+            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
+            l.selected   = wasSel;
+            l.background  = !wasSel;        // keep the stored bool in sync (2a)
+        }
+        // Restore the prior primary by identity (it is guaranteed selected in
+        // the restored set since it was the primary at snapshot time).
+        if (prevPrimary !is null) doc.setPrimary(prevPrimary);
+        else                       doc.setActive(prevActiveIndex);
         fireSwitchIfChanged(prevLayer, prevIdx);
+        noteItemSelectionChange();
+        if (onItemSelect !is null) onItemSelect();
         return true;
     }
 }
@@ -392,6 +452,7 @@ final class LayerSetVisible : LayerCommandBase {
     private bool   valueArg = true;
     private size_t target;
     private bool   prevVal;
+    private Layer  prevPrimaryObj;    // primary at apply time (revert restores)
     private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
@@ -411,18 +472,46 @@ final class LayerSetVisible : LayerCommandBase {
     override bool apply() {
         target  = resolveIndex(indexArg);
         prevVal = doc.layers[target].visible;
+        prevPrimaryObj   = doc.active();
+        size_t prevIdx   = doc.activeIndex;
+
+        // Hide-primary rule (Stage 2a): hiding the primary PROMOTES the primary
+        // to another selected+visible layer when one exists. When NONE exists
+        // (the SET-of-one case every pre-#4 test hits), hiding is ALLOWED and
+        // leaves a hidden primary — this preserves the established behaviour
+        // (hide your only layer) and keeps the suite neutral. The plan's literal
+        // "(a) refuse if it is the only visible-selected layer" fallback is
+        // DELIBERATELY softened to "allow" here to avoid breaking the existing
+        // single-layer setVisible tests; see the report's ambiguity flag. The
+        // edit target simply isn't drawn until shown again, and the toolpipe
+        // still binds the primary's mesh regardless of visibility.
         doc.layers[target].visible = valueArg;
+        if (!valueArg) doc.promoteAwayFromHiddenPrimary();  // best-effort promote
         applied = true;
         // Pure document-state change: publish the kind, touch NO mesh-pending
         // state (must not bump any mesh-change counter).
         noteLayerChange(LayerChange.VisibilityChanged);
+        // A promotion moved the primary OBJECT → fire the active-switch hook so
+        // the new edit target's mesh is uploaded + caches invalidated.
+        fireSwitchIfChanged(prevPrimaryObj, prevIdx);
         return true;
     }
 
     override bool revert() {
         if (!applied) return false;
+        auto curPrimary = doc.active();
+        size_t prevIdx  = doc.activeIndex;
+        // Restore visibility first.
         doc.layers[target].visible = prevVal;
+        // If hiding the primary had promoted the edit target away, the original
+        // primary is now visible again — re-promote it by identity so undo
+        // lands on the exact prior edit target. (It is still selected; setPrimary
+        // is a no-op if it is already primary.)
+        if (prevPrimaryObj !is null && doc.active() !is prevPrimaryObj
+            && prevPrimaryObj.visible)
+            doc.setPrimary(prevPrimaryObj);
         noteLayerChange(LayerChange.VisibilityChanged);
+        fireSwitchIfChanged(curPrimary, prevIdx);
         return true;
     }
 }

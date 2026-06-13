@@ -29,6 +29,34 @@ import editmode : EditMode;
 /// `EditMode.Vertices/Edges/Polygons`); `Item` is layer selection.
 enum SelType : ubyte { Vertex, Edge, Polygon, Item }
 
+/// The uniform select-operation mode shared by item (and, later, geometry)
+/// selection commands. NEUTRAL vocabulary mirroring the reference's
+/// `{set,add,remove,toggle}` select-mode enum (Stage 2a folds it into
+/// `layer.select`'s `mode` arg, replacing the prior `additive` bool /
+/// standalone deselect):
+///   * `Set`    — exclusive: deselect every other item, select the target,
+///                it becomes primary.
+///   * `Add`    — select the target (if not already), it becomes primary.
+///   * `Remove` — deselect the target; if it was primary, primary moves to the
+///                most-recent remaining selected item. Removing the LAST
+///                selected item is a no-op (≥1 selected invariant).
+///   * `Toggle` — `selected ? Remove : Add` (ctrl-click semantics).
+enum SelMode : ubyte { Set, Add, Remove, Toggle }
+
+/// Parse the lowercase wire token (`set`/`add`/`remove`/`toggle`) into a
+/// `SelMode`. The string spelling is the `layer.select mode:` argument
+/// vocabulary; an unknown token throws (the command param's enum validation
+/// rejects it before this is reached, so this is a defensive fallback).
+SelMode selModeFromToken(string s) pure @safe {
+    switch (s) {
+        case "set":    return SelMode.Set;
+        case "add":    return SelMode.Add;
+        case "remove": return SelMode.Remove;
+        case "toggle": return SelMode.Toggle;
+        default: throw new Exception("unknown select mode '" ~ s ~ "'");
+    }
+}
+
 /// True iff `t` is a geometry selection type (Vertex/Edge/Polygon), i.e. one
 /// with an `EditMode` counterpart. `Item` is the only non-geometry type.
 bool isGeometryType(SelType t) pure nothrow @safe @nogc {
@@ -177,6 +205,16 @@ unittest {
     assert(isGeometryType(SelType.Edge));
     assert(isGeometryType(SelType.Polygon));
     assert(!isGeometryType(SelType.Item));
+}
+
+// SelMode token parse round-trips the four select operations; unknown throws.
+unittest {
+    import std.exception : assertThrown;
+    assert(selModeFromToken("set")    == SelMode.Set);
+    assert(selModeFromToken("add")    == SelMode.Add);
+    assert(selModeFromToken("remove") == SelMode.Remove);
+    assert(selModeFromToken("toggle") == SelMode.Toggle);
+    assertThrown(selModeFromToken("bogus"));
 }
 
 // geometrySelType is the 1:1 EditMode↔SelType mapping + token spellings.

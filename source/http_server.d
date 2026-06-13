@@ -800,6 +800,7 @@ class HttpServer {
                     `"totalPosition":%d,"totalPoints":%d,"totalPolygons":%d,` ~
                     `"totalMarks":%d,"totalMaterial":%d,` ~
                     `"totalSelVertex":%d,"totalSelEdge":%d,"totalSelFace":%d,` ~
+                    `"totalSelItem":%d,` ~
                     `"totalLayerAdded":%d,"totalLayerRemoved":%d,` ~
                     `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
                     `"totalLayerVisible":%d,"totalLayerBackground":%d,` ~
@@ -812,6 +813,7 @@ class HttpServer {
                     changeBus.totalMaterial,
                     changeBus.totalSelVertex, changeBus.totalSelEdge,
                     changeBus.totalSelFace,
+                    changeBus.totalSelItem,
                     changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
                     changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
                     changeBus.totalLayerVisible, changeBus.totalLayerBackground,
