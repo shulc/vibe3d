@@ -158,30 +158,34 @@ unittest {  // cube positions: the 8 unit-cube corners are all present
     remove(cubePath());
 }
 
-unittest {  // two-object OBJ merges: 8 verts, 2 faces, both clusters present
+unittest {  // two-object OBJ → TWO layers (no flattening, layers Stage 3)
+    // Pre-Stage-3 this fixture merged into one 8-vert / 2-face mesh. With the
+    // layered import path a multi-part interchange file stops flattening: each
+    // OBJ object becomes its own layer (first active/foreground, the rest
+    // visible background). /api/model defaults to the ACTIVE layer, so it now
+    // shows just the first quad (4 verts, 1 face). The full-coverage assertions
+    // (layer count, per-layer geometry, flattened export) live in
+    // test_layer_import.d; this guard only pins that the obj path no longer
+    // flattens a multi-object file.
     write(twoPath(), twoObjObj);
     resetApp();
     loadOk(twoPath());
     auto m = model();
 
-    assert(m["vertexCount"].integer == 8,
-        "expected 8 verts (4+4) from two merged objects, got "
+    assert(m["vertexCount"].integer == 4,
+        "active layer should be the first quad (4 verts), got "
         ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 2,
-        "expected 2 faces (one quad per object), got "
+    assert(m["faceCount"].integer == 1,
+        "active layer should be a single quad (1 face), got "
         ~ m["faceCount"].integer.to!string);
 
-    // Both position clusters present: at least one vert near x=0 and one near
-    // x=10 (the far-apart object survives the merge with correct offset).
+    // The active layer is the ORIGIN object (first part); the far object lives
+    // in the second (background) layer, so it is NOT in the active model.
     auto verts = m["vertices"].array;
-    bool nearOrigin = false, nearFar = false;
     foreach (v; verts) {
         const x = v.array[0].floating;
-        if (x <= 1.5) nearOrigin = true;
-        if (x >= 9.5) nearFar = true;
+        assert(x <= 1.5, "active layer should hold only the origin object");
     }
-    assert(nearOrigin, "origin object's geometry missing after merge");
-    assert(nearFar,    "far object's geometry missing after merge");
 
     remove(twoPath());
 }
