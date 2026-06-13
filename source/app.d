@@ -1609,20 +1609,20 @@ void main(string[] args) {
     // HTTP /api/command path drives via setPath(), so it must stay
     // registered with the open framing (setPath bypasses the dialog).
     reg.commandFactories["file.load"] = () {
-        auto c = new FileLoad(&mesh(), cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
+        auto c = new FileLoad(&mesh(), cameraView, editMode, &document, &gpu, &vertexCache, &edgeCache, &faceCache);
         c.configure(FileLoadMode.open);
         return cast(Command) c;
     };
     reg.commandFactories["file.open"] = reg.commandFactories["file.load"];
     // File → Save (Ctrl+S): write to the remembered .v3d path, else prompt.
     reg.commandFactories["file.save"] = () {
-        auto c = new FileSave(&mesh(), cameraView, editMode);
+        auto c = new FileSave(&mesh(), cameraView, editMode, &document);
         c.configure(FileSaveMode.save);
         return cast(Command) c;
     };
     // File → Save As (Ctrl+Shift+S): always prompt, native .v3d.
     reg.commandFactories["file.saveAs"] = () {
-        auto c = new FileSave(&mesh(), cameraView, editMode);
+        auto c = new FileSave(&mesh(), cameraView, editMode, &document);
         c.configure(FileSaveMode.saveAs);
         return cast(Command) c;
     };
@@ -1637,7 +1637,7 @@ void main(string[] args) {
     // over its own copy.
     CommandFactory importFactory(string ext) {
         return () {
-            auto c = new FileLoad(&mesh(), cameraView, editMode, &gpu, &vertexCache, &edgeCache, &faceCache);
+            auto c = new FileLoad(&mesh(), cameraView, editMode, &document, &gpu, &vertexCache, &edgeCache, &faceCache);
             c.configure(FileLoadMode.importSingle, ext);
             return cast(Command) c;
         };
@@ -1650,7 +1650,7 @@ void main(string[] args) {
     // per-ext closure-capture care as the import loop above.
     CommandFactory exportFactory(string ext) {
         return () {
-            auto c = new FileSave(&mesh(), cameraView, editMode);
+            auto c = new FileSave(&mesh(), cameraView, editMode, &document);
             c.configure(FileSaveMode.exportSingle, ext);
             return cast(Command) c;
         };

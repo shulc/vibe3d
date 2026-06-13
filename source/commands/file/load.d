@@ -10,6 +10,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import document : Document, Layer;
 import io.lwo_import    : sceneFromLwo;
 import io.scene_import  : importViaAssimp;
 import io.scene_ir      : ImportedScene, flattenToMesh;
@@ -31,18 +32,25 @@ import change_bus : MeshChangeAll;
 enum FileLoadMode { open, importSingle }
 
 class FileLoad : Command {
+    private Document*        document;      // layered source of truth for native .v3d
     private GpuMesh*         gpu;
     private VertexCache*     vc;
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
     private string           explicitPath;  // set via setPath() to skip the dialog
-    private MeshSnapshot     snap;
+    private MeshSnapshot     snap;          // interchange path: single-mesh undo
+    // Native .v3d load replaces the whole layer list in place; undo restores
+    // the prior document state captured before the swap.
+    private Layer[]          prevLayers;
+    private size_t           prevActiveIndex;
+    private bool             docSnapped;     // true when prevLayers was captured
     private FileLoadMode     mode = FileLoadMode.open;
     private string           singleExt;     // import-single target ext (e.g. ".obj")
 
-    this(Mesh* mesh, ref View view, EditMode editMode,
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* document,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
         super(mesh, view, editMode);
+        this.document = document;
         this.gpu = gpu;
         this.vc  = vc;
         this.ec  = ec;
@@ -99,30 +107,44 @@ class FileLoad : Command {
             path = runOpenDialog();
             if (path is null) return false;
         }
-        // Snapshot the current mesh BEFORE replacing it, so undo restores
-        // whatever was open before the load. Heavy but file.load is a
-        // discrete user action — paid once per load.
-        snap = MeshSnapshot.capture(*mesh);
         // Dispatch by extension: native .v3d vs. the LWO / assimp bridges.
         // Default (unknown / no extension) is native .v3d. Interchange
         // imports go through the scene-IR seam (parse -> ImportedScene ->
         // flattenToMesh).
         bool ok;
         const ext = extension(path).toLower;
-        if (ext == ".lwo") {
-            ImportedScene sc;
-            ok = sceneFromLwo(path, sc);
-            if (ok) *mesh = flattenToMesh(sc);
-        } else if (ext == ".obj" || ext == ".gltf" || ext == ".glb"
-                   || ext == ".fbx") {
-            // Interchange import (OBJ / glTF / FBX) through assimp -> scene-IR.
-            ImportedScene sc;
-            ok = importViaAssimp(path, sc);
-            if (ok) *mesh = flattenToMesh(sc);
+        const isNative = !(ext == ".lwo" || ext == ".obj" || ext == ".gltf"
+                           || ext == ".glb" || ext == ".fbx");
+
+        if (isNative) {
+            // Native .v3d is the layered source of truth: replace the WHOLE
+            // layer list in place. Snapshot the prior document for undo BEFORE
+            // the swap (readV3d only mutates `document` atomically on success,
+            // so capturing here is safe even when the load rejects).
+            prevLayers      = document.layers.dup;   // shallow: Layer refs preserved
+            prevActiveIndex = document.activeIndex;
+            docSnapped      = true;
+            ok = readV3d(path, *document);
+            if (!ok) { docSnapped = false; prevLayers = null; return false; }
+            // readV3d clamps activeIndex into range already; defensive re-clamp.
+            if (document.activeIndex >= document.layers.length)
+                document.activeIndex = document.layers.length - 1;
         } else {
-            ok = readV3d(path, *mesh);
+            // Interchange import keeps the active-mesh path (NOT layered — that
+            // is Stage 3). Snapshot just the active mesh for undo.
+            snap = MeshSnapshot.capture(*mesh);
+            if (ext == ".lwo") {
+                ImportedScene sc;
+                ok = sceneFromLwo(path, sc);
+                if (ok) *mesh = flattenToMesh(sc);
+            } else {
+                // Interchange import (OBJ / glTF / FBX) through assimp -> scene-IR.
+                ImportedScene sc;
+                ok = importViaAssimp(path, sc);
+                if (ok) *mesh = flattenToMesh(sc);
+            }
+            if (!ok) return false;
         }
-        if (!ok) return false;
 
         // Document-path memory: a successful NATIVE load (File → Open of a
         // .v3d) becomes the current document so plain Save needs no dialog.
@@ -141,26 +163,45 @@ class FileLoad : Command {
             prefsNoteLastDir(dirName(path));
         }
 
-        // The reader has already rebuilt the mesh on a fresh struct (Mesh.init)
-        // and applied subpatch flags; grow selection arrays to match but don't
-        // clear isSubpatch.
-        mesh.syncSelection();
-        // Bulk transition: the loaded file REPLACED the whole mesh — every cache
-        // must invalidate. noteChange(All), after the reader rebuilt the mesh
-        // (the fresh struct reset pending + counters to 0).
-        mesh.noteChange(MeshChangeAll);
-        refreshCaches();
+        // From here on operate on the NEW active mesh. For the native path the
+        // layer list was replaced, so the active mesh sits at a fresh heap
+        // address — resolve it through the document rather than the fire-time
+        // `*mesh` pointer (which still points at the prior layer).
+        Mesh* active = isNative ? document.activeMesh() : mesh;
+
+        // The reader rebuilt the mesh on a fresh struct (Mesh.init) and applied
+        // subpatch flags; grow selection arrays to match but don't clear
+        // isSubpatch.
+        active.syncSelection();
+        // Bulk transition: the load REPLACED the active mesh — every cache must
+        // invalidate. noteChange(All) on the NEW active mesh (the fresh struct
+        // reset pending + counters to 0). Freshly built background layers (v2
+        // multi-layer files) start with clean pendingChanges_ and unseeded
+        // shadow stamps; the per-layer flush lazily seeds them on first sight,
+        // so a layered load does not trip the MISSED-PUBLISHER check.
+        active.noteChange(MeshChangeAll);
+        refreshActive(active);
         return true;
     }
 
     override bool revert() {
+        if (docSnapped) {
+            // Native path: restore the prior layer list + active index in place.
+            document.layers      = prevLayers;
+            document.activeIndex = prevActiveIndex >= prevLayers.length
+                ? prevLayers.length - 1 : prevActiveIndex;
+            auto active = document.activeMesh();
+            active.noteChange(MeshChangeAll);
+            refreshActive(active);
+            return true;
+        }
         if (!snap.filled) return false;
         snap.restore(*mesh);
-        refreshCaches();
+        refreshActive(mesh);
         return true;
     }
 
-    private void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+    private void refreshActive(Mesh* active) {
+        refreshDisplay(active, gpu, vc, ec, fc);
     }
 }
