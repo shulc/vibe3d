@@ -994,6 +994,21 @@ void main(string[] args) {
     scope(exit) gpu.destroy();
     gpu.upload(mesh);
 
+    // Layers Stage 5 — background-layer GPU buffers. A side map (NOT a field on
+    // Layer: document.d stays GL-free and the render boundary stays clean)
+    // keyed by the Layer object. Each entry caches the layer's last uploaded
+    // `mesh.mutationVersion` so a visible-immutable background layer uploads at
+    // most once until it actually changes. Entries for layers that are no
+    // longer visible-background (hidden, made active/foreground, or deleted) are
+    // destroyed + dropped each frame so GL handles never leak. In a single-layer
+    // document this map is always empty ⇒ zero per-frame cost.
+    import document : Layer;
+    struct BgGpu { GpuMesh gpu; ulong uploadedVersion = ulong.max; }
+    BgGpu*[Layer] bgGpuByLayer;
+    scope(exit) {
+        foreach (k, bg; bgGpuByLayer) bg.gpu.destroy();
+    }
+
     // Offscreen ID-buffer picker shared by pickVertices / pickEdges /
     // pickFaces. Heuristic-visibility tests rejected elements the user
     // could clearly see; GPU per-pixel depth-test sidesteps that.
@@ -6014,6 +6029,90 @@ void main(string[] args) {
 
         // glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
+
+        // ---- Background layers (layers Stage 5) ----
+        // Draw every VISIBLE, non-active layer dimmed (faces + edges only — no
+        // vertex dots, no selection/hover overlays, per the behaviour table),
+        // BEFORE the active pass so the active layer's depth/picking is never
+        // disturbed (background depth is written first; the active mesh draws
+        // over it with the normal full-bright pass). Lazy GPU upload keyed on
+        // the layer's mutationVersion; map entries for layers that stopped being
+        // visible-non-active are destroyed + dropped here so GL handles never
+        // leak. With one layer the loop body never runs and `bgGpuByLayer` stays
+        // empty ⇒ no per-frame cost.
+        if (document.layers.length > 1) {
+            import std.math : isNaN;
+            // 1) Reap stale map entries (hidden / now-active / deleted layers).
+            Layer[] toDrop;
+            foreach (lyr, bg; bgGpuByLayer) {
+                bool stillBg = false;
+                foreach (i, ll; document.layers)
+                    if (ll is lyr && ll.visible && i != document.activeIndex) {
+                        stillBg = true;
+                        break;
+                    }
+                if (!stillBg) toDrop ~= lyr;
+            }
+            foreach (lyr; toDrop) {
+                bgGpuByLayer[lyr].gpu.destroy();
+                bgGpuByLayer.remove(lyr);
+            }
+
+            // 2) Draw each visible non-active layer dimmed. Identity model
+            //    matrix — background geometry is static reference, never the
+            //    active tool's deferred-drag transform.
+            float[16] bgModel = identityMatrix;
+            enum float kBgDim = 0.45f;   // dim brightness for background layers
+            foreach (i, lyr; document.layers) {
+                if (i == document.activeIndex || !lyr.visible) continue;
+
+                auto pp = lyr in bgGpuByLayer;
+                BgGpu* bg;
+                if (pp is null) {
+                    bg = new BgGpu;
+                    bg.gpu.init();
+                    bgGpuByLayer[lyr] = bg;
+                } else {
+                    bg = *pp;
+                }
+                if (bg.uploadedVersion != lyr.mesh.mutationVersion) {
+                    bg.gpu.upload(lyr.mesh);
+                    bg.uploadedVersion = lyr.mesh.mutationVersion;
+                }
+
+                // Dimmed faces.
+                litShader.useProgram(bgModel, cameraView);
+                litShader.setSurfaces(lyr.mesh.surfaces);
+                litShader.setDim(kBgDim);
+                bg.gpu.drawFaces(litShader);
+                litShader.setDim(1.0f);   // restore neutral for the active pass
+
+                // Dimmed edges — no hover/selection (empty masks).
+                shader.useProgram(bgModel, cameraView);
+                shader.setDim(kBgDim);
+                bg.gpu.drawEdges(shader.locColor, -1, []);
+                shader.setDim(1.0f);
+            }
+        }
+
+        // Install the background SNAP sources (layers Stage 5): the
+        // `visible && background` layers (NOT background=false ones — those
+        // render dimmed but are not snap targets, per the behaviour table).
+        // snapCursor walks these after the active mesh. Cleared to empty in the
+        // single-layer / no-background common case ⇒ no extra snap work. The
+        // mesh addresses are the Layer objects' stable interior pointers.
+        {
+            import snap : setBackgroundSnapSources;
+            const(Mesh)*[] snapSrc;
+            if (document.layers.length > 1) {
+                foreach (i, lyr; document.layers) {
+                    if (i == document.activeIndex) continue;
+                    if (lyr.visible && lyr.background)
+                        snapSrc ~= cast(const(Mesh)*)&lyr.mesh;
+                }
+            }
+            setBackgroundSnapSources(snapSrc);
+        }
 
         // Draw faces with Blinn-Phong lighting.
         // Highlight branch in Polygons mode draws face selection +

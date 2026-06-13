@@ -54,6 +54,38 @@ bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
         && a.fixedGridSize == b.fixedGridSize;
 }
 
+// ---------------------------------------------------------------------------
+// Background snap sources (layers Stage 5).
+//
+// `snapCursor` always treats the `mesh` argument as snap SOURCE 0 (the active
+// layer) — that path is unchanged byte-for-byte. In a multi-layer document the
+// app installs the *visible && background* layers' meshes here each frame, and
+// snapCursor walks them as additional sources AFTER the active mesh. With a
+// single-layer document (or any document with no visible background layer) this
+// array is empty, so the extra-source loop never runs and the result is
+// identical to pre-Stage-5.
+//
+// The candidate grids (below) are keyed per source SLOT so two layers' grids
+// can never alias even when their meshes happen to share a mutationVersion —
+// the address term added in Stage 2 is the additional belt-and-braces guard.
+//
+// Set on the main thread once per frame; read by snapCursor on either the main
+// thread (interactive drags) or the HTTP server thread (`/api/snap` bridge), so
+// the same g_vgridMutex that guards the grids guards the source list.
+private __gshared const(Mesh)*[] g_snapSources;
+
+/// Install the background snap sources (the *visible && background* layers'
+/// meshes). The active mesh is NOT included — it is always source 0 via the
+/// `mesh` argument to snapCursor. Pass an empty slice (or never call this) for
+/// the single-layer common case. Copies into an owned buffer so the caller's
+/// slice need not outlive the frame.
+void setBackgroundSnapSources(const(Mesh)*[] sources) {
+    synchronized (g_vgridMutex) {
+        g_snapSources.length = sources.length;
+        foreach (i, s; sources) g_snapSources[i] = s;
+    }
+}
+
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
@@ -122,128 +154,159 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // CPU front-facing + occlusion test the selection path used before the GPU
     // id-buffer. Empty when the mesh has no faces (nothing can occlude) so
     // point/edge-only geometry snaps unfiltered.
-    bool[] vis;
-    if (mesh.faces.length > 0
-        && (cfg.enabledTypes & (SnapType.Vertex | SnapType.Edge
-              | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter)))
-        vis = mesh.visibleVertices(vp.eye, vp);
+    // Per-source geometric candidate walk (layers Stage 5). `slot` keys this
+    // source's candidate grids so two layers' grids never alias; `exclude`
+    // is the dragged-vertex set (active source only — a background layer is
+    // never being dragged, so it passes an empty exclude). The body is the
+    // pre-Stage-5 walk verbatim, parameterised on the mesh + grid slot.
+    void walkSource(const ref Mesh m, int slot, const(uint)[] exclude) {
+        // id-buffer. Empty when the mesh has no faces (nothing can occlude) so
+        // point/edge-only geometry snaps unfiltered.
+        bool[] vis;
+        if (m.faces.length > 0
+            && (cfg.enabledTypes & (SnapType.Vertex | SnapType.Edge
+                  | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter)))
+            vis = m.visibleVertices(vp.eye, vp);
 
-    bool vertVisible(uint vi) {
-        return vis.length == 0 || (vi < vis.length && vis[vi]);
-    }
-    // Edge / edge-midpoint: visible only when BOTH endpoints are visible. The
-    // occlusion-aware vertex mask already folds in front-facing + depth, so a
-    // hidden back edge has at least one hidden endpoint and drops out, while a
-    // silhouette edge (both ends shared with a front face) survives.
-    bool edgeVisible(uint a, uint b) {
-        return vis.length == 0
-            || (a < vis.length && b < vis.length && vis[a] && vis[b]);
-    }
-    // Face / face-center: visible only when the face is front-facing AND all
-    // its corners are visible (rejects back faces directly, occluded ones via
-    // the corner mask). Conservative for large partly-hidden faces — fine for
-    // a snap gate. Same front-facing sign convention as Mesh.visibleVertices.
-    bool faceVisible(const(uint)[] face) {
-        if (vis.length == 0) return true;
-        if (face.length < 3) return false;
-        Vec3 fn = cross(mesh.vertices[face[1]] - mesh.vertices[face[0]],
-                        mesh.vertices[face[2]] - mesh.vertices[face[0]]);
-        if (dot(fn, mesh.vertices[face[0]] - vp.eye) >= 0) return false;
-        foreach (v; face) if (v >= vis.length || !vis[v]) return false;
-        return true;
+        bool vertVisible(uint vi) {
+            return vis.length == 0 || (vi < vis.length && vis[vi]);
+        }
+        // Edge / edge-midpoint: visible only when BOTH endpoints are visible. The
+        // occlusion-aware vertex mask already folds in front-facing + depth, so a
+        // hidden back edge has at least one hidden endpoint and drops out, while a
+        // silhouette edge (both ends shared with a front face) survives.
+        bool edgeVisible(uint a, uint b) {
+            return vis.length == 0
+                || (a < vis.length && b < vis.length && vis[a] && vis[b]);
+        }
+        // Face / face-center: visible only when the face is front-facing AND all
+        // its corners are visible (rejects back faces directly, occluded ones via
+        // the corner mask). Conservative for large partly-hidden faces — fine for
+        // a snap gate. Same front-facing sign convention as Mesh.visibleVertices.
+        bool faceVisible(const(uint)[] face) {
+            if (vis.length == 0) return true;
+            if (face.length < 3) return false;
+            Vec3 fn = cross(m.vertices[face[1]] - m.vertices[face[0]],
+                            m.vertices[face[2]] - m.vertices[face[0]]);
+            if (dot(fn, m.vertices[face[0]] - vp.eye) >= 0) return false;
+            foreach (v; face) if (v >= vis.length || !vis[v]) return false;
+            return true;
+        }
+
+        if (cfg.enabledTypes & SnapType.Vertex) {
+            auto cands = queryCandidateGrid(Kind.Vertex, slot, m, vp, sx, sy,
+                                            cfg.outerRangePx, exclude);
+            foreach (vi; cands)
+                if (vertVisible(vi))
+                    consider(m.vertices[vi], cast(int)vi, SnapType.Vertex);
+        }
+
+        // Edge candidates (7.3b) — closest point on each edge segment in
+        // screen space. Skipped when both endpoints are part of the
+        // dragged set (the entire edge is moving with the cursor).
+        //
+        // Broad-phase: a per-edge screen-bbox bucket grid (Kind.Edge)
+        // returns only edges whose projected bbox overlaps the cursor's
+        // 3×3 cell block; each is then run through the UNCHANGED exact
+        // segment-distance + consider() math below, so the winner is
+        // byte-identical to the old O(edges) scan. Exclusion (both
+        // endpoints dragged) is applied at query time.
+        if (cfg.enabledTypes & SnapType.Edge) {
+            auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
+                                            cfg.outerRangePx, exclude);
+            foreach (ei; cands) {
+                auto edge = m.edges[ei];
+                if (!edgeVisible(edge[0], edge[1])) continue;
+                float px0, py0, ndcZ0, px1, py1, ndcZ1;
+                Vec3 a = m.vertices[edge[0]];
+                Vec3 b = m.vertices[edge[1]];
+                if (!projectToWindowFull(a, vp, px0, py0, ndcZ0)) continue;
+                if (!projectToWindowFull(b, vp, px1, py1, ndcZ1)) continue;
+                float t;
+                // Screen-space-closest t. The world point at the SAME
+                // parametric t is what we publish — strictly speaking
+                // perspective division means re-projecting that world
+                // point doesn't land exactly on the screen-closest pixel,
+                // but for typical viewports the deviation is sub-pixel
+                // and `consider()` will compute its actual screen
+                // distance against the cursor anyway.
+                closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
+                                           px0, py0, px1, py1, t);
+                consider(a + (b - a) * t, cast(int)ei, SnapType.Edge);
+            }
+        }
+
+        // EdgeCenter candidates (7.3b) — midpoint of each edge. Point
+        // candidate ⇒ Kind.EdgeCenter point grid; same 3×3 query as Vertex.
+        if (cfg.enabledTypes & SnapType.EdgeCenter) {
+            auto cands = queryCandidateGrid(Kind.EdgeCenter, slot, m, vp, sx, sy,
+                                            cfg.outerRangePx, exclude);
+            foreach (ei; cands) {
+                auto edge = m.edges[ei];
+                if (!edgeVisible(edge[0], edge[1])) continue;
+                Vec3 mid = (m.vertices[edge[0]] + m.vertices[edge[1]]) * 0.5f;
+                consider(mid, cast(int)ei, SnapType.EdgeCenter);
+            }
+        }
+
+        // Polygon candidates (7.3b) — closest point on the polygon
+        // surface. Cursor inside the screen-projected polygon ⇒ ray-plane
+        // hit on the face. Outside ⇒ closest point on the boundary
+        // (= closest segment of the face's edge ring).
+        //
+        // Broad-phase: per-face screen-bbox bucket grid (Kind.Polygon).
+        // The expensive `closestOnPolygonSurface` (which projects all face
+        // verts + allocates) now runs ONLY on near faces.
+        if (cfg.enabledTypes & SnapType.Polygon) {
+            auto cands = queryCandidateGrid(Kind.Polygon, slot, m, vp, sx, sy,
+                                            cfg.outerRangePx, exclude);
+            foreach (fi; cands) {
+                auto face = m.faces[fi];
+                if (!faceVisible(face)) continue;
+                Vec3 hit;
+                if (closestOnPolygonSurface(face, m, sx, sy, vp, hit))
+                    consider(hit, cast(int)fi, SnapType.Polygon);
+            }
+        }
+
+        // PolyCenter candidates (7.3b) — face centroid (average of verts).
+        // Point candidate ⇒ Kind.PolyCenter point grid.
+        if (cfg.enabledTypes & SnapType.PolyCenter) {
+            auto cands = queryCandidateGrid(Kind.PolyCenter, slot, m, vp, sx, sy,
+                                            cfg.outerRangePx, exclude);
+            foreach (fi; cands) {
+                auto face = m.faces[fi];
+                if (face.length == 0) continue;
+                if (!faceVisible(face)) continue;
+                Vec3 c = Vec3(0, 0, 0);
+                foreach (vi; face) c += m.vertices[vi];
+                c = c / cast(float)face.length;
+                consider(c, cast(int)fi, SnapType.PolyCenter);
+            }
+        }
     }
 
-    if (cfg.enabledTypes & SnapType.Vertex) {
-        auto cands = queryCandidateGrid(Kind.Vertex, mesh, vp, sx, sy,
-                                        cfg.outerRangePx, excludeVerts);
-        foreach (vi; cands)
-            if (vertVisible(vi))
-                consider(mesh.vertices[vi], cast(int)vi, SnapType.Vertex);
-    }
+    // Source 0 = the active layer (with the dragged-vertex exclusion).
+    // Single-layer / no-visible-background documents stop here, byte-identical
+    // to pre-Stage-5.
+    walkSource(mesh, 0, excludeVerts);
 
-    // Edge candidates (7.3b) — closest point on each edge segment in
-    // screen space. Skipped when both endpoints are part of the
-    // dragged set (the entire edge is moving with the cursor).
+    // Sources 1..N = the visible background layers (layers Stage 5). A
+    // background layer is never being dragged, so it carries no exclusion; its
+    // grids live in slots 1.. so they never alias the active grid.
     //
-    // Broad-phase: a per-edge screen-bbox bucket grid (Kind.Edge)
-    // returns only edges whose projected bbox overlaps the cursor's
-    // 3×3 cell block; each is then run through the UNCHANGED exact
-    // segment-distance + consider() math below, so the winner is
-    // byte-identical to the old O(edges) scan. Exclusion (both
-    // endpoints dragged) is applied at query time.
-    if (cfg.enabledTypes & SnapType.Edge) {
-        auto cands = queryCandidateGrid(Kind.Edge, mesh, vp, sx, sy,
-                                        cfg.outerRangePx, excludeVerts);
-        foreach (ei; cands) {
-            auto edge = mesh.edges[ei];
-            if (!edgeVisible(edge[0], edge[1])) continue;
-            float px0, py0, ndcZ0, px1, py1, ndcZ1;
-            Vec3 a = mesh.vertices[edge[0]];
-            Vec3 b = mesh.vertices[edge[1]];
-            if (!projectToWindowFull(a, vp, px0, py0, ndcZ0)) continue;
-            if (!projectToWindowFull(b, vp, px1, py1, ndcZ1)) continue;
-            float t;
-            // Screen-space-closest t. The world point at the SAME
-            // parametric t is what we publish — strictly speaking
-            // perspective division means re-projecting that world
-            // point doesn't land exactly on the screen-closest pixel,
-            // but for typical viewports the deviation is sub-pixel
-            // and `consider()` will compute its actual screen
-            // distance against the cursor anyway.
-            closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
-                                       px0, py0, px1, py1, t);
-            consider(a + (b - a) * t, cast(int)ei, SnapType.Edge);
-        }
+    // Snapshot the source-list under the lock into a local, then walk OUTSIDE
+    // the lock: queryCandidateGrid re-acquires g_vgridMutex (a non-recursive
+    // Mutex), so calling walkSource while holding it would deadlock. The
+    // snapshot is empty in the single-layer common case ⇒ no extra work.
+    const(Mesh)*[] bgSources;
+    synchronized (g_vgridMutex) {
+        if (g_snapSources.length > 0)
+            bgSources = g_snapSources.dup;
     }
-
-    // EdgeCenter candidates (7.3b) — midpoint of each edge. Point
-    // candidate ⇒ Kind.EdgeCenter point grid; same 3×3 query as Vertex.
-    if (cfg.enabledTypes & SnapType.EdgeCenter) {
-        auto cands = queryCandidateGrid(Kind.EdgeCenter, mesh, vp, sx, sy,
-                                        cfg.outerRangePx, excludeVerts);
-        foreach (ei; cands) {
-            auto edge = mesh.edges[ei];
-            if (!edgeVisible(edge[0], edge[1])) continue;
-            Vec3 mid = (mesh.vertices[edge[0]] + mesh.vertices[edge[1]]) * 0.5f;
-            consider(mid, cast(int)ei, SnapType.EdgeCenter);
-        }
-    }
-
-    // Polygon candidates (7.3b) — closest point on the polygon
-    // surface. Cursor inside the screen-projected polygon ⇒ ray-plane
-    // hit on the face. Outside ⇒ closest point on the boundary
-    // (= closest segment of the face's edge ring).
-    //
-    // Broad-phase: per-face screen-bbox bucket grid (Kind.Polygon).
-    // The expensive `closestOnPolygonSurface` (which projects all face
-    // verts + allocates) now runs ONLY on near faces.
-    if (cfg.enabledTypes & SnapType.Polygon) {
-        auto cands = queryCandidateGrid(Kind.Polygon, mesh, vp, sx, sy,
-                                        cfg.outerRangePx, excludeVerts);
-        foreach (fi; cands) {
-            auto face = mesh.faces[fi];
-            if (!faceVisible(face)) continue;
-            Vec3 hit;
-            if (closestOnPolygonSurface(face, mesh, sx, sy, vp, hit))
-                consider(hit, cast(int)fi, SnapType.Polygon);
-        }
-    }
-
-    // PolyCenter candidates (7.3b) — face centroid (average of verts).
-    // Point candidate ⇒ Kind.PolyCenter point grid.
-    if (cfg.enabledTypes & SnapType.PolyCenter) {
-        auto cands = queryCandidateGrid(Kind.PolyCenter, mesh, vp, sx, sy,
-                                        cfg.outerRangePx, excludeVerts);
-        foreach (fi; cands) {
-            auto face = mesh.faces[fi];
-            if (face.length == 0) continue;
-            if (!faceVisible(face)) continue;
-            Vec3 c = Vec3(0, 0, 0);
-            foreach (vi; face) c += mesh.vertices[vi];
-            c = c / cast(float)face.length;
-            consider(c, cast(int)fi, SnapType.PolyCenter);
-        }
-    }
+    foreach (i, src; bgSources)
+        if (src !is null)
+            walkSource(*src, cast(int)(i + 1), null);
 
     // Grid candidate (7.3c). The grid lies on the workplane plane.
     // Project the cursor ray onto the workplane to get a 3D hit, snap
@@ -480,20 +543,39 @@ private struct CandidateGrid {
     bool valid;
 }
 
-private __gshared CandidateGrid[Kind.max + 1] g_grids;
+// One grid set (Kind.max+1 grids) PER SNAP SOURCE SLOT (layers Stage 5).
+// Slot 0 is the active layer; slots 1.. are the visible background layers. The
+// outer array grows on demand as more sources appear; in the single-layer
+// common case it has exactly one row, so the layout is the pre-Stage-5
+// `g_grids[Kind]` with one extra level of indirection that never reallocates.
+private alias GridSet = CandidateGrid[Kind.max + 1];
+private __gshared GridSet[] g_gridSets;
 private __gshared Mutex      g_vgridMutex;
 
-shared static this() { g_vgridMutex = new Mutex(); }
+shared static this() {
+    g_vgridMutex = new Mutex();
+    g_gridSets.length = 1;   // slot 0 (active) always present
+}
+
+// Return the grid for (slot, kind), growing the slot table as needed. Caller
+// holds g_vgridMutex.
+private CandidateGrid* gridFor(int slot, Kind k) {
+    if (slot >= g_gridSets.length)
+        g_gridSets.length = slot + 1;
+    return &g_gridSets[slot][k];
+}
 
 /// Force every snap candidate grid to rebuild on next query. Belt-and-braces
 /// companion to the address-keyed staleness check (layers Stage 2): the
 /// active-layer-switch hook calls this so a grid built against the prior
 /// layer is never reused. The address key in CandidateGrid is the PRIMARY
 /// defense (it also covers undo re-populating a background layer's colliding
-/// key); this blanket drop is the secondary one.
+/// key); this blanket drop is the secondary one. Stage 5: this now drops every
+/// source slot's grids, not just the active one.
 void invalidateSnapGrids() {
     synchronized (g_vgridMutex)
-        foreach (ref g; g_grids) g.valid = false;
+        foreach (ref set; g_gridSets)
+            foreach (ref g; set) g.valid = false;
 }
 
 private bool sameViewport(const ref CandidateGrid g, const ref Viewport vp) {
@@ -565,9 +647,9 @@ private bool projectElementCells(Kind k, int idx, const ref Mesh mesh,
 // `vp`, cell size `cellPx`. Indexes ALL elements (exclusion happens at
 // query time). EXTENT kinds insert each element into every cell its
 // projected bbox overlaps; POINT kinds insert into a single cell.
-private void buildCandidateGrid(Kind k, const ref Mesh mesh,
+private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
                                 const ref Viewport vp, float cellPx) {
-    auto g = &g_grids[k];
+    auto g = gridFor(slot, k);
     g.meshAddr    = cast(size_t)&mesh;
     g.meshVersion = mesh.mutationVersion;
     g.view[]      = vp.view[];
@@ -686,7 +768,7 @@ private bool kindExcluded(Kind k, int idx, const ref Mesh mesh,
 // excluded. The list is a reusable module-scoped scratch buffer (valid
 // until the next query) — the caller iterates it immediately. See the
 // broad-phase contract + coverage guarantee in the section header.
-private int[] queryCandidateGrid(Kind k, const ref Mesh mesh,
+private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
                                  const ref Viewport vp,
                                  int sx, int sy, float outerRangePx,
                                  const(uint)[] excludeVerts) {
@@ -711,7 +793,7 @@ private int[] queryCandidateGrid(Kind k, const ref Mesh mesh,
         return g_candScratch;
     }
 
-    auto g = &g_grids[k];
+    auto g = gridFor(slot, k);
 
     // (Re)build if stale.
     if (!g.valid
@@ -719,8 +801,10 @@ private int[] queryCandidateGrid(Kind k, const ref Mesh mesh,
      || g.meshVersion != mesh.mutationVersion
      || g.elemCount   != n
      || g.cellPx      != outerRangePx
-     || !sameViewport(*g, vp))
-        buildCandidateGrid(k, mesh, vp, outerRangePx);
+     || !sameViewport(*g, vp)) {
+        buildCandidateGrid(k, slot, mesh, vp, outerRangePx);
+        g = gridFor(slot, k);   // table may have reallocated on grow
+    }
 
     if (g.nCols == 0 || g.nRows == 0) return g_candScratch;
 

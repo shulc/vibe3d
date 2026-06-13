@@ -24,10 +24,11 @@ immutable string vertexShaderSrc = q{
 
 immutable string fragmentShaderSrc = q{
     #version 330 core
-    uniform vec3 u_color;
+    uniform vec3  u_color;
+    uniform float u_dim;        // brightness multiplier; 1.0 = neutral (layers Stage 5)
     out vec4 fragColor;
     void main() {
-        fragColor = vec4(u_color, 1.0);
+        fragColor = vec4(u_color * u_dim, 1.0);
     }
 };
 
@@ -74,6 +75,7 @@ private immutable string litFragSrc = q{
     uniform float u_ambient;
     uniform float u_specStr;
     uniform float u_specPow;
+    uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
         vec4 mat_params[64];   // .x = diffuse, .y = specular, .z = glossiness
@@ -90,7 +92,7 @@ private immutable string litFragSrc = q{
         vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
         vec3  col = bc * (u_ambient + dif * (1.0 - u_ambient))
                   + vec3(1.0) * spc * u_specStr;
-        fragColor = vec4(col, 1.0);
+        fragColor = vec4(col * u_dim, 1.0);
     }
 };
 
@@ -245,6 +247,7 @@ class Shader {
     GLint locView;
     GLint locProj;
     GLint locColor;
+    GLint locDim;
 
     this() {
         program  = createProgram();
@@ -252,6 +255,7 @@ class Shader {
         locView   = glGetUniformLocation(program, "u_view");
         locProj   = glGetUniformLocation(program, "u_proj");
         locColor  = glGetUniformLocation(program, "u_color");
+        locDim    = glGetUniformLocation(program, "u_dim");
     }
     ~this() {  glDeleteProgram(program); }
 
@@ -260,6 +264,19 @@ class Shader {
         glUniformMatrix4fv(locModel, 1, GL_FALSE, meshModel.ptr);
         glUniformMatrix4fv(locView,  1, GL_FALSE, cameraView.view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, cameraView.proj.ptr);
+        // Default to neutral brightness. The active-layer / single-layer
+        // pass never touches u_dim ⇒ byte-identical to pre-Stage-5. The
+        // dimmed background pass sets it explicitly with setDim() before
+        // its draws and is responsible for restoring 1.0 afterwards.
+        glUniform1f(locDim, 1.0f);
+    }
+
+    /// Override the brightness multiplier for the next draws on this
+    /// program. Used only by the dimmed background-layer pass (layers
+    /// Stage 5); pass 1.0 to restore the neutral default.
+    void setDim(float dim) {
+        glUseProgram(program);
+        glUniform1f(locDim, dim);
     }
 };
 
@@ -301,6 +318,7 @@ class LitShader {
     GLint locAmbient;
     GLint locSpecStr;
     GLint locSpecPow;
+    GLint locDim;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
 
@@ -316,6 +334,7 @@ class LitShader {
         locAmbient     = glGetUniformLocation(program, "u_ambient");
         locSpecStr     = glGetUniformLocation(program, "u_specStr");
         locSpecPow     = glGetUniformLocation(program, "u_specPow");
+        locDim         = glGetUniformLocation(program, "u_dim");
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
@@ -402,6 +421,19 @@ class LitShader {
         glUniform1f(locAmbient,  0.20f);
         glUniform1f(locSpecStr,  0.25f);
         glUniform1f(locSpecPow,  32.0f);
+        // Default to neutral brightness. The active-layer / single-layer
+        // pass never touches u_dim ⇒ byte-identical to pre-Stage-5. The
+        // dimmed background pass sets it explicitly with setDim() before
+        // its draws and restores 1.0 afterwards.
+        glUniform1f(locDim, 1.0f);
+    }
+
+    /// Override the brightness multiplier for the next draws on this
+    /// program. Used only by the dimmed background-layer pass (layers
+    /// Stage 5); pass 1.0 to restore the neutral default.
+    void setDim(float dim) {
+        glUseProgram(program);
+        glUniform1f(locDim, dim);
     }
 }
 
