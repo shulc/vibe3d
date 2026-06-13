@@ -74,12 +74,38 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
     // create the first part on the first geometry chunk so a LAYR-less file
     // still produces exactly one part.
     // -----------------------------------------------------------------------
+    // One discontinuous (per-corner) UV override entry, layer-local.
+    // `point` indexes the layer's PNTS; `globalPoly` is this part's `polys[]`
+    // slot (the VMAD's POLS-local poly index already remapped through this
+    // part's `localToGlobal`). `u`/`v` are the 2-D TXUV value.
+    struct VmadEntry { uint point; uint globalPoly; float u, v; }
+
     struct PartBuild {
         Vec3[]   verts;
         uint[][] polys;
         bool[]   polyIsSubpatch;    // parallel to polys
         ubyte[][] ptagBodies;       // PTAG bodies (filtered to SURF later)
         string   name;
+
+        // --- TXUV vertex maps, layer-local (resolved into ImportedPart.uv) ---
+        // Continuous base (VMAP TXUV): point index -> (u,v). Last write wins if a
+        // file repeats a point; that mirrors a single named TXUV channel.
+        float[2][uint] vmapUv;
+        bool           hasVmap;
+        // Discontinuous overrides (VMAD TXUV): keyed (point, this-part poly slot).
+        VmadEntry[]    vmadUv;
+        bool           hasVmad;
+
+        // Reader half of the LWO2 poly-index contract (D-2), PER PART: PTAG and
+        // VMAD on-disk poly indices are POLS-LOCAL (0-based within the most-recent
+        // POLS chunk of a given kind). `localToGlobal[kind][local]` is the slot in
+        // THIS part's `polys[]` that the local poly was appended to, in on-disk
+        // POLS order. `lastPolsKind` (0=FACE, 1=PTCH, -1=none) records which kind a
+        // following VMAD binds to. PTAG above keys SURF off layer-local FACE
+        // indices already (vibe3d appends FACE-then-PTCH per the chunk order), so
+        // this table is used only by the VMAD remap.
+        size_t[][2] localToGlobal;
+        int         lastPolsKind = -1;
     }
 
     PartBuild[] parts;
@@ -162,15 +188,27 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             bool isPtch = (polyType == "PTCH");
             if (isFace || isPtch) {
                 if (isFace) ++faceChunks; else ++subpatchChunks;
+                // POLS-local poly index space resets per POLS chunk of a kind; a
+                // following VMAD (and PTAG) binds to the MOST-RECENT POLS chunk.
+                const int kindIdx = isPtch ? 1 : 0;
+                cur.lastPolsKind  = kindIdx;
                 size_t count0 = cur.polys.length;
                 while (p + 2 <= chunkEnd) {
                     ushort numVerts = readU16(data, p);
+                    // Mask LWO2 poly-count flag bits (high 6) like the lib reader.
+                    numVerts = cast(ushort)(numVerts & 0x03FF);
                     p += 2;
                     uint[] face;
                     face.reserve(numVerts);
                     for (int i = 0; i < numVerts && p < chunkEnd; i++)
                         face ~= readVX(data, p);
                     if (face.length >= 3) {
+                        // Record (kind, POLS-local) -> this part's polys[] slot in
+                        // on-disk POLS order, BEFORE the append, so the slot index
+                        // is `cur.polys.length`. Only arity-valid polys are mapped;
+                        // a VMAD entry for a skipped <3-vert poly is dropped (its
+                        // local index never enters localToGlobal).
+                        cur.localToGlobal[kindIdx] ~= cur.polys.length;
                         cur.polys          ~= face;
                         cur.polyIsSubpatch ~= isPtch;
                     } else {
@@ -229,14 +267,96 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                             body.length >= 4
                                 ? cast(string) body[0..4].idup
                                 : "?"));
+        } else if (tagBytes == "VMAP" && chunkEnd - pos >= 6) {
+            // Continuous per-point vertex map. Body: type[ID4], dim[U2],
+            // name[S0], then (point[VX] + f32 * dim)*. We consume only TXUV
+            // (UV) maps and only their first two components (u, v); other map
+            // types (weight, morph, …) and extra dims are ignored. Point
+            // indices are LAYER-LOCAL (into this part's PNTS).
+            ensurePart();
+            auto cur = &parts[$ - 1];
+            ubyte[4] mapType = data[pos .. pos + 4];
+            ushort   dim     = readU16(data, pos + 4);
+            size_t   p       = pos + 6;
+            // S0 name: null-terminated, even-padded.
+            while (p < chunkEnd && data[p] != 0) p++;
+            if (p < chunkEnd) p++;             // consume null
+            if (p < chunkEnd && (p & 1)) p++;  // pad to even
+            if (mapType == "TXUV" && dim >= 1) {
+                size_t entries = 0;
+                while (p < chunkEnd) {
+                    uint point = readVX(data, p);
+                    // Read `dim` floats; keep [0..2] (default v=0 for a 1-D map).
+                    float[2] uv = [0.0f, 0.0f];
+                    bool short_ = false;
+                    foreach (d; 0 .. dim) {
+                        if (p + 4 > chunkEnd) { short_ = true; break; }
+                        float f = readF32(data, p);
+                        p += 4;
+                        if (d < 2) uv[d] = f;
+                    }
+                    if (short_) break;
+                    cur.vmapUv[point] = uv;
+                    ++entries;
+                }
+                cur.hasVmap = cur.hasVmap || entries > 0;
+                lwoInfo(format("VMAP TXUV: part %d, dim %d, %d point(s)",
+                                parts.length - 1, dim, entries));
+            } else {
+                lwoInfo(format("skip VMAP type=%s dim=%d (not 2-D TXUV)",
+                                cast(string) mapType[].idup, dim));
+            }
+        } else if (tagBytes == "VMAD" && chunkEnd - pos >= 6) {
+            // Discontinuous per-corner vertex map. Body: type[ID4], dim[U2],
+            // name[S0], then (point[VX] + poly[VX] + f32 * dim)*. `poly` is
+            // POLS-LOCAL to the most-recent POLS chunk; remap it through this
+            // part's localToGlobal[lastPolsKind] to a polys[] slot. TXUV only.
+            ensurePart();
+            auto cur = &parts[$ - 1];
+            ubyte[4] mapType = data[pos .. pos + 4];
+            ushort   dim     = readU16(data, pos + 4);
+            size_t   p       = pos + 6;
+            while (p < chunkEnd && data[p] != 0) p++;
+            if (p < chunkEnd) p++;
+            if (p < chunkEnd && (p & 1)) p++;
+            if (mapType == "TXUV" && dim >= 1) {
+                if (cur.lastPolsKind < 0) {
+                    lwoWarn("VMAD TXUV with no preceding POLS in this layer, skipped");
+                } else {
+                    auto l2g = cur.localToGlobal[cur.lastPolsKind];
+                    size_t entries = 0, dropped = 0;
+                    while (p < chunkEnd) {
+                        uint point     = readVX(data, p);
+                        uint localPoly = readVX(data, p);
+                        float[2] uv = [0.0f, 0.0f];
+                        bool short_ = false;
+                        foreach (d; 0 .. dim) {
+                            if (p + 4 > chunkEnd) { short_ = true; break; }
+                            float f = readF32(data, p);
+                            p += 4;
+                            if (d < 2) uv[d] = f;
+                        }
+                        if (short_) break;
+                        if (localPoly < l2g.length) {
+                            cur.vmadUv ~= VmadEntry(point,
+                                cast(uint) l2g[localPoly], uv[0], uv[1]);
+                            ++entries;
+                        } else {
+                            ++dropped;     // override for a skipped/curve poly
+                        }
+                    }
+                    cur.hasVmad = cur.hasVmad || entries > 0;
+                    lwoInfo(format("VMAD TXUV: part %d, dim %d, %d corner(s)%s",
+                                    parts.length - 1, dim, entries,
+                                    dropped ? format(", %d out-of-range dropped", dropped) : ""));
+                }
+            } else {
+                lwoInfo(format("skip VMAD type=%s dim=%d (not 2-D TXUV)",
+                                cast(string) mapType[].idup, dim));
+            }
         } else {
-            // VMAP/VMAD TXUV (per-corner UV) are reachable here as ordinary IFF
-            // sub-chunks (bodies at data[pos..chunkEnd]), but projecting them onto
-            // the per-corner ImportedPart.uv stream is a feature in its own right
-            // (point→corners for continuous VMAP, (point,poly)→corner for
-            // discontinuous VMAD, both layer-local) and is DEFERRED to the LWO UV
-            // stage (uv_maps_plan §Stage 6) alongside LWO UV export. assimp import
-            // covers #5's "stop discarding UVs" goal in the meantime.
+            // Other chunks (CLIP, BBOX, ENVL, non-TXUV maps, …) are not part of
+            // the geometry/UV model we round-trip; skip by size.
             lwoInfo(format("skip chunk %s (size %d)",
                             cast(string) tagBytes[].idup, sz));
         }
@@ -318,6 +438,40 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 if (faceIdx < ip.faceMaterial.length && tagIdx < tags.length)
                     ip.faceMaterial[faceIdx] = tagIdx;
             }
+        }
+
+        // TXUV VMAP/VMAD -> the flat per-corner ImportedPart.uv stream (dim 2),
+        // in face-then-corner order parallel to EVERY corner of pb.polys (the same
+        // layout flattenToMesh/partToMesh read; they advance their corner cursor
+        // over all polys, dropping a face's corners with the face). For each
+        // corner (poly p, point v): uv = VMAP[v] (continuous base) if present,
+        // OVERRIDDEN by VMAD[(v, p)] (discontinuous) if present. A layer with no
+        // TXUV map leaves uv EMPTY (empty-means-none, matching the assimp path).
+        if (pb.hasVmap || pb.hasVmad) {
+            // Build a (point,poly) -> (u,v) lookup for the overrides.
+            float[2][ulong] overrideByCorner;
+            foreach (e; pb.vmadUv) {
+                const ulong key = (cast(ulong) e.globalPoly << 32) | e.point;
+                overrideByCorner[key] = [e.u, e.v];
+            }
+            size_t totalCorners = 0;
+            foreach (face; pb.polys) totalCorners += face.length;
+            ip.uv.length = totalCorners * 2;
+            size_t c = 0;
+            foreach (fi_, face; pb.polys) {
+                const uint fi = cast(uint) fi_;
+                foreach (v; face) {
+                    float u = 0.0f, vv = 0.0f;
+                    if (auto base = v in pb.vmapUv) { u = (*base)[0]; vv = (*base)[1]; }
+                    const ulong key = (cast(ulong) fi << 32) | v;
+                    if (auto ov = key in overrideByCorner) { u = (*ov)[0]; vv = (*ov)[1]; }
+                    ip.uv[c * 2]     = u;
+                    ip.uv[c * 2 + 1] = vv;
+                    ++c;
+                }
+            }
+            lwoInfo(format("part %d: resolved %d UV corner(s) (VMAP=%d pt, VMAD=%d ovr)",
+                            pi, c, pb.vmapUv.length, pb.vmadUv.length));
         }
 
         out_.parts ~= ip;
