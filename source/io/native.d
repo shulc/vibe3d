@@ -161,7 +161,10 @@ void writeV3d(ref const Document document, string path)
         JSONValue lj;
         lj["name"]       = JSONValue(layer.name);
         lj["visible"]    = JSONValue(layer.visible);
-        lj["background"] = JSONValue(layer.background);
+        // Stage 2b: `background` is derived (visible && !selected). The v2 file
+        // shape still carries a `background` key for back-compat until the Stage 3
+        // v3 rewrite; emit the DERIVED value so a round-trip is faithful.
+        lj["background"] = JSONValue(Document.background(layer));
         lj["mesh"]       = meshToJson(layer.mesh);
         layers ~= lj;
     }
@@ -269,9 +272,11 @@ bool readV3d(string path, ref Document document)
                 layer.visible = true;
                 if (auto vbp = "visible" in lj)
                     layer.visible = (vbp.type == JSONType.true_);
-                layer.background = false;
-                if (auto bgp = "background" in lj)
-                    layer.background = (bgp.type == JSONType.true_);
+                // Stage 2b: the per-layer `background` flag is GONE (background is
+                // derived from selection). The v2 `background` key is accepted but
+                // discarded — `setActive(activeIndex)` below re-asserts the
+                // SET-of-one selection regardless. (Selection round-trip arrives
+                // with the Stage 3 v3 format; v2 carried no `selected`.)
                 parsed ~= layer;
             }
             // activeLayer: optional; default 0; clamp into [0, layers-1].
@@ -295,7 +300,6 @@ bool readV3d(string path, ref Document document)
                 return false;
             layer.name = "Layer 1";
             layer.visible = true;
-            layer.background = false;
             parsed ~= layer;
             activeIndex = 0;
         }

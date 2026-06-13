@@ -32,10 +32,12 @@ class SceneReset : Command {
     private size_t           prevActiveIndex;
     private bool             docCollapsed;   // true when we replaced the layer list
     // The kept active layer's original metadata (apply overwrites it to the
-    // default "Layer 1"/visible/foreground; revert restores these).
+    // default "Layer 1"/visible; revert restores these). Foreground/background
+    // is derived from selection (Stage 2b) — `setActive` re-asserts the kept
+    // layer's selected bit on both apply and revert, so there is no stored
+    // background flag to snapshot.
     private string           keptPrevName;
     private bool             keptPrevVisible;
-    private bool             keptPrevBackground;
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
@@ -92,10 +94,8 @@ class SceneReset : Command {
             auto keep       = document.active();     // the layer `mesh` points at
             keptPrevName       = keep.name;
             keptPrevVisible    = keep.visible;
-            keptPrevBackground = keep.background;
             keep.name       = "Layer 1";
             keep.visible    = true;
-            keep.background = false;
             document.layers      = [ keep ];
             // Stage-0 lockstep: one selected primary layer (the surviving
             // active one) — setActive(0) re-asserts the SET-of-one.
@@ -170,7 +170,6 @@ class SceneReset : Command {
             auto keep = document.active();
             keep.name       = keptPrevName;
             keep.visible    = keptPrevVisible;
-            keep.background = keptPrevBackground;
             document.layers      = prevLayers;
             // Restore primary/selected/activeIndex in lockstep (setActive
             // clamps the index into range).

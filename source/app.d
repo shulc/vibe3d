@@ -2266,16 +2266,17 @@ void main(string[] args) {
             import std.array  : appender;
             import std.format : format;
             import std.json   : JSONValue;
+            import document   : Document;   // Document.background (derived, 2b)
             auto a = appender!string();
             a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
             foreach (i, l; document.layers) {
                 if (i > 0) a.put(",");
-                // `background` reports the STORED bool (Stage 2a keeps it the
-                // field of record for snap/draw — neutral). `selected` +
-                // `primary` are the NEW #4 item-selection surface: `selected`
-                // is the per-layer foreground membership, `primary` marks the
-                // single edit target (== active). A test reads these to verify
-                // the multi-select set + which member is primary.
+                // `background` is now DERIVED (Stage 2b): visible && !selected —
+                // the stored bool is gone. `selected` + `primary` are the #4
+                // item-selection surface: `selected` is the per-layer foreground
+                // membership, `primary` marks the single edit target (== active).
+                // A test reads these to verify the multi-select set + which member
+                // is primary; `background` is the derived third-state collapse.
                 a.put(format(
                     `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,` ~
@@ -2283,7 +2284,7 @@ void main(string[] args) {
                     `"mutationVersion":%d}`,
                     i, JSONValue(l.name).toString(),
                     l.visible ? "true" : "false",
-                    l.background ? "true" : "false",
+                    Document.background(l) ? "true" : "false",
                     i == document.activeIndex ? "true" : "false",
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
@@ -5190,14 +5191,20 @@ void main(string[] args) {
                             `{"index":` ~ to!string(idx) ~ `,"value":`
                             ~ (vis ? "true" : "false") ~ `}`);
                 }
-                // Background checkbox.
+                // Foreground indicator (Stage 2b). The old "B" (background)
+                // checkbox collapsed into the derived selection model: a layer is
+                // FOREGROUND iff it is selected. The checkbox shows foreground
+                // membership and dispatches the item-selection mutator —
+                // check ⇒ `layer.select mode:add` (select), uncheck ⇒
+                // `mode:remove` (deselect ⇒ derived background). No more separate
+                // background flag; `layer.setVisible` still owns visibility.
                 ImGui.SameLine();
-                bool bg = l.background;
-                if (ImGui.Checkbox("B", &bg)) {
+                bool fg = document.foreground(l);
+                if (ImGui.Checkbox("F", &fg)) {
                     if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("layer.setBackground",
-                            `{"index":` ~ to!string(idx) ~ `,"value":`
-                            ~ (bg ? "true" : "false") ~ `}`);
+                        commandHandlerDelegate("layer.select",
+                            `{"index":` ~ to!string(idx) ~ `,"mode":`
+                            ~ (fg ? `"add"` : `"remove"`) ~ `}`);
                 }
 
                 ImGui.PopID();
@@ -6234,8 +6241,13 @@ void main(string[] args) {
             Layer[] toDrop;
             foreach (lyr, bg; bgGpuByLayer) {
                 bool stillBg = false;
-                foreach (i, ll; document.layers)
-                    if (ll is lyr && ll.visible && i != document.activeIndex) {
+                // Stage 2b: a layer is a background-GPU candidate iff it is
+                // visible and NOT the primary (the derived predicate). This MUST
+                // match the dim-draw guard below exactly — if only one flips, a
+                // primary != layers[activeIndex] situation would leak or
+                // double-destroy BgGpu GL handles.
+                foreach (ll; document.layers)
+                    if (ll is lyr && ll.visible && !document.isPrimary(ll)) {
                         stillBg = true;
                         break;
                     }
@@ -6252,7 +6264,10 @@ void main(string[] args) {
             float[16] bgModel = identityMatrix;
             enum float kBgDim = 0.45f;   // dim brightness for background layers
             foreach (i, lyr; document.layers) {
-                if (i == document.activeIndex || !lyr.visible) continue;
+                // Stage 2b: dim every VISIBLE non-primary layer. Same derived
+                // `!isPrimary` predicate as the reap loop above (they flip
+                // TOGETHER — see the BgGpu handle-leak note).
+                if (document.isPrimary(lyr) || !lyr.visible) continue;
 
                 auto pp = lyr in bgGpuByLayer;
                 BgGpu* bg;
@@ -6283,19 +6298,22 @@ void main(string[] args) {
             }
         }
 
-        // Install the background SNAP sources (layers Stage 5): the
-        // `visible && background` layers (NOT background=false ones — those
-        // render dimmed but are not snap targets, per the behaviour table).
-        // snapCursor walks these after the active mesh. Cleared to empty in the
-        // single-layer / no-background common case ⇒ no extra snap work. The
-        // mesh addresses are the Layer objects' stable interior pointers.
+        // Install the background SNAP sources (layers Stage 5). Stage 2b: the
+        // snap set is now the DERIVED `Document.background(l)` (== visible &&
+        // !selected). DELIBERATE SEMANTICS FLIP: a *selected-but-non-primary*
+        // (foreground) layer is NO LONGER a snap source, and a *deselected
+        // visible* layer now IS one — the third "background" state collapsed into
+        // selection. (A primary is selected ⇒ background()==false ⇒ excluded, so
+        // the prior `i == activeIndex` skip is subsumed.) snapCursor walks these
+        // after the active mesh; empty in the single-layer common case ⇒ no extra
+        // snap work. Addresses are the Layer objects' stable interior pointers.
         {
             import snap : setBackgroundSnapSources;
+            import document : Document;
             const(Mesh)*[] snapSrc;
             if (document.layers.length > 1) {
-                foreach (i, lyr; document.layers) {
-                    if (i == document.activeIndex) continue;
-                    if (lyr.visible && lyr.background)
+                foreach (lyr; document.layers) {
+                    if (Document.background(lyr))
                         snapSrc ~= cast(const(Mesh)*)&lyr.mesh;
                 }
             }

@@ -6,11 +6,22 @@
 // vertex snaps to the BACKGROUND layer's vertex — i.e. background layers are
 // snap targets.
 //
-// This is the test_snap_during_drag.d recipe with a second layer:
-//   • positive case — background=true layer's vertex IS a snap target.
-//   • negative case — the same layer with background=false (visible only,
-//     non-active) is NOT a snap target; the drag instead snaps to the active
-//     layer's own nearest vertex.
+// This is the test_snap_during_drag.d recipe with a second layer.
+//
+// Stage 2b SEMANTICS FLIP: "background" is now DERIVED — a layer is a background
+// snap source iff it is `visible && !selected`. The stored `bool background` /
+// `layer.setBackground` third state is GONE; the snap state is produced by the
+// item-selection mutator (`layer.select mode:{add,remove}`). The test's INTENT
+// is unchanged ("only visible+DESELECTED layers snap"); only the command that
+// produces the snappable state flips:
+//   • positive case — B is visible and DESELECTED (derived background) → IS a
+//     snap target. Produced by `layer.select index:1 mode:remove` after A is
+//     primary.
+//   • negative case — B is visible and SELECTED non-primary (foreground) → is
+//     NOT a snap target; the drag instead snaps to the active layer's own
+//     nearest vertex. Produced by `layer.select index:1 mode:add` then
+//     `layer.select index:0 mode:add` (A primary, B stays selected — NOT
+//     `mode:set`, which would deselect B).
 //
 // The full /api/play-events -> MoveTool.onMouseMotion -> applySnapToDelta ->
 // snapCursor path runs on every motion event; the only Stage-5 addition under
@@ -62,10 +73,13 @@ void moveVertexActive(double[3] from, double[3] to,
 
 // Build a two-layer document. Layer A (index 0) = standard cube, active. Layer
 // B (index 1) = a cube with one vertex parked far out in +X at the snap target,
-// flagged visible + background per `bg`. Returns the snap-target world pos.
+// left VISIBLE; `bg` selects whether B ends up DESELECTED (derived background ⇒
+// a snap source) or SELECTED non-primary (foreground ⇒ NOT a snap source).
+// Returns the snap-target world pos.
 //
-// `bg` selects whether B is a background layer (positive case) or merely a
-// visible non-active layer (negative case).
+// Stage 2b: the snap source is the DERIVED `visible && !selected` set, so the
+// state is produced via `layer.select mode:{add,remove}` (the retired
+// `layer.setBackground` would only be a thin alias now).
 Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
     post(baseUrl ~ "/api/reset", "");
 
@@ -78,10 +92,22 @@ Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
     // active-layer vertex.
     moveVertexActive([-0.5, -0.5, -0.5], [3.0, -0.5, -0.5]);
 
-    cmd("layer.select index:0");       // Layer A active again
-    cmd("layer.setVisible index:1 value:true");
-    cmd(bg ? "layer.setBackground index:1 value:true"
-           : "layer.setBackground index:1 value:false");
+    cmd("layer.setVisible index:1 value:true");   // B stays visible either way
+
+    if (bg) {
+        // POSITIVE: B visible + DESELECTED ⇒ derived background ⇒ snap source.
+        // Make A primary (exclusive), then mode:remove B (it's already
+        // deselected by the set on A — a guarded no-op that leaves B
+        // visible+deselected, the snappable state).
+        cmd("layer.select index:0");                  // A primary, B deselected
+        cmd("layer.select index:1 mode:remove");      // B left visible+deselected
+    } else {
+        // NEGATIVE: B visible + SELECTED non-primary (foreground) ⇒ NOT a snap
+        // source. Add B to the selection, then add A so A becomes primary while
+        // B STAYS selected (mode:add, NOT mode:set — set would deselect B).
+        cmd("layer.select index:1 mode:add");         // B selected + primary
+        cmd("layer.select index:0 mode:add");         // A primary, B still selected
+    }
 
     return Vec3(3.0f, -0.5f, -0.5f);
 }
@@ -185,8 +211,8 @@ unittest { // POSITIVE: background-layer vertex IS a snap target
         ~ sr["targetType"].integer.to!string);
 }
 
-unittest { // NEGATIVE: a non-background (visible-only) layer does NOT snap
-    Vec3 target = buildTwoLayers(false);    // B is visible but background=false
+unittest { // NEGATIVE: a selected-non-primary (foreground) layer does NOT snap
+    Vec3 target = buildTwoLayers(false);    // B is visible + SELECTED non-primary
     auto o = dragV0Toward(target);
 
     // B is not a snap source, so v0 cannot reach X=3.0. With huge range it

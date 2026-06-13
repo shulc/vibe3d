@@ -109,7 +109,6 @@ final class LayerAdd : LayerCommandBase {
         l.name       = nameArg.length ? nameArg
                                       : "Layer " ~ to!string(doc.layers.length + 1);
         l.visible    = true;
-        l.background = false;
         doc.layers ~= l;
         addedIndex  = doc.layers.length - 1;
         // Stage-0 lockstep: set primary + selected + activeIndex together,
@@ -240,6 +239,13 @@ final class LayerDelete : LayerCommandBase {
     private Layer  removed;           // the deleted layer object (revert reinserts)
     private size_t removedIndex;
     private size_t prevActiveIndex;
+    // Stage 2b (review #6): the delete may have collapsed a multi-selection
+    // (deleting the primary promotes a NEW primary and `setActive` deselects the
+    // rest). Snapshot the FULL prior selection set by layer OBJECT identity + the
+    // prior primary so revert restores the EXACT set — not just the index. Keyed
+    // by identity so the splice between apply and revert can't drift it.
+    private bool[Layer] prevSelected;
+    private Layer       prevPrimary;
     private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
@@ -263,6 +269,12 @@ final class LayerDelete : LayerCommandBase {
         prevActiveIndex = doc.activeIndex;
         removed         = doc.layers[removedIndex];   // class ref kept for revert
         auto prevLayer  = doc.active();
+        // Snapshot the full prior selection set + primary by identity (review #6)
+        // BEFORE the splice / setActive collapse, so revert restores the exact
+        // multi-selection (including the deleted layer's own bit).
+        prevPrimary  = prevLayer;
+        prevSelected = null;
+        foreach (l; doc.layers) prevSelected[l] = l.selected;
 
         // Splice the layer out.
         doc.layers = doc.layers[0 .. removedIndex] ~ doc.layers[removedIndex + 1 .. $];
@@ -301,8 +313,16 @@ final class LayerDelete : LayerCommandBase {
         if (removedIndex > doc.layers.length) removedIndex = doc.layers.length;
         doc.layers = doc.layers[0 .. removedIndex] ~ removed
                                                    ~ doc.layers[removedIndex .. $];
-        // setActive clamps + re-establishes primary/selected in lockstep.
-        doc.setActive(prevActiveIndex);
+        // Restore the EXACT prior selection set by identity (review #6), then the
+        // prior primary — `setActive(prevActiveIndex)` would collapse to a SET-of
+        // -one and lose any sibling foreground layers a multi-selection had. The
+        // reinserted `removed` layer carries its own bit from the snapshot.
+        foreach (l; doc.layers) {
+            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
+            l.selected  = wasSel;
+        }
+        if (prevPrimary !is null) doc.setPrimary(prevPrimary);  // selected ⇒ no-op reselect
+        else                      doc.setActive(prevActiveIndex);
         // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIdx);
@@ -382,11 +402,10 @@ final class LayerSelect : LayerCommandBase {
         if (!applied) return false;
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
-        // Restore the exact prior selection set + the stored background sync.
+        // Restore the exact prior selection set (background derives from it).
         foreach (l; doc.layers) {
             auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
-            l.selected   = wasSel;
-            l.background  = !wasSel;        // keep the stored bool in sync (2a)
+            l.selected  = wasSel;
         }
         // Restore the prior primary by identity (it is guaranteed selected in
         // the restored set since it was the primary at snapshot time).
@@ -517,15 +536,28 @@ final class LayerSetVisible : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
-// layer.setBackground — UI-undo class. No active-index move.
+// layer.setBackground — RETIRED to a thin alias over the derived item-selection
+// model (Stage 2b). The third "background" state collapsed: background ==
+// visible && !selected. So setting a layer to background DESELECTS it; setting
+// it to foreground SELECTS it (Add). This class is kept ONLY as a compatibility
+// alias for ONE milestone — it re-expresses `value:true/false` as a
+// `selectItem(Remove/Add)` and still publishes the DEPRECATED
+// `LayerChange.BackgroundChanged` kind so `test_change_bus` keeps ticking
+// mid-migration. The enum value (and this whole class) retires in Stage 5; new
+// callers should dispatch `layer.select mode:remove`/`mode:add` directly. UI-undo
+// class: snapshots the full prior selection set + primary by identity (like
+// `layer.select`), since a Remove can promote the primary across several layers.
 // ---------------------------------------------------------------------------
 
 final class LayerSetBackground : LayerCommandBase {
     private int    indexArg = -1;     // -1 → active
-    private bool   valueArg = true;
-    private size_t target;
-    private bool   prevVal;
-    private bool   applied;
+    private bool   valueArg = true;   // true → make background (deselect)
+    // Full prior selection snapshot by layer OBJECT identity + the prior primary
+    // (mirrors LayerSelect — a single index can't capture a multi-foreground set).
+    private bool[Layer] prevSelected;
+    private Layer       prevPrimary;
+    private size_t      prevActiveIndex;
+    private bool        applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -542,20 +574,40 @@ final class LayerSetBackground : LayerCommandBase {
     }
 
     override bool apply() {
-        target  = resolveIndex(indexArg);
-        prevVal = doc.layers[target].background;
-        doc.layers[target].background = valueArg;
+        if (doc.layers.length == 0) return false;
+        prevActiveIndex = doc.activeIndex;
+        prevPrimary     = doc.active();
+        prevSelected    = null;
+        foreach (l; doc.layers) prevSelected[l] = l.selected;
+
+        size_t idx  = resolveIndex(indexArg);
+        auto   target = doc.layers[idx];
+        // background == !selected: value:true deselects (Remove); value:false
+        // selects (Add). Remove of the sole-selected layer is a guarded no-op in
+        // selectItem (the ≥1-selected invariant) — the alias still publishes
+        // BackgroundChanged regardless so the counter advances either way.
+        doc.selectItem(target, valueArg ? SelMode.Remove : SelMode.Add);
         applied = true;
-        // Pure document-state change: publish the kind, touch NO mesh-pending
-        // state (must not bump any mesh-change counter).
+        // Deprecated kind for one milestone (Stage 5 retires it). Pure document
+        // state — touch NO mesh-pending counter.
         noteLayerChange(LayerChange.BackgroundChanged);
+        fireSwitchIfChanged(prevPrimary, prevActiveIndex);
         return true;
     }
 
     override bool revert() {
         if (!applied) return false;
-        doc.layers[target].background = prevVal;
+        auto   prevLayer = doc.active();
+        size_t prevIdx   = doc.activeIndex;
+        // Restore the exact prior selection set by identity (background derives).
+        foreach (l; doc.layers) {
+            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
+            l.selected  = wasSel;
+        }
+        if (prevPrimary !is null) doc.setPrimary(prevPrimary);
+        else                      doc.setActive(prevActiveIndex);
         noteLayerChange(LayerChange.BackgroundChanged);
+        fireSwitchIfChanged(prevLayer, prevIdx);
         return true;
     }
 }
