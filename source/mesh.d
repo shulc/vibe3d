@@ -38,7 +38,7 @@ struct FaceList {
     inout(uint[][]) range() inout return { return _store; }
 }
 
-/// Flat per-mesh surface (LightWave-style "material"). One face references
+/// Flat per-mesh surface (a "material"). One face references
 /// exactly one Surface by index into `Mesh.surfaces`. Designed to absorb
 /// the LWO `SURF` chunk fields verbatim and to act as the compile target
 /// for Phase 3+ ShaderTree IR — see `doc/material_groups_plan.md`.

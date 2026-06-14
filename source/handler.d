@@ -12,7 +12,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 // ---------------------------------------------------------------------------
-// HandleState — mirrors MODO's three-state handle selection model
+// HandleState — the three-state handle selection model
 // (unselected / rollover / selected).
 // One enum replaces the old hovered/selected bool soup at the colour-pick site.
 // ---------------------------------------------------------------------------
@@ -167,8 +167,8 @@ private:
     // Single source of truth for hover/selected state (the three-state model).
     // Set by the central ToolHandles Test pass for registered handles; left at
     // the default Normal for draw-only (unregistered) handles, which therefore
-    // never highlight — exactly as MODO treats a handle absent from its
-    // hit-test pass.
+    // never highlight — exactly as a handle absent from the
+    // hit-test pass is treated.
     HandleState state = HandleState.Normal;
     bool   visible = true;
 
@@ -1309,7 +1309,7 @@ private:
 
 // ---------------------------------------------------------------------------
 // ToolHandles — central hover/capture arbiter, one per active tool. Mirrors
-// MODO's tool-model test/draw pass: a single hot (ROLLOVER) part and a single
+// the tool-model test/draw pass: a single hot (ROLLOVER) part and a single
 // captured (hauled) part across ALL registered handles, so highlight and
 // click can never disagree. ToolHandles drives each registered handle's
 // `state` every frame via setState; handles never self-compute hover.

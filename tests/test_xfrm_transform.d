@@ -178,7 +178,7 @@ unittest { // TransformScale preset: T=0/R=0/S=1. Pure SY=2 around
             ~ verts[vi][1].to!string);
 }
 
-unittest { // MODO-style transform presets publish both operation flags
+unittest { // transform presets publish both operation flags
            // (T/R/S) and handle presentation metadata (H/presentation).
     postJson("/api/reset", "");
 

@@ -898,7 +898,7 @@ void main(string[] args) {
 
     // Subpatch preview: cached subdivision of the cage mesh, rebuilt lazily
     // when mesh.mutationVersion or depth changes. Depth is user-adjustable;
-    // 3 matches LightWave default. Consumed by rendering and picking in
+    // 3 is the default. Consumed by rendering and picking in
     // subsequent steps.
     SubpatchPreview subpatchPreview;
     int             subpatchDepth = 3;
@@ -4276,7 +4276,7 @@ void main(string[] args) {
         dl.AddLine(ImVec2(rmax.x, rmin.y), ImVec2(rmax.x, rmax.y), c);  // right
     }
 
-    // LightWave-style raised bevel drawn as `thickness` concentric rings just
+    // Raised bevel drawn as `thickness` concentric rings just
     // inside the 1-pixel outline.
     void drawRaisedBevel(uint light, uint dark, bool pressed = false,
                          int thickness = 2) {
@@ -4295,7 +4295,7 @@ void main(string[] args) {
         }
     }
 
-    // LightWave-style button: beige palette for tools, pale blue for commands;
+    // The editor's button chrome: beige palette for tools, pale blue for commands;
     // renders as pure white when `on` (active) or `held` (mouse down).
     // Returns true when the button is clicked this frame.
     bool renderStyledButton(string label, string shortcut, bool on, bool isCommand,
@@ -4578,7 +4578,7 @@ void main(string[] args) {
         return "";
     }
 
-    // LightWave-style popup chrome — extracted to source/imgui_style.d
+    // The editor's popup chrome — extracted to source/imgui_style.d
     // so non-app code (toolpipe stages' drawProperties) can re-use the
     // same look. Thin wrappers retained for the existing App-side call
     // sites; same Push/Pop balance contract as before.
@@ -4591,7 +4591,7 @@ void main(string[] args) {
         popPopupStyle();
     }
 
-    // LightWave-style section header: dark slate-blue band with centered white
+    // Section header: dark slate-blue band with centered white
     // text, framed by a 1-pixel black outline matching button edges.
     void drawSectionHeader(string title) {
         auto dl = ImGui.GetWindowDrawList();
@@ -4614,7 +4614,7 @@ void main(string[] args) {
         ImGui.Dummy(ImVec2(w, h));
     }
 
-    // LightWave-style panel chrome: grey bg, black border, beige/blue button
+    // The editor's panel chrome: grey bg, black border, beige/blue button
     // palette, black text, flat frames. Call BEFORE `ImGui.Begin` and pair with
     // popPanelChromeStyle() AFTER `ImGui.End`.
     void pushPanelChromeStyle() {

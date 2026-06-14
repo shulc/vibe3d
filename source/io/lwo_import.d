@@ -182,8 +182,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             auto cur = &parts[$ - 1];
             ubyte[4] polyType = data[pos .. pos + 4];
             size_t   p        = pos + 4;
-            // FACE = ordinary polygons; PTCH = LightWave Catmull-Clark
-            // subpatches (same on-disk format, interpreted as subpatches).
+            // FACE = ordinary polygons; PTCH = Catmull-Clark subpatch
+            // (the .lwo PTCH face kind; same on-disk format, interpreted as subpatches).
             bool isFace = (polyType == "FACE");
             bool isPtch = (polyType == "PTCH");
             if (isFace || isPtch) {

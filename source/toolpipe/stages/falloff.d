@@ -707,7 +707,7 @@ class FalloffStage : Stage, Operator {
         // with checkmarks). Standard ImGui.Combo would render a
         // chevron; the bare button keeps the Tool Properties panel
         // visually consistent with the status row. pushPopupStyle()
-        // applies the same LightWave grey / beige hover / flat black
+        // applies the same grey / beige hover / flat black
         // border the status-bar popups use (imgui_style.d).
         static immutable string[5] shapeUiLabels = [
             "Linear", "Ease-In", "Ease-Out", "Smooth", "Custom",

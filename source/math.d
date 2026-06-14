@@ -215,7 +215,8 @@ Vec3 eulerZYXFromMatrix(float[16] M) {
 //
 // These support `blendToIdentity` in tools/xform_kernels.d, which interpolates a
 // pivot-relative transform matrix toward identity by a per-vertex falloff weight.
-// The PolarQuat blend mode (option (c) of the modo_transform_model_plan) needs
+// The PolarQuat blend mode (option (c) of the unified transform-model plan,
+// a private design doc) needs
 // to decompose a rotation·scale 3×3 into a pure rotation quaternion + per-axis
 // scale; slerp the rotation toward identity; lerp scale toward 1; recompose.
 // All matrices here follow the same column-major (m[row + col*4]) convention as
