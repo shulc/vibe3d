@@ -32,6 +32,17 @@ import document : Layer;
 final class LayerPropsProvider : ParamProvider {
     private Layer layer_;   // the wrapped layer (a class ⇒ stable heap identity)
 
+    // P4 primary-transform interlock. When a transform tool is active, the panel
+    // ALWAYS binds the PRIMARY layer — the one the gizmo is operating on. Authoring
+    // a primary transform mid-gesture would silently desync the gizmo from the
+    // mesh it thinks it is moving (the transform is render-only; the gizmo + drag
+    // math run in the layer's LOCAL frame). So while this flag is set, the 12
+    // transform component params (pos.*/rot.*/scl.*/pivot.*) report DISABLED and
+    // the panel greys those rows. This is a MID-GESTURE interlock, NOT a permanent
+    // lock: the rows RE-ENABLE the instant the transform tool drops, and any value
+    // authored while no tool is active PERSISTS. `name`/`visible` stay enabled.
+    private bool transformGuard_;
+
     this(Layer l) { layer_ = l; }
 
     /// The wrapped layer (for callers that need it back).
@@ -43,6 +54,12 @@ final class LayerPropsProvider : ParamProvider {
     /// frame. The returned `params()` always alias the CURRENT layer's fields,
     /// so a rebind is allocation-free and keeps the provider correct.
     void setLayer(Layer l) { layer_ = l; }
+
+    /// P4: set the primary-transform interlock (see `transformGuard_`). The app's
+    /// panel hook computes "an active tool is a transform tool" each frame and
+    /// sets this before `draw`, so the transform rows grey out only while a
+    /// transform gesture could be desynced — and re-enable when the tool drops.
+    void setTransformGuard(bool on) { transformGuard_ = on; }
 
     // -----------------------------------------------------------------------
     // ParamProvider
@@ -75,9 +92,21 @@ final class LayerPropsProvider : ParamProvider {
         ];
     }
 
-    /// P0: all rows enabled. The primary-transform grey-out interlock is P4 —
-    /// this just provides the hook so the later guard has a place to live.
-    bool paramEnabled(string name) const { return true; }
+    /// P4: the 12 transform-component params (pos.*/rot.*/scl.*/pivot.*) are
+    /// disabled while the primary-transform interlock is set (a transform tool is
+    /// active — see `setTransformGuard`). `name`/`visible` are always enabled.
+    /// This is a mid-gesture grey-out, not a permanent lock; the rows re-enable
+    /// when the tool drops and any value authored tool-free persists.
+    bool paramEnabled(string name) const {
+        if (!transformGuard_) return true;
+        // A transform component is one of pos/rot/scl/pivot (the dotted scalars).
+        if (name.length >= 4) {
+            immutable p4 = name[0 .. 4];
+            if (p4 == "pos." || p4 == "rot." || p4 == "scl.") return false;
+        }
+        if (name.length >= 6 && name[0 .. 6] == "pivot.") return false;
+        return true;
+    }
 
     /// P0: no-op. P3 wires this to fire the change bus / mark the layer for a
     /// redraw after a param is written through its pointer.

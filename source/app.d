@@ -2303,11 +2303,31 @@ void main(string[] args) {
                 // membership, `primary` marks the single edit target (== active).
                 // A test reads these to verify the multi-select set + which member
                 // is primary; `background` is the derived third-state collapse.
+                // Channels P4: expose the per-layer item transform so tests can
+                // assert the NON-BAKED transform without it ever moving vertices.
+                // The authored components (pos/rot/scl/pivot) let a test assert a
+                // round-trip; the composed `matrix` (column-major float[16]) lets
+                // the analytic golden fixture assert the composed result against an
+                // INDEPENDENT hand formula. Pure JSON-shape addition (the data
+                // provider already runs the snapshot on the main thread).
+                const x = l.xform;
+                float[16] m = x.composedMatrix();
+                auto xb = appender!string();
+                xb.put(format(
+                    `{"pos":[%.6f,%.6f,%.6f],"rot":[%.6f,%.6f,%.6f],` ~
+                    `"scl":[%.6f,%.6f,%.6f],"pivot":[%.6f,%.6f,%.6f],"matrix":[`,
+                    x.pos.x, x.pos.y, x.pos.z, x.rot.x, x.rot.y, x.rot.z,
+                    x.scl.x, x.scl.y, x.scl.z, x.pivot.x, x.pivot.y, x.pivot.z));
+                foreach (mi; 0 .. 16) {
+                    if (mi > 0) xb.put(",");
+                    xb.put(format("%.6f", m[mi]));
+                }
+                xb.put("]}");
                 a.put(format(
                     `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,` ~
                     `"vertexCount":%d,"faceCount":%d,` ~
-                    `"mutationVersion":%d}`,
+                    `"mutationVersion":%d,"xform":%s}`,
                     i, JSONValue(l.name).toString(),
                     l.visible ? "true" : "false",
                     Document.background(l) ? "true" : "false",
@@ -2315,7 +2335,7 @@ void main(string[] args) {
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
                     l.mesh.vertices.length, l.mesh.faces.length,
-                    cast(ulong)l.mesh.mutationVersion));
+                    cast(ulong)l.mesh.mutationVersion, xb.data));
             }
             a.put("]}");
             return a.data;
@@ -5361,6 +5381,16 @@ void main(string[] args) {
                             layerProv = new LayerPropsProvider(document.primary);
                         else
                             layerProv.setLayer(document.primary);
+                        // P4 primary-transform interlock: grey out the transform
+                        // rows while a transform tool is active. The panel always
+                        // binds the PRIMARY, so that is the only layer whose
+                        // transform could desync the live gizmo (the transform is
+                        // render-only; gizmo/drag run in the LOCAL frame). The
+                        // guard is mid-gesture only — it clears when the tool
+                        // drops; tool-free edits persist. (Same TransformTool
+                        // cast the deferred-drag draw site uses.)
+                        layerProv.setTransformGuard(
+                            (cast(TransformTool)activeTool) !is null);
                         formsPanel.draw(*layerForm, layerProv,
                                         commandHandlerDelegate,
                                         formsInteractiveDispatch,
@@ -6274,14 +6304,27 @@ void main(string[] args) {
                    cast(int)(cameraView.width  * scaleX),
                    cast(int)(cameraView.height * scaleY));
 
-        // When a tool defers GPU uploads (whole-mesh drag), apply the accumulated
-        // transform as u_model so the mesh appears correctly without re-uploading
-        // vertex data every frame.
-        float[16] meshModel = identityMatrix;
+        // Per-item (per-layer) transform — RENDER-ONLY (channels P4). The primary
+        // layer's mesh is drawn through its composed item matrix; the mesh
+        // vertices NEVER move (pick/snap/action-center/applyTRS all keep reading
+        // `mesh.vertices[i]` as LOCAL points, so they stay self-consistent for
+        // free — `layer.xform` is read at EXACTLY two draw feed-sites and NOWHERE
+        // else). This is feed-site #1 of 2 (the active/primary layer).
+        float[16] itemMatrix = document.primary.xform.composedMatrix();
+
+        // When a tool defers GPU uploads (whole-mesh drag), it applies an
+        // accumulated `gpuMatrix` as u_model so the mesh appears correctly without
+        // re-uploading vertex data every frame. COMPOSE the item matrix with it
+        // (item matrix LEFTMOST), do NOT clobber: the shader applies
+        // `u_proj·u_view·u_model·aPos`, so `u_model = itemMatrix · gpuMatrix`
+        // places the deferred-drag pose inside the layer's item frame. When no
+        // tool override is present `gpuMatrix` is identity, so `meshModel` is just
+        // the item matrix. `float[16]` has no `*` operator — use `matMul4`.
+        float[16] meshModel = itemMatrix;
         {
             TransformTool tt = cast(TransformTool)activeTool;
             if (tt !is null)
-                meshModel = tt.gpuMatrix;
+                meshModel = matMul4(itemMatrix, tt.gpuMatrix);
         }
 
         shader.useProgram(meshModel, cameraView);
@@ -6420,16 +6463,18 @@ void main(string[] args) {
                 bgGpuByLayer.remove(lyr);
             }
 
-            // 2) Draw each visible non-active layer dimmed. Identity model
-            //    matrix — background geometry is static reference, never the
-            //    active tool's deferred-drag transform.
-            float[16] bgModel = identityMatrix;
+            // 2) Draw each visible non-active layer dimmed. The model matrix is
+            //    the layer's composed ITEM transform (channels P4, RENDER-ONLY) —
+            //    this is feed-site #2 of 2 for `layer.xform`. Background geometry
+            //    is never the active tool's deferred-drag transform, so there is
+            //    no gpuMatrix to compose here (clean site). Set per-layer below.
             enum float kBgDim = 0.45f;   // dim brightness for background layers
             foreach (i, lyr; document.layers) {
                 // Stage 2b: dim every VISIBLE non-primary layer. Same derived
                 // `!isPrimary` predicate as the reap loop above (they flip
                 // TOGETHER — see the BgGpu handle-leak note).
                 if (document.isPrimary(lyr) || !lyr.visible) continue;
+                float[16] bgModel = lyr.xform.composedMatrix();
 
                 auto pp = lyr in bgGpuByLayer;
                 BgGpu* bg;
