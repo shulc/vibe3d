@@ -139,12 +139,12 @@ private void logSupportedFormats(string requested) {
 /// Geometry scale to apply to exported vertex positions for `formatId`.
 ///
 /// FBX convention: an FBX file carries a `UnitScaleFactor` in its global
-/// metadata, and the de-facto unit for FBX produced by every major DCC
-/// (Blender / Maya / Unreal) is the CENTIMETRE. assimp's FBX *exporter*
+/// metadata, and the de-facto unit for FBX produced by common DCC tools
+/// is the CENTIMETRE. assimp's FBX *exporter*
 /// likewise writes into a centimetre unit context but does NOT rescale the
 /// geometry we hand it — it copies our metre-space vertices verbatim into a
 /// file that *declares* centimetres. So a 1 m cube (±0.5) would land as a file
-/// claiming a ±0.5 cm model: ANY cm-honouring reader (Blender/Maya/Unreal) sees
+/// claiming a ±0.5 cm model: ANY cm-honouring reader sees
 /// a 1 cm cube, and our own importer — which runs aiProcess_GlobalScale and
 /// honours the declared cm unit — shrinks it ×0.01 back to ±0.005 (the observed
 /// ×100 round-trip discrepancy).

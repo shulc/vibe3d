@@ -1,4 +1,4 @@
-// Tests for the subpatch flag (LightWave-style PTCH faces).
+// Tests for the subpatch flag (.lwo PTCH faces).
 // Drives `mesh.subpatch_toggle` via /api/command — the same logic the Tab key
 // handler in app.d uses, mirroring the editor UX:
 //   • If any faces are selected, toggle isSubpatch on those faces.

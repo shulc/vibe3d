@@ -354,9 +354,9 @@ void applyScaleFromActivation(
 // Canonical single-matrix kernel (MS-1)
 // ---------------------------------------------------------------
 //
-// The four kernels above re-express MODO's decomposed transform state
+// The four kernels above re-express the decomposed transform state
 // (separate T / R / S passes). MS-1 of the canonical-matrix plan
-// (doc/modo_transform_model_plan.md) introduces a SINGLE pivot-relative
+// (the unified transform-model plan, a private design doc) introduces a SINGLE pivot-relative
 // matrix `M` that is applied per vertex, blended toward identity by the
 // per-vertex falloff weight. This block adds that kernel WITHOUT touching
 // any existing call path — it is additive and used (so far) only by

@@ -68,7 +68,7 @@ struct PenParams {
 //   Drawing ── Esc / RMB ─→ cancel (drop buffer); back to Idle
 //
 // In-progress vertex markers render in cyan (Vec3(0, 0.9, 0.9)); the central
-// ToolHandles arbiter (MODO Test pass) flips the single cursor-over vertex to
+// ToolHandles arbiter (Test pass) flips the single cursor-over vertex to
 // yellow ("they'll turn yellow when the mouse is directly over them").
 // Edges between consecutive in-progress vertices preview as the standard
 // wireframe (open polyline — closing happens at commit).
@@ -106,7 +106,7 @@ private:
     PenState         state;
     Vec3[]           vertices_;     // LOCAL workplane positions of the in-progress sequence
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
-    ToolHandles      toolHandles;   // single-source hover arbiter (MODO Test pass)
+    ToolHandles      toolHandles;   // single-source hover arbiter (Test pass)
 
     Mesh             previewMesh;
     GpuMesh          previewGpu;
@@ -510,7 +510,7 @@ public:
         //   Rollover  → yellow (single hot part, set by ToolHandles.update)
         //   selected (not hot) → orange — used for the current point
         //   default → cyan
-        // Single-source hover (MODO Test pass): register every vertex
+        // Single-source hover (Test pass): register every vertex
         // marker, resolve ONE hot part so overlapping markers can't both
         // highlight. A live vertex drag (dragArmed) keeps its marker hot.
         toolHandles.begin();

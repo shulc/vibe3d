@@ -186,8 +186,8 @@ unittest {
 // exporter.
 //
 // FBX uses CENTIMETRES. An FBX file carries a `UnitScaleFactor` in its global
-// metadata, and the de-facto unit for FBX written by every major DCC
-// (Blender/Maya/Unreal) is the centimetre; assimp's FBX exporter writes into
+// metadata, and the de-facto unit for FBX written by common DCC tools
+// is the centimetre; assimp's FBX exporter writes into
 // that cm unit context too. vibe3d works in metres, so io.scene_export
 // NORMALIZES the unit on FBX export — it scales vertex positions metres→cm
 // (×100) so the written values match the cm unit the file declares (see

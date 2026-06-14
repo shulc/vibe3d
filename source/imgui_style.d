@@ -2,7 +2,7 @@ module imgui_style;
 
 // ---------------------------------------------------------------------------
 // Shared ImGui style helpers — re-skin ImGui's defaults to vibe3d's
-// LightWave-style chrome (panel grey + beige hover + flat black border).
+// chrome (panel grey + beige hover + flat black border).
 // Originally lived as private methods on App; extracted here so non-app
 // code (notably toolpipe.stages.* drawProperties() implementations) can
 // re-use the SAME visual without each stage hand-rolling the colour /
