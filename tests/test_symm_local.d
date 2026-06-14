@@ -1,26 +1,23 @@
-// ACEN.Local + symmetry — Stage 2b of doc/symmetry_deform_plan.md.
+// ACEN.Local + symmetry — fixed-base position-copy on the per-cluster path.
 //
-// Stage 2 made the GLOBAL fold mirror a drag as a two-pass S·M·S apply. Stage
-// 2b extends that to the PER-CLUSTER (ACEN.Local) path: a mirror vertex now
-// applies its DRIVER's reflected cluster operation
-//   M' = Slin·clusterM[c]·Slin   about   S·clusterCenter[c]
-// where c = the DRIVER's cluster (NOT the mirror vertex's own cluster, and NOT
-// the unreflected cluster center). The per-cluster position-copy tail
-// (applyTranslatePerCluster's applySymmetryMirror) is deleted.
+// The transform fold carries ONE symmetry model: fixed-base position-copy. The
+// positive-axis (+X) side drives and is reflected onto the −X side, copying
+// each driver's FINAL position. This is cluster-agnostic — it copies the
+// per-cluster (ACEN.Local) final positions the driver pass produced just as it
+// copies global ones. There is no per-cluster conjugation.
 //
-// What these tests pin (headless, through applyFold → applyFoldSymmetryMirror's
-// per-cluster Pass B):
+// What these tests pin (headless, through applyFold → the single
+// applySymmetryMirror position-copy):
 //   • A multi-cluster selection STRADDLING the X=0 symmetry plane, where the
 //     two clusters are X-mirror partners. Under +1 baseSide the +X cluster
 //     drives; the −X cluster is overwritten by the reflection of the +X
-//     cluster's operation.
-//   • TRANSLATE: each cluster moves along its OWN signed fwd by the same
-//     magnitude; the cloud stays symmetric about X=0. (The OLD per-cluster
-//     mirror reflected the −X cluster's OWN matrix about the UNREFLECTED −X
-//     center → wrong magnitude/direction; this test distinguishes.)
-//   • ROTATE: the reflected per-cluster rotation (Slin·R·Slin) keeps the cloud
-//     symmetric about X=0 (chirality handled), proving the mirror is correct
-//     beyond translate.
+//     cluster's final positions.
+//   • TRANSLATE: the +X cluster moves along its fwd to x=+1.5; position-copy
+//     reflects that onto the −X cluster (x=−1.5); the cloud stays symmetric
+//     about X=0. This per-vid x=±1.5 equality is the STRONG witness.
+//   • ROTATE: the +X-driven rotated cluster, reflected onto the −X side, keeps
+//     the cloud symmetric about X=0. (Weaker witness — the symmetric setup
+//     makes outcomes coincide; lean on the translate per-vid proof.)
 //
 // Geometry: a size-2, segments-2 cube. Faces 3 (−X, normal −X) and 7 (+X,
 // normal +X) are disjoint and form two clusters whose vertices pair exactly
@@ -111,13 +108,11 @@ void assertTwoMirrorClusters() {
 }
 
 // ---------------------------------------------------------------------------
-// (translate) Per-cluster TRANSLATE under ACEN.Local + X symmetry. Each cluster
-// moves along its OWN signed fwd (±X) by the same magnitude; the +X cluster
-// drives and the −X cluster is the reflection of the +X cluster's operation.
-// Result: +X verts → x=+1.5, −X verts → x=−1.5, cloud symmetric about X=0.
-//
-// The OLD per-cluster mirror (reflect the −X cluster's OWN matrix about the
-// UNREFLECTED −X center) gives x=−0.5 for the −X verts — this test fails it.
+// (translate) Per-cluster TRANSLATE under ACEN.Local + X symmetry. The +X
+// cluster drives along its fwd to x=+1.5; fixed-base position-copy reflects the
+// driver's final positions onto the −X cluster (x=−1.5). Result: +X verts →
+// x=+1.5, −X verts → x=−1.5, cloud symmetric about X=0. The per-vid x=±1.5
+// equality is the STRONG witness that the −X side follows the +X driver.
 // ---------------------------------------------------------------------------
 unittest {
     setupLocalSymmScene("move");
@@ -140,15 +135,14 @@ unittest {
             && approxEq(after[vi][2], before[vi][2]),
             "+X cluster vert " ~ vi.to!string ~ " Y/Z must not move");
     }
-    // −X cluster verts (2,5,6,8) are the REFLECTION of the +X cluster: they
-    // move to x=−1.5 (NOT x=−0.5, the old wrong-cluster/unreflected-pivot
-    // result). This is the Stage-2b assertion.
+    // −X cluster verts (2,5,6,8) are the REFLECTION of the +X cluster's final
+    // positions: they reach x=−1.5 under fixed-base position-copy (the +X side
+    // drives, its x=+1.5 reflects to x=−1.5).
     foreach (vi; [2, 5, 6, 8]) {
         assert(approxEq(after[vi][0], -1.5),
             "−X mirror cluster vert " ~ vi.to!string ~ " must reach x=−1.5 "
-            ~ "(reflection of the +X DRIVER cluster, NOT its own cluster's "
-            ~ "matrix about the unreflected center → x=−0.5). got "
-            ~ after[vi][0].to!string);
+            ~ "(fixed-base position-copy of the +X DRIVER cluster's final "
+            ~ "position). got " ~ after[vi][0].to!string);
         assert(approxEq(after[vi][1], before[vi][1])
             && approxEq(after[vi][2], before[vi][2]),
             "−X mirror cluster vert " ~ vi.to!string ~ " Y/Z must not move");
@@ -161,10 +155,11 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (rotate) Per-cluster ROTATE under ACEN.Local + X symmetry. A rotate about
-// each cluster's fwd, mirrored as Slin·R·Slin about the reflected cluster
-// center, must keep the cloud symmetric about X=0 (chirality handled). Pins
-// the per-cluster mirror beyond translate.
+// (rotate) Per-cluster ROTATE under ACEN.Local + X symmetry. The +X-driven
+// rotated cluster, reflected onto the −X side by fixed-base position-copy, must
+// keep the cloud symmetric about X=0. (Weaker witness than translate — the
+// symmetric setup makes outcomes coincide; the translate per-vid x=±1.5 proof
+// is the strong one.)
 // ---------------------------------------------------------------------------
 unittest {
     setupLocalSymmScene("rotate");
@@ -179,7 +174,7 @@ unittest {
 
     assert(symmetricAboutX(after),
         "per-cluster rotate under X-symm must keep the mesh symmetric about "
-        ~ "X=0 (Slin·R·Slin per cluster, reflected center)");
+        ~ "X=0 (fixed-base position-copy of the +X-driven cluster)");
 
     // Sanity: geometry actually rotated (some cluster vert's Y or Z moved).
     bool moved = false;
