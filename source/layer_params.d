@@ -8,12 +8,14 @@ import document : Layer;
 // `Param`s so the same forms / undo / serialize machinery that drives tools and
 // stages can drive layer (item) properties.
 //
-// Survey #3 Phase 0: this provider only needs to COMPILE and pass its unit
-// test. It is NOT yet registered anywhere — no forms binding, no command, no
-// `.v3d` codec, no render wiring (those are P1-P4). After P0 it is unused by the
-// rest of the app; that is expected ("No behavior change yet").
+// This provider is the single source of a layer's editable params: the
+// layer-props form reads/writes them through it, the `layer.attr` command
+// resolves attr names against it, and the `.v3d` codec persists the transform
+// fields it exposes. ONE param declaration (below) drives the panel row, the
+// UI-undo/coalescing write, and the read-back query — the "one declaration"
+// goal, proven end-to-end through `name` (Phase 5).
 //
-// Design rationale (see doc/per_item_channels_plan.md Risk 2 + Phase 0):
+// Design rationale:
 //   * The provider WRAPS a `Layer*` rather than `Layer` implementing
 //     `ParamProvider` itself — this keeps `Layer` a plain data class and avoids
 //     a `document.d` → `params` coupling, and gives `onParamChanged` a home to
@@ -87,7 +89,27 @@ final class LayerPropsProvider : ParamProvider {
             Param.float_("pivot.y", "Pivot Y", &layer_.xform.pivot.y, 0.0f),
             Param.float_("pivot.z", "Pivot Z", &layer_.xform.pivot.z, 0.0f),
             // Bespoke layer props.
+            //
+            // `name` rides the GENERIC registry end-to-end: it is a plain String
+            // param here, a form text row, and writable via `layer.attr 0 name
+            // <new>` (UI-undoable + coalescing) — the "one declaration" proof
+            // (Phase 5). `layer.rename` is kept as the explicit rename path, but
+            // `name` ALSO participates in the same forms/undo/serialize machinery
+            // as every transform component. (It always round-tripped through the
+            // `.v3d` layer envelope; see io/native.d + test_v3d_layers.d.)
             Param.string_("name",    "Name",    &layer_.name,    ""),
+            // `visible` is EXPOSED as a readable Bool param (so the panel can show
+            // it / a `?` query can read it back), but is DELIBERATELY NOT driven
+            // through the generic `layer.attr` write path. Hiding a layer carries
+            // an invariant side-effect — hiding the PRIMARY must promote another
+            // selected+visible layer to primary — so the write must go through the
+            // dedicated `layer.setVisible` command, which owns that promotion hook.
+            // The layer-props form's visibility toggle therefore dispatches
+            // `layer.setVisible`, never `layer.attr` (see config/forms/layer_props
+            // .yaml). Writing `visible` via `layer.attr` would bypass the promotion
+            // and could strand a hidden primary — so it is intentionally excluded
+            // from the form's writable rows. This is the single principled
+            // exception to "every layer property rides the generic param path."
             Param.bool_  ("visible", "Visible", &layer_.visible, true),
         ];
     }
@@ -108,8 +130,19 @@ final class LayerPropsProvider : ParamProvider {
         return true;
     }
 
-    /// P0: no-op. P3 wires this to fire the change bus / mark the layer for a
-    /// redraw after a param is written through its pointer.
+    /// Intentional no-op (Phase 5 confirmed). `ParamProvider` (the interface this
+    /// implements) DECLARES `onParamChanged` (params.d), so the method must exist
+    /// — but for layer params the change-bus publication + revert snapshot are
+    /// owned by the `layer.attr` command (commands/layer/commands.d), which fires
+    /// `noteLayerChange(LayerChange.PropertyChanged)` itself after writing through
+    /// the param pointer. The provider is never on a path that calls this hook
+    /// (the panel writes go through `layer.attr`, not a direct provider-driven
+    /// PropertyPanel mutation), so there is nothing for it to do. It stays a
+    /// documented minimal stub rather than being deleted: removing it would break
+    /// the interface contract, and a redraw needs no work here — an item-matrix
+    /// change is read fresh from `composedMatrix()` at the two draw sites each
+    /// frame (no GPU vertex re-upload, since vertices never move and the mesh
+    /// `mutationVersion` is untouched).
     void onParamChanged(string name) {}
 }
 

@@ -171,6 +171,85 @@ unittest {
            ~ undoCount().to!string);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5: the `name` param rides the GENERIC registry end-to-end (the "one
+// declaration" proof). `name` is a plain String param on LayerPropsProvider, so
+// it must set/read/undo through the SAME `layer.attr` machinery as a transform
+// component — distinct from (and in addition to) the explicit `layer.rename`.
+// ---------------------------------------------------------------------------
+
+// Read a layer's `name` back via the `?` query idiom (the String analogue of
+// readAttr — the boxed query value is a JSON string for a String param).
+string readName(int index) {
+    auto body_ = "layer.attr " ~ index.to!string ~ " name ?";
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));
+    assert(j["status"].str == "ok", "name query failed: " ~ j.toString);
+    assert("value" in j, "name query carries a value: " ~ j.toString);
+    auto r = j["value"];
+    assert(r.type == JSONType.string, "name query boxes a string: " ~ j.toString);
+    return r.str;
+}
+
+// Write a layer's `name` via the argstring form (`layer.attr <i> name <value>`).
+JSONValue writeName(int index, string value) {
+    auto body_ = "layer.attr " ~ index.to!string ~ " name " ~ value;
+    return cmdMayFail(body_);
+}
+
+// Set the name via `layer.attr`, read it back via `?`, and confirm the edit is
+// UI-undoable. This proves `name` participates in the generic param path; the
+// `.v3d` name round-trip is already covered by tests/test_v3d_layers.d (a
+// multi-layer file with distinct names Tri/Quad/Pent saves + loads), so it is
+// referenced rather than re-asserted here — the focus is the layer.attr path.
+unittest {
+    resetCube();
+
+    // Capture the genuine pre-edit name (the value a single undo must restore).
+    auto orig = readName(0);
+
+    auto r = writeName(0, "Renamed");
+    assert(r["status"].str == "ok", "write name failed: " ~ r.toString);
+    assert(readName(0) == "Renamed", "name reads back as written via layer.attr");
+
+    // The /api/layers envelope reflects the same name (the generic write hit the
+    // live layer field, not a parallel copy).
+    bool found = false;
+    foreach (l; getJson("/api/layers")["layers"].array)
+        if (l["index"].integer == 0) {
+            assert(l["name"].str == "Renamed",
+                   "/api/layers shows the layer.attr-written name");
+            found = true;
+        }
+    assert(found, "layer 0 present in /api/layers");
+
+    // One undo restores the original name (UI-undoable, like any other attr).
+    auto base = undoCount();
+    undoOk("layer.attr name edit");
+    assert(readName(0) == orig, "single undo restores the pre-edit name");
+    assert(undoCount() == base - 1, "undo dropped the name-edit entry");
+}
+
+// A run of `name` edits coalesces like any other attr: N writes to (layer 0,
+// name) collapse into ONE undo entry, and one undo unwinds the whole run to the
+// pre-run name.
+unittest {
+    resetCube();
+    auto orig = readName(0);
+    auto base = undoCount();
+
+    foreach (i; 0 .. 4)
+        writeName(0, "N" ~ (i + 1).to!string);   // N1, N2, N3, N4
+    assert(readName(0) == "N4", "last name write wins");
+    assert(undoCount() == base + 1,
+           "four same-attr name writes coalesce to ONE undo entry (got "
+           ~ undoCount().to!string ~ ", base " ~ base.to!string ~ ")");
+
+    undoOk("coalesced name run");
+    assert(readName(0) == orig,
+           "single undo restores the original pre-run name");
+    assert(undoCount() == base, "undo dropped the one coalesced entry");
+}
+
 // Query of an unknown attr name is handled gracefully (no crash; error status).
 unittest {
     resetCube();
