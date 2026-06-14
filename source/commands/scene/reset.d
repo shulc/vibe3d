@@ -6,7 +6,7 @@ import mesh;
 import view;
 import editmode;
 import viewcache;
-import document : Document, Layer;
+import document : Document, Layer, ItemXform;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
@@ -38,6 +38,10 @@ class SceneReset : Command {
     // background flag to snapshot.
     private string           keptPrevName;
     private bool             keptPrevVisible;
+    // Channels P4: a reset is a clean slate, so the kept layer's per-item
+    // transform returns to identity (default ItemXform). Snapshot the prior
+    // value so undo brings the authored transform back.
+    private ItemXform        keptPrevXform;
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
@@ -94,8 +98,12 @@ class SceneReset : Command {
             auto keep       = document.active();     // the layer `mesh` points at
             keptPrevName       = keep.name;
             keptPrevVisible    = keep.visible;
+            keptPrevXform      = keep.xform;
             keep.name       = "Layer 1";
             keep.visible    = true;
+            // Channels P4: reset clears the per-item transform back to identity
+            // (render-only field — vertices are untouched either way).
+            keep.xform      = ItemXform.init;
             document.layers      = [ keep ];
             // Stage-0 lockstep: one selected primary layer (the surviving
             // active one) — setActive(0) re-asserts the SET-of-one.
@@ -170,6 +178,7 @@ class SceneReset : Command {
             auto keep = document.active();
             keep.name       = keptPrevName;
             keep.visible    = keptPrevVisible;
+            keep.xform      = keptPrevXform;
             document.layers      = prevLayers;
             // Restore primary/selected/activeIndex in lockstep (setActive
             // clamps the index into range).
