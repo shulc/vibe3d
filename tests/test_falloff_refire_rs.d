@@ -882,31 +882,28 @@ unittest {
 //
 // We grade the pair BEFORE the falloff tweak (proves the live drag mirrored)
 // and AFTER it (proves the absolute re-apply REUSED the captured symmetry pass
-// — line 2749's applySymmetryMirror over `toProcess`).
+// — applySymmetryMirror over `toProcess`).
 // ===========================================================================
 unittest {
     establishCubeBaseline();
     // NO selection → whole-mesh moving set (so widening the radius actually
-    // re-grades the partially-weighted off-center verts). The symmetry base-side
-    // rule still drives v7 from v6's mirror, so the specific v6/v7 pair stays
-    // x6 = -x7 throughout.
+    // re-grades the partially-weighted off-center verts). Under fixed-base
+    // position-copy the +X (positive-axis) side drives and is reflected onto
+    // the −X side, so the specific v6/v7 pair stays x6 = -x7 throughout.
     cmd("tool.set move");
     cmd("tool.pipe.attr symmetry enabled 1");
     cmd("tool.pipe.attr symmetry axis x");          // X plane (x=0)
     cmd("tool.pipe.attr falloff type radial");
     cmd("tool.pipe.attr falloff shape linear");
-    // Centre the radial falloff ON the symmetry plane (x=0), aligned with the
-    // v6/v7 row. v6 and its X-mirror v7 are then EQUIDISTANT from the centre →
-    // equal weight, so the `x6 = -x7` mirror relation holds. (Centring on v6
-    // itself — the pre-Stage-2 setup — made the falloff ASYMMETRIC about the
-    // plane: under the two-pass symmetry mirror v7 is now weighted at its OWN
-    // mirrored position, which for a v6-centred sphere of radius 1 is 0, so v7
-    // would correctly NOT move — the deliberate distance-falloff divergence of
-    // doc/symmetry_deform_plan.md #8, covered by tests/test_symm_falloff.d (b).
-    // This test exercises the refire/undo mechanics, so it uses a SYMMETRIC
-    // falloff where mirror == position-copy and the pair relation is stable.)
-    cmd(`tool.pipe.attr falloff center "0,0.5,0.5"`); // on x=0 plane, v6/v7 row
-    cmd(`tool.pipe.attr falloff size "1,1,1"`);     // v6/v7 partially weighted, far verts out
+    // Centre the radial falloff ON the +X corner vertex v6 (0.5,0.5,0.5). This
+    // is an ASYMMETRIC falloff about the plane: v6 sits at full weight while its
+    // X-mirror v7 (−0.5,0.5,0.5) is a sphere-radius away (own weight ≈0 at
+    // radius 1). Under fixed-base position-copy the +X side DRIVES: v6 moves by
+    // its full weight and v7 INHERITS v6's reflected final position — so v7
+    // STILL MOVES (it is NOT frozen at its own ≈0 weight). The −X mirror simply
+    // copies the +X driver, which is exactly the fixed-base contract.
+    cmd(`tool.pipe.attr falloff center "0.5,0.5,0.5"`); // ON the +X corner v6
+    cmd(`tool.pipe.attr falloff size "1,1,1"`);     // v6 full weight, v7 own-w ≈0
     settle();
     long floor = undoCount();
 
@@ -946,6 +943,14 @@ unittest {
         ~ "(x6 = -x7, y/z equal) DURING the drag; v6=(" ~ v6g[0].to!string ~ ","
         ~ v6g[1].to!string ~ "," ~ v6g[2].to!string ~ ") v7=(" ~ v7g[0].to!string
         ~ "," ~ v7g[1].to!string ~ "," ~ v7g[2].to!string ~ ")");
+    // Fixed-base witness (non-vacuous): v7's own falloff weight is ≈0 (it is a
+    // sphere-radius from the v6-centred falloff), yet it MOVED off its baseline
+    // x=-0.5 by inheriting v6's reflected position. If the mirror honoured v7's
+    // OWN weight it would be frozen at -0.5 — this asserts it is NOT.
+    assert(fabs(v7g[0] - (-0.5)) > 0.05,
+        "fixed-base: the −X mirror v7 inherits the +X driver's reflected motion "
+        ~ "and moves off its baseline x=-0.5 (NOT frozen at its own ≈0 weight); "
+        ~ "v7.x=" ~ v7g[0].to!string);
 
     // Re-grade: widen the radius. The absolute re-apply REUSES the captured
     // symmetry pass, so the v6/v7 mirror relation must STILL hold afterward.
