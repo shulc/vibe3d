@@ -7,7 +7,7 @@ import std.format    : format;
 
 import mesh;
 import math;
-import document : Document, Layer;
+import document : Document, Layer, ItemXform;
 import seltype  : SelMode;
 import log : logWarn, logInfo;
 
@@ -26,19 +26,22 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // editor model: vertices, n-gon faces, per-face subpatch flags, the surface
 // registry and per-face material indices.
 //
-// v4 schema (current, the ONLY shape read or written). It wraps one or more
+// v5 schema (current, the ONLY shape read or written). It wraps one or more
 // layers around the shared mesh sub-object. The layer envelope is unchanged
-// from v3 (selection-types Stage 3): the per-layer `selected` flag persists the
+// from v4 (selection-types Stage 3): the per-layer `selected` flag persists the
 // item-selection SET (a layer's background state derives — see below), and the
 // document's edit target is named by `primaryLayer` (replacing the old
-// `activeLayer`). v4 adds an optional per-corner `uvMaps` block to the shared
-// mesh sub-object (UV-maps Stage 3 — see below); only the version int changes
-// in the envelope:
+// `activeLayer`). v4 added an optional per-corner `uvMaps` block to the shared
+// mesh sub-object (UV-maps Stage 3 — see below). v5 adds an OPTIONAL per-layer
+// `xform` block (the item transform/pivot — per-item channels Phase 1); only
+// the version int otherwise changes in the envelope:
 //   {
-//     "formatVersion": 4,
+//     "formatVersion": 5,
 //     "primaryLayer": 0,
 //     "layers": [
 //       { "name": "Layer 1", "visible": true, "selected": true,
+//         "xform": { "pos":[x,y,z], "rot":[x,y,z],
+//                    "scl":[x,y,z], "pivot":[x,y,z] },  // optional
 //         "mesh": { /* the mesh sub-object below */ } },
 //       ...
 //     ]
@@ -48,6 +51,19 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // derives at runtime (Stage 2b), so the file persists `selected` alone. There
 // is NO `activeLayer` key — `primaryLayer` indexes the primary (edit-target)
 // layer, which the reader forces selected + visible.
+//
+// `xform` (v5 addition, per-item channels Phase 1) carries the layer's item
+// transform as four fixed `Vec3` sub-arrays (`pos`/`rot`/`scl`/`pivot`) — the
+// authored channels, NOT a derived matrix. `rot` is euler degrees. The block is
+// OMITTED ENTIRELY when the transform is all-default (pos=0, rot=0, scl=1,
+// pivot=0), matching the optional-field convention so default-transform docs
+// stay byte-clean. A MISSING block ⇒ identity transform — this is the
+// within-v5 optional-field contract (forward-additive), NOT back-compat. The
+// reader is TOLERANT: a missing or malformed sub-array leaves that component at
+// its identity default and keeps loading (the file still opens), matching the
+// `uvMaps` tolerant-within-version stance. The grouped shape is hand-written
+// from the four `Layer.xform` `Vec3` fields directly (the param provider exposes
+// flat scalar params; this codec does NOT iterate `params()` generically).
 //
 // The shared "mesh" sub-object:
 //   {
@@ -74,18 +90,21 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 //
 // CLEAN BREAK (no external clients, per the project directive): the reader
 // accepts EXACTLY `formatVersion == kV3dFormatVersion`. Every earlier shape —
-// v1 (top-level `mesh`), v2 (`activeLayer` + per-layer `background`), and v3
-// (no `uvMaps`) — is no longer parsed; they are rejected cleanly at the version
-// gate, leaving the caller's document untouched. The reader stays tolerant
-// WITHIN the current version: unknown fields are ignored and missing optional
-// fields default sensibly, so the format can keep growing (editor state, Shader
-// Tree) without another break.
+// v1 (top-level `mesh`), v2 (`activeLayer` + per-layer `background`), v3
+// (no `uvMaps`), and v4 (no per-layer `xform`) — is no longer parsed; they are
+// rejected cleanly at the version gate, leaving the caller's document
+// untouched. There is NO migration code. The reader stays tolerant WITHIN the
+// current version: unknown fields are ignored and missing optional fields
+// default sensibly, so the format can keep growing (editor state, Shader Tree)
+// without another break.
 
 /// The schema version the writer emits and the ONLY version the reader accepts.
 /// Was 3 when item-selection persistence (`selected` + `primaryLayer`) landed;
-/// bumped to 4 when the per-corner `uvMaps` block was added (UV-maps Stage 3).
-/// v3 and earlier files are now rejected (deliberate break — no external clients).
-enum int kV3dFormatVersion = 4;
+/// 4 when the per-corner `uvMaps` block was added (UV-maps Stage 3); bumped to 5
+/// when the optional per-layer `xform` block was added (per-item channels Phase
+/// 1). v4 and earlier files are now rejected (deliberate clean break — no
+/// external clients, no migration).
+enum int kV3dFormatVersion = 5;
 
 // ---------------------------------------------------------------------------
 // Write
@@ -192,12 +211,44 @@ void writeV3d(ref const Mesh mesh, string path)
     writeV3d(doc, path);
 }
 
+/// Serialize a layer's item transform to the optional grouped `xform` block:
+///   { "pos":[x,y,z], "rot":[x,y,z], "scl":[x,y,z], "pivot":[x,y,z] }
+/// Hand-written from the four `Vec3` fields directly (the param provider exposes
+/// flat scalar params; this codec is deliberately NOT a generic `params()` loop
+/// — the grouped shape is the persisted form). Returns `false` (leaving `out`
+/// untouched) when the transform is all-default (pos=0, rot=0, scl=1, pivot=0)
+/// so the writer omits the key entirely, keeping default-transform docs
+/// byte-clean.
+private bool xformToJson(ref const ItemXform x, out JSONValue xj)
+{
+    // Default test: bit-exact against the identity authored channels. The
+    // round-trip is float-text deterministic, so exact equality is correct here
+    // (a layer that was never transformed compares equal and is omitted).
+    if (x.pos   == Vec3(0, 0, 0) &&
+        x.rot   == Vec3(0, 0, 0) &&
+        x.scl   == Vec3(1, 1, 1) &&
+        x.pivot == Vec3(0, 0, 0))
+        return false;
+
+    static JSONValue triple(ref const Vec3 v) {
+        return JSONValue([JSONValue(v.x), JSONValue(v.y), JSONValue(v.z)]);
+    }
+    xj = JSONValue.init;
+    xj["pos"]   = triple(x.pos);
+    xj["rot"]   = triple(x.rot);
+    xj["scl"]   = triple(x.scl);
+    xj["pivot"] = triple(x.pivot);
+    return true;
+}
+
 /// Serialize a whole `Document` (every layer + which layer is primary) to a
-/// `.v3d` document at `path` under `formatVersion: 4`. Each layer persists its
+/// `.v3d` document at `path` under `formatVersion: 5`. Each layer persists its
 /// `selected` flag (the item-selection SET); `primaryLayer` names the edit
 /// target. There is NO `background` key (it derives from `visible && !selected`)
-/// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer's `mesh`
-/// sub-object goes through the shared `meshToJson` codec.
+/// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer also
+/// persists its item transform as an OPTIONAL grouped `xform` block (omitted
+/// when all-default — see `xformToJson`). Each layer's `mesh` sub-object goes
+/// through the shared `meshToJson` codec.
 void writeV3d(ref const Document document, string path)
 {
     JSONValue doc;
@@ -213,6 +264,11 @@ void writeV3d(ref const Document document, string path)
         // Stage 3: persist the item-selection SET directly. `background` is
         // NOT written — it derives (visible && !selected) on load.
         lj["selected"] = JSONValue(layer.selected);
+        // v5: optional per-layer item transform. Hand-written from the four
+        // `Vec3` fields (NOT a generic `params()` loop); omitted when default.
+        JSONValue xj;
+        if (xformToJson(layer.xform, xj))
+            lj["xform"] = xj;
         lj["mesh"]     = meshToJson(layer.mesh);
         layers ~= lj;
     }
@@ -228,18 +284,18 @@ void writeV3d(ref const Document document, string path)
 // ---------------------------------------------------------------------------
 
 /// Parse a `.v3d` document at `path` and rebuild a whole `Document`. Accepts
-/// ONLY `formatVersion == kV3dFormatVersion` (v4) — every earlier shape
-/// (v1/v2/v3) is rejected at the version gate (clean break). A v4 file carries a
-/// `layers` array (each entry persisting its `selected` flag) plus a
-/// `primaryLayer` index naming the edit target; the reader re-asserts the
-/// selection-set invariants via the Document mutators (`setActive` /
-/// `selectItem` / `setPrimary`), forcing the primary selected + visible if the
-/// file is inconsistent. Returns false (logging via the io subsystem, like
-/// importLWO) on a missing file, malformed JSON, a `formatVersion` other than
-/// v4, structurally wrong content, an empty `layers` array, or an out-of-range
-/// vertex index — and leaves the caller's `document` UNTOUCHED in every reject
-/// case (all layers are parsed into a temporary before the single atomic swap
-/// below).
+/// ONLY `formatVersion == kV3dFormatVersion` (v5) — every earlier shape
+/// (v1/v2/v3/v4) is rejected at the version gate (clean break, no migration). A
+/// v5 file carries a `layers` array (each entry persisting its `selected` flag,
+/// plus an optional `xform` item-transform block) plus a `primaryLayer` index
+/// naming the edit target; the reader re-asserts the selection-set invariants
+/// via the Document mutators (`setActive` / `selectItem` / `setPrimary`),
+/// forcing the primary selected + visible if the file is inconsistent. Returns
+/// false (logging via the io subsystem, like importLWO) on a missing file,
+/// malformed JSON, a `formatVersion` other than v5, structurally wrong content,
+/// an empty `layers` array, or an out-of-range vertex index — and leaves the
+/// caller's `document` UNTOUCHED in every reject case (all layers are parsed
+/// into a temporary before the single atomic swap below).
 bool readV3d(string path, ref Document document)
 {
     v3dInfo(format("readV3d: path=%s", path));
@@ -331,6 +387,12 @@ bool readV3d(string path, ref Document document)
             bool sel = false;
             if (auto sp = "selected" in lj)
                 sel = (sp.type == JSONType.true_);
+            // v5: optional per-layer item transform. A missing block ⇒ identity
+            // (the layer's `xform` stays at its default). Parsed tolerantly:
+            // a malformed sub-array leaves that component at its identity
+            // default and keeps loading (see readXform).
+            if (auto xp = "xform" in lj)
+                readXform(*xp, li, layer.xform);
             parsed   ~= layer;
             selected ~= sel;
         }
@@ -653,6 +715,40 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
 // ---------------------------------------------------------------------------
 
 private:
+
+/// Parse a v5 per-layer `xform` block into `x`, TOLERANTLY (per the `uvMaps`
+/// idiom: per-element validate / `v3dWarn` / keep going — never throw). Each of
+/// the four fixed sub-arrays (`pos`/`rot`/`scl`/`pivot`) is independent: a
+/// missing or malformed (non-array, < 3 entries, non-object root) sub-array
+/// leaves that component at its identity default (`x` arrives default-
+/// constructed from the caller), and the rest of the block still loads. So a
+/// degenerate block degrades gracefully to identity-where-broken rather than
+/// failing the load. `li` is the layer index, for diagnostics.
+void readXform(const JSONValue xv, size_t li, ref ItemXform x)
+{
+    if (xv.type != JSONType.object) {
+        v3dWarn(format("ignoring layer %d xform: not an object", li));
+        return;
+    }
+    // Pull one [x,y,z] sub-array into `dst`, leaving it untouched (identity
+    // default) on any malformed entry — warn + skip, never throw.
+    void readTriple(string key, ref Vec3 dst) {
+        auto p = key in xv;
+        if (p is null) return;   // missing ⇒ keep identity default (no warning)
+        if (p.type != JSONType.array || p.array.length < 3) {
+            v3dWarn(format("ignoring layer %d xform.%s: not an [x,y,z] triple",
+                            li, key));
+            return;
+        }
+        dst = Vec3(jsonFloat(p.array[0]),
+                   jsonFloat(p.array[1]),
+                   jsonFloat(p.array[2]));
+    }
+    readTriple("pos",   x.pos);
+    readTriple("rot",   x.rot);
+    readTriple("scl",   x.scl);
+    readTriple("pivot", x.pivot);
+}
 
 /// Read a JSON number as a float, accepting integer, unsigned and floating
 /// encodings (std.json stores 1.0 as JSONType.float but 1 as integer).
