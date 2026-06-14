@@ -135,6 +135,7 @@ import buttonset;
 import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
 import forms_render;
+import layer_params   : LayerPropsProvider;
 
 version (WithRender) import render.render_mvp   : initIPR, drawIPRPanel, shutdownIPR;
 version (WithRender) import render.render_diff  : runRenderDiff;
@@ -5286,6 +5287,37 @@ void main(string[] args) {
                 }
 
                 ImGui.PopID();
+            }
+
+            // ---- Layer (item) properties form ----
+            // Render the config-driven layer-props form for the ACTIVE
+            // (primary) layer below the layer list — the same FormsPanel that
+            // drives Tool Properties, fed a LayerPropsProvider wrapping the
+            // primary layer. The form is looked up by its explicit id
+            // ("layer.props"); guard cleanly if it is absent (config/forms not
+            // present, or VIBE3D_FORMS=0 kill-switch).
+            //
+            // NOTE (this phase): a value edit dispatches `layer.attr …`, which
+            // has no command handler yet — the edit is a no-op. The form
+            // RENDERS the rows and READS the provider's live (default) values;
+            // making an edit take effect (and rendering the transform) are
+            // later phases.
+            {
+                import forms : g_formsPanelEnabled, formById;
+                if (g_formsPanelEnabled && document.layers.length) {
+                    if (auto layerForm = formById("layer.props")) {
+                        ImGui.Separator();
+                        auto layerProv =
+                            new LayerPropsProvider(document.primary);
+                        formsPanel.draw(*layerForm, layerProv,
+                                        commandHandlerDelegate,
+                                        formsInteractiveDispatch,
+                                        /*activeToolId=*/"",
+                                        /*stageId=*/"",
+                                        /*layerIndex=*/to!string(
+                                            document.activeIndex));
+                    }
+                }
             }
         }
         ImGui.End();

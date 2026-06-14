@@ -125,19 +125,35 @@ class FormsPanel {
     // rebinds the stage-namespace target to this id. Empty => literal id.
     private string stageId_;
 
+    // Live LAYER index (as a string token) for the frame, set by draw().
+    // Parallel to activeToolId_/stageId_ but for the layer namespace: a
+    // `layer.attr <index> <attr> ?` control line carries a literal placeholder
+    // index in YAML; the live index is supplied per-draw so writeValue rebinds
+    // the layer-namespace target to the layer the panel is bound to. Empty =>
+    // literal placeholder (no layer form drawn). NOTE: a layer.attr edit is a
+    // no-op until the layer.attr command exists (a later phase); for now the
+    // form RENDERS + READS the provider's live values but a write dispatches an
+    // unhandled command (intentional).
+    private string layerIndex_;
+
     /// Render `form` for the active provider. `provider` supplies the live
     /// params() snapshot (read once at the top of this call to bound re-query
     /// cost — the plan's per-frame-cost mitigation). `dispatch` fires cmd /
     /// choice rows; `idispatch` fires control value writes marked interactive.
     /// `activeToolId` rebinds tool-namespace writes to the live tool (see
     /// activeToolId_); pass "" for stage forms (their lines name the real stage).
+    /// `layerIndex` rebinds layer-namespace writes (`layer.attr`) to the live
+    /// layer index — symmetric with activeToolId/stageId; pass "" for tool/stage
+    /// forms (the layer-props panel passes the active layer index).
     void draw(ref Form form, ParamProvider provider,
               DispatchFn dispatch, InteractiveDispatchFn idispatch,
-              string activeToolId = "", string stageId = "")
+              string activeToolId = "", string stageId = "",
+              string layerIndex = "")
     {
         if (provider is null) return;
         activeToolId_ = activeToolId;
         stageId_      = stageId;
+        layerIndex_   = layerIndex;
 
         // ---- one params() snapshot per frame -----------------------------
         // The resolver reads from this name->Param map; falloff.params()
@@ -553,11 +569,13 @@ class FormsPanel {
         // id keep the literal target. positionals[0] is the target id (the
         // tokenized form parseBinding produced); substituteQuery rebuilds the
         // line from positionals, so rewriting that slot is sufficient.
-        // Rebind the namespaced target to the live tool / stage id (the form
-        // carries the canonical family id; the live one must be written). See
-        // forms.rebindBindingTarget. Tool: validateForms' active-id guard;
-        // Stage: stacked FalloffStage instances share one form.
-        b = rebindBindingTarget(b, activeToolId_, stageId_);
+        // Rebind the namespaced target to the live tool / stage id / layer
+        // index (the form carries the canonical family id or a placeholder
+        // index; the live one must be written). See forms.rebindBindingTarget.
+        // Tool: validateForms' active-id guard; Stage: stacked FalloffStage
+        // instances share one form; Layer: the YAML placeholder index is
+        // overwritten with the bound layer's live index.
+        b = rebindBindingTarget(b, activeToolId_, stageId_, layerIndex_);
         // Reconstruct the command line with the value in the `?` slot, then
         // parse it back through argstring so tokenization matches the wire.
         string line = substituteQuery(b, value);

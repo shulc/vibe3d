@@ -1,0 +1,77 @@
+# Layer (item) Properties form — per-layer transform + name.
+#
+# Config-driven properties for the ACTIVE (primary) layer, rendered by the
+# Layers panel (source/app.d) via FormsPanel. Each value control binds to a
+# `layer.attr <index> <attr> ?` line carrying exactly one `?` placeholder:
+# reading queries the layer's LayerPropsProvider param, writing executes the
+# command with `?` substituted.
+#
+# ---------------------------------------------------------------------------
+# Lookup + rebind
+# ---------------------------------------------------------------------------
+# This form is NOT selected by an active tool or a pipe stage — it has no
+# `whenTool` / `whenStage` filter. app.d looks it up directly by its explicit
+# `id: layer.props` (forms.formById) for the fixed Layers-panel context.
+#
+# The `<index>` token in every control line is a LITERAL PLACEHOLDER (0). There
+# is no angle-bracket template substitution in the YAML; at draw time app.d
+# passes the live active-layer index to FormsPanel.draw, and
+# forms.rebindBindingTarget overwrites positionals[0] with that index so the
+# write names the bound layer. The placeholder value is irrelevant — it is
+# always overwritten.
+#
+# ---------------------------------------------------------------------------
+# Render-only / no-op edit note (this phase)
+# ---------------------------------------------------------------------------
+# The `layer.attr` command does NOT exist yet (a later phase). For now these
+# rows RENDER and READ the provider's current (default) values; editing a field
+# dispatches an unhandled `layer.attr …` command (a no-op) — this is expected.
+# Per-layer transform RENDER (drawing the mesh through its item matrix) is also
+# a later phase. So this form is the UI surface only.
+#
+# The bound attr names match LayerPropsProvider.params() exactly: the per-
+# component transform scalars (pos/rot/scl/pivot .x/.y/.z) bind as editable
+# Float rows (the same widget transform.yaml's TX/TY/TZ use — the forms `vec3`
+# widget is a read-only stub, so a Vec3 is exposed as three Float components),
+# plus `name` as a text row.
+#
+# `visible` is deliberately LEFT OUT of this form: the layer-visibility toggle
+# has an invariant side-effect (hiding the primary promotes another layer) and
+# is owned by the existing `layer.setVisible` command, not the generic
+# `layer.attr` param path. The Layers panel's per-row "V" checkbox already
+# dispatches `layer.setVisible`. A cross-command checkbox binding for `visible`
+# is deferred to a later phase.
+
+forms:
+  - id: layer.props
+    label: Layer
+    showLabel: false
+    category: layerprops/main
+    ordinal: 100.0
+    rows:
+      - { control: "layer.attr 0 name ?", label: Name }
+      - { divider: true }
+      - group: Position
+        style: inline
+        rows:
+          - { control: "layer.attr 0 pos.x ?", label: X }
+          - { control: "layer.attr 0 pos.y ?", label: Y }
+          - { control: "layer.attr 0 pos.z ?", label: Z }
+      - group: Rotate
+        style: inline
+        rows:
+          - { control: "layer.attr 0 rot.x ?", label: X }
+          - { control: "layer.attr 0 rot.y ?", label: Y }
+          - { control: "layer.attr 0 rot.z ?", label: Z }
+      - group: Scale
+        style: inline
+        rows:
+          - { control: "layer.attr 0 scl.x ?", label: X }
+          - { control: "layer.attr 0 scl.y ?", label: Y }
+          - { control: "layer.attr 0 scl.z ?", label: Z }
+      - group: Pivot
+        style: inline
+        rows:
+          - { control: "layer.attr 0 pivot.x ?", label: X }
+          - { control: "layer.attr 0 pivot.y ?", label: Y }
+          - { control: "layer.attr 0 pivot.z ?", label: Z }
