@@ -51,6 +51,30 @@ double[3][] dumpVerts() {
     return out_;
 }
 
+// Replace the current selection via the JSON /api/select endpoint (used to
+// select-all then delete the default cube so a fresh primitive starts clean).
+void selectJson(string mode, int[] indices) {
+    import std.array : join;
+    import std.algorithm : map;
+    string idxStr = indices.map!(i => i.to!string).join(",");
+    auto j = postJson("/api/select",
+        `{"mode":"` ~ mode ~ `","indices":[` ~ idxStr ~ `]}`);
+    assert(j["status"].str == "ok", "select failed: " ~ j.toString);
+}
+
+// Round x to the nearest of the five seg-4 columns {−0.5,−0.25,0,+0.25,+0.5}.
+// Returns the column centre (so verts bucket cleanly even with FP jitter).
+double nearestColumn(double x) {
+    static immutable double[5] cols = [-0.5, -0.25, 0.0, 0.25, 0.5];
+    double best = cols[0];
+    double bestD = fabs(x - cols[0]);
+    foreach (c; cols[1 .. $]) {
+        double d = fabs(x - c);
+        if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+}
+
 // Is the vertex cloud symmetric about the X=0 plane? (For every vert there
 // is a vert at its X-reflection (−x, y, z).) Proves a rotate/scale drag
 // under X-symmetry mirrored correctly.
@@ -407,5 +431,166 @@ void twoSidedRegression(bool falloffOnPlus) {
     // Whole-cloud symmetry invariant.
     assert(symmetricAboutX(after),
         "two-sided one-sided-falloff drag must be symmetric about X=0 "
+        ~ "(fixed-base position-copy)");
+}
+
+// ---------------------------------------------------------------------------
+// (f) SEGMENTED-CUBE FULL-GRADIENT REGRESSION — the strong case. A seg-4 cube
+//     has FIVE distinct X columns (x ∈ {−0.5,−0.25,0,+0.25,+0.5}), so a Linear
+//     falloff along X produces a graded ΔY ramp ACROSS the interior, not just
+//     the two endpoint columns the 8-vert cube exposes. This asserts the whole
+//     per-column ΔY gradient is exactly the fixed-base position-copy ground
+//     truth, and (in the −X-falloff variant) that the interior ±0.25 columns
+//     land on the +X-side prediction (0.125), NOT the −X-side mass (0.375) — a
+//     mid-gradient discriminator the 2-column cube cannot express.
+//
+//     Setup MUST start from an EMPTY scene: prim.cube is ADDITIVE (it appends),
+//     and /api/reset leaves the default 8-vert cube. Selecting + deleting those
+//     8 verts first yields a CLEAN 98-vert seg-4 cube (no coincident corners).
+//     The 98-unique-vert count is asserted before the transform so the test
+//     self-guards against the contamination regression (106 verts = default
+//     cube + seg-4 cube overlaid).
+// ---------------------------------------------------------------------------
+unittest {
+    segmentedFullGradient(/*falloffOnPlus=*/ true);
+}
+unittest {
+    segmentedFullGradient(/*falloffOnPlus=*/ false);
+}
+
+// Shared body for (f). Builds a clean seg-4 cube, applies a whole-mesh +0.5 TY
+// move under X-symmetry with a one-sided Linear falloff (start at +0.5 when
+// falloffOnPlus, else at −0.5), and asserts the full five-column ΔY gradient.
+//
+// Fixed-base position-copy ⇒ every column's ΔY = the +X-(positive-axis-)side's
+// OWN linear weight at THAT column's |x| × move, mirrored onto both halves.
+// Concretely, for a column at world X = x the shared (both-sides) ΔY is
+//   w(|x|) × move,   w(d) = linear weight of the +X side at distance d from 0.
+// With the gradient spanning [−0.5,+0.5]:
+//   falloffOnPlus  (start +0.5 → end −0.5): w(+0.5)=1, w(+0.25)=0.75, w(0)=0.5
+//     ⇒ column ΔY (by |x| 0.5/0.25/0): 0.500 / 0.375 / 0.250.
+//   !falloffOnPlus (start −0.5 → end +0.5): w(+0.5)=0, w(+0.25)=0.25, w(0)=0.5
+//     ⇒ column ΔY (by |x| 0.5/0.25/0): 0.000 / 0.125 / 0.250.
+// The +X-side weight is what drives BOTH halves; the −X falloff (when present)
+// is discarded. ALL expected values are computed a priori from x — never read
+// back from the run.
+void segmentedFullGradient(bool falloffOnPlus) {
+    // --- Clean-scene setup: empty the default cube, build a fresh seg-4 cube.
+    postJson("/api/reset", "");
+    // Default 8-vert cube ⇒ select all 8 verts, delete them ⇒ scene is empty.
+    selectJson("vertices", [0, 1, 2, 3, 4, 5, 6, 7]);
+    cmd("mesh.delete");
+    auto empty = dumpVerts();
+    assert(empty.length == 0,
+        "clean-scene setup failed: expected 0 verts after delete-all, got "
+        ~ empty.length.to!string);
+    // prim.cube is ADDITIVE — appends to the (now empty) scene.
+    cmd("prim.cube segmentsX:4 segmentsY:4 segmentsZ:4 radius:0");
+
+    auto before = dumpVerts();
+    // Self-guard against the contamination regression: a clean seg-4 cube has
+    // exactly 98 unique surface verts. 106 means the default cube leaked in.
+    assert(before.length == 98,
+        "expected a clean 98-vert seg-4 cube; got " ~ before.length.to!string
+        ~ " (106 ⇒ default 8-vert cube was not cleared — contamination)");
+    // And confirm there are no coincident positions (clean, distinct columns).
+    foreach (i; 0 .. before.length)
+        foreach (k; i + 1 .. before.length)
+            assert(!(approxEq(before[i][0], before[k][0]) &&
+                     approxEq(before[i][1], before[k][1]) &&
+                     approxEq(before[i][2], before[k][2])),
+                "duplicate/coincident vert in seg-4 cube ⇒ contaminated scene");
+
+    // --- The transform (fixed-base position-copy path = applyFold).
+    cmd("select.typeFrom polygon");                     // empty sel ⇒ whole mesh
+    cmd("tool.set move on");
+    cmd("tool.pipe.attr symmetry enabled true");
+    cmd("tool.pipe.attr symmetry axis x");
+    cmd("tool.pipe.attr symmetry offset 0");
+    cmd("tool.pipe.attr falloff type linear");
+    cmd("tool.pipe.attr falloff shape linear");
+    double startX = falloffOnPlus ? 0.5 : -0.5;
+    double endX   = falloffOnPlus ? -0.5 : 0.5;
+    cmd("tool.pipe.attr falloff start \"" ~ startX.to!string ~ ",0,0\"");
+    cmd("tool.pipe.attr falloff end \"" ~ endX.to!string ~ ",0,0\"");
+    const double move = 0.5;
+    cmd("tool.attr move TY " ~ move.to!string);
+    cmd("tool.doApply");
+
+    auto after = dumpVerts();
+    assert(after.length == before.length, "vert count changed under transform");
+
+    // --- Per-column mean ΔY, bucketed by nearest-column rounding of the ORIG x.
+    double[double] sumDY;     // column centre → Σ ΔY
+    int[double]    count;     // column centre → vert count
+    foreach (i; 0 .. after.length) {
+        double col = nearestColumn(before[i][0]);
+        double dY  = after[i][1] - before[i][1];
+        sumDY[col] = sumDY.get(col, 0.0) + dY;
+        count[col] = count.get(col, 0) + 1;
+        // (d) Pure Y move: X (and Z) must be untouched by a TY symmetry mirror.
+        assert(approxEq(after[i][0], before[i][0], 1e-4),
+            "TY drag must not move X (col " ~ col.to!string ~ ")");
+        assert(approxEq(after[i][2], before[i][2], 1e-4),
+            "TY drag must not move Z (col " ~ col.to!string ~ ")");
+    }
+    // All five columns must be populated (clean seg-4 cube ⇒ each x present).
+    static immutable double[5] cols = [-0.5, -0.25, 0.0, 0.25, 0.5];
+    foreach (c; cols)
+        assert(c in count && count[c] > 0,
+            "column x=" ~ c.to!string ~ " missing — torn/contaminated cube");
+
+    // (a) Each column's MEAN ΔY equals the a-priori +X-side weight × move at
+    //     that column's |x|. tol 1e-4 (tight — these are exact ground truth).
+    double meanDY(double col) { return sumDY[col] / count[col]; }
+    foreach (c; cols) {
+        // +X-side weight at THIS column = linear weight of the positive axis at
+        // distance |c| from the plane, i.e. evaluated at world X = |c| along the
+        // gradient. (The +X side drives both halves under fixed base.)
+        double wPlus    = linearWeightAtX(fabs(c), startX, endX);
+        double expected = wPlus * move;
+        assert(approxEq(meanDY(c), expected, 1e-4),
+            "col x=" ~ c.to!string ~ " mean ΔY must be " ~ expected.to!string
+            ~ " (+X-side weight " ~ wPlus.to!string ~ " × " ~ move.to!string
+            ~ "), got " ~ meanDY(c).to!string);
+    }
+
+    // (b) Mirror symmetry: column(+x) mean ΔY == column(−x) mean ΔY.
+    assert(approxEq(meanDY(+0.5), meanDY(-0.5), 1e-4),
+        "±0.5 columns must move the same ΔY (fixed-base mirror)");
+    assert(approxEq(meanDY(+0.25), meanDY(-0.25), 1e-4),
+        "±0.25 columns must move the same ΔY (fixed-base mirror)");
+
+    // (c) The mid-gradient discriminator. Only the seg-4 cube exposes this: the
+    //     INTERIOR ±0.25 columns prove the FIXED positive-axis base drives.
+    if (falloffOnPlus) {
+        // +X falloff: interior ±0.25 take the +X weight at |x|=0.25 = 0.75
+        // ⇒ ΔY = 0.375. (Centre x=0 ⇒ 0.5 weight ⇒ 0.250.)
+        assert(approxEq(meanDY(0.25), 0.375, 1e-4),
+            "falloff +X: ±0.25 columns must be 0.375, got "
+            ~ meanDY(0.25).to!string);
+        assert(approxEq(meanDY(0.0), 0.250, 1e-4),
+            "falloff +X: centre column must be 0.250, got "
+            ~ meanDY(0.0).to!string);
+    } else {
+        // −X falloff DISCARDED ⇒ the +X side drives. +X weight at |x|=0.25 is
+        // 0.25 ⇒ ΔY = 0.125 (NOT 0.375, which a mass-per-side / falloff-side
+        // driver would give). This is the strong, mid-gradient discriminator.
+        assert(approxEq(meanDY(0.25), 0.125, 1e-4),
+            "discriminator: ±0.25 columns must be 0.125 (+X-side weight), NOT "
+            ~ "0.375 (the −X-side mass). got " ~ meanDY(0.25).to!string);
+        assert(approxEq(meanDY(0.0), 0.250, 1e-4),
+            "centre column must be 0.250 (the on-plane weight is 0.5 either "
+            ~ "way), got " ~ meanDY(0.0).to!string);
+        // And the +0.5 endpoint is fully frozen on both halves.
+        assert(approxEq(meanDY(0.5), 0.0, 1e-4),
+            "falloff −X: ±0.5 columns must be frozen (0.0), got "
+            ~ meanDY(0.5).to!string);
+    }
+
+    // (e) Whole-cloud symmetry survives (closest-match X-pairing is fine here
+    //     because the per-column ΔY is uniform within each column).
+    assert(symmetricAboutX(after, 2e-3),
+        "seg-4 one-sided-falloff drag must stay symmetric about X=0 "
         ~ "(fixed-base position-copy)");
 }
