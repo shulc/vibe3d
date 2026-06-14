@@ -66,10 +66,16 @@ enum LayerChange : uint {
     Reordered         = 1 << 2,  // layers[] order changed (reorder)
     Renamed           = 1 << 3,  // a layer's display name changed
     VisibilityChanged = 1 << 4,  // a layer's `visible` flag changed
-    // 1 << 5 retired (Stage 5): the transitional `BackgroundChanged` kind is
-    // gone — background is DERIVED (visible && !selected), so a foreground/
-    // background flip is just an item-selection change reported on the SEL
-    // channel (`SelDomain.Item`), never a distinct layer-channel kind.
+    // 1 << 5 was the retired transitional `BackgroundChanged` slot (Stage 5).
+    // Survey #3 P3 reclaims the free bit for a generic per-layer PROPERTY edit
+    // (transform/pivot component, or any future scalar layer param written
+    // through the `layer.attr` command). Distinct from Renamed/VisibilityChanged
+    // (which have their own kinds for the bespoke name/visible fields) — this is
+    // the catch-all "a registered layer Param changed" signal. Like the others
+    // it carries NO payload; a subscriber re-polls `document` / `/api/layers`.
+    // Background remains DERIVED (visible && !selected) and rides the SEL
+    // channel (`SelDomain.Item`), never a layer-channel kind.
+    PropertyChanged   = 1 << 5,
     ActiveChanged     = 1 << 6,  // the active (foreground) layer changed
 }
 
@@ -132,6 +138,7 @@ struct ChangeBus {
     ulong totalLayerReordered;
     ulong totalLayerRenamed;
     ulong totalLayerVisible;
+    ulong totalLayerProperty;   // #3 P3: a registered layer Param edit (layer.attr)
     ulong totalLayerActive;
 
     // Current-type channel total: how many flushes carried a current-type flip
@@ -206,6 +213,7 @@ struct ChangeBus {
         if (layerKinds & LayerChange.Reordered)         ++totalLayerReordered;
         if (layerKinds & LayerChange.Renamed)           ++totalLayerRenamed;
         if (layerKinds & LayerChange.VisibilityChanged) ++totalLayerVisible;
+        if (layerKinds & LayerChange.PropertyChanged)   ++totalLayerProperty;
         if (layerKinds & LayerChange.ActiveChanged)     ++totalLayerActive;
 
         if (typeChanged) { ++currentTypeChanged; lastCurrentType = newType; }

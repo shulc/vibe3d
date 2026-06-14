@@ -115,6 +115,7 @@ import snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
+import commands.layer.commands : LayerAttr;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
@@ -1648,7 +1649,7 @@ void main(string[] args) {
     {
         import commands.layer.commands : LayerAdd, LayerDelete, LayerSelect,
                                           LayerRename, LayerSetVisible,
-                                          LayerReorder;
+                                          LayerReorder, LayerAttr;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.delete"] = () => cast(Command)
@@ -1662,6 +1663,12 @@ void main(string[] args) {
             new LayerRename(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.setVisible"] = () => cast(Command)
             new LayerSetVisible(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        // layer.attr — generic per-layer Param write/read (survey #3). Wired
+        // with &document like the others; the active-switch hook is unused (a
+        // property edit never moves the active layer) but passed for ctor
+        // uniformity.
+        reg.commandFactories["layer.attr"] = () => cast(Command)
+            new LayerAttr(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
@@ -2847,6 +2854,31 @@ void main(string[] args) {
                         }
                     }
                 }
+            } else if (auto la = cast(LayerAttr)cmd) {
+                // layer.attr <index> <attr> <value|?>
+                //   positional[0] = layer index (int; -1 → active)
+                //   positional[1] = attr name (e.g. "pos.x", "name")
+                //   positional[2] = value, or the literal "?" for read-back
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1) {
+                            if      (pos[0].type == JSONType.integer)  la.setIndex(cast(int)pos[0].integer);
+                            else if (pos[0].type == JSONType.uinteger) la.setIndex(cast(int)pos[0].uinteger);
+                            else if (pos[0].type == JSONType.string)   { try { la.setIndex(pos[0].str.to!int); } catch (Exception) {} }
+                        }
+                        if (pos.length >= 2 && pos[1].type == JSONType.string)
+                            la.setAttrName(pos[1].str);
+                        if (pos.length >= 3) {
+                            // Forms-engine query idiom: a literal "?" in the
+                            // value slot flips the command into read-back mode.
+                            if (pos[2].type == JSONType.string && pos[2].str == "?")
+                                la.setQuery(true);
+                            else
+                                la.setAttrValue(pos[2]);
+                        }
+                    }
+                }
             } else if (auto tpe = cast(ToolPanelEditCommand)cmd) {
                 // tool.panelEdit <dx> <dy> <dz> (test-only). Accept int / float
                 // / string scalar forms for each component.
@@ -3102,6 +3134,18 @@ void main(string[] args) {
                             throw new Exception("command '" ~ id ~ "' did not apply");
                         if (httpServer !is null)
                             httpServer.setCmdResult(tpaq.queryResultJsonOrEmpty());
+                        return;
+                    }
+                }
+                // layer.attr query (`?`): same pure-read short-circuit as the
+                // tool/stage attr queries — resolve + box the live layer Param
+                // value, record no history, return the boxed JSON.
+                if (auto laq = cast(LayerAttr)cmd) {
+                    if (laq.isQuery()) {
+                        if (!laq.apply())
+                            throw new Exception("command '" ~ id ~ "' did not apply");
+                        if (httpServer !is null)
+                            httpServer.setCmdResult(laq.queryResultJsonOrEmpty());
                         return;
                     }
                 }
@@ -5307,8 +5351,16 @@ void main(string[] args) {
                 if (g_formsPanelEnabled && document.layers.length) {
                     if (auto layerForm = formById("layer.props")) {
                         ImGui.Separator();
-                        auto layerProv =
-                            new LayerPropsProvider(document.primary);
+                        // Cache ONE provider and re-point it at the current
+                        // primary each frame (allocation-free in steady state),
+                        // instead of allocating a fresh LayerPropsProvider per
+                        // frame. The provider's params() always alias the live
+                        // bound layer, so the rebind keeps it correct.
+                        static LayerPropsProvider layerProv;
+                        if (layerProv is null)
+                            layerProv = new LayerPropsProvider(document.primary);
+                        else
+                            layerProv.setLayer(document.primary);
                         formsPanel.draw(*layerForm, layerProv,
                                         commandHandlerDelegate,
                                         formsInteractiveDispatch,

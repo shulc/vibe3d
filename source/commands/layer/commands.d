@@ -26,11 +26,14 @@ import command;
 import mesh;
 import view;
 import editmode;
-import params : Param;
+import params : Param, paramToJson, injectParamsInto;
 import document : Document, Layer;
+import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
                     noteItemSelectionChange;
+
+import std.json : JSONValue, JSONType;
 
 // ---------------------------------------------------------------------------
 // Shared base — owns the Document* and the switch hook.
@@ -536,6 +539,261 @@ final class LayerSetVisible : LayerCommandBase {
         noteLayerChange(LayerChange.VisibilityChanged);
         fireSwitchIfChanged(curPrimary, prevIdx);
         return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// layer.attr — `layer.attr <index> <attr> <value|?>`
+//
+// Generic write (and `?` read-back) of a single registered layer Param,
+// resolved through `LayerPropsProvider` (survey #3). This is the command that
+// makes a layer-props form edit take effect: the forms panel dispatches
+// `layer.attr <idx> pos.x <v>` (or `… ?` to read the live value back).
+//
+// Undo class: UI-undo (CmdFlags.UiState) — a layer property edit is document
+// state but NOT geometry, so it lands on the same stack as layer.rename /
+// layer.select and Ctrl+Z reverts it, distinct from Model-undo. Like
+// layer.rename it touches NO mesh-pending / mutation-version state (an item
+// transform/pivot is non-baked render data; vertices never move).
+//
+// Coalescing (from scratch — layer.rename does NOT coalesce, so there is no
+// exemplar in this module): a run of writes to the SAME (index, attr) collapses
+// into one undo entry (a panel drag of one field = one Ctrl+Z), exactly like the
+// UiState select-coalescing path (commands/mesh/selection_edit.d). A write to a
+// DIFFERENT attr or a different layer breaks the run.
+//
+// Query (`?`) mode mirrors ToolAttrCommand: resolve the named param against the
+// target layer's params(), box paramToJson(param), mutate nothing. The
+// dispatcher's query short-circuit (app.d) recognizes isQuery() and returns the
+// boxed value WITHOUT recording a history entry.
+// ---------------------------------------------------------------------------
+
+final class LayerAttr : LayerCommandBase {
+    private int       indexArg = -1;      // -1 → active (resolveIndex)
+    private string    attrName_;
+    private JSONValue attrValue_;
+    private bool      query_;
+    private JSONValue queryResult_;
+    // Undo snapshot: the PRIOR JSON value of the touched param (so revert()
+    // restores exactly that one attr). The resolved layer index is captured at
+    // apply time so revert hits the same row even if the active layer moved.
+    private size_t    target_;
+    private JSONValue priorValue_;
+    private bool      applied_;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
+         void delegate(size_t, size_t) onSwitch) {
+        super(mesh, view, editMode, doc, onSwitch);
+        this.attrValue_   = JSONValue(null);
+        this.queryResult_ = JSONValue(null);
+        this.priorValue_  = JSONValue(null);
+    }
+
+    override string name()  const { return "layer.attr"; }
+    override string label() const { return "Set Layer Property"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+
+    // Programmatic setters (wired from app.d's positional injector, mirroring
+    // ToolAttrCommand). The value/`?` discriminator follows the forms idiom.
+    void setIndex(int i)           { indexArg = i; }
+    void setAttrName(string n)     { attrName_ = n; }
+    void setAttrValue(JSONValue v) { attrValue_ = v; }
+    void setQuery(bool v)          { query_ = v; }
+    bool isQuery() const           { return query_; }
+    JSONValue queryResult() const  { return queryResult_; }
+    string queryResultJsonOrEmpty() const {
+        if (!query_ || queryResult_.type == JSONType.null_) return "";
+        return queryResult_.toString();
+    }
+
+    override Param[] params() {
+        return [ Param.int_("index", "Index", &indexArg, -1) ];
+    }
+
+    override bool apply() {
+        if (attrName_.length == 0)
+            throw new Exception("layer.attr: no attribute name specified");
+        if (doc.layers.length == 0)
+            throw new Exception("layer.attr: no layers");
+
+        target_      = resolveIndex(indexArg);
+        auto layer   = doc.layers[target_];
+        auto prov    = new LayerPropsProvider(layer);
+        auto ps      = prov.params();
+
+        // Resolve the named param (shared by query + write). Unknown attr is a
+        // graceful error (no crash, no mutation) — caught by the dispatcher and
+        // surfaced as a command error, exactly like ToolAttrCommand.
+        Param* found;
+        foreach (ref p; ps)
+            if (p.name == attrName_) { found = &p; break; }
+        if (found is null)
+            throw new Exception(
+                "layer.attr: unknown attribute '" ~ attrName_ ~ "'");
+
+        // Query (read-back) mode: box the live value and return WITHOUT mutating
+        // (no injectParamsInto, no bus, no history). A pure read.
+        if (query_) {
+            queryResult_ = paramToJson(*found);
+            return true;
+        }
+
+        // Write: snapshot the prior value for revert(), then inject the new one
+        // through the param's typed pointer (which aliases the live Layer field).
+        priorValue_ = paramToJson(*found);
+        JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+        pj[attrName_] = attrValue_;
+        injectParamsInto(ps, pj);
+        applied_ = true;
+
+        // Pure document-state change: publish the generic property-changed kind,
+        // touch NO mesh-pending / mutation-version state (an item transform is
+        // non-baked render data — vertices do not move).
+        noteLayerChange(LayerChange.PropertyChanged);
+        return true;
+    }
+
+    override bool revert() {
+        if (!applied_) return false;
+        if (target_ >= doc.layers.length) return false;
+        // Restore the snapshotted prior value of the one touched attr.
+        auto prov = new LayerPropsProvider(doc.layers[target_]);
+        auto ps   = prov.params();
+        JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+        pj[attrName_] = priorValue_;
+        injectParamsInto(ps, pj);
+        noteLayerChange(LayerChange.PropertyChanged);
+        return true;
+    }
+
+    // Coalescing predicate: a newer LayerAttr is COMPATIBLE iff it targets the
+    // SAME resolved layer index AND the SAME attr name. A different attr or a
+    // different layer breaks the run → a fresh undo entry. `prev` is the command
+    // currently on top of the undo stack (this command was applied just before
+    // recordCoalescing ran), so both are already applied; the merge only folds
+    // the post-state (see mergeFrom). A query never coalesces (it records no
+    // entry, so this is never reached for one).
+    override CompareResult compareOp(const Command prev) const {
+        auto p = cast(const(LayerAttr))prev;
+        if (p is null) return CompareResult.Different;
+        if (p.target_ != this.target_)   return CompareResult.Different;
+        if (p.attrName_ != this.attrName_) return CompareResult.Different;
+        return CompareResult.Compatible;
+    }
+
+    // In-place merge of a newer, COMPATIBLE LayerAttr into THIS (the kept top
+    // entry): keep THIS entry's older priorValue_ (the value before the FIRST
+    // write of the run — the revert target) and adopt `newer`'s attrValue_ (the
+    // latest written value — the apply/redo target). One undo then unwinds the
+    // whole drag back to the pre-run value. The dispatcher has ALREADY applied
+    // `newer`, so the layer holds the merged post-state; do not mutate here.
+    override bool mergeFrom(Command newer) {
+        auto n = cast(LayerAttr)newer;
+        if (n is null) return false;
+        this.attrValue_ = n.attrValue_;   // adopt latest written value
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// In-module unit test (P3): LayerAttr write/query/revert + coalescing.
+//
+// The HTTP-driven coalescing assertion in tests/test_layer_params.d already
+// proves merging end-to-end through recordCoalescing(). This unittest locks the
+// compareOp/mergeFrom CONTRACT directly (so a future refactor that breaks the
+// merge shape fails here even without a running server) and verifies the
+// write/query/revert single-attr round-trip against a live Document.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+    import std.json : JSONValue, JSONType;
+    import std.math : isClose;
+
+    auto doc  = Document.bootstrap(makeCube());
+    auto v    = new View(0, 0, 800, 600);
+    auto mPtr = doc.activeMesh();
+
+    LayerAttr mk() {
+        return new LayerAttr(mPtr, v, EditMode.Vertices, &doc, null);
+    }
+
+    // ---- write + revert round-trip on one attr ------------------------------
+    {
+        auto c = mk();
+        c.setIndex(0);
+        c.setAttrName("pos.x");
+        c.setAttrValue(JSONValue(1.5));
+        assert(c.apply(), "write apply");
+        assert(isClose(doc.layers[0].xform.pos.x, 1.5f, 1e-6f),
+               "write mutated the layer field through the param pointer");
+        assert(c.revert(), "revert");
+        assert(isClose(doc.layers[0].xform.pos.x, 0.0f, 1e-6f),
+               "revert restored the prior value");
+    }
+
+    // ---- query (read-back) mutates nothing ----------------------------------
+    {
+        doc.layers[0].xform.pos.y = 2.25f;
+        auto q = mk();
+        q.setIndex(0);
+        q.setAttrName("pos.y");
+        q.setQuery(true);
+        assert(q.isQuery());
+        assert(q.apply(), "query apply");
+        assert(q.queryResult().type == JSONType.float_);
+        assert(isClose(q.queryResult().floating, 2.25, 1e-6), "query boxed live value");
+        assert(isClose(doc.layers[0].xform.pos.y, 2.25f, 1e-6f), "query did not mutate");
+    }
+
+    // ---- unknown attr is a graceful error (no crash) ------------------------
+    {
+        auto bad = mk();
+        bad.setIndex(0);
+        bad.setAttrName("does.not.exist");
+        bad.setAttrValue(JSONValue(1.0));
+        bool threw = false;
+        try { bad.apply(); } catch (Exception) { threw = true; }
+        assert(threw, "unknown attr throws (caught by dispatcher), no crash");
+    }
+
+    // ---- coalescing: same (index, attr) merges; keep prior, adopt latest ----
+    {
+        auto first = mk();
+        first.setIndex(0);
+        first.setAttrName("pos.z");
+        first.setAttrValue(JSONValue(1.0));
+        assert(first.apply());
+        // first.priorValue_ now holds the value BEFORE the run (0.0).
+
+        auto second = mk();
+        second.setIndex(0);
+        second.setAttrName("pos.z");
+        second.setAttrValue(JSONValue(2.0));
+        assert(second.apply());
+
+        // second is COMPATIBLE with first (same layer + attr).
+        assert(second.compareOp(first) == CompareResult.Compatible,
+               "same (index, attr) coalesces");
+        // mergeFrom on the KEPT top entry (first) adopts second's value while
+        // keeping first's prior-value (the revert target).
+        assert(first.mergeFrom(second), "mergeFrom downcasts + folds");
+        assert(isClose(first.attrValue_.floating, 2.0, 1e-6),
+               "merged entry adopts the latest written value");
+        assert(isClose(first.priorValue_.floating, 0.0, 1e-6),
+               "merged entry keeps the pre-run value as the revert target");
+        // One undo of the merged entry restores the pre-run value.
+        assert(first.revert());
+        assert(isClose(doc.layers[0].xform.pos.z, 0.0f, 1e-6f),
+               "single undo of the coalesced run unwinds to pre-run");
+    }
+
+    // ---- a DIFFERENT attr does NOT coalesce ---------------------------------
+    {
+        auto px = mk(); px.setIndex(0); px.setAttrName("pos.x"); px.setAttrValue(JSONValue(3.0)); assert(px.apply());
+        auto py = mk(); py.setIndex(0); py.setAttrName("pos.y"); py.setAttrValue(JSONValue(4.0)); assert(py.apply());
+        assert(py.compareOp(px) == CompareResult.Different,
+               "different attr breaks the coalescing run");
     }
 }
 

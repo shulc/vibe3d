@@ -37,6 +37,13 @@ final class LayerPropsProvider : ParamProvider {
     /// The wrapped layer (for callers that need it back).
     Layer layer() { return layer_; }
 
+    /// Re-point this provider at a different layer. Lets a per-frame caller
+    /// (the layer-props panel) keep ONE provider instance and rebind it to the
+    /// live primary each frame instead of allocating a fresh provider every
+    /// frame. The returned `params()` always alias the CURRENT layer's fields,
+    /// so a rebind is allocation-free and keeps the provider correct.
+    void setLayer(Layer l) { layer_ = l; }
+
     // -----------------------------------------------------------------------
     // ParamProvider
     // -----------------------------------------------------------------------
