@@ -21,26 +21,33 @@
 # always overwritten.
 #
 # ---------------------------------------------------------------------------
-# Render-only / no-op edit note (this phase)
+# What these rows drive
 # ---------------------------------------------------------------------------
-# The `layer.attr` command does NOT exist yet (a later phase). For now these
-# rows RENDER and READ the provider's current (default) values; editing a field
-# dispatches an unhandled `layer.attr …` command (a no-op) — this is expected.
-# Per-layer transform RENDER (drawing the mesh through its item matrix) is also
-# a later phase. So this form is the UI surface only.
+# Editing a field dispatches `layer.attr <index> <attr> <value>`, a UI-undoable
+# (coalescing) command that writes the value through the layer's
+# LayerPropsProvider param pointer. The per-layer transform is applied
+# RENDER-ONLY: the layer's mesh is drawn through its composed item matrix, but
+# its vertices never move (editing/picking/snap/gizmo stay in the layer's local
+# frame), so a transform write triggers NO mesh GPU re-upload — only the
+# per-frame model matrix differs.
 #
 # The bound attr names match LayerPropsProvider.params() exactly: the per-
 # component transform scalars (pos/rot/scl/pivot .x/.y/.z) bind as editable
 # Float rows (the same widget transform.yaml's TX/TY/TZ use — the forms `vec3`
 # widget is a read-only stub, so a Vec3 is exposed as three Float components),
-# plus `name` as a text row.
+# plus `name` as a text row. `name` thus rides the SAME generic forms/undo/
+# serialize path as the transform components (the "one declaration" proof);
+# `layer.rename` remains as the explicit rename path.
 #
-# `visible` is deliberately LEFT OUT of this form: the layer-visibility toggle
-# has an invariant side-effect (hiding the primary promotes another layer) and
-# is owned by the existing `layer.setVisible` command, not the generic
-# `layer.attr` param path. The Layers panel's per-row "V" checkbox already
-# dispatches `layer.setVisible`. A cross-command checkbox binding for `visible`
-# is deferred to a later phase.
+# `visible` is deliberately LEFT OUT of this form's writable rows: the layer-
+# visibility toggle has an invariant side-effect (hiding the primary promotes
+# another selected+visible layer to primary) and is owned by the dedicated
+# `layer.setVisible` command, NOT the generic `layer.attr` param path. The
+# Layers panel's per-row "V" checkbox already dispatches `layer.setVisible`.
+# This is the single principled exception to "every layer property rides the
+# generic param path" — `visible` carries a promotion hook the generic write
+# would bypass. (The provider still EXPOSES `visible` as a readable Bool param;
+# only the generic write is excluded.)
 
 forms:
   - id: layer.props

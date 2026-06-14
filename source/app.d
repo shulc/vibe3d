@@ -5361,11 +5361,12 @@ void main(string[] args) {
             // ("layer.props"); guard cleanly if it is absent (config/forms not
             // present, or VIBE3D_FORMS=0 kill-switch).
             //
-            // NOTE (this phase): a value edit dispatches `layer.attr …`, which
-            // has no command handler yet — the edit is a no-op. The form
-            // RENDERS the rows and READS the provider's live (default) values;
-            // making an edit take effect (and rendering the transform) are
-            // later phases.
+            // A value edit dispatches `layer.attr <idx> <attr> <v>` (UI-undo
+            // class, coalesced); the row reads the provider's live value via
+            // `layer.attr … ?`. The per-item transform is non-baked — applied
+            // as a display matrix at the mesh draw sites — so the mesh is never
+            // re-uploaded on an edit. The transform rows grey out while a
+            // transform tool is active (a mid-gesture interlock).
             {
                 import forms : g_formsPanelEnabled, formById;
                 if (g_formsPanelEnabled && document.layers.length) {
