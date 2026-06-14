@@ -163,7 +163,7 @@ public:
     bool flagT = true;
     bool flagR = true;
     bool flagS = true;
-    // MODO-style handle family selector: 0=Move, 1=Rotate, 2=Scale,
+    // Handle family selector: 0=Move, 1=Rotate, 2=Scale,
     // 3=Uniform Scale. Presentation is separate: bare Transform uses
     // compact combined handles, while per-mode presets use the full bank.
     int handleFamily = 0;
@@ -723,7 +723,7 @@ public:
         else
             setSharedGizmoPose(queryActionCenter(vts), vts);
 
-        // Cross-bank single-winner hover/capture (MODO's two-pass hit-test → draw):
+        // Cross-bank single-winner hover/capture (two-pass hit-test → draw):
         // ONE shared arbiter over the falloff handles (registered first =
         // highest priority) + every enabled gizmo bank, resolve ONE
         // hot/captured part, THEN render.
@@ -4073,7 +4073,7 @@ private:
     RotateTool rotateSub;
     ScaleTool  scaleSub;
 
-    // Single shared cross-bank handle arbiter (MODO's two-pass hit-test → draw).
+    // Single shared cross-bank handle arbiter (two-pass hit-test → draw).
     // Every enabled bank registers its handles into this each frame at its
     // part-id base; one resolve picks ONE hot/captured part across move +
     // rotate + scale, so overlapping handles never co-highlight. Falloff
