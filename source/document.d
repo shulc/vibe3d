@@ -2,6 +2,8 @@ module document;
 
 import mesh    : Mesh;
 import seltype : SelMode;
+import math    : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX,
+                 pivotScaleMatrix, matMul4;
 
 // source/document.d — imports mesh only; no GL, no render, no UI.
 //
@@ -34,6 +36,49 @@ import seltype : SelMode;
 // index follows the primary OBJECT by identity, so reorder/delete renumbering
 // can never drift it.
 
+/// A per-layer (item) transform: position / euler-rotation-in-degrees / scale,
+/// about a pivot. Authored as four separate `Vec3` channels (the source of
+/// truth); the world matrix is a DERIVED runtime value composed on demand by
+/// `composedMatrix()` and is never itself an authored field.
+///
+/// Survey #3 Phase 0: this is the data model only. No render / IO / forms /
+/// command wiring yet (those are P1-P4); the field is unused by the rest of the
+/// app after P0 — that is expected.
+struct ItemXform {
+    // NOTE: Vec3's components are plain `float`, so their `.init` is NaN, not 0.
+    // Every field needs an explicit zero/unit initialiser so a default-
+    // constructed ItemXform composes to identity (not a NaN matrix).
+    Vec3 pos   = Vec3(0, 0, 0); ///< translation
+    Vec3 rot   = Vec3(0, 0, 0); ///< euler rotation in DEGREES (applied ZYX)
+    Vec3 scl   = Vec3(1, 1, 1); ///< per-axis scale (default = unit)
+    Vec3 pivot = Vec3(0, 0, 0); ///< pivot point for rotation + scale
+
+    /// The composed world matrix (column-major `float[16]`), in the exact
+    /// order declared by the plan:
+    ///
+    ///     M = T(pos) · T(pivot) · Rz·Ry·Rx · S · T(-pivot)
+    ///
+    /// ZYX euler, rotations in degrees. The rotation block is built by
+    /// `matrixFromEulerZYX` (R = Rz·Ry·Rx), the scale block by an origin-pivot
+    /// `pivotScaleMatrix` (pure `diag(scl)`), and the pivot is bracketed by
+    /// `T(pivot) … T(-pivot)` so rotation + scale fix the pivot point. The
+    /// default `ItemXform` (pos=0, rot=0, scl=1, pivot=0) yields identity.
+    ///
+    /// Pure: composes from the matrix helpers in `math.d`; no hand-rolled matrix.
+    float[16] composedMatrix() const {
+        float[16] T    = translationMatrix(pos);
+        float[16] Tp   = translationMatrix(pivot);
+        float[16] R    = matrixFromEulerZYX(rot);
+        float[16] S    = pivotScaleMatrix(Vec3(0, 0, 0), scl.x, scl.y, scl.z);
+        float[16] Tpi  = translationMatrix(Vec3(-pivot.x, -pivot.y, -pivot.z));
+        // M = T · Tp · R · S · Tpi  (left-to-right composition order)
+        return matMul4(T,
+               matMul4(Tp,
+               matMul4(R,
+               matMul4(S, Tpi))));
+    }
+}
+
 /// A single document layer. Deliberately a CLASS, for two reasons:
 ///   (a) the interior `Mesh` sits at a stable heap address no matter how
 ///       `layers[]` is sliced / reordered / reallocated — the
@@ -49,8 +94,11 @@ final class Layer {
     // Stage 2b: the stored `bool background` field is DELETED. Background is now
     // derived — `Document.background(l) == l.visible && !l.selected` — with no
     // separate field of record (the third state collapsed).
-    // reserved (phase 2, survey #3): pivot / transform as registered Params.
-    // Held as a comment only here — no per-layer transform plumbing in v1.
+    // Survey #3 Phase 0: per-layer (item) transform/pivot. Authored as four
+    // separate `Vec3` channels (pos/rot/scl/pivot); the world matrix is derived
+    // via `xform.composedMatrix()`. Render/IO/forms/command wiring is P1-P4 —
+    // after P0 this field is unused by the rest of the app (data model only).
+    ItemXform xform;
 }
 
 /// The layer list, the index of the one active (foreground) layer, and the
@@ -449,4 +497,89 @@ unittest {  // hide-primary refusal: no other selected+visible layer.
     assert(!ok, "refuse — no other selected+visible layer to promote");
     // Document is left with the (now hidden) primary; the command restores
     // visibility on refusal (tested at the command layer).
+}
+
+// ---------------------------------------------------------------------------
+// Survey #3 Phase 0: ItemXform.composedMatrix() correctness.
+//
+// The default xform (pos=0, rot=0, scl=1, pivot=0) MUST equal identity. A known
+// {pos,rot_deg,scl,pivot} must produce the expected 4×4 — computed here by an
+// INDEPENDENT hand formula (NOT by calling composedMatrix), so fixture and code
+// cannot agree tautologically and hide a bug. Order under test:
+//     M = T(pos) · T(pivot) · Rz·Ry·Rx · S · T(-pivot)  (ZYX, degrees).
+// ---------------------------------------------------------------------------
+
+unittest {  // default ItemXform composes to identity (within 1e-6).
+    import std.math : isClose;
+    import math : identityMatrix;
+    ItemXform x;                       // pos=0, rot=0, scl=1, pivot=0
+    auto m = x.composedMatrix();
+    foreach (i; 0 .. 16)
+        assert(isClose(m[i], identityMatrix[i], 1e-6f, 1e-6f),
+               "default ItemXform must compose to identity");
+}
+
+unittest {  // pure translation (no rot/scale/pivot) → translation in column 3.
+    import std.math : isClose;
+    ItemXform x;
+    x.pos = Vec3(3, -2, 5);
+    auto m = x.composedMatrix();
+    // Column-major: translation at m[12],m[13],m[14]; 3×3 block = identity.
+    assert(isClose(m[12], 3,  1e-6f, 1e-6f));
+    assert(isClose(m[13], -2, 1e-6f, 1e-6f));
+    assert(isClose(m[14], 5,  1e-6f, 1e-6f));
+    assert(isClose(m[0], 1, 1e-6f, 1e-6f) && isClose(m[5], 1, 1e-6f, 1e-6f)
+        && isClose(m[10], 1, 1e-6f, 1e-6f));
+}
+
+unittest {  // known TRS-about-pivot vs an INDEPENDENT hand-built expected matrix.
+    import std.math : sin, cos, PI, isClose;
+
+    // Inputs.
+    Vec3 pos   = Vec3(1, 2, 3);
+    Vec3 rdeg  = Vec3(0, 90, 0);          // 90° about Y only (clean closed form)
+    Vec3 scl   = Vec3(2, 3, 4);
+    Vec3 pivot = Vec3(0.5f, -1.0f, 0.25f);
+
+    ItemXform x;
+    x.pos = pos; x.rot = rdeg; x.scl = scl; x.pivot = pivot;
+    auto got = x.composedMatrix();
+
+    // ---- Independent expected matrix (column-major m[row + col*4]) ----------
+    // R = Ry(90°): cos=0, sin=1. Column-major rotation about Y:
+    //   Rcol = [ c 0 -s | 0 1 0 | s 0 c ] (rows) →
+    //   [r00 r01 r02; r10 r11 r12; r20 r21 r22] = [0 0 1; 0 1 0; -1 0 0].
+    double c = cos(90.0 * PI / 180.0), s = sin(90.0 * PI / 180.0);
+    double[3][3] R = [
+        [ c,   0.0,  s  ],
+        [ 0.0, 1.0,  0.0],
+        [-s,   0.0,  c  ],
+    ];
+    // RS = R · diag(scl)  (scale columns).
+    double[3][3] RS;
+    foreach (i; 0 .. 3) foreach (j; 0 .. 3)
+        RS[i][j] = R[i][j] * [scl.x, scl.y, scl.z][j];
+    // Linear part L = RS (rotation+scale, pivot only affects translation).
+    // Translation: from M = T(pos)·T(pivot)·RS_about_origin·T(-pivot), the
+    // about-pivot affine offset for a linear map L is  pivot - L·pivot, then
+    // shifted by pos+pivot folded as: t = pos + (pivot - L·pivot).
+    double[3] piv = [pivot.x, pivot.y, pivot.z];
+    double[3] Lpiv;
+    foreach (i; 0 .. 3)
+        Lpiv[i] = RS[i][0]*piv[0] + RS[i][1]*piv[1] + RS[i][2]*piv[2];
+    double[3] t = [
+        pos.x + (piv[0] - Lpiv[0]),
+        pos.y + (piv[1] - Lpiv[1]),
+        pos.z + (piv[2] - Lpiv[2]),
+    ];
+    // Assemble expected column-major float[16]: exp[row + col*4].
+    double[16] exp;
+    foreach (col; 0 .. 3) foreach (row; 0 .. 3)
+        exp[row + col*4] = RS[row][col];
+    exp[3] = exp[7] = exp[11] = 0;
+    exp[12] = t[0]; exp[13] = t[1]; exp[14] = t[2]; exp[15] = 1;
+
+    foreach (i; 0 .. 16)
+        assert(isClose(got[i], cast(float)exp[i], 1e-5f, 1e-5f),
+               "composedMatrix mismatch vs independent hand formula at index");
 }
