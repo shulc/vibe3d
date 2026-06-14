@@ -215,7 +215,7 @@ struct Form {
 // command id and dispatch on click without a value read.
 // ===========================================================================
 
-enum Namespace { tool, stage, command }
+enum Namespace { tool, stage, layer, command }
 
 /// Parsed shape of a control / cmd binding line.
 struct Binding {
@@ -238,7 +238,8 @@ struct Binding {
 /// line is reconstructed from positionals. An empty id keeps the literal target
 /// (plain commands and callers that pass none). Tool/stage are mutually
 /// exclusive by namespace, so at most one rebind applies.
-Binding rebindBindingTarget(Binding b, string activeToolId, string stageId)
+Binding rebindBindingTarget(Binding b, string activeToolId, string stageId,
+                            string layerIndex = "")
 {
     if (b.namespace == Namespace.tool && activeToolId.length
         && b.positionals.length >= 1)
@@ -251,6 +252,18 @@ Binding rebindBindingTarget(Binding b, string activeToolId, string stageId)
     {
         b.positionals[0] = stageId;
         b.targetId       = stageId;
+    }
+    else if (b.namespace == Namespace.layer && layerIndex.length
+             && b.positionals.length >= 1)
+    {
+        // A layer.attr line names the target LAYER by its index. The YAML
+        // carries a literal placeholder index (there is no angle-bracket
+        // template token); the live index is supplied here and overwrites
+        // positionals[0] (and targetId), so the reconstructed write line names
+        // the layer the panel is bound to. Namespaces are mutually exclusive,
+        // so at most one rebind applies.
+        b.positionals[0] = layerIndex;
+        b.targetId       = layerIndex;
     }
     return b;
 }
@@ -310,11 +323,15 @@ Binding parseBinding(string line)
             ~ line ~ "'");
     b.hasQuery = (qCount == 1);
 
-    // For the two attr namespaces, a value-bound line MUST be
+    // For the attr namespaces, a value-bound line MUST be
     // `<cmd> <targetId> <attr> ?` — extract target + attr. A `?`-less line in
     // these namespaces is a malformed value bind (a control row needs its `?`,
-    // a cmd/choice row should not use a tool.attr line at all).
-    if (b.namespace == Namespace.tool || b.namespace == Namespace.stage) {
+    // a cmd/choice row should not use a tool.attr line at all). The layer
+    // namespace (`layer.attr <index> <attr> ?`) follows the same `[id, attr, ?]`
+    // shape — the `id` token is the live layer INDEX (a literal placeholder in
+    // YAML, overwritten by rebindBindingTarget at draw time).
+    if (b.namespace == Namespace.tool || b.namespace == Namespace.stage
+        || b.namespace == Namespace.layer) {
         if (!b.hasQuery)
             throw new BindingException(
                 "forms: '" ~ b.commandId ~ "' binding has no '?' value slot: '"
@@ -338,6 +355,7 @@ Namespace classifyNamespace(string commandId)
 {
     if (commandId == "tool.attr")       return Namespace.tool;
     if (commandId == "tool.pipe.attr")  return Namespace.stage;
+    if (commandId == "layer.attr")      return Namespace.layer;
     return Namespace.command;
 }
 
@@ -1091,15 +1109,29 @@ private void validateControlBinding(string line, string formId,
                     b.targetId, line));
             break;
 
+        case Namespace.layer:
+            // `layer.attr <index> <attr> ?` — a layer (item) property bind.
+            // The bound attr resolves at runtime against the live
+            // LayerPropsProvider's params() (the static 14: pos/rot/scl/pivot
+            // components + name + visible); the renderer hides a row whose attr
+            // is absent, exactly like the tool/stage runtime path. There is no
+            // layer-attr universe delegate here, so the boot-strict pass accepts
+            // the line unconditionally (its shape was already checked by
+            // parseBinding). The `<index>` token is a literal placeholder
+            // overwritten with the live layer index by rebindBindingTarget; it
+            // is NOT validated as a target id here.
+            break;
+
         case Namespace.command:
             // A `control:` line in the plain-command namespace is malformed —
-            // a value bind must be tool.attr / tool.pipe.attr. parseBinding
-            // already rejects a `?`-less tool/stage line; a `?`-bearing plain
-            // command (e.g. "actr.auto ?") is nonsensical as a value bind.
+            // a value bind must be tool.attr / tool.pipe.attr / layer.attr.
+            // parseBinding already rejects a `?`-less tool/stage/layer line; a
+            // `?`-bearing plain command (e.g. "actr.auto ?") is nonsensical as a
+            // value bind.
             throw new FormValidationException(format(
                 "forms: form '%s' (%s) control binds to plain command '%s' — "
-                ~ "value controls must use tool.attr / tool.pipe.attr "
-                ~ "(binding '%s')", formId, ctx, b.commandId, line));
+                ~ "value controls must use tool.attr / tool.pipe.attr / "
+                ~ "layer.attr (binding '%s')", formId, ctx, b.commandId, line));
     }
 }
 

@@ -618,3 +618,98 @@ unittest { // rebindBindingTarget: live tool / live stage instance / literal
     assert(rebindBindingTarget(s, "", "").targetId == "falloff");
     assert(rebindBindingTarget(t, "", "").targetId == "xfrm.transform");
 }
+
+// ---------------------------------------------------------------------------
+// P2 (per-item channels): a `layer.attr <index> <attr> ?` control line parses
+// into the new Namespace.layer, extracts its attr like a tool.attr line, passes
+// strict validateControlBinding (the boot-rejection case the opponent flagged —
+// a layer.attr line classified as Namespace.command would throw at boot), and
+// rebinds its placeholder index to the live layer index.
+// ---------------------------------------------------------------------------
+
+unittest { // layer.attr parses -> Namespace.layer + attr (mirrors tool.attr)
+    auto b = parseBinding("layer.attr 0 pos.x ?");
+    assert(b.commandId == "layer.attr");
+    assert(b.namespace == Namespace.layer);
+    assert(b.targetId  == "0");          // literal placeholder index
+    assert(b.attr      == "pos.x");
+    assert(b.hasQuery);
+    assert(b.queryIdx  == 2);
+    assert(b.positionals == ["0", "pos.x", "?"]);
+
+    // The string-valued `name` row binds the same way.
+    auto n = parseBinding("layer.attr 0 name ?");
+    assert(n.namespace == Namespace.layer);
+    assert(n.attr == "name");
+}
+
+unittest { // classifyNamespace maps layer.attr -> Namespace.layer (not command)
+    assert(classifyNamespace("layer.attr")     == Namespace.layer);
+    assert(classifyNamespace("tool.attr")      == Namespace.tool);
+    assert(classifyNamespace("tool.pipe.attr") == Namespace.stage);
+    assert(classifyNamespace("actr.auto")      == Namespace.command);
+}
+
+unittest { // validateControlBinding ACCEPTS a layer.attr line (boot does not abort)
+    // A layer.attr control used to classify as Namespace.command and would
+    // throw at boot under strict validation. With Namespace.layer on the
+    // allow-list it validates clean. No layer-attr universe delegate is needed
+    // (the runtime resolver hides an absent attr, like tool/stage rows).
+    enum yaml = q"YAML
+forms:
+  - id: layer.props
+    rows:
+      - { control: "layer.attr 0 pos.x ?", label: X }
+      - { control: "layer.attr 0 name ?",  label: Name }
+YAML";
+    auto forms = loadFormsFromString(yaml);   // structurally valid
+    // Must NOT throw — the layer namespace is accepted by the strict pass.
+    validateForms(forms, realisticValidators(), "<layer-props>");
+}
+
+unittest { // rebindBindingTarget overwrites the layer index placeholder
+    auto b = parseBinding("layer.attr 0 pos.x ?");
+    assert(b.namespace == Namespace.layer && b.targetId == "0");
+    // The live layer index (as a string token) overwrites positionals[0].
+    auto rb = rebindBindingTarget(b, "", "", "3");
+    assert(rb.targetId == "3" && rb.positionals[0] == "3",
+        "layer binding must rebind to the live layer index");
+    // Tool / stage ids are irrelevant to a layer-namespace rebind.
+    auto rb2 = rebindBindingTarget(b, "move", "falloff#1", "5");
+    assert(rb2.targetId == "5" && rb2.positionals[0] == "5");
+    // Empty layer index → the literal placeholder is kept.
+    assert(rebindBindingTarget(b, "", "", "").targetId == "0");
+}
+
+unittest { // the shipped config/forms/layer_props.yaml loads + validates clean
+    import std.file : exists;
+    if (!exists("config/forms/layer_props.yaml"))
+        return;   // harness ran from an unexpected cwd; HTTP boot check covers it
+    auto forms = loadForms("config/forms/layer_props.yaml");
+    assert(forms.length == 1);
+    assert(forms[0].id == "layer.props");
+    // Not a tool/stage form — selected by formById, so neither filter is set.
+    assert(forms[0].whenTool.length == 0);
+    assert(forms[0].whenStage.length == 0);
+    // Strict validation must accept every layer.attr control line at boot.
+    validateForms(forms, realisticValidators(), "config/forms/layer_props.yaml");
+
+    // Every control binds to the layer namespace + names a LayerPropsProvider
+    // attr (the static 14: pos/rot/scl/pivot components + name; visible is
+    // deliberately omitted from this form).
+    static immutable string[] layerAttrs = [
+        "pos.x", "pos.y", "pos.z", "rot.x", "rot.y", "rot.z",
+        "scl.x", "scl.y", "scl.z", "pivot.x", "pivot.y", "pivot.z", "name",
+    ];
+    void checkRow(ref Row r) {
+        if (r.kind == RowKind.control) {
+            auto b = parseBinding(r.command);
+            assert(b.namespace == Namespace.layer,
+                "layer form row must bind to the layer namespace: " ~ r.command);
+            assert(layerAttrs.canFind(b.attr),
+                "layer form binds unexpected attr '" ~ b.attr ~ "'");
+        }
+        foreach (ref c; r.rows) checkRow(c);
+    }
+    foreach (ref r; forms[0].rows) checkRow(r);
+}
