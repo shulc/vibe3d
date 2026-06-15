@@ -12,7 +12,7 @@ import editmode;
 import document : Document;
 import io.scene_ir : flattenDocument;
 import io.lwo_export : exportLwoDocument;
-import io.scene_export : exportViaAssimp;
+import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
 import io.native : writeV3d;
 import io.formats;
 import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath;
@@ -92,6 +92,12 @@ class FileSave : Command {
         return path;
     }
 
+    // True for assimp's FBX exporter ids. FBX write is deferred for the
+    // layer-aware path, so its dispatch falls back to the flatten exporter.
+    private static bool isFbxFormat(string assimpExportId) {
+        return assimpExportId == "fbx" || assimpExportId == "fbxa";
+    }
+
     override bool apply() {
         string path = explicitPath;
         bool fromDialog = false;
@@ -120,8 +126,23 @@ class FileSave : Command {
             // path (N=1 case of the multi-layer builder).
             exportLwoDocument(*document, path);
         } else if (fi !is null && fi.kind == FormatKind.assimp && fi.canExport) {
-            auto flat = flattenDocument(*document);
-            if (!exportViaAssimp(flat, path, fi.assimpExportId)) return false;
+            // OBJ / glTF export is LAYER-AWARE (Stage 4): one aiMesh per Document
+            // layer on its own child node (N>=2), or today's exact root-mesh shape
+            // (N==1, byte-identical single-layer export). Per-layer xform rides the
+            // child node's transform; hidden layers carry an ml_visible=false node
+            // metadata (glTF extras; OBJ drops it — documented loss).
+            //
+            // FBX is SPECIAL-CASED to the flatten path: FBX write stays deferred
+            // (its node-graph / visibility semantics through assimp's FBX exporter
+            // were never probed), so multi-layer FBX is NOT exposed — it keeps
+            // today's single flattened-mesh behaviour byte-for-byte.
+            if (isFbxFormat(fi.assimpExportId)) {
+                auto flat = flattenDocument(*document);
+                if (!exportViaAssimp(flat, path, fi.assimpExportId)) return false;
+            } else {
+                if (!exportDocumentViaAssimp(*document, path, fi.assimpExportId))
+                    return false;
+            }
         } else {
             // Native .v3d is the layered source of truth: serialize the WHOLE
             // document (every layer + the active index) as formatVersion 2.

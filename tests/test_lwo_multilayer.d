@@ -13,9 +13,10 @@
 //   * import keeps the two layers separate — each layer's faces stay
 //     LAYER-LOCAL (the quad is [0,1,2,3], the triangle is [0,1,2], NOT
 //     re-offset), and each layer's geometry matches its raw LWO coords;
-//   * a flat re-export of the document re-offsets layer 1's triangle past
-//     layer 0's verts (the 7-vert / 2-face merge — the original offset-bug
-//     witness, now exercised on the export path).
+//   * OBJ EXPORT is layer-aware (Stage 4): a 2-layer document exports as one
+//     aiMesh per layer (child-node-per-layer), so re-importing the .obj yields
+//     TWO parts with layer-local geometry — NOT the old flat 7-vert / 2-face
+//     merge. (The flatten path now only runs for FBX export.)
 //
 // Fixture (LWO2):
 //   FORM <size> LWO2
@@ -254,38 +255,46 @@ unittest {  // each layer keeps LAYER-LOCAL face indices + its own raw geometry
     }
 }
 
-unittest {  // EXPORT flattens the two layers: re-offset triangle → verts 4,5,6
+unittest {  // OBJ-witness (Stage 4): export NO LONGER flattens — 2 layers → 2 parts
     writeFixture();
     loadFixture();
 
-    // Flatten via OBJ export, then re-import the merged file (one object → one
-    // layer of 7 verts). This is the original offset-bug witness, now on the
-    // export path: layer 1's triangle must land on the OFFSET verts 4,5,6.
-    const flat = "/tmp/vibe3d_test_lwo_multilayer_flat.obj";
-    if (exists(flat)) remove(flat);
-    saveOk(flat);
-    assert(exists(flat), "OBJ export should write a file");
+    // Stage 4 routes OBJ/glTF export through the LAYER-AWARE exporter: one aiMesh
+    // per Document layer on its own child node. assimp's OBJ exporter emits one
+    // group per mesh, so re-import yields TWO parts (NOT the old flat 7v/2f merge).
+    // This is the OBJ-witness the plan MOVED out of the LWO stage into Stage 4.
+    const objPath = "/tmp/vibe3d_test_lwo_multilayer_obj.obj";
+    if (exists(objPath)) remove(objPath);
+    saveOk(objPath);
+    assert(exists(objPath), "OBJ export should write a file");
 
     resetApp();
     auto resp = post("http://localhost:8080/api/command",
-        "file.load path:\"" ~ flat ~ "\"");
-    assert(parseJSON(resp)["status"].str == "ok", "flat reload failed: " ~ resp);
+        "file.load path:\"" ~ objPath ~ "\"");
+    assert(parseJSON(resp)["status"].str == "ok", "OBJ reload failed: " ~ resp);
 
-    auto m = model();
-    assert(m["vertexCount"].integer == 7,
-        "flattened export = 7 verts (4+3), got " ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 2,
-        "flattened export = 2 faces (quad+tri), got " ~ m["faceCount"].integer.to!string);
+    // Two parts, NOT one flat 7-vert mesh.
+    auto L = layers();
+    auto ls = L["layers"].array;
+    assert(ls.length == 2,
+        "2-layer OBJ export must re-import as 2 layers (not flattened), got "
+        ~ ls.length.to!string);
 
-    // Both clusters survive the flatten: a z=0 quad and a z=+5 triangle.
-    bool sawZ0 = false, sawZ5 = false;
-    foreach (v; m["vertices"].array) {
-        const z = v.array[2].floating;
-        if (approxEqual(z, 0.0)) sawZ0 = true;
-        if (approxEqual(z, 5.0)) sawZ5 = true;
+    // Geometry survives per layer: one layer carries the z=0 quad (4 verts),
+    // the other the z=+5 triangle (3 verts). Order is exporter-defined, so check
+    // by content, not by index.
+    bool sawQuadZ0 = false, sawTriZ5 = false;
+    foreach (li; 0 .. 2) {
+        auto m = modelLayer(cast(int) li);
+        const vc = m["vertexCount"].integer;
+        const z  = vat(m, 0)[2];
+        if (vc == 4 && approxEqual(z, 0.0)) sawQuadZ0 = true;
+        if (vc == 3 && approxEqual(z, 5.0)) sawTriZ5 = true;
     }
-    assert(sawZ0 && sawZ5,
-        "flattened export must contain BOTH layers' geometry (z=0 quad + z=5 tri)");
+    assert(sawQuadZ0,
+        "one re-imported layer must be the z=0 quad (4 verts)");
+    assert(sawTriZ5,
+        "one re-imported layer must be the z=+5 triangle (3 verts)");
 
-    remove(flat);
+    remove(objPath);
 }
