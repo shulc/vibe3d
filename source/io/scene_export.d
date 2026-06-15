@@ -61,6 +61,35 @@ import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import math : Vec3;
 import io.assimp_runtime : isAssimpAvailable;
 
+/// Column-major float[16] (the project's matrix convention, e.g.
+/// `ItemXform.composedMatrix()` / `math.matMul4` output) -> ROW-major
+/// `aiMatrix4x4` (what assimp's `aiNode.mTransformation` expects). This is the
+/// exact INVERSE of the `private` `toMat16` in io/scene_import.d, which
+/// transposes a row-major `aiMatrix4x4` into the column-major float[16] on the
+/// way IN; this transposes on the way OUT. PUBLIC so the multi-layer assimp
+/// exporter can write per-layer node transforms; lives here (not math.d) to keep
+/// math.d free of the assimp type dependency.
+///
+/// aiMatrix4x4 is row-major: `a1 a2 a3 a4` is row 0, `b1 b2 b3 b4` is row 1, etc.
+/// (letter = row, number = 1-based column). Column-major float[16] indexes as
+/// `col*4 + row`, so element (row r, col c) = `colMajor[c*4 + r]`.
+aiMatrix4x4 toAiMat(const float[16] colMajor) @safe pure nothrow @nogc {
+    aiMatrix4x4 m;
+    // row 0
+    m.a1 = colMajor[0*4 + 0]; m.a2 = colMajor[1*4 + 0];
+    m.a3 = colMajor[2*4 + 0]; m.a4 = colMajor[3*4 + 0];
+    // row 1
+    m.b1 = colMajor[0*4 + 1]; m.b2 = colMajor[1*4 + 1];
+    m.b3 = colMajor[2*4 + 1]; m.b4 = colMajor[3*4 + 1];
+    // row 2
+    m.c1 = colMajor[0*4 + 2]; m.c2 = colMajor[1*4 + 2];
+    m.c3 = colMajor[2*4 + 2]; m.c4 = colMajor[3*4 + 2];
+    // row 3
+    m.d1 = colMajor[0*4 + 3]; m.d2 = colMajor[1*4 + 3];
+    m.d3 = colMajor[2*4 + 3]; m.d4 = colMajor[3*4 + 3];
+    return m;
+}
+
 /// Export `mesh` to `path` using assimp's exporter for `formatId`.
 ///
 /// `formatId` is an assimp export-format id, NOT an extension — the caller

@@ -342,6 +342,36 @@ Vec3 applyAffine(float[16] m, Vec3 p) @safe pure nothrow @nogc {
     );
 }
 
+// Affine transform of a point by a COLUMN-MAJOR float[16] (w = 1; perspective
+// divide skipped — affine matrices have d-row [0,0,0,1]). PUBLIC, reusable name
+// for the interchange exporters (LWO bake, assimp node transform) so they need
+// not reach for the `private` equivalent in io/scene_import.d. Forwards to
+// applyAffine — same math, NOT a second spelling of it.
+Vec3 transformPoint(const float[16] m, Vec3 p) @safe pure nothrow @nogc {
+    return applyAffine(m, p);
+}
+unittest { // transformPoint matches a hand-computed T·R·S applied to a point.
+    // S = diag(2,3,4); R = 90deg about +Y; T = (10,20,30). Column-major
+    // M = T * R * S. Compose via the existing matrix builders, then check.
+    auto S = pivotScaleMatrix(Vec3(0, 0, 0), 2, 3, 4);
+    auto R = pivotRotationMatrix(Vec3(0, 0, 0), Vec3(0, 1, 0), cast(float) PI / 2);
+    auto T = translationMatrix(Vec3(10, 20, 30));
+    auto M = matMul4(T, matMul4(R, S));
+    // Expected by composing the identical sub-steps separately.
+    auto pScaled  = applyAffine(S, Vec3(1, 1, 1));
+    auto pRotated = applyAffine(R, pScaled);
+    auto expected = applyAffine(T, pRotated);
+    auto got = transformPoint(M, Vec3(1, 1, 1));
+    assert(isClose(got.x, expected.x, 1e-5f, 1e-5f)
+        && isClose(got.y, expected.y, 1e-5f, 1e-5f)
+        && isClose(got.z, expected.z, 1e-5f, 1e-5f));
+    // Independent hard number: 90deg-about-+Y of (2,3,4) is (4,3,-2) in this
+    // column-major builder, + T -> (14,23,28).
+    assert(isClose(got.x, 14.0f, 1e-4f, 1e-4f)
+        && isClose(got.y, 23.0f, 1e-4f, 1e-4f)
+        && isClose(got.z, 28.0f, 1e-4f, 1e-4f));
+}
+
 // Build a column-major orthonormal frame matrix from a basis. The basis
 // vectors right/up/fwd are placed in columns 0/1/2 of the upper-left 3x3;
 // rotation-only (translation 0, w 1). Same column-major (m[row + col*4])
