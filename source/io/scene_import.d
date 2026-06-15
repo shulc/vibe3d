@@ -391,3 +391,34 @@ private Vec3 transformPoint(const float[16] m, Vec3 p) {
     const float z = m[2]*p.x + m[6]*p.y + m[10]*p.z + m[14];
     return Vec3(x, y, z);
 }
+
+unittest {
+    // Round-trip witness for the PUBLIC io.scene_export.toAiMat against the
+    // private toMat16 here: they are inverse transposes, so feeding a non-trivial
+    // column-major matrix M through toAiMat (col-major -> row-major aiMatrix4x4)
+    // and back through toMat16 (row-major aiMatrix4x4 -> col-major) must recover
+    // M element-for-element. Stage 4 writes node transforms via toAiMat; this
+    // proves it lands the bytes toMat16 reads back on re-import. We assert the
+    // full transpose-out/transpose-in IDENTITY, not a mere element shuffle.
+    import io.scene_export : toAiMat;
+    import std.math : isClose;
+    // Non-trivial: translation + rotation + non-uniform scale, all entries
+    // distinct so a wrong index would show.
+    immutable float[16] M = [
+        2.0f, 0.1f, 0.2f, 0.0f,   // col 0
+        0.3f, 3.0f, 0.4f, 0.0f,   // col 1
+        0.5f, 0.6f, 4.0f, 0.0f,   // col 2
+        10.0f, 20.0f, 30.0f, 1.0f, // col 3 (translation)
+    ];
+    auto ai = toAiMat(M);
+    auto back = toMat16(ai);
+    foreach (i; 0 .. 16)
+        assert(isClose(back[i], M[i], 1e-6f, 1e-6f),
+               "toMat16(toAiMat(M)) must equal M");
+    // Spot-check the transpose actually happened: M's translation lives in the
+    // last COLUMN (M[12..14]); in the row-major aiMatrix4x4 it must be the last
+    // COLUMN entries a4/b4/c4 (one per row), not the last row.
+    assert(isClose(ai.a4, 10.0f, 1e-6f, 1e-6f));
+    assert(isClose(ai.b4, 20.0f, 1e-6f, 1e-6f));
+    assert(isClose(ai.c4, 30.0f, 1e-6f, 1e-6f));
+}
