@@ -49,6 +49,12 @@ struct ImportedPart {
     // too and the stream stays aligned with the emitted faces. After
     // `buildLoops`, it seeds the `"uv"` map via `faceCornerLoop`.
     float[]           uv;
+    // Layer visibility, carried from the source format's hidden flag (Stage 5).
+    // Additive default TRUE so every existing importer (and `flattenToMesh` /
+    // `partToMesh`, which never read it) is unchanged: only the formats that
+    // actually decode a hidden bit set this false (LWO `LAYR` flags bit 0; glTF
+    // node `ml_visible` metadata). OBJ has no visibility channel ⇒ stays true.
+    bool              visible = true;
 }
 
 /// The proto-layer model: a list of parts. When layers land this becomes the
@@ -345,20 +351,43 @@ Document toLayers(const ref ImportedScene scene) {
         l.mesh       = partToMesh(part);
         l.name       = part.name.length ? part.name
                                         : "Layer " ~ to!string(pi + 1);
-        l.visible    = true;
-        // Stage 2b: background is derived (visible && !selected) — set only the
-        // selected bit. First part is the active/foreground layer; the rest are
-        // deselected ⇒ derived background. `setActive(0)` below re-asserts the
-        // SET-of-one regardless.
-        l.selected   = (pi == 0);
+        // Stage 5: visibility rides in from the source format's hidden flag
+        // (default true). The `selected` bit (and hence the derived background)
+        // is decided below by the primary-visible guard, not assumed to be part 0.
+        l.visible    = part.visible;
+        l.selected   = false;
         layers[pi] = l;
+    }
+
+    // -----------------------------------------------------------------------
+    // Primary-visible guard (Stage 5). `setActive`/`setPrimary` require the
+    // primary layer be selected+visible (document.d invariant). Part 0 is the
+    // natural primary, but it may have come in HIDDEN. Resolve, in priority:
+    //   (a) part 0 hidden but some OTHER part is visible → promote the FIRST
+    //       VISIBLE part to primary; part 0 stays hidden + non-primary.
+    //   (b) EVERY part hidden → no visible part to edit; un-hide part 0 (force
+    //       it visible) so a representable edit target exists. A document whose
+    //       edit target is invisible is not a valid state.
+    // The chosen index is then the primary via `setActive`, which re-asserts the
+    // SET-of-one (selected + visible) invariant.
+    // -----------------------------------------------------------------------
+    size_t primaryIdx = 0;
+    if (!layers[0].visible) {
+        size_t firstVisible = size_t.max;
+        foreach (i, l; layers)
+            if (l.visible) { firstVisible = i; break; }
+        if (firstVisible != size_t.max)
+            primaryIdx = firstVisible;          // (a) promote first visible
+        else
+            layers[0].visible = true;           // (b) all hidden → force part 0 visible
     }
 
     Document d;
     d.layers      = layers;
-    // Stage-0 lockstep: set primary + selected + activeIndex together. (Part 0
-    // is the active/foreground layer; setActive re-asserts the SET-of-one.)
-    d.setActive(0);
+    // Stage-0 lockstep: set primary + selected + activeIndex together. The guard
+    // above guarantees `layers[primaryIdx]` is visible, so the primary invariant
+    // (selected + visible) holds.
+    d.setActive(primaryIdx);
     return d;
 }
 
@@ -473,4 +502,78 @@ Mesh flattenDocument(const ref Document doc) {
         m.faceMaterial[fi] = (fi < allMaterial.length) ? allMaterial[fi] : 0u;
 
     return m;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 5 — toLayers visibility + primary-visible guard (pure data invariants)
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    /// A minimal valid part: one triangle (so `partToMesh` yields real
+    /// geometry, never the empty-mesh path), with the given name + visibility.
+    private ImportedPart triPart(string name, bool visible) {
+        ImportedPart p;
+        p.name     = name;
+        p.visible  = visible;
+        p.vertices = [ Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0) ];
+        p.faces    = [ [0u, 1u, 2u] ];
+        return p;
+    }
+}
+
+unittest {
+    // "first part hidden, others visible": toLayers must NOT make the hidden
+    // part 0 primary; it promotes the first VISIBLE part. Part 0 stays
+    // visible=false. Invariants hold (primary selected + visible + non-null).
+    ImportedScene scene;
+    scene.parts = [
+        triPart("Hidden0",  false),
+        triPart("Visible1", true),
+        triPart("Visible2", true),
+    ];
+
+    Document d = toLayers(scene);
+
+    assert(d.layers.length == 3);
+    // The hidden part survived with visible=false (not silently un-hidden).
+    assert(!d.layers[0].visible, "part 0 must stay hidden");
+    assert(d.layers[1].visible && d.layers[2].visible);
+
+    // Primary is the FIRST visible part (index 1), NOT the hidden part 0.
+    assert(d.primary !is null);
+    assert(d.primary is d.layers[1], "first visible part must be primary");
+    assert(d.primary.selected, "primary must be selected");
+    assert(d.primary.visible,  "primary must be visible");
+
+    // Exactly the primary is selected (the SET-of-one setActive establishes).
+    size_t selCount = 0;
+    foreach (l; d.layers) if (l.selected) selCount++;
+    assert(selCount == 1, "exactly one layer selected");
+    assert(!d.layers[0].selected, "hidden part 0 is not selected");
+}
+
+unittest {
+    // "all parts hidden": there is no visible part to promote, so the guard MUST
+    // force at least one visible (part 0) so the primary invariant holds. A
+    // document whose edit target is invisible is not representable.
+    ImportedScene scene;
+    scene.parts = [
+        triPart("Hidden0", false),
+        triPart("Hidden1", false),
+    ];
+
+    Document d = toLayers(scene);
+
+    assert(d.layers.length == 2);
+    // Guard forced part 0 visible; the other stays hidden.
+    assert(d.layers[0].visible, "all-hidden guard forces part 0 visible");
+    assert(!d.layers[1].visible, "non-promoted hidden part stays hidden");
+
+    // Invariants: >=1 selected, primary selected + visible + non-null.
+    assert(d.primary !is null);
+    assert(d.primary is d.layers[0]);
+    assert(d.primary.selected && d.primary.visible);
+    size_t selCount = 0;
+    foreach (l; d.layers) if (l.selected) selCount++;
+    assert(selCount >= 1, "at least one layer selected");
 }

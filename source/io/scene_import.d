@@ -162,6 +162,11 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
     ImportedPart part;
     part.name = nodeOrMeshName(node, mesh);
     part.surfaces = surfaces.dup;
+    // Stage 5: glTF carries a hidden layer as the node metadata BOOL entry
+    // `ml_visible` (the exact key scene_export.d writes; the glTF exporter routes
+    // it to the node's `extras`). Absent (e.g. OBJ, which has no metadata
+    // channel) ⇒ default visible=true (documented loss for OBJ).
+    part.visible = readNodeVisible(node);
 
     // Vertices: bake the world transform (point, w=1).
     Vec3[] verts;
@@ -347,6 +352,30 @@ private string nodeOrMeshName(const(aiNode)* node, const(aiMesh)* mesh) {
     if (mesh !is null && mesh.mName.length > 0)
         return cast(string) mesh.mName.data[0 .. mesh.mName.length].idup;
     return "Mesh";
+}
+
+/// Read the `ml_visible` BOOL entry from a node's `mMetaData` (the exact key
+/// scene_export.d writes for a hidden layer; the glTF exporter carries it on the
+/// node's `extras`). Returns the bool's value when present + typed BOOL, else
+/// TRUE (visible) — so OBJ (no metadata channel) and any node without the key
+/// default to visible. `aiMetadata` is a parallel-array C struct: `mNumProperties`
+/// entries, `mKeys[i]` an `aiString`, `mValues[i]` an `aiMetadataEntry`
+/// (`mType` + `void* mData`). For BOOL, `mData` points at a C++ `bool` (1 byte).
+private bool readNodeVisible(const(aiNode)* node) {
+    if (node is null || node.mMetaData is null) return true;
+    const meta = node.mMetaData;
+    if (meta.mKeys is null || meta.mValues is null) return true;
+    foreach (i; 0 .. meta.mNumProperties) {
+        const(aiString)* key = &meta.mKeys[i];
+        if (key.length != "ml_visible".length) continue;
+        if (cast(string) key.data[0 .. key.length] != "ml_visible") continue;
+        const(aiMetadataEntry)* entry = &meta.mValues[i];
+        // Guard the type and pointer: only BOOL entries carry a 1-byte bool.
+        if (entry.mType != aiMetadataType.BOOL || entry.mData is null)
+            return true;                       // wrong type / null → treat as visible
+        return *(cast(const(bool)*) entry.mData);
+    }
+    return true;                               // key absent → visible
 }
 
 // ---------------------------------------------------------------------------

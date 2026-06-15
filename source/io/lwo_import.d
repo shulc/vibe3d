@@ -86,6 +86,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         bool[]   polyIsSubpatch;    // parallel to polys
         ubyte[][] ptagBodies;       // PTAG bodies (filtered to SURF later)
         string   name;
+        bool     hidden;            // LAYR flags bit 0 (1 => layer hidden)
 
         // --- TXUV vertex maps, layer-local (resolved into ImportedPart.uv) ---
         // Continuous base (VMAP TXUV): point index -> (u,v). Last write wins if a
@@ -140,10 +141,15 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
 
         if (tagBytes == "LAYR") {
             // Start a new layer => new part. LAYR body: U2 number, U2 flags,
-            // VEC12 pivot, then a null-terminated name. We only care about the
-            // name (best-effort) — geometry indices reset regardless.
+            // VEC12 pivot, then a null-terminated name. We read the name plus
+            // the `flags` U2: bit 0 (0x0001) marks the layer hidden, so it
+            // round-trips a layer exported with visible=false. Geometry indices
+            // reset regardless.
             string layerName;
+            bool   layerHidden = false;
             if (chunkEnd - pos >= 16) {
+                const ushort flags = readU16(data, pos + 2);   // U2 after the layer number
+                layerHidden = (flags & 0x0001) != 0;
                 size_t p = pos + 16;   // skip number(2)+flags(2)+pivot(12)
                 size_t nameStart = p;
                 while (p < chunkEnd && data[p] != 0) p++;
@@ -151,6 +157,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             }
             PartBuild pb;
             pb.name = layerName;
+            pb.hidden = layerHidden;
             // If the very first part was lazily created by an early geometry
             // chunk that preceded any LAYR (malformed), keep it; otherwise the
             // common case is LAYR-first, so we just append.
@@ -420,6 +427,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
 
         ImportedPart ip;
         ip.name         = pb.name;
+        ip.visible      = !pb.hidden;     // LAYR flags bit 0 (hidden) -> visible=false
         ip.vertices     = pb.verts;
         ip.faces        = pb.polys;
         ip.faceSubpatch = pb.polyIsSubpatch;
