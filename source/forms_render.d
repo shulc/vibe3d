@@ -49,7 +49,7 @@ import forms;
 // Pure write-path serialization helpers live in forms.d (ImGui-free, so they
 // stay headless-unit-testable without dragging d_imgui into a test link).
 import forms : valueToArgToken, substituteQuery, currentEnumTag;
-import params : Param, ParamProvider, paramToJson;
+import params : Param, ParamProvider;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -279,22 +279,24 @@ class FormsPanel {
         ImGui.SetNextItemWidth(-float.min_normal);
     }
 
-    // Compute the FIXED value-field column for a vector group's compact layout.
-    // The field starts at the same x for every group regardless of the group
-    // label text ("Position" vs "Rotate" vs "Scale"), so the value box has an
-    // identical position and width across tools — the user-visible requirement.
-    // The column is font-relative (DPI-aware via GetFontSize), with a safety
-    // clamp so a group label wider than the fixed reserve still gets room (our
-    // transform labels never exceed it, so the field stays put across them).
-    private GroupLayout computeGroupLayout(ref Row group, Param[] snapshot)
+    // Build the FIXED value-field column for a vector cluster's compact layout.
+    // The field starts at the same x for every cluster regardless of the group
+    // label text ("Position" vs "Rotate" vs "Scale" vs "Start" vs "End"), so the
+    // value box has an identical position and width across tools — the
+    // user-visible requirement. The column is font-relative (DPI-aware via
+    // GetFontSize), with a safety clamp so a group label wider than the fixed
+    // reserve still gets room (our labels never exceed it, so the field stays put
+    // across them). Shared by drawGroup (separate-attr clusters like TX/TY/TZ)
+    // and drawVec3Control (a single Vec3 attr like falloff start/end).
+    private GroupLayout makeVectorLayout(string groupLabel)
     {
         GroupLayout g;
         g.active     = true;
-        g.groupLabel = group.label;
+        g.groupLabel = groupLabel;
         g.labelGap   = ImGui.GetStyle().ItemSpacing.x + 4.0f;
 
         const float em = ImGui.GetFontSize();
-        float groupW = group.label.length ? ImGui.CalcTextSize(group.label).x : 0.0f;
+        float groupW = groupLabel.length ? ImGui.CalcTextSize(groupLabel).x : 0.0f;
 
         // Fixed reserve (≈ "Position" + a one-letter component column), and a
         // fit fallback that only grows the column for an over-long group label.
@@ -365,13 +367,12 @@ class FormsPanel {
                 drawText(row, rc, hidden, idispatch);
                 break;
             case WidgetKind.vec3:
-                // A Vec3 attr expands into three drags; transform binds X/Y/Z
-                // as SEPARATE float attrs (TX/TY/TZ) so this path is unused by
-                // the v1 adopter. Render the live components read-only-ish via
-                // the float helper would need three sub-ids; defer — v1 forms
-                // never bind a single Vec3 attr. Show value as text fallback.
-                ImGui.LabelText(row.showLabel ? visible : hidden, "%s",
-                                paramToJson(rc.param).toString());
+                // A single Vec3 attr (e.g. falloff start/end) expands into an
+                // editable X/Y/Z cluster, rendered in the same compact layout as
+                // a separate-attr `group:` (TX/TY/TZ). An edit writes the full
+                // vec3 back as "x,y,z".
+                drawVec3Control(row, rc, cid, row.showLabel ? visible : "",
+                                idispatch);
                 break;
             case WidgetKind.none:
                 break;
@@ -461,6 +462,56 @@ class FormsPanel {
         // P-E: end-of-scrub tweak-generation boundary (see drawFloatControl).
         if (ImGui.IsItemDeactivatedAfterEdit() && onTweakEnd_ !is null)
             onTweakEnd_();
+    }
+
+    // ---- vec3: editable X/Y/Z cluster, with per-component active-item guard --
+    //
+    // A single Vec3 attr (falloff start/end/center/size/axis) renders as three
+    // component drags under one group label, in the same compact layout as a
+    // separate-attr `group:` (so a Vec3 attr and a TX/TY/TZ group look identical).
+    // Each component keeps its own scratch keyed by `<cid>.<k>`; editing one
+    // component writes the FULL vec3 back as "x,y,z" — the parseVec3 wire format
+    // (matches FalloffStage.vec3Str, %g per component) — so the other two are
+    // preserved. The caller (drawControl) has already PushID(cid)'d and opened
+    // the disabled scope, so the component widgets only need ids unique within.
+    private void drawVec3Control(ref Row row, ref ResolvedControl rc,
+                                 string cid, string groupLabel,
+                                 InteractiveDispatchFn idispatch)
+    {
+        float[3] vals = [rc.param.vptr.x, rc.param.vptr.y, rc.param.vptr.z];
+
+        const h = rc.param.hints;
+        float step = h.hasStep ? h.step_ : 0.001f;
+        string fmt = h.hasFmt  ? h.fmt   : "%.3f";
+
+        // Compact two-column layout for the three rows, then restore.
+        GroupLayout saved = glayout_;
+        glayout_ = makeVectorLayout(groupLabel);
+        const ImVec2 sp = ImGui.GetStyle().ItemSpacing;
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(sp.x, 2.0f));
+        scope(exit) { ImGui.PopStyleVar(); glayout_ = saved; }
+
+        static immutable string[3] comp = ["X", "Y", "Z"];
+        foreach (k; 0 .. 3) {
+            string scid = format("%s.%d", cid, k);
+            auto sc = scid in scratch_;
+            if (sc is null) { scratch_[scid] = Scratch.init; sc = scid in scratch_; }
+            // Active-item guard: re-seed from the live component only when idle.
+            if (!sc.active)
+                sc.f = vals[k];
+
+            beginLabeledRow(comp[k]);
+            bool changed = ImGui.DragFloat("##" ~ scid, &sc.f, step, 0.0f, 0.0f, fmt);
+            sc.active = ImGui.IsItemActive();
+            if (changed) {
+                float[3] nv = vals;
+                nv[k] = sc.f;
+                string token = format("%g,%g,%g", nv[0], nv[1], nv[2]);
+                writeValue(row, JSONValue(token), idispatch);
+            }
+            if (ImGui.IsItemDeactivatedAfterEdit() && onTweakEnd_ !is null)
+                onTweakEnd_();
+        }
     }
 
     // ---- enum / intEnum: combo (choices from the Param, not YAML) --------
@@ -594,7 +645,7 @@ class FormsPanel {
         // the group label on its own line and stacked full-width member rows with
         // the default gap — taller and looser than a packed channel cluster.
         GroupLayout saved = glayout_;
-        glayout_ = computeGroupLayout(row, snapshot);
+        glayout_ = makeVectorLayout(row.label);
 
         const ImVec2 sp = ImGui.GetStyle().ItemSpacing;
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(sp.x, 2.0f));
