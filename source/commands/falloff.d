@@ -88,6 +88,78 @@ class FalloffPresetCommand : Command {
 }
 
 // ---------------------------------------------------------------------------
+// Linear-endpoint action verbs — the falloff form's "Auto Size" X/Y/Z buttons
+// and "Reverse" button (config/forms/falloff.yaml). Fire-only `cmd` rows can't
+// use a `tool.pipe.attr falloff <attr>` line (the forms binding parser requires
+// a `?` value slot on stage-namespace lines), so these are top-level commands.
+// Both route through FalloffStage.setAttr (the `autosize` / `reverse` action
+// pseudo-attrs) so the state-publish + live-eval side-effects match every other
+// falloff edit. Linear-only at the stage level (no-op for other types).
+// ---------------------------------------------------------------------------
+
+/// Resolve the primary falloff (WGHT) stage, or throw with `who` as the prefix.
+private FalloffStage requireFalloffStage(string who) {
+    if (g_pipeCtx is null)
+        throw new Exception(who ~ ": pipeline not initialised");
+    auto fo = cast(FalloffStage)g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+    if (fo is null)
+        throw new Exception(who ~ ": no falloff (WGHT) stage registered");
+    return fo;
+}
+
+class FalloffAutoSizeCommand : Command {
+    private ToolHost toolHost;
+    private string   axis_;   // "x" / "y" / "z" (set by the app.d positional bridge)
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
+        super(mesh, view, editMode);
+        this.toolHost = host;
+    }
+
+    override string name()  const { return "falloff.autosize"; }
+    override string label() const { return "Auto Size"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// Set by the app.d positional-arg bridge (falloff.autosize <axis>).
+    void setAxis(string a) { axis_ = a; }
+
+    override bool apply() {
+        auto fo = requireFalloffStage(name());
+        if (axis_.length == 0)
+            throw new Exception("falloff.autosize: no axis specified (x/y/z)");
+        if (!fo.setAttr("autosize", axis_))
+            throw new Exception(
+                "falloff.autosize: rejected axis '" ~ axis_ ~ "' (expected x/y/z)");
+        kickLiveEval(toolHost);
+        return true;
+    }
+
+    override bool revert() { return false; }
+}
+
+class FalloffReverseCommand : Command {
+    private ToolHost toolHost;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
+        super(mesh, view, editMode);
+        this.toolHost = host;
+    }
+
+    override string name()  const { return "falloff.reverse"; }
+    override string label() const { return "Reverse"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    override bool apply() {
+        auto fo = requireFalloffStage(name());
+        fo.setAttr("reverse", "1");
+        kickLiveEval(toolHost);
+        return true;
+    }
+
+    override bool revert() { return false; }
+}
+
+// ---------------------------------------------------------------------------
 // Multi-falloff stacking verbs (Phase 4 of doc/falloff_multi_subtool_plan.md):
 //
 //   falloff.add <type>      — create a NEW stacked FalloffStage instance with

@@ -18,10 +18,6 @@ import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry;
 
-import ImGui = d_imgui;
-import d_imgui.imgui_h;
-import imgui_style       : pushPopupStyle, popPopupStyle;
-
 // ---------------------------------------------------------------------------
 // FalloffStage — Phase 7.5 of doc/phase7_plan.md / doc/falloff_plan.md.
 // Sits at ordinal 0x90 (after AXIS 0x70, before PINK 0xB0).
@@ -590,6 +586,15 @@ class FalloffStage : Stage, Operator {
             IntEnumEntry(cast(int)FalloffMix.Min,      "min",      "Min"),
         ];
 
+        // Wire tags MUST match the applySetAttr("shape", …) switch.
+        IntEnumEntry[] shapeEntries = [
+            IntEnumEntry(cast(int)FalloffShape.Linear,  "linear",  "Linear"),
+            IntEnumEntry(cast(int)FalloffShape.EaseIn,  "easeIn",  "Ease-In"),
+            IntEnumEntry(cast(int)FalloffShape.EaseOut, "easeOut", "Ease-Out"),
+            IntEnumEntry(cast(int)FalloffShape.Smooth,  "smooth",  "Smooth"),
+            IntEnumEntry(cast(int)FalloffShape.Custom,  "custom",  "Custom"),
+        ];
+
         Param[] ps;
         // Mix Mode — multi-falloff stacking control. Present for EVERY
         // active (non-None) type so each falloff section carries a Mix
@@ -599,10 +604,14 @@ class FalloffStage : Stage, Operator {
                              cast(int*)&mix, mixEntries,
                              cast(int)FalloffMix.Multiply);
 
-        // Shape preset is rendered via drawProperties() as a status-bar-
-        // style popup-button; kept out of the schema list. HTTP
-        // `tool.pipe.attr falloff shape <v>`
-        // still works through FalloffStage's setAttr override.
+        // Shape preset — the weight-curve shape (Linear / Ease-In / Ease-Out /
+        // Smooth / Custom). Exposed as a form dropdown (config/forms/falloff.yaml
+        // "Shape Preset"); the legacy drawProperties() popup that used to render
+        // it was retired in favour of this row.
+        ps ~= Param.intEnum_("shape", "Shape Preset",
+                             cast(int*)&shape, shapeEntries,
+                             cast(int)FalloffShape.Smooth);
+
         // In/Out tangent params are Custom-shape-only.
         if (shape == FalloffShape.Custom) {
             ps ~= Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
@@ -700,54 +709,12 @@ class FalloffStage : Stage, Operator {
     }
 
     override void drawProperties() {
-        if (type == FalloffType.None) return;
-
-        // Shape popup-button — matches the status-bar Falloff pulldown
-        // visual (button face shows current shape, click opens popup
-        // with checkmarks). Standard ImGui.Combo would render a
-        // chevron; the bare button keeps the Tool Properties panel
-        // visually consistent with the status row. pushPopupStyle()
-        // applies the same grey / beige hover / flat black
-        // border the status-bar popups use (imgui_style.d).
-        static immutable string[5] shapeUiLabels = [
-            "Linear", "Ease-In", "Ease-Out", "Smooth", "Custom",
-        ];
-        string buttonLabel = "Shape: " ~ shapeUiLabels[cast(int)shape];
-        if (ImGui.Button(buttonLabel))
-            ImGui.OpenPopup("##falloffShapePopup");
-        // Push BEFORE BeginPopup — PopupBg / PopupRounding / PopupBorder
-        // must be set when the popup window is created. Pop after
-        // (regardless of whether BeginPopup returned true) so Push/Pop
-        // stays balanced even when the popup isn't open this frame.
-        pushPopupStyle();
-        if (ImGui.BeginPopup("##falloffShapePopup")) {
-            foreach (i; 0 .. 5) {
-                bool selected = (cast(int)shape == cast(int)i);
-                if (ImGui.MenuItem(shapeUiLabels[i], "", selected)) {
-                    shape = cast(FalloffShape)i;
-                    publishState();
-                }
-            }
-            ImGui.EndPopup();
-        }
-        popPopupStyle();
-
-        // Auto-size + Reverse: Linear-only (operate on start/end). For
-        // Radial / Screen / Lasso the analogous "fit to selection" is
-        // already covered by autoSize() called on type-switch — no
-        // separate per-axis variant makes sense.
-        if (type != FalloffType.Linear) return;
-        ImGui.Text("Auto size:");
-        ImGui.SameLine();
-        if (ImGui.Button("X##fAuto")) { autoSizeAxis(0); publishState(); }
-        ImGui.SameLine();
-        if (ImGui.Button("Y##fAuto")) { autoSizeAxis(1); publishState(); }
-        ImGui.SameLine();
-        if (ImGui.Button("Z##fAuto")) { autoSizeAxis(2); publishState(); }
-        if (ImGui.Button("Reverse")) {
-            Vec3 t = start; start = end; end = t;
-            publishState();
-        }
+        // Shape preset, per-axis Auto Size, and Reverse all moved into the
+        // config-driven Tool Properties form (config/forms/falloff.yaml):
+        //   * shape   → "Shape Preset" dropdown (exposed in params()).
+        //   * autosize→ "Auto Size" X/Y/Z button row (tool.pipe.attr autosize).
+        //   * reverse → "Reverse" button (tool.pipe.attr reverse).
+        // Nothing left for the legacy imperative panel to draw.
     }
 
     /// Fit the Linear-falloff start/end through the selection bbox
@@ -1040,6 +1007,23 @@ private:
                 else if (value == "smooth")  { shape = FalloffShape.Smooth;  return true; }
                 else if (value == "custom")  { shape = FalloffShape.Custom;  return true; }
                 return false;
+            // ACTION pseudo-attrs (fire-only `cmd` form rows, not readable state
+            // — deliberately absent from knownAttrs()/listAttrs()). Both operate
+            // on the Linear start/end endpoints, so they no-op for other types.
+            case "autosize": {
+                if (type != FalloffType.Linear) return true;   // no-op, not error
+                if      (value == "x" || value == "0") autoSizeAxis(0);
+                else if (value == "y" || value == "1") autoSizeAxis(1);
+                else if (value == "z" || value == "2") autoSizeAxis(2);
+                else return false;
+                return true;
+            }
+            case "reverse": {
+                if (type == FalloffType.Linear) {
+                    Vec3 t = start; start = end; end = t;
+                }
+                return true;   // no-op for non-Linear, not an error
+            }
             case "start":        return parseVec3(value, start);
             case "end":          return parseVec3(value, end);
             case "center":       return parseVec3(value, center);

@@ -218,3 +218,66 @@ unittest {
 
     cmd("tool.pipe.attr falloff type none");
 }
+
+// ---------------------------------------------------------------------------
+// 7. Shape Preset dropdown — `shape` is now exposed in params() (was a legacy
+//    drawProperties popup), so the form binds it as an enum combo. The row must
+//    be visible under Linear and round-trip its wire tag.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.pipe.attr falloff type linear");
+    assert(rowVisible("shape"), "Linear: 'shape' (Shape Preset) row should be visible");
+
+    enum shapeControl = "tool.pipe.attr falloff shape ?";
+    auto b = parseBinding(shapeControl);
+    string writeLine = substituteQuery(b, JSONValue("easeIn"));   // renderer's builder
+    assert(writeLine == "tool.pipe.attr falloff shape easeIn", writeLine);
+    cmd(writeLine);
+
+    auto r = cmdRaw(shapeControl);
+    assert(r["status"].str == "ok", "shape query failed: " ~ r.toString);
+    assert(r["value"].str == "easeIn",
+        "shape write should round-trip to 'easeIn', got " ~ r["value"].toString);
+
+    cmd("tool.pipe.attr falloff type none");
+}
+
+// ---------------------------------------------------------------------------
+// 8. Auto Size / Reverse action attrs — fire-only `cmd` rows. Reverse swaps the
+//    Linear start/end; autosize is accepted (no-op without a selection). Both
+//    drive the same tool.pipe.attr path the form's button rows dispatch.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.pipe.attr falloff type linear");
+
+    cmd(`tool.pipe.attr falloff start "1,2,3"`);
+    cmd(`tool.pipe.attr falloff end "4,5,6"`);
+
+    // Reverse swaps the endpoints — the SAME command the form's button fires.
+    cmd("falloff.reverse");
+
+    double[3] readVec(string attr) {
+        auto r = cmdRaw("tool.pipe.attr falloff " ~ attr ~ " ?");
+        assert(r["status"].str == "ok", attr ~ " query failed: " ~ r.toString);
+        auto a = r["value"].array;
+        double el(size_t i) {
+            return a[i].type == JSONType.float_ ? a[i].floating
+                 : a[i].type == JSONType.integer ? cast(double) a[i].integer : double.nan;
+        }
+        return [el(0), el(1), el(2)];
+    }
+    auto s = readVec("start");
+    auto e = readVec("end");
+    assert(approxEqual(s[0], 4) && approxEqual(s[1], 5) && approxEqual(s[2], 6),
+        "reverse: start should now be (4,5,6)");
+    assert(approxEqual(e[0], 1) && approxEqual(e[1], 2) && approxEqual(e[2], 3),
+        "reverse: end should now be (1,2,3)");
+
+    // autosize is accepted as a fire-only action (no selection → no-op, still
+    // ok) — the SAME command the form's Auto Size X button fires.
+    cmd("falloff.autosize x");
+
+    cmd("tool.pipe.attr falloff type none");
+}
