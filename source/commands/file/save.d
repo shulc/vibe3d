@@ -11,7 +11,7 @@ import view;
 import editmode;
 import document : Document;
 import io.scene_ir : flattenDocument;
-import io.lwo_export : exportLwo;
+import io.lwo_export : exportLwoDocument;
 import io.scene_export : exportViaAssimp;
 import io.native : writeV3d;
 import io.formats;
@@ -113,12 +113,12 @@ class FileSave : Command {
         const ext = extension(path).toLower;
         const fi  = formatFor(ext);
         if (fi !is null && fi.kind == FormatKind.lwoNative) {
-            // Interchange export stays single-mesh: flatten the VISIBLE layers
-            // into one Mesh (flattenDocument). A single-layer document flattens
-            // to a byte-identical copy of the active mesh, so single-layer LWO
-            // export is unchanged.
-            auto flat = flattenDocument(*document);
-            exportLwo(flat, path);
+            // LWO export is LAYER-AWARE (Stage 2): one LAYR per Document layer
+            // (visible AND hidden), each layer's per-item xform baked into its
+            // points, ONE global surface table. A single-VISIBLE-layer document
+            // with identity xform exports BYTE-IDENTICAL to the old flatten
+            // path (N=1 case of the multi-layer builder).
+            exportLwoDocument(*document, path);
         } else if (fi !is null && fi.kind == FormatKind.assimp && fi.canExport) {
             auto flat = flattenDocument(*document);
             if (!exportViaAssimp(flat, path, fi.assimpExportId)) return false;
