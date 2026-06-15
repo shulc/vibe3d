@@ -30,25 +30,39 @@ forms:
     # from stage ids). Keep the id as-is.
     whenStage: falloff
     showLabel: false
+    # Row order follows the reference Linear Falloff panel: endpoints, fit
+    # actions, shape, then the universal Mix Mode last. Per-type control rows
+    # (center/size/axis, screen, lasso, element) are interleaved where they
+    # belong but stay hidden for types that don't expose them (the params()
+    # filter), so each type shows only its relevant subset in this order.
     rows:
-      # ---- Mix Mode: multi-falloff combine op (present for every active
-      #      type; unused for a single / first contributor, but the dropdown
-      #      stays visible so a stacked falloff can pick its combine). ----
-      - { control: "tool.pipe.attr falloff mix ?", label: Mix }
-
-      # ---- Custom-shape tangents (only present when shape == Custom) ----
-      - { control: "tool.pipe.attr falloff in ?",  label: In,  style: slider }
-      - { control: "tool.pipe.attr falloff out ?", label: Out, style: slider }
-
       # ---- Linear: start/end line endpoints (Vec3) ----
       - { control: "tool.pipe.attr falloff start ?", label: Start }
       - { control: "tool.pipe.attr falloff end ?",   label: End }
+
+      # ---- Auto Size: per-axis fit-to-selection (Linear-only action; the cmd
+      #      rows render for any type but no-op off Linear). Horizontal equal-
+      #      width button strip. ----
+      - group: "Auto Size"
+        style: buttons
+        rows:
+          - { cmd: "falloff.autosize x", label: X }
+          - { cmd: "falloff.autosize y", label: Y }
+          - { cmd: "falloff.autosize z", label: Z }
+
+      # ---- Reverse: swap start/end (Linear-only action). Full-width button. ----
+      - { cmd: "falloff.reverse", label: Reverse }
 
       # ---- Radial / Cylinder: ellipsoid centre + per-axis radii (Vec3) ----
       - { control: "tool.pipe.attr falloff center ?", label: Center }
       - { control: "tool.pipe.attr falloff size ?",   label: Size }
       # ---- Cylinder only: axis direction (Vec3) ----
       - { control: "tool.pipe.attr falloff axis ?",   label: Axis }
+
+      # ---- Shape preset + custom-shape tangents (In/Out only when Custom) ----
+      - { control: "tool.pipe.attr falloff shape ?", label: "Shape Preset" }
+      - { control: "tool.pipe.attr falloff in ?",  label: In,  style: slider }
+      - { control: "tool.pipe.attr falloff out ?", label: Out, style: slider }
 
       # ---- Screen: window-space centre + radius + transparency ----
       - group: Screen
@@ -72,3 +86,9 @@ forms:
       #      label so the live Param.label is used — "Range" or "Steps" per the
       #      active type. ----
       - { control: "tool.pipe.attr falloff dist ?" }
+
+      # ---- Mix Mode: multi-falloff combine op (present for every active type;
+      #      unused for a single / first contributor, but the dropdown stays
+      #      visible so a stacked falloff can pick its combine). Last, per the
+      #      reference panel. ----
+      - { control: "tool.pipe.attr falloff mix ?", label: "Mix Mode" }

@@ -261,22 +261,30 @@ class FormsPanel {
             return;
         }
 
-        const float avail = ImGui.GetContentRegionAvail().x;
-        // Left column = 35% of the available content width, clamped to a sane
-        // minimum so a very narrow panel still shows a few glyphs.
-        float col = avail * 0.35f;
-        if (col < 36.0f) col = 36.0f;
-
         ImGui.AlignTextToFramePadding();   // baseline-align label with the widget
         if (label.length)
             ImGui.TextUnformatted(label);
         else
             ImGui.TextUnformatted(" ");    // keep the row height + column
 
-        ImGui.SameLine(col);
+        ImGui.SameLine(fieldColumnX());
         // Fill the rest of the row. -float.min_normal is the ImGui idiom for
         // "stretch to the right edge of the content region".
         ImGui.SetNextItemWidth(-float.min_normal);
+    }
+
+    // Fixed label-column width shared by EVERY form row — plain controls, vector
+    // clusters (makeVectorLayout), and button rows. All widgets start at this x
+    // and fill to the right edge, so labels sit left-aligned in one column and
+    // every widget has the SAME width regardless of label text (the alignment
+    // the user asked for). Font-relative (DPI-aware); clamped on a very narrow
+    // panel so the label keeps room.
+    private float fieldColumnX()
+    {
+        float col   = ImGui.GetFontSize() * 7.0f;
+        float avail = ImGui.GetContentRegionAvail().x;
+        if (avail > 0.0f && col > avail * 0.6f) col = avail * 0.6f;
+        return col;
     }
 
     // Build the FIXED value-field column for a vector cluster's compact layout.
@@ -298,9 +306,10 @@ class FormsPanel {
         const float em = ImGui.GetFontSize();
         float groupW = groupLabel.length ? ImGui.CalcTextSize(groupLabel).x : 0.0f;
 
-        // Fixed reserve (≈ "Position" + a one-letter component column), and a
-        // fit fallback that only grows the column for an over-long group label.
-        float fixedCol = em * 7.0f;
+        // Same fixed column as every plain row (fieldColumnX), so a Vec3 cluster's
+        // fields line up with plain-control widgets. A fit fallback only grows the
+        // column for an over-long group label.
+        float fixedCol = fieldColumnX();
         float fitCol   = groupW + g.labelGap + em * 1.5f;
         g.fieldColX = fixedCol > fitCol ? fixedCol : fitCol;
         return g;
@@ -484,6 +493,12 @@ class FormsPanel {
         float step = h.hasStep ? h.step_ : 0.001f;
         string fmt = h.hasFmt  ? h.fmt   : "%.3f";
 
+        // Framed box around the X/Y/Z cluster (same frame as a `group:`), so a
+        // Vec3 attr like falloff start/end reads as its own delimited unit — just
+        // like the transform Position group.
+        beginFramedCluster();
+        scope(exit) endFramedCluster();
+
         // Compact two-column layout for the three rows, then restore.
         GroupLayout saved = glayout_;
         glayout_ = makeVectorLayout(groupLabel);
@@ -566,9 +581,50 @@ class FormsPanel {
 
     private void drawCmd(ref Row row, DispatchFn dispatch)
     {
+        // Button sits in the value column (left label empty), same width as the
+        // input fields, flush right — so a standalone command button (falloff
+        // "Reverse") lines up with the fields above it rather than spanning the
+        // whole panel.
         string label = row.label.length ? row.label : row.command;
-        if (ImGui.Button(label))
+        beginLabeledRow("");
+        if (ImGui.Button(label, ImVec2(-float.min_normal, 0)))
             fireLine(row.command, dispatch);
+    }
+
+    // -----------------------------------------------------------------------
+    // button row — a `group: style: buttons` of `cmd` children laid out as a
+    // horizontal strip of EQUAL-width buttons that fills the widget column to
+    // the right edge, with a tiny gap between them (the falloff "Auto Size"
+    // X/Y/Z row). The group label sits in the left column like any other row.
+    // -----------------------------------------------------------------------
+    private void drawButtonRow(ref Row row, int rowIdx, DispatchFn dispatch)
+    {
+        ImGui.PushID(format("btnrow#%d#%s", rowIdx, row.label));
+        scope(exit) ImGui.PopID();
+
+        // Count the cmd children (the buttons).
+        int n = 0;
+        foreach (ref c; row.rows)
+            if (c.kind == RowKind.cmd) n++;
+        if (n == 0) return;
+
+        // Label left, cursor positioned at the shared field column.
+        beginLabeledRow(row.label);
+
+        const float gap   = 2.0f;   // tiny inter-button spacing
+        float avail = ImGui.GetContentRegionAvail().x;
+        float bw    = (avail - gap * (n - 1)) / n;
+        if (bw < 1.0f) bw = 1.0f;
+
+        int i = 0;
+        foreach (ref c; row.rows) {
+            if (c.kind != RowKind.cmd) continue;
+            if (i > 0) ImGui.SameLine(0, gap);
+            string lbl = c.label.length ? c.label : c.command;
+            if (ImGui.Button(lbl ~ format("##b%d", i), ImVec2(bw, 0)))
+                fireLine(c.command, dispatch);
+            i++;
+        }
     }
 
     private void drawChoice(ref Row row, int rowIdx, DispatchFn dispatch)
@@ -618,6 +674,14 @@ class FormsPanel {
                            ParamProvider provider,
                            DispatchFn dispatch, InteractiveDispatchFn idispatch)
     {
+        // style: buttons — a horizontal equal-width button strip, not a framed
+        // vector cluster. Routed before the visible-member check (its cmd
+        // children always render).
+        if (row.groupStyle == GroupStyle.buttons) {
+            drawButtonRow(row, rowIdx, dispatch);
+            return;
+        }
+
         // Skip the framed box entirely when every member is runtime-hidden —
         // otherwise the channel-split below paints an empty rect + the group
         // label with no controls inside it.
@@ -626,24 +690,14 @@ class FormsPanel {
         ImGui.PushID(format("group#%d#%s", rowIdx, row.label));
         scope(exit) ImGui.PopID();
 
-        auto dl = ImGui.GetWindowDrawList();
-        dl.ChannelsSplit(2);
-        dl.ChannelsSetCurrent(1);        // 1 = foreground (the widgets)
+        // Framed box around the cluster (shared with drawVec3Control). The
+        // compact vector layout puts the group label ("Position") on the FIRST
+        // member's row next to "X"; subsequent members leave the group column
+        // blank so "Y"/"Z" and their fields align under "X", with a tighter
+        // ItemSpacing.y. The legacy layout put the group label on its own line
+        // and stacked full-width member rows — taller and looser.
+        beginFramedCluster();
 
-        const float pad = 4.0f;
-        ImVec2 groupMin = ImGui.GetCursorScreenPos();
-        groupMin.x += pad;
-        groupMin.y += pad;
-        ImGui.SetCursorScreenPos(groupMin);
-
-        ImGui.BeginGroup();
-
-        // Compact vector layout: the group label ("Position") rides
-        // the FIRST member's row next to "X"; subsequent members leave the group
-        // column blank so "Y"/"Z" and their value fields align under "X". A
-        // tighter ItemSpacing.y packs the rows vertically. The legacy layout put
-        // the group label on its own line and stacked full-width member rows with
-        // the default gap — taller and looser than a packed channel cluster.
         GroupLayout saved = glayout_;
         glayout_ = makeVectorLayout(row.label);
 
@@ -656,23 +710,54 @@ class FormsPanel {
         ImGui.PopStyleVar();
         glayout_ = saved;   // restore for nested groups / following rows
 
+        endFramedCluster();
+    }
+
+    // -----------------------------------------------------------------------
+    // Framed cluster — a thin-bordered, padded box around a vector cluster
+    // (group of separate attrs OR a single Vec3 attr). Channel-split idiom: the
+    // border paints on a BACKGROUND channel so it sits behind the widgets (a
+    // naive rect-after-widgets would paint over them). beginFramedCluster opens
+    // the split + group + pad; endFramedCluster closes the group and strokes the
+    // box. The fill matches WindowBg (no contrasting fill — the thin border
+    // alone delimits the cluster). Used by drawGroup and drawVec3Control so a
+    // TX/TY/TZ group and a Vec3 attr (falloff start/end) frame identically.
+    // -----------------------------------------------------------------------
+    private enum float kClusterPad = 4.0f;
+
+    private void beginFramedCluster()
+    {
+        auto dl = ImGui.GetWindowDrawList();
+        dl.ChannelsSplit(2);
+        dl.ChannelsSetCurrent(1);        // 1 = foreground (the widgets)
+
+        ImVec2 p = ImGui.GetCursorScreenPos();
+        p.x += kClusterPad;
+        p.y += kClusterPad;
+        ImGui.SetCursorScreenPos(p);
+        ImGui.BeginGroup();
+    }
+
+    private void endFramedCluster()
+    {
         ImGui.EndGroup();
 
-        // Background channel: fill with the SAME color as the Tool Properties
-        // window background (style WindowBg, fetched live so any theme change
-        // tracks automatically) — a contrasting fill behind the labels read
-        // poorly. The thin border alone delimits the cluster.
         ImVec2 rmin = ImGui.GetItemRectMin();
         ImVec2 rmax = ImGui.GetItemRectMax();
-        rmin.x -= pad; rmin.y -= pad;
-        rmax.x += pad; rmax.y += pad;
+        rmin.x -= kClusterPad; rmin.y -= kClusterPad;
+        rmax.x += kClusterPad; rmax.y += kClusterPad;
+
+        // Same window draw list as beginFramedCluster (one per window) — the
+        // channel split opened there is still active; select the background
+        // channel, stroke, and merge.
+        auto dl = ImGui.GetWindowDrawList();
         dl.ChannelsSetCurrent(0);        // 0 = background
         dl.AddRectFilled(rmin, rmax, ImGui.GetColorU32(ImGuiCol.WindowBg), 3.0f);
         dl.AddRect(rmin, rmax, IM_COL32(96, 96, 110, 255), 3.0f);
         dl.ChannelsMerge();
 
         // Advance the cursor past the padded box so following rows clear it.
-        ImGui.Dummy(ImVec2(0, pad));
+        ImGui.Dummy(ImVec2(0, kClusterPad));
     }
 
     // -----------------------------------------------------------------------

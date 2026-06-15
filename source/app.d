@@ -124,7 +124,8 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
-import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand;
+import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
+                                  FalloffAutoSizeCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneRotateCommand, WorkplaneOffsetCommand,
                                 WorkplaneAlignToSelectionCommand;
@@ -1728,7 +1729,8 @@ void main(string[] args) {
     {
         import commands.falloff : FalloffPresetCommand,
                                    FalloffAddCommand, FalloffRemoveCommand,
-                                   FalloffClearCommand;
+                                   FalloffClearCommand,
+                                   FalloffAutoSizeCommand, FalloffReverseCommand;
         // IIFE capture by value — same closure-over-loop-variable trap the
         // actr.* block above documents.
         Command delegate() makeFalloffFactory(string ty) {
@@ -1749,6 +1751,14 @@ void main(string[] args) {
             new FalloffRemoveCommand(&mesh(), cameraView, editMode, toolHost);
         reg.commandFactories["falloff.clear"] = () => cast(Command)
             new FalloffClearCommand(&mesh(), cameraView, editMode, toolHost);
+
+        // Falloff form action buttons: `falloff.autosize <axis>` (X/Y/Z fit) and
+        // `falloff.reverse` (swap start/end). autosize's axis is wired in
+        // injectToolCommandPositional below.
+        reg.commandFactories["falloff.autosize"] = () => cast(Command)
+            new FalloffAutoSizeCommand(&mesh(), cameraView, editMode, toolHost);
+        reg.commandFactories["falloff.reverse"] = () => cast(Command)
+            new FalloffReverseCommand(&mesh(), cameraView, editMode, toolHost);
     }
 
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh(), cameraView, editMode);
@@ -2962,6 +2972,15 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             frm.setTargetId(pos[0].str);
+                    }
+                }
+            } else if (auto fas = cast(FalloffAutoSizeCommand)cmd) {
+                // falloff.autosize <axis>  (x / y / z)
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            fas.setAxis(pos[0].str);
                     }
                 }
             }

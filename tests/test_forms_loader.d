@@ -56,7 +56,9 @@ private string[] falloffUniverse() {
 
 private string[] commandUniverse() {
     return ["actr.auto", "actr.select", "actr.element", "actr.local",
-            "actr.origin", "mesh.flip"];
+            "actr.origin", "mesh.flip",
+            // Falloff form action buttons (Auto Size / Reverse).
+            "falloff.autosize", "falloff.reverse"];
 }
 
 private FormValidators realisticValidators() {

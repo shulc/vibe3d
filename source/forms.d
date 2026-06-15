@@ -69,8 +69,10 @@ enum ControlStyle { default_, popup, slider, drag }
 enum AlignHint { default_, sameline, wide, full }
 
 /// Group inner layout: `inline` packs children flush, `block` renders the
-/// group as its own labeled sub-box.
-enum GroupStyle { inline_, block }
+/// group as its own labeled sub-box, `buttons` lays the group's `cmd` children
+/// out as a horizontal row of equal-width buttons filling the widget column
+/// (e.g. the falloff "Auto Size" X/Y/Z row).
+enum GroupStyle { inline_, block, buttons }
 
 // ---------------------------------------------------------------------------
 // Choice entry — one row of a `choice:` menu. Fires `cmd` on selection.
@@ -949,8 +951,10 @@ private GroupStyle parseGroupStyle(ref /*dyaml.*/ DyamlNodeT node,
     switch (s) {
         case "inline": case "": return GroupStyle.inline_;
         case "block":           return GroupStyle.block;
+        case "buttons":         return GroupStyle.buttons;
         default: throw new FormLoadException(format(
-            "forms: form '%s' (%s) group has unknown style '%s' (inline/block)",
+            "forms: form '%s' (%s) group has unknown style '%s' "
+            ~ "(inline/block/buttons)",
             formId, ctx, s));
     }
 }
