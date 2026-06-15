@@ -59,6 +59,7 @@ import log : logWarn;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import math : Vec3;
+import document : Document, Layer;
 import io.assimp_runtime : isAssimpAvailable;
 
 /// Column-major float[16] (the project's matrix convention, e.g.
@@ -119,6 +120,85 @@ bool exportViaAssimp(ref const Mesh mesh, string path, string formatId) {
 
     // `st` (and everything it roots) stays alive until here — past the
     // synchronous export call.
+    if (rc != aiReturn.SUCCESS) {
+        try logWarn("io", format("assimp export failed (%s -> %s): %s",
+                            formatId, path, aiGetErrorString().fromStringz));
+        catch (Exception) {}
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-layer export (Stage 4) — Document -> OBJ / glTF, one mesh per layer.
+// ---------------------------------------------------------------------------
+// The mirror of the layer-aware LWO export (Stage 2) for the assimp formats.
+// Where `exportViaAssimp` collapses to a single mesh on the root node, this
+// builds ONE aiMesh per document layer (visible AND hidden — user decision) and
+// hangs each on its OWN CHILD aiNode under the root. The aiScene SHAPE was
+// pinned empirically by the Stage 0 probe:
+//
+//   * N >= 2: child-node-per-layer is the ONLY shape that preserves per-layer
+//     NAMES on glTF (a flat root.mMeshes=[0..N-1] loses mesh names on glTF).
+//     Each child node references its one mesh, carries the layer name, and its
+//     `mTransformation` = `toAiMat(layer.xform.composedMatrix())`. Mesh vertices
+//     stay LOCAL (un-baked); assimp bakes the node transform into the written
+//     geometry itself (verified for glTF), so re-import returns the layer at its
+//     post-bake WORLD position = composedMatrix * v_local (NOT a reappearing node
+//     matrix — our importer has no inverse-factoring step; see the plan's Q9).
+//
+//   * N == 1: SPECIAL-CASED to today's exact root-mesh shape (one mesh on the
+//     ROOT node, `root.mMeshes=[0]`, NO child node), so a single-layer OBJ/glTF
+//     export stays geometry-identical to the pre-Stage-4 path and the single-cube
+//     `test_export_roundtrip` cannot regress into a phantom 2-part reload. The
+//     probe proved a child-node N=1 is also safe (1 part), so this is
+//     belt-and-suspenders, not load-bearing — but it keeps the OBJ `g`/glTF node
+//     grouping byte-closest to today.
+//
+//   * Hidden layers: glTF carries the flag as a per-node BOOL metadata entry
+//     `mMetaData["ml_visible"] = false`, which the glTF exporter writes to the
+//     node's `extras` (verified). OBJ has no metadata channel → the visible flag
+//     is a documented LOSS on OBJ (geometry is still exported). The IMPORT-side
+//     read of `ml_visible` is Stage 5; here we only WRITE it.
+//
+//   * Materials: ONE shared default material (name only) referenced by every
+//     mesh — the same lossy A4 policy as the single-mesh path (no per-layer
+//     materials).
+//
+// FBX is NOT routed here — `commands/file/save.d` special-cases FBX to the
+// flatten path (write deferred); multi-layer FBX is intentionally not exposed.
+//
+// GC-liveness: the same contract as `buildScene` — every aggregate assimp
+// dereferences by address (the scene, all N meshes, all N child nodes, the
+// root, the material, the metadata blobs) is GC-allocated and kept rooted in a
+// single `SceneStorage` local across the `aiExportScene` call. `SceneStorage`
+// now holds the N-sized backing arrays (meshes, child nodes, the pointer arrays
+// the root/scene point into, and the per-layer geometry pieces).
+
+/// Export every layer of `doc` to `path` via assimp's exporter for `formatId`.
+///
+/// One aiMesh per layer on its own child node (N>=2) or the root-mesh shape
+/// (N==1). Returns false (logging) when assimp is unavailable, the format id is
+/// unsupported, or the export fails. `formatId` is an assimp export-format id
+/// (caller maps `.obj`->"obj", `.gltf`->"gltf2", ...), exactly like
+/// `exportViaAssimp`. FBX is dispatched to the flatten path by the caller, so
+/// it never reaches here.
+bool exportDocumentViaAssimp(ref const Document doc, string path, string formatId) {
+    if (!isAssimpAvailable()) {
+        try logWarn("io", "assimp not loaded — cannot export " ~ path);
+        catch (Exception) {}
+        return false;
+    }
+    if (!isExportFormatSupported(formatId)) {
+        logSupportedFormats(formatId);
+        return false;
+    }
+
+    SceneStorage st = buildDocumentScene(doc, unitScaleFor(formatId));
+
+    const aiReturn rc = aiExportScene(
+        st.scene, formatId.toStringz, path.toStringz, 0u);
+
     if (rc != aiReturn.SUCCESS) {
         try logWarn("io", format("assimp export failed (%s -> %s): %s",
                             formatId, path, aiGetErrorString().fromStringz));
@@ -211,12 +291,12 @@ private double unitScaleFor(string formatId) {
 /// The remaining GC-slice fields already point to GC heap and survive a move.
 private struct SceneStorage {
     aiScene*    scene;           // new aiScene
-    aiMesh*     mesh;            // new aiMesh
+    aiMesh*     mesh;            // new aiMesh (single-mesh path; meshes[0] for multi)
     aiMesh*[]   meshPtrs;        // scene.mMeshes
-    aiVector3D[] verts;          // mesh.mVertices
+    aiVector3D[] verts;          // mesh.mVertices (single-mesh path)
     aiVector3D[] uvs;            // mesh.mTextureCoords[0] (empty when no "uv" map)
-    aiFace[]    faces;           // mesh.mFaces
-    uint[][]    faceIndices;     // each aiFace.mIndices backing store
+    aiFace[]    faces;           // mesh.mFaces (single-mesh path)
+    uint[][]    faceIndices;     // each aiFace.mIndices backing store (single-mesh)
     aiNode*     root;            // new aiNode
     uint[]      rootMeshes;      // root.mMeshes (just [0])
     aiMaterial* material;        // new aiMaterial
@@ -224,6 +304,30 @@ private struct SceneStorage {
     aiMaterialProperty*  nameProp;       // new aiMaterialProperty ($mat.name)
     aiMaterialProperty*[] matPropPtrs;   // material.mProperties
     char[]      namePropData;    // the aiString blob the name property points at
+
+    // --- multi-layer (Stage 4): per-layer aggregates + the child-node graph ---
+    // Each is N-sized and kept rooted across aiExportScene. `MeshPiece` owns one
+    // layer's geometry backing arrays; `children`/`childPtrs` are the child-node
+    // graph the root points into; per-child `meshIndex`/`metaData` blobs are
+    // dereferenced by assimp by address, so they live here too.
+    MeshPiece[] pieces;          // per-layer geometry backing (verts/uvs/faces/idx)
+    aiNode*[]   children;        // the child aiNodes (one per layer)
+    aiNode*[]   childPtrs;       // root.mChildren backing array
+    uint[][]    childMeshIdx;    // each child node's mMeshes (just [i])
+    aiMetadata*[]      metas;    // per-child mMetaData (null when visible)
+    aiMetadataEntry[][] metaEntries;     // each metadata's mValues backing
+    aiString[][]        metaKeys;        // each metadata's mKeys backing
+    bool[][]            metaBoolStore;   // backing bools the BOOL entries point at
+}
+
+/// One layer's mesh + its GC-rooted geometry backing arrays. The aiMesh is
+/// heap-allocated (stable address); the slices are GC heap and survive a move.
+private struct MeshPiece {
+    aiMesh*      mesh;
+    aiVector3D[] verts;
+    aiVector3D[] uvs;
+    aiFace[]     faces;
+    uint[][]     faceIndices;
 }
 
 /// Build a single-mesh aiScene mirroring `mesh`. All storage lives in the
@@ -243,8 +347,51 @@ private SceneStorage buildScene(ref const Mesh mesh, double unitScale) {
     st.material = new aiMaterial;
     st.nameProp = new aiMaterialProperty;
 
-    // unitScale is 1.0 for OBJ/glTF (unit=1) and 100.0 for FBX (metres→cm) so
-    // the written values match the cm unit the FBX file declares.
+    // Build the single mesh's geometry into a piece, then mirror it onto the
+    // flat SceneStorage slots (kept for the GC-liveness contract + the
+    // single-mesh-path field names other code reads).
+    MeshPiece piece = buildAiMesh(mesh, unitScale, "Mesh");
+    st.mesh        = piece.mesh;
+    st.verts       = piece.verts;
+    st.uvs         = piece.uvs;
+    st.faces       = piece.faces;
+    st.faceIndices = piece.faceIndices;
+    st.pieces      = [ piece ];        // root the backing arrays across the call
+
+    st.meshPtrs = [ st.mesh ];
+
+    // --- the single default material (name only; color/per-face DEFERRED A4) ---
+    buildDefaultMaterial(st);
+
+    // --- root node referencing mesh 0 ---
+    st.rootMeshes = [ 0u ];
+    aiIdentityMatrix4(&st.root.mTransformation);
+    st.root.mNumMeshes = 1;
+    st.root.mMeshes    = st.rootMeshes.ptr;
+    setAiString(st.root.mName, "Root");
+
+    // --- scene ---
+    st.scene.mFlags        = 0;
+    st.scene.mRootNode     = st.root;
+    st.scene.mNumMeshes    = 1;
+    st.scene.mMeshes       = st.meshPtrs.ptr;
+    st.scene.mNumMaterials = cast(uint) st.materialPtrs.length;
+    st.scene.mMaterials    = st.materialPtrs.ptr;
+    setAiString(st.scene.mName, "vibe3d");
+
+    return st;
+}
+
+/// Build ONE aiMesh (verts + faces + optional UV-split channel + material index)
+/// from `mesh`, returning a `MeshPiece` that OWNS every backing array assimp
+/// will dereference by address. Shared by the single-mesh `buildScene` and the
+/// multi-layer `buildDocumentScene` so both paths emit byte-identical per-mesh
+/// geometry (the UV-seam-split path included). `unitScale` rescales vertex
+/// positions for the format (see `unitScaleFor`); `meshName` labels the aiMesh.
+private MeshPiece buildAiMesh(ref const Mesh mesh, double unitScale, string meshName) {
+    MeshPiece pc;
+    pc.mesh = new aiMesh;
+
     const float s = cast(float) unitScale;
 
     // UV channel (Stage 4, D7): present only when the mesh carries the per-corner
@@ -263,9 +410,9 @@ private SceneStorage buildScene(ref const Mesh mesh, double unitScale) {
 
     if (!hasUv) {
         // --- vertices: verbatim copy, no flip (B3), scaled to the format unit ---
-        st.verts.length = mesh.vertices.length;
+        pc.verts.length = mesh.vertices.length;
         foreach (i, v; mesh.vertices)
-            st.verts[i] = aiVector3D(v.x * s, v.y * s, v.z * s);
+            pc.verts[i] = aiVector3D(v.x * s, v.y * s, v.z * s);
 
         // --- faces: one aiFace per polygon, native arity (A3) ---
         // Drop degenerate faces (<3 verts) — mirrors the importer/native policy
@@ -337,53 +484,185 @@ private SceneStorage buildScene(ref const Mesh mesh, double unitScale) {
                 ? aiPrimitiveType.POLYGON
                 : cast(uint)(1u << (idx.length - 1));  // 3 verts -> TRIANGLE
         }
-        st.verts = verts.data;
-        st.uvs   = uvs.data;
+        pc.verts = verts.data;
+        pc.uvs   = uvs.data;
     }
 
-    st.faces       = faces.data;
-    st.faceIndices = faceIndices.data;
+    pc.faces       = faces.data;
+    pc.faceIndices = faceIndices.data;
     // Always advertise POLYGON so exporters accept >3-vert faces even if the
     // current mesh happens to be all-triangle.
     primTypes |= aiPrimitiveType.POLYGON;
 
-    // --- the single aiMesh ---
-    st.mesh.mPrimitiveTypes = primTypes;
-    st.mesh.mNumVertices    = cast(uint) st.verts.length;
-    st.mesh.mVertices       = st.verts.ptr;
-    st.mesh.mNumFaces       = cast(uint) st.faces.length;
-    st.mesh.mFaces          = st.faces.ptr;
-    st.mesh.mMaterialIndex  = 0;
-    setAiString(st.mesh.mName, "Mesh");
+    pc.mesh.mPrimitiveTypes = primTypes;
+    pc.mesh.mNumVertices    = cast(uint) pc.verts.length;
+    pc.mesh.mVertices       = pc.verts.ptr;
+    pc.mesh.mNumFaces       = cast(uint) pc.faces.length;
+    pc.mesh.mFaces          = pc.faces.ptr;
+    pc.mesh.mMaterialIndex  = 0;
+    setAiString(pc.mesh.mName, meshName);
     // UV channel 0 (Stage 4): present only on the split path; otherwise the
     // aiMesh leaves mTextureCoords/mNumUVComponents zeroed (no-UV byte-identical).
     if (hasUv) {
-        st.mesh.mTextureCoords[0]   = st.uvs.ptr;
-        st.mesh.mNumUVComponents[0] = 2;
+        pc.mesh.mTextureCoords[0]   = pc.uvs.ptr;
+        pc.mesh.mNumUVComponents[0] = 2;
     }
 
-    st.meshPtrs = [ st.mesh ];
+    return pc;
+}
 
-    // --- the single default material (name only; color/per-face DEFERRED A4) ---
+/// Build the multi-layer aiScene: one aiMesh per layer, each on its own child
+/// node (N>=2), or today's root-mesh shape (N==1). See the module section header
+/// for the SHAPE rationale (Stage 0 probe). All storage lives in the returned
+/// `SceneStorage`.
+private SceneStorage buildDocumentScene(ref const Document doc, double unitScale) {
+    SceneStorage st;
+    st.scene    = new aiScene;
+    st.root     = new aiNode;
+    st.material = new aiMaterial;
+    st.nameProp = new aiMaterialProperty;
+
+    const size_t n = doc.layers.length;
+
+    // --- N == 1: the root-mesh special-case (byte-closest to today). The single
+    // layer's xform is identity in practice; if it is NOT, bake it into the root
+    // mesh's verts so the root-only shape still carries the transform. ----------
+    if (n == 1) {
+        const Layer l = doc.layers[0];
+        MeshPiece piece = buildAiMesh(l.mesh, unitScale, l.name.length ? l.name : "Mesh");
+        // Bake a non-identity single-layer xform into the verts (no child node to
+        // carry it). Identity xform leaves verts verbatim (back-compat).
+        bakePieceXform(piece, l.xform.composedMatrix(), cast(float) unitScale);
+        st.mesh        = piece.mesh;
+        st.verts       = piece.verts;
+        st.uvs         = piece.uvs;
+        st.faces       = piece.faces;
+        st.faceIndices = piece.faceIndices;
+        st.pieces      = [ piece ];
+        st.meshPtrs    = [ st.mesh ];
+
+        buildDefaultMaterial(st);
+
+        st.rootMeshes = [ 0u ];
+        aiIdentityMatrix4(&st.root.mTransformation);
+        st.root.mNumMeshes = 1;
+        st.root.mMeshes    = st.rootMeshes.ptr;
+        setAiString(st.root.mName, "Root");
+
+        st.scene.mFlags        = 0;
+        st.scene.mRootNode     = st.root;
+        st.scene.mNumMeshes    = 1;
+        st.scene.mMeshes       = st.meshPtrs.ptr;
+        st.scene.mNumMaterials = cast(uint) st.materialPtrs.length;
+        st.scene.mMaterials    = st.materialPtrs.ptr;
+        setAiString(st.scene.mName, "vibe3d");
+        return st;
+    }
+
+    // --- N >= 2: child-node-per-layer ------------------------------------------
+    auto meshPtrs   = appender!(aiMesh*[]);
+    foreach (i, l; doc.layers) {
+        MeshPiece piece = buildAiMesh(
+            l.mesh, unitScale, l.name.length ? l.name : ("Layer" ~ itoa(i)));
+        st.pieces ~= piece;        // root the backing arrays
+        meshPtrs.put(piece.mesh);
+
+        // Child node referencing mesh i, named by the layer, transform =
+        // composedMatrix() (un-baked; assimp bakes it into the written geometry).
+        auto child = new aiNode;
+        setAiString(child.mName, l.name.length ? l.name : ("Layer" ~ itoa(i)));
+        child.mTransformation = toAiMat(l.xform.composedMatrix());
+        uint[] cm = [ cast(uint) i ];
+        st.childMeshIdx ~= cm;
+        child.mNumMeshes = 1;
+        child.mMeshes    = cm.ptr;
+
+        // Hidden layers carry ml_visible=false as node metadata (glTF: node
+        // extras; OBJ: dropped — documented loss). Only emit when hidden so a
+        // visible layer's node has NO metadata (byte-clean default).
+        if (!l.visible) {
+            attachVisibleMeta(st, child, false);
+        }
+
+        st.children  ~= child;
+        st.childPtrs ~= child;
+    }
+    st.meshPtrs = meshPtrs.data;
+
     buildDefaultMaterial(st);
 
-    // --- root node referencing mesh 0 ---
-    st.rootMeshes = [ 0u ];
+    // Root holds NO meshes — only the child nodes (the shape that splits per-layer
+    // on both OBJ and glTF and preserves names on glTF).
     aiIdentityMatrix4(&st.root.mTransformation);
-    st.root.mNumMeshes = 1;
-    st.root.mMeshes    = st.rootMeshes.ptr;
+    st.root.mNumMeshes = 0;
+    st.root.mMeshes    = null;
+    st.root.mNumChildren = cast(uint) st.childPtrs.length;
+    st.root.mChildren    = st.childPtrs.ptr;
     setAiString(st.root.mName, "Root");
+    foreach (c; st.children) c.mParent = st.root;
 
-    // --- scene ---
     st.scene.mFlags        = 0;
     st.scene.mRootNode     = st.root;
-    st.scene.mNumMeshes    = 1;
+    st.scene.mNumMeshes    = cast(uint) st.meshPtrs.length;
     st.scene.mMeshes       = st.meshPtrs.ptr;
     st.scene.mNumMaterials = cast(uint) st.materialPtrs.length;
     st.scene.mMaterials    = st.materialPtrs.ptr;
     setAiString(st.scene.mName, "vibe3d");
 
     return st;
+}
+
+/// Bake a column-major world matrix into a MeshPiece's already-built (and
+/// already unit-scaled) aiVertices. Used only by the N==1 root-mesh path, where
+/// there is no child node to carry the transform. The verts are in scaled space,
+/// so we de-scale, transform, re-scale to keep the matrix in model units.
+private void bakePieceXform(ref MeshPiece pc, const float[16] m, float unitScale) {
+    import math : transformPoint;
+    import std.math : isClose;
+    // Skip the identity fast-path (the overwhelmingly common single-layer case)
+    // so back-compat output is byte-identical.
+    static immutable float[16] I =
+        [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    bool ident = true;
+    foreach (k; 0 .. 16) if (!isClose(m[k], I[k], 1e-7f, 1e-7f)) { ident = false; break; }
+    if (ident) return;
+    const float inv = unitScale != 0 ? (1.0f / unitScale) : 1.0f;
+    foreach (ref av; pc.verts) {
+        auto p = transformPoint(m, Vec3(av.x * inv, av.y * inv, av.z * inv));
+        av = aiVector3D(p.x * unitScale, p.y * unitScale, p.z * unitScale);
+    }
+}
+
+/// Attach a single BOOL metadata entry `ml_visible = visible` to `node`, rooting
+/// the metadata struct + its key/value backing in `st`. The glTF exporter writes
+/// this to the node's `extras`; OBJ has no metadata channel (documented loss).
+private void attachVisibleMeta(ref SceneStorage st, aiNode* node, bool visible) {
+    auto meta = new aiMetadata;
+    aiString[] keys = [ aiString.init ];
+    setAiString(keys[0], "ml_visible");
+    // assimp metadata BOOL reads a C++ `bool` (1 byte) through mData; back it with
+    // a D `bool` slice so the byte layout matches.
+    bool[] store = [ visible ];
+    aiMetadataEntry[] entries = [ aiMetadataEntry.init ];
+    entries[0].mType = aiMetadataType.BOOL;
+    entries[0].mData = cast(void*) store.ptr;
+
+    meta.mNumProperties = 1;
+    meta.mKeys   = keys.ptr;
+    meta.mValues = entries.ptr;
+    node.mMetaData = meta;
+
+    // Root every backing aggregate across aiExportScene.
+    st.metas         ~= meta;
+    st.metaKeys      ~= keys;
+    st.metaEntries   ~= entries;
+    st.metaBoolStore ~= store;
+}
+
+/// Minimal size_t -> decimal string (avoids pulling std.conv into a hot helper).
+private string itoa(size_t v) {
+    import std.conv : to;
+    return to!string(v);
 }
 
 /// Lay down a minimal aiMaterial carrying just AI_MATKEY_NAME. A material with

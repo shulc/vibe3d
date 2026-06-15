@@ -140,7 +140,7 @@ unittest {  // geometry per ?layer=N: layer 0 = origin object, layer 1 = far obj
     remove(twoPath());
 }
 
-unittest {  // export flattens VISIBLE layers → vertex count == sum of layers
+unittest {  // Stage 4: OBJ export PRESERVES layers → 2 layers, each its own object
     write(twoPath(), twoObjObj);
     resetApp();
     loadOk(twoPath());
@@ -149,32 +149,31 @@ unittest {  // export flattens VISIBLE layers → vertex count == sum of layers
     saveOk(objOut());
     assert(exists(objOut()), "OBJ export should write a file");
 
-    // Re-import the flattened OBJ. It is now ONE object (a single `o` group
-    // assimp synthesizes from the merged mesh), so it lands as ONE layer of 8
-    // verts (4 + 4 from the two visible layers).
+    // Re-import the OBJ. Stage 4 routes OBJ export through the LAYER-AWARE
+    // exporter (one aiMesh per layer on its own child node), so assimp's OBJ
+    // exporter emits one group per layer and re-import yields TWO layers (NOT
+    // the old flattened single 8-vert object).
     resetApp();
     loadOk(objOut());
 
     auto L = layers();
-    assert(L["layers"].array.length == 1,
-        "flattened OBJ re-imports as a single layer (one object)");
-    auto m = model();
-    assert(m["vertexCount"].integer == 8,
-        "flattened export must contain BOTH visible layers (4+4=8 verts), got "
-        ~ m["vertexCount"].integer.to!string);
-    assert(m["faceCount"].integer == 2,
-        "flattened export must contain both quads (2 faces), got "
-        ~ m["faceCount"].integer.to!string);
+    assert(L["layers"].array.length == 2,
+        "Stage 4: 2-layer OBJ export re-imports as 2 layers (per-layer objects), "
+        ~ "got " ~ L["layers"].array.length.to!string);
 
-    // Both clusters present (origin + far) → both layers were flattened.
+    // Each layer keeps its own 4-vert quad; one is near the origin, one is far.
     bool nearOrigin = false, nearFar = false;
-    foreach (v; m["vertices"].array) {
-        const x = v.array[0].floating;
+    foreach (li; 0 .. 2) {
+        auto m = modelLayer(cast(int) li);
+        assert(m["vertexCount"].integer == 4,
+            "each re-imported layer = its own 4-vert quad, got "
+            ~ m["vertexCount"].integer.to!string);
+        const x = m["vertices"].array[0].array[0].floating;
         if (x <= 1.5) nearOrigin = true;
         if (x >= 9.5) nearFar = true;
     }
     assert(nearOrigin && nearFar,
-        "flattened export must contain both the origin and the far object");
+        "the two re-imported layers must be the origin object + the far object");
 
     remove(twoPath());
     remove(objOut());
