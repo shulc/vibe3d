@@ -90,6 +90,23 @@ class FormsPanel {
     }
     private Scratch[string] scratch_;
 
+    // Compact vector-group layout context (the Position X / Y / Z look). While
+    // a group is being drawn, beginLabeledRow uses a TWO-column scheme instead of
+    // the default single label column: the group label ("Position") is printed
+    // ONCE on the first member's row, then a fixed component-label column (X/Y/Z)
+    // and a fixed value-field column so every member's field lines up under the
+    // first. Inactive (active=false) for non-group rows, which keep the legacy
+    // single-column layout. Set by computeGroupLayout in drawGroup, restored
+    // after the member loop so nested groups / following rows are unaffected.
+    private struct GroupLayout {
+        bool   active;
+        string groupLabel;        // printed once, row 0 ("Position")
+        bool   firstMemberDrawn;  // has the group label been emitted yet?
+        float  fieldColX;         // window-local x of the value field (FIXED)
+        float  labelGap;          // gap between component label and field
+    }
+    private GroupLayout glayout_;
+
     // P-E tweak-boundary hook. Fired when a value control finishes a continuous
     // edit (ImGui IsItemDeactivatedAfterEdit) — i.e. the user RELEASES a slider /
     // drag-field after scrubbing it. The host wires this to
@@ -217,6 +234,33 @@ class FormsPanel {
     // -----------------------------------------------------------------------
     private void beginLabeledRow(string label)
     {
+        // Inside a vector group: two-column compact layout (see GroupLayout).
+        // The group label rides the first member's row ("Position" + "X"); the
+        // rest leave it blank so "Y"/"Z" and their fields align under "X".
+        if (glayout_.active) {
+            ImGui.AlignTextToFramePadding();
+            if (!glayout_.firstMemberDrawn) {
+                ImGui.TextUnformatted(glayout_.groupLabel.length
+                                      ? glayout_.groupLabel : " ");
+                glayout_.firstMemberDrawn = true;
+            } else {
+                ImGui.TextUnformatted(" ");   // keep the row; group col stays empty
+            }
+            // Component label (X / Y / Z) right-aligned just before the field, so
+            // the letters sit flush against the box and line up across
+            // rows. fieldColX is FIXED per group, so the field has the same x +
+            // width for every tool (move / rotate / scale).
+            float lw = label.length ? ImGui.CalcTextSize(label).x : 0.0f;
+            float lx = glayout_.fieldColX - glayout_.labelGap - lw;
+            if (lx < 0.0f) lx = 0.0f;
+            ImGui.SameLine(lx);
+            ImGui.TextUnformatted(label.length ? label : " ");
+            // Value field column — same x on every row so the fields line up.
+            ImGui.SameLine(glayout_.fieldColX);
+            ImGui.SetNextItemWidth(-float.min_normal);
+            return;
+        }
+
         const float avail = ImGui.GetContentRegionAvail().x;
         // Left column = 35% of the available content width, clamped to a sane
         // minimum so a very narrow panel still shows a few glyphs.
@@ -233,6 +277,31 @@ class FormsPanel {
         // Fill the rest of the row. -float.min_normal is the ImGui idiom for
         // "stretch to the right edge of the content region".
         ImGui.SetNextItemWidth(-float.min_normal);
+    }
+
+    // Compute the FIXED value-field column for a vector group's compact layout.
+    // The field starts at the same x for every group regardless of the group
+    // label text ("Position" vs "Rotate" vs "Scale"), so the value box has an
+    // identical position and width across tools — the user-visible requirement.
+    // The column is font-relative (DPI-aware via GetFontSize), with a safety
+    // clamp so a group label wider than the fixed reserve still gets room (our
+    // transform labels never exceed it, so the field stays put across them).
+    private GroupLayout computeGroupLayout(ref Row group, Param[] snapshot)
+    {
+        GroupLayout g;
+        g.active     = true;
+        g.groupLabel = group.label;
+        g.labelGap   = ImGui.GetStyle().ItemSpacing.x + 4.0f;
+
+        const float em = ImGui.GetFontSize();
+        float groupW = group.label.length ? ImGui.CalcTextSize(group.label).x : 0.0f;
+
+        // Fixed reserve (≈ "Position" + a one-letter component column), and a
+        // fit fallback that only grows the column for an over-long group label.
+        float fixedCol = em * 7.0f;
+        float fitCol   = groupW + g.labelGap + em * 1.5f;
+        g.fieldColX = fixedCol > fitCol ? fixedCol : fitCol;
+        return g;
     }
 
     // -----------------------------------------------------------------------
@@ -518,16 +587,23 @@ class FormsPanel {
 
         ImGui.BeginGroup();
 
-        // Group label drawn once, on the first line of the cluster.
-        if (row.label.length)
-            ImGui.TextUnformatted(row.label);
+        // Compact vector layout: the group label ("Position") rides
+        // the FIRST member's row next to "X"; subsequent members leave the group
+        // column blank so "Y"/"Z" and their value fields align under "X". A
+        // tighter ItemSpacing.y packs the rows vertically. The legacy layout put
+        // the group label on its own line and stacked full-width member rows with
+        // the default gap — taller and looser than a packed channel cluster.
+        GroupLayout saved = glayout_;
+        glayout_ = computeGroupLayout(row, snapshot);
 
-        // Members carry short labels (X / Y / Z). Inline style packs them; the
-        // simplest robust layout is a stacked list of narrowed drags — keep the
-        // member rows on their own lines (matches the legacy MoveTool sliders),
-        // which reads cleanly in the narrow Tool Properties window.
+        const ImVec2 sp = ImGui.GetStyle().ItemSpacing;
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(sp.x, 2.0f));
+
         foreach (i, ref child; row.rows)
             drawRow(child, cast(int) i, snapshot, provider, dispatch, idispatch);
+
+        ImGui.PopStyleVar();
+        glayout_ = saved;   // restore for nested groups / following rows
 
         ImGui.EndGroup();
 
