@@ -179,3 +179,42 @@ unittest {
 
     cmd("tool.pipe.attr falloff type none");
 }
+
+// ---------------------------------------------------------------------------
+// 6. Vec3 write round-trip — the editable X/Y/Z cluster. FormsPanel's
+//    drawVec3Control serializes the full vector as a "%g,%g,%g" string token and
+//    fires it through the row's binding; one component edit rewrites all three so
+//    the others are preserved. Build the SAME line via the renderer's own
+//    substituteQuery (a JSONValue string of "x,y,z"), assert it quotes the
+//    comma-bearing token, dispatch it, and read the vec3 back (paramToJson emits
+//    a [x,y,z] array). Covers the Vec3 write path the Linear falloff start/end
+//    rows now use.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.pipe.attr falloff type linear");
+
+    enum startControl = "tool.pipe.attr falloff start ?";
+    auto b = parseBinding(startControl);
+    // The renderer builds the token as format("%g,%g,%g", x, y, z) → string value.
+    string writeLine = substituteQuery(b, JSONValue("0,0,-5"));
+    assert(writeLine == `tool.pipe.attr falloff start "0,0,-5"`, writeLine);
+    cmd(writeLine);
+
+    auto r = cmdRaw(startControl);
+    assert(r["status"].str == "ok", "start query failed: " ~ r.toString);
+    assert("value" in r, "start query returned no value: " ~ r.toString);
+    auto v = r["value"];
+    assert(v.type == JSONType.array && v.array.length == 3,
+        "vec3 query should return a [x,y,z] array, got " ~ v.toString);
+    double comp(size_t i) {
+        auto e = v.array[i];
+        return e.type == JSONType.float_ ? e.floating
+             : e.type == JSONType.integer ? cast(double) e.integer : double.nan;
+    }
+    assert(approxEqual(comp(0), 0.0) && approxEqual(comp(1), 0.0)
+        && approxEqual(comp(2), -5.0),
+        "falloff start vec3 write should round-trip to (0,0,-5), got " ~ v.toString);
+
+    cmd("tool.pipe.attr falloff type none");
+}
