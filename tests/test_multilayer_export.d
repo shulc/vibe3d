@@ -148,6 +148,25 @@ bool sawLayer(long vc, double z) {
     return false;
 }
 
+// The /api/layers index of the FIRST layer that is a `vc`-vert mesh with
+// vertex 0 at z≈`z` (the per-layer `visible` flag lives on /api/layers, not on
+// /api/model, so callers that need visibility resolve the index this way).
+// Returns -1 if none match.
+int layerIndexByGeom(long vc, double z) {
+    auto ls = layers()["layers"].array;
+    foreach (li; 0 .. ls.length) {
+        auto m = modelLayer(cast(int) li);
+        if (m["vertexCount"].integer == vc && approxEqual(vat(m, 0)[2], z))
+            return cast(int) li;
+    }
+    return -1;
+}
+
+// The `visible` flag from /api/layers for the layer at `idx`.
+bool layerVisible(int idx) {
+    return layers()["layers"].array[idx]["visible"].boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Case 1 + 2: OBJ / glTF 2-layer round-trip → 2 parts, geometry preserved.
 // ---------------------------------------------------------------------------
@@ -221,8 +240,14 @@ unittest { xformRoundTrip(".obj"); }
 unittest { xformRoundTrip(".gltf"); }
 
 // ---------------------------------------------------------------------------
-// Case 4: hidden flag → ml_visible metadata is written into the .gltf file
-// text. The IMPORT-side read is Stage 5; here we grep the raw file only.
+// Case 4 (UPGRADED — Stage 5 import lands): glTF hidden-layer FULL round-trip.
+// A hidden, geometry-carrying layer exported to .gltf rides the `ml_visible`
+// node `extras`; now that the assimp import reads node metadata, re-loading the
+// file must bring that layer back PRESENT and `visible == false`. We keep the
+// raw-text grep as a cheap witness that the metadata reached the file, but the
+// load-side `visible == false` assertion is the real proof.
+// NOTE: OBJ has NO visibility metadata (documented loss) — hidden round-trips
+// are asserted only through glTF (here) and LWO (below), never OBJ.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -230,17 +255,12 @@ unittest {
     writeFixture();
     loadOk(FIXTURE);
 
-    // Hide the tri layer (index 1 in the imported doc — order is import-defined,
-    // but the LWO importer keeps LAYR order so tri = index 1).
-    auto ls = layers()["layers"].array;
-    int triIdx = -1;
-    foreach (li; 0 .. ls.length) {
-        auto m = modelLayer(cast(int) li);
-        if (m["vertexCount"].integer == 3) triIdx = cast(int) li;
-    }
+    // Hide the tri layer (3 verts at z=+5). It MUST carry geometry: an empty
+    // hidden layer is dropped on re-import, so the round-trip would assert on a
+    // vanished layer. The tri layer is non-primary, so hiding it leaves the quad
+    // primary/visible (the primary-must-be-visible invariant holds).
+    int triIdx = layerIndexByGeom(3, 5.0);
     assert(triIdx >= 0, "could not find the tri layer to hide");
-    // Hiding goes through layer.setVisible (owns the hide-primary promotion);
-    // the tri layer is non-primary so hiding it leaves the quad primary/visible.
     cmdOk(format("layer.setVisible index:%d value:false", triIdx));
 
     const outPath = "/tmp/vibe3d_test_mlexport_hidden.gltf";
@@ -248,10 +268,188 @@ unittest {
     saveOk(outPath);
     assert(exists(outPath), "glTF hidden export should write a file");
 
-    // The glTF exporter writes node BOOL metadata into the node's `extras`.
+    // Cheap witness: the BOOL node metadata reached the file's node `extras`.
     const text = readText(outPath);
     assert(text.canFind("ml_visible"),
-        "hidden layer must write ml_visible into the .gltf node extras "
-        ~ "(import-side read is Stage 5)");
+        "hidden layer must write ml_visible into the .gltf node extras");
+
+    // The real assertion: re-import and confirm the tri layer is back, present
+    // AND visible==false (Stage 5 reads the node metadata into ImportedPart).
+    // Assert on `visible`, NOT `background`: a hidden layer is neither
+    // foreground nor background (background == visible && !selected).
+    resetApp();
+    loadOk(outPath);
+    assert(layers()["layers"].array.length == 2,
+        "glTF hidden export must re-import both layers (hidden one is present)");
+    int triBack = layerIndexByGeom(3, 5.0);
+    assert(triBack >= 0,
+        "the hidden tri layer must come back PRESENT after glTF round-trip");
+    assert(!layerVisible(triBack),
+        "the hidden tri layer must re-import with visible==false (glTF)");
+    // The other (quad) layer stays visible.
+    int quadBack = layerIndexByGeom(4, 0.0);
+    assert(quadBack >= 0 && layerVisible(quadBack),
+        "the un-hidden quad layer must re-import visible==true (glTF)");
+    remove(outPath);
+}
+
+// ===========================================================================
+// LWO cases (Stage 3) — LWO export no longer flattens: one LAYR per layer,
+// xform BAKED into PNTS, hidden carried in the LAYR `flags` bit. Re-import
+// keeps LAYER-LOCAL indices (unlike assimp, which may re-order verts), so the
+// LWO cases assert layer-local face indexing on top of the geometry checks.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// LWO Case 1: 2-layer round-trip. Mirrors the assimp Case 1/2 (2 parts, quad
+// at z=0 + tri at z=+5) but additionally asserts each layer's face indices are
+// LAYER-LOCAL (quad [0,1,2,3], tri [0,1,2]) — the LWO writer/reader contract
+// the import test (test_lwo_multilayer.d) pins for the import direction; here
+// we prove the export→import round-trip preserves it too.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetApp();
+    writeFixture();
+    loadOk(FIXTURE);
+    assert(layers()["layers"].array.length == 2, "source doc must have 2 layers");
+
+    const outPath = "/tmp/vibe3d_test_mlexport_rt.lwo";
+    if (exists(outPath)) remove(outPath);
+    saveOk(outPath);
+    assert(exists(outPath), "LWO export should write a file");
+
+    resetApp();
+    loadOk(outPath);
+    auto ls = layers()["layers"].array;
+    assert(ls.length == 2,
+        format("LWO 2-layer export must re-import as 2 layers, got %d", ls.length));
+
+    // The quad layer: 4 verts at z=0, ONE quad face with LAYER-LOCAL indices.
+    int qIdx = layerIndexByGeom(4, 0.0);
+    assert(qIdx >= 0, "LWO: expected a 4-vert quad layer at z=0");
+    auto qm = modelLayer(qIdx);
+    auto qf = qm["faces"].array;
+    assert(qf.length == 1 && qf[0].array.length == 4, "LWO quad layer = one quad");
+    foreach (k, idx; qf[0].array)
+        assert(idx.integer == k,
+            "LWO quad face indices must round-trip LAYER-LOCAL [0,1,2,3]");
+    foreach (idx; qf[0].array)
+        assert(approxEqual(vat(qm, idx.integer)[2], 0.0),
+            "LWO quad verts stay at z=0 after round-trip");
+
+    // The tri layer: 3 verts at z=+5, ONE tri face, LAYER-LOCAL indices, and
+    // each vertex matches its original LWO coordinate (not re-offset).
+    int tIdx = layerIndexByGeom(3, 5.0);
+    assert(tIdx >= 0, "LWO: expected a 3-vert tri layer at z=+5");
+    auto tm = modelLayer(tIdx);
+    auto tf = tm["faces"].array;
+    assert(tf.length == 1 && tf[0].array.length == 3, "LWO tri layer = one tri");
+    foreach (k, idx; tf[0].array) {
+        assert(idx.integer == k,
+            "LWO tri face indices must round-trip LAYER-LOCAL [0,1,2]");
+        auto p = vat(tm, idx.integer);
+        assert(approxEqual(p[0], triVerts[k * 3 + 0])
+            && approxEqual(p[1], triVerts[k * 3 + 1])
+            && approxEqual(p[2], triVerts[k * 3 + 2]),
+            format("LWO tri vert %d round-tripped to %s", k, p.to!string));
+    }
+    remove(outPath);
+}
+
+// ---------------------------------------------------------------------------
+// LWO Case 2: per-layer xform BAKE. LWO has no node transform — the layer's
+// composedMatrix() is baked into the written PNTS. Set the tri layer pos.z=+10,
+// export .lwo, re-import, and assert the tri verts came back at their ORIGINAL
+// local coords + (0,0,10). Expected positions are hand-computed (not via
+// composedMatrix) to avoid a tautology.
+// ---------------------------------------------------------------------------
+
+// Hand-computed expected tri positions after a pure +Z translation of 10.
+// (Independent of composedMatrix — a translation just adds to every vertex.)
+static immutable float[3 * 3] triVertsBaked = [
+    0.0f, 0.0f, 15.0f,  2.0f, 0.0f, 15.0f,  1.0f, 3.0f, 15.0f,
+];
+
+unittest {
+    resetApp();
+    writeFixture();
+    loadOk(FIXTURE);
+
+    int triIdx = layerIndexByGeom(3, 5.0);
+    assert(triIdx >= 0, "could not find the tri layer to transform");
+
+    // Non-identity item transform: +10 in Z (render-only; the LWO export is the
+    // first place it bakes into coordinates).
+    cmdOk(format("layer.attr %d pos.z 10", triIdx));
+
+    const outPath = "/tmp/vibe3d_test_mlexport_xf.lwo";
+    if (exists(outPath)) remove(outPath);
+    saveOk(outPath);
+    assert(exists(outPath), "LWO xform export should write a file");
+
+    resetApp();
+    loadOk(outPath);
+    assert(layers()["layers"].array.length == 2,
+        "LWO xform export must re-import both layers");
+
+    // The tri layer comes back at z=+15 (5 + 10), each vert at the hand-computed
+    // baked coordinate (NOT recomputed from composedMatrix).
+    int tBack = layerIndexByGeom(3, 15.0);
+    assert(tBack >= 0,
+        "transformed tri layer must re-import at world z=15 (baked, LWO)");
+    auto tm = modelLayer(tBack);
+    auto tf = tm["faces"].array;
+    assert(tf.length == 1 && tf[0].array.length == 3, "baked tri layer = one tri");
+    foreach (k, idx; tf[0].array) {
+        auto p = vat(tm, idx.integer);
+        assert(approxEqual(p[0], triVertsBaked[k * 3 + 0])
+            && approxEqual(p[1], triVertsBaked[k * 3 + 1])
+            && approxEqual(p[2], triVertsBaked[k * 3 + 2]),
+            format("LWO baked tri vert %d = %s, expected %s", k, p.to!string,
+                   [triVertsBaked[k*3], triVertsBaked[k*3+1],
+                    triVertsBaked[k*3+2]].to!string));
+    }
+    // The untouched quad layer stays at its original z=0.
+    assert(sawLayer(4, 0.0), "LWO: untouched quad layer must stay at z=0");
+    remove(outPath);
+}
+
+// ---------------------------------------------------------------------------
+// LWO Case 3: hidden-layer FULL round-trip (now that the importer reads the
+// LAYR `flags` hidden bit — Stage 5). Hide the tri layer (it carries geometry,
+// so it survives import — empty parts are dropped), export .lwo, re-import, and
+// assert the layer comes back PRESENT and `visible == false`. Assert on
+// `visible`, NOT `background` (a hidden layer is neither fg nor bg).
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetApp();
+    writeFixture();
+    loadOk(FIXTURE);
+
+    // Hide the tri layer (3 verts at z=+5, non-primary → quad stays primary).
+    int triIdx = layerIndexByGeom(3, 5.0);
+    assert(triIdx >= 0, "could not find the tri layer to hide");
+    cmdOk(format("layer.setVisible index:%d value:false", triIdx));
+
+    const outPath = "/tmp/vibe3d_test_mlexport_hidden.lwo";
+    if (exists(outPath)) remove(outPath);
+    saveOk(outPath);
+    assert(exists(outPath), "LWO hidden export should write a file");
+
+    resetApp();
+    loadOk(outPath);
+    assert(layers()["layers"].array.length == 2,
+        "LWO hidden export must re-import both layers (hidden one is present)");
+    int triBack = layerIndexByGeom(3, 5.0);
+    assert(triBack >= 0,
+        "the hidden tri layer must come back PRESENT after LWO round-trip");
+    assert(!layerVisible(triBack),
+        "the hidden tri layer must re-import with visible==false (LWO LAYR flag)");
+    // The other (quad) layer stays visible.
+    int quadBack = layerIndexByGeom(4, 0.0);
+    assert(quadBack >= 0 && layerVisible(quadBack),
+        "the un-hidden quad layer must re-import visible==true (LWO)");
     remove(outPath);
 }
