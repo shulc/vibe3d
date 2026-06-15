@@ -60,7 +60,7 @@
 			"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
 		},
 		"lwo2-writer": {
-			"version": "~master",
+			"version": "6338b2a5b0f53abf8773e6fb9673951995dc10e6",
 			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
 		}
 	},
