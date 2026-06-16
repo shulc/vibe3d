@@ -596,13 +596,20 @@ class FalloffStage : Stage, Operator {
         ];
 
         Param[] ps;
-        // Mix Mode — multi-falloff stacking control. Present for EVERY
-        // active (non-None) type so each falloff section carries a Mix
-        // dropdown (the field is unused for a single / first contributor,
-        // but the UI + `mix ?` query path both resolve through params()).
-        ps ~= Param.intEnum_("mix", "Mix",
-                             cast(int*)&mix, mixEntries,
-                             cast(int)FalloffMix.Multiply);
+        // Mix Mode — multi-falloff stacking control: how this falloff combines
+        // with the others. A LONE falloff has nothing to combine with, so the
+        // dropdown is hidden until a second falloff is stacked (falloff.add);
+        // then every stacked section carries it. Gated by exposing the `mix`
+        // param only when >1 WGHT stage is registered — the forms resolver hides
+        // the row whenever the attr is absent (the same value-driven filter that
+        // hides per-type rows). `mix` stays in knownAttrs()/listAttrs(), so the
+        // setAttr round-trip and form validation are unaffected.
+        bool stacked = g_pipeCtx !is null
+            && g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght).length > 1;
+        if (stacked)
+            ps ~= Param.intEnum_("mix", "Mix",
+                                 cast(int*)&mix, mixEntries,
+                                 cast(int)FalloffMix.Multiply);
 
         // Shape preset — the weight-curve shape (Linear / Ease-In / Ease-Out /
         // Smooth / Custom). Exposed as a form dropdown (config/forms/falloff.yaml

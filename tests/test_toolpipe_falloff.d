@@ -345,14 +345,25 @@ unittest { // bogus mix value refused — previous value retained
         "bogus mix must be rejected, keeping 'add'; got " ~ a["mix"]);
 }
 
-unittest { // mix `?` query resolves via params() for an active type
+unittest { // mix `?` query (params() visibility) is gated on multi-falloff
     resetCube();
     postJson("/api/command", "tool.pipe.attr falloff type linear");
     postJson("/api/command", "tool.pipe.attr falloff mix max");
-    // The forms-engine `?` read-back path resolves through the live,
-    // type-filtered params(); `mix` is exposed for every non-None type.
-    auto r = postJson("/api/command", `tool.pipe.attr falloff mix "?"`);
-    assert(r["status"].str == "ok",
-        "mix ? query should resolve for an active type: " ~ r.toString);
+
+    // A LONE falloff hides Mix Mode: the forms-engine `?` read-back resolves
+    // through the live params(), and `mix` is omitted for a single stage — so
+    // the query does NOT resolve (the form row is hidden).
+    auto r1 = postJson("/api/command", `tool.pipe.attr falloff mix "?"`);
+    assert(r1["status"].str != "ok",
+        "mix ? query should NOT resolve for a lone falloff: " ~ r1.toString);
+
+    // Stack a second falloff — now Mix Mode is meaningful and params() exposes
+    // it, so the query resolves.
+    postJson("/api/command", "falloff.add radial");
+    auto r2 = postJson("/api/command", `tool.pipe.attr falloff mix "?"`);
+    assert(r2["status"].str == "ok",
+        "mix ? query should resolve once a 2nd falloff is stacked: " ~ r2.toString);
+
+    postJson("/api/command", "falloff.clear");
     postJson("/api/command", "tool.pipe.attr falloff type none");
 }

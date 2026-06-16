@@ -493,18 +493,16 @@ class FormsPanel {
         float step = h.hasStep ? h.step_ : 0.001f;
         string fmt = h.hasFmt  ? h.fmt   : "%.3f";
 
-        // Framed box around the X/Y/Z cluster (same frame as a `group:`), so a
-        // Vec3 attr like falloff start/end reads as its own delimited unit — just
-        // like the transform Position group.
-        beginFramedCluster();
-        scope(exit) endFramedCluster();
-
-        // Compact two-column layout for the three rows, then restore.
+        // Compact two-column layout for the three rows, closed by a horizontal
+        // rule that separates this cluster from the next. No surrounding box: a
+        // box requires BeginGroup, whose GroupOffset.x leaks into the cluster's
+        // SameLine(fieldColX) and left the fields slightly misaligned vs plain
+        // rows. Without the group every field lands on the same column.
         GroupLayout saved = glayout_;
         glayout_ = makeVectorLayout(groupLabel);
         const ImVec2 sp = ImGui.GetStyle().ItemSpacing;
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(sp.x, 2.0f));
-        scope(exit) { ImGui.PopStyleVar(); glayout_ = saved; }
+        scope(exit) { ImGui.PopStyleVar(); glayout_ = saved; ImGui.Separator(); }
 
         static immutable string[3] comp = ["X", "Y", "Z"];
         foreach (k; 0 .. 3) {
@@ -690,14 +688,10 @@ class FormsPanel {
         ImGui.PushID(format("group#%d#%s", rowIdx, row.label));
         scope(exit) ImGui.PopID();
 
-        // Framed box around the cluster (shared with drawVec3Control). The
-        // compact vector layout puts the group label ("Position") on the FIRST
-        // member's row next to "X"; subsequent members leave the group column
-        // blank so "Y"/"Z" and their fields align under "X", with a tighter
-        // ItemSpacing.y. The legacy layout put the group label on its own line
-        // and stacked full-width member rows — taller and looser.
-        beginFramedCluster();
-
+        // Compact vector layout, closed by a horizontal rule that separates this
+        // group from the next (no box — see drawVec3Control for why a box leaves
+        // the fields slightly misaligned). The group label rides the first
+        // member's row; members pack with a tighter ItemSpacing.y.
         GroupLayout saved = glayout_;
         glayout_ = makeVectorLayout(row.label);
 
@@ -710,54 +704,7 @@ class FormsPanel {
         ImGui.PopStyleVar();
         glayout_ = saved;   // restore for nested groups / following rows
 
-        endFramedCluster();
-    }
-
-    // -----------------------------------------------------------------------
-    // Framed cluster — a thin-bordered, padded box around a vector cluster
-    // (group of separate attrs OR a single Vec3 attr). Channel-split idiom: the
-    // border paints on a BACKGROUND channel so it sits behind the widgets (a
-    // naive rect-after-widgets would paint over them). beginFramedCluster opens
-    // the split + group + pad; endFramedCluster closes the group and strokes the
-    // box. The fill matches WindowBg (no contrasting fill — the thin border
-    // alone delimits the cluster). Used by drawGroup and drawVec3Control so a
-    // TX/TY/TZ group and a Vec3 attr (falloff start/end) frame identically.
-    // -----------------------------------------------------------------------
-    private enum float kClusterPad = 4.0f;
-
-    private void beginFramedCluster()
-    {
-        auto dl = ImGui.GetWindowDrawList();
-        dl.ChannelsSplit(2);
-        dl.ChannelsSetCurrent(1);        // 1 = foreground (the widgets)
-
-        ImVec2 p = ImGui.GetCursorScreenPos();
-        p.x += kClusterPad;
-        p.y += kClusterPad;
-        ImGui.SetCursorScreenPos(p);
-        ImGui.BeginGroup();
-    }
-
-    private void endFramedCluster()
-    {
-        ImGui.EndGroup();
-
-        ImVec2 rmin = ImGui.GetItemRectMin();
-        ImVec2 rmax = ImGui.GetItemRectMax();
-        rmin.x -= kClusterPad; rmin.y -= kClusterPad;
-        rmax.x += kClusterPad; rmax.y += kClusterPad;
-
-        // Same window draw list as beginFramedCluster (one per window) — the
-        // channel split opened there is still active; select the background
-        // channel, stroke, and merge.
-        auto dl = ImGui.GetWindowDrawList();
-        dl.ChannelsSetCurrent(0);        // 0 = background
-        dl.AddRectFilled(rmin, rmax, ImGui.GetColorU32(ImGuiCol.WindowBg), 3.0f);
-        dl.AddRect(rmin, rmax, IM_COL32(96, 96, 110, 255), 3.0f);
-        dl.ChannelsMerge();
-
-        // Advance the cursor past the padded box so following rows clear it.
-        ImGui.Dummy(ImVec2(0, kClusterPad));
+        ImGui.Separator();
     }
 
     // -----------------------------------------------------------------------
