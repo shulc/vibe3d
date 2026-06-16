@@ -561,9 +561,9 @@ public:
         // reflects whatever the last preview frame produced and can
         // freeze — acceptable for now.
         drawSnapOverlay(lastSnap, vp, *mesh);
-        // Falloff overlay + endpoint handles are drawn ONCE by the
-        // XfrmTransformTool wrapper, which owns the single shared
-        // FalloffGizmo (step 4b-2). The banks no longer touch it.
+        // Falloff overlay + endpoint handles are drawn ONCE at the
+        // XfrmTransformTool wrapper, via the PipeGizmoHost-owned emitter.
+        // The banks never touch falloff.
     }
 
     void drawPrincipalOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)

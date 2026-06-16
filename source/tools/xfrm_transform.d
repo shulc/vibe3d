@@ -20,9 +20,10 @@ module tools.xfrm_transform;
 //   sub-tool maintains its own edit session and commits its own
 //   history entry. Most presets toggle only one flag so this
 //   doesn't bite in practice.
-// - Each sub-tool has its own FalloffGizmo instance. Endpoint
-//   handle dragging stays scoped to the sub-tool that owns it; no
-//   shared state, no cross-talk.
+// - The falloff endpoint gizmo is NOT per-sub-tool. A single
+//   PipeGizmoHost-owned emitter, registered into the tool's shared
+//   toolHandles, handles falloff for all banks — one source of truth,
+//   no per-sub-tool copies.
 // - Sub-tool mouse-button-down side effects (screen-falloff disc
 //   re-center) fire idempotently when none of the sub-tools
 //   short-circuit, which is fine — they all see the same cursor.
@@ -922,7 +923,7 @@ public:
         }
 
         // Falloff endpoint handles claim the click first (Linear/Radial),
-        // at the wrapper now that it owns the single FalloffGizmo.
+        // routed at the wrapper through the host-owned falloff emitter.
         if (e.button == SDL_BUTTON_LEFT) {
             FalloffPacket curFp = currentFalloff(vts);
             if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
