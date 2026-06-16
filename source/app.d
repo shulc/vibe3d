@@ -22,7 +22,6 @@ import math;
 import mesh;
 import eventlog;
 import handler;
-import falloff_handles : FalloffGizmo;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import editmode;
@@ -2268,6 +2267,20 @@ void main(string[] args) {
     // the HTTP path, so raw `/api/command` writes stay non-interactive.
     bool formsInteractiveLatch = false;
 
+    // Step 3 of the falloff stage-gizmo refactor: the single persistent
+    // app-level owner of the toolpipe falloff gizmo + overlay (see
+    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed here, at main's
+    // outer scope and BEFORE the `if (httpServer !is null)` block, so the
+    // /api/reset handler closure (registered inside that block) can capture it
+    // and drop any in-flight no-tool falloff drag on reset, AND so the later
+    // run-loop draw / event-handler closures can capture it too. GL is already
+    // valid at this point (context + shaders set up earlier in main), and the
+    // host's own GL alloc is lazy on first draw() in any case. The scope(exit)
+    // tears down its GL handles at shutdown; the context is still current at
+    // that point (this also fixes the ef43dd9 standalone-gizmo leak).
+    auto pipeGizmoHost = new PipeGizmoHost();
+    scope(exit) pipeGizmoHost.destroyGL();
+
     // Set up HTTP server model data provider
     if (httpServer !is null) {
         // Convert mesh vertices to flat float array for HTTP server
@@ -3525,6 +3538,9 @@ void main(string[] args) {
             }
             if (!cmd.apply())
                 throw new Exception("scene.reset did not apply");
+            // The host now owns the no-tool falloff drag (step 3 of the
+            // stage-gizmo refactor); a reset must drop any in-flight drag.
+            pipeGizmoHost.cancelDrag();
             // Selection-types Stage 1: re-sync the SelType recent-ordering to the
             // current geometry editMode after a reset. editMode is the persistent
             // picking authority (scene.reset does not change it), so aligning the
@@ -3596,31 +3612,6 @@ void main(string[] args) {
 
     int lastMouseX, lastMouseY;
 
-    // Standalone falloff gizmo — drawn + interactive when a falloff is active
-    // but NO transform tool is selected (the per-tool gizmo lives on
-    // CommandWrapperTool; this is its tool-less counterpart). Created lazily on
-    // the first no-tool falloff frame. FALLOFF_BASE is the part-id base for the
-    // single-emitter ToolHandles pool (value arbitrary — no other emitter here).
-    FalloffGizmo falloffGizmoStandalone;
-    ToolHandles  falloffHandlesStandalone;
-    enum int kStandaloneFalloffBase = 100;
-
-    // Step 2 of the falloff stage-gizmo refactor: the single persistent
-    // app-level owner of the toolpipe falloff gizmo + overlay (see
-    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed here, in the same
-    // run-loop scope as the standalone falloff locals above, so the nested
-    // draw + event-handler closures can capture it in later steps. GL is
-    // already valid at this point (context + shaders set up earlier in main),
-    // and the host's own GL alloc is lazy on first draw() in any case.
-    //
-    // The host is IDLE this step — nothing routes draw or events through it
-    // yet (steps 3-6). The scope(exit) below tears down its GL handles at
-    // shutdown; placed after the GL-context / shader scope(exit)s above, it
-    // runs BEFORE them in LIFO order, so the context is still current when the
-    // gizmo is destroyed (this also fixes the ef43dd9 standalone-gizmo leak,
-    // once the standalone is retired in step 3).
-    auto pipeGizmoHost = new PipeGizmoHost();
-    scope(exit) pipeGizmoHost.destroyGL();
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
     SDL_Event event;
@@ -3915,18 +3906,17 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             if (activeTool.onMouseButtonDown(btn, vts)) return;
         }
-        // No tool, but the standalone falloff gizmo may own this click (drag an
+        // No tool, but the host's falloff gizmo may own this click (drag an
         // endpoint). Must run BEFORE the bare-LMB selection-clear below so a
         // handle grab isn't treated as a deselect. Skip alt/ctrl chords (camera).
         if (activeTool is null && btn.button == SDL_BUTTON_LEFT
-            && falloffGizmoStandalone !is null
             && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))) {
             import toolpipe.packets : FalloffPacket;
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
             Viewport vpg = cameraView.viewport();
-            if (falloffGizmoStandalone.onMouseButtonDown(btn, vpg, fp))
+            if (pipeGizmoHost.tryClaimDown(btn, vpg, fp, pipeGizmoHost.ownPool()))
                 return;
         }
         if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && activeTool is null) {
@@ -4208,9 +4198,10 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             activeTool.onMouseButtonUp(btn, vts);
         }
-        // Release a standalone falloff-gizmo drag (no tool active).
-        if (activeTool is null && falloffGizmoStandalone !is null
-            && falloffGizmoStandalone.onMouseButtonUp(btn))
+        // Release a host falloff-gizmo drag (no tool active). routeUp does NOT
+        // bump the tweak generation — that bump is XfrmTransformTool-specific
+        // and the no-tool path never bumped.
+        if (activeTool is null && pipeGizmoHost.routeUp(btn))
             return;
         // When BoxTool commits a new face it appends geometry via mesh
         // primitives (addVertex / addFace), which publish a Geometry change on
@@ -4265,12 +4256,11 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             if (activeTool.onMouseMotion(mot, vts)) return;
         }
-        // Standalone falloff-gizmo endpoint drag (no tool active). The gizmo
-        // writes the new endpoint to the FalloffStage via tool.pipe.attr.
-        if (activeTool is null && falloffGizmoStandalone !is null
-            && falloffGizmoStandalone.isDragging()) {
+        // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes
+        // the new endpoint to the FalloffStage via tool.pipe.attr.
+        if (activeTool is null && pipeGizmoHost.isDragging()) {
             Viewport vpg = cameraView.viewport();
-            if (falloffGizmoStandalone.onMouseMotion(mot, vpg)) return;
+            if (pipeGizmoHost.routeMotion(mot, vpg)) return;
         }
         if (dragMode == DragMode.None) return;
 
@@ -6881,10 +6871,11 @@ void main(string[] args) {
 
         // ---- Active tool ----
         if (activeTool) {
-            // A tool just became active — drop any latched standalone falloff
-            // drag so isDragging() can't leak into a later tool-less motion.
-            if (falloffGizmoStandalone !is null && falloffGizmoStandalone.isDragging())
-                falloffGizmoStandalone.cancelDrag();
+            // A tool just became active — drop any latched no-tool falloff drag
+            // so isDragging() can't leak into a later tool-less motion. The host
+            // now owns the drag (step 3 of the stage-gizmo refactor).
+            if (pipeGizmoHost.isDragging())
+                pipeGizmoHost.cancelDrag();
             {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
                 activeTool.update(vts);
@@ -6894,37 +6885,18 @@ void main(string[] args) {
                 activeTool.draw(shader, vp, vts);
             }
         } else if (anyFalloffActive()) {
-            // No transform tool, but a user-locked falloff is active — draw its
-            // overlay AND its interactive handles on a standalone gizmo, so the
-            // falloff is visible and draggable on its own (mirrors the gizmo
-            // block in CommandWrapperTool.draw). The gizmo writes start/end /
+            // No transform tool, but a user-locked falloff is active — route the
+            // overlay + interactive handles through the persistent host, using
+            // its own no-tool arbiter pool. The host folds in drawFalloffOverlay
+            // and gates the gizmo on fp.enabled; the gizmo writes start/end /
             // center/size back to the FalloffStage via tool.pipe.attr, so the
             // next buildToolVts reflects the drag.
-            import falloff_render  : drawFalloffOverlay;
             import toolpipe.packets : FalloffPacket;
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
-            drawFalloffOverlay(fp, vp);
-            if (fp.enabled) {
-                if (falloffGizmoStandalone is null)
-                    falloffGizmoStandalone = new FalloffGizmo();
-                if (falloffHandlesStandalone is null)
-                    falloffHandlesStandalone = new ToolHandles();
-                // Host arbiter: register the falloff handles, resolve one hot/
-                // captured part, then render (two-pass hit-test → draw model).
-                falloffHandlesStandalone.begin();
-                falloffGizmoStandalone.registerHandles(
-                    falloffHandlesStandalone, kStandaloneFalloffBase, fp);
-                falloffHandlesStandalone.setHaul(
-                    falloffGizmoStandalone.isDragging()
-                    ? falloffGizmoStandalone.capturedPart(kStandaloneFalloffBase)
-                    : -1);
-                int hmx, hmy;
-                queryMouse(hmx, hmy);
-                falloffHandlesStandalone.update(hmx, hmy, vp);
-                falloffGizmoStandalone.draw(shader, vp, fp);
-            }
+            if (fp.enabled)
+                pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
         }
 
         // ---- ImGui draw ----
