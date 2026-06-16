@@ -4726,6 +4726,12 @@ void main(string[] args) {
         ImGui.PushStyleColor(ImGuiCol.SliderGrab,       grabLo);
         ImGui.PushStyleColor(ImGuiCol.SliderGrabActive, grabHi);
         ImGui.PushStyleColor(ImGuiCol.CheckMark,        black);
+        // Dropdown / combo popups open INSIDE this chrome inherit its black Text,
+        // but PopupBg defaults to the dark StyleColorsDark value → black-on-dark,
+        // unreadable. Match PopupBg to the field background (btnBg) so an open
+        // combo reads the same as its closed state. Only popup WINDOWS use
+        // PopupBg, so CollapsingHeader section styling is unaffected.
+        ImGui.PushStyleColor(ImGuiCol.PopupBg,          btnBg);
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,    ImVec2(3, 3));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1.0f);
@@ -4733,7 +4739,7 @@ void main(string[] args) {
     }
     void popPanelChromeStyle() {
         ImGui.PopStyleVar(3);
-        ImGui.PopStyleColor(15);
+        ImGui.PopStyleColor(16);
     }
 
     // Packed-button-row layout (large FramePadding, zero ItemSpacing). Use inside
