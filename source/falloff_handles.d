@@ -385,6 +385,12 @@ public:
 
     bool isDragging() const { return activeLinear >= 0 || activeRadial >= 0; }
 
+    /// Force-release any in-flight endpoint drag without an LMB-up event. The
+    /// standalone (tool-less) host calls this when a tool activates mid-drag —
+    /// otherwise isDragging() would stay latched and a later tool-less motion
+    /// would move an endpoint with no fresh grab.
+    void cancelDrag() { activeLinear = -1; activeRadial = -1; }
+
     // Register the active falloff handles into the shared arbiter at `base`
     // so they join the single-winner pool. Part layout (mutually exclusive
     // by mode, so no clash): Linear start = base+0..3, end = base+10..13;
