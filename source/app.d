@@ -1532,18 +1532,21 @@ void main(string[] args) {
         auto t = new XfrmSmoothTool(&mesh(), cameraView, editMode, &gpu,
                                     &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.jitter"] = () {
         auto t = new XfrmJitterTool(&mesh(), cameraView, editMode, &gpu,
                                     &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.quantize"] = () {
         auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu,
                                       &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["prim.cube"] = () {

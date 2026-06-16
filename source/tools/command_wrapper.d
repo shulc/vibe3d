@@ -11,23 +11,19 @@ import tool   : Tool;
 import params : Param;
 import math   : Vec3, Viewport, screenToWorkPlane;
 import shader : Shader;
-import handler : ClickPointHandler, ToolHandles;
-import eventlog : queryMouse;
+import handler : ClickPointHandler;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import tools.transform : VertexEditFactory;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import operator        : Operator, Task, VectorStack, PacketKind;
-import falloff_render : drawFalloffOverlay;
-import falloff_handles : FalloffGizmo;
+import pipe_gizmo_host : PipeGizmoHost;
 
 import commands.mesh.smooth   : MeshSmooth;
 import commands.mesh.jitter   : MeshJitter;
 import commands.mesh.quantize : MeshQuantize;
 
 import ImGui = d_imgui;
-
-private enum int FALLOFF_BASE = 100;
 
 /// Tool wrapper around a one-shot Command. Lets a Command be activated
 /// via `tool.set <id> on`, configured via `tool.attr`, and applied via
@@ -133,12 +129,14 @@ abstract class CommandWrapperTool : Tool {
     // identical to the prior single-packet behaviour.
     private FalloffPacket[] lastAppliedFalloffs;
 
-    // Lazy-built endpoint gizmo for draggable handles (linear start /
-    // end, radial center + 6 size handles). Mirrors transform tools'
-    // FalloffGizmo usage. Null when no falloff is active in the
-    // tool's lifetime.
-    private FalloffGizmo  falloffGizmo;
-    private ToolHandles   toolHandles;
+    // Falloff stage-gizmo refactor (step 5): the interactive falloff
+    // endpoint gizmo is no longer owned per-tool. The single persistent
+    // app-level PipeGizmoHost owns the one emitter; CommandWrapperTool has
+    // no gizmo banks of its own, so it drives the host's FULL-cycle draw on
+    // the host's OWN pool (exactly like the no-tool path) and routes events
+    // through the host. Injected by app.d at each construction site via
+    // setPipeGizmoHost(); nullable for tests / older callers.
+    private PipeGizmoHost pipeGizmoHost;
 
     override string name() const { return "CommandWrapperTool"; }
     override Param[] params() { return inner.params(); }
@@ -153,6 +151,15 @@ abstract class CommandWrapperTool : Tool {
     public void setUndoBindings(CommandHistory h, VertexEditFactory f) {
         this.history           = h;
         this.vertexEditFactory = f;
+    }
+
+    /// Inject the app-level persistent falloff gizmo host (mirror of
+    /// setUndoBindings / XfrmTransformTool.setPipeGizmoHost). app.d calls
+    /// this at each CommandWrapperTool construction site so the wrapper
+    /// drives/routes the single shared falloff emitter instead of owning
+    /// its own. Covers subclasses (the setter lives on the base).
+    public void setPipeGizmoHost(PipeGizmoHost h) {
+        this.pipeGizmoHost = h;
     }
 
     // ---- subclass hooks ----------------------------------------------
@@ -208,11 +215,8 @@ abstract class CommandWrapperTool : Tool {
             clickHandle.destroy();
             clickHandle = null;
         }
-        if (falloffGizmo !is null) {
-            falloffGizmo.destroy();
-            falloffGizmo = null;
-        }
-        toolHandles = null;
+        // The falloff emitter is owned by the app-level PipeGizmoHost; the
+        // tool only references it. Nothing to tear down here.
         baseline.length = 0;
         dirty    = false;
         dragging = false;
@@ -339,10 +343,10 @@ abstract class CommandWrapperTool : Tool {
         // Falloff endpoint drag takes priority — same precedence move /
         // scale tools give it. Read the FalloffPacket from the dispatcher-
         // built vts (Phase 7), no extra pipeline walk needed.
-        if (falloffGizmo !is null) {
+        if (pipeGizmoHost !is null) {
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
-            if (falloffGizmo.onMouseButtonDown(e, cachedVp, fp))
+            if (pipeGizmoHost.tryClaimDown(e, cachedVp, fp, pipeGizmoHost.ownPool()))
                 return true;
         }
 
@@ -374,8 +378,8 @@ abstract class CommandWrapperTool : Tool {
         // Falloff endpoint drag — gizmo updates the FalloffStage's
         // attrs via tool.pipe.attr; the subsequent `evaluate()` tick
         // detects the live falloff change and re-applies the preview.
-        if (falloffGizmo !is null && falloffGizmo.isDragging())
-            return falloffGizmo.onMouseMotion(e, cachedVp);
+        if (pipeGizmoHost !is null && pipeGizmoHost.isDragging())
+            return pipeGizmoHost.routeMotion(e, cachedVp);
 
         if (!dragging || meshPtr is null) return false;
         int dx = e.x - dragStartX;
@@ -391,7 +395,7 @@ abstract class CommandWrapperTool : Tool {
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Release falloff endpoint drag first — it consumes
         // independently of the tool's own drag.
-        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e))
+        if (pipeGizmoHost !is null && pipeGizmoHost.routeUp(e))
             return true;
         if (e.button != SDL_BUTTON_LEFT) return false;
         if (!dragging) return false;
@@ -477,24 +481,13 @@ abstract class CommandWrapperTool : Tool {
         // every other Tool sees this frame.
         FalloffPacket fp;
         if (auto p = vts.get!FalloffPacket()) fp = *p;
-        drawFalloffOverlay(fp, vp);
-        if (fp.enabled) {
-            if (falloffGizmo is null) falloffGizmo = new FalloffGizmo();
-            if (toolHandles  is null) toolHandles  = new ToolHandles();
-            // Host arbiter (two-pass hit-test -> draw tool model): register the
-            // falloff handles, resolve one hot/captured part, then render.
-            // CommandWrapper has no gizmo bank, so falloff is the only
-            // emitter — this unifies the previously per-endpoint self-hover
-            // into a single winner across all falloff handles.
-            toolHandles.begin();
-            falloffGizmo.registerHandles(toolHandles, FALLOFF_BASE, fp);
-            toolHandles.setHaul(falloffGizmo.isDragging()
-                                ? falloffGizmo.capturedPart(FALLOFF_BASE) : -1);
-            int hmx, hmy;
-            queryMouse(hmx, hmy);
-            toolHandles.update(hmx, hmy, vp);
-            falloffGizmo.draw(shader, vp, fp);
-        }
+        // CommandWrapper has NO gizmo banks, so the falloff emitter has
+        // nothing to co-arbitrate — drive the host's FULL-cycle draw on the
+        // host's OWN pool, exactly like the no-tool path (host.draw folds in
+        // drawFalloffOverlay + the fp.enabled gate + the whole
+        // begin/register/setHaul/update/draw arbiter cycle).
+        if (pipeGizmoHost !is null)
+            pipeGizmoHost.draw(shader, vp, fp, pipeGizmoHost.ownPool());
 
         // Click-point handle. Drawn only while LMB is held — appears
         // on first click, disappears on release. World size matches
