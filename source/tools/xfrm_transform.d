@@ -134,10 +134,11 @@ alias VertexEditFactory = MeshVertexEdit delegate();
 // Part-id bases for the shared cross-bank handle arbiter. Each bank
 // registers its local handle ids (0..6) at its base so overlapping
 // handles at the shared gizmo center get distinct global part ids. The
-// falloff base (100) hosts the single wrapper-owned FalloffGizmo, which
-// registers FIRST (highest test priority) so a falloff endpoint handle
-// wins over a co-located gizmo arrow — matching the click-dispatch order.
-private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20, FALLOFF_BASE = 100;
+// falloff base (PipeGizmoHost.FALLOFF_BASE = 100) is owned by the host:
+// it registers its emitter's handles into this SAME pool FIRST (highest
+// test priority) so a falloff endpoint handle wins over a co-located
+// gizmo arrow — matching the click-dispatch order.
+private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20;
 
 // Canonical run-state for the wrapper transform: translation Vec3, rotation
 // as a matrix-truth float[16] (R is matrix-truth — euler is a derived view),
@@ -728,14 +729,11 @@ public:
         // highest priority) + every enabled gizmo bank, resolve ONE
         // hot/captured part, THEN render.
         toolHandles.begin();
-        if (fp.enabled) {
-            ensureFalloffGizmo();
-            falloffGizmo.registerHandles(toolHandles, FALLOFF_BASE, fp);
-        }
+        if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.registerInto(toolHandles, fp);
         registerGizmoHandles(toolHandles);
         // Capture precedence: a live falloff-handle drag wins; else the active
         // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
-        if      (falloffGizmo !is null && falloffGizmo.isDragging())  toolHandles.setHaul(falloffGizmo.capturedPart(FALLOFF_BASE));
+        if      (pipeGizmoHost !is null && pipeGizmoHost.isDragging())  toolHandles.setHaul(pipeGizmoHost.capturedPart());
         else if (activeDrag is moveSub   && moveSub.dragAxis   >= 0)  toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
         else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0)  toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
         else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0)  toolHandles.suppress();
@@ -759,7 +757,7 @@ public:
 
         // Falloff overlay + handles drawn ONCE, on top of the gizmo banks.
         drawFalloffOverlay(fp, vp);
-        if (fp.enabled) { ensureFalloffGizmo(); falloffGizmo.draw(shader, vp, fp); }
+        if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.drawGizmo(shader, vp, fp);
 
         syncGpuMatrix();
     }
@@ -927,7 +925,7 @@ public:
         // at the wrapper now that it owns the single FalloffGizmo.
         if (e.button == SDL_BUTTON_LEFT) {
             FalloffPacket curFp = currentFalloff(vts);
-            if (falloffGizmo !is null && falloffGizmo.onMouseButtonDown(e, cachedVp, curFp)) {
+            if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
                 activeDrag = null;   // falloff owns the drag, no gizmo bank
                 return true;
             }
@@ -1713,8 +1711,8 @@ public:
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        if (falloffGizmo !is null && falloffGizmo.isDragging())
-            return falloffGizmo.onMouseMotion(e, cachedVp);
+        if (pipeGizmoHost !is null && pipeGizmoHost.isDragging())
+            return pipeGizmoHost.routeMotion(e, cachedVp);
         bool r;
         if (activeDrag is moveSub) {
             r = moveSub.onMouseMotion(e, vts);
@@ -2012,7 +2010,7 @@ public:
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (falloffGizmo !is null && falloffGizmo.onMouseButtonUp(e)) {
+        if (pipeGizmoHost !is null && pipeGizmoHost.routeUp(e)) {
             // P-E: a falloff-handle DRAG just ended. Its per-frame setAttrs
             // (issued directly on the stage as the handle was hauled, bypassing
             // the command dispatcher) shared ONE generation and REPLACEd into one
