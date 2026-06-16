@@ -608,10 +608,24 @@ void main(string[] args) {
     initAssimp();
     scope(exit) shutdownAssimp();
 
-    // Initialize HTTP server
-    HttpServer httpServer;
+    // Initialize HTTP server.
+    //
+    // The server object is ALWAYS constructed, even when the network
+    // listener is disabled (release/default runs, --no-http). The ctor
+    // binds no socket and spawns no thread — only start() opens the port.
+    // Constructing unconditionally keeps the command-dispatch wiring below
+    // (commandHandlerDelegate / formsInteractiveDispatch / replayUndoEntry,
+    // all assigned inside the `if (httpServer !is null)` block) in place for
+    // the UI: status-line `kind: script` actions dispatch through
+    // commandHandlerDelegate, so it must be wired regardless of whether the
+    // HTTP port is open. Without this, a release build (HTTP off by default)
+    // left commandHandlerDelegate null and every `kind: script` status-line
+    // action (falloff type, granular ACEN sub-modes, edit-mode convert, …)
+    // silently no-op'd, while `kind: command` items kept working (they
+    // dispatch via runCommand directly). start() stays gated on
+    // startHttpServer, so no port is exposed when HTTP is off.
+    HttpServer httpServer = new HttpServer(httpPort);
     if (startHttpServer) {
-        httpServer = new HttpServer(httpPort);
         if (testMode) {
             httpServer.setTestMode(true);
             mouseOverride();
@@ -2285,17 +2299,21 @@ void main(string[] args) {
         }
     }
 
-    // Declared at outer scope so that the main-loop UI (History panel replay
-    // button) can call them regardless of whether httpServer is non-null.
-    // Both are assigned inside the `if (httpServer !is null)` block below;
-    // when httpServer is null they remain null and the replay path is a no-op.
+    // Declared at outer scope so the main-loop UI (status-line `kind: script`
+    // actions, History panel replay button) can call them. They are assigned
+    // inside the `if (httpServer !is null)` block below; httpServer is now
+    // ALWAYS constructed (the listener is gated separately on start()), so the
+    // block always runs and these are always wired — a release build with the
+    // HTTP port closed still dispatches script actions through
+    // commandHandlerDelegate.
     void delegate(string, string) commandHandlerDelegate;
     void delegate(size_t) replayUndoEntry;
     // FormsPanel write path: dispatches a `tool.attr` exactly like
     // commandHandlerDelegate but marks the built ToolAttrCommand `interactive`
     // (an in-process setInteractive(true)) so the universal reEvaluate() seam
     // opens the tool's live session on the first edit. Never sets the flag via
-    // an argstring — see commands/tool/attr.d. Null when httpServer is null.
+    // an argstring — see commands/tool/attr.d. Always wired now that
+    // httpServer is always constructed (listener gated on start()).
     void delegate(string, string) formsInteractiveDispatch;
     // Closure-captured latch the command handler reads to decide whether a
     // `tool.attr` it is about to build should be marked interactive. Set ONLY
@@ -5572,7 +5590,10 @@ void main(string[] args) {
     while (running) {
         // ---- Playback: push due events before polling ----
         if (playbackMode) evPlay.tick();
-        if (httpServer !is null) {
+        // httpServer is always constructed now; only drain the request queues
+        // when the listener is actually up (start() called). Skipped entirely
+        // in a release/no-http run, where no thread ever posts requests.
+        if (httpServer.running) {
             httpServer.tickEventPlayer();
             httpServer.tickReset();
             httpServer.tickModel();
