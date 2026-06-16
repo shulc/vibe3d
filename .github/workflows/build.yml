@@ -85,6 +85,9 @@ jobs:
           - runner: [self-hosted, macOS, ARM64]
             name: macos-arm64
             binary: vibe3d
+          - runner: [self-hosted, macOS, X64]
+            name: macos-x64
+            binary: vibe3d
           - runner: [self-hosted, Windows]
             name: windows
             binary: vibe3d.exe
@@ -501,7 +504,7 @@ jobs:
           TAG:     ${{ needs.check.outputs.tag }}
           NIGHTLY: ${{ needs.check.outputs.nightly }}
         run: |
-          ASSETS=( vibe3d-linux.zip vibe3d-macos-arm64.zip vibe3d-windows.zip )
+          ASSETS=( vibe3d-linux.zip vibe3d-macos-arm64.zip vibe3d-macos-x64.zip vibe3d-windows.zip )
           # Append with-render assets only if their build job actually ran.
           [[ -f vibe3d-linux-render.zip   ]] && ASSETS+=( vibe3d-linux-render.zip )
           [[ -f vibe3d-windows-render.zip ]] && ASSETS+=( vibe3d-windows-render.zip )
