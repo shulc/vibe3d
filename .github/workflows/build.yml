@@ -122,7 +122,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           missing=()
-          for pkg in ldc sdl2 cmake ninja; do
+          for pkg in sdl2 cmake ninja; do
             if ! brew list "$pkg" >/dev/null 2>&1; then
               missing+=("$pkg")
             fi
