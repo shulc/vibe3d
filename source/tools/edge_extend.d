@@ -16,6 +16,7 @@ import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
 import tools.xfrm_transform : XfrmTransformTool;
+import pipe_gizmo_host : PipeGizmoHost;
 import tools.move : MoveTool;
 import tools.rotate : RotateTool;
 import tools.scale : ScaleTool;
@@ -175,6 +176,16 @@ public:
     void setUndoBindings(CommandHistory h, EdgeExtendEditFactory f) {
         this.history = h;
         this.factory = f;
+    }
+
+    /// Forward the app-level falloff gizmo host to the embedded transform
+    /// wrapper (falloff stage-gizmo refactor, step 4). The embedded
+    /// XfrmTransformTool registers / routes the single shared emitter through
+    /// its own arbiter cycle exactly like a standalone transform tool; without
+    /// this the embedded wrapper would have a null host (falloff handles inert
+    /// — and pre-fix, a null deref).
+    void setPipeGizmoHost(PipeGizmoHost h) {
+        xfrm.setPipeGizmoHost(h);
     }
 
     override string name() const { return "Edge Extend"; }

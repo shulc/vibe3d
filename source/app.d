@@ -1452,6 +1452,20 @@ void main(string[] args) {
     // loop runs below.
     bool running = true;
 
+    // Falloff stage-gizmo refactor (steps 3-4): the single persistent
+    // app-level owner of the toolpipe falloff gizmo + overlay (see
+    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed HERE, BEFORE the
+    // XfrmTransformTool factory registrations below, so each factory closure
+    // can capture it and inject it into the tool via setPipeGizmoHost(). It
+    // also stays in scope for the no-tool app.d event/draw closures and the
+    // /api/reset handler (all later in main). GL is already valid (context +
+    // shaders set up earlier in main), and the host's own GL alloc is lazy on
+    // first draw() in any case. The scope(exit) tears down its GL handles at
+    // shutdown — the context is still current at that point (this also fixes
+    // the ef43dd9 standalone-gizmo leak).
+    auto pipeGizmoHost = new PipeGizmoHost();
+    scope(exit) pipeGizmoHost.destroyGL();
+
     Registry reg;
     // `move` / `rotate` / `scale` build XfrmTransformTool with the
     // matching T/R/S single-flag preset — they share one engine, like
@@ -1468,6 +1482,7 @@ void main(string[] args) {
         t.handleFamily = 0;
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["rotate"] = () {
@@ -1477,6 +1492,7 @@ void main(string[] args) {
         t.handleFamily = 1;
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["scale"]  = () {
@@ -1486,12 +1502,14 @@ void main(string[] args) {
         t.handleFamily = 2;
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.transform"] = () {
         import tools.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.push"] = () {
@@ -1617,6 +1635,7 @@ void main(string[] args) {
         auto t = new EdgeExtendTool(() => &mesh(), &gpu, &editMode, litShader,
                                     &vertexCache, &edgeCache, &faceCache);
         t.setUndoBindings(history, edgeExtendEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
 
@@ -2266,20 +2285,6 @@ void main(string[] args) {
     // by formsInteractiveDispatch around a single dispatch; never touched by
     // the HTTP path, so raw `/api/command` writes stay non-interactive.
     bool formsInteractiveLatch = false;
-
-    // Step 3 of the falloff stage-gizmo refactor: the single persistent
-    // app-level owner of the toolpipe falloff gizmo + overlay (see
-    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed here, at main's
-    // outer scope and BEFORE the `if (httpServer !is null)` block, so the
-    // /api/reset handler closure (registered inside that block) can capture it
-    // and drop any in-flight no-tool falloff drag on reset, AND so the later
-    // run-loop draw / event-handler closures can capture it too. GL is already
-    // valid at this point (context + shaders set up earlier in main), and the
-    // host's own GL alloc is lazy on first draw() in any case. The scope(exit)
-    // tears down its GL handles at shutdown; the context is still current at
-    // that point (this also fixes the ef43dd9 standalone-gizmo leak).
-    auto pipeGizmoHost = new PipeGizmoHost();
-    scope(exit) pipeGizmoHost.destroyGL();
 
     // Set up HTTP server model data provider
     if (httpServer !is null) {
@@ -6871,11 +6876,12 @@ void main(string[] args) {
 
         // ---- Active tool ----
         if (activeTool) {
-            // A tool just became active — drop any latched no-tool falloff drag
-            // so isDragging() can't leak into a later tool-less motion. The host
-            // now owns the drag (step 3 of the stage-gizmo refactor).
-            if (pipeGizmoHost.isDragging())
-                pipeGizmoHost.cancelDrag();
+            // Step 4 of the stage-gizmo refactor: NO cancel-on-tool-activate
+            // here. With one shared host emitter, a no-tool→tool transition
+            // just CONTINUES the in-flight falloff drag — the now-active
+            // XfrmTransformTool routes the same host through its own shared
+            // arbiter cycle. Cancelling every frame would kill a legitimate
+            // with-tool falloff drag.
             {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
                 activeTool.update(vts);

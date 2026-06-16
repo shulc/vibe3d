@@ -137,6 +137,40 @@ class PipeGizmoHost {
         return gizmo.onMouseButtonUp(e);
     }
 
+    // ---- in-cycle (with-tool) registration ------------------------------
+    //
+    // When a TOOL is active, the falloff emitter must live INSIDE the tool's
+    // SINGLE shared-arbiter cycle: the tool calls pool.begin(), then these
+    // three methods register / pin / draw the falloff handles into that SAME
+    // pool (alongside the tool's gizmo banks), so cross-bank single-winner
+    // hover arbitration is preserved. The tool owns begin()/update(); the host
+    // only contributes its emitter's handles + draw. (The no-tool `draw()`
+    // above runs the whole cycle itself on the host's own pool instead.)
+
+    /// Register the falloff emitter's handles into the supplied (tool-owned)
+    /// pool at FALLOFF_BASE. The caller must have already called pool.begin();
+    /// this just adds the falloff parts (registered FIRST = highest priority).
+    void registerInto(ToolHandles pool, const ref FalloffPacket fp) {
+        if (gizmo is null) gizmo = new FalloffGizmo();
+        gizmo.registerHandles(pool, FALLOFF_BASE, fp);
+    }
+
+    /// The hauled falloff part for the tool's setHaul() precedence check, or
+    /// -1 if no emitter / no drag. Null-safe.
+    int capturedPart() {
+        return gizmo is null ? -1 : gizmo.capturedPart(FALLOFF_BASE);
+    }
+
+    /// Draw ONLY the falloff gizmo (no overlay, no begin/update — the tool
+    /// owns the arbiter cycle and draws the overlay itself). Lazily creates
+    /// the emitter so a tool that first observes an enabled packet here still
+    /// gets a gizmo.
+    void drawGizmo(const ref Shader shader, const ref Viewport vp,
+                   const ref FalloffPacket fp) {
+        if (gizmo is null) gizmo = new FalloffGizmo();
+        gizmo.draw(shader, vp, fp);
+    }
+
     // ---- state / lifecycle ----------------------------------------------
 
     /// True while a falloff endpoint / center / size drag is in flight.

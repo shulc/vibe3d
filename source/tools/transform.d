@@ -13,8 +13,8 @@ import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import falloff : evaluateFalloff;
-import falloff_handles : FalloffGizmo;
 import symmetry : applySymmetryMirror;
+import pipe_gizmo_host : PipeGizmoHost;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires gpu+caches; the tool just calls this delegate
@@ -100,12 +100,14 @@ protected:
     // an in-session / post-drop undo restores the snap config with the geometry.
     SnapPacket dragSnap;
 
-    // Phase 7.5h+: interactive falloff endpoint handles. Built lazily
-    // on first draw() that sees a Linear-typed enabled falloff packet,
-    // so non-falloff sessions don't allocate GL buffers. Owned by the
-    // base class because all three TransformTool subclasses (Move /
-    // Rotate / Scale) need the same dispatch wiring.
-    FalloffGizmo falloffGizmo;
+    // Falloff stage-gizmo refactor (step 4): the interactive falloff
+    // endpoint gizmo is no longer owned per-tool. The single persistent
+    // app-level PipeGizmoHost owns the one emitter; the tool registers it
+    // INTO its own shared `toolHandles` arbiter cycle and routes events
+    // through the host so a no-tool→tool transition continues one drag.
+    // Injected by app.d at each XfrmTransformTool construction site via
+    // setPipeGizmoHost(); nullable for tests / older callers.
+    PipeGizmoHost pipeGizmoHost;
 
     // Whole-mesh GPU bypass (Rotate + Scale use these; Move uses gpuOffset instead)
     bool   wholeMeshDrag;
@@ -842,13 +844,12 @@ protected:
         return syeq(a, b);
     }
 
-    /// Lazy-construct the falloff endpoint gizmo. Called from each
-    /// subclass's draw() once the live falloff packet is observed.
-    /// Constructing eagerly in the ctor would allocate GL VAO/VBO for
-    /// tools that may never see a falloff in their lifetime.
-    protected void ensureFalloffGizmo() {
-        if (falloffGizmo is null)
-            falloffGizmo = new FalloffGizmo();
+    /// Inject the app-level persistent falloff gizmo host (mirror of
+    /// setUndoBindings). app.d calls this at each XfrmTransformTool
+    /// construction site so the tool registers/routes the single shared
+    /// falloff emitter instead of owning its own.
+    public final void setPipeGizmoHost(PipeGizmoHost h) {
+        pipeGizmoHost = h;
     }
 
     /// True iff the ACEN stage currently holds a sticky click-outside
