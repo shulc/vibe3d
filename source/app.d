@@ -1212,7 +1212,35 @@ void main(string[] args) {
         if (attrs.length > 0) g_prefs.toolDefaults[activeToolId] = attrs;
     }
 
+    // Falloff stage-gizmo refactor (steps 3-4): the single persistent
+    // app-level owner of the toolpipe falloff gizmo + overlay (see
+    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed HERE, BEFORE
+    // setActiveTool (so its one-shot cancelDrag below can reach it) and BEFORE
+    // the XfrmTransformTool factory registrations further down (so each factory
+    // closure can capture it and inject it via setPipeGizmoHost()). It also
+    // stays in scope for the no-tool app.d event/draw closures and the
+    // /api/reset handler (all later in main). GL is already valid (context +
+    // shaders set up earlier in main), and the host's own GL alloc is lazy on
+    // first draw() in any case. The scope(exit) tears down its GL handles at
+    // shutdown — the context is still current at that point (this also fixes
+    // the ef43dd9 standalone-gizmo leak).
+    auto pipeGizmoHost = new PipeGizmoHost();
+    scope(exit) pipeGizmoHost.destroyGL();
+
     void setActiveTool(Tool t) {
+        // One-shot falloff-drag cancel at the universal tool
+        // activation/switch/drop chokepoint (BOTH activateToolById and
+        // toolHost.activate route through here, as does every drop). Step 4
+        // removed the per-frame cancel guard; without this, a no-tool-origin
+        // falloff drag (LMB held on a falloff handle while activeTool is null)
+        // would latch pipeGizmoHost.isDragging() forever if the incoming tool
+        // can't route events into the host (a primitive/pen/box tool never
+        // calls routeUp). A with-tool falloff drag can only BEGIN while a
+        // routing tool is already active, so activation never lands mid-with-
+        // tool-drag — the only live drag at this boundary is the no-tool one,
+        // which must be dropped. This is a single cancel per activation, NOT a
+        // per-frame guard.
+        pipeGizmoHost.cancelDrag();
         if (t is null) captureStickyToolDefaults();
         if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
@@ -1451,20 +1479,6 @@ void main(string[] args) {
     // (file.quit in particular) can capture it before the actual
     // loop runs below.
     bool running = true;
-
-    // Falloff stage-gizmo refactor (steps 3-4): the single persistent
-    // app-level owner of the toolpipe falloff gizmo + overlay (see
-    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed HERE, BEFORE the
-    // XfrmTransformTool factory registrations below, so each factory closure
-    // can capture it and inject it into the tool via setPipeGizmoHost(). It
-    // also stays in scope for the no-tool app.d event/draw closures and the
-    // /api/reset handler (all later in main). GL is already valid (context +
-    // shaders set up earlier in main), and the host's own GL alloc is lazy on
-    // first draw() in any case. The scope(exit) tears down its GL handles at
-    // shutdown — the context is still current at that point (this also fixes
-    // the ef43dd9 standalone-gizmo leak).
-    auto pipeGizmoHost = new PipeGizmoHost();
-    scope(exit) pipeGizmoHost.destroyGL();
 
     Registry reg;
     // `move` / `rotate` / `scale` build XfrmTransformTool with the

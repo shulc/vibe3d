@@ -240,9 +240,9 @@ public:
         // snapped to (vertex / edge / face). No-op when no recent snap
         // (init/cleared SnapResult has highlighted=false).
         drawSnapOverlay(lastSnap, vp, *mesh);
-        // Falloff overlay + endpoint handles are drawn ONCE by the
-        // XfrmTransformTool wrapper, which owns the single shared
-        // FalloffGizmo (step 4b-2). The banks no longer touch it.
+        // Falloff overlay + endpoint handles are drawn ONCE at the
+        // XfrmTransformTool wrapper, via the PipeGizmoHost-owned emitter.
+        // The banks never touch falloff.
     }
 
     void drawAxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts)
