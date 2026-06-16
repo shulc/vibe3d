@@ -60,6 +60,16 @@ class FalloffStage : Stage, Operator {
     Vec3 center = Vec3(0, 0, 0);
     Vec3 size   = Vec3(1, 1, 1);
     Vec3 normal = Vec3(0, 1, 0);    // cylinder axis (default +Y, the xfrm.vortex default)
+
+    // userLocked: true when the user EXPLICITLY chose this falloff (status-bar
+    // type pulldown → `tool.pipe.attr falloff type <X>`, or a `falloff.<type>`
+    // sub-tool). resetTransientPipeStages (tool.set / tool switch) then SKIPS
+    // resetting it, so a user-set falloff survives a tool change — matching the
+    // reference editor (parity captured 2026-06-16). A preset-BUNDLED falloff applies
+    // its type via Stage.setAttr directly (not through a command), never sets
+    // this flag, and so stays transient (resets on the next tool switch).
+    // Cleared by reset() (full reset / SceneReset) and by selecting type=none.
+    bool userLocked = false;
     // Element falloff (Stage 14.1): sphere centred on the ACEN-
     // published pivot (state.actionCenter.center — same point the
     // gizmo sits on) with radius `dist`. The sphere CENTRE has a
@@ -244,6 +254,7 @@ class FalloffStage : Stage, Operator {
         out_         = 0.5f;
         mix          = FalloffMix.Multiply;
         anchorRing.length = 0;
+        userLocked   = false;   // full reset clears the user-lock (SceneReset)
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
         _selCacheValid     = false;
@@ -252,6 +263,15 @@ class FalloffStage : Stage, Operator {
         _adjOffset.length  = 0;
         _adjNeighbors.length = 0;
         publishState();
+    }
+
+    /// resetTransient: same contract as ActionCenter/Axis — a full reset()
+    /// UNLESS the user explicitly locked the falloff (userLocked), in which case
+    /// it is preserved across the tool switch. Called by app.d's
+    /// resetTransientPipeStages on every tool activation.
+    void resetTransient() {
+        if (userLocked) return;
+        reset();
     }
 
     // ------------------------------------------------------------------

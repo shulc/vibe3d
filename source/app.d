@@ -1136,6 +1136,7 @@ void main(string[] args) {
         import toolpipe.pipeline             : g_pipeCtx;
         import toolpipe.stages.actcenter     : ActionCenterStage;
         import toolpipe.stages.axis          : AxisStage;
+        import toolpipe.stages.falloff       : FalloffStage;
         if (g_pipeCtx is null) return;
         foreach (s; g_pipeCtx.pipeline.allMut()) {
             switch (s.id()) {
@@ -1154,8 +1155,13 @@ void main(string[] args) {
                         s.reset();
                     break;
                 case "falloff":
-                    // Falloff is always tool-driven — always reset.
-                    s.reset();
+                    // A user-selected falloff (userLocked) survives a tool
+                    // switch — reference parity (captured 2026-06-16). A
+                    // preset-bundled / unlocked falloff still resets.
+                    if (auto fo = cast(FalloffStage)s)
+                        fo.resetTransient();
+                    else
+                        s.reset();
                     break;
                 default: break;
             }

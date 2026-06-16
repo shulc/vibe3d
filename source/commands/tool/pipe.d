@@ -103,6 +103,17 @@ class ToolPipeAttrCommand : Command {
                 "tool.pipe.attr: stage '" ~ stageId_ ~ "' rejected attr '"
                 ~ attrName_ ~ "' = '" ~ attrValue_ ~ "'");
 
+        // A user-driven falloff TYPE change (the status-bar Falloff pulldown
+        // fires `tool.pipe.attr falloff type <X>`) locks the stage so it
+        // survives a tool switch — reference parity (2026-06-16). type=none clears
+        // the lock. Preset-bundle config applies via Stage.setAttr DIRECTLY (not
+        // through this command), so it never locks and stays transient.
+        if (attrName_ == "type") {
+            import toolpipe.stages.falloff : FalloffStage;
+            if (auto fo = cast(FalloffStage) matched)
+                fo.userLocked = (attrValue_ != "none");
+        }
+
         // Stage-attr edits (falloff/ACEN/AXIS/snap) gain mid-session
         // immediacy: when a tool ALREADY has a live evaluation session, re-run
         // its apply now so the new stage state takes effect this edit instead

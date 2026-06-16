@@ -73,6 +73,12 @@ class FalloffPresetCommand : Command {
             throw new Exception(
                 name() ~ ": falloff stage rejected type '" ~ typeName_ ~ "'");
 
+        // Explicit user selection → lock the falloff so it survives a tool
+        // switch (reference parity). Selecting `none` clears the lock. Preset-bundled
+        // falloffs set their type via Stage.setAttr directly (not this command),
+        // so they never lock and stay transient.
+        fo.userLocked = (typeName_ != "none");
+
         // Mid-session immediacy: if a tool already has a live evaluation
         // session, re-run its apply now so the new falloff takes effect this
         // edit instead of on the next update() tick. Mirrors

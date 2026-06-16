@@ -367,3 +367,53 @@ unittest { // mix `?` query (params() visibility) is gated on multi-falloff
     postJson("/api/command", "falloff.clear");
     postJson("/api/command", "tool.pipe.attr falloff type none");
 }
+
+// ---------------------------------------------------------------------------
+// A user-selected falloff survives a tool switch (reference parity, 2026-06-16).
+// vibe3d used to reset the falloff to None on every tool activation
+// (resetTransientPipeStages); now an explicitly-chosen falloff is userLocked
+// and kept — with its FULL state (type + endpoints) — across `tool.set`.
+// ---------------------------------------------------------------------------
+unittest { // status-bar path (tool.pipe.attr falloff type) locks; survives switch
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff type linear");
+    postJson("/api/command", `tool.pipe.attr falloff start "1,2,3"`);
+    postJson("/api/command", `tool.pipe.attr falloff end "4,5,6"`);
+
+    // Activate a transform tool — this runs resetTransientPipeStages.
+    postJson("/api/command", "tool.set move");
+
+    auto a = getFalloffAttrs();
+    assert(a["type"] == "linear",
+        "user falloff TYPE should survive tool switch, got " ~ a["type"]);
+    assert(a["start"] == "1,2,3",
+        "falloff start should survive tool switch, got " ~ a["start"]);
+    assert(a["end"] == "4,5,6",
+        "falloff end should survive tool switch, got " ~ a["end"]);
+
+    postJson("/api/command", "tool.pipe.attr falloff type none");
+}
+
+unittest { // `falloff.<type>` sub-tool command also locks → survives switch
+    resetCube();
+    postJson("/api/command", "falloff.linear");
+    postJson("/api/command", "tool.set move");
+    auto a = getFalloffAttrs();
+    assert(a["type"] == "linear",
+        "falloff.<type> selection should survive tool switch, got " ~ a["type"]);
+    postJson("/api/command", "tool.pipe.attr falloff type none");
+}
+
+unittest { // type=none clears the lock; SceneReset fully resets a locked falloff
+    resetCube();
+    postJson("/api/command", "tool.pipe.attr falloff type linear");   // lock
+    postJson("/api/command", "tool.pipe.attr falloff type none");     // unlock
+    postJson("/api/command", "tool.set move");
+    assert(getFalloffAttrs()["type"] == "none",
+        "type=none should stay none across switch");
+
+    postJson("/api/command", "tool.pipe.attr falloff type radial");   // lock again
+    resetCube();                                 // SceneReset → full reset() unlocks
+    assert(getFalloffAttrs()["type"] == "none",
+        "SceneReset must clear a locked falloff back to none");
+}
