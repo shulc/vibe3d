@@ -23,6 +23,7 @@ import mesh;
 import eventlog;
 import handler;
 import falloff_handles : FalloffGizmo;
+import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import editmode;
 import seltype;
@@ -3603,6 +3604,23 @@ void main(string[] args) {
     FalloffGizmo falloffGizmoStandalone;
     ToolHandles  falloffHandlesStandalone;
     enum int kStandaloneFalloffBase = 100;
+
+    // Step 2 of the falloff stage-gizmo refactor: the single persistent
+    // app-level owner of the toolpipe falloff gizmo + overlay (see
+    // doc/falloff_stage_gizmo_refactor_plan.md). Constructed here, in the same
+    // run-loop scope as the standalone falloff locals above, so the nested
+    // draw + event-handler closures can capture it in later steps. GL is
+    // already valid at this point (context + shaders set up earlier in main),
+    // and the host's own GL alloc is lazy on first draw() in any case.
+    //
+    // The host is IDLE this step — nothing routes draw or events through it
+    // yet (steps 3-6). The scope(exit) below tears down its GL handles at
+    // shutdown; placed after the GL-context / shader scope(exit)s above, it
+    // runs BEFORE them in LIFO order, so the context is still current when the
+    // gizmo is destroyed (this also fixes the ef43dd9 standalone-gizmo leak,
+    // once the standalone is retired in step 3).
+    auto pipeGizmoHost = new PipeGizmoHost();
+    scope(exit) pipeGizmoHost.destroyGL();
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
     SDL_Event event;
