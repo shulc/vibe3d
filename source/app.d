@@ -22,6 +22,7 @@ import math;
 import mesh;
 import eventlog;
 import handler;
+import falloff_handles : FalloffGizmo;
 import tool;
 import editmode;
 import seltype;
@@ -1132,6 +1133,23 @@ void main(string[] args) {
     // from activateToolById BEFORE preActivate fires for the new
     // preset — so the new preset's pipe attrs land on freshly
     // reset stages.
+    // True when at least one falloff (WGHT) stage is active (type != None, so
+    // its params() are non-empty). Used to show the Falloff section in Tool
+    // Properties AND draw the falloff overlay in the viewport even when NO
+    // transform tool is selected — a user-locked falloff persists across tool
+    // switches (resetTransient), so it should stay visible/editable on its own.
+    bool anyFalloffActive() {
+        import toolpipe.pipeline       : g_pipeCtx;
+        import toolpipe.stage          : TaskCode;
+        import toolpipe.stages.falloff : FalloffStage;
+        if (g_pipeCtx is null) return false;
+        foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght))
+            if (auto fo = cast(FalloffStage) s)
+                if (fo.enabled && fo.isActive())   // type != None; alloc-free
+                    return true;
+        return false;
+    }
+
     void resetTransientPipeStages() {
         import toolpipe.pipeline             : g_pipeCtx;
         import toolpipe.stages.actcenter     : ActionCenterStage;
@@ -3576,6 +3594,15 @@ void main(string[] args) {
     }
 
     int lastMouseX, lastMouseY;
+
+    // Standalone falloff gizmo — drawn + interactive when a falloff is active
+    // but NO transform tool is selected (the per-tool gizmo lives on
+    // CommandWrapperTool; this is its tool-less counterpart). Created lazily on
+    // the first no-tool falloff frame. FALLOFF_BASE is the part-id base for the
+    // single-emitter ToolHandles pool (value arbitrary — no other emitter here).
+    FalloffGizmo falloffGizmoStandalone;
+    ToolHandles  falloffHandlesStandalone;
+    enum int kStandaloneFalloffBase = 100;
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
     SDL_Event event;
@@ -3870,6 +3897,20 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             if (activeTool.onMouseButtonDown(btn, vts)) return;
         }
+        // No tool, but the standalone falloff gizmo may own this click (drag an
+        // endpoint). Must run BEFORE the bare-LMB selection-clear below so a
+        // handle grab isn't treated as a deselect. Skip alt/ctrl chords (camera).
+        if (activeTool is null && btn.button == SDL_BUTTON_LEFT
+            && falloffGizmoStandalone !is null
+            && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))) {
+            import toolpipe.packets : FalloffPacket;
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            FalloffPacket fp;
+            if (auto p = vts.get!FalloffPacket()) fp = *p;
+            Viewport vpg = cameraView.viewport();
+            if (falloffGizmoStandalone.onMouseButtonDown(btn, vpg, fp))
+                return;
+        }
         if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && activeTool is null) {
             // Double-click loop / connect — these mutate selection. Wrap as
             // an interactive edit so undo restores the prior selection.
@@ -4149,6 +4190,10 @@ void main(string[] args) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             activeTool.onMouseButtonUp(btn, vts);
         }
+        // Release a standalone falloff-gizmo drag (no tool active).
+        if (activeTool is null && falloffGizmoStandalone !is null
+            && falloffGizmoStandalone.onMouseButtonUp(btn))
+            return;
         // When BoxTool commits a new face it appends geometry via mesh
         // primitives (addVertex / addFace), which publish a Geometry change on
         // the change-notification bus. The per-frame flush therefore delivers
@@ -4201,6 +4246,13 @@ void main(string[] args) {
         if (activeTool) {
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             if (activeTool.onMouseMotion(mot, vts)) return;
+        }
+        // Standalone falloff-gizmo endpoint drag (no tool active). The gizmo
+        // writes the new endpoint to the FalloffStage via tool.pipe.attr.
+        if (activeTool is null && falloffGizmoStandalone !is null
+            && falloffGizmoStandalone.isDragging()) {
+            Viewport vpg = cameraView.viewport();
+            if (falloffGizmoStandalone.onMouseMotion(mot, vpg)) return;
         }
         if (dragMode == DragMode.None) return;
 
@@ -5559,7 +5611,11 @@ void main(string[] args) {
         // drags over the viewport are never captured by it; a test enables it
         // explicitly via `ui.toolProperties show`. In a normal run it is always
         // rendered while a tool is active (g_testMode false ⇒ guard passes).
-        if (activeTool !is null && (!command.g_testMode || g_toolPropertiesShown)) {
+        // Open the panel when a tool is active OR a falloff is active on its own
+        // (a user-locked falloff persists with no transform tool — its Falloff
+        // section must still be reachable to read/edit Start/End etc.).
+        if ((activeTool !is null || anyFalloffActive())
+            && (!command.g_testMode || g_toolPropertiesShown)) {
             pushPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 10), ImGuiCond.FirstUseEver);
             // Default tall enough to show a typical tool form (e.g. the box's
@@ -5576,6 +5632,10 @@ void main(string[] args) {
                 // so the reEvaluate() seam opens a coalesced undo session).
                 // Otherwise fall back to the unchanged PropertyPanel +
                 // drawProperties() path for every un-migrated tool.
+                // Tool-level form / properties only when a tool is active. When
+                // the panel is open ONLY because a falloff is active (no tool),
+                // skip straight to the per-stage sections below.
+                if (activeTool !is null) {
                 import forms : g_formsPanelEnabled, formsForTool;
                 auto matchingForms = g_formsPanelEnabled
                                    ? formsForTool(activeToolId) : null;
@@ -5613,6 +5673,7 @@ void main(string[] args) {
                     propertyPanel.draw(activeTool);   // schema-driven params first
                     activeTool.drawProperties();      // tool-specific custom UI after
                 }
+                } // if (activeTool !is null)
 
                 // Phase 7.9: each enabled tool-pipe stage with a params()
                 // schema gets its own collapsible section below the
@@ -6802,6 +6863,10 @@ void main(string[] args) {
 
         // ---- Active tool ----
         if (activeTool) {
+            // A tool just became active — drop any latched standalone falloff
+            // drag so isDragging() can't leak into a later tool-less motion.
+            if (falloffGizmoStandalone !is null && falloffGizmoStandalone.isDragging())
+                falloffGizmoStandalone.cancelDrag();
             {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
                 activeTool.update(vts);
@@ -6809,6 +6874,38 @@ void main(string[] args) {
             {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
                 activeTool.draw(shader, vp, vts);
+            }
+        } else if (anyFalloffActive()) {
+            // No transform tool, but a user-locked falloff is active — draw its
+            // overlay AND its interactive handles on a standalone gizmo, so the
+            // falloff is visible and draggable on its own (mirrors the gizmo
+            // block in CommandWrapperTool.draw). The gizmo writes start/end /
+            // center/size back to the FalloffStage via tool.pipe.attr, so the
+            // next buildToolVts reflects the drag.
+            import falloff_render  : drawFalloffOverlay;
+            import toolpipe.packets : FalloffPacket;
+            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            FalloffPacket fp;
+            if (auto p = vts.get!FalloffPacket()) fp = *p;
+            drawFalloffOverlay(fp, vp);
+            if (fp.enabled) {
+                if (falloffGizmoStandalone is null)
+                    falloffGizmoStandalone = new FalloffGizmo();
+                if (falloffHandlesStandalone is null)
+                    falloffHandlesStandalone = new ToolHandles();
+                // Host arbiter: register the falloff handles, resolve one hot/
+                // captured part, then render (two-pass hit-test → draw model).
+                falloffHandlesStandalone.begin();
+                falloffGizmoStandalone.registerHandles(
+                    falloffHandlesStandalone, kStandaloneFalloffBase, fp);
+                falloffHandlesStandalone.setHaul(
+                    falloffGizmoStandalone.isDragging()
+                    ? falloffGizmoStandalone.capturedPart(kStandaloneFalloffBase)
+                    : -1);
+                int hmx, hmy;
+                queryMouse(hmx, hmy);
+                falloffHandlesStandalone.update(hmx, hmy, vp);
+                falloffGizmoStandalone.draw(shader, vp, fp);
             }
         }
 
