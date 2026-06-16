@@ -56,7 +56,7 @@
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
 		},
 		"bindbc-assimp6": {
-			"version": "988dc67bf9e53f3019e120c20bfe8562f8356c1e",
+			"version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
 			"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
 		},
 		"lwo2-writer": {
