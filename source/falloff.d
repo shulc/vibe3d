@@ -244,10 +244,17 @@ private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
 
 /// Screen falloff: window-pixel disc at (screenCx, screenCy) radius
 /// `screenSize`, projected as an infinite cylinder along the camera-
-/// back axis. Weight = 1.0 at the disc centre, 0.0 at radius, attenuated
-/// across `screenSize` by `shape`. When `transparent == false`, verts
-/// behind the camera (projection failed) get weight = 0 — facing-only
-/// semantics.
+/// back axis. Weight = 1.0 at the disc centre, 0.0 at radius. When
+/// `transparent == false`, verts behind the camera (projection failed)
+/// get weight = 0 — facing-only semantics.
+///
+/// The radial attenuation is a FIXED LINEAR ramp (w = 1 - t), NOT the
+/// `shape` preset: the reference editor's screen falloff has no shape
+/// control — its disc profile is a fixed linear curve, confirmed by a
+/// headless per-vertex weight capture (two independent drags both fit
+/// 1 - t at RMS ~0.02; smooth/easeIn fit far worse). So screen ignores
+/// `cfg.shape` and the Shape Preset row is hidden for the screen type
+/// (FalloffStage.params()).
 private float screenWeight(const ref FalloffPacket cfg, Vec3 pos,
                            const ref Viewport vp)
 {
@@ -261,7 +268,7 @@ private float screenWeight(const ref FalloffPacket cfg, Vec3 pos,
     float t = dist / cfg.screenSize;
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
-    return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+    return applyShape(t, FalloffShape.Linear, cfg.in_, cfg.out_);
 }
 
 /// Lasso falloff: project the vert to window pixels; weight = 1.0 if

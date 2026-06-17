@@ -281,3 +281,36 @@ unittest {
 
     cmd("tool.pipe.attr falloff type none");
 }
+
+// ---------------------------------------------------------------------------
+// 9. Screen falloff (soft drag) hides the Linear-only Auto Size + Reverse
+//    action rows. Those `cmd`/`group` rows carry no value bind of their own, so
+//    they are gated in falloff.yaml on `whenAttr: start` — and Screen's
+//    params() does not expose `start`. rowVisible("start") is therefore false,
+//    the gate hides both actions, and the soft-drag panel shows only Screen's
+//    own config (matching MODO, which surfaces neither for a screen falloff).
+//    Pinned via the SAME stage-query the row gate resolves through.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd("tool.pipe.attr falloff type screen");
+
+    // Gate condition for Auto Size + Reverse: `start` absent → both hidden.
+    assert(!rowVisible("start"),
+        "Screen: 'start' absent → whenAttr-gated Auto Size + Reverse hidden");
+
+    // Screen's OWN config rows stay visible (the panel isn't empty).
+    assert(rowVisible("screenCx"),   "Screen: 'screenCx' row visible");
+    assert(rowVisible("screenSize"), "Screen: 'screenSize' row visible");
+
+    // Shape Preset is HIDDEN for screen: screenWeight() uses a fixed linear
+    // ramp (the reference editor's screen falloff has no shape control — a
+    // headless per-vertex weight capture fit 1 - t), so the preset would be
+    // inert. params() omits `shape` for screen → the form row hides. Contrast:
+    // case 7 above asserts `shape` IS visible under Linear.
+    assert(!rowVisible("shape"),
+        "Screen: 'shape' (Shape Preset) row hidden — screen uses a fixed "
+        ~ "linear curve, so the preset is omitted from params()");
+
+    cmd("tool.pipe.attr falloff type none");
+}

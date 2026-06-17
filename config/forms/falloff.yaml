@@ -40,18 +40,21 @@ forms:
       - { control: "tool.pipe.attr falloff start ?", label: Start }
       - { control: "tool.pipe.attr falloff end ?",   label: End }
 
-      # ---- Auto Size: per-axis fit-to-selection (Linear-only action; the cmd
-      #      rows render for any type but no-op off Linear). Horizontal equal-
-      #      width button strip. ----
+      # ---- Auto Size: per-axis fit-to-selection (Linear-only action).
+      #      Gated on `start` (exposed only by the Linear type's params()), so
+      #      the strip is hidden for every other falloff type — Screen (soft
+      #      drag), Radial, etc. show no inert no-op buttons. Horizontal
+      #      equal-width button strip. ----
       - group: "Auto Size"
         style: buttons
+        whenAttr: start
         rows:
           - { cmd: "falloff.autosize x", label: X }
           - { cmd: "falloff.autosize y", label: Y }
           - { cmd: "falloff.autosize z", label: Z }
 
-      # ---- Reverse: swap start/end (Linear-only action). Full-width button. ----
-      - { cmd: "falloff.reverse", label: Reverse }
+      # ---- Reverse: swap start/end (Linear-only action; gated on `start`). ----
+      - { cmd: "falloff.reverse", label: Reverse, whenAttr: start }
 
       # ---- Radial / Cylinder: ellipsoid centre + per-axis radii (Vec3) ----
       - { control: "tool.pipe.attr falloff center ?", label: Center }

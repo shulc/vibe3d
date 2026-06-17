@@ -165,6 +165,49 @@ YAML";
 }
 
 // ---------------------------------------------------------------------------
+// whenAttr visibility gate: parses onto ANY row kind (group / cmd), and strict
+// validation fences a gate that names an attr outside the stage universe. This
+// is the mechanism the falloff form uses to hide the Linear-only Auto Size +
+// Reverse actions for non-Linear types (Screen / soft drag, Radial, ...).
+// ---------------------------------------------------------------------------
+unittest {
+    enum yaml = q"YAML
+forms:
+  - id: toolprops.falloff
+    whenStage: falloff
+    rows:
+      - group: "Auto Size"
+        style: buttons
+        whenAttr: start
+        rows:
+          - { cmd: "falloff.autosize x", label: X }
+      - { cmd: "falloff.reverse", label: Reverse, whenAttr: start }
+YAML";
+    auto forms = loadFormsFromString(yaml);
+    auto f = forms[0];
+    assert(f.rows[0].kind == RowKind.group);
+    assert(f.rows[0].whenAttr == "start", "group whenAttr should parse");
+    assert(f.rows[1].kind == RowKind.cmd);
+    assert(f.rows[1].whenAttr == "start", "cmd whenAttr should parse");
+    // A gate naming a real stage attr passes strict validation.
+    validateForms(forms, realisticValidators(), "whenAttr-ok");
+}
+
+unittest { // whenAttr naming an attr outside the stage universe throws
+    enum yaml = q"YAML
+forms:
+  - id: toolprops.falloff
+    whenStage: falloff
+    rows:
+      - { cmd: "falloff.reverse", label: Reverse, whenAttr: bogusAttr }
+YAML";
+    auto forms = loadFormsFromString(yaml);
+    auto msg = collectExceptionMsg!FormValidationException(
+        validateForms(forms, realisticValidators(), "whenAttr-bad"));
+    assert(msg.canFind("whenAttr") && msg.canFind("bogusAttr"), msg);
+}
+
+// ---------------------------------------------------------------------------
 // Loader structural negatives (FormLoadException).
 // ---------------------------------------------------------------------------
 
