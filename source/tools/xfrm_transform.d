@@ -904,38 +904,12 @@ public:
     // reads state.actionCenter.center directly).
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // Element-falloff click-pick PRE-step: when falloff.element
-        // is active and the user clicks any element (vert/edge/face)
-        // with no modifier keys, we push the picked element's
-        // centroid through ACEN.setUserPlaced. ACEN.center then
-        // becomes that point for every consumer (gizmo via
-        // queryActionCenter, falloff sphere via state.actionCenter.center).
-        // This DOES NOT add the picked element to the moving set —
-        // ElementMove uses pick only as the pivot/anchor. The drag
-        // moves the prior selection through the falloff sphere.
-        bool picked = false;
-        bool ctrlMod = false;
-        if (e.button == SDL_BUTTON_LEFT) {
-            SDL_Keymod mods = SDL_GetModState();
-            ctrlMod = (mods & KMOD_CTRL) != 0;
-            bool plain = (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
-            if (plain) picked = tryPickElement(e.x, e.y);
-        }
-
-        // Falloff endpoint handles claim the click first (Linear/Radial),
-        // routed at the wrapper through the host-owned falloff emitter.
-        if (e.button == SDL_BUTTON_LEFT) {
-            FalloffPacket curFp = currentFalloff(vts);
-            if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
-                activeDrag = null;   // falloff owns the drag, no gizmo bank
-                return true;
-            }
-        }
-
-        // Dispatch to the first enabled sub-tool that consumes the
-        // event. When a click hits a registered shared handle, dispatch only
-        // to that handle's bank; otherwise the Move bank may consume a
-        // rotate/scale click as an off-gizmo relocate before R/S see it.
+        // Gizmo-handle hit test FIRST. When a click hits a registered shared
+        // handle, dispatch only to that handle's bank; otherwise the Move bank
+        // may consume a rotate/scale click as an off-gizmo relocate before R/S
+        // see it. Computing hitPart up front is also load-bearing for the
+        // element-pick gate below: a click on a transform handle is an
+        // on-handle drag, NEVER an element pick/relocate.
         int hitPart = -1;
         if (e.button == SDL_BUTTON_LEFT) {
             toolHandles.begin();
@@ -945,6 +919,39 @@ public:
                 int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
                 if (scaleHeadAxis >= 0)
                     hitPart = SCALE_BASE + scaleHeadAxis;
+            }
+        }
+
+        // Element-falloff click-pick PRE-step: when falloff.element
+        // is active and the user clicks any element (vert/edge/face)
+        // with no modifier keys, we push the picked element's
+        // centroid through ACEN.setUserPlaced. ACEN.center then
+        // becomes that point for every consumer (gizmo via
+        // queryActionCenter, falloff sphere via state.actionCenter.center).
+        // This DOES NOT add the picked element to the moving set —
+        // ElementMove uses pick only as the pivot/anchor. The drag
+        // moves the prior selection through the falloff sphere.
+        //
+        // Gated on `hitPart < 0`: a click that landed on a gizmo handle is an
+        // on-handle drag and must NOT relocate. (Before the host refreshed
+        // hover at mouse-down, a STALE empty-space hover hid this — grabbing
+        // an arrow that overlaps a face would otherwise pick that face.)
+        bool picked = false;
+        bool ctrlMod = false;
+        if (e.button == SDL_BUTTON_LEFT) {
+            SDL_Keymod mods = SDL_GetModState();
+            ctrlMod = (mods & KMOD_CTRL) != 0;
+            bool plain = (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
+            if (plain && hitPart < 0) picked = tryPickElement(e.x, e.y);
+        }
+
+        // Falloff endpoint handles claim the click first (Linear/Radial),
+        // routed at the wrapper through the host-owned falloff emitter.
+        if (e.button == SDL_BUTTON_LEFT) {
+            FalloffPacket curFp = currentFalloff(vts);
+            if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
+                activeDrag = null;   // falloff owns the drag, no gizmo bank
+                return true;
             }
         }
         bool hitMoveBank  = hitPart >= MOVE_BASE  && hitPart < MOVE_BASE  + 10;

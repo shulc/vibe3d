@@ -3899,6 +3899,12 @@ void main(string[] args) {
     // delegate is bound.
     void delegate(int mx, int my) doSelectPickAt;
 
+    // Forward-declared like doSelectPickAt (nested functions aren't visible
+    // before their definition): bound below, near pickFaces. Re-runs the GPU
+    // hover pick at a pixel so a mouse-DOWN element click-pick reads current
+    // hover, not last frame's.
+    void delegate(int mx, int my) refreshHoverPickAt;
+
     void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
         // Viewport click → drop ImGui keyboard focus. The viewport is
         // raw OpenGL drawn under ImGui, so SDL clicks here don't reach
@@ -3943,6 +3949,19 @@ void main(string[] args) {
             return;
         }
         if (activeTool) {
+            // Refresh the hover pick at the click position BEFORE the tool sees
+            // the event, so a tool that click-picks an element (XfrmTransformTool
+            // under falloff.element) reads hover for THIS cursor, not the last
+            // rendered frame's. Gated to a plain LEFT click on an element-hover
+            // tool — the only case that reads g_hovered on mouse-down — so it
+            // never adds a GPU readback to camera chords or non-picking tools.
+            if (btn.button == SDL_BUTTON_LEFT && !io.WantCaptureMouse
+                && refreshHoverPickAt !is null
+                && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT))
+                && (activeTool.wantsHoverForType(EditMode.Vertices)
+                 || activeTool.wantsHoverForType(EditMode.Edges)
+                 || activeTool.wantsHoverForType(EditMode.Polygons)))
+                refreshHoverPickAt(btn.x, btn.y);
             SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
             if (activeTool.onMouseButtonDown(btn, vts)) return;
         }
@@ -4449,6 +4468,41 @@ void main(string[] args) {
         if (editMode == EditMode.Vertices)      pickVertices(vp, false);
         else if (editMode == EditMode.Edges)    pickEdges   (vp, false);
         else if (editMode == EditMode.Polygons) pickFaces   (vp, false);
+    };
+
+    // Synchronously re-run the GPU ID-buffer hover pick at (mx, my) and
+    // publish g_hovered — the same vert>edge>face resolution + publish the
+    // render loop does each frame (see the pick block in the frame body).
+    // Called on mouse-DOWN, BEFORE the active tool's onMouseButtonDown, so a
+    // tool's click-pick (XfrmTransformTool.tryPickElement under
+    // falloff.element) reads hover for the CURRENT cursor rather than the
+    // PREVIOUS frame's.
+    //
+    // Why it matters: g_hovered is otherwise refreshed only once per render
+    // frame. On a fast click after a large cursor jump (e.g. pick element A,
+    // then immediately click element B), the button-down is processed before
+    // any frame re-picks B, so tryPickElement lands on the STALE element A.
+    // The element-falloff drag then freezes A's anchor for the whole gesture
+    // and only a later frame / the commit corrects it — the "falloff sits at
+    // the previous click and the points snap to the new spot on release" bug.
+    refreshHoverPickAt = (int mx, int my) {
+        setOverrideMouse(mx, my);
+        Viewport vp = cameraView.viewport();
+        pickVertices(vp, false);
+        if (edgeCache.needsUpdate(vp)) { edgeCache.invalidate(); edgeCache.update(vp); }
+        pickEdges(vp, false);
+        if (faceCache.needsUpdate(vp)) { faceCache.invalidate(); faceCache.update(vp); }
+        pickFaces(vp, false);
+        // Tool-driven multi-type priority (vert first, then edge, then face),
+        // mirroring the render-loop resolution so the published hover matches.
+        if (activeTool !is null) {
+            if (hoveredVertex >= 0) { hoveredEdge = -1; hoveredFace = -1; }
+            else if (hoveredEdge >= 0) { hoveredFace = -1; }
+        }
+        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+        g_hoveredVertex = hoveredVertex;
+        g_hoveredEdge   = hoveredEdge;
+        g_hoveredFace   = hoveredFace;
     };
 
     // 1-px black outline around the last ImGui item.
