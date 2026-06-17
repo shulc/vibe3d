@@ -635,16 +635,24 @@ class FalloffStage : Stage, Operator {
         // Smooth / Custom). Exposed as a form dropdown (config/forms/falloff.yaml
         // "Shape Preset"); the legacy drawProperties() popup that used to render
         // it was retired in favour of this row.
-        ps ~= Param.intEnum_("shape", "Shape Preset",
-                             cast(int*)&shape, shapeEntries,
-                             cast(int)FalloffShape.Smooth);
+        //
+        // NOT exposed for the Screen type: screenWeight() uses a FIXED linear
+        // ramp (matching the reference editor's screen falloff, which has no
+        // shape control), so the preset would be inert. Omitting it from
+        // params() makes the forms resolver hide the Shape Preset + In/Out rows
+        // for screen (value-driven row hiding), same as a per-type field.
+        if (type != FalloffType.Screen) {
+            ps ~= Param.intEnum_("shape", "Shape Preset",
+                                 cast(int*)&shape, shapeEntries,
+                                 cast(int)FalloffShape.Smooth);
 
-        // In/Out tangent params are Custom-shape-only.
-        if (shape == FalloffShape.Custom) {
-            ps ~= Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
-                       .widget(ParamHints.Widget.Slider);
-            ps ~= Param.float_("out", "Out", &out_, 0.5f).min(0.0f).max(1.0f)
-                       .widget(ParamHints.Widget.Slider);
+            // In/Out tangent params are Custom-shape-only.
+            if (shape == FalloffShape.Custom) {
+                ps ~= Param.float_("in",  "In",  &in_,  0.5f).min(0.0f).max(1.0f)
+                           .widget(ParamHints.Widget.Slider);
+                ps ~= Param.float_("out", "Out", &out_, 0.5f).min(0.0f).max(1.0f)
+                           .widget(ParamHints.Widget.Slider);
+            }
         }
         // Per-type geometry config.
         final switch (type) {

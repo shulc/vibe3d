@@ -193,6 +193,14 @@ class FormsPanel {
                          ParamProvider provider,
                          DispatchFn dispatch, InteractiveDispatchFn idispatch)
     {
+        // Row-level visibility gate: a `whenAttr` row draws only when that attr
+        // is present in the live params() this frame — the same value-driven
+        // hiding a control gets when its own attr is absent, but extended to
+        // rows with no value bind (cmd / group). Lets the Linear-only falloff
+        // actions (Auto Size, Reverse) ride `start`, exposed only by Linear.
+        if (row.whenAttr.length && !snapshotHasAttr(snapshot, row.whenAttr))
+            return;
+
         final switch (row.kind) {
             case RowKind.control:
                 drawControl(row, rowIdx, snapshot, provider, idispatch);
@@ -656,6 +664,15 @@ class FormsPanel {
     // a fully-absent group would otherwise leave an empty framed box with just
     // the group label. Non-control members (cmd / choice / divider / label)
     // always draw, so they count as visible.
+    // True iff `snapshot` exposes a param named `attr` this frame — the test
+    // behind a row's `whenAttr` visibility gate (drawRow).
+    private static bool snapshotHasAttr(Param[] snapshot, string attr)
+    {
+        foreach (ref p; snapshot)
+            if (p.name == attr) return true;
+        return false;
+    }
+
     private bool groupHasVisibleMember(ref Row group, Param[] snapshot)
     {
         foreach (ref child; group.rows) {

@@ -120,6 +120,17 @@ struct Row {
     bool showLabel = true;
     string tooltip;
 
+    // --- visibility gate ---------------------------------------------------
+    // Row-level conditional visibility: when set, this row (of ANY kind —
+    // control / cmd / group / …) is drawn ONLY if a param named `whenAttr` is
+    // present in the live params() snapshot this frame. Empty => always shown.
+    // Mirrors the value-driven hiding a `control` row already gets when its own
+    // bound attr is absent, but lets a row that carries NO value bind of its
+    // own (a `cmd` button, a `group` of buttons) ride a type-filtered attr.
+    // Used by config/forms/falloff.yaml so the Linear-only Auto Size + Reverse
+    // actions track `start` (exposed only by the Linear falloff type).
+    string whenAttr;
+
     // --- convenience constructors -----------------------------------------
     // Brace-init works too; these read better at call sites and in tests.
 
@@ -888,6 +899,12 @@ private Row parseRow(ref /*dyaml.*/ DyamlNodeT node, string formId, string ctx)
         default:
             assert(false, "unreachable row kind");
     }
+
+    // Optional visibility gate — applies to ANY row kind, so it is parsed here
+    // rather than in applyControlFields (group rows skip that helper).
+    if (node.containsKey("whenAttr"))
+        row.whenAttr = node["whenAttr"].as!string;
+
     return row;
 }
 
@@ -1031,6 +1048,8 @@ private void validateFormStageBinding(ref Form f, FormValidators v, string ctx)
             "forms: form '%s' (%s) binds to unknown pipe stage '%s' via "
             ~ "whenStage", f.id, ctx, f.whenStage));
 
+    auto stageUniverse = v.stageAttrs(f.whenStage);
+
     // Every value-bound control in a stage form must target this same stage.
     void checkRow(ref Row r) {
         if (r.kind == RowKind.control) {
@@ -1042,6 +1061,14 @@ private void validateFormStageBinding(ref Form f, FormValidators v, string ctx)
                     ~ "'tool.pipe.attr %s <attr> ?')",
                     f.id, ctx, f.whenStage, r.command, f.whenStage));
         }
+        // A `whenAttr` gate names an attr of THIS stage's universe — typo-fence
+        // it at boot like a control binding (the runtime resolver only hides;
+        // it never errors on an unknown gate).
+        if (r.whenAttr.length && !hasName(stageUniverse, r.whenAttr))
+            throw new FormValidationException(format(
+                "forms: form '%s' (%s) row gates on unknown attr '%s' "
+                ~ "(whenAttr) for stage '%s'",
+                f.id, ctx, r.whenAttr, f.whenStage));
         foreach (ref c; r.rows) checkRow(c);
     }
     foreach (ref r; f.rows) checkRow(r);
