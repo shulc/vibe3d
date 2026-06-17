@@ -84,6 +84,7 @@ import eventlog : queryMouse;
 import shader : Shader;
 import params : Param;
 import tools.transform : TransformTool;
+import tool            : ToolFlag;
 import tools.move      : MoveTool;
 import tools.rotate    : RotateTool;
 import tools.scale     : ScaleTool;
@@ -2157,8 +2158,9 @@ public:
             // idle re-grades this gesture ONLY while the version still matches.
             // An in-session Ctrl+Z reverts geometry (bumps the version away from
             // the stamp), so the re-grade site then refuses — a popped gesture is
-            // never resurrected.
-            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            // never resurrected. (A brush-reset tool DISARMS instead — see
+            // armRegradeStamp: a baked stroke must not re-grade on a falloff tweak.)
+            armRegradeStamp();
 
             // Open a FRESH re-fire window for this gesture. A run can hold more
             // than one gesture (g1 -> tweak -> g2 -> tweak), and a tweak after g2
@@ -2248,7 +2250,7 @@ public:
             // behind so a later falloff tweak re-grades THIS gesture only while
             // the version still matches; clear refireAnchor so the tweak opens a
             // FRESH re-fire window anchored to this gesture's post-recompute state.
-            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
             refireAnchor.length = 0;
             refirePreValid      = false;   // fresh window ⇒ recapture pre-config
         }
@@ -2312,7 +2314,7 @@ public:
             // clear refireAnchor so a later falloff tweak re-grades THIS gesture
             // from a fresh window, and an R/S gesture after a Move/R/S tweak never
             // inherits a stale anchor.
-            lastAppliedGestureMutationVersion = mesh.mutationVersion;
+            armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
             refireAnchor.length = 0;
             refirePreValid      = false;   // fresh window ⇒ recapture pre-config
         }
@@ -4137,6 +4139,23 @@ private:
     //   deactivate / resetTransientState and at every run boundary (bank switch,
     //   selection/mutation guard).
     ulong lastAppliedGestureMutationVersion = ulong.max;
+
+    // Arm (or, for a BRUSH-RESET tool, DISARM) the in-session falloff re-grade
+    // staleness stamp at a gesture's mouse-up commit. Called from all three bank
+    // commit sites in place of a bare `= mesh.mutationVersion`.
+    //
+    // A brush-reset tool (`xfrm.softDrag`, `flags: [brushReset]`) bakes each LMB
+    // stroke as an atomic action — its transform zeroes between strokes, so after
+    // a move stroke a later radius gesture drives only the falloff, never the
+    // transform, and the committed stroke does not re-deform. So a falloff /
+    // radius change at idle must NOT re-grade the committed stroke. Disarming the stamp
+    // (`ulong.max`) makes ARM 2's version gate fail, so any post-stroke falloff
+    // tweak is inert for a brush tool. Plain move / rotate / scale (no
+    // brushReset) arm normally and keep the in-session re-grade unchanged.
+    private void armRegradeStamp() {
+        lastAppliedGestureMutationVersion =
+            hasFlag(ToolFlag.BrushReset) ? ulong.max : mesh.mutationVersion;
+    }
 
     // refireAnchor — once-per-RE-FIRE-WINDOW POST-GESTURE full-mesh snapshot.
     //   Captured ONCE at the FIRST re-grade after a gesture (before the recompute
