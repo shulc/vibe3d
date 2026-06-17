@@ -78,6 +78,11 @@ class FalloffStage : Stage, Operator {
     // setUserPlaced from a tool, or HTTP
     // `tool.pipe.attr actionCenter userPlacedX/Y/Z`).
     float dist = 1.0f;
+    // Selection falloff (D.7): the "Steps" count — the BFS-hop depth the
+    // per-vert weight is grown across (iters = 4·steps + 1 smoothing passes).
+    // Integer by nature (discrete hops); its own field so it stays independent
+    // of the Element `dist` radius above. attr `steps`.
+    int steps = 4;
     // Stage 14.4: connectivity gate. When != Off, the per-vert
     // weight is multiplied by `connectMask[vi] ? 1 : 0` so verts
     // outside the picked component drop out regardless of distance.
@@ -492,7 +497,7 @@ class FalloffStage : Stage, Operator {
     override string[] knownAttrs() {
         return [
             "type", "shape", "start", "end", "center", "size", "axis",
-            "dist", "anchorRing", "connect", "mode", "screenCx", "screenCy",
+            "dist", "steps", "anchorRing", "connect", "mode", "screenCx", "screenCy",
             "screenSize", "transparent", "lassoStyle", "lassoPoly",
             "softBorder", "in", "out", "mix",
         ];
@@ -508,6 +513,7 @@ class FalloffStage : Stage, Operator {
             ["size",         vec3Str(size)],
             ["axis",         vec3Str(normal)],
             ["dist",         format("%g", dist)],
+            ["steps",        format("%d", steps)],
             ["anchorRing",   anchorRingStr()],
             ["connect",      connectLabel()],
             ["mode",         elementModeLabel()],
@@ -697,12 +703,9 @@ class FalloffStage : Stage, Operator {
                                      cast(int)ElementConnect.Off);
                 break;
             case FalloffType.Selection:
-                // `falloff.selection` (attr `steps`). `dist` field
-                // re-used as the BFS-hop count (float so the existing
-                // storage shared with Element can stay); the param is
-                // labelled "Steps".
-                ps ~= Param.float_("dist", "Steps",
-                                   &dist, 4.0f).min(1.0f);
+                // `falloff.selection` (attr `steps`) — the BFS-hop count, a
+                // proper integer (discrete smoothing iterations).
+                ps ~= Param.int_("steps", "Steps", &steps, 4).min(1);
                 break;
             case FalloffType.Composite:
                 // A FalloffStage's own `type` is never Composite — that
@@ -823,7 +826,7 @@ class FalloffStage : Stage, Operator {
         // selWeights_ is position-independent. If every key field matches
         // the cached values AND the buffer is the right length, the result
         // is identical to last frame — reuse it and skip the smoothing.
-        int stepsI = cast(int)dist;
+        int stepsI = steps;
         if (stepsI < 0) stepsI = 0;
         const ulong  mutVer    = mesh_.mutationVersion;
         const int    editModeI = cast(int)(*editMode_);
@@ -898,7 +901,7 @@ class FalloffStage : Stage, Operator {
         // current weight with the mean of in-selection neighbours,
         // weighted by `alpha`. Boundary stays pinned at 0.
         //
-        // dist (the falloff.selection `steps` attribute) maps to the
+        // steps (the falloff.selection `steps` attribute) maps to the
         // iteration count via `iters = 4·Steps + 1` (best-fit). With
         // Steps=0 we collapse to no smoothing — the selection-edge
         // hinge is the whole weight map (binary 0/1).
@@ -1065,6 +1068,7 @@ private:
             case "size":         return parseVec3(value, size);
             case "axis":         return parseVec3(value, normal);
             case "dist":         dist = parseFloat(value); return true;
+            case "steps":        steps = cast(int)parseFloat(value); return true;
             case "connect":
                 if      (value == "off")      { connect = ElementConnect.Off;      return true; }
                 else if (value == "vertex")   { connect = ElementConnect.Vertex;   return true; }
@@ -1429,11 +1433,9 @@ private:
                 if (maxHalf > 0) dist = maxHalf;
                 break;
             case FalloffType.Selection:
-                // `dist` is the BFS-hop range (the `steps` attr) —
-                // bbox sizing doesn't apply. Pin to 4 so a fresh
-                // selection switch ignores any prior `dist` value
-                // left by a previous Element session.
-                dist = 4.0f;
+                // `steps` is the BFS-hop range — bbox sizing doesn't apply.
+                // Pin to the default so a fresh selection switch starts clean.
+                steps = 4;
                 break;
             case FalloffType.Composite:
                 // Never a stage's own type — nothing to auto-size.

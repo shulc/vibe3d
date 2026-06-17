@@ -109,21 +109,23 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Element vs Selection both expose `dist` (Element = Range, Selection =
-//    Steps): the single shared `dist` row stays visible across that switch
-//    while the Element-only mode/connect rows flip off. Pins that the shared
-//    row binds correctly under both (label is the live Param.label, not in YAML).
+// 3. Element exposes `dist` (Range), Selection exposes `steps` (Steps): the two
+//    are distinct per-type attrs, each row resolving only for its own type while
+//    the Element-only mode/connect rows flip off. Pins that the per-type rows
+//    bind correctly (label is the live Param.label, not in YAML).
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
 
     cmd("tool.pipe.attr falloff type element");
-    assert(rowVisible("dist"),    "Element: 'dist' row visible");
-    assert(rowVisible("mode"),    "Element: 'mode' row visible");
-    assert(rowVisible("connect"), "Element: 'connect' row visible");
+    assert(rowVisible("dist"),     "Element: 'dist' (Range) row visible");
+    assert(!rowVisible("steps"),   "Element: 'steps' (selection-only) row hidden");
+    assert(rowVisible("mode"),     "Element: 'mode' row visible");
+    assert(rowVisible("connect"),  "Element: 'connect' row visible");
 
     cmd("tool.pipe.attr falloff type selection");
-    assert(rowVisible("dist"),     "Selection: shared 'dist' row still visible");
+    assert(rowVisible("steps"),    "Selection: 'steps' (Steps) row visible");
+    assert(!rowVisible("dist"),    "Selection: 'dist' (element-only) row hidden");
     assert(!rowVisible("mode"),    "Selection: 'mode' (element-only) row hidden");
     assert(!rowVisible("connect"), "Selection: 'connect' (element-only) row hidden");
 
