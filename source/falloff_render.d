@@ -52,7 +52,14 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
     final switch (cfg.type) {
         case FalloffType.None: return;
         case FalloffType.Linear: drawLinear(dl, cfg, vp, outlineCol); break;
-        case FalloffType.Radial: drawRadial(dl, cfg, vp, outlineCol); break;
+        case FalloffType.Radial:
+            // No center dot: the interactive FalloffGizmo centerHandle box
+            // (drawn for Radial) already marks the center. The dot would
+            // stack a fixed-size ImGui circle on top of that GL handle —
+            // reading as a second, smaller center marker that doesn't track
+            // the gizmo size.
+            drawRadial(dl, cfg, vp, outlineCol, /*centerDot=*/false);
+            break;
         case FalloffType.Screen: {
             // The Screen disc shows only while the user is actively
             // interacting — RMB radius-adjust gesture, or an LMB
@@ -195,7 +202,7 @@ private void drawLinear(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
 }
 
 private void drawRadial(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
-                        const ref Viewport vp, uint col)
+                        const ref Viewport vp, uint col, bool centerDot = true)
 {
     // Three great-circle outlines in the YZ / XZ / XY planes of the
     // ellipsoid's local frame. Each circle samples 36 points; degenerate
@@ -226,10 +233,14 @@ private void drawRadial(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
     greatCircle(0, 2);   // XZ
     greatCircle(0, 1);   // XY
 
-    // Centre dot for visual anchor.
-    float cx, cy, cndcZ;
-    if (projectToWindowFull(cfg.center, vp, cx, cy, cndcZ))
-        dl.AddCircleFilled(ImVec2(cx, cy), 4.0f, col, 12);
+    // Centre dot for visual anchor — only where no interactive center
+    // handle is drawn (Element / Cylinder reuse this overlay). Suppressed
+    // for true Radial, whose FalloffGizmo draws a draggable center box.
+    if (centerDot) {
+        float cx, cy, cndcZ;
+        if (projectToWindowFull(cfg.center, vp, cx, cy, cndcZ))
+            dl.AddCircleFilled(ImVec2(cx, cy), 4.0f, col, 12);
+    }
 }
 
 private void drawScreen(ImGui.ImDrawList* dl, const ref FalloffPacket cfg,
