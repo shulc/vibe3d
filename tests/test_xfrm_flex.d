@@ -67,7 +67,7 @@ unittest { // Single-face selection on a cube: all 4 selected verts
     auto before = dumpVerts();
 
     cmd("tool.set xfrm.flex on");
-    cmd("tool.pipe.attr falloff dist 2");
+    cmd("tool.pipe.attr falloff steps 2");
     cmd("tool.pipe.attr falloff shape smooth");
     cmd("tool.attr xfrm.flex TX 0.5");
     cmd("tool.doApply");
@@ -98,7 +98,7 @@ unittest { // Selecting EVERY face on the cube means every selected
     auto before = dumpVerts();
 
     cmd("tool.set xfrm.flex on");
-    cmd("tool.pipe.attr falloff dist 2");
+    cmd("tool.pipe.attr falloff steps 2");
     cmd("tool.pipe.attr falloff shape smooth");
     cmd("tool.attr xfrm.flex TX 0.5");
     cmd("tool.doApply");
@@ -124,7 +124,7 @@ unittest { // Unselected verts ALWAYS stay put. Select 1 face, set
     auto before = dumpVerts();
 
     cmd("tool.set xfrm.flex on");
-    cmd("tool.pipe.attr falloff dist 8");
+    cmd("tool.pipe.attr falloff steps 8");
     cmd("tool.pipe.attr falloff shape smooth");
     cmd("tool.attr xfrm.flex TX 1.0");
     cmd("tool.doApply");

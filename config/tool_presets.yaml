@@ -169,9 +169,9 @@ presets:
   # `xfrm.flex` mirrors MODO's stock `Flex` preset:
   # ACEN=border, AXIS=select,
   # Falloff=selection (with shape=smooth), Transform with T/R/S
-  # all on. MODO's `falloff.selection` `steps` attr maps to
-  # vibe3d's `dist` field (re-used storage; labelled "Steps" in
-  # the params block). D.7 of doc/deform_d7_flex_plan.md.
+  # all on. The `falloff.selection` `steps` attr is an integer
+  # BFS-hop count (its own `steps` field/param, labelled "Steps").
+  # D.7 of doc/deform_d7_flex_plan.md.
   - id: xfrm.flex
     base: xfrm.transform
     attrs:

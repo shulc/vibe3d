@@ -85,10 +85,12 @@ forms:
       - { control: "tool.pipe.attr falloff mode ?",    label: "Element Mode" }
       - { control: "tool.pipe.attr falloff connect ?", label: Connect }
 
-      # ---- dist is shared by Element (Range) and Selection (Steps); omit the
-      #      label so the live Param.label is used — "Range" or "Steps" per the
-      #      active type. ----
+      # ---- Element Range (dist) and Selection Steps (steps) are distinct
+      #      per-type attrs; each row resolves only when its attr is present in
+      #      the active params() list (the resolver hides absent-attr rows).
+      #      Omit the label so the live Param.label is used. ----
       - { control: "tool.pipe.attr falloff dist ?" }
+      - { control: "tool.pipe.attr falloff steps ?" }
 
       # ---- Mix Mode: multi-falloff combine op (present for every active type;
       #      unused for a single / first contributor, but the dropdown stays

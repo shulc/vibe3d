@@ -48,7 +48,7 @@ private string[] falloffUniverse() {
     // The authoritative FalloffStage.knownAttrs() list.
     return [
         "type", "shape", "start", "end", "center", "size", "axis",
-        "dist", "anchorRing", "connect", "mode", "screenCx", "screenCy",
+        "dist", "steps", "anchorRing", "connect", "mode", "screenCx", "screenCy",
         "screenSize", "transparent", "lassoStyle", "lassoPoly",
         "softBorder", "in", "out", "mix",
     ];
