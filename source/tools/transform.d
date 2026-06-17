@@ -8,7 +8,7 @@ import change_bus : MeshEditScope;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
-import toolpipe.packets : FalloffPacket, SymmetryPacket, SnapPacket, SubjectPacket;
+import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
@@ -738,6 +738,25 @@ protected:
     bool captureFalloffForDrag(ref VectorStack vts) {
         if (auto fp = vts.get!FalloffPacket()) dragFalloff = *fp;
         else                                   dragFalloff = FalloffPacket.init;
+        // Screen-falloff re-center fix. The host (app.d buildToolVts) evaluates
+        // the pipeline and snapshots the FalloffPacket into `vts` BEFORE the
+        // tool runs. A Screen-falloff soft drag re-centers the disc at the
+        // click INSIDE the sub-tool's onMouseButtonDown (screenFalloffSetCenter
+        // → the live FalloffStage), which happens AFTER that snapshot — so the
+        // snapshot's screen center is one gesture stale. Without refreshing it,
+        // `dragFalloff` freezes the PREVIOUS click's center for the whole drag
+        // and the disc only catches up on the next eval at release ("screen
+        // falloff modifies the geometry around the previous click during the
+        // drag, then snaps to the new click on mouse-up"). Pull the live center
+        // from the stage so the captured drag falloff is anchored at THIS click.
+        // Move / Rotate / Scale all set the center the same way, so fixing it at
+        // the shared capture site covers every soft-drag sub-tool at once.
+        if (dragFalloff.enabled && dragFalloff.type == FalloffType.Screen) {
+            if (auto fs = falloffStageForHooks()) {
+                dragFalloff.screenCx = fs.screenCx;
+                dragFalloff.screenCy = fs.screenCy;
+            }
+        }
         return dragFalloff.enabled;
     }
 
