@@ -310,7 +310,15 @@ public:
         // click point — snap-final position is lost and the gizmo
         // visually jumps back. With snap on the jump is dramatic
         // because the gizmo had locked onto a discrete snap target.
-        if (acenIsUserPlaced())
+        //
+        // Gated to the relocate-allowed modes (Auto / None / Screen). In
+        // Element mode the pin is owned by the click-pick (tryPickElement →
+        // setUserPlaced at the picked element), NOT by the drag: re-pinning to
+        // handler.center here would drag the gizmo OFF the picked element to
+        // the moving-set position (the whole-mesh centroid under an empty
+        // selection), so the gizmo snapped back to the center on release. Skip
+        // the follow there and the picked-element pin survives the gesture.
+        if (acenIsUserPlaced() && acenAllowsClickRelocate())
             notifyAcenUserPlaced(handler.center);
         lastSelectionHash = computeSelectionHash();
         return true;
@@ -323,7 +331,11 @@ public:
         if (handler.circleYZ.hitTest(mx, my, cachedVp)) return 5;
         if (handler.circleXZ.hitTest(mx, my, cachedVp)) return 6;
 
-        if (handler.centerBox.hitTest(mx, my, cachedVp)) return 3;
+        // Skip the center handle when hidden (element-move flow): the wrapper
+        // hides it so a central click falls through to the element pick rather
+        // than grabbing a center-plane drag. Mirrors the arrow isVisible guard.
+        if (handler.centerBox.isVisible()
+            && handler.centerBox.hitTest(mx, my, cachedVp)) return 3;
 
         Arrow[3] arrows = [handler.arrowX, handler.arrowY, handler.arrowZ];
         foreach (i, arrow; arrows) {

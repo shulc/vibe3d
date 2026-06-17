@@ -150,6 +150,33 @@ class ActionCenterStage : Stage, Operator {
     Vec3 userPlacedCenter = Vec3(0, 0, 0);  // valid when userPlaced is true
     bool userPlaced = false;                // click-outside marker for Auto / None / Screen
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
+    // Mode.Element: the picked element's vertex indices (single vert / edge
+    // endpoints / face vert ring), set by the transform wrapper's click-pick
+    // (XfrmTransformTool.tryPickElement). Unlike `userPlaced` (a FROZEN world
+    // point owned by the Move-tool relocate machinery), this tracks the
+    // element LIVE: computeCenter returns the current centroid of these verts,
+    // so the gizmo follows the element as it moves under the drag and stays on
+    // it after release — matching MODO's `center.element` (Action Center =
+    // Element, owned by the ACEN slot, NOT a Move attribute). Empty until a
+    // pick; cleared on reset / mode switch.
+    uint[] elementVerts_;
+    // Offset of the click point from the picked element's ring centroid, so the
+    // Element gizmo sits at the CLICK POINT on the element (e.g. partway along a
+    // picked edge) rather than its centroid. Added to the live ring centroid in
+    // liveElementCenter. Set with elementVerts_, cleared with it.
+    //
+    // RIGID-TRANSLATION MODEL: the offset is a constant WORLD vector, exact only
+    // while the picked element translates rigidly — which is the stock
+    // translate-only ElementMove (anchorRing verts all get falloff weight 1, so
+    // they move by the same delta). The unified xfrm.transform lets the user
+    // flip R/S on (tool_presets.yaml), under which a rotated/scaled edge/face
+    // pick's click point would no longer coincide with centroid+offset, so the
+    // gizmo / falloff-sphere anchor drifts off the click point. This is a
+    // DISPLAY-ONLY drift (gizmo + sphere centre); the deformed geometry is never
+    // affected. Vertex picks are immune (offset 0). Acceptable for now since
+    // ElementMove is translate by default; a future R/S element-move could store
+    // a parametric (barycentric) anchor instead, or snap the offset to 0.
+    Vec3 elementOffset_ = Vec3(0, 0, 0);
     int  selectSubMode = SelectSubMode.Center;
     // Phase 7.2e (Local mode): cluster count + first-cluster centroid
     // are recomputed in evaluate() and exposed via listAttrs() so
@@ -229,6 +256,8 @@ public:
         mode             = Mode.None;
         userPlacedCenter = Vec3(0, 0, 0);
         userPlaced       = false;
+        elementVerts_    = null;
+        elementOffset_   = Vec3(0, 0, 0);
         manualCenter     = Vec3(0, 0, 0);
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
@@ -363,6 +392,8 @@ public:
     void resetAuto() {
         mode = Mode.Auto;
         userPlaced = false;
+        elementVerts_ = null;
+        elementOffset_ = Vec3(0, 0, 0);
         // Re-picking Auto re-follows the selection — drop any display settle.
         softPlaced       = false;
         softPlacedCenter = Vec3(0, 0, 0);
@@ -401,6 +432,47 @@ public:
     /// True iff a sticky click-outside pin is active (set via
     /// `setUserPlaced`, cleared by `resetAuto` or a mode switch).
     bool isUserPlaced() const { return userPlaced; }
+
+    /// Mode.Element: record the picked element's vertex ring + the exact click
+    /// point on it. The wrapper's click-pick calls this so computeCenter tracks
+    /// the element LIVE (see the `elementVerts_` field doc). `anchor` is the
+    /// click point ON the element (e.g. the hit point along a picked edge, NOT
+    /// its midpoint); we store it as an OFFSET from the ring centroid so the
+    /// gizmo sits at the CLICK POINT and still rides the element as its verts
+    /// move. The offset is a constant world vector — exact while the element
+    /// translates rigidly (stock translate-only ElementMove); see the
+    /// `elementOffset_` field doc for the R/S display-drift caveat. Pass an
+    /// empty slice to clear.
+    void setElementVerts(const(uint)[] verts, Vec3 anchor) {
+        elementVerts_ = verts.dup;
+        Vec3 c;
+        elementOffset_ = ringCentroid(verts, c) ? (anchor - c) : Vec3(0, 0, 0);
+        publishState();
+    }
+
+    /// Live centroid of `verts` (mesh positions), false when none resolve.
+    private bool ringCentroid(const(uint)[] verts, out Vec3 c) const {
+        if (mesh_ is null || verts.length == 0) return false;
+        Vec3 sum = Vec3(0, 0, 0);
+        int  n   = 0;
+        foreach (vi; verts) {
+            if (vi >= mesh_.vertices.length) continue;   // stale index guard
+            sum += mesh_.vertices[vi];
+            n++;
+        }
+        if (n == 0) return false;
+        c = sum * (1.0f / n);
+        return true;
+    }
+
+    /// Live picked-element anchor = ring centroid + the click-point offset, or
+    /// false when no element is recorded / the mesh / indices are unusable.
+    private bool liveElementCenter(out Vec3 c) const {
+        Vec3 cen;
+        if (!ringCentroid(elementVerts_, cen)) return false;
+        c = cen + elementOffset_;
+        return true;
+    }
 
     // ----- In-session cancel snapshot (transform Ctrl+Z coordination) -------
     //
@@ -656,6 +728,15 @@ private:
                 // No click yet → fall back to the selection-element
                 // centroid (whole mesh per the universal "empty
                 // selection = all" rule).
+                //
+                // Primary source: the picked element's LIVE centroid
+                // (elementVerts_, set by the wrapper's click-pick). This is
+                // the MODO `center.element` model — the ACEN slot owns the
+                // pivot and follows the element as it moves, INDEPENDENT of
+                // the Move tool's userPlaced/handler.center (which used to
+                // drag the gizmo off the element to the moving-set centroid).
+                Vec3 elc;
+                if (liveElementCenter(elc)) return elc;
                 if (userPlaced) return userPlacedCenter;
                 return elementCenter();
             case Mode.Local: {
@@ -1355,6 +1436,8 @@ private:
                 // display settle (a new mode recomputes the center afresh).
                 mode = m;
                 userPlaced       = false;
+                elementVerts_    = null;
+                elementOffset_   = Vec3(0, 0, 0);
                 softPlaced       = false;
                 softPlacedCenter = Vec3(0, 0, 0);
                 return true;

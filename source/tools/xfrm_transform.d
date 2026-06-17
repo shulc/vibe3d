@@ -832,7 +832,25 @@ public:
         return handlePresentation == "compact";
     }
 
+    // Element-move flow active? = the WGHT slot is falloff.element, so a
+    // plain click relocates the gizmo onto the picked element (tryPickElement).
+    // Mirrors MODO's ElementMove preset (center.element + falloff.element):
+    // in that mode MODO drops the transform center handle (xfrm.transform
+    // -16777211 vs the normal +EASFQG) so every click is an element pick, not
+    // a center-handle grab. We match by hiding the Move centerBox below.
+    private bool elementPickActive() const {
+        auto fs = activeFalloffStage();
+        return fs !is null && fs.type == FalloffType.Element;
+    }
+
     private void registerGizmoHandles(ToolHandles th) {
+        // Hide the Move center handle in the element-move flow (MODO parity):
+        // invisible → ToolHandles.test() skips it (so a central click falls
+        // through to tryPickElement) AND BoxHandler.draw early-outs (so it
+        // isn't shown). Axis arrows / plane handles stay live.
+        if (flagT)
+            moveSub.handler.centerBox.setVisible(!elementPickActive());
+
         if (compactPresentation()) {
             // Bare Transform draws scale boxes at the same screen-space endpoints
             // as move arrows. Register scale first so hover and click prefer the
@@ -881,6 +899,11 @@ public:
     // FalloffStage's elementMode pick selector. Falls through to the
     // base (no hover) when no Element falloff is active — keeps the
     // gizmo-only highlight for plain Move / Rotate / Scale presets.
+    // True between mouse-down and mouse-up of any gizmo/element haul. The host
+    // freezes the element hover pick while this holds (only the dragged element
+    // stays highlighted, not every element under the moving cursor).
+    override bool isDragging() const { return activeDrag !is null; }
+
     override bool wantsHoverForType(EditMode type) const {
         auto fs = activeFalloffStage();
         if (fs is null || fs.type != FalloffType.Element) return false;
@@ -1182,7 +1205,19 @@ public:
             // The fresh screen-plane drag below is a Move gesture; record its
             // bank (no-op switch when the prior run was also Move).
             noteRunBank(DragBank.Move);
-            Vec3 pivot = queryActionCenter(vts);
+            // Use the LIVE ACEN center, NOT queryActionCenter(vts): the `vts`
+            // ActionCenterPacket was evaluated at the START of this frame —
+            // BEFORE tryPickElement ran this mouse-down — so it still holds the
+            // PRE-pick center (the old gizmo position / mesh centroid). The
+            // ACEN stage's currentCenter() recomputes live and already reflects
+            // the just-picked element (elementVerts_). Feeding the stale packet
+            // here anchored the drag at the OLD center, so the gizmo moved
+            // relative to its old location instead of jumping onto the picked
+            // vertex first — the reported bug.
+            auto acForPivot = activeAcenStage();
+            Vec3 pivot = acForPivot !is null
+                ? acForPivot.currentCenter()
+                : queryActionCenter(vts);
             // notifyAcen=false because tryPickElement already wrote
             // userPlaced (notifyAcenUserPlaced) — don't overwrite it
             // with the ray-hit point.
@@ -3643,6 +3678,10 @@ private:
     bool takeVert(FalloffStage stage, int vi) {
         notifyAcenUserPlaced(mesh.vertices[vi]);
         stage.anchorRing = [cast(uint)vi];
+        // ACEN.Element tracks the picked element LIVE (the gizmo follows it
+        // under the drag instead of being dragged to the moving-set centroid).
+        // anchor = the vertex itself (offset 0).
+        notifyAcenElementVerts(stage.anchorRing, mesh.vertices[vi]);
         updateConnectMask(stage, vi);
         return true;
     }
@@ -3660,6 +3699,9 @@ private:
             : (a + b) * 0.5f;
         notifyAcenUserPlaced(anchor);
         stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
+        // anchor = the click point ON the edge (bare Edge mode) or its midpoint
+        // (EdgeCent) — the gizmo sits there, not always at the midpoint.
+        notifyAcenElementVerts(stage.anchorRing, anchor);
         updateConnectMask(stage, cast(int)edge[0]);
         return true;
     }
@@ -3691,6 +3733,9 @@ private:
         stage.anchorRing.length = face.length;
         foreach (i, vi; face)
             stage.anchorRing[i] = vi;
+        // anchor = the click point on the face (bare Polygon) or its centroid
+        // (PolyCent) — the gizmo sits there.
+        notifyAcenElementVerts(stage.anchorRing, anchor);
         if (face.length > 0)
             updateConnectMask(stage, cast(int)face[0]);
         return true;
