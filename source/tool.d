@@ -171,6 +171,13 @@ class Tool : ParamProvider {
         }
     }
 
+    // True while the tool owns an in-progress drag gesture (a gizmo / element
+    // haul between mouse-down and mouse-up). The host uses this to FREEZE the
+    // hover pick during the drag — so only the element picked at drag-start
+    // stays highlighted, instead of every element the moving cursor passes
+    // over lighting up. Default false; XfrmTransformTool overrides it.
+    bool isDragging() const { return false; }
+
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}
 

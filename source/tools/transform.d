@@ -533,6 +533,22 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
+    // Record the picked element's vertex ring on the ACEN stage so Mode.Element
+    // tracks the element LIVE (gizmo follows it under the drag + stays on it
+    // after release). Paired with notifyAcenUserPlaced from the wrapper's
+    // click-pick (takeVert/takeEdge/takeFace). No-op when no ACEN stage is
+    // registered. PUBLIC for the wrapper→sub-tool (sibling-instance) reason.
+    public void notifyAcenElementVerts(const(uint)[] verts, Vec3 anchor) {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return;
+        ac.setElementVerts(verts, anchor);
+    }
+
     // Display soft-pin hooks (BUG-1: Move gizmo settle, falloff-independent).
     // The Move mouse-up records the settled gizmo pivot here so the recompute
     // modes (Auto/None/Screen) keep the gizmo at the full-delta position instead
@@ -756,6 +772,29 @@ protected:
                 dragFalloff.screenCx = fs.screenCx;
                 dragFalloff.screenCy = fs.screenCy;
             }
+        }
+        // Element-falloff re-anchor fix — same staleness as the Screen case
+        // above, one level deeper. The element click-pick
+        // (XfrmTransformTool.tryPickElement) runs INSIDE the sub-tool's
+        // onMouseButtonDown, AFTER the host snapshotted `vts` — so the captured
+        // packet still carries the PREVIOUS pick's sphere centre + anchor ring,
+        // and the drag would deform around the OLD element (the picked vertex
+        // wouldn't move; the previously-anchored region would). Pull the live
+        // sphere centre (= the ACEN centre, which the pick just relocated onto
+        // the new element) plus the freshly-built anchorRing / connectMask from
+        // the stage so the drag deforms around THIS click.
+        if (dragFalloff.enabled && dragFalloff.type == FalloffType.Element) {
+            if (auto fs = falloffStageForHooks()) {
+                dragFalloff.anchorRing  = fs.anchorRing.dup;
+                dragFalloff.connectMask = fs.connectMask.dup;
+            }
+            import toolpipe.pipeline         : g_pipeCtx;
+            import toolpipe.stages.actcenter : ActionCenterStage;
+            import toolpipe.stage            : TaskCode;
+            if (g_pipeCtx !is null)
+                if (auto ac = cast(ActionCenterStage)
+                              g_pipeCtx.pipeline.findByTask(TaskCode.Acen))
+                    dragFalloff.pickedCenter = ac.currentCenter();
         }
         return dragFalloff.enabled;
     }

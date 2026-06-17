@@ -838,6 +838,7 @@ public:
 
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
+        if (!visible) return;
         Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
                : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
                :                                 color;

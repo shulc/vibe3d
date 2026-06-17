@@ -2753,6 +2753,13 @@ void main(string[] args) {
                     buf.put(`,"transform":{"translate":`); putVec3(xf.publishedTranslate());
                     buf.put(`,"rotate":`);  putVec3(xf.publishedRotate());
                     buf.put(`,"scale":`);   putVec3(xf.publishedScale());
+                    // Live Move-bank gizmo center (handler.center) — the
+                    // VISUAL gizmo position during a drag (the wrapper draws
+                    // the gizmo from this, NOT from actionCenter.center while a
+                    // drag is active). Lets tests witness the during-drag gizmo
+                    // (element-move: the gizmo must jump onto the picked element
+                    // at drag start, not move off its old center).
+                    buf.put(`,"gizmoCenter":`); putVec3(xf.moveGizmoCenter());
                     // P-F Phase 1 — the frozen per-run gizmo frame.
                     bool rfValid; Vec3 rfO, rfR, rfU, rfF;
                     xf.publishedRunFrame(rfValid, rfO, rfR, rfU, rfF);
@@ -2764,6 +2771,15 @@ void main(string[] args) {
                     buf.put(`,"runFrameFwd":`);   putVec3(rfF);
                     buf.put(`}`);
                 }
+            }
+            // Published hover state (vert/edge/face index, -1 = none). Lets
+            // tests witness the during-drag hover FREEZE: while a tool drag is
+            // active the hover must stay on the element picked at drag-start,
+            // not follow the cursor onto other elements.
+            {
+                import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+                buf.put(format(`,"hover":{"vertex":%d,"edge":%d,"face":%d}`,
+                               g_hoveredVertex, g_hoveredEdge, g_hoveredFace));
             }
             buf.put(`}`);
             return buf.data;
@@ -4361,6 +4377,10 @@ void main(string[] args) {
     }
 
     void pickVertices(ref Viewport vp, bool doingCameraDrag) {
+        // Freeze hover during an active tool drag (element-move haul): return
+        // WITHOUT re-picking so the element picked at drag-start stays
+        // highlighted instead of every vertex the moving cursor passes over.
+        if (activeTool !is null && activeTool.isDragging()) return;
         hoveredVertex = -1;
         if (io.WantCaptureMouse || doingCameraDrag) return;
         // No active tool → only the current editMode picks. With an
@@ -4396,6 +4416,7 @@ void main(string[] args) {
     }
 
     void pickEdges(ref Viewport vp, bool doingCameraDrag) {
+        if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredEdge = -1;
         if (io.WantCaptureMouse || doingCameraDrag) return;
         if (activeTool is null) {
@@ -4426,6 +4447,7 @@ void main(string[] args) {
     }
 
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
+        if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredFace = -1;
         if (io.WantCaptureMouse || doingCameraDrag) return;
         if (activeTool is null) {

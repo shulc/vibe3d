@@ -157,7 +157,7 @@ void activateElementMovePreset() {
     postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
     postJson("/api/script", "tool.set xfrm.elementMove on");
     postJson("/api/command", "tool.pipe.attr falloff dist 4");
-    postJson("/api/command", "tool.pipe.attr falloff elementMode polyCent");
+    postJson("/api/command", "tool.pipe.attr falloff mode polyCent");
     settle();
 }
 
