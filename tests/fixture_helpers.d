@@ -337,6 +337,34 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.attr rotate RZ %g", asDouble(eul["rz"])), ctx);
         cmd("tool.doApply", ctx);
         cmd("tool.set rotate off", ctx);
+    } else if ("element_transform" in step) {
+        // Element-falloff translate via the LIVE xfrm.elementMove preset —
+        // mirrors a reference-engine element-move pick+drag. The element
+        // falloff is a sphere of radius `dist` anchored at the picked element
+        // `center`; vibe3d's sphere centre tracks the action centre, so the
+        // pick is reproduced by pushing ACEN.userPlaced (see
+        // source/toolpipe/stages/falloff.d). `translate` is the full (w=1)
+        // displacement the picked element received — applied unscaled, so the
+        // per-vert weight reproduces the reference verts. Multi-axis (the drag
+        // is a free screen-plane haul, so TX/TY/TZ are all live).
+        auto ft  = step["element_transform"];
+        string tl = ("tool" in ft) ? ft["tool"].str : "xfrm.elementMove";
+        auto fo  = ft["falloff"];
+        auto cen = jvec3(fo["center"]);
+        auto tr  = jvec3(ft["translate"]);
+        cmd(format("tool.set %s on", tl), ctx);
+        cmd("tool.pipe.attr falloff type element", ctx);
+        cmd(format("tool.pipe.attr falloff shape %s",
+                   ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
+        cmd(format("tool.pipe.attr falloff dist %g", asDouble(fo["dist"])), ctx);
+        cmd(format("tool.pipe.attr actionCenter userPlacedX %g", cen[0]), ctx);
+        cmd(format("tool.pipe.attr actionCenter userPlacedY %g", cen[1]), ctx);
+        cmd(format("tool.pipe.attr actionCenter userPlacedZ %g", cen[2]), ctx);
+        cmd(format("tool.attr %s TX %g", tl, tr[0]), ctx);
+        cmd(format("tool.attr %s TY %g", tl, tr[1]), ctx);
+        cmd(format("tool.attr %s TZ %g", tl, tr[2]), ctx);
+        cmd("tool.doApply", ctx);
+        cmd(format("tool.set %s off", tl), ctx);
     } else if ("acen_transform" in step) {
         // Action-center transform: set an actr.<mode> preset (ACEN+AXIS), then
         // run a single-axis numeric transform. With actr.local on a multi-
