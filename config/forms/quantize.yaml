@@ -1,0 +1,24 @@
+# Tool Properties form for the Quantize deform tool (xfrm.quantize).
+#
+# Same mechanism as config/forms/smooth.yaml: each value control binds to a
+# `tool.attr xfrm.quantize <attr> ?` line — reading queries the tool's params(),
+# writing dispatches the command with `?` filled in. A matching tool form fully
+# replaces the legacy schema panel (the propertyPanel.draw fallback only runs
+# when NO form matches the active tool), so this carries the full visible set.
+#
+# Layout mirrors the transform/Move panel: each parameter is a flat row with its
+# label in the fixed left column and the value field aligned in the right column
+# (forms_render.beginLabeledRow / fieldColumnX).
+
+forms:
+  - id: quantize.deform
+    label: Quantize
+    showLabel: false
+    whenTool:
+      - xfrm.quantize
+    category: toolprops/main
+    ordinal: 150.52
+    rows:
+      - { control: "tool.attr xfrm.quantize X ?", label: "Step X" }
+      - { control: "tool.attr xfrm.quantize Y ?", label: "Step Y" }
+      - { control: "tool.attr xfrm.quantize Z ?", label: "Step Z" }
