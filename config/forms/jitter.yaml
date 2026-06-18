@@ -1,0 +1,30 @@
+# Tool Properties form for the Jitter deform tool (xfrm.jitter).
+#
+# Same mechanism as config/forms/smooth.yaml: each value control binds to a
+# `tool.attr xfrm.jitter <attr> ?` line — reading queries the tool's params(),
+# writing dispatches the command with `?` filled in. A matching tool form fully
+# replaces the legacy schema panel (the propertyPanel.draw fallback only runs
+# when NO form matches the active tool), so this carries the full visible set.
+#
+# Layout mirrors the transform/Move panel: each parameter is a flat row with its
+# label in the fixed left column and the value field aligned in the right column
+# (forms_render.beginLabeledRow / fieldColumnX). Per-axis Enable/Range are paired
+# so each axis reads top-to-bottom; a per-axis Range greys out (provider
+# paramEnabled) when its Enable is off.
+
+forms:
+  - id: jitter.deform
+    label: Jitter
+    showLabel: false
+    whenTool:
+      - xfrm.jitter
+    category: toolprops/main
+    ordinal: 150.51
+    rows:
+      - { control: "tool.attr xfrm.jitter enableX ?", label: "Enable X" }
+      - { control: "tool.attr xfrm.jitter rangeX ?",  label: "Range X" }
+      - { control: "tool.attr xfrm.jitter enableY ?", label: "Enable Y" }
+      - { control: "tool.attr xfrm.jitter rangeY ?",  label: "Range Y" }
+      - { control: "tool.attr xfrm.jitter enableZ ?", label: "Enable Z" }
+      - { control: "tool.attr xfrm.jitter rangeZ ?",  label: "Range Z" }
+      - { control: "tool.attr xfrm.jitter seed ?",    label: Seed }
