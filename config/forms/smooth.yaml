@@ -1,0 +1,31 @@
+# Tool Properties form for the Smooth deform tool (xfrm.smooth).
+#
+# Same mechanism as config/forms/transform.yaml / box.yaml: each value control
+# binds to a `tool.attr xfrm.smooth <attr> ?` line — reading queries the tool's
+# params(), writing dispatches the command with `?` filled in. A matching tool
+# form fully replaces the legacy schema panel (the propertyPanel.draw fallback
+# only runs when NO form matches the active tool), so this carries the full
+# visible parameter set.
+#
+# Layout mirrors the transform/Move panel: each parameter is a flat row with its
+# label in the fixed left column and the value field aligned in the right column
+# (forms_render.beginLabeledRow / fieldColumnX). Bool params render as native
+# checkboxes. Row order follows the reference Smooth tool; `sharpAngle` greys out
+# (provider paramEnabled) unless `lockSharp` is on.
+
+forms:
+  - id: smooth.deform
+    label: Smooth
+    showLabel: false
+    whenTool:
+      - xfrm.smooth
+    category: toolprops/main
+    ordinal: 150.50
+    rows:
+      - { control: "tool.attr xfrm.smooth strn ?",       label: Strength }
+      - { control: "tool.attr xfrm.smooth iter ?",       label: Iterations }
+      - { control: "tool.attr xfrm.smooth lockBound ?",  label: "Lock Boundary" }
+      - { control: "tool.attr xfrm.smooth lockCorner ?", label: "Lock Corner" }
+      - { control: "tool.attr xfrm.smooth preserve ?",   label: "Preserve Volume" }
+      - { control: "tool.attr xfrm.smooth lockSharp ?",  label: "Lock Sharp Edges" }
+      - { control: "tool.attr xfrm.smooth sharpAngle ?", label: "Sharp Angle" }

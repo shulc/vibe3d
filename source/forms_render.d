@@ -401,6 +401,12 @@ class FormsPanel {
                               InteractiveDispatchFn idispatch)
     {
         bool v = *rc.param.bptr;
+        // Align the checkbox box at the value-field column (its left edge), with
+        // the label to its RIGHT — so a column of checkboxes lines up with the
+        // numeric fields above/below them. beginLabeledRow("") emits an empty
+        // left label gutter and advances the cursor to fieldColumnX, exactly as
+        // a value row does, so checkbox boxes and field boxes share the same x.
+        beginLabeledRow("");
         if (ImGui.Checkbox(label, &v))
             writeValue(row, JSONValue(v), idispatch);
     }
