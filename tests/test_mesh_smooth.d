@@ -341,29 +341,29 @@ unittest { // lockBound + lockCorner together is equivalent to lockBound
 
 
 // PR-5 of the convolve design doc — lockSharp pins verts
-// on interior edges whose dihedral angle exceeds sharpThreshold
-// (radians). All cube edges are 90° (π/2 ≈ 1.5708 rad).
+// on interior edges whose dihedral angle exceeds the sharp angle
+// (degrees). All cube edges are 90°.
 
-unittest { // sharpThreshold = π/4 (45°) < 90° → every cube edge is
+unittest { // sharpAngle = 45° < 90° → every cube edge is
            // "sharp" → all 8 verts pinned → smooth no-op.
     postJson("/api/reset", "");
     auto before = dumpVerts();
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:0.7853981");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:45");
     auto after = dumpVerts();
     assert(before.length == after.length);
     foreach (i; 0 .. before.length)
         foreach (c; 0 .. 3)
             assert(approxEq(before[i][c], after[i][c]),
-                "lockSharp π/4: every cube edge is 90°, all verts "
+                "lockSharp 45°: every cube edge is 90°, all verts "
                 ~ "should be pinned (no-op); v[" ~ i.to!string ~ "][" ~ c.to!string ~ "] "
                 ~ "before=" ~ before[i][c].to!string
                 ~ " after="  ~ after[i][c].to!string);
 }
 
-unittest { // sharpThreshold = 2.0 rad ≈ 115° > 90° → no edge passes
+unittest { // sharpAngle = 115° > 90° → no edge passes
            // the threshold → no lock → cube smooths normally.
     postJson("/api/reset", "");
-    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpThreshold:2.0");
+    cmd("mesh.smooth strn:1 iter:5 lockSharp:true sharpAngle:115");
     auto after = dumpVerts();
     bool anyMoved = false;
     foreach (v; after)
@@ -372,7 +372,7 @@ unittest { // sharpThreshold = 2.0 rad ≈ 115° > 90° → no edge passes
             anyMoved = true; break;
         }
     assert(anyMoved,
-        "lockSharp 2.0 rad (~115°): no cube edge passes threshold, "
+        "lockSharp 115°: no cube edge passes threshold, "
         ~ "smooth should move every vert toward centroid");
 }
 

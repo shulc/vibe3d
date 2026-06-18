@@ -9,7 +9,7 @@ import viewcache;
 import math : Vec3, cross, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
-import std.math : cos;
+import std.math : cos, PI;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -28,7 +28,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     private VertexCache*     vc;
     private EdgeCache*       ec;
     private FaceBoundsCache* fc;
-    private float            strn_ = 0.5f;   // `strn` (strength) attr
+    private float            strn_ = 1.0f;   // `strn` (strength) attr — MODO default 1.0
     private int              iter_ = 1;      // `iter` (iterations) attr
     private bool             lockBound_ = false;  // `lockBound` —
     // freezes verts on boundary edges (edges adjacent to only one face,
@@ -39,11 +39,12 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     // toggled independently. A corner vertex is shared by a single
     // polygon and lies on the boundary.
     private bool             lockSharp_     = false; // `lockSharp`
-    private float            sharpThreshold_ = 0.785398163f; // π/4 ≈ 45°
-    // freezes verts on interior edges whose dihedral angle exceeds
-    // sharpThreshold (radians): edges with a larger angle than the
-    // sharp-angle threshold are locked. Boundary edges aren't covered
-    // here — use lockBound / lockCorner for those.
+    private float            sharpAngleDeg_ = 60.0f; // `sharpAngle`,
+    // DEGREES (MODO default 60°). Freezes verts on interior edges whose
+    // dihedral angle exceeds this threshold; converted to radians at the
+    // dihedral test below. Boundary edges aren't covered here — use
+    // lockBound / lockCorner for those. Greyed out (paramEnabled) unless
+    // lockSharp is on, matching MODO's disabled spinner.
     // Optional falloff packet — set via `setFalloff` from either the
     // wrapping tool (XfrmSmoothTool reads the toolpipe's FalloffStage)
     // or the HTTP injector (tests pass a `falloff` JSON alongside the
@@ -74,16 +75,24 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     override string name()  const { return "mesh.smooth"; }
     override string label() const { return "Smooth"; }
 
+    // Row order matches MODO's Smooth Tool Properties top-to-bottom.
     override Param[] params() {
         return [
-            Param.float_("strn",           "Strength",        &strn_,           0.5f).min(0.0f).max(1.0f),
-            Param.int_  ("iter",           "Iterations",      &iter_,           1).min(0),
-            Param.bool_ ("lockBound",      "Lock Boundary",   &lockBound_,      false),
-            Param.bool_ ("lockCorner",     "Lock Corner",     &lockCorner_,     false),
-            Param.bool_ ("lockSharp",      "Lock Sharp Edges",&lockSharp_,      false),
-            Param.float_("sharpThreshold", "Sharp Angle",     &sharpThreshold_, 0.785398163f).min(0.0f),
-            Param.bool_ ("preserve",       "Preserve Volume", &preserve_,       false),
+            Param.float_("strn",       "Strength",         &strn_,          1.0f).min(0.0f).max(1.0f),
+            Param.int_  ("iter",       "Iterations",       &iter_,          1).min(0),
+            Param.bool_ ("lockBound",  "Lock Boundary",    &lockBound_,     false),
+            Param.bool_ ("lockCorner", "Lock Corner",      &lockCorner_,    false),
+            Param.bool_ ("preserve",   "Preserve Volume",  &preserve_,      false),
+            Param.bool_ ("lockSharp",  "Lock Sharp Edges", &lockSharp_,     false),
+            Param.float_("sharpAngle", "Sharp Angle",      &sharpAngleDeg_, 60.0f).min(0.0f).max(180.0f),
         ];
+    }
+
+    // Sharp Angle is meaningful only while Lock Sharp Edges is on —
+    // grey it out otherwise, matching MODO's disabled spinner.
+    override bool paramEnabled(string name) const {
+        if (name == "sharpAngle") return lockSharp_;
+        return true;
     }
 
     // Setters for XfrmSmoothTool's drag-modulates-attrs path.
@@ -92,7 +101,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     void setLockBound(bool v)         { lockBound_ = v; }
     void setLockCorner(bool v)        { lockCorner_ = v; }
     void setLockSharp(bool v)         { lockSharp_ = v; }
-    void setSharpThreshold(float v)   { sharpThreshold_ = v; }
+    void setSharpAngle(float v)       { sharpAngleDeg_ = v; }
     void setPreserve(bool v)          { preserve_ = v; }
     void setFalloff(FalloffPacket fp) { falloff_ = fp; }
 
@@ -158,7 +167,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // so angle > threshold ⇔ dot(n1, n2) < cos(threshold) —
         // saves a per-edge acos.
         if (lockSharp_) {
-            float cosThreshold = cos(sharpThreshold_);
+            float cosThreshold = cos(sharpAngleDeg_ * (PI / 180.0f));
             foreach (li, ref l; mesh.loops) {
                 if (l.twin == uint.max) continue;
                 if (cast(uint)li > l.twin) continue;
