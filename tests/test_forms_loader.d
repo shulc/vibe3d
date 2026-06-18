@@ -578,8 +578,14 @@ unittest {
     assert(!toolForm.matchesStage("xfrm.transform"));   // never a stage
 
     Form sharedSub;                                     // neither filter
-    assert(sharedSub.matchesTool("anything"));          // shared sub-form
-    assert(!sharedSub.matchesStage("anything"));        // but not a stage form
+    // A filter-less form (shared sub-form pulled via sub/ref, or an
+    // id-lookup form like layer.props) is NEVER auto-matched as a
+    // top-level tool form — otherwise it would render in Tool Properties
+    // INSTEAD of the active tool's own params() (app.d skips
+    // PropertyPanel.draw whenever any form matches). Disjoint from
+    // matchesStage by symmetry.
+    assert(!sharedSub.matchesTool("anything"));
+    assert(!sharedSub.matchesStage("anything"));
 }
 
 // ---------------------------------------------------------------------------

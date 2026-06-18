@@ -193,8 +193,14 @@ struct Form {
     /// lookup. So a tool match requires either a whenTool hit, or a filter-less
     /// form that is NOT a stage form.
     bool matchesTool(string activeToolId) const {
-        if (whenStage.length != 0) return false;   // stage form — not a tool form
-        if (whenTool.length == 0) return true;
+        // A tool form MUST declare an explicit `whenTool`. A filter-less form
+        // is a stage form (whenStage), a shared sub-form (pulled via sub/ref),
+        // or an id-lookup form (e.g. layer.props, rendered by the Layers panel
+        // via formById) — none of those may leak into the Tool Properties
+        // tool-matching pool, or they would render INSTEAD of the active tool's
+        // own params() (app.d skips PropertyPanel.draw whenever any form
+        // matches). Keeps this lookup disjoint from matchesStage by symmetry.
+        if (whenTool.length == 0) return false;
         foreach (w; whenTool)
             if (w == activeToolId) return true;
         return false;
@@ -1296,9 +1302,13 @@ version (unittest)
         assert(Row.makeRef("toolprops.falloff").kind == RowKind.ref_);
     }
 
-    unittest { // Form.matchesTool: empty filter => always; list membership
-        Form shared_;                       // no whenTool
-        assert(shared_.matchesTool("anything"));
+    unittest { // Form.matchesTool: filter-less never matches; list membership
+        Form shared_;                       // no whenTool — id-lookup / sub-form
+        assert(!shared_.matchesTool("anything"));
+
+        Form stageForm;                     // stage form — not a tool form
+        stageForm.whenStage = "falloff";
+        assert(!stageForm.matchesTool("anything"));
 
         Form f;
         f.whenTool = ["xfrm.transform", "move"];
