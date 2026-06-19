@@ -339,27 +339,36 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd("tool.set rotate off", ctx);
     } else if ("element_transform" in step) {
         // Element-falloff translate via the LIVE xfrm.elementMove preset —
-        // mirrors a reference-engine element-move pick+drag. The element
-        // falloff is a sphere of radius `dist` anchored at the picked element
-        // `center`; vibe3d's sphere centre tracks the action centre, so the
-        // pick is reproduced by pushing ACEN.userPlaced (see
-        // source/toolpipe/stages/falloff.d). `translate` is the full (w=1)
-        // displacement the picked element received — applied unscaled, so the
-        // per-vert weight reproduces the reference verts. Multi-axis (the drag
-        // is a free screen-plane haul, so TX/TY/TZ are all live).
+        // mirrors a reference-engine element-move pick+drag. The falloff
+        // attenuates by distance to the picked element's GEOMETRY (vert /
+        // segment / face), defined by `anchor` (the picked element's vertex
+        // coords; resolved to anchorRing indices). `center` is the fallback
+        // sphere centre used only when no `anchor` is given (single-point pick).
+        // `translate` is the full (w=1) displacement the picked element
+        // received — applied unscaled, so the per-vert weight reproduces the
+        // reference verts. Multi-axis (the free screen-plane drag is live TXYZ).
         auto ft  = step["element_transform"];
         string tl = ("tool" in ft) ? ft["tool"].str : "xfrm.elementMove";
         auto fo  = ft["falloff"];
-        auto cen = jvec3(fo["center"]);
         auto tr  = jvec3(ft["translate"]);
         cmd(format("tool.set %s on", tl), ctx);
         cmd("tool.pipe.attr falloff type element", ctx);
         cmd(format("tool.pipe.attr falloff shape %s",
                    ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
         cmd(format("tool.pipe.attr falloff dist %g", asDouble(fo["dist"])), ctx);
-        cmd(format("tool.pipe.attr actionCenter userPlacedX %g", cen[0]), ctx);
-        cmd(format("tool.pipe.attr actionCenter userPlacedY %g", cen[1]), ctx);
-        cmd(format("tool.pipe.attr actionCenter userPlacedZ %g", cen[2]), ctx);
+        if ("anchor" in fo) {
+            // Picked element verts (engine-neutral coords) → anchorRing indices.
+            int[] aidx = resolveCoords("vertices", fo["anchor"], ctx);
+            string s = "";
+            foreach (k, vi; aidx) { if (k) s ~= ","; s ~= format("%d", vi); }
+            cmd(format(`tool.pipe.attr falloff anchorRing "%s"`, s), ctx);
+        }
+        if ("center" in fo) {
+            auto cen = jvec3(fo["center"]);
+            cmd(format("tool.pipe.attr actionCenter userPlacedX %g", cen[0]), ctx);
+            cmd(format("tool.pipe.attr actionCenter userPlacedY %g", cen[1]), ctx);
+            cmd(format("tool.pipe.attr actionCenter userPlacedZ %g", cen[2]), ctx);
+        }
         cmd(format("tool.attr %s TX %g", tl, tr[0]), ctx);
         cmd(format("tool.attr %s TY %g", tl, tr[1]), ctx);
         cmd(format("tool.attr %s TZ %g", tl, tr[2]), ctx);
