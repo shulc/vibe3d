@@ -787,6 +787,18 @@ protected:
             if (auto fs = falloffStageForHooks()) {
                 dragFalloff.anchorRing  = fs.anchorRing.dup;
                 dragFalloff.connectMask = fs.connectMask.dup;
+                // Resolve the picked element's vert indices → world positions
+                // so the drag attenuates by distance to the element GEOMETRY
+                // (segment / face), parallel to anchorRing. Out-of-range
+                // indices skipped; empty → elementWeight falls back to the
+                // pickedCenter point distance.
+                Vec3[] aPos;
+                if (auto m = mesh) {
+                    const size_t nV = m.vertices.length;
+                    foreach (vi; fs.anchorRing)
+                        if (cast(size_t)vi < nV) aPos ~= m.vertices[vi];
+                }
+                dragFalloff.anchorPos = aPos;
             }
             import toolpipe.pipeline         : g_pipeCtx;
             import toolpipe.stages.actcenter : ActionCenterStage;

@@ -4,7 +4,7 @@ import std.algorithm : max, min;
 import std.json;
 import std.math      : sqrt;
 
-import math : Vec3, Viewport, projectToWindowFull, dot,
+import math : Vec3, Viewport, projectToWindowFull, dot, cross,
               pointInPolygon2D, closestOnSegment2DSquared;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                           ElementConnect;
@@ -234,12 +234,98 @@ private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
             || !cfg.connectMask[vi]))
         return 0.0f;
     if (cfg.pickedRadius <= 1e-9f) return 1.0f;  // degenerate radius → full
-    Vec3 d = pos - cfg.pickedCenter;
-    float r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    // Distance is measured to the picked element's GEOMETRY (defined
+    // by `anchorPos`, the world positions of the picked verts), not to
+    // the single centroid `pickedCenter`. A vertex pick (1 anchor) ==
+    // the point distance, so it stays bit-identical to the old centroid
+    // path; an edge / polygon pick attenuates by distance to the
+    // SEGMENT / FACE, matching the reference editor.
+    float r;
+    if (cfg.anchorPos.length == 0) {
+        // No picked geometry (scripted / non-pick use) → fall back to
+        // the centroid-point distance, preserving the prior behaviour.
+        Vec3 d = pos - cfg.pickedCenter;
+        r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    } else if (cfg.anchorPos.length == 1) {
+        Vec3 d = pos - cfg.anchorPos[0];
+        r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    } else if (cfg.anchorPos.length == 2) {
+        r = distPointSegment(pos, cfg.anchorPos[0], cfg.anchorPos[1]);
+    } else {
+        r = distPointPolygon(pos, cfg.anchorPos);
+    }
     float t = r / cfg.pickedRadius;
     if (t <= 0.0f) return 1.0f;
     if (t >= 1.0f) return 0.0f;
     return applyShape(t, cfg.shape, cfg.in_, cfg.out_);
+}
+
+/// Distance from `p` to the segment [a, b] (clamped orthogonal
+/// projection). Degenerate (a == b) reduces to the point distance.
+private float distPointSegment(Vec3 p, Vec3 a, Vec3 b) {
+    Vec3  ab  = b - a;
+    float ab2 = dot(ab, ab);
+    Vec3  ap  = p - a;
+    float t   = (ab2 > 1e-12f) ? dot(ap, ab) / ab2 : 0.0f;
+    if (t < 0.0f) t = 0.0f;
+    else if (t > 1.0f) t = 1.0f;
+    Vec3 d = ap - ab * t;
+    return sqrt(dot(d, d));
+}
+
+/// Distance from `p` to the (convex-ish) polygon whose vertices are
+/// `poly` (length ≥ 3). The face plane normal comes from the first
+/// three verts; `p` is projected onto that plane. If the projection
+/// falls inside the polygon (point-in-polygon in the plane's 2D
+/// basis) the perpendicular plane distance is returned, otherwise the
+/// minimum distance to any edge segment. A degenerate (collinear)
+/// triangle falls back to the edge-segment minimum so the result is
+/// always well-defined.
+private float distPointPolygon(Vec3 p, const(Vec3)[] poly) {
+    // Plane normal from the first three verts.
+    Vec3 n = cross(poly[1] - poly[0], poly[2] - poly[0]);
+    float nlen = sqrt(dot(n, n));
+    if (nlen > 1e-9f) {
+        n = n * (1.0f / nlen);
+        // Signed perpendicular distance + projection onto the plane.
+        float sd   = dot(p - poly[0], n);
+        Vec3  proj = p - n * sd;
+        // Build an in-plane 2D basis (u, v) to test containment.
+        Vec3 u = poly[1] - poly[0];
+        float ulen = sqrt(dot(u, u));
+        if (ulen > 1e-9f) {
+            u = u * (1.0f / ulen);
+            Vec3 v = cross(n, u);   // already unit (n, u orthonormal)
+            // Project polygon + the candidate point to (u, v) coords.
+            float px = dot(proj - poly[0], u);
+            float py = dot(proj - poly[0], v);
+            bool inside = false;
+            size_t j = poly.length - 1;
+            foreach (i; 0 .. poly.length) {
+                float xi = dot(poly[i] - poly[0], u);
+                float yi = dot(poly[i] - poly[0], v);
+                float xj = dot(poly[j] - poly[0], u);
+                float yj = dot(poly[j] - poly[0], v);
+                if (((yi > py) != (yj > py))
+                 && (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+                    inside = !inside;
+                j = i;
+            }
+            if (inside) {
+                float ad = sd < 0.0f ? -sd : sd;
+                return ad;
+            }
+        }
+    }
+    // Outside the polygon (or degenerate plane) → min edge-segment dist.
+    float best = float.infinity;
+    size_t k = poly.length - 1;
+    foreach (i; 0 .. poly.length) {
+        float d = distPointSegment(p, poly[k], poly[i]);
+        if (d < best) best = d;
+        k = i;
+    }
+    return best;
 }
 
 /// Screen falloff: window-pixel disc at (screenCx, screenCy) radius

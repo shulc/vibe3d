@@ -104,6 +104,12 @@ class FalloffStage : Stage, Operator {
     // never touch it). Cleared on FalloffStage.reset and on type
     // change away from Element.
     uint[] anchorRing;
+    // Resolved world positions of `anchorRing`, parallel to it. Owned by
+    // the stage so the slice published on the packet (pkt.anchorPos) stays
+    // valid for the whole pipe walk. Rebuilt every evaluate() from the live
+    // mesh; out-of-range indices are skipped (so a stale ring after a
+    // topology edit degrades gracefully rather than reading garbage).
+    private Vec3[] anchorPos_;
     // Stage 14.8: pick mode for the Element-falloff click-pick path.
     // `auto`/`autoCent`
     // try all element types; vertex/edge/polygon restrict; bare vs
@@ -317,6 +323,12 @@ class FalloffStage : Stage, Operator {
         pkt.connect      = connect;
         pkt.connectMask  = connectMask;
         pkt.anchorRing   = anchorRing;
+        // Resolve the picked element's vert indices → world positions so
+        // the Element falloff can attenuate by distance to the element
+        // GEOMETRY (segment / face), not the centroid point. Owned buffer
+        // → slice stays valid for the pipe walk.
+        resolveAnchorPos();
+        pkt.anchorPos    = anchorPos_;
         pkt.elementMode  = elementMode;
         pkt.screenCx     = screenCx;
         pkt.screenCy     = screenCy;
@@ -974,6 +986,24 @@ class FalloffStage : Stage, Operator {
         foreach (i, m; marks)
             if (m & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
         return h;
+    }
+
+    // Resolve `anchorRing` vertex indices to their live world positions into
+    // `anchorPos_` (parallel to anchorRing). Out-of-range indices are
+    // skipped, so the two arrays may differ in length after a topology edit
+    // left a stale ring — that is benign: elementWeight only cares about the
+    // geometry the resolved positions describe (point / segment / polygon),
+    // and the anchorRing→weight-1.0 short-circuit keys on indices separately.
+    // When the mesh is unavailable or the ring is empty, anchorPos_ is empty
+    // and elementWeight falls back to the pickedCenter point distance.
+    void resolveAnchorPos() {
+        anchorPos_.length = 0;
+        if (anchorRing.length == 0) return;
+        Mesh* m = mesh_;
+        if (m is null) return;
+        const size_t nV = m.vertices.length;
+        foreach (vi; anchorRing)
+            if (cast(size_t)vi < nV) anchorPos_ ~= m.vertices[vi];
     }
 
     // Build (or reuse) the vertex→neighbor CSR adjacency from mesh_.edges.

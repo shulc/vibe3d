@@ -296,6 +296,18 @@ struct FalloffPacket {
     // form a hybrid "anchor + attenuation" weight function. Empty
     // when no pick.
     const(uint)[]  anchorRing;
+    // Anchor positions — the WORLD positions of the picked element's
+    // verts, parallel to `anchorRing` (anchorPos[i] is the world
+    // position of vertex anchorRing[i]). This is the GEOMETRY the
+    // Element falloff attenuates from: `elementWeight` measures the
+    // distance from each vert to this geometry (point / segment /
+    // polygon) rather than to the single `pickedCenter` centroid, so
+    // an edge / polygon pick attenuates by distance to the SEGMENT /
+    // FACE — matching the reference editor (a centroid-only sphere
+    // diverges for non-vertex picks). Empty when no pick (or for a
+    // non-pick scripted falloff): `elementWeight` then falls back to
+    // the `pickedCenter` point distance.
+    const(Vec3)[]  anchorPos;
 
     // Screen: disc in window pixels at (cx, cy), radius `screenSize`,
     // projected as an infinite cylinder along the camera-back axis.

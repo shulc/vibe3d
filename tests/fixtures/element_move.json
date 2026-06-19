@@ -1,6 +1,6 @@
 {
   "name": "element_move",
-  "description": "Reference-parity: ElementMove (xfrm.elementMove preset) \u2014 a translate weighted by an ELEMENT falloff (a sphere anchored at the picked element). Captured from a real interactive pick+drag in the reference engine: a 4x4x4 cube, the -X+Y-Z corner picked, element-falloff Range 0.5, linear shape, dragged in the screen plane. Recovered: center=(-0.5,0.5,-0.5), radius=0.5, full translate=(-1.515,1.205,0). 7 verts fall inside the sphere (corner w=1, ring@0.25 w=0.5, ring@0.354 w=0.293 = linear 1-d/0.5). vibe3d replays the preset (falloff type=element + dist + ACEN.userPlaced center + TX/TY/TZ) and reproduces every vertex bit-for-bit. Built on an empty reset so the welded seg4 cube is the only geometry.",
+  "description": "Reference-parity: ElementMove (xfrm.elementMove preset) \u2014 a translate weighted by an ELEMENT falloff (a sphere anchored at the picked element). Captured from a real interactive pick+drag in the reference engine: a 4x4x4 cube, the -X+Y-Z corner picked, element-falloff Range 0.5, linear shape, dragged in the screen plane. Recovered: center=(-0.5,0.5,-0.5), radius=0.5, full translate=(-1.515,1.205,0). 7 verts fall inside the sphere (corner w=1, ring@0.25 w=0.5, ring@0.354 w=0.293 = linear 1-d/0.5). Cases cover a VERTEX pick (sphere=point) and an EDGE pick (falloff attenuates by distance to the edge SEGMENT, anchorRing = the 2 endpoints). vibe3d replays the preset (falloff type=element + dist + ACEN.userPlaced center + TX/TY/TZ) and reproduces every vertex bit-for-bit. Built on an empty reset so the welded seg4 cube is the only geometry.",
   "source": "Frozen reference capture (xfrm.elementMove, manual interactive pick+drag via tools/local/modo_diff manual VNC; element falloff cannot be driven by synthetic input \u2014 see capture notes).",
   "tolerance": 0.0001,
   "cases": [
@@ -1180,6 +1180,1230 @@
           "after": [
             0.0,
             0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            0.25,
+            0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.25,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            0.25
+          ],
+          "after": [
+            0.25,
+            0.5,
+            0.25
+          ]
+        }
+      ]
+    },
+    {
+      "name": "element_move_edge_lin_r0p5",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:4 segmentsY:4 segmentsZ:4 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "element_transform": {
+            "tool": "xfrm.elementMove",
+            "translate": [
+              0.01,
+              0.46,
+              0.0
+            ],
+            "falloff": {
+              "type": "element",
+              "shape": "linear",
+              "dist": 0.5,
+              "anchor": [
+                [
+                  -0.25,
+                  0.5,
+                  -0.25
+                ],
+                [
+                  -0.25,
+                  0.5,
+                  0.0
+                ]
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.25,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.25,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            -0.25,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.25,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            -0.25,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.0,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            0.25,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.25,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.25,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            -0.25,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            -0.25
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.0
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.25
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.25,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.0,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.25
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            -0.25
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.25,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.25
+          ],
+          "after": [
+            0.5,
+            0.0,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.25
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.25,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.25
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.25
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            -0.49866,
+            0.311628,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            -0.247071,
+            0.384731,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.00134,
+            0.311628,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            -0.25
+          ],
+          "after": [
+            0.5,
+            0.25,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.25,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.25
+          ],
+          "after": [
+            0.5,
+            0.25,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.25,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.25,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.25
+          ],
+          "after": [
+            -0.49866,
+            0.311628,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.0
+          ],
+          "after": [
+            -0.497071,
+            0.384731,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            -0.25
+          ],
+          "after": [
+            -0.497071,
+            0.384731,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.497071,
+            0.634731,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.245,
+            0.73,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.002929,
+            0.634731,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.25,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            -0.497071,
+            0.634731,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.495,
+            0.73,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            -0.495,
+            0.73,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            -0.24,
+            0.96,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.24,
+            0.96,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            0.25
+          ],
+          "after": [
+            -0.245,
+            0.73,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            0.005,
+            0.73,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.005,
+            0.73,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.25
+          ],
+          "after": [
+            0.002929,
+            0.634731,
             0.25
           ]
         },
