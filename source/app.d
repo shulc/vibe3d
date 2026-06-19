@@ -1101,6 +1101,15 @@ void main(string[] args) {
     bool[] faceSelEdgesCache;
     bool[] faceSelEdgesPrevSel;  // snapshot of selectedFaces at last rebuild
 
+    // Cache: edge-loop hover mask for ElementMove + falloff EdgeLoops.
+    // Hovering an edge pre-highlights the whole loop ring (mirrors the apply,
+    // which expands a picked edge to its loop). The loop WALK (edgeLoopRing +
+    // the ring→edge-index map) is expensive, so recompute ONLY when the hovered
+    // edge or the mesh topology changes — never per frame.
+    bool[] loopHoverEdgesCache;
+    int    loopHoverPrevEdge = -2;        // hoveredEdge at last rebuild (-2 = never)
+    ulong  loopHoverPrevTopo = ulong.max; // mesh.topologyVersion at last rebuild
+
     DragMode dragMode = DragMode.None;
     EditMode editMode = EditMode.Vertices;
     // Selection-types Stage 1: the most-recent-first ordering of selection types
@@ -1162,6 +1171,49 @@ void main(string[] args) {
                 if (fo.enabled && fo.isActive())   // type != None; alloc-free
                     return true;
         return false;
+    }
+
+    // ElementMove + falloff EdgeLoops: build the cage-edge mask for the whole
+    // loop ring through the hovered edge, so the renderer can pre-highlight the
+    // loop in the hover colour (matching the apply, which expands a picked edge
+    // to its loop). CACHED: the loop walk (edgeLoopRing + ring→edge lookup)
+    // only re-runs when `hoveredEdge` or the mesh topology changes — never per
+    // frame. Returns a cage-indexed bool[] (length == mesh.edges.length); on a
+    // valence-3 / boundary / non-quad edge `edgeLoopRing` falls back to the
+    // seed edge, so the mask just lights the single hovered edge.
+    const(bool)[] rebuildLoopHoverMask(int hovEdge) {
+        if (loopHoverPrevEdge == hovEdge
+            && loopHoverPrevTopo == mesh.topologyVersion
+            && loopHoverEdgesCache.length == mesh.edges.length)
+            return loopHoverEdgesCache;   // cache hit — no walk
+
+        loopHoverPrevEdge = hovEdge;
+        loopHoverPrevTopo = mesh.topologyVersion;
+        if (loopHoverEdgesCache.length != mesh.edges.length)
+            loopHoverEdgesCache = new bool[](mesh.edges.length);
+        loopHoverEdgesCache[] = false;
+
+        if (hovEdge < 0 || hovEdge >= cast(int)mesh.edges.length)
+            return loopHoverEdgesCache;
+
+        auto seed = mesh.edges[hovEdge];
+        uint[] ring = edgeLoopRing(mesh, seed[0], seed[1]);
+        if (ring.length < 2) return loopHoverEdgesCache;
+
+        // Map each consecutive ring vert pair (CLOSED: last→first too) back to
+        // its cage edge index via the mesh's edgeIndexMap (keyed by edgeKey).
+        // A 2-vert fallback ring closes onto itself → only the single edge.
+        foreach (i; 0 .. ring.length) {
+            uint a = ring[i];
+            uint b = ring[(i + 1) % ring.length];
+            if (a == b) continue;
+            if (auto p = edgeKey(a, b) in mesh.edgeIndexMap) {
+                uint ei = *p;
+                if (ei < loopHoverEdgesCache.length)
+                    loopHoverEdgesCache[ei] = true;
+            }
+        }
+        return loopHoverEdgesCache;
     }
 
     void resetTransientPipeStages() {
@@ -6971,7 +7023,17 @@ void main(string[] args) {
             // baseline colour over the viewport even when the cursor
             // is on a face (`gpu.drawEdges` renders all edges and
             // colours them per the highlight / selection masks).
-            gpu.drawEdges(shader.locColor, hoveredEdge, []);
+            //
+            // ElementMove + falloff EdgeLoops: pre-highlight the WHOLE loop
+            // ring under the cursor (matches the apply, which expands a picked
+            // edge to its loop). Compute the ring→edge-index mask and CACHE it,
+            // recomputing only when the hovered edge or topology changes — the
+            // loop walk must NOT run every frame.
+            const bool[] loopMask =
+                (activeTool !is null && activeTool.wantsEdgeLoopHover())
+                    ? rebuildLoopHoverMask(hoveredEdge)
+                    : (bool[]).init;
+            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask);
         } else {
             gpu.drawEdges(shader.locColor, -1, []);
         }
