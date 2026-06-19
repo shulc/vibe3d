@@ -6533,15 +6533,89 @@ uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
     return [v0, v1];
 }
 
-unittest { // edgeLoopRing closes a loop on a quad cube
-    Mesh m = makeCube();   // 6 quad faces, 12 edges, 8 verts
-    if (m.faces.length == 6) {
-        auto e = m.edges[0];
-        auto ring = edgeLoopRing(m, e[0], e[1]);
-        assert(ring.length >= 2);
-        foreach (i; 0 .. ring.length)
-            foreach (j; i + 1 .. ring.length)
-                assert(ring[i] != ring[j]);
+unittest { // edgeLoopRing: valence-3 cube degenerates to the seed-edge fallback
+    // A plain cube's 8 corners are all valence-3, so the loop walk has no
+    // unambiguous "straight across" continuation at any vertex and bails to
+    // the seed-edge fallback `[v0, v1]`. Pin that documented limitation so a
+    // regression that silently changed the cube's loop behaviour is caught;
+    // the REAL closed-loop walk is exercised on the valence-4 torus below
+    // (and end-to-end by tests/fixtures/element_move.json
+    // `element_move_edgeloops_lin_r0p5`).
+    Mesh cube = makeCube();   // 6 quad faces, 12 edges, 8 valence-3 verts
+    auto e = cube.edges[0];
+    auto fb = edgeLoopRing(cube, e[0], e[1]);
+    assert(fb.length == 2);
+    assert(fb[0] == e[0] && fb[1] == e[1]);
+}
+
+unittest { // edgeLoopRing walks a REAL closed loop on a valence-4 quad torus
+    // Build a quad torus: R major rings × S minor segments, BOTH directions
+    // wrapping. Every vertex is valence-4 and every face is a quad, so the
+    // edge-loop walk has a well-defined "straight across" continuation at
+    // each vertex — exactly the topology edgeLoopRing is designed for (unlike
+    // the valence-3 cube above, which falls back to the seed edge).
+    //
+    //   idx(r, s) = (r % R) * S + (s % S)
+    //   face q(r, s) = [idx(r,s), idx(r,s+1), idx(r+1,s+1), idx(r+1,s)]
+    //
+    // A seed along the MAJOR direction (fixed minor column s, stepping r)
+    // continues straight across each valence-4 vertex to the next major
+    // neighbour, wrapping the whole major circle: idx(0,0) → idx(1,0) →
+    // idx(2,0) → idx(3,0) → back to idx(0,0). So the ring is the ordered
+    // major circle of exactly R verts and is CLOSED.
+    enum int R = 4;          // major rings
+    enum int S = 3;          // minor segments
+    Mesh m;
+    m.vertices.length = R * S;
+    foreach (r; 0 .. R)
+        foreach (s; 0 .. S)
+            m.vertices[r * S + s] = Vec3(cast(float)r, cast(float)s, 0.0f);
+
+    static uint idx(int r, int s) { return cast(uint)(((r % R) * S) + (s % S)); }
+    foreach (r; 0 .. R)
+        foreach (s; 0 .. S)
+            m.addFace([idx(r, s), idx(r, s + 1), idx(r + 1, s + 1), idx(r + 1, s)]);
+    m.buildLoops();
+
+    assert(m.vertices.length == R * S);   // 12 verts
+    assert(m.faces.length    == R * S);   // 12 quad faces (closed torus)
+
+    // Major-direction seed (0,0) → (1,0): expect the closed major circle.
+    auto ring = edgeLoopRing(m, idx(0, 0), idx(1, 0));
+
+    // (a) A real loop ran, not the 2-vert fallback.
+    assert(ring.length > 2);
+    // (b) It is the full closed major circle of exactly R verts.
+    assert(ring.length == R);
+    // (c) All verts are unique.
+    foreach (i; 0 .. ring.length)
+        foreach (j; i + 1 .. ring.length)
+            assert(ring[i] != ring[j]);
+
+    // The ring is the ordered major circle through column s == 0, i.e. each
+    // entry is a multiple of S (no minor offset), and the four entries are
+    // exactly the four major-circle verts. This nails the loop's identity,
+    // not just its length.
+    bool[uint] seen;
+    foreach (v; ring) {
+        assert(v % S == 0);                 // on the s == 0 minor column
+        seen[v] = true;
+    }
+    foreach (r; 0 .. R)
+        assert(idx(r, 0) in seen);          // every major-ring vert present
+
+    // It forms a cycle: consecutive ring verts (wrapping last→first) are
+    // each one major step apart (a mesh edge exists between them).
+    foreach (i; 0 .. ring.length) {
+        uint a = ring[i];
+        uint b = ring[(i + 1) % ring.length];
+        bool adjacent = false;
+        foreach (ed; m.edges)
+            if ((ed[0] == a && ed[1] == b) || (ed[0] == b && ed[1] == a)) {
+                adjacent = true;
+                break;
+            }
+        assert(adjacent);
     }
 }
 

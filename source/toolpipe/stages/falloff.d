@@ -1076,6 +1076,12 @@ class FalloffStage : Stage, Operator {
     void resolveConnectMask() {
         connectMask_.length = 0;
         if (connect == ElementConnect.Ignore) return;
+        // EdgeLoops attenuates by polyline distance to the ordered loop ring,
+        // not by connected-component membership — its elementWeight gate
+        // explicitly excludes connectMask (see falloff.d elementWeight,
+        // `connect != EdgeLoops`). So the BFS + allocation below would be
+        // pure dead work for EdgeLoops; skip it (no behavior change).
+        if (connect == ElementConnect.EdgeLoops) return;
         if (anchorRing.length == 0) return;
         Mesh* m = mesh_;
         if (m is null) return;
