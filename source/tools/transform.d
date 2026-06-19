@@ -785,7 +785,20 @@ protected:
         // the stage so the drag deforms around THIS click.
         if (dragFalloff.enabled && dragFalloff.type == FalloffType.Element) {
             if (auto fs = falloffStageForHooks()) {
-                dragFalloff.anchorRing  = fs.anchorRing.dup;
+                import toolpipe.packets : ElementConnect;
+                // Edge-Loops: walk the quad edge-loop from the picked edge
+                // so the live drag uses the SAME ordered ring as the
+                // headless path (FalloffStage.resolveEdgeLoopRing). When the
+                // picked element is a 2-vert edge → walk it; when fs already
+                // carries a ≥3-vert ring treat it as pre-resolved; other
+                // connect modes pass the ring through unchanged.
+                const(uint)[] ring = fs.anchorRing;
+                if (fs.connect == ElementConnect.EdgeLoops
+                 && fs.anchorRing.length == 2) {
+                    if (auto m = mesh)
+                        ring = edgeLoopRing(*m, fs.anchorRing[0], fs.anchorRing[1]);
+                }
+                dragFalloff.anchorRing  = ring.dup;
                 // Connected-component mask. The interactive click-pick fills
                 // `fs.connectMask`; when it is empty (headless tool.doApply,
                 // replay-without-input) resolve it here from `fs.anchorRing`
@@ -796,7 +809,7 @@ protected:
                     dragFalloff.connectMask = fs.connectMask.dup;
                 } else {
                     dragFalloff.connectMask =
-                        resolveConnectMaskForDrag(fs.anchorRing);
+                        resolveConnectMaskForDrag(ring);
                 }
                 // Resolve the picked element's vert indices → world positions
                 // so the drag attenuates by distance to the element GEOMETRY
@@ -806,7 +819,7 @@ protected:
                 Vec3[] aPos;
                 if (auto m = mesh) {
                     const size_t nV = m.vertices.length;
-                    foreach (vi; fs.anchorRing)
+                    foreach (vi; ring)
                         if (cast(size_t)vi < nV) aPos ~= m.vertices[vi];
                 }
                 dragFalloff.anchorPos = aPos;

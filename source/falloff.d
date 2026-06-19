@@ -213,7 +213,9 @@ private float cylinderWeight(const ref FalloffPacket cfg, Vec3 pos) {
 ///                       attenuate by distance.
 ///   * Rigid           → verts inside the component get weight 1 (rigid,
 ///                       no attenuation); verts outside get 0.
-///   * EdgeLoops       → STUB, behaves as UseConnectivity (see TODO).
+///   * EdgeLoops       → anchorRing is the ordered quad edge-loop ring;
+///                       non-ring verts attenuate by distance to the
+///                       closed loop POLYLINE (no component zeroing gate).
 /// With an empty `connectMask` (no anchor / Ignore) the gate is a no-op
 /// and the unrestricted sphere applies.
 private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
@@ -236,8 +238,15 @@ private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
     // headless without a ring) degrades to "unrestricted" so non-pick
     // scripted use still works. EdgeLoops is a documented stub that
     // currently behaves as UseConnectivity.
-    // TODO(edge-loops): needs quad-loop detection + reference capture.
-    if (cfg.connect != ElementConnect.Ignore && cfg.connectMask.length > 0) {
+    // EdgeLoops is no longer a UseConnectivity stub: its anchorRing is the
+    // ORDERED quad edge-loop ring (resolved upstream in FalloffStage /
+    // transform.d), and non-ring verts attenuate by distance to the loop
+    // POLYLINE (see distPointClosedPolyline below). So EdgeLoops must NOT
+    // run the component zeroing gate — every vert attenuates by polyline
+    // distance, with the ring verts pinned to weight 1 above.
+    if (cfg.connect != ElementConnect.Ignore
+     && cfg.connect != ElementConnect.EdgeLoops
+     && cfg.connectMask.length > 0) {
         bool inComponent = vi >= 0
                         && vi < cast(int)cfg.connectMask.length
                         && cfg.connectMask[vi];
@@ -264,6 +273,14 @@ private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
         // the centroid-point distance, preserving the prior behaviour.
         Vec3 d = pos - cfg.pickedCenter;
         r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    } else if (cfg.connect == ElementConnect.EdgeLoops && cfg.anchorPos.length >= 2) {
+        // Edge Loops: the anchor positions are the ORDERED ring of the
+        // detected quad edge-loop (closed band). Attenuate by distance to
+        // the closed POLYLINE through the ring — NOT the filled-polygon
+        // distance (distPointPolygon would treat the ring's interior as
+        // distance-0, which is wrong for a loop band). The ring verts are
+        // already weight-1 via the anchorRing short-circuit above.
+        r = distPointClosedPolyline(pos, cfg.anchorPos);
     } else if (cfg.anchorPos.length == 1) {
         Vec3 d = pos - cfg.anchorPos[0];
         r = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
@@ -289,6 +306,28 @@ private float distPointSegment(Vec3 p, Vec3 a, Vec3 b) {
     else if (t > 1.0f) t = 1.0f;
     Vec3 d = ap - ab * t;
     return sqrt(dot(d, d));
+}
+
+/// Distance from `p` to the CLOSED polyline through `pts` (the minimum
+/// distance to any segment pts[i] → pts[(i+1) % n]). Unlike
+/// `distPointPolygon`, the polyline's interior is NOT distance-0 — this is
+/// the loop-band distance used by Edge-Loops element falloff, where the
+/// ring is a closed band of edges and points "inside" the band must still
+/// attenuate by their distance to the nearest ring segment. A 1-point
+/// input degenerates to the point distance; empty → +inf.
+float distPointClosedPolyline(Vec3 p, const(Vec3)[] pts) {
+    if (pts.length == 0) return float.infinity;
+    if (pts.length == 1) {
+        Vec3 d = p - pts[0];
+        return sqrt(dot(d, d));
+    }
+    float best = float.infinity;
+    foreach (i; 0 .. pts.length) {
+        size_t j = (i + 1) % pts.length;
+        float d = distPointSegment(p, pts[i], pts[j]);
+        if (d < best) best = d;
+    }
+    return best;
 }
 
 /// Distance from `p` to the (convex-ish) polygon whose vertices are

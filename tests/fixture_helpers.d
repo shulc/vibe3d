@@ -356,6 +356,11 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
         cmd(format("tool.pipe.attr falloff shape %s",
                    ("shape" in fo) ? fo["shape"].str : "linear"), ctx);
         cmd(format("tool.pipe.attr falloff dist %g", asDouble(fo["dist"])), ctx);
+        // Connected Elements gate (ignore/useConnectivity/rigid/edgeLoops). For
+        // edgeLoops the `anchor` is the picked EDGE's 2 verts; the stage walks
+        // the edge loop into the full ring.
+        if ("connect" in fo)
+            cmd(format("tool.pipe.attr falloff connect %s", fo["connect"].str), ctx);
         if ("anchor" in fo) {
             // Picked element verts (engine-neutral coords) → anchorRing indices.
             int[] aidx = resolveCoords("vertices", fo["anchor"], ctx);
