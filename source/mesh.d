@@ -6619,6 +6619,75 @@ unittest { // edgeLoopRing walks a REAL closed loop on a valence-4 quad torus
     }
 }
 
+unittest { // ring verts → cage-edge-index mask (the edge-loop HOVER mask path)
+    // Mirrors app.d's rebuildLoopHoverMask: walk the loop ring through a
+    // hovered edge, then map each consecutive ring vert pair (CLOSED:
+    // last→first too) back to its cage edge via edgeKey + edgeIndexMap. On a
+    // CLOSED loop the mask has exactly `ring.length` edges set (one per pair,
+    // wrapping). Built on the same valence-4 quad torus as the ring walk above.
+    enum int R = 4;          // major rings
+    enum int S = 3;          // minor segments
+    Mesh m;
+    m.vertices.length = R * S;
+    foreach (r; 0 .. R)
+        foreach (s; 0 .. S)
+            m.vertices[r * S + s] = Vec3(cast(float)r, cast(float)s, 0.0f);
+    static uint idx(int r, int s) { return cast(uint)(((r % R) * S) + (s % S)); }
+    foreach (r; 0 .. R)
+        foreach (s; 0 .. S)
+            m.addFace([idx(r, s), idx(r, s + 1), idx(r + 1, s + 1), idx(r + 1, s)]);
+    m.buildLoops();
+
+    // Closed major circle through column s == 0: ring length == R.
+    auto ring = edgeLoopRing(m, idx(0, 0), idx(1, 0));
+    assert(ring.length == R);
+
+    // Build the loop-edge mask exactly as rebuildLoopHoverMask does.
+    auto mask = new bool[](m.edges.length);
+    foreach (i; 0 .. ring.length) {
+        uint a = ring[i];
+        uint b = ring[(i + 1) % ring.length];
+        if (a == b) continue;
+        if (auto p = edgeKey(a, b) in m.edgeIndexMap) {
+            uint ei = *p;
+            assert(ei < mask.length);
+            mask[ei] = true;
+        }
+    }
+
+    // (a) Exactly R edges are set — one per consecutive pair, closed.
+    int set = 0;
+    foreach (e; mask) if (e) set++;
+    assert(set == R);
+
+    // (b) Each set edge is precisely a major-circle edge idx(r,0)→idx(r+1,0)
+    //     and EVERY such edge is present (the full closed ring, no stray
+    //     minor-direction or cross-loop edges).
+    bool[ulong] expected;
+    foreach (r; 0 .. R)
+        expected[edgeKey(idx(r, 0), idx(r + 1, 0))] = true;
+    assert(expected.length == R);   // R distinct major edges
+    foreach (ei, e; mask) {
+        if (!e) continue;
+        ulong k = edgeKey(m.edges[ei][0], m.edges[ei][1]);
+        assert(k in expected);      // every set edge is a major-circle edge
+        expected.remove(k);
+    }
+    assert(expected.length == 0);   // every major edge was covered
+
+    // (c) The single hovered seed edge is among the masked edges (the hover
+    //     preview always contains the edge under the cursor).
+    auto seed = m.edges[0];
+    auto seedRing = edgeLoopRing(m, seed[0], seed[1]);
+    auto seedMask = new bool[](m.edges.length);
+    foreach (i; 0 .. seedRing.length) {
+        uint a = seedRing[i], b = seedRing[(i + 1) % seedRing.length];
+        if (a == b) continue;
+        if (auto p = edgeKey(a, b) in m.edgeIndexMap) seedMask[*p] = true;
+    }
+    assert(seedMask[0]);            // edge 0 (the hovered seed) is lit
+}
+
 // ---------------------------------------------------------------------------
 // GpuMesh
 // ---------------------------------------------------------------------------
@@ -7361,7 +7430,16 @@ struct GpuMesh {
     // subpatch preview is uploaded, `edgeOriginGpu` maps each VBO segment
     // back to its cage edge so highlights propagate across every segment of
     // the corresponding original edge.
-    void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges) {
+    //
+    // `hoveredEdges` is an OPTIONAL cage-indexed hover SET (default empty).
+    // A segment is hovered when its cage edge equals `hoveredEdge` OR its cage
+    // edge is set in `hoveredEdges`. This lets a caller pre-highlight a whole
+    // edge loop in the hover colour (ElementMove + falloff EdgeLoops): pass the
+    // loop's edge mask and the single hovered edge index. With the default
+    // empty mask the behaviour is identical to the single-edge form, so every
+    // existing call site is unchanged.
+    void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges,
+                   const bool[] hoveredEdges = []) {
         int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
 
@@ -7374,20 +7452,29 @@ struct GpuMesh {
             return c >= 0 && c < cast(int)selectedEdges.length && selectedEdges[c];
         }
         bool segHovered(int segIdx) {
-            return hoveredEdge >= 0 && cageOf(segIdx) == hoveredEdge;
+            int c = cageOf(segIdx);
+            if (hoveredEdge >= 0 && c == hoveredEdge) return true;
+            return c >= 0 && c < cast(int)hoveredEdges.length && hoveredEdges[c];
         }
+
+        // Is ANY segment in the hover colour? (single hovered edge OR any
+        // loop-mask edge). Drives the gray-pass fast path + the all-selected
+        // shortcut so a loop mask with hoveredEdge < 0 still skips its segments.
+        bool anyHover = hoveredEdge >= 0;
+        if (!anyHover)
+            foreach (h; hoveredEdges) if (h) { anyHover = true; break; }
 
         // "All selected" shortcut is only safe when VBO segments are 1:1 with
         // cage edges (cage mode). Skip it in preview mode.
         bool allEdgesSelected = !preview
             && selectedEdges.length >= edgeCount
-            && hoveredEdge < 0;
+            && !anyHover;
         if (allEdgesSelected)
             foreach (s; selectedEdges[0 .. edgeCount]) if (!s) { allEdgesSelected = false; break; }
 
         // Gray pass — depth-tested, skip hovered/selected segments.
         glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
-        if (hoveredEdge < 0 && selectedEdges.length == 0) {
+        if (!anyHover && selectedEdges.length == 0) {
             glDrawArrays(GL_LINES, 0, edgeVertCount);
         } else if (!allEdgesSelected) {
             int batchStart = -1;
@@ -7425,17 +7512,16 @@ struct GpuMesh {
                 glDrawArrays(GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
         }
 
-        if (hoveredEdge >= 0) {
+        if (anyHover) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
-            if (preview) {
-                // A hovered cage edge fans out to every VBO segment tracing
-                // back to it.
-                for (int i = 0; i < edgeCount; i++)
-                    if (segHovered(i))
-                        glDrawArrays(GL_LINES, i * 2, 2);
-            } else if (hoveredEdge < edgeCount) {
-                glDrawArrays(GL_LINES, hoveredEdge * 2, 2);
-            }
+            // Draw EVERY hovered segment (single hovered edge + any loop-mask
+            // edges). In preview mode a cage edge fans out to several VBO
+            // segments; in cage mode it is 1:1 — segHovered() handles both and
+            // also folds in the hoveredEdges loop mask, so a single scan covers
+            // the single-edge case and the whole-loop case uniformly.
+            for (int i = 0; i < edgeCount; i++)
+                if (segHovered(i))
+                    glDrawArrays(GL_LINES, i * 2, 2);
         }
 
         glEnable(GL_DEPTH_TEST);

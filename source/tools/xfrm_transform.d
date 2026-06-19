@@ -918,6 +918,20 @@ public:
         }
     }
 
+    // Pre-highlight the whole edge loop on hover ONLY when the active falloff
+    // is Element type in EdgeLoops connect mode — the apply path expands a
+    // picked edge to its loop ring (FalloffStage's EdgeLoops resolver), so the
+    // hover preview should show the same ring. Any other connect mode (Ignore /
+    // UseConnectivity / Rigid) or a non-Element falloff keeps the single-edge
+    // hover. DYNAMIC (depends on the live stage config) so it stays a method
+    // override like wantsHoverForType rather than a static flag.
+    override bool wantsEdgeLoopHover() const {
+        auto fs = activeFalloffStage();
+        return fs !is null
+            && fs.type == FalloffType.Element
+            && fs.connect == ElementConnect.EdgeLoops;
+    }
+
     // No queryActionCenter override here on purpose: ACEN is the
     // single source of truth for the gizmo pivot. When falloff.element
     // is active, ACEN.mode == element (set by the preset) and

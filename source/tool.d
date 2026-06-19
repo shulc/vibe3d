@@ -178,6 +178,14 @@ class Tool : ParamProvider {
     // over lighting up. Default false; XfrmTransformTool overrides it.
     bool isDragging() const { return false; }
 
+    // Pre-highlight the WHOLE edge loop under the cursor (not just the single
+    // hovered edge). True only when an Element falloff is active in EdgeLoops
+    // connect mode — the apply already expands a picked edge to its loop ring,
+    // so the hover preview matches. Default false; XfrmTransformTool overrides
+    // it. The renderer reads this to decide whether to compute + draw the
+    // loop-edge mask (see source/app.d's edge-hover branch).
+    bool wantsEdgeLoopHover() const { return false; }
+
     // Per-parameter hint overrides at runtime.
     void paramHints(string name, ref ParamHints hints) {}
 
