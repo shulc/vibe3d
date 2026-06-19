@@ -201,14 +201,20 @@ unittest { // Rigid: whole picked component moves the FULL distance
         ~ "got min=" ~ s.minMovedDeltaB.to!string ~ " max=" ~ s.maxDeltaB.to!string);
 }
 
-unittest { // EdgeLoops stub behaves as UseConnectivity (same gating)
+unittest { // EdgeLoops no longer gates by component — it attenuates by
+    // distance to the loop polyline (no component zeroing). With a SINGLE
+    // non-edge anchor (vert 8, not a 2-vert edge) there is no loop to walk,
+    // so the ring stays the single vert and the weight is the ungated
+    // point-distance sphere — exactly like Ignore. The distinguishing
+    // property here is that, unlike UseConnectivity / Rigid, EdgeLoops does
+    // NOT zero the unconnected cube A: verts within geometric range move.
     runElementMove("edgeLoops");
     auto s = measure();
-    assert(s.movedA == 0,
-        "EdgeLoops(stub==UseConnectivity): cube-A verts must be gated; got "
-        ~ s.movedA.to!string);
     assert(s.movedB > 0,
-        "EdgeLoops(stub==UseConnectivity): cube-B verts should move; got 0");
+        "EdgeLoops: cube-B verts (near the anchor) should move; got 0");
+    assert(s.movedA > 0,
+        "EdgeLoops: no component zeroing gate — cube-A verts in geometric "
+        ~ "range should ALSO move; got " ~ s.movedA.to!string);
 }
 
 // Differential sanity: Ignore moves strictly MORE of cube A than

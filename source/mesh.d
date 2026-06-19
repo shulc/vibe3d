@@ -6382,6 +6382,170 @@ struct SubpatchPreview {
 }
 
 // ---------------------------------------------------------------------------
+// edgeLoopRing — ordered quad edge-LOOP walk
+// ---------------------------------------------------------------------------
+//
+// Given a seed edge (v0, v1), walk the quad EDGE LOOP it belongs to and
+// return the ORDERED ring of vertex indices the loop passes through.
+//
+// "Edge loop" here is the classic modeling edge loop (NOT the edge RING):
+// from a directed edge (prev → cur), the loop continues at vertex `cur`
+// across to the one edge of `cur` that shares NO face with the incoming
+// edge. On a valence-4 quad vertex that is the edge "straight across" the
+// vertex (the two faces of the incoming edge sit on either side of it), so
+// the loop runs perpendicular to those faces — e.g. on a subdivided cube a
+// loop seeded by any edge of the band where the x=c plane cuts the cube
+// follows that whole planar perimeter, wrapping the four side faces.
+//
+// The walk goes in BOTH directions from the seed and splices: forward from
+// (v0 → v1) and backward from (v1 → v0). It terminates when it closes back
+// on v0 (a closed ring) or when a vertex offers zero or >1 continuation
+// (a boundary / pole / non-quad fan — an open or ambiguous loop). On a
+// closed quad manifold the forward half closes and the full ordered ring
+// is returned.
+//
+// Falls back to `[v0, v1]` (the seed edge endpoints) when the loop cannot
+// be walked (degenerate edge, or the seed edge is absent), so callers
+// always get a usable ≥2-vert ring.
+//
+// Pure: reads only `m.faces`; allocates the adjacency tables and the
+// result on the GC, mutates nothing.
+uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
+    const size_t nV = m.vertices.length;
+    const size_t nF = m.faces.length;
+    if (v0 == v1 || v0 >= nV || v1 >= nV) return [v0, v1];
+
+    // Undirected edge key packed into a ulong (min,max). Build, per edge:
+    //   * the set of incident face indices (edgeFaces)
+    //   * per-vertex list of incident undirected-edge keys (vertEdges)
+    static ulong key(uint a, uint b) {
+        return (a < b) ? ((cast(ulong)a << 32) | b)
+                       : ((cast(ulong)b << 32) | a);
+    }
+    int[][ulong] edgeFaces;
+    ulong[][uint] vertEdges;
+    foreach (fi; 0 .. nF) {
+        auto f = m.faces[fi];
+        const size_t k = f.length;
+        if (k < 2) continue;
+        foreach (c; 0 .. k) {
+            uint a = f[c];
+            uint b = f[(c + 1) % k];
+            if (a == b) continue;
+            ulong ek = key(a, b);
+            edgeFaces[ek] ~= cast(int)fi;
+            // Track membership without duplicates (small valence).
+            bool haveA = false, haveB = false;
+            foreach (x; vertEdges.get(a, null)) if (x == ek) { haveA = true; break; }
+            foreach (x; vertEdges.get(b, null)) if (x == ek) { haveB = true; break; }
+            if (!haveA) vertEdges[a] ~= ek;
+            if (!haveB) vertEdges[b] ~= ek;
+        }
+    }
+
+    if (key(v0, v1) !in edgeFaces) return [v0, v1];
+
+    static uint otherEnd(ulong ek, uint v) {
+        uint a = cast(uint)(ek >> 32);
+        uint b = cast(uint)(ek & 0xffffffff);
+        return (a == v) ? b : a;
+    }
+
+    // From the directed edge (prev → cur), find the single continuation
+    // vertex of the edge loop at `cur`: the neighbor across an edge that
+    // shares NO face with the incoming edge (prev,cur). Returns uint.max
+    // when there is not exactly one such candidate (boundary / pole /
+    // ambiguous fan → loop stops).
+    uint nextLoopVert(uint prev, uint cur) {
+        ulong inEk = key(prev, cur);
+        auto inFaces = edgeFaces.get(inEk, null);
+        uint found = uint.max;
+        int count = 0;
+        foreach (ek; vertEdges.get(cur, null)) {
+            if (ek == inEk) continue;
+            // Reject edges that share a face with the incoming edge — those
+            // are the "ring" / co-face edges, not the loop continuation.
+            bool sharesFace = false;
+            foreach (f1; edgeFaces.get(ek, null))
+                foreach (f0; inFaces)
+                    if (f1 == f0) { sharesFace = true; break; }
+            if (sharesFace) continue;
+            count++;
+            found = otherEnd(ek, cur);
+        }
+        return (count == 1) ? found : uint.max;
+    }
+
+    // Forward walk from (v0 → v1).
+    uint[] fwd;
+    {
+        uint prev = v0, cur = v1;
+        uint guard = 0;
+        const uint maxSteps = cast(uint)(nV + 4);
+        while (guard < maxSteps) {
+            guard++;
+            uint nx = nextLoopVert(prev, cur);
+            if (nx == uint.max) break;          // open end / ambiguous
+            if (nx == v0) { fwd ~= uint.max; break; }   // closed marker
+            // Stop on any unexpected revisit (degenerate topology).
+            bool dup = (nx == v1);
+            foreach (x; fwd) if (x == nx) { dup = true; break; }
+            if (dup) break;
+            fwd ~= nx;
+            prev = cur; cur = nx;
+        }
+    }
+
+    bool closed = (fwd.length > 0 && fwd[$ - 1] == uint.max);
+    if (closed) {
+        uint[] ring;
+        ring ~= v0;
+        ring ~= v1;
+        foreach (x; fwd) if (x != uint.max) ring ~= x;
+        if (ring.length >= 3) return ring;
+    }
+
+    // Open / failed-to-close: also walk backward (v1 → v0) and splice
+    // [reversed-back] + v0 + v1 + [forward].
+    uint[] back;
+    {
+        uint prev = v1, cur = v0;
+        uint guard = 0;
+        const uint maxSteps = cast(uint)(nV + 4);
+        while (guard < maxSteps) {
+            guard++;
+            uint nx = nextLoopVert(prev, cur);
+            if (nx == uint.max || nx == v1) break;
+            bool dup = (nx == v0);
+            foreach (x; back) if (x == nx) { dup = true; break; }
+            if (dup) break;
+            back ~= nx;
+            prev = cur; cur = nx;
+        }
+    }
+
+    uint[] ring;
+    foreach_reverse (x; back) ring ~= x;
+    ring ~= v0;
+    ring ~= v1;
+    foreach (x; fwd) if (x != uint.max) ring ~= x;
+    if (ring.length >= 2) return ring;
+    return [v0, v1];
+}
+
+unittest { // edgeLoopRing closes a loop on a quad cube
+    Mesh m = makeCube();   // 6 quad faces, 12 edges, 8 verts
+    if (m.faces.length == 6) {
+        auto e = m.edges[0];
+        auto ring = edgeLoopRing(m, e[0], e[1]);
+        assert(ring.length >= 2);
+        foreach (i; 0 .. ring.length)
+            foreach (j; i + 1 .. ring.length)
+                assert(ring[i] != ring[j]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GpuMesh
 // ---------------------------------------------------------------------------
 

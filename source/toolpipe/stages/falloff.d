@@ -86,8 +86,9 @@ class FalloffStage : Stage, Operator {
     // Connected-Elements gate. When != Ignore, the per-vert weight is
     // shaped by `connectMask` (BFS component of the picked element):
     // UseConnectivity gates non-component verts to 0 (attenuating within
-    // the component), Rigid forces component verts to 1, EdgeLoops is a
-    // documented stub behaving as UseConnectivity. The mask is filled by
+    // the component), Rigid forces component verts to 1, EdgeLoops walks
+    // the quad edge-loop from the picked edge and attenuates non-ring verts
+    // by distance to the loop polyline (no zeroing gate). The mask is filled by
     // XfrmTransformTool's click-pick OR resolved headless in evaluate()
     // from `anchorRing` + mesh edge-adjacency (see resolveConnectMask).
     ElementConnect connect = ElementConnect.Ignore;
@@ -120,6 +121,15 @@ class FalloffStage : Stage, Operator {
     // (so headless tool.doApply gets connectivity gating too). Empty
     // when `connect == Ignore`, the ring is empty, or the mesh is null.
     private bool[] connectMask_;
+    // Edge-Loops resolved ring (ordered loop vertex indices). Owned by the
+    // stage (like anchorPos_ / connectMask_) so the slice published on
+    // pkt.anchorRing stays valid for the whole pipe walk. Populated only
+    // when `connect == EdgeLoops` and the picked element is an edge (a
+    // 2-vert `anchorRing`); empty otherwise (the packet then uses the raw
+    // `anchorRing`). When `anchorRing` already holds ≥3 verts it is treated
+    // as a pre-resolved ring and copied through verbatim (idempotent), so
+    // scripted tests can set the full ring directly via `anchorRing`.
+    private uint[] loopRing_;
     // Stage 14.8: pick mode for the Element-falloff click-pick path.
     // `auto`/`autoCent`
     // try all element types; vertex/edge/polygon restrict; bare vs
@@ -331,6 +341,12 @@ class FalloffStage : Stage, Operator {
             pkt.pickedCenter = acen.center;
         pkt.pickedRadius = dist;
         pkt.connect      = connect;
+        // Edge-Loops: walk the quad edge-loop from the picked edge so the
+        // ring (anchorRing + anchorPos) is the ORDERED loop. For other
+        // connect modes this is a no-op (returns `anchorRing` unchanged).
+        // Done BEFORE resolveConnectMask / resolveAnchorPos so both read
+        // the resolved ring. Owned buffer → slice stays valid.
+        resolveEdgeLoopRing();
         // Resolve the connected-component mask headless so `connect`
         // works in tool.doApply, not just on interactive click-pick.
         // When click-pick already filled `connectMask`, that takes
@@ -339,7 +355,7 @@ class FalloffStage : Stage, Operator {
         resolveConnectMask();
         pkt.connectMask  = (connectMask.length > 0) ? connectMask
                                                     : cast(bool[]) connectMask_;
-        pkt.anchorRing   = anchorRing;
+        pkt.anchorRing   = (loopRing_.length > 0) ? loopRing_ : anchorRing;
         // Resolve the picked element's vert indices → world positions so
         // the Element falloff can attenuate by distance to the element
         // GEOMETRY (segment / face), not the centroid point. Owned buffer
@@ -1014,12 +1030,40 @@ class FalloffStage : Stage, Operator {
     // and elementWeight falls back to the pickedCenter point distance.
     void resolveAnchorPos() {
         anchorPos_.length = 0;
-        if (anchorRing.length == 0) return;
+        // For Edge-Loops, resolve positions from the ordered loop ring so
+        // the polyline distance in elementWeight runs over the actual loop.
+        const(uint)[] ring = (loopRing_.length > 0) ? cast(const(uint)[])loopRing_
+                                                     : cast(const(uint)[])anchorRing;
+        if (ring.length == 0) return;
         Mesh* m = mesh_;
         if (m is null) return;
         const size_t nV = m.vertices.length;
-        foreach (vi; anchorRing)
+        foreach (vi; ring)
             if (cast(size_t)vi < nV) anchorPos_ ~= m.vertices[vi];
+    }
+
+    // Edge-Loops ring resolver. When `connect == EdgeLoops`:
+    //   * anchorRing has exactly 2 verts (a picked edge) → walk the quad
+    //     edge-loop from that edge (mesh.edgeLoopRing) to build the ordered
+    //     ring, stored in loopRing_.
+    //   * anchorRing has ≥3 verts → treat it as a pre-resolved ring (a
+    //     scripted full-ring set); copy it through verbatim (idempotent —
+    //     the walk would otherwise re-seed from the first edge and mangle a
+    //     ring that is already correct).
+    // For every other connect mode loopRing_ is left empty (no-op) and the
+    // packet uses the raw anchorRing.
+    void resolveEdgeLoopRing() {
+        loopRing_.length = 0;
+        if (connect != ElementConnect.EdgeLoops) return;
+        if (anchorRing.length >= 3) {
+            loopRing_ = anchorRing.dup;        // pre-resolved ring
+            return;
+        }
+        if (anchorRing.length != 2) return;    // need a picked edge
+        Mesh* m = mesh_;
+        if (m is null) return;
+        import mesh : edgeLoopRing;
+        loopRing_ = edgeLoopRing(*m, anchorRing[0], anchorRing[1]);
     }
 
     // Resolve the connected-component mask into `connectMask_` (parallel
