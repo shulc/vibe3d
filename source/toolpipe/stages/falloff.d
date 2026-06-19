@@ -83,12 +83,14 @@ class FalloffStage : Stage, Operator {
     // Integer by nature (discrete hops); its own field so it stays independent
     // of the Element `dist` radius above. attr `steps`.
     int steps = 4;
-    // Stage 14.4: connectivity gate. When != Off, the per-vert
-    // weight is multiplied by `connectMask[vi] ? 1 : 0` so verts
-    // outside the picked component drop out regardless of distance.
-    // Mask is populated by XfrmTransformTool's click-pick (BFS over
-    // mesh.edges from the picked vert).
-    ElementConnect connect = ElementConnect.Off;
+    // Connected-Elements gate. When != Ignore, the per-vert weight is
+    // shaped by `connectMask` (BFS component of the picked element):
+    // UseConnectivity gates non-component verts to 0 (attenuating within
+    // the component), Rigid forces component verts to 1, EdgeLoops is a
+    // documented stub behaving as UseConnectivity. The mask is filled by
+    // XfrmTransformTool's click-pick OR resolved headless in evaluate()
+    // from `anchorRing` + mesh edge-adjacency (see resolveConnectMask).
+    ElementConnect connect = ElementConnect.Ignore;
     bool[]         connectMask;
     // Anchor ring — vertex indices that get weight=1.0 regardless
     // of the sphere math. Click-pick populates this with the
@@ -110,6 +112,14 @@ class FalloffStage : Stage, Operator {
     // mesh; out-of-range indices are skipped (so a stale ring after a
     // topology edit degrades gracefully rather than reading garbage).
     private Vec3[] anchorPos_;
+    // Headless-resolved connected-component mask, parallel to mesh
+    // vertices. Owned by the stage (like anchorPos_) so the slice
+    // published on the packet stays valid for the whole pipe walk.
+    // Rebuilt every evaluate() from `anchorRing` + mesh edge-adjacency
+    // when the interactive click-pick did NOT already fill `connectMask`
+    // (so headless tool.doApply gets connectivity gating too). Empty
+    // when `connect == Ignore`, the ring is empty, or the mesh is null.
+    private bool[] connectMask_;
     // Stage 14.8: pick mode for the Element-falloff click-pick path.
     // `auto`/`autoCent`
     // try all element types; vertex/edge/polygon restrict; bare vs
@@ -321,7 +331,14 @@ class FalloffStage : Stage, Operator {
             pkt.pickedCenter = acen.center;
         pkt.pickedRadius = dist;
         pkt.connect      = connect;
-        pkt.connectMask  = connectMask;
+        // Resolve the connected-component mask headless so `connect`
+        // works in tool.doApply, not just on interactive click-pick.
+        // When click-pick already filled `connectMask`, that takes
+        // precedence; otherwise BFS the component(s) of `anchorRing`
+        // over mesh edge-adjacency (mirrors resolveAnchorPos()).
+        resolveConnectMask();
+        pkt.connectMask  = (connectMask.length > 0) ? connectMask
+                                                    : cast(bool[]) connectMask_;
         pkt.anchorRing   = anchorRing;
         // Resolve the picked element's vert indices → world positions so
         // the Element falloff can attenuate by distance to the element
@@ -609,11 +626,10 @@ class FalloffStage : Stage, Operator {
         ];
 
         IntEnumEntry[] elementConnectEntries = [
-            IntEnumEntry(cast(int)ElementConnect.Off,      "off",      "Off"),
-            IntEnumEntry(cast(int)ElementConnect.Vertex,   "vertex",   "Vertex"),
-            IntEnumEntry(cast(int)ElementConnect.Edge,     "edge",     "Edge"),
-            IntEnumEntry(cast(int)ElementConnect.Polygon,  "polygon",  "Polygon"),
-            IntEnumEntry(cast(int)ElementConnect.Material, "material", "Material"),
+            IntEnumEntry(cast(int)ElementConnect.Ignore,          "ignore",          "Ignore"),
+            IntEnumEntry(cast(int)ElementConnect.UseConnectivity, "useConnectivity", "Use Connectivity"),
+            IntEnumEntry(cast(int)ElementConnect.Rigid,           "rigid",           "Rigid Connections"),
+            IntEnumEntry(cast(int)ElementConnect.EdgeLoops,       "edgeLoops",       "Edge Loops"),
         ];
 
         IntEnumEntry[] mixEntries = [
@@ -710,9 +726,9 @@ class FalloffStage : Stage, Operator {
                                      cast(int*)&elementMode, elementModeEntries,
                                      cast(int)ElementMode.Auto);
                 ps ~= Param.float_("dist", "Range", &dist, 1.0f).min(1e-6f);
-                ps ~= Param.intEnum_("connect", "Connect",
+                ps ~= Param.intEnum_("connect", "Connected Elements",
                                      cast(int*)&connect, elementConnectEntries,
-                                     cast(int)ElementConnect.Off);
+                                     cast(int)ElementConnect.Ignore);
                 break;
             case FalloffType.Selection:
                 // `falloff.selection` (attr `steps`) — the BFS-hop count, a
@@ -1006,6 +1022,40 @@ class FalloffStage : Stage, Operator {
             if (cast(size_t)vi < nV) anchorPos_ ~= m.vertices[vi];
     }
 
+    // Resolve the connected-component mask into `connectMask_` (parallel
+    // to mesh vertices, `true` for verts reachable from any `anchorRing`
+    // vert over mesh edge-adjacency). Mirrors resolveAnchorPos(): rebuilt
+    // every evaluate() so headless tool.doApply gets connectivity gating
+    // without an interactive click. No-op (empty mask) when connect is
+    // Ignore, the ring is empty, or the mesh is unavailable — in which
+    // case elementWeight falls back to the unrestricted sphere.
+    void resolveConnectMask() {
+        connectMask_.length = 0;
+        if (connect == ElementConnect.Ignore) return;
+        if (anchorRing.length == 0) return;
+        Mesh* m = mesh_;
+        if (m is null) return;
+        const size_t nV = m.vertices.length;
+        if (nV == 0) return;
+        ensureVertexAdjacency();   // CSR over mesh_.edges, mutVer-cached
+        auto visited = new bool[](nV);
+        size_t[] stack;
+        foreach (vi; anchorRing) {
+            if (cast(size_t)vi >= nV || visited[vi]) continue;
+            visited[vi] = true;
+            stack ~= cast(size_t)vi;
+        }
+        while (stack.length > 0) {
+            size_t v = stack[$ - 1];
+            stack.length -= 1;
+            foreach (j; _adjOffset[v] .. _adjOffset[v + 1]) {
+                size_t nb = _adjNeighbors[j];
+                if (!visited[nb]) { visited[nb] = true; stack ~= nb; }
+            }
+        }
+        connectMask_ = visited;
+    }
+
     // Build (or reuse) the vertex→neighbor CSR adjacency from mesh_.edges.
     // Topology-invariant, so it is rebuilt only when mutationVersion moves.
     void ensureVertexAdjacency() {
@@ -1100,11 +1150,10 @@ private:
             case "dist":         dist = parseFloat(value); return true;
             case "steps":        steps = cast(int)parseFloat(value); return true;
             case "connect":
-                if      (value == "off")      { connect = ElementConnect.Off;      return true; }
-                else if (value == "vertex")   { connect = ElementConnect.Vertex;   return true; }
-                else if (value == "edge")     { connect = ElementConnect.Edge;     return true; }
-                else if (value == "polygon")  { connect = ElementConnect.Polygon;  return true; }
-                else if (value == "material") { connect = ElementConnect.Material; return true; }
+                if      (value == "ignore")          { connect = ElementConnect.Ignore;          return true; }
+                else if (value == "useConnectivity") { connect = ElementConnect.UseConnectivity; return true; }
+                else if (value == "rigid")           { connect = ElementConnect.Rigid;           return true; }
+                else if (value == "edgeLoops")       { connect = ElementConnect.EdgeLoops;        return true; }
                 return false;
             case "mode":
                 // 7-mode `element-mode` enum: auto / autoCent
@@ -1219,11 +1268,10 @@ private:
 
     string connectLabel() const {
         final switch (connect) {
-            case ElementConnect.Off:      return "off";
-            case ElementConnect.Vertex:   return "vertex";
-            case ElementConnect.Edge:     return "edge";
-            case ElementConnect.Polygon:  return "polygon";
-            case ElementConnect.Material: return "material";
+            case ElementConnect.Ignore:          return "ignore";
+            case ElementConnect.UseConnectivity: return "useConnectivity";
+            case ElementConnect.Rigid:           return "rigid";
+            case ElementConnect.EdgeLoops:       return "edgeLoops";
         }
     }
 

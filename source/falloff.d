@@ -206,11 +206,16 @@ private float cylinderWeight(const ref FalloffPacket cfg, Vec3 pos) {
 /// (the centre is normally the centroid of the user-clicked
 /// component; `pickedRadius` is the `dist`/Range attr).
 ///
-/// Stage 14.4: when `cfg.connect != Off` AND `cfg.connectMask` is
-/// populated, verts not in the same connected component as the
-/// picked element get weight = 0 regardless of distance. With no
-/// mask (mask empty) the gate is a no-op — the unrestricted sphere
-/// applies, matching the pre-14.4 behaviour.
+/// Connected-Elements gate (`cfg.connect`):
+///   * Ignore          → no gate; pure geometric-distance falloff.
+///   * UseConnectivity → verts outside the picked component (per
+///                       `connectMask`) get weight 0; verts inside still
+///                       attenuate by distance.
+///   * Rigid           → verts inside the component get weight 1 (rigid,
+///                       no attenuation); verts outside get 0.
+///   * EdgeLoops       → STUB, behaves as UseConnectivity (see TODO).
+/// With an empty `connectMask` (no anchor / Ignore) the gate is a no-op
+/// and the unrestricted sphere applies.
 private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
     // Anchor ring (click-picked element's vert ring) short-circuits
     // to full weight regardless of the sphere math — drag the picked
@@ -225,14 +230,27 @@ private float elementWeight(const ref FalloffPacket cfg, Vec3 pos, int vi) {
         foreach (av; cfg.anchorRing)
             if (cast(uint)vi == av) return 1.0f;
     }
+    // Connected-Elements gate. `Ignore` skips the gate entirely (pure
+    // geometric-distance falloff). The other modes consult `connectMask`
+    // (BFS component of the picked element); an empty mask (no anchor /
+    // headless without a ring) degrades to "unrestricted" so non-pick
+    // scripted use still works. EdgeLoops is a documented stub that
+    // currently behaves as UseConnectivity.
+    // TODO(edge-loops): needs quad-loop detection + reference capture.
+    if (cfg.connect != ElementConnect.Ignore && cfg.connectMask.length > 0) {
+        bool inComponent = vi >= 0
+                        && vi < cast(int)cfg.connectMask.length
+                        && cfg.connectMask[vi];
+        if (!inComponent) return 0.0f;
+        // Rigid Connections: the whole connected component moves rigidly
+        // the full distance — no distance attenuation inside it.
+        if (cfg.connect == ElementConnect.Rigid) return 1.0f;
+        // UseConnectivity / EdgeLoops(stub): in-component verts fall
+        // through to the geometric-distance attenuation below.
+    }
     // pickedCenter drives the falloff sphere; pickedRadius (the
     // `dist` attr) is the radius. Non-anchor verts attenuate from
     // weight = 1 at the centre to 0 at the boundary, shape-mapped.
-    if (cfg.connect != ElementConnect.Off
-        && cfg.connectMask.length > 0
-        && (vi < 0 || vi >= cast(int)cfg.connectMask.length
-            || !cfg.connectMask[vi]))
-        return 0.0f;
     if (cfg.pickedRadius <= 1e-9f) return 1.0f;  // degenerate radius → full
     // Distance is measured to the picked element's GEOMETRY (defined
     // by `anchorPos`, the world positions of the picked verts), not to

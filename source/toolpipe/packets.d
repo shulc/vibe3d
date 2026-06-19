@@ -159,20 +159,33 @@ enum FalloffMix : int {
     Min      = 4,   // min(accum, w)
 }
 
-/// Element-falloff connectivity gate (Stage 14.4) — the `falloff.element`
-/// `connect` attr. `Off` disables the gate; any
-/// other value restricts the sphere to verts in the same connected
-/// component as the picked element. Vertex/Edge/Polygon distinguish
-/// the connectivity definition but reduce to the same BFS over
-/// mesh.edges for the single-mesh case vibe3d targets today; we
-/// keep them separate for forwards-compat with future per-face
-/// material partitioning.
+/// Element-falloff "Connected Elements" mode — the `falloff.element`
+/// `connect` attr, realigned to the reference modeling app's taxonomy:
+///
+///   * Ignore          — ignore connectivity entirely; a vert anywhere
+///                       in range attenuates by pure geometric distance
+///                       regardless of which surface it belongs to.
+///   * UseConnectivity — only the same connected surface participates;
+///                       verts in other components are gated to weight 0,
+///                       but verts in the picked component still attenuate
+///                       by distance within the falloff radius.
+///   * Rigid           — "Rigid Connections": the whole picked connected
+///                       component moves rigidly the full distance
+///                       (weight 1, no attenuation); other components 0.
+///   * EdgeLoops       — only the connected quad edge-loop row. NOT
+///                       implemented yet (needs quad-loop detection + a
+///                       reference capture); the enum value exists so the
+///                       dropdown / round-trip is complete, but the
+///                       evaluation currently behaves as UseConnectivity.
+///
+/// All three implemented modes use the same BFS over `mesh.edges` to
+/// build the connected-component mask; they differ only in how the gate
+/// shapes the weight (UseConnectivity attenuates, Rigid forces 1).
 enum ElementConnect : ubyte {
-    Off      = 0,
-    Vertex   = 1,
-    Edge     = 2,
-    Polygon  = 3,
-    Material = 4,
+    Ignore          = 0,
+    UseConnectivity = 1,
+    Rigid           = 2,
+    EdgeLoops       = 3,
 }
 
 /// Element-falloff pick mode (Stage 14.8) — the `falloff.element`
@@ -267,15 +280,15 @@ struct FalloffPacket {
     Vec3         pickedCenter  = Vec3(0, 0, 0);
     float        pickedRadius  = 1.0f;
     // Element connectivity gate (Stage 14.4). When != Off, the
-    // sphere weight is multiplied by 0 for verts that aren't in the
-    // same connected component as the picked element (compared via
-    // mesh.edges BFS). The `connect` attr is one of
-    // Off / Vertex / Edge / Polygon / Material. We only
-    // distinguish Off vs anything-else for now (BFS over mesh.edges
-    // covers Vertex / Edge / Polygon equivalently for the
-    // single-mesh case; Material partitioning would need per-face
-    // material ids which aren't tracked).
-    ElementConnect connect    = ElementConnect.Off;
+    // sphere weight is shaped by the connected-component mask
+    // (`connectMask`, a BFS over mesh.edges from the picked element).
+    // The `connect` attr is one of Ignore / UseConnectivity / Rigid /
+    // EdgeLoops (see ElementConnect): Ignore disables the gate,
+    // UseConnectivity gates non-component verts to 0 (attenuating
+    // within the component), Rigid forces component verts to weight 1.
+    // EdgeLoops is a documented stub that currently behaves as
+    // UseConnectivity (pending quad edge-loop detection).
+    ElementConnect connect    = ElementConnect.Ignore;
     // Element pick mode (Stage 14.8). XfrmTransformTool reads this
     // (when falloff.element is active) to restrict which element
     // types LMB-pick will hit and where pickedCenter lands on the
@@ -283,11 +296,14 @@ struct FalloffPacket {
     // centred on the natural pick point.
     ElementMode    elementMode = ElementMode.Auto;
     // BFS-precomputed component mask for the picked element: index
-    // into the same vert array, `true` for verts in the component.
-    // XfrmTransformTool's click-pick fills it; consumers reading
-    // the packet see an empty mask when no pick has happened yet
-    // (in that case `elementWeight` falls through to the
-    // unrestricted sphere).
+    // into the same vert array, `true` for verts in the picked
+    // element's connected component(s). Two producers fill it:
+    // XfrmTransformTool's interactive click-pick, AND — for headless
+    // tool.doApply — FalloffStage.evaluate / transform.d resolve it
+    // from `anchorRing` + mesh edge-adjacency at packet-publish time
+    // (mirroring how `anchorPos` is resolved). Consumers see an empty
+    // mask only when `connect == Ignore` or no anchor ring exists; in
+    // that case `elementWeight` applies the unrestricted sphere.
     const(bool)[] connectMask;
     // Anchor ring — vertex indices that get weight=1.0 regardless
     // of the sphere math. Click-pick populates with the clicked

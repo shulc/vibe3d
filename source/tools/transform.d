@@ -786,7 +786,18 @@ protected:
         if (dragFalloff.enabled && dragFalloff.type == FalloffType.Element) {
             if (auto fs = falloffStageForHooks()) {
                 dragFalloff.anchorRing  = fs.anchorRing.dup;
-                dragFalloff.connectMask = fs.connectMask.dup;
+                // Connected-component mask. The interactive click-pick fills
+                // `fs.connectMask`; when it is empty (headless tool.doApply,
+                // replay-without-input) resolve it here from `fs.anchorRing`
+                // by BFS over mesh edge-adjacency so the connectivity gate
+                // works without a click — mirroring the anchorPos resolution
+                // just below (and FalloffStage.evaluate's resolveConnectMask).
+                if (fs.connectMask.length > 0) {
+                    dragFalloff.connectMask = fs.connectMask.dup;
+                } else {
+                    dragFalloff.connectMask =
+                        resolveConnectMaskForDrag(fs.anchorRing);
+                }
                 // Resolve the picked element's vert indices → world positions
                 // so the drag attenuates by distance to the element GEOMETRY
                 // (segment / face), parallel to anchorRing. Out-of-range
@@ -809,6 +820,53 @@ protected:
                     dragFalloff.pickedCenter = ac.currentCenter();
         }
         return dragFalloff.enabled;
+    }
+
+    /// BFS the connected component(s) of `ring` over the live mesh's
+    /// edge-adjacency, returning a per-vertex bool mask. Used by
+    /// captureFalloffForDrag when the interactive click-pick left
+    /// `connectMask` empty (headless tool.doApply / replay) so the
+    /// Element-falloff connectivity gate works without an actual click.
+    /// Empty result when the ring is empty or the mesh is unavailable —
+    /// elementWeight then treats the gate as a no-op.
+    protected bool[] resolveConnectMaskForDrag(const(uint)[] ring) {
+        if (ring.length == 0) return null;
+        auto m = mesh;
+        if (m is null) return null;
+        const size_t nV = m.vertices.length;
+        if (nV == 0) return null;
+        // Build undirected adjacency from mesh.edges.
+        auto offset = new size_t[](nV + 1);
+        foreach (e; m.edges) {
+            if (e[0] >= nV || e[1] >= nV) continue;
+            offset[e[0] + 1]++;
+            offset[e[1] + 1]++;
+        }
+        foreach (i; 1 .. nV + 1) offset[i] += offset[i - 1];
+        auto neighbors = new size_t[](offset[nV]);
+        auto cursor = new size_t[](nV);
+        foreach (i; 0 .. nV) cursor[i] = offset[i];
+        foreach (e; m.edges) {
+            if (e[0] >= nV || e[1] >= nV) continue;
+            neighbors[cursor[e[0]]++] = e[1];
+            neighbors[cursor[e[1]]++] = e[0];
+        }
+        auto visited = new bool[](nV);
+        size_t[] stack;
+        foreach (vi; ring) {
+            if (cast(size_t)vi >= nV || visited[vi]) continue;
+            visited[vi] = true;
+            stack ~= cast(size_t)vi;
+        }
+        while (stack.length > 0) {
+            size_t v = stack[$ - 1];
+            stack.length -= 1;
+            foreach (j; offset[v] .. offset[v + 1]) {
+                size_t nb = neighbors[j];
+                if (!visited[nb]) { visited[nb] = true; stack ~= nb; }
+            }
+        }
+        return visited;
     }
 
     /// Phase 7.6b: snapshot the SymmetryPacket at drag start. Same
