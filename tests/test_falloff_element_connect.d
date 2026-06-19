@@ -243,3 +243,59 @@ unittest {
         "Rigid should move the component uniformly (min ≈ max); got min="
         ~ rg.minMovedDeltaB.to!string ~ " max=" ~ rg.maxDeltaB.to!string);
 }
+
+// ----------------------------------------------------------------------
+// Part C — a SCENE / DOCUMENT reset is a clean slate for the falloff.
+//
+// Regression guard for the cross-test state-bleed flake: locking an
+// Element falloff into a non-default state (type + connect + a stale
+// anchorRing) and then issuing /api/reset must leave the WGHT stage at
+// its declaration-time defaults — even though tool.pipe.attr LOCKS the
+// falloff (userLocked) so it survives a mere tool switch. A locked
+// falloff that survived a reset would corrupt the NEXT test's
+// element-move weights (stale connect=edgeLoops + dead anchorRing →
+// wrong edge-loop walk).
+// ----------------------------------------------------------------------
+
+unittest { // reset clears a locked element falloff to a clean slate
+    postJson("/api/reset", "");
+    cmd("tool.set xfrm.elementMove on");
+    // Lock the falloff into a non-default Element config. Each of these
+    // tool.pipe.attr writes sets userLocked=true.
+    cmd("tool.pipe.attr falloff type element");
+    cmd("tool.pipe.attr falloff connect edgeLoops");
+    cmd("tool.pipe.attr falloff dist 3");
+    cmd(`tool.pipe.attr falloff anchorRing "0,1"`);
+    // Sanity: the lock actually took (pre-reset state is dirty).
+    assert(falloffAttr("type")    == "element",   "pre-reset type");
+    assert(falloffAttr("connect") == "edgeLoops",  "pre-reset connect");
+    assert(falloffAttr("anchorRing") != "",        "pre-reset anchorRing set");
+
+    // Now reset — both the bare /api/reset and ?empty=true funnel through
+    // SceneReset, which must fully reset the pipe (clears userLocked too).
+    postJson("/api/reset", "");
+
+    assert(falloffAttr("type")    == "none",
+        "reset must clear locked falloff type; got " ~ falloffAttr("type"));
+    assert(falloffAttr("connect") == "ignore",
+        "reset must clear stale connect; got " ~ falloffAttr("connect"));
+    assert(falloffAttr("anchorRing") == "",
+        "reset must clear stale anchorRing; got " ~ falloffAttr("anchorRing"));
+    assert(falloffAttr("dist") == "1",
+        "reset must restore default dist=1; got " ~ falloffAttr("dist"));
+}
+
+unittest { // same clean-slate guarantee for /api/reset?empty=true
+    postJson("/api/reset", "");
+    cmd("tool.set xfrm.elementMove on");
+    cmd("tool.pipe.attr falloff type element");
+    cmd("tool.pipe.attr falloff connect rigid");
+    assert(falloffAttr("connect") == "rigid", "pre-reset connect (empty path)");
+
+    postJson("/api/reset?empty=true", "");
+
+    assert(falloffAttr("type")    == "none",
+        "empty reset must clear locked falloff type; got " ~ falloffAttr("type"));
+    assert(falloffAttr("connect") == "ignore",
+        "empty reset must clear stale connect; got " ~ falloffAttr("connect"));
+}
