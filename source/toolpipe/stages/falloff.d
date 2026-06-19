@@ -285,6 +285,18 @@ class FalloffStage : Stage, Operator {
         out_         = 0.5f;
         mix          = FalloffMix.Multiply;
         anchorRing.length = 0;
+        // Element-connect config (declaration-time defaults). Without these a
+        // SceneReset left `connect` / `elementMode` / `dist` / `steps` stale,
+        // so a prior test's locked element falloff bled into the next one —
+        // a stale `connect=EdgeLoops` + stale `anchorRing` ran the edge-loop
+        // walk on a dead ring and produced wrong weights.
+        connect      = ElementConnect.Ignore;
+        elementMode  = ElementMode.Auto;
+        dist         = 1.0f;
+        steps        = 4;
+        loopRing_.length   = 0;
+        connectMask_.length = 0;
+        connectMask.length  = 0;
         userLocked   = false;   // full reset clears the user-lock (SceneReset)
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;

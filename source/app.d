@@ -1252,6 +1252,22 @@ void main(string[] args) {
         }
     }
 
+    // FULL pipe reset used only by a SCENE / DOCUMENT reset (/api/reset,
+    // scene.reset, file.new). Unlike resetTransientPipeStages (which respects
+    // userLocked so a user-set falloff / ACEN / AXIS survives a tool switch —
+    // reference parity), this calls the unconditional reset() on EVERY stage,
+    // clearing the userLocks too. A "Reset" UX promise is a clean slate, so a
+    // prior session's locked falloff config must not bleed across the reset.
+    // (SceneReset.apply already resets every stage before onResetTool fires;
+    // this is the same guarantee made explicit at the onResetTool seam, so any
+    // future reset path that only wires onResetTool still gets the clean slate.)
+    void resetAllPipeStages() {
+        import toolpipe.pipeline : g_pipeCtx;
+        if (g_pipeCtx is null) return;
+        foreach (s; g_pipeCtx.pipeline.allMut())
+            s.reset();
+    }
+
     // Sticky tool-option defaults: on a CLEAN tool drop (setActiveTool(null)
     // with a known preset id), snapshot the dropped tool's TOOL-LEVEL params
     // into g_prefs.toolDefaults[presetId], so the next activation of that
@@ -1989,7 +2005,7 @@ void main(string[] args) {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                                  &gpu, &vertexCache, &edgeCache, &faceCache,
                                  &editMode, &cameraView,
-                                 () => setActiveTool(null));
+                                 () { setActiveTool(null); resetAllPipeStages(); });
         c.setDocument(&document);
         c.setEmpty(true);
         return cast(Command) c;
@@ -2095,7 +2111,8 @@ void main(string[] args) {
     reg.commandFactories["scene.reset"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache,
-                       &editMode, &cameraView, () => setActiveTool(null));
+                       &editMode, &cameraView,
+                       () { setActiveTool(null); resetAllPipeStages(); });
         c.setDocument(&document);
         return cast(Command) c;
     };
