@@ -1,0 +1,1700 @@
+{
+  "name": "taper",
+  "description": "Reference-parity matrix for taper = linear-falloff Scale (xfrm.taper preset). Each case scales one axis (SX/SY/SZ) under a perpendicular linear gradient and asserts every vertex matches the frozen reference; vibe3d reproduces each bit-for-bit. Coverage: all three scale axes crossed with a gradient axis, a shrink factor (<1), and gradient reversal. Built on an empty reset so the welded segmented cube is the only geometry. Driven numerically via the xfrm.taper preset (tool.set + tool.pipe.attr falloff + tool.attr S? + tool.doApply).",
+  "source": "Frozen reference capture (xfrm.taper, linear falloff, parameter matrix; capture via tools/local/modo_diff manual_vnc_kit/probe_tt.py headless).",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "taper_sx_gy",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:4 segmentsZ:1 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.taper",
+            "attr": "SX",
+            "value": 2.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            -0.625,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.625,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.625,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            -0.625,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.75,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.75,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.75,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.75,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            -0.875,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.875,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.875,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            -0.875,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -1.0,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            1.0,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            1.0,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -1.0,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "name": "taper_sx_gy_shrink",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:4 segmentsZ:1 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.taper",
+            "attr": "SX",
+            "value": 0.5,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            -0.4375,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.4375,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.4375,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            -0.4375,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.375,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.375,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.375,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.375,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            -0.3125,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.3125,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.3125,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            -0.3125,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.25,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.25,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "name": "taper_sy_gx",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:4 segmentsY:1 segmentsZ:1 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.taper",
+            "attr": "SY",
+            "value": 2.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0.5,
+                0.0,
+                0.0
+              ],
+              "end": [
+                -0.5,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.25,
+            -0.625,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            -0.75,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            -0.875,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -1.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -1.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.25,
+            -0.875,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            -0.75,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            -0.625,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.25,
+            0.625,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.75,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.25,
+            0.875,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            1.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            1.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.25,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.25,
+            0.875,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.75,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.25,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.25,
+            0.625,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "name": "taper_sz_gy",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:4 segmentsZ:1 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.taper",
+            "attr": "SZ",
+            "value": 2.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            -0.625
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            -0.625
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.25,
+            0.625
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.25,
+            0.625
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            -0.75
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            -0.75
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.75
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.75
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.25,
+            -0.875
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.25,
+            -0.875
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.25,
+            0.875
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.25,
+            0.875
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -1.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -1.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            1.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            1.0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "taper_sx_gz",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:1 segmentsZ:4 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.taper",
+            "attr": "SX",
+            "value": 2.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0.0,
+                0.0,
+                0.5
+              ],
+              "end": [
+                0.0,
+                0.0,
+                -0.5
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            0.625,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.75,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.875,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            1.0,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -1.0,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            -0.875,
+            -0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.75,
+            -0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            -0.625,
+            -0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            0.625,
+            0.5,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.75,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            0.875,
+            0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            1.0,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -1.0,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            -0.875,
+            0.5,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.75,
+            0.5,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            -0.625,
+            0.5,
+            -0.25
+          ]
+        }
+      ]
+    },
+    {
+      "name": "taper_sx_gy_rev",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:4 segmentsZ:1 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.taper",
+            "attr": "SX",
+            "value": 2.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0.0,
+                -0.5,
+                0.0
+              ],
+              "end": [
+                0.0,
+                0.5,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -1.0,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            1.0,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            1.0,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -1.0,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            -0.875,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            -0.5
+          ],
+          "after": [
+            0.875,
+            -0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            0.875,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.25,
+            0.5
+          ],
+          "after": [
+            -0.875,
+            -0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.75,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.75,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.75,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.75,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            -0.625,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            -0.5
+          ],
+          "after": [
+            0.625,
+            0.25,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            0.625,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.25,
+            0.5
+          ],
+          "after": [
+            -0.625,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ]
+    }
+  ]
+}
