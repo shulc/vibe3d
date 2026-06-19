@@ -979,8 +979,14 @@ public:
         if (e.button == SDL_BUTTON_LEFT) {
             SDL_Keymod mods = SDL_GetModState();
             ctrlMod = (mods & KMOD_CTRL) != 0;
-            bool plain = (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
-            if (plain && hitPart < 0) picked = tryPickElement(e.x, e.y);
+            // Ctrl is the axis-lock modifier for the screen-plane drag this pick
+            // opens (forwarded as `ctrlMod` to beginScreenPlaneDragAt below), so
+            // it MUST be allowed through the pick gate — gating on a no-modifier
+            // `plain` swallowed Ctrl, leaving Element Move with no axis-lock.
+            // Alt stays excluded (Ctrl+Alt+LMB = camera zoom, dispatched to the
+            // view before the tool); Shift stays excluded (selection add).
+            bool pickAllowed = (mods & (KMOD_ALT | KMOD_SHIFT)) == 0;   // Ctrl OK
+            if (pickAllowed && hitPart < 0) picked = tryPickElement(e.x, e.y);
         }
 
         // Falloff endpoint handles claim the click first (Linear/Radial),
