@@ -4048,9 +4048,9 @@ private:
     }
 
     // Connected-component BFS seeded at the picked vert, written into
-    // FalloffStage.connectMask. Active only when connect != Off.
+    // FalloffStage.connectMask. Active only when connect != Ignore.
     void updateConnectMask(FalloffStage stage, int seedVi) {
-        if (stage.connect == ElementConnect.Off) {
+        if (stage.connect == ElementConnect.Ignore) {
             stage.connectMask = null;
             return;
         }
