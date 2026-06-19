@@ -4020,12 +4020,17 @@ void main(string[] args) {
             // Refresh the hover pick at the click position BEFORE the tool sees
             // the event, so a tool that click-picks an element (XfrmTransformTool
             // under falloff.element) reads hover for THIS cursor, not the last
-            // rendered frame's. Gated to a plain LEFT click on an element-hover
-            // tool — the only case that reads g_hovered on mouse-down — so it
-            // never adds a GPU readback to camera chords or non-picking tools.
+            // rendered frame's. Gated to a LEFT click on an element-hover tool —
+            // the only case that reads g_hovered on mouse-down — so it never adds
+            // a GPU readback to camera chords or non-picking tools. Ctrl is
+            // ALLOWED (it's the axis-lock modifier the click-pick forwards as
+            // ctrlMod): excluding it left the hover stale on a Ctrl+click, so the
+            // first Ctrl element-move gesture failed to pick → no relocate, no
+            // axis-lock (must mirror XfrmTransformTool's `pickAllowed` gate).
+            // Alt stays excluded (Ctrl+Alt+LMB = camera zoom); Shift = sel-add.
             if (btn.button == SDL_BUTTON_LEFT && !io.WantCaptureMouse
                 && refreshHoverPickAt !is null
-                && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT))
+                && !(SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT))
                 && (activeTool.wantsHoverForType(EditMode.Vertices)
                  || activeTool.wantsHoverForType(EditMode.Edges)
                  || activeTool.wantsHoverForType(EditMode.Polygons)))
