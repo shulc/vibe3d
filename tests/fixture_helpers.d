@@ -302,6 +302,18 @@ private void runStep(JSONValue step, string name, string phase, size_t i) {
                        c[0], c[1], c[2]), ctx);
             cmd(format(`tool.pipe.attr falloff size "%g,%g,%g"`,
                        s[0], s[1], s[2]), ctx);
+        } else if (fo["type"].str == "cylinder") {
+            // Cylinder falloff: radial-perpendicular-to-axis. The weight
+            // attenuates with distance to the AXIS line, so the axis MUST be
+            // sent — omitting it lets the stage default (+Y) win, which would
+            // measure perpendicular distance about the wrong axis and produce
+            // the wrong per-vertex weights. `center` is NOT used by cylinder.
+            auto s = jvec3(fo["size"]);
+            auto ax = ("axis" in fo) ? jvec3(fo["axis"]) : [0.0, 1.0, 0.0];
+            cmd(format(`tool.pipe.attr falloff size "%g,%g,%g"`,
+                       s[0], s[1], s[2]), ctx);
+            cmd(format(`tool.pipe.attr falloff axis "%g,%g,%g"`,
+                       ax[0], ax[1], ax[2]), ctx);
         } else {
             auto a = jvec3(fo["start"]);
             auto b = jvec3(fo["end"]);
