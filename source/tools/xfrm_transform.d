@@ -184,6 +184,30 @@ public:
     XformState gestureStart;
     Vec3 headlessRotate    = Vec3(0, 0, 0);
 
+    // Per-tool fold blend mode for the ROTATE-ONLY soft path. The unified fold
+    // blends the composed matrix toward identity by the falloff weight; the
+    // production default is MatrixLerp (keep-b), confirmed reference-correct for
+    // the combined T/R/S fold (MS-4.1/4.2). A pure-rotate-under-radial-falloff
+    // preset wants instead to scale the ROTATION ANGLE by the weight (radius
+    // preserved) — R(w·theta) — which equals slerp(I, R, w) when M is an
+    // origin-fixed pure rotation. `rotFalloffBlend` is the Enum Param storage
+    // ("linear" = MatrixLerp default, "arc" = PolarQuat angle-scaling), mapped to
+    // `rotateBlendMode()` and consumed ONLY by the rotate-only guard in applyFold.
+    // The reference engine's data backing "arc" is SINGLE-AXIS only (see the
+    // applyFold guard comment). Presets xfrm.softRotate / xfrm.swirl set "arc";
+    // the other two base:rotate presets (xfrm.twist / xfrm.vortex) deliberately
+    // STAY on the default "linear" — they use linear/cylinder falloff with no
+    // reference capture yet, so leaving them on MatrixLerp is intentional, not a
+    // gap to be "completed".
+    string rotFalloffBlend = "linear";
+
+    // Map the rotFalloffBlend Enum Param storage onto the kernel BlendMode. This
+    // is the per-tool rotate-only fold blend selector ("arc" = PolarQuat = scale
+    // the rotation angle by the weight; anything else = MatrixLerp).
+    BlendMode rotateBlendMode() const @safe pure nothrow @nogc {
+        return rotFalloffBlend == "arc" ? BlendMode.PolarQuat : BlendMode.MatrixLerp;
+    }
+
     // Attr-state baseline captured at session OPEN (the closed->open
     // transition in beginEdit() below). cancelUncommittedEdit() restores these
     // alongside the vertices so the Tool-Properties values the panel/form read
@@ -780,6 +804,14 @@ public:
             Param.float_("RX", "Rotate X",    &headlessRotate.x,    0.0f).angle(),
             Param.float_("RY", "Rotate Y",    &headlessRotate.y,    0.0f).angle(),
             Param.float_("RZ", "Rotate Z",    &headlessRotate.z,    0.0f).angle(),
+            // Rotate-only fold blend selector (consumed in applyFold). "linear"
+            // (MatrixLerp, default) keeps the reference-correct unified fold; "arc"
+            // (PolarQuat) scales the rotation angle by the falloff weight, R(w*theta),
+            // radius-preserving — used by xfrm.softRotate / xfrm.swirl.
+            Param.enum_ ("rotFalloffBlend", "Rotate Falloff Blend",
+                         &rotFalloffBlend,
+                         [["linear", "Linear (matrix)"], ["arc", "Arc (angle)"]],
+                         "linear").hidden(),
             Param.float_("SX", "Scale X",     &run.s.x,     1.0f),
             Param.float_("SY", "Scale Y",     &run.s.y,     1.0f),
             Param.float_("SZ", "Scale Z",     &run.s.z,     1.0f),
@@ -3944,8 +3976,28 @@ private:
         // DISABLED so the in-kernel position-copy tail never runs here: the
         // symmetry mirror is owned by the single position-copy call below.
         SymmetryPacket noSym;   // enabled == false
+        // ROTATE-ONLY fold blend guard. When `!hasT && !hasS && flagR` the composed
+        // matrix M == run.r is an origin-fixed PURE rotation (the pivot is applied
+        // OUTSIDE M by applyXformMatrix as `pivot + M*(v - pivot)`), so
+        // blendToIdentity(M, w, PolarQuat) = slerp(I, R, w) = R(w*theta) — scaling
+        // the rotation ANGLE by the weight, radius-preserving. That is what a soft
+        // radial-rotation preset (xfrm.softRotate / xfrm.swirl) wants. For a
+        // COMBINED T*R*S fold, decomposing M into a pure rotation is NOT equivalent
+        // to scaling the gesture (the per-axis scale/translate residual would be
+        // re-spread non-linearly), so those folds MUST stay on MatrixLerp — hence
+        // the guard only fires when rotate is the SOLE active bank.
+        //
+        // CONVENTION: the reference data backing "arc" is SINGLE-AXIS rotation only.
+        // For multi-axis standalone-soft rotation (RX+RY+RZ under one falloff),
+        // PolarQuat blends slerp(I, composed-R, w) — i.e. compose-then-arc-by-weight
+        // — which is NOT reference-verified; it is the chosen convention, stated here
+        // so a future reader does not mistake it for a captured result.
+        BlendMode foldMode = (!hasT && !hasS && flagR
+                              && rotateBlendMode() != BlendMode.MatrixLerp)
+                           ? rotateBlendMode()
+                           : blendModeForMeasure();
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
-                         blendModeForMeasure(), dragFalloff, cachedVp, cp, ap,
+                         foldMode, dragFalloff, cachedVp, cp, ap,
                          clusterM, noSym, toProcess, /*weightVerts=*/ baseline);
 
         // MIRROR pass — fixed-base position-copy symmetry. The fold carries

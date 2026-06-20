@@ -40,6 +40,14 @@ presets:
 
   - id: xfrm.softRotate
     base: rotate
+    # Scale the rotation ANGLE by the falloff weight (radius-preserving),
+    # R(w*theta), instead of matrix-lerping toward identity. Reference-verified
+    # for single-axis soft rotation. NB: the other base:rotate presets
+    # xfrm.twist / xfrm.vortex deliberately do NOT set this — they use
+    # linear/cylinder falloff with no reference capture, so they stay on the
+    # default "linear" (matrix) blend; leaving them is intentional, not a gap.
+    attrs:
+      rotFalloffBlend: arc
     pipe:
       falloff:
         type: radial
@@ -63,6 +71,10 @@ presets:
 
   - id: xfrm.swirl
     base: rotate
+    # Angle-scaling soft rotation (see xfrm.softRotate). xfrm.twist /
+    # xfrm.vortex intentionally remain on the default "linear" matrix blend.
+    attrs:
+      rotFalloffBlend: arc
     pipe:
       falloff:
         type: radial
