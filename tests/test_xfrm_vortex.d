@@ -12,7 +12,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
-import std.math : fabs, sqrt, cos, sin, PI;
+import std.math : fabs;
 
 void main() {}
 
@@ -62,71 +62,16 @@ unittest { // vortex preset activation: type=cylinder, shape=linear
         "vortex preset should set falloff.shape=linear, got " ~ fshape);
 }
 
-unittest { // RY=30 around Y axis, cylinder radius 1.0 — verts at
-           // perpendicular distance r get weight = 1 - r/1.0 (clamped).
-           // vibe3d rotates via a rotation-MATRIX lerp:
-           //   M(w) = (1-w)·I + w·R(Y, theta)        applied to p
-           // The component in the rotation plane (XZ) pinches mid-weight; the
-           // component along the axis (Y) is preserved. For a Y-axis rotation:
-           //   xNew =  a·ox + b·oz
-           //   yNew =  oy               ← axis component preserved (no pinch)
-           //   zNew =  a·oz - b·ox
-           // where a = 1-w + w·cos(theta),  b = w·sin(theta).
-    postJson("/api/reset", "");
-    cmd("select.typeFrom polygon");
-    // Use a cube with vertical segmentation so the verts have a
-    // perpendicular-to-Y component that varies. With segmentsX=1,
-    // segmentsY=4, segmentsZ=1, the verts at y=±0.5/±0.25/0 all sit
-    // at perpendicular distance sqrt((±0.5)² + (±0.5)²) = sqrt(0.5)
-    // ≈ 0.707 from the Y axis. So weight = 1 - 0.707/1.0 ≈ 0.293
-    // (linear shape).
-    cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
-        ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
-    auto before = dumpVerts();
+// NB: the weighted-rotation parity (vibe3d vs the reference engine) is now
+// covered by tests/test_fixture_vortex.d as a reference-parity golden — the
+// reference applies R(w·θ) (angle-scaling, radius-preserving), NOT a matrix-lerp
+// toward identity, so the analytical matrix-lerp self-test that used to live
+// here was removed when the xfrm.vortex preset switched to angle-scaling. The
+// activation test above (type=cylinder / shape=linear) and the RY=0 no-op below
+// are unaffected by the blend mode and stay.
 
-    cmd("tool.set xfrm.vortex on");
-    // Pin cylinder handles explicitly: axis=+Y, center origin, size 1.0.
-    cmd("tool.pipe.attr falloff center \"0,0,0\"");
-    cmd("tool.pipe.attr falloff size \"1,1,1\"");
-    cmd("tool.pipe.attr falloff axis \"0,1,0\"");
-    cmd("tool.attr xfrm.vortex RY 30");
-    cmd("tool.doApply");
-
-    auto after = dumpVerts();
-    assert(after.length == before.length);
-
-    enum double R       = 1.0;
-    enum double RY_DEG  = 30.0;
-    foreach (i, v; after) {
-        double ox = before[i][0], oy = before[i][1], oz = before[i][2];
-        // Perpendicular distance from Y axis = sqrt(x² + z²).
-        double perp = sqrt(ox*ox + oz*oz);
-        double t    = perp / R;
-        if (t > 1) t = 1;
-        double w    = 1.0 - t;
-        if (w < 0) w = 0;
-        // Matrix-lerp M(w)=(1-w)I+w·R(Y,theta) (full angle theta, weight w).
-        double theta = RY_DEG * (PI / 180.0);
-        double a     = 1.0 - w + w * cos(theta);   // (1-w) + w·cos
-        double b     = w * sin(theta);             //         w·sin
-        double xExp  = a * ox + b * oz;
-        double yExp  = oy;                          // axis component preserved
-        double zExp  = a * oz - b * ox;
-        assert(approxEq(v[1], yExp),
-            "vert " ~ i.to!string ~ " Y mismatch: got " ~ v[1].to!string
-            ~ ", expected " ~ yExp.to!string
-            ~ " (perp=" ~ perp.to!string ~ ", w=" ~ w.to!string ~ ")");
-        assert(approxEq(v[0], xExp),
-            "vert " ~ i.to!string ~ " X mismatch: got " ~ v[0].to!string
-            ~ ", expected " ~ xExp.to!string ~ " (perp=" ~ perp.to!string
-            ~ ", weight=" ~ w.to!string ~ ")");
-        assert(approxEq(v[2], zExp),
-            "vert " ~ i.to!string ~ " Z mismatch: got " ~ v[2].to!string
-            ~ ", expected " ~ zExp.to!string);
-    }
-}
-
-unittest { // RY=0 ⇒ no-op even with cylinder falloff active
+unittest { // RY=0 ⇒ no-op even with cylinder falloff active. Angle 0 under
+           // angle-scaling is R(w·0)=identity for every weight, so nothing moves.
     postJson("/api/reset", "");
     cmd("select.typeFrom polygon");
     cmd("tool.set xfrm.vortex on");

@@ -42,10 +42,10 @@ presets:
     base: rotate
     # Scale the rotation ANGLE by the falloff weight (radius-preserving),
     # R(w*theta), instead of matrix-lerping toward identity. Reference-verified
-    # for single-axis soft rotation. NB: the other base:rotate presets
-    # xfrm.twist / xfrm.vortex deliberately do NOT set this — they use
-    # linear/cylinder falloff with no reference capture, so they stay on the
-    # default "linear" (matrix) blend; leaving them is intentional, not a gap.
+    # for single-axis soft rotation. The other base:rotate soft-rotation presets
+    # (xfrm.swirl / xfrm.twist / xfrm.vortex) set this too — they are all
+    # angle-scaling soft rotations, each reference-verified against the
+    # appropriate falloff (radial / linear / cylinder).
     attrs:
       rotFalloffBlend: arc
     pipe:
@@ -64,6 +64,10 @@ presets:
   # with the wrong attenuation curve compared to MODO.
   - id: xfrm.twist
     base: rotate
+    # Angle-scaling soft rotation (R(w*theta), radius-preserving — see
+    # xfrm.softRotate) under a LINEAR falloff. Reference-verified.
+    attrs:
+      rotFalloffBlend: arc
     pipe:
       falloff:
         type: linear
@@ -71,8 +75,7 @@ presets:
 
   - id: xfrm.swirl
     base: rotate
-    # Angle-scaling soft rotation (see xfrm.softRotate). xfrm.twist /
-    # xfrm.vortex intentionally remain on the default "linear" matrix blend.
+    # Angle-scaling soft rotation (see xfrm.softRotate) under a radial falloff.
     attrs:
       rotFalloffBlend: arc
     pipe:
@@ -110,14 +113,17 @@ presets:
         type:  linear
         shape: linear
 
-  # `xfrm.vortex` mirrors MODO's stock `xfrm.vortex` preset: cylinder
-  # falloff (radial-perpendicular-to-axis) + Rotate. Cylinder axis
-  # defaults to +Y, matching MODO's `axisY=1.0` baseline. The user
-  # rotates by setting RY (or RX/RZ to switch axes); per-vert weight
-  # comes from the cylinder falloff so verts on the axis spin full,
-  # verts at the cylinder's radial boundary stay put.
+  # `xfrm.vortex` mirrors the reference engine's stock `vortex` preset:
+  # cylinder falloff (radial-perpendicular-to-axis) + Rotate. The user
+  # rotates by setting an axis attr (e.g. RZ) about the matching cylinder
+  # axis; per-vert weight comes from the cylinder falloff so verts on the
+  # axis spin full, verts at the cylinder's radial boundary stay put.
+  # Like the other soft-rotation presets it scales the rotation ANGLE by
+  # the weight (R(w*theta), radius-preserving) — reference-verified.
   - id: xfrm.vortex
     base: rotate
+    attrs:
+      rotFalloffBlend: arc
     pipe:
       falloff:
         type:  cylinder

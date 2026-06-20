@@ -128,114 +128,11 @@ unittest { // shear with TX=0 leaves the cube alone — nothing moves
     }
 }
 
-// ---------------------------------------------------------------------------
-// twist (xfrm.twist preset = RotateTool + linear falloff). Verifies vibe3d
-// against the analytical reference (per-vertex rotation by RY · weight(y)
-// around the world Y axis).
-// ---------------------------------------------------------------------------
-
-import std.math : cos, sin, PI;
-
-unittest { // twist: per-vertex Y-axis rotation via rotation-MATRIX lerp
-    // vibe3d rotates with weight w as a linear blend of the rotation matrix:
-    //   M(w) = (1-w)·I + w·R(axis, theta)        applied to p
-    // This is NOT the arc model (R(theta*w)·p, radius-preserving) NOR a
-    // quaternion lerp. M(w) blends two rotation matrices, so the component IN
-    // the rotation plane pinches (radius < 1 mid-weight) while the component
-    // ALONG the axis is preserved exactly. For a Y-axis rotation:
-    //   xNew =  a·ox + b·oz
-    //   yNew =  oy                          ← axis component preserved (no pinch)
-    //   zNew =  a·oz - b·ox
-    // where a = 1-w + w·cos(theta),  b = w·sin(theta).
-    // At w=0: a=1,b=0 → identity. At w=1: a=cos,b=sin → pure rotation R(theta).
-    postJson("/api/reset", "");
-    cmd("select.typeFrom polygon");
-    cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
-        ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
-
-    // Snapshot BEFORE positions — we'll rotate each one analytically and
-    // compare to the AFTER mesh. Avoids hardcoding the cube's vert
-    // emission order.
-    auto before = getJson("/api/model")["vertices"].array;
-    double[3][] origs;
-    foreach (v; before) {
-        auto a = v.array;
-        origs ~= [a[0].floating, a[1].floating, a[2].floating];
-    }
-
-    cmd("tool.set xfrm.twist on");
-    cmd("tool.pipe.attr falloff start \"0,0.5,0\"");
-    cmd("tool.pipe.attr falloff end \"0,-0.5,0\"");
-    cmd("tool.pipe.attr falloff shape linear");
-    cmd("tool.attr xfrm.twist RY 30");
-    cmd("tool.doApply");
-
-    auto after = getJson("/api/model")["vertices"].array;
-    assert(after.length == origs.length,
-        "vert count changed: " ~ origs.length.to!string ~ " → "
-        ~ after.length.to!string);
-
-    enum START_Y =  0.5;
-    enum END_Y   = -0.5;
-    enum RY_DEG  = 30.0;
-
-    foreach (i, v; after) {
-        auto a = v.array;
-        double ox = origs[i][0], oy = origs[i][1], oz = origs[i][2];
-        // Linear weight: 1 at start_Y, 0 at end_Y, clamped outside [0,1].
-        double w = (oy - END_Y) / (START_Y - END_Y);
-        if (w < 0) w = 0;
-        else if (w > 1) w = 1;
-        // Full rotation angle (Y axis, pivot at origin).
-        double theta = RY_DEG * (PI / 180.0);
-        // Matrix lerp M(w) = (1-w)·I + w·R(Y,theta), R(Y,theta)·p =
-        //   (ox·cos + oz·sin, oy, oz·cos - ox·sin):
-        double ca = 1.0 - w + w * cos(theta);  // (1-w) + w·cos
-        double sb = w * sin(theta);            //         w·sin
-        double xExp = ca * ox + sb * oz;
-        double yExp = oy;                      // axis component preserved
-        double zExp = ca * oz - sb * ox;
-        assert(approxEq(a[1].floating, yExp, 1e-4),
-            "vert " ~ i.to!string ~ " Y mismatch: "
-            ~ "got " ~ a[1].floating.to!string
-            ~ ", expected " ~ yExp.to!string
-            ~ " (orig=(" ~ ox.to!string ~ "," ~ oy.to!string ~ ","
-            ~ oz.to!string ~ "), w=" ~ w.to!string ~ ")");
-        assert(approxEq(a[0].floating, xExp, 1e-4),
-            "vert " ~ i.to!string ~ " X mismatch: "
-            ~ "got " ~ a[0].floating.to!string
-            ~ ", expected " ~ xExp.to!string
-            ~ " (orig=(" ~ ox.to!string ~ "," ~ oy.to!string ~ ","
-            ~ oz.to!string ~ "), w=" ~ w.to!string ~ ")");
-        assert(approxEq(a[2].floating, zExp, 1e-4),
-            "vert " ~ i.to!string ~ " Z mismatch: "
-            ~ "got " ~ a[2].floating.to!string
-            ~ ", expected " ~ zExp.to!string);
-    }
-}
-
-unittest { // twist with RY=0 leaves the cube alone
-    postJson("/api/reset", "");
-    cmd("select.typeFrom polygon");
-    cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
-        ~ "segmentsX:1 segmentsY:4 segmentsZ:1 radius:0");
-    cmd("tool.set xfrm.twist on");
-    cmd("tool.pipe.attr falloff start \"0,0.5,0\"");
-    cmd("tool.pipe.attr falloff end \"0,-0.5,0\"");
-    cmd("tool.pipe.attr falloff shape linear");
-    // Default RX/RY/RZ = 0 → no rotation. applyHeadless skips the loop
-    // entirely (each axis-rotation is gated `if (R{X,Y,Z} != 0)`).
-    cmd("tool.doApply");
-    auto verts = getJson("/api/model")["vertices"].array;
-    foreach (v; verts) {
-        auto a = v.array;
-        // Cube corners stay on the ±0.5 box.
-        bool onBox = approxEq(fabs(a[0].floating), 0.5)
-                  || approxEq(fabs(a[1].floating), 0.5)
-                  || approxEq(fabs(a[2].floating), 0.5);
-        assert(onBox, "RY=0 twist shouldn't move verts off the cube box");
-    }
-}
+// NB: xfrm.twist (Rotate + linear falloff) parity is now covered by
+// tests/test_fixture_twist.d as a reference-parity golden — the reference
+// engine applies R(w·θ) (angle-scaling, radius-preserving), NOT a matrix-lerp
+// toward identity, so the analytical matrix-lerp self-tests that used to live
+// here were removed when the xfrm.twist preset switched to angle-scaling.
 
 // ---------------------------------------------------------------------------
 // taper (xfrm.taper preset = ScaleTool + linear falloff). SX=2.0
