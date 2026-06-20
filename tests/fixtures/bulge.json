@@ -1,0 +1,362 @@
+{
+  "name": "bulge",
+  "description": "Reference-parity: bulge = radial-falloff Scale (xfrm.bulge \u2014 wired identically to softScale in vibe3d). Seg-2 cube scaled along Y under a radial linear falloff; asserted against the frozen reference. Empty reset.",
+  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "bulge",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:2 segmentsY:2 segmentsZ:2 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.bulge",
+            "attr": "SY",
+            "value": 1.57,
+            "falloff": {
+              "type": "radial",
+              "shape": "linear",
+              "center": [
+                0,
+                0,
+                0
+              ],
+              "size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5381827,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            -0.5834746,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5381827,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            -0.5834746,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5381827,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            -0.5834746,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5381827,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            -0.5834746,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            -0.6425,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.0,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5381827,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.0,
+            0.5834746,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5381827,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.5,
+            0.5834746,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5381827,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.0,
+            0.5834746,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5381827,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.5,
+            0.5834746,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            0.6425,
+            0.0
+          ]
+        }
+      ]
+    }
+  ]
+}
