@@ -1,0 +1,572 @@
+{
+  "name": "twist",
+  "description": "Reference-parity: twist = LINEAR-falloff Rotate (xfrm.twist). The reference applies R(w*theta) (rotation angle scaled by per-vertex weight, radius preserved). Rotation about Z and the linear-falloff axis Z are an INFERRED convention, not stored in the capture. Empty reset.",
+  "source": "Frozen reference capture (radial falloff, real-GL session; capture via tools/local/modo_diff/manual_vnc_kit/probe_radial_deform.py).",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "twist_30",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:1 segmentsZ:4 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.twist",
+            "attr": "RZ",
+            "value": 30.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0,
+                0,
+                0.5
+              ],
+              "end": [
+                0,
+                0,
+                -0.5
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            0.5609855,
+            -0.4304593,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.6123725,
+            -0.3535534,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.6532815,
+            -0.2705981,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.6830127,
+            -0.1830127,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            -0.1830127,
+            -0.6830127,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            -0.2705981,
+            -0.6532815,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.3535534,
+            -0.6123725,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            -0.4304593,
+            -0.5609855,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            0.4304593,
+            0.5609855,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.3535534,
+            0.6123725,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            0.2705981,
+            0.6532815,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            0.1830127,
+            0.6830127,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.6830127,
+            0.1830127,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            -0.6532815,
+            0.2705981,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.6123725,
+            0.3535534,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            -0.5609855,
+            0.4304593,
+            -0.25
+          ]
+        }
+      ]
+    },
+    {
+      "name": "twist_90",
+      "input": [
+        {
+          "reset": true,
+          "empty": true
+        },
+        {
+          "endpoint": "command",
+          "argstring": "select.typeFrom polygon"
+        },
+        {
+          "endpoint": "command",
+          "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:1 segmentsY:1 segmentsZ:4 radius:0"
+        }
+      ],
+      "op": [
+        {
+          "falloff_transform": {
+            "tool": "xfrm.twist",
+            "attr": "RZ",
+            "value": 90.0,
+            "falloff": {
+              "type": "linear",
+              "shape": "linear",
+              "start": [
+                0,
+                0,
+                0.5
+              ],
+              "end": [
+                0,
+                0,
+                -0.5
+              ]
+            }
+          }
+        }
+      ],
+      "expected_pairs": [
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            0.6532815,
+            -0.2705981,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            0.7071068,
+            -0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.6532815,
+            0.2705981,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          "after": [
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.25
+          ],
+          "after": [
+            0.2705981,
+            -0.6532815,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            0.0
+          ],
+          "after": [
+            -0.0,
+            -0.7071068,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            -0.5,
+            -0.25
+          ],
+          "after": [
+            -0.2705981,
+            -0.6532815,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          "after": [
+            0.5,
+            0.5,
+            -0.5
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            0.2705981,
+            0.6532815,
+            -0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            0.0,
+            0.7071068,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            -0.2705981,
+            0.6532815,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          "after": [
+            -0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.25
+          ],
+          "after": [
+            -0.6532815,
+            -0.2705981,
+            0.25
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            0.0
+          ],
+          "after": [
+            -0.7071068,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "before": [
+            -0.5,
+            0.5,
+            -0.25
+          ],
+          "after": [
+            -0.6532815,
+            0.2705981,
+            -0.25
+          ]
+        }
+      ]
+    }
+  ]
+}
