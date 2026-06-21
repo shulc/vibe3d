@@ -119,7 +119,17 @@ public:
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
         cachedCenter = center;
         handler.setPosition(center);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the gizmo ORIENTATION for the duration of an active rotate
+        // drag (dragAxis >= 0). The rotation math reads the drag-start-frozen
+        // dragAxisVec / dragRefDir, so the angle is already correct, but the
+        // rendered ring would visibly re-orient mid-drag if the live basis
+        // re-derives from the deforming mesh under axis.mode=select (axis sign
+        // flip). Keeping the orientation from the last idle draw() (undeformed
+        // mesh = drag-start basis) also matches the frozen frame the mouse-up
+        // view-ring decomposition (dot(viewDragAxis, handler.axis*)) reads.
+        // Center still follows the cursor. Mirrors the MoveTool / ScaleTool gate.
+        if (dragAxis < 0)
+            handler.setOrientation(bX, bY, bZ);
     }
 
     override string name() const { return "Rotate"; }
@@ -538,9 +548,12 @@ public:
 
         // Orient gizmo into the active workplane basis (auto ⇒ identity).
         // arcX rotates around axisX, arcY around axisY, arcZ around axisZ.
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
 
         // Flush pending partial-selection GPU upload once per frame.
         if (needsGpuUpdate) {
@@ -571,9 +584,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
 
         if (needsGpuUpdate) {
             uploadToGpu();
