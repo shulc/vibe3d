@@ -169,7 +169,16 @@ public:
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
         cachedCenter = center;
         handler.setPosition(center);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the gizmo ORIENTATION for the duration of an active move
+        // drag (dragAxis >= 0). The screen→world projection of each motion
+        // delta reads handler.axisX/Y/Z; under axis.mode=select the live
+        // basis re-derives from the deforming mesh and can flip the up-sign
+        // / swap the right axis mid-drag, which oscillates the geometry.
+        // The handler keeps the orientation from the last idle draw()
+        // (undeformed mesh = correct drag-start basis), matching the frozen
+        // apply frame (runFrameR/U/F). Center still follows the cursor.
+        if (dragAxis < 0)
+            handler.setOrientation(bX, bY, bZ);
     }
 
     // Recompute gizmo center from current selection / mesh state.
@@ -222,9 +231,13 @@ public:
         // Pull the active workplane basis (auto ⇒ world XYZ) and orient the
         // gizmo into it: arrowX = workplane axis1, arrowY = workplane normal,
         // arrowZ = workplane axis2. Drag math reads these via the handler.
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the orientation during an active drag (dragAxis >= 0) — the
+        // input-projection basis must stay fixed (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
 
         // Flush pending GPU upload once per frame (partial selection during drag).
         if (needsGpuUpdate) {
@@ -250,9 +263,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
 
         if (needsGpuUpdate) {
             uploadToGpu();
@@ -268,9 +284,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
 
         if (needsGpuUpdate) {
             uploadToGpu();
