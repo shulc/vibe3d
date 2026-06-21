@@ -111,7 +111,17 @@ public:
         if (!editIsOpen())
             activationCenter = center;
         handler.setPosition(center);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the gizmo ORIENTATION for the duration of an active scale
+        // drag (dragAxis >= 0). The single-axis drag path projects the gizmo
+        // axis (handler.axisX/Y/Z) to screen and projects the screen drag
+        // onto it; under axis.mode=select the live basis re-derives from the
+        // deforming mesh and can flip the axis sign mid-drag, which reverses
+        // / oscillates the scale direction. The handler keeps the orientation
+        // from the last idle draw() (undeformed mesh = correct drag-start
+        // basis). Center still follows the cursor. Mirrors the existing
+        // dragAxis>=0 gate in ScaleTool.update and the MoveTool fix.
+        if (dragAxis < 0)
+            handler.setOrientation(bX, bY, bZ);
     }
 
     // Register this bank's gizmo handles into the shared arbiter `th`
@@ -513,10 +523,14 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Orient gizmo into the active workplane basis.
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Orient gizmo into the active workplane basis. Freeze the
+        // orientation during an active drag (dragAxis >= 0) — the
+        // input-projection basis must stay fixed (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
 
         // Flush pending partial-selection GPU upload once per frame.
         if (needsGpuUpdate) {
@@ -542,9 +556,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
+        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
+        if (dragAxis < 0) {
+            Vec3 bX, bY, bZ;
+            currentBasis(bX, bY, bZ, vts);
+            handler.setOrientation(bX, bY, bZ);
+        }
         handler.setScaleAccum(dragScaleAccum);
         handler.activeDragAxis = dragAxis;
         handler.drawAxisBoxesOnly(shader, vp);
