@@ -78,8 +78,11 @@ class FalloffStage : Stage, Operator {
     // setUserPlaced from a tool, or HTTP
     // `tool.pipe.attr actionCenter userPlacedX/Y/Z`).
     float dist = 1.0f;
-    // Selection falloff (D.7): the "Steps" count — the BFS-hop depth the
-    // per-vert weight is grown across (iters = 4·steps + 1 smoothing passes).
+    // Selection falloff (D.7): the "Steps" count — the depth the per-vert
+    // weight is grown across from the selection border inward. The smoothing-
+    // pass count scales QUADRATICALLY with steps (iters ≈ round(0.7·steps² + 2))
+    // because the weight is a diffusion process whose reach grows ∝ √iters,
+    // while the reference engine scales that reach LINEARLY in steps.
     // Integer by nature (discrete hops); its own field so it stays independent
     // of the Element `dist` radius above. attr `steps`.
     int steps = 4;
@@ -873,7 +876,7 @@ class FalloffStage : Stage, Operator {
     /// constraint", matching the "empty selection moves everything"
     /// convention every transform path uses).
     void recomputeSelectionWeights() {
-        import std.math : sqrt;
+        import std.math : sqrt, lround;
         if (mesh_ is null || editMode_ is null) { selWeights_.length = 0; return; }
         size_t nVerts = mesh_.vertices.length;
         if (nVerts == 0) { selWeights_.length = 0; return; }
@@ -950,20 +953,29 @@ class FalloffStage : Stage, Operator {
             }
         }
 
-        // Iterative Laplacian smoothing — fits the falloff.selection
-        // reference at RMS 0.0275 across Steps=1..4.
-        // Initial state: boundary verts = 0,
-        // interior selected verts = 1. Each iteration averages the
-        // current weight with the mean of in-selection neighbours,
-        // weighted by `alpha`. Boundary stays pinned at 0.
+        // Iterative Laplacian smoothing — a DIFFUSION APPROXIMATION of
+        // the reference engine's selection-falloff weight. The reference's
+        // exact operator is NOT a uniform Laplacian and is closed-source,
+        // so this is meaningfully closer, not bit-perfect: an irreducible
+        // ~4–9.5 % per-vertex residual remains across the steps range.
         //
-        // steps (the falloff.selection `steps` attribute) maps to the
-        // iteration count via `iters = 4·Steps + 1` (best-fit). With
-        // Steps=0 we collapse to no smoothing — the selection-edge
-        // hinge is the whole weight map (binary 0/1).
-        enum float kLapAlpha = 0.76f;
+        // Initial state: boundary (selection-border) verts = 0, interior
+        // selected verts = 1. Each iteration replaces every interior weight
+        // with the mean of its in-selection neighbours (α = 1.0 → pure
+        // Jacobi neighbour-mean; over-relaxation α > 1 was tested and does
+        // NOT help). Boundary stays pinned at 0 (the soft-border hinge).
+        //
+        // Iteration count scales QUADRATICALLY with steps:
+        //   iters ≈ round(0.7·steps² + 2).
+        // The smoothing is a diffusion process whose reach (how far the
+        // weight gradient penetrates from the border) grows ∝ √iters; the
+        // reference engine scales that reach LINEARLY in steps, so matching
+        // it requires iters ∝ steps². With steps == 0 we collapse to no
+        // smoothing — the selection-edge hinge is the whole weight map
+        // (binary 0/1).
+        enum float kLapAlpha = 1.0f;
         // stepsI computed at the cache gate above.
-        int iters = (stepsI <= 0) ? 0 : (4 * stepsI + 1);
+        int iters = (stepsI <= 0) ? 0 : cast(int) lround(0.7f * stepsI * stepsI + 2.0f);
 
         float[] wA = new float[](nVerts);
         float[] wB = new float[](nVerts);
@@ -1664,4 +1676,118 @@ void restoreFalloffSetFromCombined(FalloffStage[] set,
         if (set[0] !is null)
             set[0].restoreConfigFromPacket(combined);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regression guard for recomputeSelectionWeights() — locks the two empirically
+// fitted smoothing constants (alpha = 1.0, iters = round(0.7*steps^2 + 2)). The
+// asserts split into mesh-agnostic STRUCTURAL invariants (hold for any mesh)
+// and a small FROZEN-OUTPUT table on one specific grid+selection (what fails
+// if someone reverts alpha or relinearises the iteration count). The frozen
+// values are NOT a reference-parity claim — recomputeSelectionWeights is a
+// diffusion APPROXIMATION of the closed-source reference operator (~4-9.5 %
+// per-vertex residual).
+//
+// READ-ONLY / side-effect-free: this block compiles into the live editor's
+// unittest pass, so it only constructs a throwaway Mesh + FalloffStage and
+// reads computed state — it never touches global/shared editor state.
+unittest {
+    import mesh : makeGridPlane;
+    import std.math : abs, isNaN;
+
+    // makeGridPlane(8): a flat 9x9 vertex grid (vertex(i,j) = i*9 + j) of
+    // 8x8 = 64 quad faces (face(i,j) = i*8 + j). We select the interior
+    // 6x6 block of faces (rows/cols 1..6) so the selection has a clear
+    // one-quad-deep border plus a genuine interior.
+    enum int N    = 8;          // faces per side
+    enum int side = N + 1;      // verts per side (9)
+    Mesh grid = makeGridPlane(N);
+    grid.resetSelection(); // size the selection-mark arrays to match geometry
+
+    // Border-distance INTO the selection: the selected faces span face
+    // rows/cols 1..6, so selected verts span vertex rows/cols 1..7.
+    // hopDepth(i,j) = min(i, j, 8-i, 8-j) - 1: 0 on the selection border,
+    // growing inward. Deepest interior verts are the centre 2x2 (depth 3).
+    // Returns < 0 for verts outside the selected block.
+    static int hopDepth(int i, int j) {
+        int d = i;
+        if (j < d) d = j;
+        if (side - 1 - i < d) d = side - 1 - i;
+        if (side - 1 - j < d) d = side - 1 - j;
+        return d - 1;
+    }
+
+    // A FalloffStage bound to the grid via a delegate; editMode in Polygons.
+    EditMode em = EditMode.Polygons;
+    Mesh* meshPtr = &grid;
+    auto fs = new FalloffStage(() => meshPtr, &em);
+    fs.type = FalloffType.Selection;
+
+    // Select the interior 6x6 block of faces (rows/cols 1..6).
+    foreach (i; 1 .. N - 1)
+        foreach (j; 1 .. N - 1)
+            grid.selectFace(i * N + j);
+
+    int vi(int i, int j) { return i * side + j; }
+
+    // --- steps == 0: binary hinge map (no smoothing) -----------------------
+    fs.steps = 0;
+    fs.recomputeSelectionWeights();
+    assert(fs.selWeights_.length == grid.vertices.length);
+    foreach (i; 1 .. side - 1)
+        foreach (j; 1 .. side - 1) {
+            int hd = hopDepth(i, j);
+            if (hd < 0) continue; // not a selected vert
+            // applyShape(1 - w): boundary w=0 -> applyShape(1)=0; interior
+            // w=1 -> applyShape(0)=1. So selected interior == 1, border == 0.
+            float got = fs.selWeights_[vi(i, j)];
+            if (hd == 0)
+                assert(abs(got - 0.0f) < 1e-6f, "steps=0 border must be 0");
+            else
+                assert(abs(got - 1.0f) < 1e-6f, "steps=0 interior must be 1");
+        }
+
+    // --- steps > 0: smoothed weights, border pinned to 0, monotone with hop
+    // depth, bounded in [0,1]. NOTE on direction: more steps == more diffusion
+    // passes == the falloff reaches FARTHER from the pinned-0 border, so the
+    // interior weight DECREASES as steps grow (at steps=1 the centre still
+    // sits near 1; by steps=6 it has bled almost to 0). The "deepest interior
+    // > 0.9" saturation invariant therefore holds at the shallow end
+    // (steps=1); the in-range + border-pin + monotone invariants hold at
+    // every steps>0.
+    fs.steps = 2;
+    fs.recomputeSelectionWeights();
+    auto w2 = fs.selWeights_;
+    foreach (i; 1 .. side - 1)
+        foreach (j; 1 .. side - 1) {
+            int hd = hopDepth(i, j);
+            if (hd < 0) continue;
+            float got = w2[vi(i, j)];
+            assert(!isNaN(got));
+            assert(got >= -1e-6f && got <= 1.0f + 1e-6f, "weight in [0,1]");
+            if (hd == 0) assert(abs(got) < 1e-6f, "border vert must be 0");
+        }
+    // Monotone non-decreasing along a straight ray from the border into the
+    // deepest interior: (4,1)->(4,2)->(4,3)->(4,4) has hopDepth 0,1,2,3.
+    assert(w2[vi(4, 1)] <= w2[vi(4, 2)] + 1e-6f);
+    assert(w2[vi(4, 2)] <= w2[vi(4, 3)] + 1e-6f);
+    assert(w2[vi(4, 3)] <= w2[vi(4, 4)] + 1e-6f);
+
+    // Deepest-interior selected vert (centre, hopDepth 3) saturates near 1 at
+    // the shallow end (steps=1, before the falloff has bled inward).
+    fs.steps = 1;
+    fs.recomputeSelectionWeights();
+    auto w1 = fs.selWeights_;
+    assert(w1[vi(4, 4)] > 0.9f, "deepest interior must exceed 0.9 at steps=1");
+
+    // --- FROZEN OUTPUT -----------------------------------------------------
+    // Frozen output of alpha = 1.0 / iters = round(0.7*steps^2 + 2) on this
+    // exact grid + selection — locks the constants; NOT a reference-parity
+    // claim. (Reverting alpha to 0.76 or relinearising iters to 4*steps+1
+    // changes these and fails here.) Tolerance 1e-4 absorbs float-order noise.
+    assert(abs(w2[vi(4, 2)] - 0.320533f) < 1e-4f); // steps=2, hopDepth 1
+    assert(abs(w2[vi(4, 3)] - 0.718783f) < 1e-4f); // steps=2, hopDepth 2
+    assert(abs(w2[vi(4, 4)] - 0.830364f) < 1e-4f); // steps=2, hopDepth 3 (centre)
+    assert(abs(w2[vi(3, 3)] - 0.593262f) < 1e-4f); // steps=2, off-axis interior
+    assert(abs(w1[vi(4, 4)] - 0.988770f) < 1e-4f); // steps=1 centre (near 1)
 }
