@@ -596,6 +596,37 @@ unittest { // screen falloff: behind-camera handling
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
 }
 
+unittest { // screen falloff: LINEAR profile (locks the curve; w = 1 - t)
+    // Capture-verified against the reference engine: a Soft-Drag haul in an
+    // ortho-top view on a flat grid yields a LINEAR screen attenuation
+    // (RMS 0.003 vs 1-t; a Smooth curve would sit ~0.09 higher mid-ramp).
+    // This guards screenWeight against silently switching shapes.
+    //
+    // Identity view+proj so world maps to the window predictably:
+    //   projectToWindowFull → px = (x*0.5+0.5)*width.  With width=200 the
+    //   origin lands at px=100 and a point at x=Δ lands at px=100+Δ*100
+    //   (screen-distance Δ*100 from the disc centre).
+    import std.math : isClose;
+    Viewport vp;
+    vp.view   = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    vp.proj   = vp.view;
+    vp.width  = 200;
+    vp.height = 200;
+    FalloffPacket p;
+    p.enabled    = true;
+    p.type       = FalloffType.Screen;
+    p.shape      = FalloffShape.Linear;
+    p.screenCx   = 100;
+    p.screenCy   = 100;
+    p.screenSize = 100;        // screen-distance Δ*100 → t = Δ
+    // t=0.25 → linear 0.75 (a Smooth profile would give ~0.844 — distinguishes it).
+    assert(isClose(evaluateFalloff(p, Vec3(0.25f, 0, 0), 0, vp), 0.75f, 0.01f));
+    // t=0.75 → linear 0.25 (Smooth → ~0.156).
+    assert(isClose(evaluateFalloff(p, Vec3(0.75f, 0, 0), 0, vp), 0.25f, 0.01f));
+    assert(isClose(evaluateFalloff(p, Vec3(0,    0, 0), 0, vp), 1.0f));  // centre
+    assert(isClose(evaluateFalloff(p, Vec3(1.5f, 0, 0), 0, vp), 0.0f));  // beyond the disc
+}
+
 unittest { // lasso: empty / unset polygon falls through to weight = 1
     import std.math : isClose;
     FalloffPacket p;
@@ -605,6 +636,32 @@ unittest { // lasso: empty / unset polygon falls through to weight = 1
     Viewport vp;
     // No polygon → no-op falloff (matches plan: "unset / malformed → 1").
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
+}
+
+unittest { // lasso: inside→1, outside→0, soft-border ramp via applyShape
+    // Identity view+proj (width=height=200): origin→(100,100); x=Δ→px=100+Δ*100.
+    // Lasso = a screen-pixel square [50,150]². Inside→1, outside→0; with a
+    // soft border the outside weight ramps in via the (verified) shape curve.
+    import std.math : isClose;
+    Viewport vp;
+    vp.view   = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    vp.proj   = vp.view;
+    vp.width  = 200;
+    vp.height = 200;
+    FalloffPacket p;
+    p.enabled    = true;
+    p.type       = FalloffType.Lasso;
+    p.shape      = FalloffShape.Linear;
+    p.lassoPolyX = [50.0f, 150.0f, 150.0f,  50.0f];
+    p.lassoPolyY = [50.0f,  50.0f, 150.0f, 150.0f];
+    // origin → (100,100) inside → 1.
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
+    // x=0.6 → (160,100), 10px past the right edge; hard border → 0.
+    p.softBorderPx = 0.0f;
+    assert(isClose(evaluateFalloff(p, Vec3(0.6f, 0, 0), 0, vp), 0.0f));
+    // same point with a 20px soft border → t = 10/20 = 0.5 → linear 0.5.
+    p.softBorderPx = 20.0f;
+    assert(isClose(evaluateFalloff(p, Vec3(0.6f, 0, 0), 0, vp), 0.5f, 0.02f));
 }
 
 unittest { // Selection (D.7): empty packet → all verts weight = 1
