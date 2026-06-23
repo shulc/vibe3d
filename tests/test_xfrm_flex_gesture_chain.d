@@ -454,3 +454,97 @@ unittest {
         ~ baseRes.maxScreenDrift.to!string ~ " px) — dragAxis==3 was not excluded "
         ~ "from softBasis chaining (apply/visual desync).");
 }
+
+// SAME-SESSION rotate→move: the user-found bug the separate-grab test above MISSED.
+//
+// In ONE tool session (no reset / selection change / tool drop between gestures —
+// exactly the GUI flow), a flex rotate then a move renders the move handle in the
+// WORLD frame for the whole move drag. Root cause: runFrame is frozen ONCE per
+// session (at the session's first applyTRS = the rotate's start = world) and is
+// NOT re-frozen for the within-session move, so renderBasis's runFrameValid branch
+// returned the stale WORLD B0 (with R_gesture == I, since gestureStart.r == run.r).
+// The fix sources renderBasis's B0 from the persisted softBasis (rotated) even when
+// runFrameValid — RENDER ONLY (the apply path / runFrame are untouched; re-sourcing
+// runFrame would double-rotate the translate via the fold's run.r·T, verified).
+//
+// The first chain unittest above missed this because after its larger rotate the
+// move Z-ARROW pixel (418,384) no longer hits a handle (the gizmo moved), so its
+// "move" never engaged (dragAxis -1) and the rotated frame it observed was the IDLE
+// (runFrameValid=false) render, not a real within-session move. Here we use a
+// SMALLER rotate (~30°) and grab the CENTER BOX (always at the gizmo center, so the
+// move reliably engages dragAxis==3 with runFrameValid==TRUE — the bug condition).
+unittest {
+    setupFlex();
+    Cam cam = fetchCam();
+    V3 worldB0 = moveRight();              // un-rotated frame, ~ (1,0,0)
+
+    // ~30° rotate (dragPx 35) — small enough the center box stays grabbable, large
+    // enough the rotated frame is unmistakably off world. SAME SESSION after this.
+    double rotMag = driveBorderRotate(cam, 35);
+    assert(rotMag > 15.0,
+        "same-session: Border rotate too small (" ~ rotMag.to!string ~ ")");
+    V3 rotatedFrame = moveRight();         // persisted rotated frame (idle)
+    assert(maxDev(rotatedFrame, worldB0) > 0.15,
+        "same-session: rotate did not persist a rotated frame (dev="
+        ~ maxDev(rotatedFrame, worldB0).to!string ~ ")");
+
+    // Grab the CENTER BOX in the SAME session (no reset / selection change). The
+    // move engages dragAxis==3 with runFrameValid==TRUE — the exact within-session
+    // path the user hit and the first unittest missed.
+    cam = fetchCam();
+    double ppx, ppy;
+    assert(projWorld(cam, gizmoCenter(), ppx, ppy), "same-session: gizmo off-camera");
+    int x0 = cast(int)(ppx + 0.5), y0 = cast(int)(ppy + 0.5);
+    int x1 = x0 - 55, y1 = y0 - 18;
+    enum int steps = 16;
+    play(format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.w, cam.h, x0, y0));
+
+    // The move MUST have engaged a real handle (not missed like the first test).
+    auto td = getJson("/api/toolpipe/eval")["transform"];
+    assert(cast(int)td["moveDragAxis"].integer == 3,
+        "same-session: center-box move did not engage (dragAxis="
+        ~ td["moveDragAxis"].integer.to!string ~ ")");
+    // Document the bug CONDITION: runFrame is still the session's (world) frame.
+    assert(td["runFrameValid"].type == JSONType.TRUE,
+        "same-session: expected the session's runFrame to still be valid (the "
+        ~ "within-session path); got invalid — test no longer exercises the bug");
+
+    // BUG: the move handle must render the ROTATED frame for the WHOLE drag — NOT
+    // snap back to world — even though runFrameValid (the session's world frame).
+    int lastX = x0, lastY = y0; double t = 100.0;
+    double worstWorldSnap = 0, worstRotDev = 0;
+    foreach (i; 1 .. steps + 1) {
+        int xx = x0 + cast(int)(cast(double)(x1 - x0) * i / steps);
+        int yy = y0 + cast(int)(cast(double)(y1 - y0) * i / steps);
+        play(format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+            t, xx, yy, xx - lastX, yy - lastY));
+        lastX = xx; lastY = yy; t += 50.0;
+        V3 mr = moveRight();
+        double devRot   = maxDev(mr, rotatedFrame);   // distance from rotated frame
+        double devWorld = maxDev(mr, worldB0);         // distance from world frame
+        if (devRot   > worstRotDev)   worstRotDev   = devRot;
+        if (devWorld < worstWorldSnap || worstWorldSnap == 0) worstWorldSnap = devWorld;
+    }
+    play(format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, x1, y1));
+
+    assert(worstRotDev < 5e-2,
+        "same-session move rendered frame DEVIATED from the rotated frame (worst="
+        ~ worstRotDev.to!string ~ ") — within-session render reverted toward world "
+        ~ "(the user-found same-session bug).");
+    assert(worstWorldSnap > 0.15,
+        "same-session move rendered frame SNAPPED to the WORLD frame (closest dev="
+        ~ worstWorldSnap.to!string ~ ") — runFrameValid world B0 leaked into the "
+        ~ "within-session render (the bug).");
+
+    // Idle after the move stays rotated (guardrail #4 — the move's settleGestureBasis
+    // re-pins the rotated frame, so the chain holds).
+    assert(maxDev(moveRight(), worldB0) > 0.15,
+        "same-session: idle-after-move snapped back to world — softBasis not re-pinned "
+        ~ "(guardrail #4).");
+}

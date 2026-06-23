@@ -976,17 +976,35 @@ public:
             currentBasis(rX, rY, rZ, vts);
             return;
         }
-        // B0 — the gesture-frozen frame. Use the run-frozen slot once valid;
-        // before the first applyTRS of the run freezes it, the live basis IS the
-        // about-to-be-frozen frame (mirrors the ring's runFrameValid fallback).
+        // B0 — the gesture-frozen RENDER frame.
+        //
+        // WITHIN-SESSION CHAINING (render-only): runFrame is frozen ONCE per tool
+        // session (lazily on the session's first applyTRS = at the FIRST gesture's
+        // start). A SECOND gesture in the same session (the GUI keeps rotate→move in
+        // one session) therefore inherits the FIRST gesture's runFrame — world if the
+        // session opened on a rotate — and with gestureStart.r == run.r the
+        // R_gesture below is I, so the handles would render WORLD even though the
+        // prior rotate left a rotated softBasis (the user-found same-session bug).
+        //
+        // Fix the RENDER ONLY: when a prior gesture persisted a rotated frame
+        // (softBasisValid, selection/mode unchanged), source B0 from softBasis even
+        // when runFrameValid. This is DELIBERATELY render-only — runFrame and the
+        // apply fold are UNTOUCHED. The apply path already lands the move along the
+        // cursor world delta: composeFor folds M = run.r · T(runFrame · run.t) and
+        // 798047a overrides the chained move's INPUT basis to softBasis, so
+        // run.t = softBasisᵀ·worldDelta and the fold's run.r cancels the softBasis's
+        // rotation → net Δ = worldDelta (verified by the fold algebra). Re-sourcing
+        // runFrame instead would inject a SECOND run.r (runFrame=run.r·B0 with the
+        // input already pre-counter-rotated) → Δ = run.r·worldDelta, drifting the
+        // applied translate by the held angle, AND would re-interpret any already-
+        // accumulated run.t (move→rotate→move). So render is the only safe locus.
         Vec3 b0X, b0Y, b0Z;
-        if (runFrameValid) {
-            b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
-        } else if (softBasisValid && acenSettleAllowed()) {
-            // First frame of a chained gesture, before applyTRS freezes runFrame:
-            // mirror the runFrame freeze's softBasis source so the very first drawn
-            // frame is the persisted (rotated) B0, not a one-frame un-rotated pop.
+        if (softBasisValid && acenSettleAllowed()) {
+            // Persisted rotated frame — render it whether or not runFrame is valid
+            // (within-session chain: runFrame may be the stale world frame).
             b0X = softBasisR; b0Y = softBasisU; b0Z = softBasisF;
+        } else if (runFrameValid) {
+            b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
         } else {
             currentBasis(b0X, b0Y, b0Z, vts);
         }
