@@ -114,6 +114,15 @@ V3 gizmoCenter() {
     auto a = getJson("/api/toolpipe/eval")["transform"]["gizmoCenter"].array;
     return V3(a[0].floating, a[1].floating, a[2].floating);
 }
+// The LIVE rendered bank `right` vectors (rendered-pose seam) — the orientation
+// the move / scale / rotate handles actually drew this frame.
+V3 readRight(JSONValue blk) {
+    auto a = blk["right"].array;
+    return V3(a[0].floating, a[1].floating, a[2].floating);
+}
+V3 moveRight()  { return readRight(getJson("/api/toolpipe/eval")["transform"]["moveRenderFrame"]); }
+V3 scaleRight() { return readRight(getJson("/api/toolpipe/eval")["transform"]["scaleRenderFrame"]); }
+V3 rotateRight(){ return readRight(getJson("/api/toolpipe/eval")["transform"]["rotateRenderFrame"]); }
 double maxDev(V3 a, V3 b) {
     double m = fabs(a.x-b.x);
     m = fabs(a.y-b.y) > m ? fabs(a.y-b.y) : m;
@@ -369,4 +378,113 @@ unittest {
     assert(maxDev(acenCenter(), afterUndo) < 1e-2,
         "after scale undo the falloff anchor and gizmo center diverged — the "
         ~ "undo-splice left the soft pin inconsistent.");
+}
+
+// =========================================================================
+// COMMIT B — gesture-end BASIS persists post-release (no rotate-release snap).
+//
+// After a flex ROTATE LMB-up, the rendered move / scale / rotate triples must
+// STAY at their gesture-end (rotated) orientation — NOT snap back to the
+// world-snapped idle currentBasis — until a selection change, after which they
+// re-derive. The persistence rides the same softPlaced lifecycle (one clear on
+// selection/mode change), and is captured EXPLICITLY at mouse-up so a boundary
+// resetRun cannot strand it.
+// =========================================================================
+unittest {
+    setupFlex();
+    Cam cam = fetchCam();
+
+    double ppx, ppy;
+    assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera — camera changed");
+    int x0 = cast(int)(ppx + 95), y0 = cast(int)ppy;   // on the view-ring
+    int y1 = y0 - 70;
+
+    enum int steps = 20;
+    play(format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.w, cam.h, x0, y0));
+
+    // Drag-start rendered move/scale right (button down, before motion) — the
+    // pre-rotation (idle B0) orientation, so we can prove the siblings MOVED.
+    V3 moveStart  = moveRight();
+    V3 scaleStart = scaleRight();
+
+    V3 moveLastDrag = moveStart, scaleLastDrag = scaleStart, rotLastDrag;
+    int lastY = y0;
+    double t = 100.0;
+    foreach (i; 1 .. steps + 1) {
+        int yy = y0 + cast(int)(cast(double)(y1 - y0) * i / steps);
+        play(format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+            t, x0, yy, 0, yy - lastY));
+        lastY = yy; t += 50.0;
+        moveLastDrag  = moveRight();
+        scaleLastDrag = scaleRight();
+        rotLastDrag   = rotateRight();
+    }
+
+    // The siblings followed the rotation during the drag (bug-3 path, sanity).
+    assert(maxDev(moveLastDrag, moveStart) > 0.1,
+        "flex rotate: move sibling did not follow during the drag (basis-persist "
+        ~ "test precondition) — Phase 2 follow regressed.");
+
+    play(format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, x0, y1));
+
+    // COMMIT B: after release the rendered triples HOLD at the gesture-end
+    // orientation — no snap back to the world-snapped idle currentBasis.
+    enum double holdEps = 5e-3;
+    V3 moveAfter  = moveRight();
+    V3 scaleAfter = scaleRight();
+    V3 rotAfter   = rotateRight();
+    assert(maxDev(moveAfter, moveLastDrag) < holdEps,
+        "flex rotate-release: MOVE rendered basis SNAPPED back (drop="
+        ~ moveLastDrag.to!string ~ " after=" ~ moveAfter.to!string
+        ~ ") — gesture-end basis persistence regressed (Commit B).");
+    assert(maxDev(scaleAfter, scaleLastDrag) < holdEps,
+        "flex rotate-release: SCALE rendered basis SNAPPED back (drop="
+        ~ scaleLastDrag.to!string ~ " after=" ~ scaleAfter.to!string
+        ~ ") — gesture-end basis persistence regressed (Commit B).");
+    assert(maxDev(rotAfter, rotLastDrag) < holdEps,
+        "flex rotate-release: ROTATE rendered basis SNAPPED back (drop="
+        ~ rotLastDrag.to!string ~ " after=" ~ rotAfter.to!string
+        ~ ") — gesture-end basis persistence regressed (Commit B).");
+    // And it really moved off the pre-rotation idle basis (so the hold is the
+    // ROTATED frame, not a coincidental world-snap match).
+    assert(maxDev(moveAfter, moveStart) > 0.1,
+        "flex rotate-release: persisted MOVE basis equals the PRE-rotation basis "
+        ~ "(" ~ moveAfter.to!string ~ ") — it snapped to idle after all.");
+
+    // After a SELECTION change the persisted basis is dropped and the gizmo
+    // re-derives from the new selection (the one-lifecycle clear). Reselect a
+    // DIFFERENT partial patch and confirm the rendered basis is no longer pinned
+    // to the rotated frame (it now reflects the fresh selection's world-snap).
+    auto model = getJson("/api/model");
+    auto verts = model["vertices"].array;
+    auto faces = model["faces"].array;
+    int[] sel2;
+    foreach (fi, f; faces) {
+        auto idx = f.array;
+        double cx = 0;
+        foreach (vi; idx) cx += verts[cast(size_t)vi.integer].array[0].floating;
+        cx /= idx.length;
+        if (cx > 0.1) sel2 ~= cast(int)fi;     // a different (right-side) patch
+    }
+    assert(sel2.length > 10, "expected a right-side patch for the re-derive check");
+    string s2 = "[";
+    foreach (i, s; sel2) s2 ~= (i ? "," : "") ~ s.to!string;
+    s2 ~= "]";
+    postJson("/api/select", `{"mode":"polygons","indices":` ~ s2 ~ `}`);
+    Thread.sleep(dur!"msecs"(80));
+    // Force an idle update tick so the selection-change boundary fires its clear.
+    getJson("/api/toolpipe/eval");
+    Thread.sleep(dur!"msecs"(40));
+
+    V3 moveReDerive = moveRight();
+    assert(maxDev(moveReDerive, moveAfter) > 1e-3,
+        "flex: a selection change did NOT re-derive the rendered basis (still "
+        ~ "pinned to the rotated frame " ~ moveAfter.to!string ~ ") — the "
+        ~ "soft-basis clear hook is not firing on selection change (Commit B).");
 }
