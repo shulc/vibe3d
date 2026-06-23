@@ -1019,9 +1019,9 @@ public:
             // own settleGestureBasis), chaining across move→scale→… until a
             // selection/mode change clears it (clearSoftBasis) → the first fresh
             // gesture re-derives the world-snapped basis again.
-            if (softBasisValid) {
+            if (frame.valid) {
                 debug assertGestureFrameMirrorsSoftBasis();
-                rX = softBasisR; rY = softBasisU; rZ = softBasisF;
+                rX = frame.right; rY = frame.up; rZ = frame.axis;
                 return;
             }
             // No persisted basis: live basis, exactly as before.
@@ -1051,11 +1051,12 @@ public:
         // applied translate by the held angle, AND would re-interpret any already-
         // accumulated run.t (move→rotate→move). So render is the only safe locus.
         Vec3 b0X, b0Y, b0Z;
-        if (softBasisValid && acenSettleAllowed()) {
+        if (frame.valid) {
             // Persisted rotated frame — render it whether or not runFrame is valid
             // (within-session chain: runFrame may be the stale world frame).
+            // frame.valid == (softBasisValid && acenSettleAllowed()) by construction.
             debug assertGestureFrameMirrorsSoftBasis();
-            b0X = softBasisR; b0Y = softBasisU; b0Z = softBasisF;
+            b0X = frame.right; b0Y = frame.up; b0Z = frame.axis;
         } else if (runFrameValid) {
             b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
         } else {
