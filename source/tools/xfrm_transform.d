@@ -1014,6 +1014,28 @@ public:
         ];
     }
 
+    // "Did the gesture actually rotate / scale?" — the rotate/scale analogue of
+    // the Move path's accumulatedWorldDelta length check, used to gate the
+    // gesture-end settle (a degenerate no-motion grab must not pin softPlaced).
+    // Compares only the relevant TRS component of the gesture-START vs gesture-END
+    // run state; the other components are equal across a single-bank gesture.
+    private static bool xformRotEqual(const ref XformState a, const ref XformState b)
+        pure nothrow @nogc @safe {
+        import std.math : fabs;
+        enum float eps = 1e-6f;
+        foreach (i; 0 .. 16)
+            if (fabs(a.r[i] - b.r[i]) > eps) return false;
+        return true;
+    }
+    private static bool xformScaleEqual(const ref XformState a, const ref XformState b)
+        pure nothrow @nogc @safe {
+        import std.math : fabs;
+        enum float eps = 1e-6f;
+        return fabs(a.s.x - b.s.x) <= eps
+            && fabs(a.s.y - b.s.y) <= eps
+            && fabs(a.s.z - b.s.z) <= eps;
+    }
+
     private void setSharedGizmoPose(Vec3 center, ref VectorStack vts) {
         Vec3 bX, bY, bZ;
         renderBasis(bX, bY, bZ, vts);
@@ -2519,16 +2541,37 @@ public:
             // mouse-down in beginRotateDragSession). rotateSub.handler.center is the
             // pivot (rotate never translates it), so the live recompute for a Border
             // partial selection would otherwise drift off it after the rotation.
+            // PER-BANK settle gate (preserves each bank's ORIGINAL main condition,
+            // OR-ing in the flex/Border falloff branch). Rotate on main pinned in
+            // the RELOCATE modes (acenAllowsClickRelocate: Auto/None/Screen) — its
+            // handler.center stays at the pivot during the gesture but the recomputed
+            // bbox center after rotation is angle-dependent (asymmetric meshes), so
+            // the pin is needed even WITHOUT falloff (test_acen_softpin_settle). We
+            // keep that AND add the falloff branch so flex/Border (which always has
+            // falloff) also pins (bug 1 + rotate-basis-persist). acenSettleAllowed()
+            // still excludes Element/Local (a single drop pose can't represent the
+            // live element anchor / N cluster pivots). The "no if(mode==border)" rule
+            // holds: these are capability predicates (relocate / settle-allowed /
+            // falloff), never a mode-NAME branch. (Scale below is falloff-ONLY — main
+            // had no scale settle, so without falloff a stale scale pin must not drift
+            // the next cross-bank Move's pivot: test_run_absolute_scale.)
+            bool rotGestureMoved = rotAbsKnown && !xformRotEqual(xfStart, xfEnd);
+            bool rotSettle = rotGestureMoved && acenSettleAllowed()
+                          && (acenAllowsClickRelocate() || currentFalloff(vts).enabled);
             bool   softEndPlaced; Vec3 softEndCenter;
-            settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
+            if (rotSettle)
+                settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
+            else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
             // COMMIT B — persist the rotate bank's gesture-end rendered basis
             // (R_gesture·B0 = the rotated frame the ring left on screen) so the idle
             // gizmo HOLDS it instead of snapping back to the world-snapped live
             // currentBasis on release. Read from the rendered handler.axis* NOW (the
-            // last drag frame's render frame), before any boundary resetRun.
-            settleGestureBasis(rotateSub.handler.axisX,
-                               rotateSub.handler.axisY,
-                               rotateSub.handler.axisZ);
+            // last drag frame's render frame), before any boundary resetRun. Gated
+            // identically (same falloff+moved condition) so center+basis stay in sync.
+            if (rotSettle)
+                settleGestureBasis(rotateSub.handler.axisX,
+                                   rotateSub.handler.axisY,
+                                   rotateSub.handler.axisZ);
             bool softStartPlaced = rotAbsKnown ? rotateSoftStartPlaced : softEndPlaced;
             Vec3 softStartCenter = rotAbsKnown ? rotateSoftStartCenter : softEndCenter;
             rotateSub.wrapperFieldApplyHook  = () {
@@ -2603,13 +2646,31 @@ public:
             // the gesture-END snapshot the undo hook restores carries the settle;
             // splice the soft pin into both hooks (gesture-START captured at scale
             // mouse-down) so an in-session Ctrl+Z restores it in lockstep.
+            // PER-BANK settle gate — Scale is FALLOFF-ONLY. Main had NO scale
+            // settle at all, so WITHOUT falloff scale must NOT pin: a stale softPlaced
+            // from this scale would shift the NEXT cross-bank Move gesture's
+            // computeCenter under the relocate modes (Auto/None/Screen read softPlaced)
+            // — the scale-then-move-under-None pivot drift (test_run_absolute_scale).
+            // Scale's bbox center, UNLIKE rotate's, is NOT angle-dependent (scale about
+            // the pivot keeps the centroid put), so the no-falloff pin the rotate bank
+            // needs is unnecessary — hence falloff-only here, NOT acenAllowsClickRelocate.
+            // WITH falloff (flex / Border, which always has falloff) the pin fires so
+            // bug 1 + the basis persistence stay fixed. acenSettleAllowed() excludes
+            // Element/Local as everywhere.
+            bool scaleGestureMoved = scaleAbsKnown && !xformScaleEqual(xfStart, xfEnd);
+            bool scaleSettle = scaleGestureMoved && acenSettleAllowed()
+                            && currentFalloff(vts).enabled;
             bool   softEndPlaced; Vec3 softEndCenter;
-            settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
+            if (scaleSettle)
+                settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
+            else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
             // COMMIT B — persist the scale bank's gesture-end rendered basis
-            // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release.
-            settleGestureBasis(scaleSub.handler.axisX,
-                               scaleSub.handler.axisY,
-                               scaleSub.handler.axisZ);
+            // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release. Gated
+            // identically so center+basis persistence stay in sync.
+            if (scaleSettle)
+                settleGestureBasis(scaleSub.handler.axisX,
+                                   scaleSub.handler.axisY,
+                                   scaleSub.handler.axisZ);
             bool softStartPlaced = scaleAbsKnown ? scaleSoftStartPlaced : softEndPlaced;
             Vec3 softStartCenter = scaleAbsKnown ? scaleSoftStartCenter : softEndCenter;
             scaleSub.wrapperFieldApplyHook  = () {
@@ -4418,6 +4479,15 @@ private:
         if (g_pipeCtx is null) return null;
         return cast(ActionCenterStage)
                g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+    }
+
+    // Wrapper-side mirror of ActionCenterStage.acenSettleAllowed() — the 2-entry
+    // Element/Local exclusion, used by the per-bank settle gates at the mouse-ups.
+    // Defaults FALSE when no ACEN stage is registered (nothing to pin into; basis
+    // persistence must not fire without the matching center pin — one lifecycle).
+    bool acenSettleAllowed() const {
+        auto ac = activeAcenStage();
+        return ac !is null && ac.acenSettleAllowed();
     }
 
     // flex_border_handles_plan.md Phase 3 (BUG-1) — the ONE gesture-end center
