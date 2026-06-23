@@ -46,6 +46,17 @@ private:
     float    prevWrapped = 0;      // previous frame's wrapped [-π,π] angle (unwrap state)
     Vec3     viewDragAxis;    // camera forward captured at start of view-plane drag
     Vec3     dragAxisVec;     // axis vector for current drag (cached to avoid recomputation)
+    // Input-projection basis, captured ONCE at drag start from the live
+    // `currentBasis(...)`. The principal-axis ring already freezes its
+    // gesture math into `dragAxisVec` / `dragRefDir`; this names the frozen
+    // frame the VIEW-RING mouse-up decomposition reads (the dot products
+    // that split a camera-aligned rotation onto the gizmo axes), so that
+    // decode no longer depends on the rendered `handler.axis*` staying
+    // frozen. Captured from the same `currentBasis(...)` the last idle draw
+    // used ⇒ byte-stable today.
+    Vec3     inputBasisX = Vec3(1, 0, 0);
+    Vec3     inputBasisY = Vec3(0, 1, 0);
+    Vec3     inputBasisZ = Vec3(0, 0, 1);
     Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
     Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
     Vec3[]   origVertices;                // snapshot of vertex positions at activate()
@@ -671,6 +682,11 @@ public:
         totalAngle = 0;
         lastSnappedAngle = 0;
 
+        // Freeze the input-projection basis for the gesture (= the current
+        // idle basis = the frozen rendered orientation today). The view-ring
+        // mouse-up decomposition reads it instead of the rendered handler.
+        currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
+
         // Build vertex cache now so we know whether this is a whole-mesh drag.
         buildVertexCacheIfNeeded();
         // Phase 7.5: capture falloff packet — when active, force the
@@ -696,9 +712,12 @@ public:
             viewDragAxis = Vec3(-cachedVp.view[2], -cachedVp.view[6], -cachedVp.view[10]);
             dragAxisVec = viewDragAxis;
         } else {
-            dragAxisVec = dragAxis == 0 ? handler.axisX
-                        : dragAxis == 1 ? handler.axisY
-                                        : handler.axisZ;
+            // Principal ring: the rotation axis is the frozen INPUT basis
+            // vector (== rendered `handler.axis*` at drag start today), so
+            // the gesture plane stays fixed even once the rendered frame moves.
+            dragAxisVec = dragAxis == 0 ? inputBasisX
+                        : dragAxis == 1 ? inputBasisY
+                                        : inputBasisZ;
         }
 
         // Compute drag start direction in the arc plane.
@@ -736,13 +755,14 @@ public:
         else if (dragAxis == 1) angleAccum.y += effectiveAngle;
         else if (dragAxis == 2) angleAccum.z += effectiveAngle;
         else if (dragAxis == 3) {
-            // angleAccum.{x,y,z} are rotations around the gizmo's basis
-            // (axisX/Y/Z). Decompose the view-aligned rotation onto those
-            // axes via dot products — identity basis collapses to the
-            // legacy world-XYZ behaviour.
-            angleAccum.x += effectiveAngle * dot(viewDragAxis, handler.axisX);
-            angleAccum.y += effectiveAngle * dot(viewDragAxis, handler.axisY);
-            angleAccum.z += effectiveAngle * dot(viewDragAxis, handler.axisZ);
+            // angleAccum.{x,y,z} are rotations around the gizmo's basis.
+            // Decompose the view-aligned rotation onto those axes via dot
+            // products against the frozen INPUT basis (captured at drag
+            // start), not the rendered `handler.axis*` — identity basis
+            // collapses to the legacy world-XYZ behaviour.
+            angleAccum.x += effectiveAngle * dot(viewDragAxis, inputBasisX);
+            angleAccum.y += effectiveAngle * dot(viewDragAxis, inputBasisY);
+            angleAccum.z += effectiveAngle * dot(viewDragAxis, inputBasisZ);
         }
 
         // Geometry + GPU for EVERY ring (principal 0/1/2 AND view-ring 3) are
@@ -906,10 +926,13 @@ public:
         if (dragAxis >= 0) {
             float dispAngle = (SDL_GetModState() & KMOD_CTRL) ? lastSnappedAngle : totalAngle;
             // For view-axis drag (==3) the in-progress angle is decomposed
-            // onto the basis triple (matches onMouseButtonUp's accumulation).
-            float vx = dragAxis == 3 ? dot(viewDragAxis, handler.axisX) : 0;
-            float vy = dragAxis == 3 ? dot(viewDragAxis, handler.axisY) : 0;
-            float vz = dragAxis == 3 ? dot(viewDragAxis, handler.axisZ) : 0;
+            // onto the frozen INPUT basis (captured at drag start), not the
+            // rendered `handler.axis*` — matching onMouseButtonUp's
+            // accumulation so the displayed degrees stay consistent once the
+            // rendered frame moves.
+            float vx = dragAxis == 3 ? dot(viewDragAxis, inputBasisX) : 0;
+            float vy = dragAxis == 3 ? dot(viewDragAxis, inputBasisY) : 0;
+            float vz = dragAxis == 3 ? dot(viewDragAxis, inputBasisZ) : 0;
             propDeg.x = (angleAccum.x + (dragAxis == 0 ? dispAngle : dispAngle * vx)) * 180.0f / PI;
             propDeg.y = (angleAccum.y + (dragAxis == 1 ? dispAngle : dispAngle * vy)) * 180.0f / PI;
             propDeg.z = (angleAccum.z + (dragAxis == 2 ? dispAngle : dispAngle * vz)) * 180.0f / PI;

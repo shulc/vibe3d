@@ -89,6 +89,20 @@ public:
     bool pendingScaleValid = false;
     Vec3 pendingScale = Vec3(1, 1, 1);   // per-axis factor, absolute since drag start
 
+    // Input-projection basis, captured ONCE at drag start (in
+    // `onMouseButtonDown`, where `dragAxis` becomes >= 0) from the live
+    // `currentBasis(...)`. The single-axis drag projects the screen drag
+    // onto THIS frozen frame, kept SEPARATE from the rendered gizmo
+    // orientation (`handler.axisX/Y/Z`). Today both are the same drag-start
+    // frame (render orientation frozen via the `dragAxis < 0` gate;
+    // `inputBasis*` captured from the same `currentBasis(...)` the last idle
+    // draw used) — so the split is byte-stable. It lets the rendered frame
+    // move later without reversing the drag direction mid-gesture (the
+    // axis-sign flip 0b812cf fixed).
+    Vec3 inputBasisX = Vec3(1, 0, 0);
+    Vec3 inputBasisY = Vec3(0, 1, 0);
+    Vec3 inputBasisZ = Vec3(0, 0, 1);
+
     // Back-pointer to the unified `XfrmTransformTool`, wired at the
     // wrapper's `activate()`. Typed as the base class to avoid a
     // field-level circular import (mirrors `MoveTool` / `RotateTool`);
@@ -592,6 +606,9 @@ public:
         dragAxis = hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
+            // Freeze the input-projection basis for the gesture (= the
+            // current idle basis = the frozen rendered orientation today).
+            currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
             dragStartScaleAccum = scaleAccum;
             dragScaleAccum = Vec3(1, 1, 1);
             dragScaleScalarDelta = 0.0f;
@@ -730,9 +747,12 @@ public:
             return true;
         }
 
-        Vec3 axis = dragAxis == 0 ? handler.axisX
-                  : dragAxis == 1 ? handler.axisY
-                                  : handler.axisZ;
+        // Single-axis drag projects the screen drag onto the frozen INPUT
+        // basis (captured at drag start), not the rendered `handler.axis*`,
+        // so the drag direction can't reverse if the rendered frame moves.
+        Vec3 axis = dragAxis == 0 ? inputBasisX
+                  : dragAxis == 1 ? inputBasisY
+                                  : inputBasisZ;
 
         float cx, cy, cndcZ, ax_, ay_, andcZ;
         if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))

@@ -51,6 +51,59 @@ Vec3 axisDragDelta(int mx,     int my,
     return axisDir * d;
 }
 
+// Single-axis drag — input-basis OVERLOAD (dragAxis 0/1/2 = X/Y/Z).
+//
+// Same screen→world math as `axisDragDelta(handler)` above, but the drag
+// AXIS DIRECTION is taken from the explicit `inputBasis{X,Y,Z}` triple (a
+// frame the caller froze at drag start) instead of the live rendered arrow
+// geometry (`handler.arrow*.end - handler.center`). This insulates the input
+// projection from the rendered gizmo orientation, which a later phase moves
+// during a drag. The pixel/world SCALE (`axisLen`) is still the gizmo's
+// world-space arrow length — a render-size property, orientation-independent
+// — read from the handler so the close-camera ratio stays exact.
+//
+// MoveTool calls this; the box/sphere/cone/cylinder/capsule/torus primitive
+// movers keep the original `axisDragDelta(handler)` signature above.
+//
+// Byte-stable note: today `inputBasis{X,Y,Z}` equals the handler's frozen
+// orientation triple, so `inputAxis == axisDir` and the result is identical
+// to the handler-derived path.
+Vec3 axisDragDelta(int mx,     int my,
+                   int lastMX, int lastMY,
+                   int dragAxis,
+                   MoveHandler handler,
+                   Vec3 inputBasisX, Vec3 inputBasisY, Vec3 inputBasisZ,
+                   const ref Viewport vp,
+                   out bool skip)
+{
+    skip = false;
+    Vec3 center    = handler.center;
+    Vec3 inputAxis = dragAxis == 0 ? inputBasisX
+                   : dragAxis == 1 ? inputBasisY
+                                   : inputBasisZ;
+
+    // Gizmo arrow world length (= screen-relative gizmo size) for the
+    // pixel/world ratio. Orientation-independent: all three arrows share the
+    // same length, so reading arrowX's is correct for any dragAxis.
+    Vec3  ae      = handler.arrowX.end - center;
+    float axisLen = sqrt(ae.x*ae.x + ae.y*ae.y + ae.z*ae.z);
+    if (axisLen < 1e-9f) { skip = true; return Vec3(0,0,0); }
+
+    Vec3 axisEnd = center + inputAxis * axisLen;
+
+    float cx, cy, cndcZ, ax_, ay_, andcZ;
+    if (!projectToWindowFull(center,  vp, cx,  cy,  cndcZ) ||
+        !projectToWindowFull(axisEnd, vp, ax_, ay_, andcZ))
+    { skip = true; return Vec3(0,0,0); }
+
+    float sdx = ax_ - cx, sdy = ay_ - cy;
+    float slen2 = sdx*sdx + sdy*sdy;
+    if (slen2 < 1.0f) { skip = true; return Vec3(0,0,0); }
+
+    float d = ((mx - lastMX) * sdx + (my - lastMY) * sdy) / slen2 * axisLen;
+    return inputAxis * d;
+}
+
 // Delta for dragging along an arbitrary world axis from a screen mouse delta.
 // `axis` should be a unit vector; the result is scaled to world units.
 Vec3 screenAxisDelta(int mx,     int my,

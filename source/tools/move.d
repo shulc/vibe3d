@@ -75,6 +75,21 @@ class MoveTool : TransformTool {
     // latch, not a relocate marker, so it can't discriminate either.
     bool lastClickWasRelocate = false;
 
+    // Input-projection basis, captured ONCE at drag start (in
+    // `onMouseButtonDown`, where `dragAxis` becomes >= 0) from the live
+    // `currentBasis(...)`. This is the frame the screen→world input math
+    // reads (axis-constrain / delta projection), kept SEPARATE from the
+    // rendered gizmo orientation (`handler.axisX/Y/Z`). Today both are the
+    // same drag-start frame — the render orientation is frozen during a
+    // drag via the `dragAxis < 0` gate, and `inputBasis*` is captured from
+    // the same `currentBasis(...)` the last idle draw used — so this split
+    // is byte-stable. It lets the rendered frame move later without
+    // dragging the input projection with it (the oscillation eb3fd47 /
+    // baa8a92 / 0b812cf fixed).
+    Vec3 inputBasisX = Vec3(1, 0, 0);
+    Vec3 inputBasisY = Vec3(0, 1, 0);
+    Vec3 inputBasisZ = Vec3(0, 0, 1);
+
     // Phase 4 — property-panel back-pointer. Set by the wrapper at
     // `activate()` (the only path that constructs MoveTool); read
     // by `drawProperties` to route slider edits through
@@ -406,6 +421,9 @@ public:
                 constrainStartMX = e.x; constrainStartMY = e.y;
             }
             lastMX = e.x; lastMY = e.y;
+            // Freeze the input-projection basis for the gesture (= the
+            // current idle basis = the frozen rendered orientation today).
+            currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
             buildVertexCacheIfNeeded();
             // Phase 3 — wrapper (`XfrmTransformTool.beginMoveDragSession`)
             // captures falloff / symmetry / edit-session baseline /
@@ -477,6 +495,8 @@ public:
             notifyAcenUserPlaced(hit);
         dragAxis = 3;   // most-facing plane through gizmo center
         lastMX = mx; lastMY = my;
+        // Freeze the input-projection basis for this relocate drag.
+        currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
         buildVertexCacheIfNeeded();
         if (ctrl) {
             ctrlConstrain = true;
@@ -552,13 +572,16 @@ public:
     // user picked that plane on purpose.
     private Vec3 constrainSnapDelta(Vec3 delta) {
         // Single-axis drag — keep only the component along the locked axis.
-        if (dragAxis == 0) return handler.axisX * dot(delta, handler.axisX);
-        if (dragAxis == 1) return handler.axisY * dot(delta, handler.axisY);
-        if (dragAxis == 2) return handler.axisZ * dot(delta, handler.axisZ);
+        // Reads the frozen INPUT basis (captured at drag start), not the
+        // rendered `handler.axis*`, so input projection is insulated from
+        // the rendered frame.
+        if (dragAxis == 0) return inputBasisX * dot(delta, inputBasisX);
+        if (dragAxis == 1) return inputBasisY * dot(delta, inputBasisY);
+        if (dragAxis == 2) return inputBasisZ * dot(delta, inputBasisZ);
         // Plane circles — strip the component along the plane normal.
-        if (dragAxis == 4) return delta - handler.axisZ * dot(delta, handler.axisZ);
-        if (dragAxis == 5) return delta - handler.axisX * dot(delta, handler.axisX);
-        if (dragAxis == 6) return delta - handler.axisY * dot(delta, handler.axisY);
+        if (dragAxis == 4) return delta - inputBasisZ * dot(delta, inputBasisZ);
+        if (dragAxis == 5) return delta - inputBasisX * dot(delta, inputBasisX);
+        if (dragAxis == 6) return delta - inputBasisY * dot(delta, inputBasisY);
         // dragAxis == 3 (centerBox) and any unrecognised value: pass
         // through the full 3D snap delta.
         return delta;
@@ -589,9 +612,9 @@ public:
             import std.math : abs;
             const ref float[16] vv = cachedVp.view;
             Vec3 camBack = Vec3(vv[2], vv[6], vv[10]);
-            float aXdot = abs(dot(camBack, handler.axisX));
-            float aYdot = abs(dot(camBack, handler.axisY));
-            float aZdot = abs(dot(camBack, handler.axisZ));
+            float aXdot = abs(dot(camBack, inputBasisX));
+            float aYdot = abs(dot(camBack, inputBasisY));
+            float aZdot = abs(dot(camBack, inputBasisZ));
             int ax1, ax2;
             if      (aXdot >= aYdot && aXdot >= aZdot) { ax1 = 1; ax2 = 2; } // normal=axisX → Y,Z
             else if (aYdot >= aXdot && aYdot >= aZdot) { ax1 = 0; ax2 = 2; } // normal=axisY → X,Z
@@ -624,11 +647,13 @@ public:
         bool skip;
         if (dragAxis <= 2)
             worldDelta = axisDragDelta(e.x, e.y, lastMX, lastMY,
-                                       dragAxis, handler, cachedVp, skip);
+                                       dragAxis, handler,
+                                       inputBasisX, inputBasisY, inputBasisZ,
+                                       cachedVp, skip);
         else
             worldDelta = planeDragDelta(e.x, e.y, lastMX, lastMY,
                                         dragAxis, handler.center, cachedVp, skip,
-                                        handler.axisX, handler.axisY, handler.axisZ);
+                                        inputBasisX, inputBasisY, inputBasisZ);
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
         // Phase 7.3a: snap. Bend the would-be gizmo position towards a
@@ -657,9 +682,9 @@ public:
         // are now all the wrapper's responsibility. Idle/hover and
         // falloff-gizmo branches above are unchanged.
         pendingTranslateDelta = pendingTranslateDelta
-            + Vec3(dot(worldDelta, handler.axisX),
-                   dot(worldDelta, handler.axisY),
-                   dot(worldDelta, handler.axisZ));
+            + Vec3(dot(worldDelta, inputBasisX),
+                   dot(worldDelta, inputBasisY),
+                   dot(worldDelta, inputBasisZ));
 
         lastMX = e.x;
         lastMY = e.y;
