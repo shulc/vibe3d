@@ -2829,6 +2829,7 @@ void main(string[] args) {
                     // (element-move: the gizmo must jump onto the picked element
                     // at drag start, not move off its old center).
                     buf.put(`,"gizmoCenter":`); putVec3(xf.moveGizmoCenter());
+                    buf.put(format(`,"moveDragAxis":%d`, xf.moveDragAxisPublic()));
                     // P-F Phase 1 — the frozen per-run gizmo frame.
                     bool rfValid; Vec3 rfO, rfR, rfU, rfF;
                     xf.publishedRunFrame(rfValid, rfO, rfR, rfU, rfF);

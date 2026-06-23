@@ -885,6 +885,12 @@ public:
     // and (in 4b) as the action-center pivot.
     public Vec3 moveGizmoCenter() const { return moveSub.handler.center; }
 
+    // Test seam — the Move bank's live drag axis (0/1/2 axis, 3 center-box / most-
+    // facing plane, 4/5/6 plane circles, -1 idle). Lets the gesture-chain test
+    // confirm a center-box grab actually engaged dragAxis==3 (the basis-free path
+    // excluded from softBasis chaining), rather than a rotated arrow.
+    public int moveDragAxisPublic() const { return moveSub.dragAxisPublic(); }
+
     // ----- Rendered-pose seam (flex_border_handles_plan.md Phase 4 step 1) ----
     //
     // The LIVE rendered per-bank gizmo orientation, so tests can witness the
@@ -953,15 +959,15 @@ public:
             // release does NOT snap the rendered triples back to the world-snapped
             // idle currentBasis. Cleared on the same boundaries as softPlaced.
             //
-            // KNOWN RESIDUAL (deliberate, out of scope): if the user re-grabs a
-            // handle WITHOUT changing selection after a flex rotate, the new
-            // gesture's B0 is frozen from the LIVE world-snapped currentBasis (the
-            // begin*DragSession path), NOT from softBasis — so the gizmo pops back
-            // to the un-rotated B0 for that drag. Sourcing B0 from softBasis here
-            // would desync from the Phase-1 INPUT basis (which derives from
-            // currentBasis), reintroducing exactly the input/render conflation
-            // Phase 1 removed. A proper fix needs the idle world-snapped basis
-            // redesign, which the plan scopes out.
+            // GESTURE CHAINING: re-grabbing a handle WITHOUT changing selection now
+            // chains off this persisted frame — begin*DragSession freezes the new
+            // run's B0 from softBasis (feeding BOTH render and apply translate), and
+            // the sub-tools' inputBasis* are overridden from the same softBasis, so
+            // render + input + apply all agree on the rotated frame for the whole
+            // drag (no un-rotated pop). softBasis re-pins each gesture (the move's
+            // own settleGestureBasis), chaining across move→scale→… until a
+            // selection/mode change clears it (clearSoftBasis) → the first fresh
+            // gesture re-derives the world-snapped basis again.
             if (softBasisValid) {
                 rX = softBasisR; rY = softBasisU; rZ = softBasisF;
                 return;
@@ -976,6 +982,11 @@ public:
         Vec3 b0X, b0Y, b0Z;
         if (runFrameValid) {
             b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
+        } else if (softBasisValid && acenSettleAllowed()) {
+            // First frame of a chained gesture, before applyTRS freezes runFrame:
+            // mirror the runFrame freeze's softBasis source so the very first drawn
+            // frame is the persisted (rotated) B0, not a one-frame un-rotated pop.
+            b0X = softBasisR; b0Y = softBasisU; b0Z = softBasisF;
         } else {
             currentBasis(b0X, b0Y, b0Z, vts);
         }
@@ -1827,6 +1838,25 @@ public:
         moveGestureStartKnown = true;
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
+        // Gesture chaining (coherence): override the Move bank's input-projection
+        // basis (captured from the LIVE currentBasis in moveSub.onMouseButtonDown)
+        // with the SAME softBasis the runFrame B0 freeze uses, so the drag
+        // DIRECTION matches the rotated arrows — grab the rotated X arrow → move
+        // along rotated X. Render and input must never split sources. ONLY for the
+        // frame-relative grabs (single axis 0/1/2 + plane circles 4/5/6). The
+        // center-box free-plane drag (dragAxis 3) is BASIS-FREE/screen-plane — its
+        // input decompose passes the full 3D snap delta unchanged (constrainSnapDelta
+        // returns delta, move.d:586) against the live basis — so it must NOT chain off
+        // softBasis (the apply runFrame swap + visual center-follow are excluded the
+        // same way via moveCenterBoxDragActive(); decompose and re-expand must share
+        // the live basis so they cancel and the drag stays screen-plane). Note: a
+        // center-box GRAB returns dragAxis 3 from hitTestAxes and does NOT relocate —
+        // only beginScreenPlaneDragAt (the off-gizmo click-relocate) does.
+        if (softBasisValid && acenSettleAllowed() && moveSub.dragAxis != 3) {
+            moveSub.inputBasisX = softBasisR;
+            moveSub.inputBasisY = softBasisU;
+            moveSub.inputBasisZ = softBasisF;
+        }
 
         auto cp = queryClusterPivots(vts);
         // ANTI-RELOCATION: do NOT move this predicate out of
@@ -1989,6 +2019,14 @@ public:
         // dragStartScaleAccum — undo-only, never a fold input.
         gestureStart           = run;
         scaleGestureStartKnown = true;
+        // Gesture chaining (coherence): override the Scale bank's input-projection
+        // basis from softBasis (mirror of the Move override) so an axis scale after
+        // a rotate scales along the rotated axes that the rendered boxes show.
+        if (softBasisValid && acenSettleAllowed()) {
+            scaleSub.inputBasisX = softBasisR;
+            scaleSub.inputBasisY = softBasisU;
+            scaleSub.inputBasisZ = softBasisF;
+        }
         // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — capture the
         // gesture-START soft pin LIVE (mirror of the rotate/Move capture) so the
         // scale undo hook restores it on revert.
@@ -2046,9 +2084,19 @@ public:
                 // visible "gizmo center" — the gizmo follows the
                 // ACEN centroid which `update()` re-evaluates from
                 // the moved verts on the next frame.
-                Vec3 worldStep = moveSub.handler.axisX * pending.x
-                               + moveSub.handler.axisY * pending.y
-                               + moveSub.handler.axisZ * pending.z;
+                // The center-box free-plane drag (dragAxis 3) decomposed `pending`
+                // against the LIVE inputBasis (NOT the rotated softBasis), so its
+                // visual follow must re-expand along that SAME live inputBasis — else
+                // the center drifts off the cursor by the gizmo rotation R. The
+                // axis/plane grabs decomposed against the rendered frame (= rotated
+                // handler.axis* when chaining), so they expand along handler.axis*.
+                Vec3 eX, eY, eZ;
+                if (moveCenterBoxDragActive()) {
+                    eX = moveSub.inputBasisX; eY = moveSub.inputBasisY; eZ = moveSub.inputBasisZ;
+                } else {
+                    eX = moveSub.handler.axisX; eY = moveSub.handler.axisY; eZ = moveSub.handler.axisZ;
+                }
+                Vec3 worldStep = eX * pending.x + eY * pending.y + eZ * pending.z;
                 accumulatedWorldDelta = accumulatedWorldDelta + worldStep;
 
                 // Single per-frame mesh mutation through applyTRS with the
@@ -2808,10 +2856,29 @@ public:
         // resetRun() at every geometry-run boundary clears it so a relocate
         // re-freezes a fresh frame next apply.
         if (!runFrameValid) {
+            // Chain a new gesture off the PERSISTED gizmo frame: when a prior
+            // gesture left a soft basis (softBasisValid, and the selection/mode
+            // hasn't changed to clear it), freeze THIS run's B0 from softBasis
+            // instead of the live world-snapped currentBasis. runFrame is the SINGLE
+            // B0 that feeds BOTH the rendered frame (renderBasis drag branch) AND the
+            // apply-path translate (tX/tY/tZ at applyFold), so this one swap keeps
+            // render + apply coherent — the move-after-rotate gizmo draws rotated AND
+            // translates along the rotated axes (MODO parity). The sub-tools'
+            // inputBasis* are overridden from the same softBasis in begin*DragSession
+            // so the drag DIRECTION matches the rendered arrows (never split sources).
+            // Gated by acenSettleAllowed() (mirrors where softBasis is set) so
+            // Element/Local — which never persist a frame — re-derive fresh.
+            // The Move center-box free-plane drag (dragAxis 3) is basis-free on the
+            // input side, so it stays on the LIVE basis here too — else decompose
+            // (live) vs re-expand (rotated runFrame) would round-trip to R·worldDelta.
+            Vec3 f0X = bX, f0Y = bY, f0Z = bZ;
+            if (softBasisValid && acenSettleAllowed() && !moveCenterBoxDragActive()) {
+                f0X = softBasisR; f0Y = softBasisU; f0Z = softBasisF;
+            }
             runFrameOrigin = pivot;
-            runFrameR      = bX;
-            runFrameU      = bY;
-            runFrameF      = bZ;
+            runFrameR      = f0X;
+            runFrameU      = f0Y;
+            runFrameF      = f0Z;
             runFrameValid  = true;
         }
 
@@ -4488,6 +4555,22 @@ private:
     bool acenSettleAllowed() const {
         auto ac = activeAcenStage();
         return ac !is null && ac.acenSettleAllowed();
+    }
+
+    // Gesture chaining — is the ACTIVE drag the Move center-box free-plane drag
+    // (dragAxis == 3)? That drag is BASIS-FREE: its input decompose passes the full
+    // 3D snap delta (constrainSnapDelta returns delta unchanged, move.d:586) and
+    // pendingTranslateDelta decomposes against the LIVE inputBasis (NOT overridden
+    // for axis 3 in beginMoveDragSession). So it must be EXCLUDED from the softBasis
+    // chaining on the APPLY side (runFrame B0) and the visual center-follow too:
+    // re-expanding run.t along a rotated runFrame while it was decomposed against the
+    // live basis would round-trip to R·worldDelta — a center-box free-drag after a
+    // Border rotate would translate rotated by the gizmo angle (off the cursor). The
+    // surrounding gizmo can still draw rotated (renderBasis); only this handle's
+    // input + apply + visual-follow stay on the live (un-rotated) basis, as before
+    // the chaining change.
+    bool moveCenterBoxDragActive() const {
+        return activeDrag is moveSub && moveSub.dragAxis == 3;
     }
 
     // flex_border_handles_plan.md Phase 3 (BUG-1) — the ONE gesture-end center
