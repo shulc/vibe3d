@@ -2336,10 +2336,22 @@ public:
                     // its OWN axes. Falls back to runFrame (then live currentBasis)
                     // for the un-chained first gesture / non-Border modes.
                     Vec3 ringAxis;
+                    // Gesture-frame unification, Phase 3 — the chained ring axis
+                    // now reads the unified `frame` instead of the parallel
+                    // `rotateChain*` copy. `rotateChainAxisValid` is precisely
+                    // `frame.valid && rotDragAxisIdx in 0..2` (set in
+                    // beginRotateDragSession from the SAME softBasis), and here we
+                    // are already in the principal-ring branch (ax in 0..2), so
+                    // `frame.{right,up,axis}` are the SAME vectors `rotateChain*`
+                    // held (both copies of softBasis). The `rotateChain*` WRITES
+                    // stay in place (retired in a later phase); only this READ
+                    // moves to `frame`. Value-identical (the parity guard proves
+                    // `frame == softBasis`).
                     if (rotateChainAxisValid) {
-                        ringAxis = ax == 0 ? rotateChainR
-                                 : ax == 1 ? rotateChainU
-                                           : rotateChainF;
+                        debug assertGestureFrameMirrorsSoftBasis();
+                        ringAxis = ax == 0 ? frame.right
+                                 : ax == 1 ? frame.up
+                                           : frame.axis;
                     } else if (runFrameValid) {
                         ringAxis = ax == 0 ? runFrameR
                                  : ax == 1 ? runFrameU
@@ -4454,8 +4466,15 @@ private:
         // per-cluster (ACEN.Local) path below keeps its own per-cluster axes
         // (Local never chains — acenSettleAllowed excludes it).
         Vec3 sX = tX, sY = tY, sZ = tZ;
-        if (softBasisValid && acenSettleAllowed()) {
-            sX = softBasisR; sY = softBasisU; sZ = softBasisF;
+        // Gesture-frame unification, Phase 3 — the chained scale axes now read the
+        // unified `frame` instead of softBasis directly. `frame.valid` IS
+        // `softBasisValid && acenSettleAllowed()` by construction, and
+        // `frame.{right,up,axis} == softBasis{R,U,F}` (parity guard), so this is a
+        // value-identical swap. The softBasis WRITES stay (retired in a later
+        // phase); only this READ moves to `frame`.
+        if (frame.valid) {
+            debug assertGestureFrameMirrorsSoftBasis();
+            sX = frame.right; sY = frame.up; sZ = frame.axis;
         }
 
         // MATRIX-AS-TRUTH — the GLOBAL rotate factor is `run.r` directly (the
