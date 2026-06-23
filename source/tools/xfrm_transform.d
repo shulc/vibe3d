@@ -76,7 +76,8 @@ import operator : VectorStack;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix, matMul4, wrapAboutPivot, eulerZYXFromMatrix;
+               identityMatrix, matMul4, wrapAboutPivot, eulerZYXFromMatrix,
+               frameMatrix, frameMatrixInverse;
 import editmode : EditMode;
 import mesh;
 import handler  : ToolHandles;
@@ -155,6 +156,30 @@ struct XformState {
     // mutable field, so the literal is spelled out here.
     float[16] r = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1];
     Vec3 s = Vec3(1, 1, 1);
+}
+
+// Unified gesture frame — the orthonormal world coordinate frame frozen at
+// gesture start and chained across same-session gestures. It is the single
+// representation that the render ladder's top rung, the chained input
+// channel, and the chained apply axis will read for all three banks, once the
+// later phases re-point those reads. Phase 0 introduces it ALONGSIDE the
+// existing slots and proves it mirrors the persisted `softBasis` triple
+// exactly (same value, same `softBasisValid && acenSettleAllowed()` gate);
+// NO consumer reads it for behavior yet.
+//
+// `m`/`mInv` are COMPUTED from the existing math helpers rather than stored:
+// every writer feeds a pure-rotation orthonormal triple, so the inverse of
+// the frame matrix equals its transpose by construction (frameMatrixInverse,
+// proven == transpose in math.d's unittest). A DEBUG assert at population
+// keeps that invariant honest.
+struct GestureFrame {
+    Vec3 right  = Vec3(1, 0, 0);
+    Vec3 up     = Vec3(0, 1, 0);
+    Vec3 axis   = Vec3(0, 0, 1);   // "axis"/"forward" — the third frame vector
+    Vec3 origin = Vec3(0, 0, 0);   // the chained-translate pivot
+    bool valid  = false;           // false until the first freeze of a chained session
+    float[16] m()    const @safe pure nothrow @nogc { return frameMatrix(right, up, axis); }
+    float[16] mInv() const @safe pure nothrow @nogc { return frameMatrixInverse(right, up, axis); }
 }
 
 class XfrmTransformTool : TransformTool {
@@ -284,6 +309,17 @@ public:
     private Vec3 softBasisR     = Vec3(1, 0, 0);
     private Vec3 softBasisU     = Vec3(0, 1, 0);
     private Vec3 softBasisF     = Vec3(0, 0, 1);
+
+    // Unified gesture frame (Phase 0) — populated to MIRROR the persisted
+    // softBasis triple under the SAME `softBasisValid && acenSettleAllowed()`
+    // gate, so `frame.{right,up,axis} == softBasis{R,U,F}` and
+    // `frame.valid == (softBasisValid && acenSettleAllowed())` everywhere it is
+    // chained. NO functional read consults `frame` yet; later phases will
+    // re-point the render top rung / input channel / apply axis onto it and
+    // retire the hand-synced copies. Kept in sync via `syncGestureFrame()`,
+    // called wherever softBasis changes (begin*DragSession, settleGestureBasis,
+    // clearSoftBasis).
+    private GestureFrame frame;
 
     // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
     // THIS gesture's mouse-down lives in `gestureStart` (one struct snapshot,
@@ -984,6 +1020,7 @@ public:
             // selection/mode change clears it (clearSoftBasis) → the first fresh
             // gesture re-derives the world-snapped basis again.
             if (softBasisValid) {
+                debug assertGestureFrameMirrorsSoftBasis();
                 rX = softBasisR; rY = softBasisU; rZ = softBasisF;
                 return;
             }
@@ -1017,6 +1054,7 @@ public:
         if (softBasisValid && acenSettleAllowed()) {
             // Persisted rotated frame — render it whether or not runFrame is valid
             // (within-session chain: runFrame may be the stale world frame).
+            debug assertGestureFrameMirrorsSoftBasis();
             b0X = softBasisR; b0Y = softBasisU; b0Z = softBasisF;
         } else if (runFrameValid) {
             b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
@@ -1914,6 +1952,11 @@ public:
                         && !cp.active
                         && (vertexProcessCount
                             == cast(int)mesh.vertices.length);
+
+        // Phase 0 — mirror the (possibly chained) softBasis into the unified
+        // `frame` at gesture start, under the same gate the chained reads use.
+        // NO consumer reads `frame` yet; this only proves it tracks softBasis.
+        syncGestureFrame();
     }
 
     // MS-2 (rotate single-source) — rotate counterpart of
@@ -2042,6 +2085,9 @@ public:
                        && !cp.active
                        && (vertexProcessCount
                            == cast(int)mesh.vertices.length);
+
+        // Phase 0 — mirror softBasis into `frame` (see beginMoveDragSession).
+        syncGestureFrame();
     }
 
     // Scale single-source — scale counterpart of `beginMoveDragSession` /
@@ -2113,6 +2159,9 @@ public:
                          && (vertexProcessCount
                              == cast(int)mesh.vertices.length);
         scaleDragActive = true;
+
+        // Phase 0 — mirror softBasis into `frame` (see beginMoveDragSession).
+        syncGestureFrame();
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
@@ -4742,12 +4791,82 @@ private:
         if (ac is null || !ac.acenSettleAllowed()) return;
         softBasisValid = true;
         softBasisR = r; softBasisU = u; softBasisF = f;
+        syncGestureFrame();   // Phase 0 — mirror the just-settled basis into `frame`.
     }
 
     // Drop the persisted gesture-end basis so the idle gizmo re-derives from the
     // live selection (a new selection / a mode change recomputes the basis). Driven
     // from the SAME wrapper boundaries that clear the center soft pin.
-    void clearSoftBasis() { softBasisValid = false; }
+    void clearSoftBasis() { softBasisValid = false; syncGestureFrame(); }
+
+    // Phase 0 — recompute the unified `frame` to MIRROR the persisted softBasis
+    // triple under the SAME gate the chained reads use (`softBasisValid &&
+    // acenSettleAllowed()`). Called wherever softBasis changes. This makes
+    // `frame.{right,up,axis} == softBasis{R,U,F}` and `frame.valid` exactly the
+    // chained gate by construction, so the later phases can re-point reads onto
+    // `frame` as a same-value swap. NO behavior depends on it yet.
+    private void syncGestureFrame() {
+        if (softBasisValid && acenSettleAllowed()) {
+            frame.right = softBasisR;
+            frame.up    = softBasisU;
+            frame.axis  = softBasisF;
+            frame.valid = true;
+            debug assertGestureFrameOrthonormal();
+        } else {
+            frame.valid = false;
+        }
+    }
+
+    // DEBUG-only — Phase 0 parity guard. On the CHAINED render branches (idle
+    // softBasis rung + the active B0 top rung) `frame` must EQUAL the softBasis
+    // triple it is destined to replace, with `frame.valid` set. This proves the
+    // unified frame tracks softBasis exactly before any functional read is
+    // re-pointed onto it. The idle rung gates on `softBasisValid` alone (not
+    // also acenSettleAllowed()); that path is still value-identical by invariant
+    // — an idle ACEN-mode flip fires clearSoftBasis() (which also clears
+    // `frame.valid`) before render — so this guard holds at idle frames too.
+    // We do NOT assert against the runFrame or currentBasis rungs: they are
+    // untouched and carry distinct values by design (the render ladder stays
+    // 3-way). Compiled out of release.
+    debug private void assertGestureFrameMirrorsSoftBasis() {
+        import std.math : abs;
+        enum float tol = 1e-5f;
+        assert(frame.valid,
+               "GestureFrame invalid on a chained softBasis render branch");
+        assert(abs(frame.right.x - softBasisR.x) < tol
+            && abs(frame.right.y - softBasisR.y) < tol
+            && abs(frame.right.z - softBasisR.z) < tol,
+               "frame.right != softBasisR");
+        assert(abs(frame.up.x - softBasisU.x) < tol
+            && abs(frame.up.y - softBasisU.y) < tol
+            && abs(frame.up.z - softBasisU.z) < tol,
+               "frame.up != softBasisU");
+        assert(abs(frame.axis.x - softBasisF.x) < tol
+            && abs(frame.axis.y - softBasisF.y) < tol
+            && abs(frame.axis.z - softBasisF.z) < tol,
+               "frame.axis != softBasisF");
+    }
+
+    // DEBUG-only — the chained frame is always a pure-rotation orthonormal
+    // triple, so `frameMatrixInverse == transpose(frameMatrix) == inverse`
+    // holds by construction. Assert it at population (Risk G): unit-length,
+    // mutually orthogonal vectors, and `m·mInv ≈ I`. Compiled out of release.
+    debug private void assertGestureFrameOrthonormal() {
+        import std.math : abs;
+        enum float tol = 1e-3f;
+        assert(abs(frame.right.length - 1.0f) < tol, "frame.right not unit length");
+        assert(abs(frame.up.length    - 1.0f) < tol, "frame.up not unit length");
+        assert(abs(frame.axis.length  - 1.0f) < tol, "frame.axis not unit length");
+        assert(abs(dot(frame.right, frame.up))   < tol, "frame right·up not orthogonal");
+        assert(abs(dot(frame.right, frame.axis)) < tol, "frame right·axis not orthogonal");
+        assert(abs(dot(frame.up,    frame.axis)) < tol, "frame up·axis not orthogonal");
+        auto m    = frame.m();
+        auto mInv = frame.mInv();
+        auto prod = matMul4(m, mInv);
+        foreach (i; 0 .. 16)
+            assert(abs(prod[i] - identityMatrix[i]) < tol,
+                   "frame m·mInv not identity (orthonormality violated)");
+    }
 
     // P-C: the single SNAP / SYMM stages — config sources of truth for the
     // snap + symmetry banks. The refire entry's config-restore hooks + the
