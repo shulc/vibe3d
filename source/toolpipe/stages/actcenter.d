@@ -694,6 +694,24 @@ public:
         return computeCenter();
     }
 
+    /// BUG-1 / flex_border_handles_plan.md Phase 3 — the 2-entry "is a gesture
+    /// settle (soft-pin) meaningful in this mode?" predicate. The wrapper's
+    /// settleGestureCenter() consults it before pinning the drop center, and the
+    /// undo-hook splice gates on it too. We EXCLUDE exactly the two modes that
+    /// already own a HIGHER-precedence LIVE pivot source which computeCenter
+    /// returns ahead of softPlaced — so a single drop-center either can't apply or
+    /// can't represent the pivot:
+    ///   - Element: liveElementCenter (the picked-element ring centroid) wins in
+    ///     computeCenter; the gizmo must keep tracking the element, not freeze.
+    ///   - Local:   per-cluster pivots (N centers) — one drop-center can't stand
+    ///     in for N clusters.
+    /// This is NOT a mode allow-list: every OTHER mode (Auto / None / Screen /
+    /// Select / SelectAuto / Border / Origin / Manual) consults softPlaced, so the
+    /// freeze generalizes with no `mode==border` branch.
+    bool acenSettleAllowed() const {
+        return mode != Mode.Element && mode != Mode.Local;
+    }
+
 private:
 
     Vec3 computeCenter() const {
@@ -703,9 +721,19 @@ private:
                 if (softPlaced) return softPlacedCenter;
                 return centroidWithGeometryFallback();
             case Mode.Select:
+                // BUG-1 (flex_border_handles_plan.md Phase 3): a completed gesture
+                // settles the gizmo via setSoftPlaced — consult it BEFORE the live
+                // recompute so the selection-derived pivot holds at the drop pose
+                // (no jump-back) until selection/mode change. The settle is pinned
+                // by the wrapper only for modes WITHOUT a higher-precedence live
+                // source (Element / Local excluded there — see acenSettleAllowed),
+                // so this is the general "gesture settled here" pin, not a mode
+                // branch.
+                if (softPlaced) return softPlacedCenter;
                 return selectionCentroid(/*sub*/ selectSubMode);
             case Mode.SelectAuto:
                 // Same center as Select; AxisStage realigns the basis.
+                if (softPlaced) return softPlacedCenter;
                 return selectionCentroid(SelectSubMode.Center);
             case Mode.Origin:
                 return Vec3(0, 0, 0);
@@ -765,6 +793,11 @@ private:
                 // selections (sphere top hemisphere: only the equator
                 // ring is on a border edge) the result differs and
                 // matches `actr.border`.
+                //
+                // BUG-1 (Phase 3): consult the gesture settle BEFORE the live
+                // border recompute so the gizmo holds at the drop pose instead of
+                // snapping back to the fractional falloff-attenuated border center.
+                if (softPlaced) return softPlacedCenter;
                 if (mesh_ is null) return Vec3(0, 0, 0);
                 final switch (*editMode_) {
                     case EditMode.Vertices: return centroidWithGeometryFallback();
