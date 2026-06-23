@@ -2838,6 +2838,23 @@ void main(string[] args) {
                     buf.put(`,"runFrameRight":`); putVec3(rfR);
                     buf.put(`,"runFrameUp":`);    putVec3(rfU);
                     buf.put(`,"runFrameFwd":`);   putVec3(rfF);
+                    // flex_border_handles_plan.md Phase 4 step 1 — the LIVE
+                    // rendered per-bank gizmo pose (Risk 7: read handler.axis*,
+                    // NOT the frozen runFrame*). Lets tests witness the rendered
+                    // orientation follow/freeze during a drag (bugs 2/3).
+                    Vec3 mrR, mrU, mrF, rrR, rrU, rrF, srR, srU, srF, ringR, ringU, ringF;
+                    xf.moveRenderFrame(mrR, mrU, mrF);
+                    xf.rotateRenderFrame(rrR, rrU, rrF);
+                    xf.scaleRenderFrame(srR, srU, srF);
+                    xf.rotateRingFrame(ringR, ringU, ringF);
+                    buf.put(`,"moveRenderFrame":{"right":`);   putVec3(mrR);
+                    buf.put(`,"up":`); putVec3(mrU); buf.put(`,"fwd":`); putVec3(mrF); buf.put(`}`);
+                    buf.put(`,"rotateRenderFrame":{"right":`); putVec3(rrR);
+                    buf.put(`,"up":`); putVec3(rrU); buf.put(`,"fwd":`); putVec3(rrF); buf.put(`}`);
+                    buf.put(`,"scaleRenderFrame":{"right":`);  putVec3(srR);
+                    buf.put(`,"up":`); putVec3(srU); buf.put(`,"fwd":`); putVec3(srF); buf.put(`}`);
+                    buf.put(`,"rotateRingFrame":{"right":`);   putVec3(ringR);
+                    buf.put(`,"up":`); putVec3(ringU); buf.put(`,"fwd":`); putVec3(ringF); buf.put(`}`);
                     buf.put(`}`);
                 }
             }

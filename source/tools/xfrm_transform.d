@@ -852,6 +852,43 @@ public:
     // and (in 4b) as the action-center pivot.
     public Vec3 moveGizmoCenter() const { return moveSub.handler.center; }
 
+    // ----- Rendered-pose seam (flex_border_handles_plan.md Phase 4 step 1) ----
+    //
+    // The LIVE rendered per-bank gizmo orientation, so tests can witness the
+    // rendered basis follow (or NOT follow) the gesture (bugs 2/3). CRITICAL
+    // (Risk 7): these read the LIVE rendered `handler.axisX/Y/Z` (the basis
+    // the bank actually drew this frame), NOT the frozen `runFrame*` — the
+    // whole point is to observe the rendered orientation, which during a drag
+    // is the Model-C render frame, distinct from the frozen input/apply frame.
+    //
+    // Each accessor returns the bank's right/up/fwd as a 3x3-in-Vec3 triple.
+    public void moveRenderFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        right = moveSub.handler.axisX;
+        up    = moveSub.handler.axisY;
+        fwd   = moveSub.handler.axisZ;
+    }
+    public void rotateRenderFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        right = rotateSub.handler.axisX;
+        up    = rotateSub.handler.axisY;
+        fwd   = rotateSub.handler.axisZ;
+    }
+    public void scaleRenderFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        right = scaleSub.handler.axisX;
+        up    = scaleSub.handler.axisY;
+        fwd   = scaleSub.handler.axisZ;
+    }
+    // The rotate ring's composed orientation = R_accum · frozenFrame (the
+    // R_gesture·B0 the ring already draws, xfrm_transform.d ring compose). The
+    // rotate bank's live handler.axis* IS that rendered ring orientation once
+    // the Model-C render frame feeds it (Phase 2); before then it equals the
+    // frozen idle basis. Published distinctly so a test can assert the ring
+    // preview rate independently of the sibling banks.
+    public void rotateRingFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
+        right = rotateSub.handler.axisX;
+        up    = rotateSub.handler.axisY;
+        fwd   = rotateSub.handler.axisZ;
+    }
+
     private void setSharedGizmoPose(Vec3 center, ref VectorStack vts) {
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
