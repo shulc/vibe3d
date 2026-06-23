@@ -268,6 +268,23 @@ public:
     private bool scaleSoftStartPlaced   = false;
     private Vec3 scaleSoftStartCenter   = Vec3(0, 0, 0);
 
+    // flex_border_handles_plan.md Phase 3 / COMMIT B — the gesture-end gizmo BASIS
+    // persistence slot (the analogue of softPlaced for the rendered orientation).
+    // On release of a flex ROTATE the during-drag rendered basis is R_gesture·B0;
+    // without this the idle renderBasis path falls back to the live currentBasis
+    // (world-snapped, now-rotated-selection) → a visible snap-back. We snapshot
+    // the gesture-END rendered basis at mouse-up and consult it from renderBasis
+    // while idle (activeDrag is null) BEFORE the live currentBasis fallback, so the
+    // dropped orientation persists until selection/mode change (cleared by the SAME
+    // hooks that clear softPlaced — ONE lifecycle). Captured EXPLICITLY at mouse-up
+    // (from the bank's last-drawn handler.axis*) rather than read from runFrame*,
+    // since a boundary-triggered resetRun could zero runFrame* before the next
+    // idle frame reads it (the load-bearing ordering check).
+    private bool softBasisValid = false;
+    private Vec3 softBasisR     = Vec3(1, 0, 0);
+    private Vec3 softBasisU     = Vec3(0, 1, 0);
+    private Vec3 softBasisF     = Vec3(0, 0, 1);
+
     // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
     // THIS gesture's mouse-down lives in `gestureStart` (one struct snapshot,
     // captured in every begin*DragSession after beginRunGesture). The per-gesture
@@ -390,6 +407,7 @@ public:
         currentRunBank     = DragBank.None;
         resetRun();                   // apply-path Phase 2: fresh geometry run (+ P-F frozen frame)
         lastAcenMode       = -1;      // P-C: re-latch the ACEN mode on first poll
+        clearSoftBasis();             // COMMIT B — fresh session re-derives the basis
     }
 
     // Wrapper-level transient reset (undo/redo migration P1). Extends the base
@@ -540,8 +558,10 @@ public:
                 // the soft-pin clear. A real selection change (sentinel already
                 // replaced by a concrete hash) still clears, as before.
                 if (lastSelectionHash != uint.max
-                 && curHash != lastSelectionHash)
+                 && curHash != lastSelectionHash) {
                     clearAcenSoftPlaced();
+                    clearSoftBasis();   // COMMIT B — one lifecycle with the center pin
+                }
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
             }
@@ -589,6 +609,7 @@ public:
                     // through setAttr; this covers any other path that moved the mode
                     // and is a no-op when already clear.)
                     clearAcenSoftPlaced();
+                    clearSoftBasis();   // COMMIT B — one lifecycle with the center pin
                     lastAcenMode     = curMode;
                 }
             }
@@ -925,8 +946,27 @@ public:
     // Phase 3 (separate) handles post-release persistence; here a release reverts
     // to idle-live (a transient rotate-release snap is acceptable, Phase-3 work).
     private void renderBasis(out Vec3 rX, out Vec3 rY, out Vec3 rZ, ref VectorStack vts) {
-        // Idle (no active gizmo drag): live basis, exactly as before.
+        // Idle (no active gizmo drag).
         if (activeDrag is null) {
+            // COMMIT B — a completed gesture left a persisted gesture-end basis
+            // (R_gesture·B0). Hold it until selection/mode change so a flex rotate
+            // release does NOT snap the rendered triples back to the world-snapped
+            // idle currentBasis. Cleared on the same boundaries as softPlaced.
+            //
+            // KNOWN RESIDUAL (deliberate, out of scope): if the user re-grabs a
+            // handle WITHOUT changing selection after a flex rotate, the new
+            // gesture's B0 is frozen from the LIVE world-snapped currentBasis (the
+            // begin*DragSession path), NOT from softBasis — so the gizmo pops back
+            // to the un-rotated B0 for that drag. Sourcing B0 from softBasis here
+            // would desync from the Phase-1 INPUT basis (which derives from
+            // currentBasis), reintroducing exactly the input/render conflation
+            // Phase 1 removed. A proper fix needs the idle world-snapped basis
+            // redesign, which the plan scopes out.
+            if (softBasisValid) {
+                rX = softBasisR; rY = softBasisU; rZ = softBasisF;
+                return;
+            }
+            // No persisted basis: live basis, exactly as before.
             currentBasis(rX, rY, rZ, vts);
             return;
         }
@@ -2383,6 +2423,13 @@ public:
             if (gestureMoved && currentFalloff(vts).enabled) {
                 pendingMoveSoftPin    = true;
                 pendingMoveSoftCenter = moveSub.handler.center;
+                // COMMIT B — persist the move bank's gesture-end rendered basis
+                // (R_gesture=I ⇒ B0) so the idle gizmo holds it, gated identically
+                // to the center settle (real motion + falloff) for a byte-identical
+                // no-falloff path.
+                settleGestureBasis(moveSub.handler.axisX,
+                                   moveSub.handler.axisY,
+                                   moveSub.handler.axisZ);
             }
 
             if (editIsOpen())
@@ -2474,6 +2521,14 @@ public:
             // partial selection would otherwise drift off it after the rotation.
             bool   softEndPlaced; Vec3 softEndCenter;
             settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
+            // COMMIT B — persist the rotate bank's gesture-end rendered basis
+            // (R_gesture·B0 = the rotated frame the ring left on screen) so the idle
+            // gizmo HOLDS it instead of snapping back to the world-snapped live
+            // currentBasis on release. Read from the rendered handler.axis* NOW (the
+            // last drag frame's render frame), before any boundary resetRun.
+            settleGestureBasis(rotateSub.handler.axisX,
+                               rotateSub.handler.axisY,
+                               rotateSub.handler.axisZ);
             bool softStartPlaced = rotAbsKnown ? rotateSoftStartPlaced : softEndPlaced;
             Vec3 softStartCenter = rotAbsKnown ? rotateSoftStartCenter : softEndCenter;
             rotateSub.wrapperFieldApplyHook  = () {
@@ -2550,6 +2605,11 @@ public:
             // mouse-down) so an in-session Ctrl+Z restores it in lockstep.
             bool   softEndPlaced; Vec3 softEndCenter;
             settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
+            // COMMIT B — persist the scale bank's gesture-end rendered basis
+            // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release.
+            settleGestureBasis(scaleSub.handler.axisX,
+                               scaleSub.handler.axisY,
+                               scaleSub.handler.axisZ);
             bool softStartPlaced = scaleAbsKnown ? scaleSoftStartPlaced : softEndPlaced;
             Vec3 softStartCenter = scaleAbsKnown ? scaleSoftStartCenter : softEndCenter;
             scaleSub.wrapperFieldApplyHook  = () {
@@ -4387,6 +4447,31 @@ private:
         softEndPlaced = ac.isSoftPlaced();
         softEndCenter = ac.currentSoftCenter();
     }
+
+    // COMMIT B — persist the gesture-END rendered BASIS (the analogue of the center
+    // settle above). Snapshot the bank's last-drawn handler.axis* (= the render
+    // frame R_gesture·B0 the gesture left on screen) so the idle renderBasis holds
+    // it after release instead of snapping to the world-snapped live currentBasis.
+    // Called at every gesture mouse-up. Captured EXPLICITLY from the rendered basis
+    // here (not runFrame*) so a boundary resetRun cannot strand it. Shares the
+    // softPlaced lifecycle — cleared by clearSoftBasis on the same boundaries.
+    void settleGestureBasis(Vec3 r, Vec3 u, Vec3 f) {
+        // Gate mirrors settleGestureCenter's acenSettleAllowed() so center + basis
+        // persistence share ONE Element/Local exclusion lifecycle: in Local the
+        // center re-derives per-cluster on release, so the basis must NOT freeze (a
+        // single drop-frame can't represent N clusters — Risk 5); in Element the
+        // live picked-element anchor keeps tracking. Without this gate the basis
+        // would freeze while the center re-derives → a center/basis desync.
+        auto ac = activeAcenStage();
+        if (ac is null || !ac.acenSettleAllowed()) return;
+        softBasisValid = true;
+        softBasisR = r; softBasisU = u; softBasisF = f;
+    }
+
+    // Drop the persisted gesture-end basis so the idle gizmo re-derives from the
+    // live selection (a new selection / a mode change recomputes the basis). Driven
+    // from the SAME wrapper boundaries that clear the center soft pin.
+    void clearSoftBasis() { softBasisValid = false; }
 
     // P-C: the single SNAP / SYMM stages — config sources of truth for the
     // snap + symmetry banks. The refire entry's config-restore hooks + the
