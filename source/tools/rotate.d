@@ -57,6 +57,25 @@ private:
     Vec3     inputBasisX = Vec3(1, 0, 0);
     Vec3     inputBasisY = Vec3(0, 1, 0);
     Vec3     inputBasisZ = Vec3(0, 0, 1);
+
+    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2).
+    // The rotate freeze-ordering trap: the principal `dragAxisVec`/`dragRefDir`
+    // are frozen at `onMouseButtonDown` (from `inputBasis*`), which runs BEFORE
+    // the wrapper's `beginRotateDragSession`. So a bare channel write would be
+    // too late — `setWrapperInputFrame` RE-DERIVES `dragAxisVec`/`dragRefDir`
+    // from the pushed frame after button-down (the former `rechainPrincipalDragAxis`
+    // logic, now routed through the unified frame channel). When chained, the
+    // pushed frame == softBasis, so the rotation plane is byte-identical to the
+    // prior override. The view-ring (dragAxis==3) is camera-axis/basis-free and
+    // EXCLUDED: this never fires for it (principal rings 0/1/2 only), and the
+    // view-ring mouse-up decompose keeps reading the LIVE `inputBasis*` (which is
+    // never overwritten now). The STANDALONE path (`wrapperRef is null`) never
+    // calls this and keeps deriving `dragAxisVec` from its own `inputBasis*`.
+    Vec3     wrapperInputFrameX = Vec3(1, 0, 0);
+    Vec3     wrapperInputFrameY = Vec3(0, 1, 0);
+    Vec3     wrapperInputFrameZ = Vec3(0, 0, 1);
+    bool     wrapperInputFrameValid = false;
+
     Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
     Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
     Vec3[]   origVertices;                // snapshot of vertex positions at activate()
@@ -739,30 +758,35 @@ public:
         return true;
     }
 
-    // Gesture chaining (flex_border_handles_plan.md) — RE-FREEZE the principal
-    // ring's input basis + frozen drag axis off a CHAINED basis (the persisted
-    // softBasis a prior same-session gesture left), AFTER onMouseButtonDown has
-    // already captured them from the live world-snapped currentBasis. The
-    // wrapper calls this from beginRotateDragSession (which runs after the
-    // sub-tool's onMouseButtonDown) so the rotation PLANE + the frozen
+    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2) —
+    // push the wrapper's unified gesture frame into the principal ring's frozen
+    // drag axis. Called once per gesture from beginRotateDragSession (which runs
+    // AFTER the sub-tool's onMouseButtonDown), so the rotation PLANE + the frozen
     // dragAxisVec follow the DISPLAYED rotated ring, not the un-chained world
-    // frame. Counterpart of the move/scale inputBasis override — but rotate
-    // freezes dragAxisVec/dragRefDir at button-down, so a bare inputBasis write
-    // would be too late; this re-derives those frozen fields too.
+    // frame. This is the rotate counterpart of the move/scale channel push, but
+    // rotate freezes dragAxisVec/dragRefDir at button-down (the freeze-ordering
+    // trap), so a bare channel write would be too late — it RE-DERIVES those
+    // frozen fields here from the pushed frame. When chained, the pushed frame ==
+    // softBasis, so the plane is byte-identical to the prior override.
     //
     // Principal axes (0/1/2) ONLY. The view-ring (dragAxis == 3) rotates about
-    // the camera-forward axis (basis-independent) and decomposes onto inputBasis*
-    // on mouse-up — chaining it would mis-attribute the view rotation onto the
-    // rotated principal slots — so callers MUST exclude it (mirrors the move
-    // center-box dragAxis==3 exclusion, moveCenterBoxDragActive()).
-    void rechainPrincipalDragAxis(Vec3 rX, Vec3 rY, Vec3 rZ, ref VectorStack vts) {
-        if (dragAxis < 0 || dragAxis > 2) return;   // principal rings only
-        inputBasisX = rX;
-        inputBasisY = rY;
-        inputBasisZ = rZ;
-        dragAxisVec = dragAxis == 0 ? inputBasisX
-                    : dragAxis == 1 ? inputBasisY
-                                    : inputBasisZ;
+    // the camera-forward axis (basis-independent) and decomposes onto the LIVE
+    // inputBasis* on mouse-up — chaining it would mis-attribute the view rotation
+    // onto the rotated principal slots. The wrapper's `chained` gate already
+    // excludes it; this self-guards too. Note inputBasis* is NOT overwritten here
+    // (unlike the former rechain), so the view-ring decompose stays on the live
+    // basis (a principal gesture never reaches the view-ring sites — dragAxis is
+    // fixed for the gesture — so dropping the overwrite is byte-stable).
+    void setWrapperInputFrame(Vec3 r, Vec3 u, Vec3 f, bool chained) {
+        wrapperInputFrameX     = r;
+        wrapperInputFrameY     = u;
+        wrapperInputFrameZ     = f;
+        wrapperInputFrameValid = chained;
+        if (!chained || dragAxis < 0 || dragAxis > 2) return;   // principal rings only
+        debug assertWrapperInputFrameChained();
+        dragAxisVec = dragAxis == 0 ? r
+                    : dragAxis == 1 ? u
+                                    : f;
         // Re-derive the fixed grab reference in the NEW arc plane, from the same
         // grab pixel onMouseButtonDown stored (lastMX/lastMY) against the same
         // cachedVp — so dragRefDir / dragStartDir / dragRefRadius all describe the
@@ -782,6 +806,28 @@ public:
             dragRefDir    = Vec3(0,0,0);
             dragRefRadius = 0;
         }
+    }
+
+    // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
+    // The pushed channel must carry the wrapper's unified `frame` (proven ==
+    // softBasis by the wrapper-side assert), an orthonormal triple. Compiled out
+    // of release.
+    debug void assertWrapperInputFrameChained() const {
+        import std.math : abs;
+        if (wrapperRef is null || !wrapperInputFrameValid) return;
+        enum float tol = 1e-3f;
+        assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
+               "rotate wrapperInputFrameX not unit length");
+        assert(abs(wrapperInputFrameY.length - 1.0f) < tol,
+               "rotate wrapperInputFrameY not unit length");
+        assert(abs(wrapperInputFrameZ.length - 1.0f) < tol,
+               "rotate wrapperInputFrameZ not unit length");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameY)) < tol,
+               "rotate wrapperInputFrame X·Y not orthogonal");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameZ)) < tol,
+               "rotate wrapperInputFrame X·Z not orthogonal");
+        assert(abs(dot(wrapperInputFrameY, wrapperInputFrameZ)) < tol,
+               "rotate wrapperInputFrame Y·Z not orthogonal");
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {

@@ -2057,13 +2057,14 @@ public:
         //       move-after-rotate translate algebra stays correct — see the
         //       render-only note at ~989); and
         //   (2) the INPUT measurement plane — re-derive the sub-tool's frozen
-        //       inputBasis* / dragAxisVec / dragRefDir off the same softBasis, so
-        //       the measured angle is read in the rotated ring's plane (rotate
-        //       freezes those at button-down, so a bare inputBasis write would be
-        //       too late — rechainPrincipalDragAxis re-derives them).
+        //       dragAxisVec / dragRefDir off the unified `frame`, so the measured
+        //       angle is read in the rotated ring's plane (rotate freezes those at
+        //       button-down, so a bare write would be too late — the channel push
+        //       below re-derives them; gesture-frame unification Phase 2).
         // The VIEW-RING (rotDragAxisIdx == 3) is camera-axis basis-independent and
         // EXCLUDED (mirrors moveCenterBoxDragActive() excluding the move
-        // center-box dragAxis 3). rechainPrincipalDragAxis self-guards to 0/1/2.
+        // center-box dragAxis 3). Both the apply override and the input channel
+        // self-guard to 0/1/2.
         rotateChainAxisValid = false;
         if (softBasisValid && acenSettleAllowed()
                 && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
@@ -2071,7 +2072,6 @@ public:
             rotateChainR = softBasisR;
             rotateChainU = softBasisU;
             rotateChainF = softBasisF;
-            rotateSub.rechainPrincipalDragAxis(softBasisR, softBasisU, softBasisF, vts);
         }
 
         auto cp = queryClusterPivots(vts);
@@ -2083,8 +2083,19 @@ public:
                        && (vertexProcessCount
                            == cast(int)mesh.vertices.length);
 
-        // Phase 0 — mirror softBasis into `frame` (see beginMoveDragSession).
+        // Mirror softBasis into `frame` (see beginMoveDragSession).
         syncGestureFrame();
+        // Gesture-frame unification, Phase 2 — push the unified frame into the
+        // Rotate bank's WRAPPED input channel, which re-derives the frozen
+        // principal dragAxisVec/dragRefDir from it (the freeze-ordering trap:
+        // button-down already froze them from the live basis BEFORE this runs).
+        // The channel carries `frame` (== softBasis when chained), so the rotation
+        // plane is byte-identical to the prior rechain. Gate mirrors the apply
+        // override exactly — `frame.valid` is `softBasisValid && acenSettleAllowed()`,
+        // and the view-ring (rotDragAxisIdx == 3) is excluded (the channel push and
+        // its re-derivation both self-guard to principal rings 0/1/2).
+        rotateSub.setWrapperInputFrame(frame.right, frame.up, frame.axis,
+            frame.valid && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2);
     }
 
     // Scale single-source — scale counterpart of `beginMoveDragSession` /
