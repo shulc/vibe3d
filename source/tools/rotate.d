@@ -739,6 +739,51 @@ public:
         return true;
     }
 
+    // Gesture chaining (flex_border_handles_plan.md) — RE-FREEZE the principal
+    // ring's input basis + frozen drag axis off a CHAINED basis (the persisted
+    // softBasis a prior same-session gesture left), AFTER onMouseButtonDown has
+    // already captured them from the live world-snapped currentBasis. The
+    // wrapper calls this from beginRotateDragSession (which runs after the
+    // sub-tool's onMouseButtonDown) so the rotation PLANE + the frozen
+    // dragAxisVec follow the DISPLAYED rotated ring, not the un-chained world
+    // frame. Counterpart of the move/scale inputBasis override — but rotate
+    // freezes dragAxisVec/dragRefDir at button-down, so a bare inputBasis write
+    // would be too late; this re-derives those frozen fields too.
+    //
+    // Principal axes (0/1/2) ONLY. The view-ring (dragAxis == 3) rotates about
+    // the camera-forward axis (basis-independent) and decomposes onto inputBasis*
+    // on mouse-up — chaining it would mis-attribute the view rotation onto the
+    // rotated principal slots — so callers MUST exclude it (mirrors the move
+    // center-box dragAxis==3 exclusion, moveCenterBoxDragActive()).
+    void rechainPrincipalDragAxis(Vec3 rX, Vec3 rY, Vec3 rZ, ref VectorStack vts) {
+        if (dragAxis < 0 || dragAxis > 2) return;   // principal rings only
+        inputBasisX = rX;
+        inputBasisY = rY;
+        inputBasisZ = rZ;
+        dragAxisVec = dragAxis == 0 ? inputBasisX
+                    : dragAxis == 1 ? inputBasisY
+                                    : inputBasisZ;
+        // Re-derive the fixed grab reference in the NEW arc plane, from the same
+        // grab pixel onMouseButtonDown stored (lastMX/lastMY) against the same
+        // cachedVp — so dragRefDir / dragStartDir / dragRefRadius all describe the
+        // rotated ring's plane, matching dragAxisVec.
+        prevWrapped = 0;
+        Vec3 hit;
+        if (rayPlaneIntersect(viewCamOrigin(), screenRay(lastMX, lastMY, cachedVp),
+                              handler.center, dragAxisVec, hit)) {
+            Vec3 d = hit - handler.center;
+            float draw = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+            dragStartDir = draw * 1.05f > 1e-6f ? d / (draw * 1.05f)
+                                                : Vec3(0,0,0);
+            dragRefDir    = draw > 1e-6f ? d / draw : Vec3(0,0,0);
+            dragRefRadius = draw;
+        } else {
+            dragStartDir  = Vec3(0,0,0);
+            dragRefDir    = Vec3(0,0,0);
+            dragRefRadius = 0;
+        }
+    }
+
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
         // turned it on unconditionally when Screen falloff is active so

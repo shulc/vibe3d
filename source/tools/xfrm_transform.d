@@ -322,6 +322,20 @@ public:
     // / no-cluster path → NOTHING re-bakes there (run.r accumulates it all).
     private bool rotateGesturePerClusterLocal = false;
 
+    // Gesture chaining (flex_border_handles_plan.md) — the principal rotate ring's
+    // CHAINED axis basis for THIS gesture. When a prior same-session gesture left a
+    // persisted softBasis (softBasisValid && acenSettleAllowed()), a fresh principal
+    // rotate gesture rotates about the DISPLAYED (rotated) ring axis, not the stale
+    // world-snapped runFrame. The applied ring axis (the drain at ~2232) reads
+    // rotateChain{R,U,F}[ax] instead of runFrame{R,U,F}[ax] when valid; render
+    // already sources softBasis independently (setGizmoRenderBasis ~1002). Captured
+    // in beginRotateDragSession (principal axes only — the view-ring is excluded,
+    // it is camera-axis basis-independent), cleared at every rotate mouse-up.
+    private bool rotateChainAxisValid = false;
+    private Vec3 rotateChainR = Vec3(1, 0, 0);
+    private Vec3 rotateChainU = Vec3(0, 1, 0);
+    private Vec3 rotateChainF = Vec3(0, 0, 1);
+
     // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
     // and consumed by commitEdit ONLY when a real edit command was built. A
     // zero-motion off-gizmo relocate CLICK opens a moveSub session (so the mouse-up
@@ -439,6 +453,7 @@ public:
         moveDragFastPath          = false;
         rotDragFastPath           = false;
         rotDragAxisIdx            = -1;
+        rotateChainAxisValid      = false;
         scaleDragFastPath         = false;
         scaleDragActive           = false;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
@@ -1986,6 +2001,39 @@ public:
         rotDragAxisIdx = (rotateSub.dragAxis >= 0 && rotateSub.dragAxis <= 3)
                        ? rotateSub.dragAxis : -1;
 
+        // Gesture chaining (flex_border_handles_plan.md) — when a prior
+        // same-session gesture left a persisted gizmo frame (softBasisValid, and
+        // the selection/mode has not changed to clear it), this PRINCIPAL rotate
+        // gesture must rotate about the DISPLAYED rotated ring axis, not the stale
+        // world-snapped runFrame. The render already draws the ring at
+        // R_gesture·softBasis (setGizmoRenderBasis ~1002) — without this the apply
+        // would rotate about world X while the ring shows rotated X (the
+        // user-found same-session bug: rotate Z, then grab X → X rotates about
+        // world X). Two coupled overrides, gated identically to where softBasis is
+        // SET (acenSettleAllowed mirrors the Element/Local exclusion):
+        //   (1) the APPLY ring axis — rotateChain{R,U,F} feeds the drain (~2232)
+        //       in place of runFrame{R,U,F}, the ONLY apply consumer that needs
+        //       chaining (run.t / the translate fold are UNTOUCHED, so the
+        //       move-after-rotate translate algebra stays correct — see the
+        //       render-only note at ~989); and
+        //   (2) the INPUT measurement plane — re-derive the sub-tool's frozen
+        //       inputBasis* / dragAxisVec / dragRefDir off the same softBasis, so
+        //       the measured angle is read in the rotated ring's plane (rotate
+        //       freezes those at button-down, so a bare inputBasis write would be
+        //       too late — rechainPrincipalDragAxis re-derives them).
+        // The VIEW-RING (rotDragAxisIdx == 3) is camera-axis basis-independent and
+        // EXCLUDED (mirrors moveCenterBoxDragActive() excluding the move
+        // center-box dragAxis 3). rechainPrincipalDragAxis self-guards to 0/1/2.
+        rotateChainAxisValid = false;
+        if (softBasisValid && acenSettleAllowed()
+                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
+            rotateChainAxisValid = true;
+            rotateChainR = softBasisR;
+            rotateChainU = softBasisU;
+            rotateChainF = softBasisF;
+            rotateSub.rechainPrincipalDragAxis(softBasisR, softBasisU, softBasisF, vts);
+        }
+
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
         // anti-relocation note. Do NOT recompute mid-drag.
@@ -2217,8 +2265,25 @@ public:
                     // not happened yet (applyTRS below does it), so fall back to the
                     // live currentBasis axis for THIS frame — it equals the
                     // about-to-be-frozen frame (currentBasis is what M6 freezes).
+                    // Gesture chaining (flex_border_handles_plan.md): when a prior
+                    // same-session gesture persisted a rotated frame, the runFrame
+                    // captured at THIS run's first applyTRS may be the STALE
+                    // world-snapped basis (a cross-axis rotate-after-rotate reuses
+                    // the run frame — no re-bake on the global matrix-truth path),
+                    // while the ring is DRAWN at R_gesture·softBasis. Rotate about
+                    // the DISPLAYED ring axis (rotateChain{R,U,F} = softBasis,
+                    // captured in beginRotateDragSession, principal axes only) so
+                    // apply follows render. Self-consistent — no double-count: the
+                    // render's R_gesture = R(rotateChain[ax], ang) is then applied
+                    // to softBasis, i.e. rotating the displayed frame about one of
+                    // its OWN axes. Falls back to runFrame (then live currentBasis)
+                    // for the un-chained first gesture / non-Border modes.
                     Vec3 ringAxis;
-                    if (runFrameValid) {
+                    if (rotateChainAxisValid) {
+                        ringAxis = ax == 0 ? rotateChainR
+                                 : ax == 1 ? rotateChainU
+                                           : rotateChainF;
+                    } else if (runFrameValid) {
                         ringAxis = ax == 0 ? runFrameR
                                  : ax == 1 ? runFrameU
                                            : runFrameF;
@@ -2560,6 +2625,10 @@ public:
             needsGpuUpdate  = false;
             rotDragFastPath = false;
             rotDragAxisIdx  = -1;
+            // Gesture chaining (flex_border_handles_plan.md) — drop the chained
+            // ring-axis override; the NEXT gesture re-evaluates it from the
+            // softBasis this gesture's own settleGestureBasis just (re)pinned.
+            rotateChainAxisValid = false;
             // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; a
             // subsequent R/S own-bank fast-path must drop to CPU re-upload.
             runGpuBufferDirty = true;
