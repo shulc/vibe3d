@@ -127,6 +127,27 @@ class AxisStage : Stage, Operator {
         None       = 10,
     }
 
+    // flex_border_handles_plan.md Model C — the ONE general boolean the gizmo
+    // reads to decide whether the rendered basis follows the gesture rotation.
+    // True for the SELECTION-DERIVED axis modes (their basis is anchored to the
+    // selected geometry, so it co-rotates with a flex rotate); false for the
+    // world-/screen-/origin-fixed modes (which stay put under any gesture).
+    // Border maps to axis=select (presets.cfg), so it's covered by Select. This
+    // is a PURE function of the mode — no drag/mutable state — so the idle /
+    // listAttrs deterministic path is untouched (Risk 6). The gizmo never names
+    // a mode; it asks this single declared capability of the axis sub-tool.
+    static bool modeTracksSelection(Mode m) pure nothrow @nogc @safe {
+        return m == Mode.Select || m == Mode.SelectAuto || m == Mode.Local;
+    }
+    // Same predicate keyed by the AxisPacket.type int (= cast(int)mode), for
+    // consumers that only hold the published packet, not the stage instance.
+    static bool modeTracksSelection(int type) pure nothrow @nogc @safe {
+        return modeTracksSelection(cast(Mode) type);
+    }
+    bool axisTracksSelection() const pure nothrow @nogc @safe {
+        return modeTracksSelection(mode);
+    }
+
     // Default = None — companion of ActionCenterStage's default (see
     // its comment). Tests that need a specific mode set it explicitly.
     Mode mode = Mode.None;
