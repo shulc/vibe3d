@@ -184,16 +184,15 @@ public:
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
         cachedCenter = center;
         handler.setPosition(center);
-        // Freeze the gizmo ORIENTATION for the duration of an active move
-        // drag (dragAxis >= 0). The screen→world projection of each motion
-        // delta reads handler.axisX/Y/Z; under axis.mode=select the live
-        // basis re-derives from the deforming mesh and can flip the up-sign
-        // / swap the right axis mid-drag, which oscillates the geometry.
-        // The handler keeps the orientation from the last idle draw()
-        // (undeformed mesh = correct drag-start basis), matching the frozen
-        // apply frame (runFrameR/U/F). Center still follows the cursor.
-        if (dragAxis < 0)
-            handler.setOrientation(bX, bY, bZ);
+        // flex_border_handles_plan.md Phase 2 — the wrapper passes the Model-C
+        // RENDER basis (idle: live currentBasis; during a drag: the gesture-
+        // frozen `(axisTracksSelection ? R_gesture : I)·B0`). It is now applied
+        // UNCONDITIONALLY — the old `dragAxis < 0` render gate is removed so the
+        // rendered orientation follows renderBasis cross-bank (Risk 1). The INPUT
+        // projection is unaffected: it reads the separately-frozen `inputBasis*`
+        // (Phase 1), never handler.axis*, so the gesture math stays stable while
+        // the rendered frame moves.
+        handler.setOrientation(bX, bY, bZ);
     }
 
     // Recompute gizmo center from current selection / mesh state.
@@ -243,12 +242,12 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Pull the active workplane basis (auto ⇒ world XYZ) and orient the
-        // gizmo into it: arrowX = workplane axis1, arrowY = workplane normal,
-        // arrowZ = workplane axis2. Drag math reads these via the handler.
-        // Freeze the orientation during an active drag (dragAxis >= 0) — the
-        // input-projection basis must stay fixed (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Orient the gizmo. When WRAPPED (XfrmTransformTool), the wrapper owns
+        // the rendered basis: it calls setWrapperGizmoPose with the Model-C
+        // renderBasis every frame BEFORE draw, so re-deriving currentBasis here
+        // would clobber the gesture-frozen render frame. Only a STANDALONE bank
+        // (no wrapper — unit tests) self-orients from the live basis.
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);
@@ -278,8 +277,8 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);
@@ -299,8 +298,8 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);

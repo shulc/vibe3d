@@ -93,12 +93,12 @@ public:
     // `onMouseButtonDown`, where `dragAxis` becomes >= 0) from the live
     // `currentBasis(...)`. The single-axis drag projects the screen drag
     // onto THIS frozen frame, kept SEPARATE from the rendered gizmo
-    // orientation (`handler.axisX/Y/Z`). Today both are the same drag-start
-    // frame (render orientation frozen via the `dragAxis < 0` gate;
-    // `inputBasis*` captured from the same `currentBasis(...)` the last idle
-    // draw used) — so the split is byte-stable. It lets the rendered frame
-    // move later without reversing the drag direction mid-gesture (the
-    // axis-sign flip 0b812cf fixed).
+    // orientation (`handler.axisX/Y/Z`). Phase 2 (flex_border_handles_plan.md)
+    // moves the RENDERED frame to the Model-C `(axisTracksSelection ? R_gesture
+    // : I)·B0` during a drag, while this input frame stays drag-start-frozen —
+    // so the rendered handle can re-orient (flex sibling-follow) WITHOUT
+    // reversing the drag direction mid-gesture (the axis-sign flip 0b812cf
+    // fixed). The two are now genuinely distinct during a flex rotate.
     Vec3 inputBasisX = Vec3(1, 0, 0);
     Vec3 inputBasisY = Vec3(0, 1, 0);
     Vec3 inputBasisZ = Vec3(0, 0, 1);
@@ -125,17 +125,12 @@ public:
         if (!editIsOpen())
             activationCenter = center;
         handler.setPosition(center);
-        // Freeze the gizmo ORIENTATION for the duration of an active scale
-        // drag (dragAxis >= 0). The single-axis drag path projects the gizmo
-        // axis (handler.axisX/Y/Z) to screen and projects the screen drag
-        // onto it; under axis.mode=select the live basis re-derives from the
-        // deforming mesh and can flip the axis sign mid-drag, which reverses
-        // / oscillates the scale direction. The handler keeps the orientation
-        // from the last idle draw() (undeformed mesh = correct drag-start
-        // basis). Center still follows the cursor. Mirrors the existing
-        // dragAxis>=0 gate in ScaleTool.update and the MoveTool fix.
-        if (dragAxis < 0)
-            handler.setOrientation(bX, bY, bZ);
+        // flex_border_handles_plan.md Phase 2 — apply the wrapper's Model-C
+        // RENDER basis UNCONDITIONALLY (old `dragAxis < 0` render gate removed,
+        // Risk 1). The single-axis scale INPUT projection reads the separately-
+        // frozen `inputBasis*` (Phase 1), not handler.axis*, so the scale math
+        // stays stable while the rendered frame follows renderBasis cross-bank.
+        handler.setOrientation(bX, bY, bZ);
     }
 
     // Register this bank's gizmo handles into the shared arbiter `th`
@@ -537,10 +532,10 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Orient gizmo into the active workplane basis. Freeze the
-        // orientation during an active drag (dragAxis >= 0) — the
-        // input-projection basis must stay fixed (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Wrapped: wrapper owns the Model-C renderBasis (set every frame before
+        // draw); standalone (no wrapper — unit tests) self-orients from the live
+        // basis. Re-deriving while wrapped would clobber the gesture-frozen frame.
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);
@@ -570,8 +565,8 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);

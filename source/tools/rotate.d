@@ -130,17 +130,15 @@ public:
     void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
         cachedCenter = center;
         handler.setPosition(center);
-        // Freeze the gizmo ORIENTATION for the duration of an active rotate
-        // drag (dragAxis >= 0). The rotation math reads the drag-start-frozen
-        // dragAxisVec / dragRefDir, so the angle is already correct, but the
-        // rendered ring would visibly re-orient mid-drag if the live basis
-        // re-derives from the deforming mesh under axis.mode=select (axis sign
-        // flip). Keeping the orientation from the last idle draw() (undeformed
-        // mesh = drag-start basis) also matches the frozen frame the mouse-up
-        // view-ring decomposition (dot(viewDragAxis, handler.axis*)) reads.
-        // Center still follows the cursor. Mirrors the MoveTool / ScaleTool gate.
-        if (dragAxis < 0)
-            handler.setOrientation(bX, bY, bZ);
+        // flex_border_handles_plan.md Phase 2 — apply the wrapper's Model-C
+        // RENDER basis UNCONDITIONALLY (old `dragAxis < 0` render gate removed,
+        // Risk 1). For the rotate bank the wrapper-supplied basis during a drag
+        // IS the composed `R_gesture · B0` (the ring's own rotated frame), so the
+        // rendered ring + sibling banks share one orientation. The rotation INPUT
+        // math reads the drag-start-frozen `inputBasisX/Y/Z` (Phase 1) /
+        // dragAxisVec / dragRefDir, never handler.axis*, so the angle is
+        // unaffected by the moving rendered frame.
+        handler.setOrientation(bX, bY, bZ);
     }
 
     override string name() const { return "Rotate"; }
@@ -557,10 +555,11 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Orient gizmo into the active workplane basis (auto ⇒ identity).
-        // arcX rotates around axisX, arcY around axisY, arcZ around axisZ.
-        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Wrapped: wrapper owns the Model-C renderBasis (= R_gesture·B0 for the
+        // ring during a drag), set every frame before draw. Standalone (no
+        // wrapper — unit tests) self-orients from the live basis. Re-deriving
+        // while wrapped would clobber the gesture-frozen rotated ring frame.
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);
@@ -595,8 +594,8 @@ public:
         if (!active) return;
         cachedVp = vp;
 
-        // Freeze the orientation during an active drag (see setWrapperGizmoPose).
-        if (dragAxis < 0) {
+        // Wrapped: wrapper owns renderBasis; standalone self-orients (see draw()).
+        if (wrapperRef is null) {
             Vec3 bX, bY, bZ;
             currentBasis(bX, bY, bZ, vts);
             handler.setOrientation(bX, bY, bZ);

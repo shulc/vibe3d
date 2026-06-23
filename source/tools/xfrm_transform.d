@@ -889,9 +889,82 @@ public:
         fwd   = rotateSub.handler.axisZ;
     }
 
+    // flex_border_handles_plan.md Model C — the SHARED rendered gizmo basis fed
+    // to ALL enabled banks during a gesture:
+    //
+    //     renderBasis = (axisTracksSelection ? R_gesture : I) · B0
+    //
+    //   B0        = the gizmo basis FROZEN at gesture start. That is exactly the
+    //               existing per-run frozen frame `runFrameR/U/F` (captured on the
+    //               first applyTRS of the run; before the freeze, `currentBasis`
+    //               == the about-to-be-frozen frame — same fallback the ring uses).
+    //   R_gesture = the rotation accumulated DURING this gesture = the world run
+    //               rotation now (`run.r`) relative to its gesture-start value
+    //               (`gestureStart.r`): R_gesture = run.r · gestureStart.r⁻¹. For a
+    //               move/scale gesture run.r == gestureStart.r ⇒ R_gesture = I, so
+    //               renderBasis = B0 (frozen cross-bank — bug 2). For a rotate
+    //               gesture it is the in-gesture ring rotation, so renderBasis is
+    //               B0 rotated by the applied angle (matching the ring) — bug 3.
+    //   axisTracksSelection = the single declared AxisStage capability (no mode
+    //               branch). false ⇒ plain modes hold B0 (no sibling follow).
+    //
+    // When NOT dragging the wrapper keeps today's behavior: render = the live
+    // `currentBasis` (so selecting different elements re-orients the idle gizmo).
+    // Phase 3 (separate) handles post-release persistence; here a release reverts
+    // to idle-live (a transient rotate-release snap is acceptable, Phase-3 work).
+    private void renderBasis(out Vec3 rX, out Vec3 rY, out Vec3 rZ, ref VectorStack vts) {
+        // Idle (no active gizmo drag): live basis, exactly as before.
+        if (activeDrag is null) {
+            currentBasis(rX, rY, rZ, vts);
+            return;
+        }
+        // B0 — the gesture-frozen frame. Use the run-frozen slot once valid;
+        // before the first applyTRS of the run freezes it, the live basis IS the
+        // about-to-be-frozen frame (mirrors the ring's runFrameValid fallback).
+        Vec3 b0X, b0Y, b0Z;
+        if (runFrameValid) {
+            b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
+        } else {
+            currentBasis(b0X, b0Y, b0Z, vts);
+        }
+        // axisTracksSelection — read the published axis mode (no stage lookup).
+        bool tracksSelection = false;
+        {
+            import toolpipe.packets      : AxisPacket;
+            import toolpipe.stages.axis  : AxisStage;
+            if (auto ap = vts.get!AxisPacket())
+                tracksSelection = AxisStage.modeTracksSelection(ap.type);
+        }
+        if (!tracksSelection) {
+            rX = b0X; rY = b0Y; rZ = b0Z;     // plain / fixed axis modes hold B0
+            return;
+        }
+        // R_gesture · B0. R_gesture = run.r · gestureStart.r⁻¹ (both pure
+        // rotations ⇒ inverse = transpose of the 3x3). Apply to each frozen
+        // basis vector (direction transform — these matrices have no translation).
+        import math : transformPoint;
+        float[16] gsInv = transpose3x3(gestureStart.r);
+        float[16] rGesture = matMul4(run.r, gsInv);
+        rX = transformPoint(rGesture, b0X);
+        rY = transformPoint(rGesture, b0Y);
+        rZ = transformPoint(rGesture, b0Z);
+    }
+
+    // Transpose of the upper-left 3x3 of a column-major float[16] (translation
+    // column zeroed). For an orthonormal rotation this equals its inverse — used
+    // to back out the gesture-start orientation when composing R_gesture.
+    private static float[16] transpose3x3(float[16] m) pure nothrow @nogc @safe {
+        return [
+            m[0], m[4], m[8],  0,
+            m[1], m[5], m[9],  0,
+            m[2], m[6], m[10], 0,
+            0,    0,    0,     1,
+        ];
+    }
+
     private void setSharedGizmoPose(Vec3 center, ref VectorStack vts) {
         Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
+        renderBasis(bX, bY, bZ, vts);
         if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);
