@@ -2128,14 +2128,6 @@ public:
         // dragStartScaleAccum — undo-only, never a fold input.
         gestureStart           = run;
         scaleGestureStartKnown = true;
-        // Gesture chaining (coherence): override the Scale bank's input-projection
-        // basis from softBasis (mirror of the Move override) so an axis scale after
-        // a rotate scales along the rotated axes that the rendered boxes show.
-        if (softBasisValid && acenSettleAllowed()) {
-            scaleSub.inputBasisX = softBasisR;
-            scaleSub.inputBasisY = softBasisU;
-            scaleSub.inputBasisZ = softBasisF;
-        }
         // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — capture the
         // gesture-START soft pin LIVE (mirror of the rotate/Move capture) so the
         // scale undo hook restores it on revert.
@@ -2157,8 +2149,16 @@ public:
                              == cast(int)mesh.vertices.length);
         scaleDragActive = true;
 
-        // Phase 0 — mirror softBasis into `frame` (see beginMoveDragSession).
+        // Mirror softBasis into `frame` (see beginMoveDragSession).
         syncGestureFrame();
+        // Gesture-frame unification, Phase 2 — push the unified frame into the
+        // Scale bank's WRAPPED input channel (mirror of the Move push). Replaces
+        // the prior hand-synced inputBasis* override; the channel carries `frame`
+        // (== softBasis when chained), so an axis scale after a rotate scales
+        // along the rotated axes the rendered boxes show — byte-identical input.
+        // `frame.valid` is the `softBasisValid && acenSettleAllowed()` gate the
+        // old override used (scale has no center-box exclusion).
+        scaleSub.setWrapperInputFrame(frame.right, frame.up, frame.axis, frame.valid);
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {

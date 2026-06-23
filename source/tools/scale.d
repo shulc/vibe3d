@@ -103,6 +103,71 @@ public:
     Vec3 inputBasisY = Vec3(0, 1, 0);
     Vec3 inputBasisZ = Vec3(0, 0, 1);
 
+    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2).
+    // When wrapper-driven (`wrapperRef !is null`) AND the wrapper chained this
+    // gesture off the persisted gizmo frame, the wrapper pushes that ONE unified
+    // frame here (via `setWrapperInputFrame`, called once per gesture from
+    // `beginScaleDragSession`). The single-axis DECOMPOSE site then projects onto
+    // THIS frame instead of the bank's own `inputBasis*`. Replaces the prior
+    // hand-synced override that copied softBasis into `inputBasis*` at gesture
+    // start — same value (the channel carries the unified `frame`, which equals
+    // softBasis when chained). The STANDALONE path (`wrapperRef is null`) NEVER
+    // consults this; it keeps its own `inputBasis*` (seeded by `currentBasis`).
+    Vec3 wrapperInputFrameX = Vec3(1, 0, 0);
+    Vec3 wrapperInputFrameY = Vec3(0, 1, 0);
+    Vec3 wrapperInputFrameZ = Vec3(0, 0, 1);
+    bool wrapperInputFrameValid = false;
+
+    // Push the wrapper's unified gesture frame into this bank for the WRAPPED
+    // scale input projection. `chained` is the wrapper's `frame.valid &&
+    // acenSettleAllowed()` gate (mirrors the old override guard) — false for a
+    // fresh/non-chained gesture, in which case the DECOMPOSE read stays on
+    // `inputBasis*`.
+    void setWrapperInputFrame(Vec3 r, Vec3 u, Vec3 f, bool chained) {
+        wrapperInputFrameX     = r;
+        wrapperInputFrameY     = u;
+        wrapperInputFrameZ     = f;
+        wrapperInputFrameValid = chained;
+    }
+
+    // Source selector for the WRAPPED-role DECOMPOSE read. Reads the unified
+    // frame when wrapper-chained, else the bank's drag-start-frozen
+    // `inputBasis*` (standalone / fresh non-chained).
+    Vec3 inAxisX() const {
+        return (wrapperRef !is null && wrapperInputFrameValid)
+             ? wrapperInputFrameX : inputBasisX;
+    }
+    Vec3 inAxisY() const {
+        return (wrapperRef !is null && wrapperInputFrameValid)
+             ? wrapperInputFrameY : inputBasisY;
+    }
+    Vec3 inAxisZ() const {
+        return (wrapperRef !is null && wrapperInputFrameValid)
+             ? wrapperInputFrameZ : inputBasisZ;
+    }
+
+    // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
+    // The pushed channel must carry the wrapper's unified `frame` (proven ==
+    // softBasis by the wrapper-side assert), an orthonormal triple. Assert that
+    // invariant here, mirroring the render-rung asserts. Compiled out of release.
+    debug void assertWrapperInputFrameChained() const {
+        import std.math : abs;
+        if (wrapperRef is null || !wrapperInputFrameValid) return;
+        enum float tol = 1e-3f;
+        assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
+               "scale wrapperInputFrameX not unit length");
+        assert(abs(wrapperInputFrameY.length - 1.0f) < tol,
+               "scale wrapperInputFrameY not unit length");
+        assert(abs(wrapperInputFrameZ.length - 1.0f) < tol,
+               "scale wrapperInputFrameZ not unit length");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameY)) < tol,
+               "scale wrapperInputFrame X·Y not orthogonal");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameZ)) < tol,
+               "scale wrapperInputFrame X·Z not orthogonal");
+        assert(abs(dot(wrapperInputFrameY, wrapperInputFrameZ)) < tol,
+               "scale wrapperInputFrame Y·Z not orthogonal");
+    }
+
     // Back-pointer to the unified `XfrmTransformTool`, wired at the
     // wrapper's `activate()`. Typed as the base class to avoid a
     // field-level circular import (mirrors `MoveTool` / `RotateTool`);
@@ -742,12 +807,16 @@ public:
             return true;
         }
 
-        // Single-axis drag projects the screen drag onto the frozen INPUT
-        // basis (captured at drag start), not the rendered `handler.axis*`,
-        // so the drag direction can't reverse if the rendered frame moves.
-        Vec3 axis = dragAxis == 0 ? inputBasisX
-                  : dragAxis == 1 ? inputBasisY
-                                  : inputBasisZ;
+        // Single-axis drag projects the screen drag onto the unified gesture
+        // frame when wrapper-chained (gesture-frame unification, Phase 2), else
+        // the bank's drag-start-frozen INPUT basis — never the rendered
+        // `handler.axis*`, so the drag direction can't reverse if the rendered
+        // frame moves. The channel carries the same value the old softBasis
+        // override wrote, so this is byte-identical when chained.
+        debug assertWrapperInputFrameChained();
+        Vec3 axis = dragAxis == 0 ? inAxisX()
+                  : dragAxis == 1 ? inAxisY()
+                                  : inAxisZ();
 
         float cx, cy, cndcZ, ax_, ay_, andcZ;
         if (!projectToWindowFull(center, cachedVp, cx, cy, cndcZ))
