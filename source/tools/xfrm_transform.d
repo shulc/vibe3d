@@ -1910,25 +1910,6 @@ public:
         moveGestureStartKnown = true;
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
-        // Gesture chaining (coherence): override the Move bank's input-projection
-        // basis (captured from the LIVE currentBasis in moveSub.onMouseButtonDown)
-        // with the SAME softBasis the runFrame B0 freeze uses, so the drag
-        // DIRECTION matches the rotated arrows — grab the rotated X arrow → move
-        // along rotated X. Render and input must never split sources. ONLY for the
-        // frame-relative grabs (single axis 0/1/2 + plane circles 4/5/6). The
-        // center-box free-plane drag (dragAxis 3) is BASIS-FREE/screen-plane — its
-        // input decompose passes the full 3D snap delta unchanged (constrainSnapDelta
-        // returns delta, move.d:586) against the live basis — so it must NOT chain off
-        // softBasis (the apply runFrame swap + visual center-follow are excluded the
-        // same way via moveCenterBoxDragActive(); decompose and re-expand must share
-        // the live basis so they cancel and the drag stays screen-plane). Note: a
-        // center-box GRAB returns dragAxis 3 from hitTestAxes and does NOT relocate —
-        // only beginScreenPlaneDragAt (the off-gizmo click-relocate) does.
-        if (softBasisValid && acenSettleAllowed() && moveSub.dragAxis != 3) {
-            moveSub.inputBasisX = softBasisR;
-            moveSub.inputBasisY = softBasisU;
-            moveSub.inputBasisZ = softBasisF;
-        }
 
         auto cp = queryClusterPivots(vts);
         // ANTI-RELOCATION: do NOT move this predicate out of
@@ -1954,10 +1935,25 @@ public:
                         && (vertexProcessCount
                             == cast(int)mesh.vertices.length);
 
-        // Phase 0 — mirror the (possibly chained) softBasis into the unified
-        // `frame` at gesture start, under the same gate the chained reads use.
-        // NO consumer reads `frame` yet; this only proves it tracks softBasis.
+        // Mirror the (possibly chained) softBasis into the unified `frame` at
+        // gesture start, under the same gate the chained reads use.
         syncGestureFrame();
+        // Gesture-frame unification, Phase 2 — push the unified frame into the
+        // Move bank's WRAPPED input-projection channel. This replaces the prior
+        // hand-synced `inputBasis*` override: the channel carries `frame`
+        // (== softBasis when chained), and the bank's DECOMPOSE reads project the
+        // world delta onto it. The `chained` gate mirrors the old override guard
+        // EXACTLY — `frame.valid` is `softBasisValid && acenSettleAllowed()`, and
+        // the center-box free-plane drag (dragAxis 3) is BASIS-FREE/screen-plane,
+        // so it is excluded here (passes chained=false) and falls back to the
+        // bank's live `inputBasis*` — its decompose and re-expand share the live
+        // basis so they cancel and the drag stays screen-plane (the apply runFrame
+        // swap + visual center-follow are excluded the same way via
+        // moveCenterBoxDragActive()). Note: a center-box GRAB returns dragAxis 3
+        // from hitTestAxes and does NOT relocate — only beginScreenPlaneDragAt
+        // (the off-gizmo click-relocate) does.
+        moveSub.setWrapperInputFrame(frame.right, frame.up, frame.axis,
+            frame.valid && moveSub.dragAxis != 3);
     }
 
     // MS-2 (rotate single-source) — rotate counterpart of
