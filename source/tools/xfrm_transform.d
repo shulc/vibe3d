@@ -4365,6 +4365,42 @@ private:
         Vec3 tY = runFrameValid ? runFrameU : bY;
         Vec3 tZ = runFrameValid ? runFrameF : bZ;
 
+        // SCALE-AXIS CHAIN (same fix class as the rotate-axis chain d4e0ea0 and
+        // the translate frozen-frame above) — the GLOBAL fold's SCALE term must
+        // use a FROZEN basis, NOT the live currentBasis (bX/bY/bZ).
+        // pivotScaleMatrixBasis scales `run.s` along the axes it is handed, and a
+        // single-axis scale (e.g. SZ) deforms the selection's bbox aspect ratio,
+        // so the live world-snapped select-derived basis (axis.d
+        // computeSelectionBboxBasis: `right` = world axis of largest in-plane
+        // bbox extent) SWAPS its largest-extent axis as the drag crosses an
+        // extent tie and swaps BACK — the apply axis OSCILLATES A->B->A within
+        // one drag (the user-found scale-after-rotate flip).
+        //
+        // SOURCE — mirror renderBasis (~1017) and the input override
+        // (beginScaleDragSession ~2091): when a prior same-session gesture left a
+        // persisted gizmo frame (softBasisValid && acenSettleAllowed), source the
+        // scale axes from softBasis DIRECTLY, not from runFrame. The run frame is
+        // frozen at the run's FIRST applyTRS, but a chained scale REUSES the prior
+        // (e.g. rotate) gesture's still-open run (noteRunBank consolidates history
+        // but does NOT resetRun), so runFrame holds that run's ORIGINAL
+        // world-snapped frame — softBasis carries the rotated frame the displayed
+        // boxes + the input projection already use. Scaling along softBasis (=
+        // run.r·world) composes with the held `run.r` in composeFor as
+        // M = S(softBasis)·run.r: at run.s=I, M = run.r (held rotation only); as
+        // run.s grows the extra scale is along the DISPLAYED rotated axis — no
+        // double-count (S composes with run.r, it does not replace or re-rotate
+        // it). For a FRESH first gesture (softBasisValid==false) this falls back
+        // to the frozen runFrame == the gesture-start currentBasis, so a
+        // non-flipping drag is geometry-identical to the old live read and differs
+        // ONLY on the flip frames it suppresses. Uniform-disc scale (run.s
+        // isotropic) is rotation-invariant ⇒ frozen vs live is a no-op there. The
+        // per-cluster (ACEN.Local) path below keeps its own per-cluster axes
+        // (Local never chains — acenSettleAllowed excludes it).
+        Vec3 sX = tX, sY = tY, sZ = tZ;
+        if (softBasisValid && acenSettleAllowed()) {
+            sX = softBasisR; sY = softBasisU; sZ = softBasisF;
+        }
+
         // MATRIX-AS-TRUTH — the GLOBAL rotate factor is `run.r` directly (the
         // run's world-space accumulated rotation, composed about the real frozen
         // ring axes at the drain; the view-ring is already folded into it). It is an
@@ -4382,7 +4418,7 @@ private:
         // the SHARED-fold Move/Scale terms.
         float[16] M = composeFor(/*useRotM=*/true, run.r,
                                  Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,0),
-                                 bX, bY, bZ, tX, tY, tZ);
+                                 sX, sY, sZ, tX, tY, tZ);
 
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
