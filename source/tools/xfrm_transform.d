@@ -256,6 +256,18 @@ public:
     private bool gestureSoftStartPlaced = false;
     private Vec3 gestureSoftStartCenter = Vec3(0, 0, 0);
 
+    // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — the Rotate /
+    // Scale equivalents of the Move gestureSoftStart* pair above. Captured at the
+    // matching mouse-DOWN (begin*DragSession) from the LIVE soft pin so the
+    // per-gesture undo hook can restore the gesture-START soft state on revert
+    // (mirroring the Move commitEdit splice). Without these an in-session Ctrl+Z
+    // after a frozen-frame rotate/scale reverts geometry but leaves the gizmo
+    // floating at the settled pose — the exact desync the Move path already fixed.
+    private bool rotateSoftStartPlaced  = false;
+    private Vec3 rotateSoftStartCenter  = Vec3(0, 0, 0);
+    private bool scaleSoftStartPlaced   = false;
+    private Vec3 scaleSoftStartCenter   = Vec3(0, 0, 0);
+
     // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
     // THIS gesture's mouse-down lives in `gestureStart` (one struct snapshot,
     // captured in every begin*DragSession after beginRunGesture). The per-gesture
@@ -1842,6 +1854,17 @@ public:
         // (angleAccum) — undo-only, never a fold input.
         gestureStart            = run;
         rotateGestureStartKnown = true;
+        // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — capture the
+        // gesture-START soft pin LIVE here so the rotate undo hook can restore it
+        // on revert (gesture-1 of a run: typically cleared → pivot recomputes;
+        // gesture-2+: the prior gesture's settle). Mirrors the Move W1 capture.
+        if (auto ac = activeAcenStage()) {
+            rotateSoftStartPlaced = ac.isSoftPlaced();
+            rotateSoftStartCenter = ac.currentSoftCenter();
+        } else {
+            rotateSoftStartPlaced = false;
+            rotateSoftStartCenter = Vec3(0, 0, 0);
+        }
         // Track whether THIS gesture is a view-ring, for the NEXT gesture's
         // post-view-ring re-bake decision. Set AFTER beginRunGesture consumed the
         // prior value above.
@@ -1904,6 +1927,16 @@ public:
         // dragStartScaleAccum — undo-only, never a fold input.
         gestureStart           = run;
         scaleGestureStartKnown = true;
+        // flex_border_handles_plan.md Phase 3 (BUG-1, undo-splice) — capture the
+        // gesture-START soft pin LIVE (mirror of the rotate/Move capture) so the
+        // scale undo hook restores it on revert.
+        if (auto ac = activeAcenStage()) {
+            scaleSoftStartPlaced = ac.isSoftPlaced();
+            scaleSoftStartCenter = ac.currentSoftCenter();
+        } else {
+            scaleSoftStartPlaced = false;
+            scaleSoftStartCenter = Vec3(0, 0, 0);
+        }
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -2336,10 +2369,18 @@ public:
             // settle) only when a real edit command was also built. A relocate-only
             // click leaves the soft pin cleared (userPlaced wins, as the reference
             // does); a relocate-THEN-drag still stamps the settle (motion > 0).
+            // flex_border_handles_plan.md Phase 3 (BUG-1): request the gesture-end
+            // center settle. The relocate gate is GONE (it admitted only
+            // Auto/None/Screen and excluded Border, the flex mode) — the actual
+            // mode filter is settleGestureCenter's acenSettleAllowed() predicate,
+            // applied when commitEdit consumes the request. The falloff gate STAYS:
+            // without falloff every selected vert moves the full delta, so the live
+            // recompute already equals the settled center (no jump-back, soft pin
+            // unused) and pinning it would only nudge the published pivot off the
+            // bit-exact recompute the relocate-boundary tests pin.
             enum float kMoveEps = 1e-5f;
             bool gestureMoved = accumulatedWorldDelta.length() > kMoveEps;
-            if (gestureMoved && acenAllowsClickRelocate()
-                             && currentFalloff(vts).enabled) {
+            if (gestureMoved && currentFalloff(vts).enabled) {
                 pendingMoveSoftPin    = true;
                 pendingMoveSoftCenter = moveSub.handler.center;
             }
@@ -2423,14 +2464,26 @@ public:
             XformState xfEnd   = run;
             rotateGestureStartKnown = false;
             if (!rotAbsKnown) xfStart = xfEnd;   // inert (no preceding mouse-down)
-            if (acenAllowsClickRelocate()) {
-                if (auto ac = activeAcenStage())
-                    ac.setSoftPlaced(rotateSub.handler.center);
-            }
+            // flex_border_handles_plan.md Phase 3 (BUG-1) — settle the gesture-end
+            // center through the shared helper (relocate gate GONE; the 2-entry
+            // acenSettleAllowed() predicate is the sole filter). settleGestureCenter
+            // pins the drop center and reports the END soft state so the undo hook
+            // can carry it in lockstep with the geometry (gesture-START captured at
+            // mouse-down in beginRotateDragSession). rotateSub.handler.center is the
+            // pivot (rotate never translates it), so the live recompute for a Border
+            // partial selection would otherwise drift off it after the rotation.
+            bool   softEndPlaced; Vec3 softEndCenter;
+            settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
+            bool softStartPlaced = rotAbsKnown ? rotateSoftStartPlaced : softEndPlaced;
+            Vec3 softStartCenter = rotAbsKnown ? rotateSoftStartCenter : softEndCenter;
             rotateSub.wrapperFieldApplyHook  = () {
-                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r); };
+                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r);
+                if (auto ac = activeAcenStage())
+                    ac.restoreSoftPlaced(softEndPlaced, softEndCenter); };
             rotateSub.wrapperFieldRevertHook = () {
-                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r); };
+                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                if (auto ac = activeAcenStage())
+                    ac.restoreSoftPlaced(softStartPlaced, softStartCenter); };
             rotateSub.commitGesture();
             // Clear the wrapper-field hooks so a later sub-tool commit with no
             // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
@@ -2488,10 +2541,25 @@ public:
             XformState xfEnd   = run;
             scaleGestureStartKnown = false;
             if (!scaleAbsKnown) xfStart = xfEnd;   // inert
+            // flex_border_handles_plan.md Phase 3 (BUG-1) — Scale had NO settle at
+            // all; add it through the shared helper (the 2-entry acenSettleAllowed()
+            // predicate is the sole mode filter, no relocate gate) so a completed
+            // scale leaves the gizmo at its drop pose. Pin BEFORE commitGesture so
+            // the gesture-END snapshot the undo hook restores carries the settle;
+            // splice the soft pin into both hooks (gesture-START captured at scale
+            // mouse-down) so an in-session Ctrl+Z restores it in lockstep.
+            bool   softEndPlaced; Vec3 softEndCenter;
+            settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
+            bool softStartPlaced = scaleAbsKnown ? scaleSoftStartPlaced : softEndPlaced;
+            Vec3 softStartCenter = scaleAbsKnown ? scaleSoftStartCenter : softEndCenter;
             scaleSub.wrapperFieldApplyHook  = () {
-                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r); };
+                run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r);
+                if (auto ac = activeAcenStage())
+                    ac.restoreSoftPlaced(softEndPlaced, softEndCenter); };
             scaleSub.wrapperFieldRevertHook = () {
-                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r); };
+                run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                if (auto ac = activeAcenStage())
+                    ac.restoreSoftPlaced(softStartPlaced, softStartCenter); };
 
             // Per-gesture commit (record+consolidate, Phase 2): mirrors the
             // rotate path above — each scale drag bakes a tagged in-session entry
@@ -3365,8 +3433,11 @@ public:
         // setSoftPlaced makes the live gizmo follow immediately. The display soft
         // pin is disjoint from the userPlaced pin captured here.
         if (pendingMoveSoftPin) {
-            if (auto ac = activeAcenStage())
-                ac.setSoftPlaced(pendingMoveSoftCenter);
+            // Route through the shared settle so the 2-entry acenSettleAllowed()
+            // predicate (Element + Local excluded) is the SINGLE mode filter; the
+            // relocate gate that used to live at the mouse-up was dropped (Phase 3).
+            bool _sp; Vec3 _sc;
+            settleGestureCenter(pendingMoveSoftCenter, _sp, _sc);
             pendingMoveSoftPin = false;
         }
 
@@ -4287,6 +4358,34 @@ private:
         if (g_pipeCtx is null) return null;
         return cast(ActionCenterStage)
                g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+    }
+
+    // flex_border_handles_plan.md Phase 3 (BUG-1) — the ONE gesture-end center
+    // settle, shared by the move / rotate / scale mouse-up paths. It pins the
+    // drop center as a DISPLAY soft pin so the selection-derived modes (Auto /
+    // None / Screen / Select / SelectAuto / Border) return it from computeCenter
+    // instead of recomputing the (falloff-attenuated, post-deform) live center —
+    // so a completed gesture leaves the gizmo at its drop pose, no jump-back
+    // (the bug), persisting until selection/mode change clears the soft pin.
+    //
+    // It DELIBERATELY drops the `acenAllowsClickRelocate()` gate the old per-bank
+    // calls carried — that gate admits only Auto/None/Screen and is exactly what
+    // excluded Border (the flex mode) today. The ONLY exclusion is the 2-entry
+    // `acenSettleAllowed()` predicate (Element + Local — modes with a
+    // higher-precedence LIVE pivot source). Returns the (placed, center) the
+    // caller's undo hook should restore as the gesture-END soft state, so the
+    // splice carries the pin in lockstep with the geometry. When the settle is
+    // not allowed it pins nothing and reports placed=false.
+    void settleGestureCenter(Vec3 settledCenter,
+                             out bool softEndPlaced, out Vec3 softEndCenter) {
+        softEndPlaced = false;
+        softEndCenter = Vec3(0, 0, 0);
+        auto ac = activeAcenStage();
+        if (ac is null) return;
+        if (!ac.acenSettleAllowed()) return;
+        ac.setSoftPlaced(settledCenter);
+        softEndPlaced = ac.isSoftPlaced();
+        softEndCenter = ac.currentSoftCenter();
     }
 
     // P-C: the single SNAP / SYMM stages — config sources of truth for the
