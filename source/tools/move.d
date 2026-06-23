@@ -90,6 +90,79 @@ class MoveTool : TransformTool {
     Vec3 inputBasisY = Vec3(0, 1, 0);
     Vec3 inputBasisZ = Vec3(0, 0, 1);
 
+    // Wrapped-mode input-frame channel (gesture-frame unification, Phase 2).
+    // When this bank is driven by `XfrmTransformTool` (`wrapperRef !is null`)
+    // AND the wrapper chained this gesture off the persisted gizmo frame, the
+    // wrapper pushes that ONE unified frame here (via `setWrapperInputFrame`,
+    // called once per gesture from `beginMoveDragSession`). The DECOMPOSE read
+    // sites then project the world delta onto THIS frame instead of the bank's
+    // own `inputBasisX/Y/Z`. This replaces the prior hand-synced override that
+    // overwrote `inputBasis*` from the wrapper's softBasis at gesture start —
+    // same value (the channel carries the unified `frame`, which equals
+    // softBasis when chained), now sourced from the single frame. The STANDALONE
+    // path (`wrapperRef is null`) NEVER consults this; it keeps reading its own
+    // `inputBasis*` (seeded by the `currentBasis(inputBasis*, vts)` writes). The
+    // center-box drag (dragAxis==3) is basis-free/screen-plane and is excluded
+    // at the push site (the wrapper passes `chained=false` for it), so it falls
+    // back to the live `inputBasis*` exactly as before.
+    Vec3 wrapperInputFrameX = Vec3(1, 0, 0);
+    Vec3 wrapperInputFrameY = Vec3(0, 1, 0);
+    Vec3 wrapperInputFrameZ = Vec3(0, 0, 1);
+    bool wrapperInputFrameValid = false;
+
+    // Push the wrapper's unified gesture frame into this bank for the WRAPPED
+    // input projection. `chained` is the wrapper's `frame.valid &&
+    // acenSettleAllowed() && dragAxis != 3` gate (mirrors the old override
+    // guard) — false for a fresh/non-chained gesture or the basis-free
+    // center-box, in which case the DECOMPOSE reads stay on `inputBasis*`.
+    void setWrapperInputFrame(Vec3 r, Vec3 u, Vec3 f, bool chained) {
+        wrapperInputFrameX     = r;
+        wrapperInputFrameY     = u;
+        wrapperInputFrameZ     = f;
+        wrapperInputFrameValid = chained;
+    }
+
+    // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
+    // When a wrapped DECOMPOSE read consults the pushed channel, that channel
+    // must carry the wrapper's unified `frame` (proven == softBasis by the
+    // wrapper-side assert), which is always a pure-rotation orthonormal triple.
+    // Assert that local invariant here so the input-read safety net mirrors the
+    // render-rung asserts. Compiled out of release.
+    debug void assertWrapperInputFrameChained() const {
+        import std.math : abs;
+        if (wrapperRef is null || !wrapperInputFrameValid) return;
+        enum float tol = 1e-3f;
+        assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
+               "move wrapperInputFrameX not unit length");
+        assert(abs(wrapperInputFrameY.length - 1.0f) < tol,
+               "move wrapperInputFrameY not unit length");
+        assert(abs(wrapperInputFrameZ.length - 1.0f) < tol,
+               "move wrapperInputFrameZ not unit length");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameY)) < tol,
+               "move wrapperInputFrame X·Y not orthogonal");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameZ)) < tol,
+               "move wrapperInputFrame X·Z not orthogonal");
+        assert(abs(dot(wrapperInputFrameY, wrapperInputFrameZ)) < tol,
+               "move wrapperInputFrame Y·Z not orthogonal");
+    }
+
+    // Source selector for the WRAPPED-role DECOMPOSE reads. When this bank is
+    // wrapper-driven and the gesture chained off the unified frame, the input
+    // projection reads that frame; otherwise (standalone, or fresh/center-box
+    // non-chained) it reads the bank's own drag-start-frozen `inputBasis*`.
+    Vec3 inAxisX() const {
+        return (wrapperRef !is null && wrapperInputFrameValid)
+             ? wrapperInputFrameX : inputBasisX;
+    }
+    Vec3 inAxisY() const {
+        return (wrapperRef !is null && wrapperInputFrameValid)
+             ? wrapperInputFrameY : inputBasisY;
+    }
+    Vec3 inAxisZ() const {
+        return (wrapperRef !is null && wrapperInputFrameValid)
+             ? wrapperInputFrameZ : inputBasisZ;
+    }
+
     // Phase 4 — property-panel back-pointer. Set by the wrapper at
     // `activate()` (the only path that constructs MoveTool); read
     // by `drawProperties` to route slider edits through
@@ -571,16 +644,20 @@ public:
     // user picked that plane on purpose.
     private Vec3 constrainSnapDelta(Vec3 delta) {
         // Single-axis drag — keep only the component along the locked axis.
-        // Reads the frozen INPUT basis (captured at drag start), not the
-        // rendered `handler.axis*`, so input projection is insulated from
-        // the rendered frame.
-        if (dragAxis == 0) return inputBasisX * dot(delta, inputBasisX);
-        if (dragAxis == 1) return inputBasisY * dot(delta, inputBasisY);
-        if (dragAxis == 2) return inputBasisZ * dot(delta, inputBasisZ);
+        // Reads the unified gesture frame when wrapper-chained (gesture-frame
+        // unification, Phase 2), else the bank's drag-start-frozen INPUT basis —
+        // never the rendered `handler.axis*`, so input projection is insulated
+        // from the rendered frame. The channel carries the same value the old
+        // softBasis override wrote, so this is byte-identical when chained.
+        debug assertWrapperInputFrameChained();
+        Vec3 ax0 = inAxisX(), ax1 = inAxisY(), ax2 = inAxisZ();
+        if (dragAxis == 0) return ax0 * dot(delta, ax0);
+        if (dragAxis == 1) return ax1 * dot(delta, ax1);
+        if (dragAxis == 2) return ax2 * dot(delta, ax2);
         // Plane circles — strip the component along the plane normal.
-        if (dragAxis == 4) return delta - inputBasisZ * dot(delta, inputBasisZ);
-        if (dragAxis == 5) return delta - inputBasisX * dot(delta, inputBasisX);
-        if (dragAxis == 6) return delta - inputBasisY * dot(delta, inputBasisY);
+        if (dragAxis == 4) return delta - ax2 * dot(delta, ax2);
+        if (dragAxis == 5) return delta - ax0 * dot(delta, ax0);
+        if (dragAxis == 6) return delta - ax1 * dot(delta, ax1);
         // dragAxis == 3 (centerBox) and any unrecognised value: pass
         // through the full 3D snap delta.
         return delta;
@@ -611,9 +688,15 @@ public:
             import std.math : abs;
             const ref float[16] vv = cachedVp.view;
             Vec3 camBack = Vec3(vv[2], vv[6], vv[10]);
-            float aXdot = abs(dot(camBack, inputBasisX));
-            float aYdot = abs(dot(camBack, inputBasisY));
-            float aZdot = abs(dot(camBack, inputBasisZ));
+            // ctrlConstrain only ever runs for the center-box drag (dragAxis==3),
+            // which the wrapper excludes from chaining (chained=false), so the
+            // selector resolves to the live `inputBasis*` here — basis-free as
+            // before. Routed through the selector for uniformity.
+            debug assertWrapperInputFrameChained();
+            Vec3 di0 = inAxisX(), di1 = inAxisY(), di2 = inAxisZ();
+            float aXdot = abs(dot(camBack, di0));
+            float aYdot = abs(dot(camBack, di1));
+            float aZdot = abs(dot(camBack, di2));
             int ax1, ax2;
             if      (aXdot >= aYdot && aXdot >= aZdot) { ax1 = 1; ax2 = 2; } // normal=axisX → Y,Z
             else if (aYdot >= aXdot && aYdot >= aZdot) { ax1 = 0; ax2 = 2; } // normal=axisY → X,Z
@@ -642,17 +725,24 @@ public:
             return true; // axis locked — movement starts on the next motion event
         }
 
+        // Project the screen drag against the unified gesture frame when
+        // wrapper-chained (gesture-frame unification, Phase 2), else the bank's
+        // own drag-start INPUT basis. The center-box (dragAxis==3) is excluded
+        // from chaining at the push site, so its plane drag resolves to the live
+        // `inputBasis*` here — basis-free as before.
+        debug assertWrapperInputFrameChained();
+        Vec3 mi0 = inAxisX(), mi1 = inAxisY(), mi2 = inAxisZ();
         Vec3 worldDelta;
         bool skip;
         if (dragAxis <= 2)
             worldDelta = axisDragDelta(e.x, e.y, lastMX, lastMY,
                                        dragAxis, handler,
-                                       inputBasisX, inputBasisY, inputBasisZ,
+                                       mi0, mi1, mi2,
                                        cachedVp, skip);
         else
             worldDelta = planeDragDelta(e.x, e.y, lastMX, lastMY,
                                         dragAxis, handler.center, cachedVp, skip,
-                                        inputBasisX, inputBasisY, inputBasisZ);
+                                        mi0, mi1, mi2);
         if (skip) { lastMX = e.x; lastMY = e.y; return true; }
 
         // Phase 7.3a: snap. Bend the would-be gizmo position towards a
@@ -681,9 +771,9 @@ public:
         // are now all the wrapper's responsibility. Idle/hover and
         // falloff-gizmo branches above are unchanged.
         pendingTranslateDelta = pendingTranslateDelta
-            + Vec3(dot(worldDelta, inputBasisX),
-                   dot(worldDelta, inputBasisY),
-                   dot(worldDelta, inputBasisZ));
+            + Vec3(dot(worldDelta, mi0),
+                   dot(worldDelta, mi1),
+                   dot(worldDelta, mi2));
 
         lastMX = e.x;
         lastMY = e.y;
