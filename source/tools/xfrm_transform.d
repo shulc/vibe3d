@@ -475,6 +475,9 @@ public:
         rotateSub = new RotateTool(meshSrc, gpu, editMode);
         scaleSub  = new ScaleTool (meshSrc, gpu, editMode);
         toolHandles = new ToolHandles();
+        toolHandles.setAiHoverPreviewEnabled(true);
+        toolHandles.setAiHoverPreviewPredicate(
+            (int part) const => latchedHandlePart(part).bank != LatchedHandleBank.None);
     }
 
     override string name() const { return "Transform"; }
