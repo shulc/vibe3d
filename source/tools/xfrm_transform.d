@@ -144,6 +144,42 @@ alias VertexEditFactory = MeshVertexEdit delegate();
 // gizmo arrow — matching the click-dispatch order.
 private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20;
 
+private enum LatchedHandleBank { None, Move, Rotate, Scale }
+
+private struct LatchedHandlePart {
+    LatchedHandleBank bank = LatchedHandleBank.None;
+    int localPart = -1;
+}
+
+private LatchedHandlePart latchedHandlePart(int hitPart) pure nothrow @safe @nogc {
+    if (hitPart >= MOVE_BASE && hitPart < MOVE_BASE + 10)
+        return LatchedHandlePart(LatchedHandleBank.Move, hitPart - MOVE_BASE);
+    if (hitPart >= ROT_BASE && hitPart < ROT_BASE + 10)
+        return LatchedHandlePart(LatchedHandleBank.Rotate, hitPart - ROT_BASE);
+    if (hitPart >= SCALE_BASE && hitPart < SCALE_BASE + 10)
+        return LatchedHandlePart(LatchedHandleBank.Scale, hitPart - SCALE_BASE);
+    return LatchedHandlePart();
+}
+
+version(unittest) int[2] xfrmLatchedHandlePartForTest(int hitPart)
+        pure nothrow @safe @nogc {
+    auto p = latchedHandlePart(hitPart);
+    return [cast(int)p.bank, p.localPart];
+}
+
+unittest { // shared handle winner maps to the exact subtool latch part
+    assert(latchedHandlePart(-1).bank == LatchedHandleBank.None);
+    auto move = latchedHandlePart(MOVE_BASE + 6);
+    assert(move.bank == LatchedHandleBank.Move);
+    assert(move.localPart == 6);
+    auto rot = latchedHandlePart(ROT_BASE + 3);
+    assert(rot.bank == LatchedHandleBank.Rotate);
+    assert(rot.localPart == 3);
+    auto scale = latchedHandlePart(SCALE_BASE + 4);
+    assert(scale.bank == LatchedHandleBank.Scale);
+    assert(scale.localPart == 4);
+}
+
 // Canonical run-state for the wrapper transform: translation Vec3, rotation
 // as a matrix-truth float[16] (R is matrix-truth — euler is a derived view),
 // and a per-component scale Vec3. Defaults are the identity transform
@@ -1261,7 +1297,7 @@ public:
             registerGizmoHandles(toolHandles);
             hitPart = toolHandles.test(e.x, e.y, cachedVp,
                                        AiInteractionPhase.mouseDown);
-            if (compactPresentation() && flagS) {
+            if (compactPresentation() && flagS && hitPart < 0) {
                 int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
                 if (scaleHeadAxis >= 0)
                     hitPart = SCALE_BASE + scaleHeadAxis;
@@ -1316,8 +1352,13 @@ public:
         bool allowScaleDispatch = compactPresentation()
             ? hitScaleBank
             : (hitPart < 0 || hitScaleBank);
+        auto latchedPart = latchedHandlePart(hitPart);
 
-        if (flagT && allowMoveDispatch && moveSub.onMouseButtonDown(e, vts)) {
+        if (flagT && allowMoveDispatch) {
+            if (latchedPart.bank == LatchedHandleBank.Move)
+                moveSub.forceNextDragAxis(latchedPart.localPart);
+            if (!moveSub.onMouseButtonDown(e, vts))
+                goto tryRotateBank;
             // An off-gizmo click-relocate during a live session is a new
             // logical run: commit the prior run, then re-stage the
             // relocated pin so the fresh session freezes IT (not the stale
@@ -1393,7 +1434,12 @@ public:
             setSharedGizmoPose(moveSub.handler.center, vts);
             activeDrag = moveSub;  return true;
         }
-        if (flagR && allowRotDispatch && rotateSub.onMouseButtonDown(e, vts)) {
+tryRotateBank:
+        if (flagR && allowRotDispatch) {
+            if (latchedPart.bank == LatchedHandleBank.Rotate)
+                rotateSub.forceNextDragAxis(latchedPart.localPart);
+            if (!rotateSub.onMouseButtonDown(e, vts))
+                goto tryScaleBank;
             // Principal-axis ring (0/1/2) AND view-ring (3) → wrapper owns
             // geometry via applyTRS (capture the drag state). Principal axes
             // drain into headlessRotate (Euler); the view-ring drains into the
@@ -1431,7 +1477,12 @@ public:
             }
             activeDrag = rotateSub; return true;
         }
-        if (flagS && allowScaleDispatch && scaleSub.onMouseButtonDown(e, vts)) {
+tryScaleBank:
+        if (flagS && allowScaleDispatch) {
+            if (latchedPart.bank == LatchedHandleBank.Scale)
+                scaleSub.forceNextDragAxis(latchedPart.localPart);
+            if (!scaleSub.onMouseButtonDown(e, vts))
+                goto noBankConsumed;
             // Scale single-source: a real gizmo drag (dragAxis >= 0 — any
             // of single-axis 0/1/2, uniform disc 3, plane circle 4/5/6)
             // → wrapper owns geometry via applyTRS (capture the drag
@@ -1463,6 +1514,7 @@ public:
             }
             activeDrag = scaleSub;  return true;
         }
+noBankConsumed:
 
         // Click landed OFF every gizmo handler bank. If we just
         // picked an element under falloff.element, snap moveSub's

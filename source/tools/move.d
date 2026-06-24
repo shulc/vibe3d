@@ -175,6 +175,8 @@ class MoveTool : TransformTool {
     TransformTool wrapperRef;
 
 private:
+    int forcedNextDragAxis = -1;
+
     // Phase 3 — `dragDelta` + `dragDeltaAtDragStart` deleted. The
     // wrapper now owns the accumulated world delta (its
     // `accumulatedWorldDelta` / `accumulatedAtDragStart`) plus the
@@ -187,6 +189,10 @@ private:
     // the live click-outside snap preview now.)
 
 public:
+    void forceNextDragAxis(int axis) {
+        forcedNextDragAxis = axis >= 0 && axis <= 6 ? axis : -1;
+    }
+
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
         super(meshSrc, gpu, editMode);
         handler = new MoveHandler(Vec3(0, 0, 0));
@@ -458,7 +464,11 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        if (!active || e.button != SDL_BUTTON_LEFT) {
+            forcedNextDragAxis = -1;
+            return false;
+        }
+        scope(exit) forcedNextDragAxis = -1;
         // Don't interfere with pan/rotate/zoom modifier combos.
         SDL_Keymod mods = SDL_GetModState();
         bool ctrl = (mods & KMOD_CTRL) != 0;
@@ -485,7 +495,9 @@ public:
 
         ctrlConstrain = false;
         lastClickWasRelocate = false;
-        dragAxis = hitTestAxes(e.x, e.y);
+        dragAxis = forcedNextDragAxis >= 0
+                 ? forcedNextDragAxis
+                 : hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {
