@@ -10,6 +10,7 @@ import ai.interaction : AiAdvisorDecision, AiCandidate, AiIntent;
 string aiIntentId(AiIntent intent) {
     final switch (intent) {
         case AiIntent.keepDefault:       return "keepDefault";
+        case AiIntent.handle:            return "handle";
         case AiIntent.hoverElement:      return "hoverElement";
         case AiIntent.selectElement:     return "selectElement";
         case AiIntent.boxOrLassoSelect:  return "boxOrLassoSelect";

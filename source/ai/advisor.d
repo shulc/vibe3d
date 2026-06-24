@@ -72,8 +72,6 @@ class AiAdvisor {
             immutable priorityAdvantage =
                 defaultCandidate.priorityFromCurrentRules -
                 c.priorityFromCurrentRules;
-            if (priorityAdvantage < 0.0f)
-                continue;
 
             float screenAdvantage = 0.0f;
             if (finite(defaultCandidate.screenDist) && finite(c.screenDist))

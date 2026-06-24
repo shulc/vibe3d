@@ -43,12 +43,18 @@ private class ScaleHeadHandle : Handler {
     }
 
     override protected bool hitTest(int mx, int my, const ref Viewport vp) {
-        if (!target.isVisible()) return false;
+        return aiScreenDistance(mx, my, vp) < 12.0f;
+    }
+
+    override protected float aiScreenDistance(int mx, int my,
+                                              const ref Viewport vp) {
+        if (!target.isVisible()) return float.infinity;
         float ex, ey, ndcZ;
-        if (!projectToWindowFull(target.end, vp, ex, ey, ndcZ)) return false;
+        if (!projectToWindowFull(target.end, vp, ex, ey, ndcZ))
+            return float.infinity;
         float dx = cast(float)mx - ex;
         float dy = cast(float)my - ey;
-        return sqrt(dx*dx + dy*dy) < 12.0f;
+        return sqrt(dx*dx + dy*dy);
     }
 }
 
