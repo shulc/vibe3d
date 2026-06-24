@@ -5,6 +5,7 @@ import bindbc.opengl;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv : to;
 
+import ai.debug_trace : publishHandleDebugTrace;
 import ai.interaction : AiCandidate, AiCandidateKind, AiIntent;
 import math;
 import eventlog;
@@ -1376,6 +1377,7 @@ class ToolHandles {
         }
         if (defaultCandidate != size_t.max)
             aiCandidates[defaultCandidate].isDefaultWinner = true;
+        publishHandleDebugTrace(aiCandidates);
         return firstPart;
     }
 
@@ -1389,6 +1391,7 @@ class ToolHandles {
         if (suppressed) {
             hot = -1;
             aiCandidates.length = 0;
+            publishHandleDebugTrace(aiCandidates);
             foreach (ref e; entries) e.h.setState(HandleState.Normal);
             return;
         }
