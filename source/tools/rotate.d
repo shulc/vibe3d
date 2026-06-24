@@ -639,7 +639,8 @@ public:
                                            ref VectorStack vts,
                                            int resolvedAxis) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
-        SDL_Keymod mods = SDL_GetModState();
+        version(unittest) SDL_Keymod mods = 0;
+        else SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
         // Soft Drag: re-center the screen-falloff disc at the click on
         // every fresh grab AND flip the overlay-visibility flag on so

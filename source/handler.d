@@ -114,16 +114,21 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
 // Upload a float[] (XYZ triples) to a fresh VAO with a single vec3 attribute at location 0.
 // Fills *vbo with the created buffer object and returns the VAO.
 private GLuint buildVao3f(float[] data, out GLuint vbo) {
-    GLuint vao;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, data.length * float.sizeof, data.ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-    return vao;
+    version(unittest) {
+        vbo = 0;
+        return 0;
+    } else {
+        GLuint vao;
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, data.length * float.sizeof, data.ptr, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+        return vao;
+    }
 }
 
 // Compute a right-handed local frame from a normal/forward vector.

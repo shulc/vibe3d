@@ -1,5 +1,6 @@
 // Pure tests for handle candidate collection in the shared handle arbiter.
 
+import std.conv : to;
 import std.json : parseJSON;
 
 import ai.advisor : AiAdvisor;
@@ -7,9 +8,14 @@ import ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace,
     latestHandleDebugTraceJson;
 import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
+import bindbc.sdl : SDL_BUTTON_LEFT, SDL_MouseButtonEvent;
+import editmode : EditMode;
 import handler : Handler, ToolHandles, setHandleAiAdvisor;
 import math : Viewport;
-import tools.xfrm_transform : xfrmLatchedHandlePartForTest;
+import mesh : GpuMesh, Mesh, makeCube;
+import operator : VectorStack;
+import tools.xfrm_transform : XfrmTransformTool,
+    xfrmCompactScaleHeadFallbackForTest, xfrmLatchedHandlePartForTest;
 
 void main() {}
 
@@ -280,6 +286,83 @@ unittest { // advisor-applied shared winner decodes to the production latch part
     auto latch = xfrmLatchedHandlePartForTest(winner);
     assert(latch[0] == 3); // scale bank
     assert(latch[1] == 2); // local Z part consumed by ScaleTool.forceNextDragAxis
+}
+
+private int advisoryWinner(int defaultPart, int advisoryPart) {
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, defaultPart);
+    handles.add(later, advisoryPart);
+
+    int winner = handles.test(123, 456, vp, AiInteractionPhase.mouseDown);
+    assert(winner == advisoryPart);
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:" ~ defaultPart.to!string);
+    assert(trace.appliedWinnerId == "handle:" ~ advisoryPart.to!string);
+    return winner;
+}
+
+private XfrmTransformTool activeTransform(Mesh* mesh, GpuMesh* gpu,
+                                          EditMode* editMode) {
+    auto tool = new XfrmTransformTool(() => mesh, gpu, editMode);
+    tool.handlePresentation = "compact";
+    tool.activate();
+    return tool;
+}
+
+private SDL_MouseButtonEvent leftDown() {
+    SDL_MouseButtonEvent e;
+    e.button = SDL_BUTTON_LEFT;
+    e.x = 123;
+    e.y = 456;
+    return e;
+}
+
+unittest { // advisory shared winner reaches the wrapper-owned subtool dragAxis
+    Mesh mesh = makeCube();
+    mesh.resizeVertexSelection();
+    mesh.selectVertex(6);
+    GpuMesh gpu;
+    EditMode editMode = EditMode.Vertices;
+    VectorStack vts;
+
+    auto e = leftDown();
+
+    auto moveTool = activeTransform(&mesh, &gpu, &editMode);
+    assert(moveTool.routeResolvedHandlePartForTest(e, vts, advisoryWinner(0, 2)));
+    assert(moveTool.moveDragAxisPublic() == 2);
+    assert(moveTool.rotateDragAxisPublic() == -1);
+    assert(moveTool.scaleDragAxisPublic() == -1);
+
+    auto rotateTool = activeTransform(&mesh, &gpu, &editMode);
+    assert(rotateTool.routeResolvedHandlePartForTest(e, vts, advisoryWinner(0, 12)));
+    assert(rotateTool.moveDragAxisPublic() == -1);
+    assert(rotateTool.rotateDragAxisPublic() == 2);
+    assert(rotateTool.scaleDragAxisPublic() == -1);
+
+    auto scaleTool = activeTransform(&mesh, &gpu, &editMode);
+    assert(scaleTool.routeResolvedHandlePartForTest(e, vts, advisoryWinner(0, 22)));
+    assert(scaleTool.moveDragAxisPublic() == -1);
+    assert(scaleTool.rotateDragAxisPublic() == -1);
+    assert(scaleTool.scaleDragAxisPublic() == 2);
+}
+
+unittest { // compact scale-head fallback does not overwrite a resolved winner
+    assert(xfrmCompactScaleHeadFallbackForTest(true, true, -1, 2) == 22);
+    assert(xfrmCompactScaleHeadFallbackForTest(true, true, 12, 2) == 12);
+    assert(xfrmCompactScaleHeadFallbackForTest(true, true, 22, 0) == 22);
+    assert(xfrmCompactScaleHeadFallbackForTest(false, true, -1, 2) == -1);
+    assert(xfrmCompactScaleHeadFallbackForTest(true, false, -1, 2) == -1);
+    assert(xfrmCompactScaleHeadFallbackForTest(true, true, -1, -1) == -1);
 }
 
 private class InvalidAdvisor : AiAdvisor {
