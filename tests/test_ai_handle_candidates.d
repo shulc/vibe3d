@@ -116,12 +116,14 @@ unittest { // first-hit winner is preserved while all hit candidates are exposed
     assert(trace.candidates[1].id == "handle:30");
     assert(trace.defaultWinnerIndex == 0);
     assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerIndex == 0);
+    assert(trace.appliedWinnerId == "handle:10");
     assert(trace.advisor.keepDefault);
     assert(trace.advisor.confidence == 0.0f);
     assert(trace.advisor.candidateIndex == -1);
 }
 
-unittest { // real ToolHandles + real advisor can produce an advisory decision
+unittest { // real ToolHandles + real advisor can apply a valid advisory winner
     clearLatestHandleDebugTrace();
     setHandleAiAdvisor(new AiAdvisor(true));
     scope (exit) setHandleAiAdvisor(null);
@@ -135,12 +137,11 @@ unittest { // real ToolHandles + real advisor can produce an advisory decision
     handles.add(first, 10);
     handles.add(later, 30);
     handles.hot = 7;
-    handles.captured = 8;
 
     int winner = handles.test(123, 456, vp, AiInteractionPhase.mouseDown);
-    assert(winner == 10);
+    assert(winner == 30);
     assert(handles.hot == 7);
-    assert(handles.captured == 8);
+    assert(handles.captured == -1);
 
     auto candidates = handles.handleCandidates();
     assert(candidates.length == 2);
@@ -155,6 +156,8 @@ unittest { // real ToolHandles + real advisor can produce an advisory decision
     assert(trace.advisor.confidence >= 0.75f);
     assert(trace.advisor.candidateIndex == 1);
     assert(trace.advisor.candidateId == "handle:30");
+    assert(trace.appliedWinnerIndex == 1);
+    assert(trace.appliedWinnerId == "handle:30");
 }
 
 unittest { // disabled real advisor keeps default even for clear handle candidates
@@ -175,6 +178,7 @@ unittest { // disabled real advisor keeps default even for clear handle candidat
 
     auto trace = latestHandleDebugTrace();
     assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
     assert(trace.advisor.keepDefault);
     assert(trace.advisor.confidence == 0.0f);
     assert(trace.advisor.candidateIndex == -1);
@@ -198,12 +202,13 @@ unittest { // real advisor keeps default when handle margin is low
 
     auto trace = latestHandleDebugTrace();
     assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
     assert(trace.advisor.keepDefault);
     assert(trace.advisor.confidence == 0.0f);
     assert(trace.advisor.candidateIndex == -1);
 }
 
-unittest { // advisor decision is traced while first-hit behavior remains default
+unittest { // advisor decision can switch only to a valid hit candidate
     clearLatestHandleDebugTrace();
     resetSpyAdvisor();
     setHandleAiAdvisor(new SpyAdvisor());
@@ -219,7 +224,9 @@ unittest { // advisor decision is traced while first-hit behavior remains defaul
     handles.add(later, 30);
 
     int winner = handles.test(123, 456, vp, AiInteractionPhase.mouseDown);
-    assert(winner == 10);
+    assert(winner == 30);
+    assert(handles.hot == -1);
+    assert(handles.captured == -1);
     assert(handles.handleCandidates()[0].isDefaultWinner);
     assert(!handles.handleCandidates()[1].isDefaultWinner);
 
@@ -239,6 +246,8 @@ unittest { // advisor decision is traced while first-hit behavior remains defaul
     assert(trace.advisor.confidence == 0.9f);
     assert(trace.advisor.candidateIndex == 1);
     assert(trace.advisor.candidateId == "handle:30");
+    assert(trace.appliedWinnerIndex == 1);
+    assert(trace.appliedWinnerId == "handle:30");
 
     auto j = parseJSON(latestHandleDebugTraceJson(true));
     assert(j["advisor"]["intent"].str == "dragAxisZ");
@@ -246,6 +255,107 @@ unittest { // advisor decision is traced while first-hit behavior remains defaul
     assert(j["advisor"]["candidateIndex"].integer == 1);
     assert(j["advisor"]["candidateId"].str == "handle:30");
     assert(j["handleTrace"]["defaultWinner"]["id"].str == "handle:10");
+    assert(j["handleTrace"]["appliedWinner"]["id"].str == "handle:30");
+}
+
+private class InvalidAdvisor : AiAdvisor {
+    int candidateIndex;
+    string candidateId;
+
+    this(int candidateIndex, string candidateId) {
+        this.candidateIndex = candidateIndex;
+        this.candidateId = candidateId;
+    }
+
+    override AiAdvisorDecision advise(const ref AiInteractionContext context,
+                                      const(AiCandidate)[] candidates) const {
+        AiAdvisorDecision decision;
+        decision.intent = AiIntent.dragAxisZ;
+        decision.confidence = 0.95f;
+        decision.candidateIndex = candidateIndex;
+        decision.candidateId = candidateId;
+        return decision;
+    }
+}
+
+unittest { // invalid advisory candidates fall back to the deterministic winner
+    clearLatestHandleDebugTrace();
+    setHandleAiAdvisor(new InvalidAdvisor(1, "handle:999"));
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    assert(handles.test(123, 456, vp, AiInteractionPhase.mouseDown) == 10);
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
+    assert(trace.advisor.candidateIndex == 1);
+    assert(trace.advisor.candidateId == "handle:999");
+
+    setHandleAiAdvisor(new InvalidAdvisor(12, "handle:30"));
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    assert(handles.test(123, 456, vp, AiInteractionPhase.mouseDown) == 10);
+    auto secondTrace = latestHandleDebugTrace();
+    assert(secondTrace.defaultWinnerId == "handle:10");
+    assert(secondTrace.appliedWinnerId == "handle:10");
+    assert(secondTrace.advisor.candidateIndex == 12);
+    assert(secondTrace.advisor.candidateId == "handle:30");
+}
+
+unittest { // advisory choices are not applied outside the mouse-down gate
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    assert(handles.test(123, 456, vp, AiInteractionPhase.hover) == 10);
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
+    assert(trace.advisor.candidateIndex == 1);
+}
+
+unittest { // captured drags preserve the latched handle and skip retesting
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+    handles.captured = 30;
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 30);
+    assert(handles.captured == 30);
+    assert(first.hitCalls == 0);
+    assert(later.hitCalls == 0);
+    assert(spyCalls == 0);
 }
 
 unittest { // invisible hits are skipped exactly like default arbitration
@@ -274,6 +384,8 @@ unittest { // invisible hits are skipped exactly like default arbitration
     assert(trace.candidates[0].id == "handle:2");
     assert(trace.defaultWinnerIndex == 0);
     assert(trace.defaultWinnerId == "handle:2");
+    assert(trace.appliedWinnerIndex == 0);
+    assert(trace.appliedWinnerId == "handle:2");
 }
 
 unittest { // suppressed updates publish an empty trace and do not test handles
@@ -296,4 +408,6 @@ unittest { // suppressed updates publish an empty trace and do not test handles
     assert(trace.candidates.length == 0);
     assert(trace.defaultWinnerIndex == -1);
     assert(trace.defaultWinnerId.length == 0);
+    assert(trace.appliedWinnerIndex == -1);
+    assert(trace.appliedWinnerId.length == 0);
 }
