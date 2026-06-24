@@ -260,6 +260,50 @@ float[] encodeAiRankerCandidate(const ref AiCandidate candidate) {
     return values;
 }
 
+/// Width of the expanded per-candidate vector consumed by the linear ONNX
+/// ranker: candidate features + context×candidate cross terms. Mirrors
+/// tools/ai/ranker_trainer.py `FeatureSpace` (kept in lockstep with it).
+size_t aiRankerExpandedFeatureCount() {
+    immutable fc = aiRankerCandidateFeatureNames().length;
+    immutable fctx = aiRankerContextFeatureNames().length;
+    return fc + fctx * fc;
+}
+
+/// Expanded per-candidate feature vector: `[candidate features]` followed by
+/// `[context_i * candidate_j]` with context outer / candidate inner — exactly
+/// `FeatureSpace.encode_candidate` in the trainer. Length =
+/// `aiRankerExpandedFeatureCount` when fed schema-sized inputs.
+float[] encodeAiRankerExpandedCandidate(const(float)[] contextFeatures,
+                                        const(float)[] candidateFeatures) {
+    auto values = new float[candidateFeatures.length +
+                            contextFeatures.length * candidateFeatures.length];
+    size_t o;
+    foreach (v; candidateFeatures)
+        values[o++] = v;
+    foreach (c; contextFeatures)
+        foreach (cand; candidateFeatures)
+            values[o++] = c * cand;
+    return values;
+}
+
+/// Row-major `[maxCandidates][expandedWidth]` matrix for a batch (padded rows
+/// expand from zero candidate features → all-zero rows). Feed to the ONNX
+/// ranker's `[N, F]` input and pair with `batch.candidateMask` for masked
+/// argmax over the real candidates.
+float[] encodeAiRankerExpandedBatch(const ref AiRankerFeatureBatch batch) {
+    immutable rows = batch.candidateFeatures.length;
+    immutable fc = rows ? batch.candidateFeatures[0].length : 0;
+    immutable width = fc + batch.contextFeatures.length * fc;
+    auto mat = new float[rows * width];
+    size_t o;
+    foreach (ref row; batch.candidateFeatures) {
+        auto ex = encodeAiRankerExpandedCandidate(batch.contextFeatures, row);
+        mat[o .. o + ex.length] = ex[];
+        o += ex.length;
+    }
+    return mat;
+}
+
 string[] aiRankerGroupCategoryNames() {
     return ["unknown", "handle", "element", "mode_tool_context"];
 }
@@ -355,4 +399,34 @@ unittest {
     assert(candidateNames.length == aiRankerCandidateKindCategoryCount +
            aiRankerElementKindCategoryCount +
            aiRankerIntentCategoryCount + 14);
+}
+
+unittest {
+    // Expanded vector mirrors the trainer's FeatureSpace.encode_candidate:
+    // candidate features first, then context*candidate (context outer).
+    float[] ctx = [2.0f, 3.0f];
+    float[] cand = [5.0f, 7.0f];
+    auto ex = encodeAiRankerExpandedCandidate(ctx, cand);
+    assert(ex.length == cand.length + ctx.length * cand.length);
+    assert(ex[0] == 5.0f && ex[1] == 7.0f);             // candidate prefix
+    assert(ex[2] == 2.0f * 5.0f && ex[3] == 2.0f * 7.0f); // ctx0 * cand
+    assert(ex[4] == 3.0f * 5.0f && ex[5] == 3.0f * 7.0f); // ctx1 * cand
+
+    assert(aiRankerExpandedFeatureCount() ==
+           aiRankerCandidateFeatureNames().length +
+           aiRankerContextFeatureNames().length *
+           aiRankerCandidateFeatureNames().length);
+
+    // Batch expansion is row-major and zero-pads masked rows.
+    AiInteractionContext context;
+    AiCandidate c;
+    c.id = "x";
+    auto batch = encodeAiRankerInput("handle", context, [c], 2);
+    auto mat = encodeAiRankerExpandedBatch(batch);
+    immutable width = aiRankerExpandedFeatureCount();
+    assert(mat.length == 2 * width);          // maxCandidates rows
+    bool padZero = true;
+    foreach (v; mat[width .. $])              // second (padded) row
+        if (v != 0.0f) { padZero = false; break; }
+    assert(padZero);
 }

@@ -62,6 +62,10 @@
 		"lwo2-writer": {
 			"version": "6338b2a5b0f53abf8773e6fb9673951995dc10e6",
 			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
+		},
+		"d-onnxruntime": {
+			"version": "~master",
+			"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
 		}
 	},
 	"subConfigurations": {
