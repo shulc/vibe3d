@@ -189,8 +189,10 @@ void publishHandleDebugTrace(const(AiCandidate)[] candidates,
     g_latestHandleTrace.set(candidates, decision, appliedWinnerIndex);
 }
 
-void publishElementDebugTrace(const(AiCandidate)[] candidates) {
-    g_latestElementTrace.set(candidates);
+void publishElementDebugTrace(const(AiCandidate)[] candidates,
+                              AiAdvisorDecision decision = AiAdvisorDecision(),
+                              int appliedWinnerIndex = -1) {
+    g_latestElementTrace.set(candidates, decision, appliedWinnerIndex);
 }
 
 const(AiHandleDebugTrace) latestHandleDebugTrace() {

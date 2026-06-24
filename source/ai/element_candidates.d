@@ -3,8 +3,76 @@ module ai.element_candidates;
 import std.conv : to;
 
 import ai.debug_trace : publishElementDebugTrace;
-import ai.interaction : AiCandidate, AiCandidateKind, AiElementCandidateKind,
-    AiIntent;
+import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+    AiElementCandidateKind, AiIntent;
+
+enum float elementAdvisorMinConfidence = 0.75f;
+
+struct ElementCandidateResolution {
+    AiAdvisorDecision advisor;
+    int defaultWinnerIndex = -1;
+    int appliedWinnerIndex = -1;
+
+    string defaultWinnerId(const(AiCandidate)[] candidates) const {
+        return defaultWinnerIndex >= 0 &&
+            cast(size_t)defaultWinnerIndex < candidates.length
+            ? candidates[cast(size_t)defaultWinnerIndex].id
+            : "";
+    }
+
+    string appliedWinnerId(const(AiCandidate)[] candidates) const {
+        return appliedWinnerIndex >= 0 &&
+            cast(size_t)appliedWinnerIndex < candidates.length
+            ? candidates[cast(size_t)appliedWinnerIndex].id
+            : "";
+    }
+}
+
+private int defaultElementCandidateIndex(const(AiCandidate)[] candidates) {
+    foreach (i, ref c; candidates) {
+        if (c.isDefaultWinner)
+            return cast(int)i;
+    }
+    return -1;
+}
+
+private bool canApplyElementAdvisorDecision(const(AiCandidate)[] candidates,
+                                            int defaultWinnerIndex,
+                                            const ref AiAdvisorDecision decision) {
+    if (decision.keepDefault ||
+        decision.confidence < elementAdvisorMinConfidence ||
+        decision.candidateIndex < 0)
+        return false;
+
+    auto index = cast(size_t)decision.candidateIndex;
+    if (index >= candidates.length)
+        return false;
+    if (decision.candidateIndex == defaultWinnerIndex)
+        return false;
+    if (candidates[index].kind != AiCandidateKind.element)
+        return false;
+    if (candidates[index].intent == AiIntent.keepDefault)
+        return false;
+    if (decision.candidateId.length &&
+        decision.candidateId != candidates[index].id)
+        return false;
+    return true;
+}
+
+ElementCandidateResolution resolveElementCandidateDecision(
+    const(AiCandidate)[] candidates,
+    AiAdvisorDecision decision = AiAdvisorDecision()) {
+    ElementCandidateResolution resolution;
+    resolution.advisor = decision;
+    resolution.defaultWinnerIndex = defaultElementCandidateIndex(candidates);
+    resolution.appliedWinnerIndex = resolution.defaultWinnerIndex;
+
+    if (canApplyElementAdvisorDecision(candidates,
+                                       resolution.defaultWinnerIndex,
+                                       decision))
+        resolution.appliedWinnerIndex = decision.candidateIndex;
+    return resolution;
+}
 
 private AiCandidate makeElementCandidate(AiElementCandidateKind kind,
                                          int elementId,
@@ -78,6 +146,21 @@ void publishElementCandidates(int mx,
                               int edge,
                               int face) {
     publishElementDebugTrace(collectElementCandidates(mx, my, vertex, edge, face));
+}
+
+ElementCandidateResolution publishElementCandidatesWithAdvisor(
+    int mx,
+    int my,
+    int vertex,
+    int edge,
+    int face,
+    AiAdvisorDecision decision = AiAdvisorDecision()) {
+    auto candidates = collectElementCandidates(mx, my, vertex, edge, face);
+    auto resolution = resolveElementCandidateDecision(candidates, decision);
+    publishElementDebugTrace(candidates,
+                             resolution.advisor,
+                             resolution.appliedWinnerIndex);
+    return resolution;
 }
 
 unittest {
