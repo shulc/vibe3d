@@ -75,6 +75,15 @@ private class SpyAdvisor : AiAdvisor {
     }
 }
 
+private void registerFalloffThenTransform(ToolHandles handles,
+                                          TestHandle falloffLike,
+                                          TestHandle transformLike) {
+    // Mirrors PipeGizmoHost::registerInto before XfrmTransformTool's gizmo
+    // banks: falloff handles win the deterministic overlap by pool order.
+    handles.add(falloffLike, 100);
+    handles.add(transformLike, 10);
+}
+
 unittest { // first-hit winner is preserved while all hit candidates are exposed
     clearLatestHandleDebugTrace();
     auto first = new TestHandle(true);
@@ -330,6 +339,98 @@ unittest { // hover preview cannot promote from an excluded default scope
     assert(trace.defaultWinnerId == "handle:100");
     assert(trace.appliedWinnerId == "handle:100");
     assert(trace.advisor.candidateIndex == 1);
+}
+
+unittest { // falloff default cannot receive AI hover promotion to transform
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto falloffLikeDefault = new TestHandle(true);
+    auto transformLikeLater = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.setAiHoverPreviewEnabled(true);
+    handles.setAiHoverPreviewPredicate((int part) const => part >= 0 && part < 30);
+    handles.begin();
+    registerFalloffThenTransform(handles, falloffLikeDefault, transformLikeLater);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 100);
+    assert(handles.secondaryDefault == -1);
+    assert(falloffLikeDefault.getState() == HandleState.Rollover);
+    assert(transformLikeLater.getState() == HandleState.Normal);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.candidates.length == 2);
+    assert(trace.defaultWinnerId == "handle:100");
+    assert(trace.appliedWinnerId == "handle:100");
+    assert(trace.advisor.candidateIndex == 1);
+    assert(trace.advisor.candidateId == "handle:10");
+}
+
+unittest { // transform default cannot receive AI hover promotion to falloff
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto transformLikeDefault = new TestHandle(true);
+    auto falloffLikeLater = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.setAiHoverPreviewEnabled(true);
+    handles.setAiHoverPreviewPredicate((int part) const => part >= 0 && part < 30);
+    handles.begin();
+    handles.add(transformLikeDefault, 10);
+    handles.add(falloffLikeLater, 100);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 10);
+    assert(handles.secondaryDefault == -1);
+    assert(transformLikeDefault.getState() == HandleState.Rollover);
+    assert(falloffLikeLater.getState() == HandleState.Normal);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.candidates.length == 2);
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
+    assert(trace.advisor.candidateIndex == 1);
+    assert(trace.advisor.candidateId == "handle:100");
+}
+
+unittest { // transform default can still preview advisory transform winner
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto transformLikeDefault = new TestHandle(true);
+    auto transformLikeLater = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.setAiHoverPreviewEnabled(true);
+    handles.setAiHoverPreviewPredicate((int part) const => part >= 0 && part < 30);
+    handles.begin();
+    handles.add(transformLikeDefault, 10);
+    handles.add(transformLikeLater, 20);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 20);
+    assert(handles.secondaryDefault == 10);
+    assert(transformLikeDefault.getState() == HandleState.SecondaryDefault);
+    assert(transformLikeLater.getState() == HandleState.Rollover);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.candidates.length == 2);
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:20");
+    assert(trace.advisor.candidateIndex == 1);
+    assert(trace.advisor.candidateId == "handle:20");
 }
 
 unittest { // stable hover and mouse-down candidates resolve to the same handle
