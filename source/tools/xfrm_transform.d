@@ -159,13 +159,19 @@ struct XformState {
 }
 
 // Unified gesture frame — the orthonormal world coordinate frame frozen at
-// gesture start and chained across same-session gestures. It is the single
-// representation that the render ladder's top rung, the chained input
-// channel, and the chained apply axis will read for all three banks, once the
-// later phases re-point those reads. Phase 0 introduces it ALONGSIDE the
-// existing slots and proves it mirrors the persisted `softBasis` triple
-// exactly (same value, same `softBasisValid && acenSettleAllowed()` gate);
-// NO consumer reads it for behavior yet.
+// gesture start and chained across same-session gestures. It is the SINGLE
+// SOURCE OF TRUTH for the chained frozen frame: the render ladder's top rung,
+// the chained input channel, the chained rotate/scale apply axis, and
+// runFrame's chained translate source ALL read it (gesture-frame unification
+// Phases 1-4 re-pointed those reads onto it). It is written DIRECTLY by
+// `settleGestureBasis` (the gesture-end persist) and re-gated by
+// `refreshFrameValid()` — there is no longer a parallel mirror slot.
+//
+// `settled` records whether a gesture-end basis is currently persisted. `valid`
+// is the EFFECTIVE chained gate, recomputed as `settled && acenSettleAllowed()`
+// at exactly the points the basis or the action-center mode can change (settle /
+// clear / each begin*DragSession) — so every read site sees the same value the
+// former two-flag chained gate produced.
 //
 // `m`/`mInv` are COMPUTED from the existing math helpers rather than stored:
 // every writer feeds a pure-rotation orthonormal triple, so the inverse of
@@ -173,11 +179,11 @@ struct XformState {
 // proven == transpose in math.d's unittest). A DEBUG assert at population
 // keeps that invariant honest.
 struct GestureFrame {
-    Vec3 right  = Vec3(1, 0, 0);
-    Vec3 up     = Vec3(0, 1, 0);
-    Vec3 axis   = Vec3(0, 0, 1);   // "axis"/"forward" — the third frame vector
-    Vec3 origin = Vec3(0, 0, 0);   // the chained-translate pivot
-    bool valid  = false;           // false until the first freeze of a chained session
+    Vec3 right   = Vec3(1, 0, 0);
+    Vec3 up      = Vec3(0, 1, 0);
+    Vec3 axis    = Vec3(0, 0, 1);  // "axis"/"forward" — the third frame vector
+    bool settled = false;          // a gesture-end basis is persisted
+    bool valid   = false;          // settled && acenSettleAllowed() — the chained-read gate
     float[16] m()    const @safe pure nothrow @nogc { return frameMatrix(right, up, axis); }
     float[16] mInv() const @safe pure nothrow @nogc { return frameMatrixInverse(right, up, axis); }
 }
@@ -294,31 +300,27 @@ public:
     private Vec3 scaleSoftStartCenter   = Vec3(0, 0, 0);
 
     // flex_border_handles_plan.md Phase 3 / COMMIT B — the gesture-end gizmo BASIS
-    // persistence slot (the analogue of softPlaced for the rendered orientation).
+    // persistence frame (the analogue of softPlaced for the rendered orientation),
+    // now the unified `GestureFrame` (gesture-frame unification, Phase 5 — the
+    // separate persisted-basis and chained-rotate-axis slots were retired; this is
+    // the SINGLE source of truth for the chained frozen frame).
+    //
     // On release of a flex ROTATE the during-drag rendered basis is R_gesture·B0;
     // without this the idle renderBasis path falls back to the live currentBasis
     // (world-snapped, now-rotated-selection) → a visible snap-back. We snapshot
-    // the gesture-END rendered basis at mouse-up and consult it from renderBasis
+    // the gesture-END rendered basis at mouse-up (settleGestureBasis writes
+    // `frame.{right,up,axis}` + `frame.settled`) and consult it from renderBasis
     // while idle (activeDrag is null) BEFORE the live currentBasis fallback, so the
     // dropped orientation persists until selection/mode change (cleared by the SAME
-    // hooks that clear softPlaced — ONE lifecycle). Captured EXPLICITLY at mouse-up
-    // (from the bank's last-drawn handler.axis*) rather than read from runFrame*,
-    // since a boundary-triggered resetRun could zero runFrame* before the next
-    // idle frame reads it (the load-bearing ordering check).
-    private bool softBasisValid = false;
-    private Vec3 softBasisR     = Vec3(1, 0, 0);
-    private Vec3 softBasisU     = Vec3(0, 1, 0);
-    private Vec3 softBasisF     = Vec3(0, 0, 1);
-
-    // Unified gesture frame (Phase 0) — populated to MIRROR the persisted
-    // softBasis triple under the SAME `softBasisValid && acenSettleAllowed()`
-    // gate, so `frame.{right,up,axis} == softBasis{R,U,F}` and
-    // `frame.valid == (softBasisValid && acenSettleAllowed())` everywhere it is
-    // chained. NO functional read consults `frame` yet; later phases will
-    // re-point the render top rung / input channel / apply axis onto it and
-    // retire the hand-synced copies. Kept in sync via `syncGestureFrame()`,
-    // called wherever softBasis changes (begin*DragSession, settleGestureBasis,
-    // clearSoftBasis).
+    // hooks that clear softPlaced — ONE lifecycle, clearFrame()). Captured
+    // EXPLICITLY at mouse-up (from the bank's last-drawn handler.axis*) rather than
+    // read from runFrame*, since a boundary-triggered resetRun could zero runFrame*
+    // before the next idle frame reads it (the load-bearing ordering check).
+    //
+    // `frame.settled` records whether a basis is persisted; `frame.valid` is the
+    // chained-read gate, re-evaluated as `settled && acenSettleAllowed()` whenever
+    // the basis or ACEN mode can change (settle / clearFrame / each
+    // begin*DragSession) — see refreshFrameValid().
     private GestureFrame frame;
 
     // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
@@ -357,20 +359,6 @@ public:
     // gesture so its field carries ONE live axis per cluster). False for the global
     // / no-cluster path → NOTHING re-bakes there (run.r accumulates it all).
     private bool rotateGesturePerClusterLocal = false;
-
-    // Gesture chaining (flex_border_handles_plan.md) — the principal rotate ring's
-    // CHAINED axis basis for THIS gesture. When a prior same-session gesture left a
-    // persisted softBasis (softBasisValid && acenSettleAllowed()), a fresh principal
-    // rotate gesture rotates about the DISPLAYED (rotated) ring axis, not the stale
-    // world-snapped runFrame. The applied ring axis (the drain at ~2232) reads
-    // rotateChain{R,U,F}[ax] instead of runFrame{R,U,F}[ax] when valid; render
-    // already sources softBasis independently (setGizmoRenderBasis ~1002). Captured
-    // in beginRotateDragSession (principal axes only — the view-ring is excluded,
-    // it is camera-axis basis-independent), cleared at every rotate mouse-up.
-    private bool rotateChainAxisValid = false;
-    private Vec3 rotateChainR = Vec3(1, 0, 0);
-    private Vec3 rotateChainU = Vec3(0, 1, 0);
-    private Vec3 rotateChainF = Vec3(0, 0, 1);
 
     // BUG-2 — a PENDING Move-settle soft pin, requested by the mouse-up handler
     // and consumed by commitEdit ONLY when a real edit command was built. A
@@ -457,7 +445,7 @@ public:
         currentRunBank     = DragBank.None;
         resetRun();                   // apply-path Phase 2: fresh geometry run (+ P-F frozen frame)
         lastAcenMode       = -1;      // P-C: re-latch the ACEN mode on first poll
-        clearSoftBasis();             // COMMIT B — fresh session re-derives the basis
+        clearFrame();                 // COMMIT B — fresh session re-derives the basis
     }
 
     // Wrapper-level transient reset (undo/redo migration P1). Extends the base
@@ -489,7 +477,6 @@ public:
         moveDragFastPath          = false;
         rotDragFastPath           = false;
         rotDragAxisIdx            = -1;
-        rotateChainAxisValid      = false;
         scaleDragFastPath         = false;
         scaleDragActive           = false;
         accumulatedWorldDelta     = Vec3(0, 0, 0);
@@ -611,7 +598,7 @@ public:
                 if (lastSelectionHash != uint.max
                  && curHash != lastSelectionHash) {
                     clearAcenSoftPlaced();
-                    clearSoftBasis();   // COMMIT B — one lifecycle with the center pin
+                    clearFrame();       // COMMIT B — one lifecycle with the center pin
                 }
                 lastSelectionHash   = curHash;
                 lastMutationVersion = curMutVer;
@@ -660,7 +647,7 @@ public:
                     // through setAttr; this covers any other path that moved the mode
                     // and is a no-op when already clear.)
                     clearAcenSoftPlaced();
-                    clearSoftBasis();   // COMMIT B — one lifecycle with the center pin
+                    clearFrame();       // COMMIT B — one lifecycle with the center pin
                     lastAcenMode     = curMode;
                 }
             }
@@ -939,7 +926,7 @@ public:
     // Test seam — the Move bank's live drag axis (0/1/2 axis, 3 center-box / most-
     // facing plane, 4/5/6 plane circles, -1 idle). Lets the gesture-chain test
     // confirm a center-box grab actually engaged dragAxis==3 (the basis-free path
-    // excluded from softBasis chaining), rather than a rotated arrow.
+    // excluded from gesture-frame chaining), rather than a rotated arrow.
     public int moveDragAxisPublic() const { return moveSub.dragAxisPublic(); }
 
     // ----- Rendered-pose seam (flex_border_handles_plan.md Phase 4 step 1) ----
@@ -1012,15 +999,14 @@ public:
             //
             // GESTURE CHAINING: re-grabbing a handle WITHOUT changing selection now
             // chains off this persisted frame — begin*DragSession freezes the new
-            // run's B0 from softBasis (feeding BOTH render and apply translate), and
-            // the sub-tools' inputBasis* are overridden from the same softBasis, so
+            // run's B0 from the unified frame (feeding BOTH render and apply
+            // translate), and the sub-tools' input projection reads the same frame, so
             // render + input + apply all agree on the rotated frame for the whole
-            // drag (no un-rotated pop). softBasis re-pins each gesture (the move's
+            // drag (no un-rotated pop). The frame re-pins each gesture (the move's
             // own settleGestureBasis), chaining across move→scale→… until a
-            // selection/mode change clears it (clearSoftBasis) → the first fresh
+            // selection/mode change clears it (clearFrame) → the first fresh
             // gesture re-derives the world-snapped basis again.
             if (frame.valid) {
-                debug assertGestureFrameMirrorsSoftBasis();
                 rX = frame.right; rY = frame.up; rZ = frame.axis;
                 return;
             }
@@ -1036,15 +1022,15 @@ public:
         // one session) therefore inherits the FIRST gesture's runFrame — world if the
         // session opened on a rotate — and with gestureStart.r == run.r the
         // R_gesture below is I, so the handles would render WORLD even though the
-        // prior rotate left a rotated softBasis (the user-found same-session bug).
+        // prior rotate left a rotated frame (the user-found same-session bug).
         //
         // Fix the RENDER ONLY: when a prior gesture persisted a rotated frame
-        // (softBasisValid, selection/mode unchanged), source B0 from softBasis even
+        // (frame.settled, selection/mode unchanged), source B0 from `frame` even
         // when runFrameValid. This is DELIBERATELY render-only — runFrame and the
         // apply fold are UNTOUCHED. The apply path already lands the move along the
         // cursor world delta: composeFor folds M = run.r · T(runFrame · run.t) and
-        // 798047a overrides the chained move's INPUT basis to softBasis, so
-        // run.t = softBasisᵀ·worldDelta and the fold's run.r cancels the softBasis's
+        // the chained move's INPUT basis is the same `frame`, so
+        // run.t = frameᵀ·worldDelta and the fold's run.r cancels the frame's
         // rotation → net Δ = worldDelta (verified by the fold algebra). Re-sourcing
         // runFrame instead would inject a SECOND run.r (runFrame=run.r·B0 with the
         // input already pre-counter-rotated) → Δ = run.r·worldDelta, drifting the
@@ -1054,8 +1040,7 @@ public:
         if (frame.valid) {
             // Persisted rotated frame — render it whether or not runFrame is valid
             // (within-session chain: runFrame may be the stale world frame).
-            // frame.valid == (softBasisValid && acenSettleAllowed()) by construction.
-            debug assertGestureFrameMirrorsSoftBasis();
+            // frame.valid == (frame.settled && acenSettleAllowed()) by construction.
             b0X = frame.right; b0Y = frame.up; b0Z = frame.axis;
         } else if (runFrameValid) {
             b0X = runFrameR; b0Y = runFrameU; b0Z = runFrameF;
@@ -1935,15 +1920,17 @@ public:
                         && (vertexProcessCount
                             == cast(int)mesh.vertices.length);
 
-        // Mirror the (possibly chained) softBasis into the unified `frame` at
-        // gesture start, under the same gate the chained reads use.
-        syncGestureFrame();
+        // Re-gate the unified `frame` for this gesture (it carries the persisted,
+        // possibly-chained gesture-end basis) under the same Element/Local gate the
+        // chained reads use.
+        refreshFrameValid();
         // Gesture-frame unification, Phase 2 — push the unified frame into the
         // Move bank's WRAPPED input-projection channel. This replaces the prior
-        // hand-synced `inputBasis*` override: the channel carries `frame`
-        // (== softBasis when chained), and the bank's DECOMPOSE reads project the
-        // world delta onto it. The `chained` gate mirrors the old override guard
-        // EXACTLY — `frame.valid` is `softBasisValid && acenSettleAllowed()`, and
+        // hand-synced `inputBasis*` override: the channel carries `frame` (the
+        // persisted gesture frame when chained), and the bank's DECOMPOSE reads
+        // project the world delta onto it. The `chained` gate mirrors the old
+        // override guard EXACTLY — `frame.valid` is `frame.settled &&
+        // acenSettleAllowed()` — and
         // the center-box free-plane drag (dragAxis 3) is BASIS-FREE/screen-plane,
         // so it is excluded here (passes chained=false) and falls back to the
         // bank's live `inputBasis*` — its decompose and re-expand share the live
@@ -2042,16 +2029,16 @@ public:
                        ? rotateSub.dragAxis : -1;
 
         // Gesture chaining (flex_border_handles_plan.md) — when a prior
-        // same-session gesture left a persisted gizmo frame (softBasisValid, and
+        // same-session gesture left a persisted gizmo frame (frame.settled, and
         // the selection/mode has not changed to clear it), this PRINCIPAL rotate
         // gesture must rotate about the DISPLAYED rotated ring axis, not the stale
         // world-snapped runFrame. The render already draws the ring at
-        // R_gesture·softBasis (setGizmoRenderBasis ~1002) — without this the apply
+        // R_gesture·frame (setGizmoRenderBasis ~1002) — without this the apply
         // would rotate about world X while the ring shows rotated X (the
         // user-found same-session bug: rotate Z, then grab X → X rotates about
-        // world X). Two coupled overrides, gated identically to where softBasis is
-        // SET (acenSettleAllowed mirrors the Element/Local exclusion):
-        //   (1) the APPLY ring axis — rotateChain{R,U,F} feeds the drain (~2232)
+        // world X). Two coupled chained reads, gated identically to where the basis
+        // is settled (acenSettleAllowed mirrors the Element/Local exclusion):
+        //   (1) the APPLY ring axis — the drain (~2232) reads `frame.{right,up,axis}`
         //       in place of runFrame{R,U,F}, the ONLY apply consumer that needs
         //       chaining (run.t / the translate fold are UNTOUCHED, so the
         //       move-after-rotate translate algebra stays correct — see the
@@ -2063,16 +2050,8 @@ public:
         //       below re-derives them; gesture-frame unification Phase 2).
         // The VIEW-RING (rotDragAxisIdx == 3) is camera-axis basis-independent and
         // EXCLUDED (mirrors moveCenterBoxDragActive() excluding the move
-        // center-box dragAxis 3). Both the apply override and the input channel
+        // center-box dragAxis 3). Both the apply read and the input channel
         // self-guard to 0/1/2.
-        rotateChainAxisValid = false;
-        if (softBasisValid && acenSettleAllowed()
-                && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
-            rotateChainAxisValid = true;
-            rotateChainR = softBasisR;
-            rotateChainU = softBasisU;
-            rotateChainF = softBasisF;
-        }
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -2083,16 +2062,16 @@ public:
                        && (vertexProcessCount
                            == cast(int)mesh.vertices.length);
 
-        // Mirror softBasis into `frame` (see beginMoveDragSession).
-        syncGestureFrame();
+        // Re-gate the unified `frame` for this gesture (see beginMoveDragSession).
+        refreshFrameValid();
         // Gesture-frame unification, Phase 2 — push the unified frame into the
         // Rotate bank's WRAPPED input channel, which re-derives the frozen
         // principal dragAxisVec/dragRefDir from it (the freeze-ordering trap:
         // button-down already froze them from the live basis BEFORE this runs).
-        // The channel carries `frame` (== softBasis when chained), so the rotation
-        // plane is byte-identical to the prior rechain. Gate mirrors the apply
-        // override exactly — `frame.valid` is `softBasisValid && acenSettleAllowed()`,
-        // and the view-ring (rotDragAxisIdx == 3) is excluded (the channel push and
+        // The channel carries `frame` (the persisted gesture frame when chained), so
+        // the rotation plane is byte-identical to the prior rechain. Gate mirrors the
+        // apply read exactly — `frame.valid` is `frame.settled && acenSettleAllowed()`
+        // — and the view-ring (rotDragAxisIdx == 3) is excluded (the channel push and
         // its re-derivation both self-guard to principal rings 0/1/2).
         rotateSub.setWrapperInputFrame(frame.right, frame.up, frame.axis,
             frame.valid && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2);
@@ -2160,15 +2139,16 @@ public:
                              == cast(int)mesh.vertices.length);
         scaleDragActive = true;
 
-        // Mirror softBasis into `frame` (see beginMoveDragSession).
-        syncGestureFrame();
+        // Re-gate the unified `frame` for this gesture (see beginMoveDragSession).
+        refreshFrameValid();
         // Gesture-frame unification, Phase 2 — push the unified frame into the
         // Scale bank's WRAPPED input channel (mirror of the Move push). Replaces
         // the prior hand-synced inputBasis* override; the channel carries `frame`
-        // (== softBasis when chained), so an axis scale after a rotate scales
-        // along the rotated axes the rendered boxes show — byte-identical input.
-        // `frame.valid` is the `softBasisValid && acenSettleAllowed()` gate the
-        // old override used (scale has no center-box exclusion).
+        // (the persisted gesture frame when chained), so an axis scale after a
+        // rotate scales along the rotated axes the rendered boxes show —
+        // byte-identical input. `frame.valid` is the `frame.settled &&
+        // acenSettleAllowed()` gate the old override used (scale has no center-box
+        // exclusion).
         scaleSub.setWrapperInputFrame(frame.right, frame.up, frame.axis, frame.valid);
     }
 
@@ -2208,7 +2188,7 @@ public:
                 // ACEN centroid which `update()` re-evaluates from
                 // the moved verts on the next frame.
                 // The center-box free-plane drag (dragAxis 3) decomposed `pending`
-                // against the LIVE inputBasis (NOT the rotated softBasis), so its
+                // against the LIVE inputBasis (NOT the rotated gesture frame), so its
                 // visual follow must re-expand along that SAME live inputBasis — else
                 // the center drifts off the cursor by the gizmo rotation R. The
                 // axis/plane grabs decomposed against the rendered frame (= rotated
@@ -2327,28 +2307,25 @@ public:
                     // captured at THIS run's first applyTRS may be the STALE
                     // world-snapped basis (a cross-axis rotate-after-rotate reuses
                     // the run frame — no re-bake on the global matrix-truth path),
-                    // while the ring is DRAWN at R_gesture·softBasis. Rotate about
-                    // the DISPLAYED ring axis (rotateChain{R,U,F} = softBasis,
-                    // captured in beginRotateDragSession, principal axes only) so
-                    // apply follows render. Self-consistent — no double-count: the
-                    // render's R_gesture = R(rotateChain[ax], ang) is then applied
-                    // to softBasis, i.e. rotating the displayed frame about one of
-                    // its OWN axes. Falls back to runFrame (then live currentBasis)
-                    // for the un-chained first gesture / non-Border modes.
+                    // while the ring is DRAWN at R_gesture·frame. Rotate about the
+                    // DISPLAYED ring axis (the unified `frame`, persisted by the prior
+                    // gesture's settleGestureBasis, principal axes only) so apply
+                    // follows render. Self-consistent — no double-count: the render's
+                    // R_gesture = R(frame[ax], ang) is then applied to `frame`, i.e.
+                    // rotating the displayed frame about one of its OWN axes. Falls
+                    // back to runFrame (then live currentBasis) for the un-chained
+                    // first gesture / non-Border modes.
                     Vec3 ringAxis;
-                    // Gesture-frame unification, Phase 3 — the chained ring axis
-                    // now reads the unified `frame` instead of the parallel
-                    // `rotateChain*` copy. `rotateChainAxisValid` is precisely
-                    // `frame.valid && rotDragAxisIdx in 0..2` (set in
-                    // beginRotateDragSession from the SAME softBasis), and here we
-                    // are already in the principal-ring branch (ax in 0..2), so
-                    // `frame.{right,up,axis}` are the SAME vectors `rotateChain*`
-                    // held (both copies of softBasis). The `rotateChain*` WRITES
-                    // stay in place (retired in a later phase); only this READ
-                    // moves to `frame`. Value-identical (the parity guard proves
-                    // `frame == softBasis`).
-                    if (rotateChainAxisValid) {
-                        debug assertGestureFrameMirrorsSoftBasis();
+                    // Gesture-frame unification, Phase 5 — the chained ring axis
+                    // reads the unified `frame` directly. The chained gate is
+                    // inlined as `frame.valid && rotDragAxisIdx in 0..2` (the
+                    // condition the retired chained-axis flag was set under in
+                    // beginRotateDragSession; principal-ring gestures only — the
+                    // view-ring takes the ax==3 branch, not this one), and we are
+                    // already in the principal-ring branch, so `frame.{right,up,axis}`
+                    // are the frozen gesture frame's axes. Falls back to runFrame
+                    // (then live currentBasis) for the un-chained first gesture.
+                    if (frame.valid && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
                         ringAxis = ax == 0 ? frame.right
                                  : ax == 1 ? frame.up
                                            : frame.axis;
@@ -2693,11 +2670,12 @@ public:
             gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
             needsGpuUpdate  = false;
             rotDragFastPath = false;
-            rotDragAxisIdx  = -1;
             // Gesture chaining (flex_border_handles_plan.md) — drop the chained
-            // ring-axis override; the NEXT gesture re-evaluates it from the
-            // softBasis this gesture's own settleGestureBasis just (re)pinned.
-            rotateChainAxisValid = false;
+            // ring-axis read by clearing the principal-ring index; the chained drain
+            // gate (`frame.valid && rotDragAxisIdx in 0..2`) is now false, so the
+            // NEXT gesture re-evaluates the axis from the frame this gesture's own
+            // settleGestureBasis just (re)pinned.
+            rotDragAxisIdx  = -1;
             // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; a
             // subsequent R/S own-bank fast-path must drop to CPU re-upload.
             runGpuBufferDirty = true;
@@ -3013,32 +2991,29 @@ public:
         // re-freezes a fresh frame next apply.
         if (!runFrameValid) {
             // Chain a new gesture off the PERSISTED gizmo frame: when a prior
-            // gesture left a soft basis (softBasisValid, and the selection/mode
-            // hasn't changed to clear it), freeze THIS run's B0 from softBasis
-            // instead of the live world-snapped currentBasis. runFrame is the SINGLE
-            // B0 that feeds BOTH the rendered frame (renderBasis drag branch) AND the
-            // apply-path translate (tX/tY/tZ at applyFold), so this one swap keeps
-            // render + apply coherent — the move-after-rotate gizmo draws rotated AND
-            // translates along the rotated axes (MODO parity). The sub-tools'
-            // inputBasis* are overridden from the same softBasis in begin*DragSession
-            // so the drag DIRECTION matches the rendered arrows (never split sources).
-            // Gated by acenSettleAllowed() (mirrors where softBasis is set) so
-            // Element/Local — which never persist a frame — re-derive fresh.
+            // gesture left a settled basis (frame.settled, and the selection/mode
+            // hasn't changed to clear it), freeze THIS run's B0 from the unified
+            // `frame` instead of the live world-snapped currentBasis. runFrame is the
+            // SINGLE B0 that feeds BOTH the rendered frame (renderBasis drag branch)
+            // AND the apply-path translate (tX/tY/tZ at applyFold), so this one swap
+            // keeps render + apply coherent — the move-after-rotate gizmo draws
+            // rotated AND translates along the rotated axes. The sub-tools' input
+            // projection reads the same `frame` (pushed in begin*DragSession) so the
+            // drag DIRECTION matches the rendered arrows (never split sources).
+            // Gated by acenSettleAllowed() (the frame's own gate) so Element/Local —
+            // which never persist a frame — re-derive fresh.
             // The Move center-box free-plane drag (dragAxis 3) is basis-free on the
             // input side, so it stays on the LIVE basis here too — else decompose
             // (live) vs re-expand (rotated runFrame) would round-trip to R·worldDelta.
             Vec3 f0X = bX, f0Y = bY, f0Z = bZ;
-            // Gesture-frame unification, Phase 4 — runFrame's CHAINED source now
-            // reads the unified `frame` instead of softBasis directly. `frame.valid`
-            // IS `softBasisValid && acenSettleAllowed()` by construction, and
-            // `frame.{right,up,axis} == softBasis{R,U,F}` (parity guard), so this is
-            // a value-identical swap: when chained the frozen B0 triple is the same
-            // vectors as before. The non-chained default (bX/bY/bZ over the restored
-            // baseline) and the moveCenterBoxDragActive() exclusion stay verbatim —
-            // runFrame itself, its freeze, runFrameValid, the publish, and the
-            // translate read are untouched (runFrame is the 6->2 boundary, it stays).
+            // Gesture-frame unification — runFrame's CHAINED source reads the unified
+            // `frame` (the single source of truth). `frame.valid` IS `frame.settled
+            // && acenSettleAllowed()` by construction. The non-chained default
+            // (bX/bY/bZ over the restored baseline) and the moveCenterBoxDragActive()
+            // exclusion stay verbatim — runFrame itself, its freeze, runFrameValid,
+            // the publish, and the translate read are untouched (runFrame is the
+            // 6->2 boundary, it stays).
             if (frame.valid && !moveCenterBoxDragActive()) {
-                debug assertGestureFrameMirrorsSoftBasis();
                 f0X = frame.right; f0Y = frame.up; f0Z = frame.axis;
             }
             runFrameOrigin = pivot;
@@ -4455,20 +4430,20 @@ private:
         // extent tie and swaps BACK — the apply axis OSCILLATES A->B->A within
         // one drag (the user-found scale-after-rotate flip).
         //
-        // SOURCE — mirror renderBasis (~1017) and the input override
-        // (beginScaleDragSession ~2091): when a prior same-session gesture left a
-        // persisted gizmo frame (softBasisValid && acenSettleAllowed), source the
-        // scale axes from softBasis DIRECTLY, not from runFrame. The run frame is
-        // frozen at the run's FIRST applyTRS, but a chained scale REUSES the prior
-        // (e.g. rotate) gesture's still-open run (noteRunBank consolidates history
-        // but does NOT resetRun), so runFrame holds that run's ORIGINAL
-        // world-snapped frame — softBasis carries the rotated frame the displayed
-        // boxes + the input projection already use. Scaling along softBasis (=
+        // SOURCE — mirror renderBasis (~1017) and the input channel
+        // (beginScaleDragSession): when a prior same-session gesture left a
+        // persisted gizmo frame (frame.settled && acenSettleAllowed), source the
+        // scale axes from the unified `frame` DIRECTLY, not from runFrame. The run
+        // frame is frozen at the run's FIRST applyTRS, but a chained scale REUSES the
+        // prior (e.g. rotate) gesture's still-open run (noteRunBank consolidates
+        // history but does NOT resetRun), so runFrame holds that run's ORIGINAL
+        // world-snapped frame — `frame` carries the rotated frame the displayed
+        // boxes + the input projection already use. Scaling along `frame` (=
         // run.r·world) composes with the held `run.r` in composeFor as
-        // M = S(softBasis)·run.r: at run.s=I, M = run.r (held rotation only); as
+        // M = S(frame)·run.r: at run.s=I, M = run.r (held rotation only); as
         // run.s grows the extra scale is along the DISPLAYED rotated axis — no
         // double-count (S composes with run.r, it does not replace or re-rotate
-        // it). For a FRESH first gesture (softBasisValid==false) this falls back
+        // it). For a FRESH first gesture (frame.settled==false) this falls back
         // to the frozen runFrame == the gesture-start currentBasis, so a
         // non-flipping drag is geometry-identical to the old live read and differs
         // ONLY on the flip frames it suppresses. Uniform-disc scale (run.s
@@ -4476,14 +4451,10 @@ private:
         // per-cluster (ACEN.Local) path below keeps its own per-cluster axes
         // (Local never chains — acenSettleAllowed excludes it).
         Vec3 sX = tX, sY = tY, sZ = tZ;
-        // Gesture-frame unification, Phase 3 — the chained scale axes now read the
-        // unified `frame` instead of softBasis directly. `frame.valid` IS
-        // `softBasisValid && acenSettleAllowed()` by construction, and
-        // `frame.{right,up,axis} == softBasis{R,U,F}` (parity guard), so this is a
-        // value-identical swap. The softBasis WRITES stay (retired in a later
-        // phase); only this READ moves to `frame`.
+        // Gesture-frame unification — the chained scale axes read the unified
+        // `frame` (the single source of truth). `frame.valid` IS `frame.settled &&
+        // acenSettleAllowed()` by construction.
         if (frame.valid) {
-            debug assertGestureFrameMirrorsSoftBasis();
             sX = frame.right; sY = frame.up; sZ = frame.axis;
         }
 
@@ -4769,9 +4740,10 @@ private:
     // Gesture chaining — is the ACTIVE drag the Move center-box free-plane drag
     // (dragAxis == 3)? That drag is BASIS-FREE: its input decompose passes the full
     // 3D snap delta (constrainSnapDelta returns delta unchanged, move.d:586) and
-    // pendingTranslateDelta decomposes against the LIVE inputBasis (NOT overridden
-    // for axis 3 in beginMoveDragSession). So it must be EXCLUDED from the softBasis
-    // chaining on the APPLY side (runFrame B0) and the visual center-follow too:
+    // pendingTranslateDelta decomposes against the LIVE inputBasis (the wrapped
+    // input channel is NOT pushed for axis 3 in beginMoveDragSession). So it must be
+    // EXCLUDED from the gesture-frame chaining on the APPLY side (runFrame B0) and
+    // the visual center-follow too:
     // re-expanding run.t along a rotated runFrame while it was decomposed against the
     // live basis would round-trip to R·worldDelta — a center-box free-drag after a
     // Border rotate would translate rotated by the gizmo angle (off the cursor). The
@@ -4816,7 +4788,7 @@ private:
     // it after release instead of snapping to the world-snapped live currentBasis.
     // Called at every gesture mouse-up. Captured EXPLICITLY from the rendered basis
     // here (not runFrame*) so a boundary resetRun cannot strand it. Shares the
-    // softPlaced lifecycle — cleared by clearSoftBasis on the same boundaries.
+    // softPlaced lifecycle — cleared by clearFrame() on the same boundaries.
     void settleGestureBasis(Vec3 r, Vec3 u, Vec3 f) {
         // Gate mirrors settleGestureCenter's acenSettleAllowed() so center + basis
         // persistence share ONE Element/Local exclusion lifecycle: in Local the
@@ -4826,62 +4798,29 @@ private:
         // would freeze while the center re-derives → a center/basis desync.
         auto ac = activeAcenStage();
         if (ac is null || !ac.acenSettleAllowed()) return;
-        softBasisValid = true;
-        softBasisR = r; softBasisU = u; softBasisF = f;
-        syncGestureFrame();   // Phase 0 — mirror the just-settled basis into `frame`.
+        // Write the persisted gesture-end basis DIRECTLY into the unified frame —
+        // `frame` is the single source of truth now (no parallel mirror slot).
+        frame.right   = r;
+        frame.up      = u;
+        frame.axis    = f;
+        frame.settled = true;
+        debug assertGestureFrameOrthonormal();
+        refreshFrameValid();   // settled + ACEN allows ⇒ frame.valid = true
     }
 
     // Drop the persisted gesture-end basis so the idle gizmo re-derives from the
     // live selection (a new selection / a mode change recomputes the basis). Driven
     // from the SAME wrapper boundaries that clear the center soft pin.
-    void clearSoftBasis() { softBasisValid = false; syncGestureFrame(); }
+    void clearFrame() { frame.settled = false; refreshFrameValid(); }
 
-    // Phase 0 — recompute the unified `frame` to MIRROR the persisted softBasis
-    // triple under the SAME gate the chained reads use (`softBasisValid &&
-    // acenSettleAllowed()`). Called wherever softBasis changes. This makes
-    // `frame.{right,up,axis} == softBasis{R,U,F}` and `frame.valid` exactly the
-    // chained gate by construction, so the later phases can re-point reads onto
-    // `frame` as a same-value swap. NO behavior depends on it yet.
-    private void syncGestureFrame() {
-        if (softBasisValid && acenSettleAllowed()) {
-            frame.right = softBasisR;
-            frame.up    = softBasisU;
-            frame.axis  = softBasisF;
-            frame.valid = true;
-            debug assertGestureFrameOrthonormal();
-        } else {
-            frame.valid = false;
-        }
-    }
-
-    // DEBUG-only — Phase 0 parity guard. On the CHAINED render branches (idle
-    // softBasis rung + the active B0 top rung) `frame` must EQUAL the softBasis
-    // triple it is destined to replace, with `frame.valid` set. This proves the
-    // unified frame tracks softBasis exactly before any functional read is
-    // re-pointed onto it. The idle rung gates on `softBasisValid` alone (not
-    // also acenSettleAllowed()); that path is still value-identical by invariant
-    // — an idle ACEN-mode flip fires clearSoftBasis() (which also clears
-    // `frame.valid`) before render — so this guard holds at idle frames too.
-    // We do NOT assert against the runFrame or currentBasis rungs: they are
-    // untouched and carry distinct values by design (the render ladder stays
-    // 3-way). Compiled out of release.
-    debug private void assertGestureFrameMirrorsSoftBasis() {
-        import std.math : abs;
-        enum float tol = 1e-5f;
-        assert(frame.valid,
-               "GestureFrame invalid on a chained softBasis render branch");
-        assert(abs(frame.right.x - softBasisR.x) < tol
-            && abs(frame.right.y - softBasisR.y) < tol
-            && abs(frame.right.z - softBasisR.z) < tol,
-               "frame.right != softBasisR");
-        assert(abs(frame.up.x - softBasisU.x) < tol
-            && abs(frame.up.y - softBasisU.y) < tol
-            && abs(frame.up.z - softBasisU.z) < tol,
-               "frame.up != softBasisU");
-        assert(abs(frame.axis.x - softBasisF.x) < tol
-            && abs(frame.axis.y - softBasisF.y) < tol
-            && abs(frame.axis.z - softBasisF.z) < tol,
-               "frame.axis != softBasisF");
+    // Re-gate the chained-read flag: `frame.valid = frame.settled &&
+    // acenSettleAllowed()`. Called at exactly the points the basis or the ACEN
+    // mode can change (settle / clearFrame / each begin*DragSession), so every
+    // read site sees the value the former persisted-basis chained gate produced.
+    // The triple is left untouched — when `settled` is false the gate makes it
+    // unreadable, exactly as the old mirror did.
+    private void refreshFrameValid() {
+        frame.valid = frame.settled && acenSettleAllowed();
     }
 
     // DEBUG-only — the chained frame is always a pure-rotation orthonormal

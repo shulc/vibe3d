@@ -65,8 +65,9 @@ private:
     // too late — `setWrapperInputFrame` RE-DERIVES `dragAxisVec`/`dragRefDir`
     // from the pushed frame after button-down (the former `rechainPrincipalDragAxis`
     // logic, now routed through the unified frame channel). When chained, the
-    // pushed frame == softBasis, so the rotation plane is byte-identical to the
-    // prior override. The view-ring (dragAxis==3) is camera-axis/basis-free and
+    // pushed frame is the wrapper's persisted gesture frame, so the rotation plane
+    // is byte-identical to the prior override. The view-ring (dragAxis==3) is
+    // camera-axis/basis-free and
     // EXCLUDED: this never fires for it (principal rings 0/1/2 only), and the
     // view-ring mouse-up decompose keeps reading the LIVE `inputBasis*` (which is
     // never overwritten now). The STANDALONE path (`wrapperRef is null`) never
@@ -766,8 +767,9 @@ public:
     // frame. This is the rotate counterpart of the move/scale channel push, but
     // rotate freezes dragAxisVec/dragRefDir at button-down (the freeze-ordering
     // trap), so a bare channel write would be too late — it RE-DERIVES those
-    // frozen fields here from the pushed frame. When chained, the pushed frame ==
-    // softBasis, so the plane is byte-identical to the prior override.
+    // frozen fields here from the pushed frame. When chained, the pushed frame is
+    // the wrapper's persisted gesture frame, so the plane is byte-identical to the
+    // prior override.
     //
     // Principal axes (0/1/2) ONLY. The view-ring (dragAxis == 3) rotates about
     // the camera-forward axis (basis-independent) and decomposes onto the LIVE
@@ -809,9 +811,8 @@ public:
     }
 
     // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
-    // The pushed channel must carry the wrapper's unified `frame` (proven ==
-    // softBasis by the wrapper-side assert), an orthonormal triple. Compiled out
-    // of release.
+    // The pushed channel must carry the wrapper's unified `frame` (an orthonormal
+    // triple, asserted on the wrapper side at population). Compiled out of release.
     debug void assertWrapperInputFrameChained() const {
         import std.math : abs;
         if (wrapperRef is null || !wrapperInputFrameValid) return;
