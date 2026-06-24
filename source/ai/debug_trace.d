@@ -5,7 +5,8 @@ import std.conv : to;
 import std.format : format;
 import std.json : JSONValue;
 
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiIntent;
+import ai.interaction : AiAdvisorDecision, AiCandidate, AiElementCandidateKind,
+    AiIntent;
 
 string aiIntentId(AiIntent intent) {
     final switch (intent) {
@@ -39,7 +40,35 @@ private string jsonString(string s) {
     return JSONValue(s).toString();
 }
 
-struct AiHandleDebugTrace {
+string aiElementCandidateKindId(AiElementCandidateKind kind) {
+    final switch (kind) {
+        case AiElementCandidateKind.none:       return "none";
+        case AiElementCandidateKind.vertex:     return "vertex";
+        case AiElementCandidateKind.edge:       return "edge";
+        case AiElementCandidateKind.face:       return "face";
+        case AiElementCandidateKind.background: return "background";
+    }
+}
+
+private AiCandidate copyCandidate(const ref AiCandidate c) {
+    auto copy = AiCandidate();
+    copy.id = c.id;
+    copy.kind = c.kind;
+    copy.elementKind = c.elementKind;
+    copy.intent = c.intent;
+    copy.screenDist = c.screenDist;
+    copy.worldDist = c.worldDist;
+    copy.priorityFromCurrentRules = c.priorityFromCurrentRules;
+    copy.isDefaultWinner = c.isDefaultWinner;
+    copy.isExplicitModifierChoice = c.isExplicitModifierChoice;
+    copy.hasScreenPosition = c.hasScreenPosition;
+    copy.screenPosition = c.screenPosition;
+    copy.hasWorldPosition = c.hasWorldPosition;
+    copy.worldPosition = c.worldPosition;
+    return copy;
+}
+
+struct AiCandidateDebugTrace {
     AiAdvisorDecision advisor;
     AiCandidate[] candidates;
     int defaultWinnerIndex = -1;
@@ -62,19 +91,7 @@ struct AiHandleDebugTrace {
         clear();
         advisor = decision;
         foreach (i, ref c; observed) {
-            auto copy = AiCandidate();
-            copy.id = c.id;
-            copy.kind = c.kind;
-            copy.intent = c.intent;
-            copy.screenDist = c.screenDist;
-            copy.worldDist = c.worldDist;
-            copy.priorityFromCurrentRules = c.priorityFromCurrentRules;
-            copy.isDefaultWinner = c.isDefaultWinner;
-            copy.isExplicitModifierChoice = c.isExplicitModifierChoice;
-            copy.hasScreenPosition = c.hasScreenPosition;
-            copy.screenPosition = c.screenPosition;
-            copy.hasWorldPosition = c.hasWorldPosition;
-            copy.worldPosition = c.worldPosition;
+            auto copy = copyCandidate(c);
             if (copy.isDefaultWinner && defaultWinnerIndex < 0) {
                 defaultWinnerIndex = cast(int)i;
                 defaultWinnerId = copy.id;
@@ -91,17 +108,25 @@ struct AiHandleDebugTrace {
         }
     }
 
-    string toJson(bool enabled) const {
-        auto buf = appender!string();
-        buf.put(format(`{"enabled":%s`, enabled ? "true" : "false"));
-        buf.put(`,"advisor":`);
-        putAdvisorJson(buf);
-        buf.put(`,"handleTrace":{"candidateCount":`);
+    void putTraceJson(B)(ref B buf, string fieldName) const {
+        buf.put(`,"`);
+        buf.put(fieldName);
+        buf.put(`":{"candidateCount":`);
         buf.put(candidates.length.to!string);
         buf.put(`,"candidateIds":[`);
         foreach (i, ref c; candidates) {
             if (i) buf.put(`,`);
             buf.put(jsonString(c.id));
+        }
+        buf.put(`],"candidates":[`);
+        foreach (i, ref c; candidates) {
+            if (i) buf.put(`,`);
+            buf.put(format(`{"id":%s,"elementKind":%s,` ~
+                           `"isDefaultWinner":%s,"priorityFromCurrentRules":%f}`,
+                           jsonString(c.id),
+                           jsonString(aiElementCandidateKindId(c.elementKind)),
+                           c.isDefaultWinner ? "true" : "false",
+                           c.priorityFromCurrentRules));
         }
         buf.put(`],"defaultWinner":{`);
         buf.put(format(`"present":%s,"id":%s,"index":%d`,
@@ -113,11 +138,10 @@ struct AiHandleDebugTrace {
                        appliedWinnerIndex >= 0 ? "true" : "false",
                        jsonString(appliedWinnerId),
                        appliedWinnerIndex));
-        buf.put(`}}}`);
-        return buf.data;
+        buf.put(`}}`);
     }
 
-    private void putAdvisorJson(B)(ref B buf) const {
+    void putAdvisorJson(B)(ref B buf) const {
         buf.put(format(`{"intent":%s,"confidence":%f,"candidateIndex":%d,` ~
                        `"candidateId":%s,"keepDefault":%s}`,
                        jsonString(aiIntentId(advisor.intent)),
@@ -128,10 +152,34 @@ struct AiHandleDebugTrace {
     }
 }
 
+alias AiHandleDebugTrace = AiCandidateDebugTrace;
+alias AiElementDebugTrace = AiCandidateDebugTrace;
+
 private AiHandleDebugTrace g_latestHandleTrace;
+private AiElementDebugTrace g_latestElementTrace;
+
+private string tracesToJson(bool enabled) {
+        auto buf = appender!string();
+        buf.put(format(`{"enabled":%s`, enabled ? "true" : "false"));
+        buf.put(`,"advisor":`);
+        g_latestHandleTrace.putAdvisorJson(buf);
+        g_latestHandleTrace.putTraceJson(buf, "handleTrace");
+        g_latestElementTrace.putTraceJson(buf, "elementTrace");
+        buf.put(`}`);
+        return buf.data;
+}
 
 void clearLatestHandleDebugTrace() {
     g_latestHandleTrace.clear();
+}
+
+void clearLatestElementDebugTrace() {
+    g_latestElementTrace.clear();
+}
+
+void clearLatestAiDebugTraces() {
+    clearLatestHandleDebugTrace();
+    clearLatestElementDebugTrace();
 }
 
 void publishHandleDebugTrace(const(AiCandidate)[] candidates,
@@ -140,16 +188,24 @@ void publishHandleDebugTrace(const(AiCandidate)[] candidates,
     g_latestHandleTrace.set(candidates, decision, appliedWinnerIndex);
 }
 
+void publishElementDebugTrace(const(AiCandidate)[] candidates) {
+    g_latestElementTrace.set(candidates);
+}
+
 const(AiHandleDebugTrace) latestHandleDebugTrace() {
     return g_latestHandleTrace;
 }
 
+const(AiElementDebugTrace) latestElementDebugTrace() {
+    return g_latestElementTrace;
+}
+
 string latestHandleDebugTraceJson(bool enabled) {
-    return g_latestHandleTrace.toJson(enabled);
+    return tracesToJson(enabled);
 }
 
 unittest {
-    clearLatestHandleDebugTrace();
+    clearLatestAiDebugTraces();
     auto empty = latestHandleDebugTrace();
     assert(empty.candidates.length == 0);
     assert(empty.defaultWinnerIndex == -1);
@@ -157,10 +213,13 @@ unittest {
     assert(empty.appliedWinnerIndex == -1);
     assert(empty.appliedWinnerId.length == 0);
     assert(empty.advisor.keepDefault);
-    assert(empty.toJson(false) ==
+    assert(latestHandleDebugTraceJson(false) ==
            `{"enabled":false,"advisor":{"intent":"keepDefault","confidence":0.000000,` ~
            `"candidateIndex":-1,"candidateId":"","keepDefault":true},` ~
-           `"handleTrace":{"candidateCount":0,"candidateIds":[],` ~
+           `"handleTrace":{"candidateCount":0,"candidateIds":[],"candidates":[],` ~
+           `"defaultWinner":{"present":false,"id":"","index":-1},` ~
+           `"appliedWinner":{"present":false,"id":"","index":-1}},` ~
+           `"elementTrace":{"candidateCount":0,"candidateIds":[],"candidates":[],` ~
            `"defaultWinner":{"present":false,"id":"","index":-1},` ~
            `"appliedWinner":{"present":false,"id":"","index":-1}}}`);
 }

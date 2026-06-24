@@ -46,9 +46,18 @@ enum AiCandidateKind {
     context,
 }
 
+enum AiElementCandidateKind {
+    none,
+    vertex,
+    edge,
+    face,
+    background,
+}
+
 struct AiCandidate {
     string id = "";
     AiCandidateKind kind = AiCandidateKind.unknown;
+    AiElementCandidateKind elementKind = AiElementCandidateKind.none;
     AiIntent intent = AiIntent.keepDefault;
     float screenDist = float.infinity;
     float worldDist = float.infinity;
@@ -91,6 +100,7 @@ unittest {
     auto candidate = AiCandidate();
     assert(candidate.id.length == 0);
     assert(candidate.kind == AiCandidateKind.unknown);
+    assert(candidate.elementKind == AiElementCandidateKind.none);
     assert(candidate.intent == AiIntent.keepDefault);
     assert(candidate.screenDist == float.infinity);
     assert(candidate.worldDist == float.infinity);

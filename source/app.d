@@ -137,6 +137,7 @@ import registry;
 import shortcuts;
 import buttonset;
 import ai.debug_trace : latestHandleDebugTraceJson;
+import ai.element_candidates : publishElementCandidates;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
 import args_dialog    : ArgsDialog;
@@ -3704,6 +3705,10 @@ void main(string[] args) {
             // The host now owns the no-tool falloff drag (step 3 of the
             // stage-gizmo refactor); a reset must drop any in-flight drag.
             pipeGizmoHost.cancelDrag();
+            {
+                import ai.debug_trace : clearLatestAiDebugTraces;
+                clearLatestAiDebugTraces();
+            }
             // Selection-types Stage 1: re-sync the SelType recent-ordering to the
             // current geometry editMode after a reset. editMode is the persistent
             // picking authority (scene.reset does not change it), so aligning the
@@ -4599,9 +4604,20 @@ void main(string[] args) {
     doSelectPickAt = (int mx, int my) {
         setOverrideMouse(mx, my);
         Viewport vp = cameraView.viewport();
-        if (editMode == EditMode.Vertices)      pickVertices(vp, false);
-        else if (editMode == EditMode.Edges)    pickEdges   (vp, false);
-        else if (editMode == EditMode.Polygons) pickFaces   (vp, false);
+        int pickedVertex = -1;
+        int pickedEdge = -1;
+        int pickedFace = -1;
+        if (editMode == EditMode.Vertices) {
+            pickVertices(vp, false);
+            pickedVertex = hoveredVertex;
+        } else if (editMode == EditMode.Edges) {
+            pickEdges(vp, false);
+            pickedEdge = hoveredEdge;
+        } else if (editMode == EditMode.Polygons) {
+            pickFaces(vp, false);
+            pickedFace = hoveredFace;
+        }
+        publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
     };
 
     // Synchronously re-run the GPU ID-buffer hover pick at (mx, my) and
@@ -4627,12 +4643,16 @@ void main(string[] args) {
         pickEdges(vp, false);
         if (faceCache.needsUpdate(vp)) { faceCache.invalidate(); faceCache.update(vp); }
         pickFaces(vp, false);
+        int pickedVertex = hoveredVertex;
+        int pickedEdge = hoveredEdge;
+        int pickedFace = hoveredFace;
         // Tool-driven multi-type priority (vert first, then edge, then face),
         // mirroring the render-loop resolution so the published hover matches.
         if (activeTool !is null) {
             if (hoveredVertex >= 0) { hoveredEdge = -1; hoveredFace = -1; }
             else if (hoveredEdge >= 0) { hoveredFace = -1; }
         }
+        publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
         import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
         g_hoveredVertex = hoveredVertex;
         g_hoveredEdge   = hoveredEdge;
@@ -6999,6 +7019,9 @@ void main(string[] args) {
         }
 
         pickFaces(vp, doingCameraDrag);
+        int pickedVertex = hoveredVertex;
+        int pickedEdge = hoveredEdge;
+        int pickedFace = hoveredFace;
 
         // Tool-driven multi-type hover priority resolution: when an
         // active tool (e.g. XfrmTransformTool with falloff.element
@@ -7016,6 +7039,10 @@ void main(string[] args) {
                 hoveredFace = -1;
             }
         }
+        int elementTraceMouseX, elementTraceMouseY;
+        queryMouse(elementTraceMouseX, elementTraceMouseY);
+        publishElementCandidates(elementTraceMouseX, elementTraceMouseY,
+                                 pickedVertex, pickedEdge, pickedFace);
         // Publish the resolved hover state for cross-module consumers
         // (XfrmTransformTool.tryPickElement reads these when
         // falloff.element is active so click-pick lands on the same
