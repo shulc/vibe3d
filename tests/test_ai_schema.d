@@ -23,6 +23,7 @@ unittest { // schema defaults
     auto candidate = AiCandidate();
     assert(candidate.id.length == 0);
     assert(candidate.kind == AiCandidateKind.unknown);
+    assert(candidate.elementKind == AiElementCandidateKind.none);
     assert(candidate.intent == AiIntent.keepDefault);
     assert(candidate.screenDist == float.infinity);
     assert(candidate.worldDist == float.infinity);
