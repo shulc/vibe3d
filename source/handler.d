@@ -1579,8 +1579,11 @@ class ToolHandles {
         if (phase == AiInteractionPhase.hover) {
             if (!aiHoverPreviewEnabled)
                 return false;
+            if (defaultCandidate >= aiCandidateParts.length)
+                return false;
             if (aiHoverPreviewPredicate !is null &&
-                !aiHoverPreviewPredicate(aiCandidateParts[index]))
+                (!aiHoverPreviewPredicate(aiCandidateParts[defaultCandidate]) ||
+                 !aiHoverPreviewPredicate(aiCandidateParts[index])))
                 return false;
         }
         if (decision.candidateId.length == 0 ||

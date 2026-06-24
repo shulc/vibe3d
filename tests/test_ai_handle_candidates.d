@@ -303,6 +303,35 @@ unittest { // hover preview opt-in can exclude parts with deterministic click pa
     assert(trace.advisor.candidateIndex == 1);
 }
 
+unittest { // hover preview cannot promote from an excluded default scope
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto falloffLikeDefault = new TestHandle(true);
+    auto transformLikeLater = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.setAiHoverPreviewEnabled(true);
+    handles.setAiHoverPreviewPredicate((int part) const => part < 100);
+    handles.begin();
+    handles.add(falloffLikeDefault, 100);
+    handles.add(transformLikeLater, 10);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 100);
+    assert(handles.secondaryDefault == -1);
+    assert(falloffLikeDefault.getState() == HandleState.Rollover);
+    assert(transformLikeLater.getState() == HandleState.Normal);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:100");
+    assert(trace.appliedWinnerId == "handle:100");
+    assert(trace.advisor.candidateIndex == 1);
+}
+
 unittest { // stable hover and mouse-down candidates resolve to the same handle
     clearLatestHandleDebugTrace();
     resetSpyAdvisor();
