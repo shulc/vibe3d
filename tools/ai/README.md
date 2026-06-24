@@ -62,3 +62,21 @@ Captured records contain only interaction features and synthetic candidate ids
 (e.g. `element:vertex:3`, `handle:10`, mouse coordinates, modifier-key flags,
 tool/edit-mode ids). No file paths, document or scene names, or user identities
 are written.
+
+## Live inference (opt-in, off by default)
+
+The captured corpus trains a candidate ranker; once exported to `ranker.onnx`,
+the editor can consult it live to influence which handle is picked. This is
+**off by default** and enabled explicitly with a model path:
+
+```
+VIBE3D_AI_MODEL=/path/to/ranker.onnx ./vibe3d
+./vibe3d --ai-model /path/to/ranker.onnx          # CLI wins over the env var
+```
+
+When unset, behavior is exactly as before — the deterministic advisor only. When
+set, the model becomes the handle decision source, but every prediction still
+passes the same phase / captured / hover gates as the manual path (the model
+never bypasses them). If the prediction is low-confidence, rejected, or the model
+fails to load (or the runtime is absent), the path falls through to the existing
+deterministic advisor — identical to the unset case, never a crash.
