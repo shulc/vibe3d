@@ -323,6 +323,28 @@ public:
     // begin*DragSession) — see refreshFrameValid().
     private GestureFrame frame;
 
+    // Gizmo-basis undo splice — the per-bank gesture-START snapshot of the
+    // persisted `frame`, the BASIS analogue of the *SoftStart* center snapshots
+    // above. Captured at the matching mouse-DOWN (begin*DragSession) from the
+    // LIVE `frame` so the per-gesture undo hook can restore the gesture-START
+    // basis on revert, exactly as the center is restored via restoreSoftPlaced.
+    //
+    // WHY this is needed only for rotate in practice: an undo bumps the mutation
+    // version but NOT the selection hash, so clearFrame() does not fire and the
+    // idle renderBasis keeps returning the persisted `frame`. A rotate gesture's
+    // settleGestureBasis leaves `frame` holding R_gesture·B0 (rotated), so after
+    // an in-session Ctrl+Z the geometry returns to pristine while the rendered
+    // gizmo basis stays stale-rotated. Move/scale re-settle the SAME orientation
+    // (settleGestureBasis writes the un-rotated triple), so frameStart == frameEnd
+    // there and the restore is an identity no-op (restore-to-same, harmless).
+    // Non-flex modes never settle a basis (acenSettleAllowed gates it / frame
+    // stays invalid), so frameEnd is unchanged from frameStart and the hook is
+    // inert there too. Gated by the SAME *GestureStartKnown flags as the run /
+    // soft-pin splice so a commit with no preceding mouse-down stays inert.
+    private GestureFrame moveFrameStart;
+    private GestureFrame rotateFrameStart;
+    private GestureFrame scaleFrameStart;
+
     // P-F Phase 3 — per-GESTURE run-absolute snapshot. The WHOLE run state at
     // THIS gesture's mouse-down lives in `gestureStart` (one struct snapshot,
     // captured in every begin*DragSession after beginRunGesture). The per-gesture
@@ -1893,6 +1915,10 @@ public:
         // changes, so the R/S fields of the snapshot are inert (start == end).
         gestureStart          = run;
         moveGestureStartKnown = true;
+        // Gesture-START gizmo BASIS snapshot for the undo splice (mirror of the
+        // soft-pin capture in beginEdit). Move never rotates the frame, so
+        // frameStart == frameEnd at commit and the restore is an identity no-op.
+        moveFrameStart = frame;
         accumulatedWorldDelta   = Vec3(0, 0, 0);
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
@@ -2017,6 +2043,11 @@ public:
             rotateSoftStartPlaced = false;
             rotateSoftStartCenter = Vec3(0, 0, 0);
         }
+        // Capture the gesture-START gizmo BASIS for the undo splice (mirrors the
+        // soft-pin capture above). For gesture-1 of a run this is typically the
+        // unsettled default; for gesture-2+ it is the prior gesture's persisted
+        // rotated frame (chaining). Revert restores exactly this on Ctrl+Z.
+        rotateFrameStart = frame;
         // Track whether THIS gesture is a view-ring, for the NEXT gesture's
         // post-view-ring re-bake decision. Set AFTER beginRunGesture consumed the
         // prior value above.
@@ -2128,6 +2159,10 @@ public:
             scaleSoftStartPlaced = false;
             scaleSoftStartCenter = Vec3(0, 0, 0);
         }
+        // Gesture-START gizmo BASIS snapshot for the undo splice (mirror of the
+        // soft-pin capture). Scale never rotates the frame, so frameStart ==
+        // frameEnd at commit and the restore is an identity no-op.
+        scaleFrameStart = frame;
 
         auto cp = queryClusterPivots(vts);
         // Same once-per-drag freeze contract as `moveDragFastPath`; see its
@@ -2756,12 +2791,24 @@ public:
                                    rotateSub.handler.axisZ);
             bool softStartPlaced = rotAbsKnown ? rotateSoftStartPlaced : softEndPlaced;
             Vec3 softStartCenter = rotAbsKnown ? rotateSoftStartCenter : softEndCenter;
+            // BASIS undo splice — the rendered-frame analogue of the soft-pin pair
+            // above. frameEnd = the gesture-END `frame` settleGestureBasis just
+            // wrote (R_gesture·B0); frameStart = this gesture's mouse-down capture.
+            // An in-session Ctrl+Z bumps the mutation version but not the selection
+            // hash, so clearFrame never fires and the idle renderBasis keeps the
+            // settled (rotated) basis — without this restore the gizmo would render
+            // the rotated frame over the reverted-to-pristine geometry. Gated by
+            // rotAbsKnown so a commit with no preceding mouse-down stays inert.
+            GestureFrame frameEnd   = frame;
+            GestureFrame frameStart = rotAbsKnown ? rotateFrameStart : frameEnd;
             rotateSub.wrapperFieldApplyHook  = () {
                 run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameEnd; refreshFrameValid();
                 if (auto ac = activeAcenStage())
                     ac.restoreSoftPlaced(softEndPlaced, softEndCenter); };
             rotateSub.wrapperFieldRevertHook = () {
                 run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameStart; refreshFrameValid();
                 if (auto ac = activeAcenStage())
                     ac.restoreSoftPlaced(softStartPlaced, softStartCenter); };
             rotateSub.commitGesture();
@@ -2855,12 +2902,19 @@ public:
                                    scaleSub.handler.axisZ);
             bool softStartPlaced = scaleAbsKnown ? scaleSoftStartPlaced : softEndPlaced;
             Vec3 softStartCenter = scaleAbsKnown ? scaleSoftStartCenter : softEndCenter;
+            // BASIS undo splice (mirror of the rotate hook). Scale's R_gesture is I,
+            // so frameStart == frameEnd and the restore is an identity no-op — it
+            // exists purely so the splice composes uniformly across the three banks.
+            GestureFrame frameEnd   = frame;
+            GestureFrame frameStart = scaleAbsKnown ? scaleFrameStart : frameEnd;
             scaleSub.wrapperFieldApplyHook  = () {
                 run = xfEnd;   headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameEnd; refreshFrameValid();
                 if (auto ac = activeAcenStage())
                     ac.restoreSoftPlaced(softEndPlaced, softEndCenter); };
             scaleSub.wrapperFieldRevertHook = () {
                 run = xfStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameStart; refreshFrameValid();
                 if (auto ac = activeAcenStage())
                     ac.restoreSoftPlaced(softStartPlaced, softStartCenter); };
 
@@ -3746,6 +3800,14 @@ public:
         moveGestureStartKnown = false;
         if (!moveAbsKnown) moveXfStart = moveXfEnd;   // inert
 
+        // BASIS undo splice (mirror of the rotate/scale hooks). Move's R_gesture is
+        // I, so frameStart == frameEnd and the restore is an identity no-op; it
+        // exists so the splice composes uniformly across the three banks. frameEnd
+        // is the gesture-END `frame` (settleGestureBasis above ran before this
+        // commitEdit), frameStart the mouse-down capture. Gated by moveAbsKnown.
+        GestureFrame moveFrameEnd   = frame;
+        GestureFrame moveFrameStartLocal = moveAbsKnown ? moveFrameStart : moveFrameEnd;
+
         // Base commit discards the frozen pin snapshot, then builds + records the
         // cmd via recordCommit. We replicate the body so we can splice setHooks
         // between buildEditCmd and recordCommit (buildEditCmd returns null on a
@@ -3840,6 +3902,7 @@ public:
                 // run.r so the panel + matrix stay locked. DISJOINT wrapper struct —
                 // composes without clobber.
                 run = moveXfEnd; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = moveFrameEnd; refreshFrameValid();
             },
             // revert (undo): restore the gesture-START pin + SOFT pin + run pipe
             // config + publish. The gesture-START soft state is typically cleared
@@ -3860,6 +3923,7 @@ public:
                 // first.revert/last.apply splices these to run-START / run-END at the
                 // drop.
                 run = moveXfStart; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = moveFrameStartLocal; refreshFrameValid();
             },
         );
         recordCommit(cmd);
@@ -5177,6 +5241,13 @@ private:
         // pipe-config restores. headlessRotate is re-derived from run.r so the panel
         // + matrix stay locked.
         XformState xfNow = run;
+        // BASIS undo splice on the refire entry — IDENTICAL reasoning to xfNow: a
+        // mid-run snap/falloff re-grade does NOT change the persisted gizmo basis,
+        // so snapshot the CURRENT `frame` as BOTH pre and post. It must ride EVERY
+        // entry in the run (gesture + refire) so mergeRun first.revert/last.apply
+        // splices the basis coherently — without it a refire-tail first.revert
+        // would leave the basis at its post-gesture (rotated) value on undo.
+        GestureFrame frameNow = frame;
         cmd.setHooks(
             // apply (redo): restore the POST-tweak pipe config + the run state
             // (unchanged across the refire) + publish.
@@ -5191,6 +5262,7 @@ private:
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(postSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
                 run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameNow; refreshFrameValid();
             },
             // revert (undo): restore the PRE-tweak pipe config + the run state +
             // publish.
@@ -5199,6 +5271,7 @@ private:
                 if (auto sn = activeSnapStage())     sn.restoreConfigFromPacket(preSnCopy);
                 if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
                 run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameNow; refreshFrameValid();
             },
         );
 
