@@ -202,6 +202,28 @@ unittest { // outcome metadata and escaped strings survive JSON round trip
     assert(j["outcome"]["note"].str == `note\tail`);
 }
 
+unittest { // non-finite advisor confidence serializes as valid JSON null
+    AiInteractionContext context;
+    AiCandidate candidate;
+    candidate.id = "handle:x";
+    candidate.kind = AiCandidateKind.handle;
+    candidate.intent = AiIntent.dragAxisX;
+    candidate.screenDist = float.infinity;
+    candidate.isDefaultWinner = true;
+
+    AiAdvisorDecision decision;
+    decision.intent = AiIntent.dragAxisX;
+    decision.confidence = float.infinity;
+    decision.candidateIndex = 0;
+    decision.candidateId = "handle:x";
+
+    auto record = makeAiInteractionLogRecord(
+        "tool-handles", "handles", context, [candidate], decision, 0);
+    auto j = parseJSON(record.toJsonLine());
+    assert(j["advisorDecision"]["confidence"].type == JSONType.null_);
+    assert(j["candidates"].array[0]["screenDist"].type == JSONType.null_);
+}
+
 unittest { // stable top-level field order stays suitable for JSONL snapshots
     auto json = AiInteractionLogRecord().toJsonLine();
     assert(json ==

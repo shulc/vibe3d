@@ -258,8 +258,9 @@ private void putAdvisorDecisionJson(B)(ref B buf,
                                        const ref AiAdvisorDecision decision) {
     buf.put(`{"intent":`);
     putJsonString(buf, aiIntentId(decision.intent));
-    buf.put(format(`,"confidence":%f,"candidateIndex":%d,"candidateId":`,
-                   decision.confidence,
+    buf.put(`,"confidence":`);
+    putJsonFloat(buf, decision.confidence);
+    buf.put(format(`,"candidateIndex":%d,"candidateId":`,
                    decision.candidateIndex));
     putJsonString(buf, decision.candidateId);
     buf.put(`,"keepDefault":`);
