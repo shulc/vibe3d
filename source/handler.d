@@ -3,7 +3,9 @@ import bindbc.sdl;
 import bindbc.opengl;
 
 import std.math : tan, sin, cos, sqrt, PI, abs;
+import std.conv : to;
 
+import ai.interaction : AiCandidate, AiCandidateKind, AiIntent;
 import math;
 import eventlog;
 import shader;
@@ -1323,12 +1325,17 @@ private:
 class ToolHandles {
     private struct Entry { Handler h; int part; }
     private Entry[] entries;     // registration order = test priority
+    private AiCandidate[] aiCandidates; // last observational hit-candidate pass
     int hot      = -1;           // ROLLOVER part, -1 = none
     int captured = -1;           // hauled part during a drag, -1 = none
     private bool suppressed;     // when set, update() forces every handle Normal
 
     // Clear the per-frame registration list. Call at the start of each draw.
-    void begin() { entries.length = 0; suppressed = false; }
+    void begin() {
+        entries.length = 0;
+        aiCandidates.length = 0;
+        suppressed = false;
+    }
 
     // Force every registered handle to Normal for this frame, ignoring hover
     // and capture. Used by ScaleTool, whose drag feedback is the animated
@@ -1342,13 +1349,38 @@ class ToolHandles {
     }
 
     // Hit-test pass: first registered handle (by priority) whose hitTest passes.
-    // Skips invisible handles. Returns its part id, or -1 on miss.
+    // Skips invisible handles. Returns its part id, or -1 on miss. Also records
+    // the full ordered list of hit handle candidates for future advisory/debug
+    // paths; this cache is observational and does not drive the winner.
     int test(int mx, int my, const ref Viewport vp) {
-        foreach (ref e; entries) {
+        aiCandidates.length = 0;
+        int firstPart = -1;
+        size_t defaultCandidate = size_t.max;
+
+        foreach (priority, ref e; entries) {
             if (!e.h.isVisible()) continue;
-            if (e.h.hitTest(mx, my, vp)) return e.part;
+            if (!e.h.hitTest(mx, my, vp)) continue;
+
+            AiCandidate c;
+            c.id = "handle:" ~ e.part.to!string;
+            c.kind = AiCandidateKind.handle;
+            c.intent = AiIntent.keepDefault;
+            c.priorityFromCurrentRules = cast(float)priority;
+            c.hasScreenPosition = true;
+            c.screenPosition = [cast(float)mx, cast(float)my];
+            if (firstPart < 0) {
+                firstPart = e.part;
+                defaultCandidate = aiCandidates.length;
+            }
+            aiCandidates ~= c;
         }
-        return -1;
+        if (defaultCandidate != size_t.max)
+            aiCandidates[defaultCandidate].isDefaultWinner = true;
+        return firstPart;
+    }
+
+    const(AiCandidate)[] handleCandidates() const {
+        return aiCandidates;
     }
 
     // Resolve the hot part (captured sticks; else test) and hand each
@@ -1356,6 +1388,7 @@ class ToolHandles {
     void update(int mx, int my, const ref Viewport vp) {
         if (suppressed) {
             hot = -1;
+            aiCandidates.length = 0;
             foreach (ref e; entries) e.h.setState(HandleState.Normal);
             return;
         }
