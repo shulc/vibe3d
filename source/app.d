@@ -145,6 +145,10 @@ import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
+import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
+    AiModelAvailability, AiModelStatus, AiModelFallbackMode,
+    aiModelAdapterMinConfidence;
+import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
 import forms_render;
@@ -436,6 +440,12 @@ void main(string[] args) {
     // CLI alias for the VIBE3D_AI_LOG env var (CLI wins). OFF when both unset.
     string aiLogCliPath;
 
+    // --ai-model <path>: opt-in model-backed handle decision provider (task
+    // 0028). Thin CLI alias for the VIBE3D_AI_MODEL env var (CLI wins). OFF
+    // when both unset — the default deterministic advisor stays the decision
+    // source and behavior is unchanged.
+    string aiModelCliPath;
+
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
             if (i + 1 >= args.length) {
@@ -540,6 +550,13 @@ void main(string[] args) {
                 exit(1);
             }
             aiLogCliPath = args[++i];
+        } else if (args[i] == "--ai-model") {
+            if (i + 1 >= args.length) {
+                writeln("Error: --ai-model requires a file path");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            aiModelCliPath = args[++i];
         } else {
             writefln("Error: unknown argument '%s'", args[i]);
             import core.stdc.stdlib : exit;
@@ -1542,6 +1559,44 @@ void main(string[] args) {
     auto aiState       = new EditorAiState();
     auto aiAdvisor     = new AiAdvisor(() => aiState.enabled);
     setHandleAiAdvisor(aiAdvisor);
+
+    // Opt-in model-backed handle decision provider (task 0028). Enabled only
+    // when a model path is configured (--ai-model wins, else VIBE3D_AI_MODEL);
+    // OFF when both unset, in which case the adapter is NOT constructed and the
+    // provider is NOT set — the handle path stays exactly the deterministic
+    // advisor above (byte-identical to before).
+    //
+    // Never-crash contract: OnnxModelBackend's ctor never throws (a missing
+    // onnx runtime or an unloadable model file reports `unavailable`), and the
+    // adapter uses fallbackMode = keepDefault so a not-ready / low-confidence /
+    // rejected prediction returns a no-op decision (no allocation, no always-on
+    // advisor). The injected closure then falls through to the SAME aiState-
+    // gated `aiAdvisor` instance ⇒ flag-on-but-model-unavailable is also
+    // byte-identical to before. Only a confident, valid model prediction
+    // influences the handle, and even then it is re-gated by the handler's
+    // canApplyAdvisorDecision. The model prediction itself is independent of the
+    // aiState panel switch — pointing at a model via env/CLI is the explicit
+    // opt-in to use it.
+    import std.process : environment;
+    auto aiModelPath = aiModelCliPath.length
+        ? aiModelCliPath
+        : environment.get("VIBE3D_AI_MODEL", "");
+    if (aiModelPath.length) {
+        auto aiBackend = new OnnxModelBackend(aiModelPath);  // never throws
+        AiModelAdapterConfig aiModelCfg;
+        aiModelCfg.availability = AiModelAvailability(AiModelStatus.ready);
+        aiModelCfg.fallbackMode = AiModelFallbackMode.keepDefault;
+        aiModelCfg.minConfidence = aiModelAdapterMinConfidence;
+        auto aiModelAdapter = new AiModelAdapter(aiModelCfg, aiBackend);
+        // Composing provider: try the model first, fall through to today's
+        // exact advisor on keepDefault. The closure keeps the adapter (and the
+        // backend it holds) GC-live for the program lifetime once stored.
+        setHandleDecisionProvider(
+            (const ref AiInteractionContext ctx, const(AiCandidate)[] cands) {
+                auto d = aiModelAdapter.decide(ctx, cands);
+                return d.keepDefault ? aiAdvisor.advise(ctx, cands) : d;
+            });
+    }
 
     // Opt-in live interaction-log capture (task 0027). Enabled only when a path
     // is configured (--ai-log wins, else VIBE3D_AI_LOG). Gated on the writer
