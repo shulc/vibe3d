@@ -369,6 +369,10 @@ public:
         if (*editMode != EditMode.Edges) return false;
         if (mesh.edges.length == 0) return false;
 
+        // EdgeExtendTool drives these embedded banks DIRECTLY and never enters the
+        // wrapper's begin*DragSession path, so the wrapped input-frame channel
+        // (setWrapperInputFrame) is never pushed here — each bank reads its own
+        // standalone inputBasis*, and the unified GestureFrame stays inert.
         MoveTool   mv = xfrm.moveBank();
         RotateTool rt = xfrm.rotateBank();
         ScaleTool  sc = xfrm.scaleBank();

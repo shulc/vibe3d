@@ -97,9 +97,9 @@ class MoveTool : TransformTool {
     // called once per gesture from `beginMoveDragSession`). The DECOMPOSE read
     // sites then project the world delta onto THIS frame instead of the bank's
     // own `inputBasisX/Y/Z`. This replaces the prior hand-synced override that
-    // overwrote `inputBasis*` from the wrapper's softBasis at gesture start —
-    // same value (the channel carries the unified `frame`, which equals
-    // softBasis when chained), now sourced from the single frame. The STANDALONE
+    // overwrote `inputBasis*` from the wrapper's persisted basis at gesture start —
+    // same value (the channel carries the unified `frame`, the persisted gesture
+    // frame when chained), now sourced from the single frame. The STANDALONE
     // path (`wrapperRef is null`) NEVER consults this; it keeps reading its own
     // `inputBasis*` (seeded by the `currentBasis(inputBasis*, vts)` writes). The
     // center-box drag (dragAxis==3) is basis-free/screen-plane and is excluded
@@ -124,8 +124,8 @@ class MoveTool : TransformTool {
 
     // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
     // When a wrapped DECOMPOSE read consults the pushed channel, that channel
-    // must carry the wrapper's unified `frame` (proven == softBasis by the
-    // wrapper-side assert), which is always a pure-rotation orthonormal triple.
+    // must carry the wrapper's unified `frame` (an orthonormal triple, asserted
+    // on the wrapper side at population), which is always a pure-rotation triple.
     // Assert that local invariant here so the input-read safety net mirrors the
     // render-rung asserts. Compiled out of release.
     debug void assertWrapperInputFrameChained() const {
@@ -648,7 +648,7 @@ public:
         // unification, Phase 2), else the bank's drag-start-frozen INPUT basis —
         // never the rendered `handler.axis*`, so input projection is insulated
         // from the rendered frame. The channel carries the same value the old
-        // softBasis override wrote, so this is byte-identical when chained.
+        // hand-synced override wrote, so this is byte-identical when chained.
         debug assertWrapperInputFrameChained();
         Vec3 ax0 = inAxisX(), ax1 = inAxisY(), ax2 = inAxisZ();
         if (dragAxis == 0) return ax0 * dot(delta, ax0);

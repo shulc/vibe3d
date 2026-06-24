@@ -109,9 +109,10 @@ public:
     // frame here (via `setWrapperInputFrame`, called once per gesture from
     // `beginScaleDragSession`). The single-axis DECOMPOSE site then projects onto
     // THIS frame instead of the bank's own `inputBasis*`. Replaces the prior
-    // hand-synced override that copied softBasis into `inputBasis*` at gesture
-    // start — same value (the channel carries the unified `frame`, which equals
-    // softBasis when chained). The STANDALONE path (`wrapperRef is null`) NEVER
+    // hand-synced override that copied the wrapper's persisted basis into
+    // `inputBasis*` at gesture start — same value (the channel carries the unified
+    // `frame`, the persisted gesture frame when chained). The STANDALONE path
+    // (`wrapperRef is null`) NEVER
     // consults this; it keeps its own `inputBasis*` (seeded by `currentBasis`).
     Vec3 wrapperInputFrameX = Vec3(1, 0, 0);
     Vec3 wrapperInputFrameY = Vec3(0, 1, 0);
@@ -147,9 +148,9 @@ public:
     }
 
     // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
-    // The pushed channel must carry the wrapper's unified `frame` (proven ==
-    // softBasis by the wrapper-side assert), an orthonormal triple. Assert that
-    // invariant here, mirroring the render-rung asserts. Compiled out of release.
+    // The pushed channel must carry the wrapper's unified `frame` (an orthonormal
+    // triple, asserted on the wrapper side at population). Assert that invariant
+    // here, mirroring the render-rung asserts. Compiled out of release.
     debug void assertWrapperInputFrameChained() const {
         import std.math : abs;
         if (wrapperRef is null || !wrapperInputFrameValid) return;
@@ -811,7 +812,7 @@ public:
         // frame when wrapper-chained (gesture-frame unification, Phase 2), else
         // the bank's drag-start-frozen INPUT basis — never the rendered
         // `handler.axis*`, so the drag direction can't reverse if the rendered
-        // frame moves. The channel carries the same value the old softBasis
+        // frame moves. The channel carries the same value the old hand-synced
         // override wrote, so this is byte-identical when chained.
         debug assertWrapperInputFrameChained();
         Vec3 axis = dragAxis == 0 ? inAxisX()
