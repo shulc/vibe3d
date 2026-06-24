@@ -78,6 +78,29 @@ unittest { // populated trace preserves candidate order and default winner
     assert(trace["appliedWinner"]["index"].integer == 0);
 }
 
+unittest { // legacy handle clear resets the full JSON debug payload
+    clearLatestAiDebugTraces();
+
+    AiCandidate element;
+    element.id = "element:face:4";
+    element.kind = AiCandidateKind.element;
+    element.elementKind = AiElementCandidateKind.face;
+    element.intent = AiIntent.hoverElement;
+    element.isDefaultWinner = true;
+
+    publishElementDebugTrace([element]);
+    assert(latestElementDebugTrace().candidates.length == 1);
+
+    clearLatestHandleDebugTrace();
+
+    auto j = parseJSON(latestHandleDebugTraceJson(true));
+    assert(j["handleTrace"]["candidateCount"].integer == 0);
+    assert(j["elementTrace"]["candidateCount"].integer == 0);
+    assert(j["elementTrace"]["candidateIds"].array.length == 0);
+    assert(j["elementTrace"]["defaultWinner"]["present"].type == JSONType.false_);
+    assert(j["elementTrace"]["appliedWinner"]["present"].type == JSONType.false_);
+}
+
 unittest { // explicit advisor decisions serialize with the applied winner
     clearLatestHandleDebugTrace();
 

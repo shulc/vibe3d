@@ -171,6 +171,7 @@ private string tracesToJson(bool enabled) {
 
 void clearLatestHandleDebugTrace() {
     g_latestHandleTrace.clear();
+    g_latestElementTrace.clear();
 }
 
 void clearLatestElementDebugTrace() {
