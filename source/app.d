@@ -137,7 +137,12 @@ import registry;
 import shortcuts;
 import buttonset;
 import ai.debug_trace : latestHandleDebugTraceJson;
-import ai.element_candidates : publishElementCandidates;
+import ai.element_candidates : publishElementCandidates,
+    collectElementCandidates, resolveElementCandidateDecision;
+import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
+    AiInteractionPhase, AiIntent;
+import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
+import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
 import args_dialog    : ArgsDialog;
@@ -427,6 +432,10 @@ void main(string[] args) {
     string renderDiffBackend = "cycles";
     string renderDiffOutput;
 
+    // --ai-log <path>: opt-in live interaction-log capture (task 0027). Thin
+    // CLI alias for the VIBE3D_AI_LOG env var (CLI wins). OFF when both unset.
+    string aiLogCliPath;
+
     for (size_t i = 1; i < args.length; ++i) {
         if (args[i] == "--playback") {
             if (i + 1 >= args.length) {
@@ -524,6 +533,13 @@ void main(string[] args) {
                 exit(1);
             }
             renderDiffOutput = args[++i];
+        } else if (args[i] == "--ai-log") {
+            if (i + 1 >= args.length) {
+                writeln("Error: --ai-log requires a file path");
+                import core.stdc.stdlib : exit;
+                exit(1);
+            }
+            aiLogCliPath = args[++i];
         } else {
             writefln("Error: unknown argument '%s'", args[i]);
             import core.stdc.stdlib : exit;
@@ -1526,6 +1542,47 @@ void main(string[] args) {
     auto aiState       = new EditorAiState();
     auto aiAdvisor     = new AiAdvisor(() => aiState.enabled);
     setHandleAiAdvisor(aiAdvisor);
+
+    // Opt-in live interaction-log capture (task 0027). Enabled only when a path
+    // is configured (--ai-log wins, else VIBE3D_AI_LOG). Gated on the writer
+    // being enabled, INDEPENDENT of the AI master switch (aiState) — with the
+    // advisor OFF the applied winner is the DEFAULT winner, which is exactly the
+    // element/handle the user applied, so AI-off capture is valid training data.
+    // Disabled-path is fully inert (no file, append is a no-op).
+    auto aiLogWriter = AiInteractionLogWriter.fromEnv(aiLogCliPath);
+    immutable aiLogSource = defaultLiveSource();
+    scope(exit) aiLogWriter.close();
+
+    // Maps the current EditMode enum to the schema's editModeId string for the
+    // captured context (mirrors the per-mode labels used elsewhere).
+    string aiEditModeId() {
+        final switch (editMode) {
+            case EditMode.Vertices: return "vertices";
+            case EditMode.Edges:    return "edges";
+            case EditMode.Polygons: return "polygons";
+        }
+    }
+
+    // Handle apply hook: handler.d fires this on a genuine handle apply only
+    // (mouse-DOWN, not a drag, a default part was hit — gated in
+    // publishHandleTrace). The handler-supplied context lacks tool/edit-mode
+    // ids, so enrich it here before appending. appliedIndex is the part the
+    // user actually applied (= default unless an advisor decision overrode it).
+    if (aiLogWriter.enabled) {
+        setHandleApplyCaptureSink(
+            (const ref AiInteractionContext ctx,
+             const(AiCandidate)[] candidates,
+             AiAdvisorDecision decision,
+             int appliedIndex) {
+                AiInteractionContext enriched = ctx;
+                enriched.activeToolId = activeToolId;
+                enriched.editModeId = aiEditModeId();
+                auto record = makeAiInteractionLogRecord(
+                    aiLogSource, "handles", enriched, candidates,
+                    decision, appliedIndex);
+                aiLogWriter.append(record);
+            });
+    }
 
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to
@@ -4027,6 +4084,15 @@ void main(string[] args) {
     // delegate is bound.
     void delegate(int mx, int my) doSelectPickAt;
 
+    // Last element triple resolved by doSelectPickAt, stashed so the mouse-DOWN
+    // dispatch path can capture an interaction-log record (task 0027) WITHOUT
+    // re-running the pick — and without the shared delegate body (also bound to
+    // mouse-MOTION) emitting one record per motion event. Exactly one of these
+    // is >= 0 per editMode (vertices/edges/polygons); all -1 = a background pick.
+    int aiLastPickedVertex = -1;
+    int aiLastPickedEdge   = -1;
+    int aiLastPickedFace   = -1;
+
     // Forward-declared like doSelectPickAt (nested functions aren't visible
     // before their definition): bound below, near pickFaces. Re-runs the GPU
     // hover pick at a pixel so a mouse-DOWN element click-pick reads current
@@ -4169,8 +4235,41 @@ void main(string[] args) {
             if ((dragMode == DragMode.Select
               || dragMode == DragMode.SelectAdd
               || dragMode == DragMode.SelectRemove)
-                && doSelectPickAt !is null)
+                && doSelectPickAt !is null) {
                 doSelectPickAt(btn.x, btn.y);
+
+                // Element apply capture (task 0027). Gated to the mouse-DOWN
+                // dispatch path ONLY — doSelectPickAt is also bound to
+                // mouse-MOTION during a select-drag, so capturing inside its
+                // body would emit one record per motion event. The triple was
+                // stashed by the pick above; doSelectPickAt sets exactly one of
+                // vertex/edge/face per editMode (others -1, or all -1 for a
+                // background pick), so collectElementCandidates yields a single
+                // real candidate at index 0 = the default winner = the element
+                // the user actually applied. No advisor runs here, so
+                // resolveElementCandidateDecision's appliedWinnerIndex == the
+                // default winner.
+                if (aiLogWriter.enabled) {
+                    auto candidates = collectElementCandidates(
+                        btn.x, btn.y,
+                        aiLastPickedVertex, aiLastPickedEdge, aiLastPickedFace);
+                    auto resolution = resolveElementCandidateDecision(candidates);
+                    AiInteractionContext ctx;
+                    ctx.phase = AiInteractionPhase.mouseDown;
+                    ctx.defaultIntent = AiIntent.selectElement;
+                    ctx.mouseX = btn.x;
+                    ctx.mouseY = btn.y;
+                    ctx.shift = shift;
+                    ctx.ctrl = ctrl;
+                    ctx.alt = alt;
+                    ctx.activeToolId = activeToolId;
+                    ctx.editModeId = aiEditModeId();
+                    auto record = makeAiInteractionLogRecord(
+                        aiLogSource, "elements", ctx, candidates,
+                        resolution.advisor, resolution.appliedWinnerIndex);
+                    aiLogWriter.append(record);
+                }
+            }
         }
     }
 
@@ -4618,6 +4717,11 @@ void main(string[] args) {
             pickedFace = hoveredFace;
         }
         publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
+        // Stash for the mouse-DOWN capture hook (cheap; the motion path runs
+        // through here too but never reads these back, so it stays zero-cost).
+        aiLastPickedVertex = pickedVertex;
+        aiLastPickedEdge   = pickedEdge;
+        aiLastPickedFace   = pickedFace;
     };
 
     // Synchronously re-run the GPU ID-buffer hover pick at (mx, my) and
