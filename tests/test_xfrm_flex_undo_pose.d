@@ -26,7 +26,7 @@
 
 import std.net.curl;
 import std.json;
-import std.math : fabs, sqrt, tan, PI;
+import std.math : fabs, sqrt, tan, sin, cos, atan2, PI;
 import std.conv : to;
 import std.format : format;
 import core.thread : Thread;
@@ -134,6 +134,127 @@ bool projectPivot(Cam cam, out double ppx, out double ppy) {
     auto view = lookAt(cam.eye, cam.focus, V3(0,1,0));
     auto proj = persp(45.0*PI/180.0, cast(double)cam.w/cam.h, 0.001, 100.0);
     return project(pivot, view, proj, cam.w, cam.h, cam.vpX, cam.vpY, ppx, ppy);
+}
+
+long undoCount() { return getJson("/api/history")["undo"].array.length; }
+void undoStep() {
+    postJson("/api/undo", "");
+    Thread.sleep(dur!"msecs"(80));
+    getJson("/api/toolpipe/eval");   // force an idle update tick
+    Thread.sleep(dur!"msecs"(40));
+}
+void redoStep() {
+    postJson("/api/redo", "");
+    Thread.sleep(dur!"msecs"(80));
+    getJson("/api/toolpipe/eval");
+    Thread.sleep(dur!"msecs"(40));
+}
+
+// --- principal-ring drag helpers (ported from test_xfrm_flex_rotate_axis_chain.d).
+// A fixed-pixel ring grab is reliable for the FIRST gesture only — after a
+// rotation the principal rings move on screen, so a chained 2nd gesture needs a
+// projected, retried grab to reliably re-engage a principal ring.
+double len(V3 v) { return sqrt(dot(v, v)); }
+V3 scl(V3 v, double s) { return V3(v.x*s, v.y*s, v.z*s); }
+V3 add(V3 a, V3 b) { return V3(a.x+b.x, a.y+b.y, a.z+b.z); }
+bool projWorld(Cam cam, V3 w, out double px, out double py) {
+    auto view = lookAt(cam.eye, cam.focus, V3(0, 1, 0));
+    auto proj = persp(45.0 * PI / 180.0, cast(double)cam.w / cam.h, 0.001, 100.0);
+    return project(w, view, proj, cam.w, cam.h, cam.vpX, cam.vpY, px, py);
+}
+// World-space gizmo radius (matches source/handler.d:gizmoSize, 90px default).
+double gizmoRadius(Cam cam, V3 center) {
+    double cx, cy;
+    if (!projWorld(cam, center, cx, cy)) return 0.5;
+    auto view = lookAt(cam.eye, cam.focus, V3(0, 1, 0));
+    V3 camRight = V3(view[0], view[4], view[8]);
+    double rx, ry;
+    if (!projWorld(cam, add(center, camRight), rx, ry)) return 0.5;
+    double pxPerUnit = sqrt((rx-cx)*(rx-cx) + (ry-cy)*(ry-cy));
+    return pxPerUnit > 1e-6 ? 90.0 / pxPerUnit : 0.5;
+}
+void localFrame(V3 normal, out V3 right, out V3 up) {
+    V3 fwd = norm(normal);
+    V3 tmp = fabs(fwd.x) < 0.9 ? V3(1, 0, 0) : V3(0, 1, 0);
+    right = norm(cross(fwd, tmp));
+    up    = cross(right, fwd);
+}
+double arcStartAngle(V3 nAxis, V3 camFwd, V3 right, V3 up) {
+    V3 dir = cross(nAxis, camFwd);
+    double l = len(dir);
+    if (l <= 1e-4) return 0.0;
+    dir = scl(dir, 1.0 / l);
+    V3 mid = cross(nAxis, dir);
+    if (dot(mid, camFwd) < 0.0) dir = scl(dir, -1.0);
+    return atan2(dot(dir, up), dot(dir, right));
+}
+// Drive ONE principal-ring ROTATE gesture about world axis `axisVec` at
+// `center`, retrying on the undo count (a missed grab records nothing). Returns
+// true once an entry is recorded. In a continuous session the rotation CHAINS on
+// the persisted frame — exactly the path that exercises the mergeRun
+// first.revert / last.apply coherence claim for an already-rotated frame.
+bool ringRotate(V3 axisVec, V3 center, long wantCount, double arcDelta) {
+    foreach (attempt; 0 .. 16) {
+        Thread.sleep(dur!"msecs"(60));
+        Cam cam = fetchCam();
+        double radius = gizmoRadius(cam, center);
+        V3 right, up;
+        localFrame(axisVec, right, up);
+        auto view = lookAt(cam.eye, cam.focus, V3(0, 1, 0));
+        V3 camFwd = V3(-view[2], -view[6], -view[10]);
+        double startAngle = arcStartAngle(norm(axisVec), camFwd, right, up);
+        double pull = arcDelta + attempt * 0.08;
+        double a0 = startAngle + PI / 2.0;
+        double a1 = a0 + pull;
+        V3 w0 = add(center, add(scl(right, cos(a0) * radius), scl(up, sin(a0) * radius)));
+        V3 w1 = add(center, add(scl(right, cos(a1) * radius), scl(up, sin(a1) * radius)));
+        double x0, y0, x1, y1;
+        if (!projWorld(cam, w0, x0, y0)) continue;
+        if (!projWorld(cam, w1, x1, y1)) continue;
+
+        enum int steps = 18;
+        play(format(
+            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+            `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+            cam.vpX, cam.vpY, cam.w, cam.h, cast(int)x0, cast(int)y0));
+        int lastX = cast(int)x0, lastY = cast(int)y0;
+        double t = 100.0;
+        foreach (i; 1 .. steps + 1) {
+            int xx = cast(int)(x0 + (x1 - x0) * i / steps);
+            int yy = cast(int)(y0 + (y1 - y0) * i / steps);
+            play(format(
+                `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+                t, xx, yy, xx - lastX, yy - lastY));
+            lastX = xx; lastY = yy; t += 50.0;
+        }
+        play(format(
+            `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+            t, cast(int)x1, cast(int)y1));
+        Thread.sleep(dur!"msecs"(60));
+        if (undoCount() >= wantCount) return true;
+        // missed grab — nothing recorded; geometry unchanged, retry.
+    }
+    return false;
+}
+
+// Drive ONE flex MOVE arrow drag (same screen coords the MOVE unittest uses).
+void moveDragOnce(Cam cam) {
+    int x0 = 418, y0 = 384;
+    int x1 = x0 - 60, y1 = y0;
+    enum int steps = 20;
+    play(format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        cam.vpX, cam.vpY, cam.w, cam.h, x0, y0));
+    int lastX = x0, lastY = y0; double t = 100.0;
+    foreach (i; 1 .. steps + 1) {
+        int xx = x0 + cast(int)(cast(double)(x1 - x0) * i / steps);
+        int yy = y0 + cast(int)(cast(double)(y1 - y0) * i / steps);
+        play(format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+            t, xx, yy, xx - lastX, yy - lastY));
+        lastX = xx; lastY = yy; t += 50.0;
+    }
+    play(format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n", t, x1, y1));
 }
 
 // =========================================================================
@@ -365,4 +486,165 @@ unittest {
     assert(redoGap < 1e-2,
         "ROTATE redo: rendered ROTATE frame did NOT return to post-gesture basis (gap="
         ~ redoGap.to!string ~ " post=" ~ postRotRight.to!string ~ " redo=" ~ redoRotRight.to!string ~ ")");
+}
+
+// =========================================================================
+// MULTI-GESTURE CHAIN — TWO rotates back-to-back in ONE session (the second
+// runs on the PERSISTED rotated frame the first left), then undo / undo /
+// redo / redo. This is the path the single-gesture cases above do NOT cover:
+// the 2nd gesture's frameStart is the prior gesture's rotated frameEnd, so the
+// per-gesture splice must step the basis through the CHAINED frames — NOT jump
+// straight to pristine or stay double-rotated. It exercises the mergeRun
+// first.revert / last.apply coherence claim for an already-persisted frame.
+//
+//   pre → [rotate 1] → f1 → [rotate 2] → f2
+//   undo  ⇒ basis returns to f1  (post-first, NOT pristine, NOT double-rotated)
+//   undo  ⇒ basis returns to pre (pristine)
+//   redo  ⇒ basis walks forward to f1
+//   redo  ⇒ basis walks forward to f2
+//
+// Two consecutive same-bank ring drags are TWO in-session entries (no selection
+// change / tool drop between them), so each Ctrl+Z pops one gesture.
+//
+// RED without the 2634ea2 fix: the per-gesture revert/apply hooks do NOT restore
+// `frame`, so the idle renderBasis keeps the last persisted (f2) frame across
+// every undo/redo step — the f1 and pristine assertions both fire.
+// GREEN with the fix: the basis steps to f1, pristine, f1, f2 in lock-step.
+// =========================================================================
+unittest {
+    setupFlex();
+
+    V3 preRot = rotateRight();
+    V3 pivot  = acenCenter();
+    long c0 = undoCount();
+
+    // GESTURE 1 — principal rotate about world Z, establishes the rotated frame f1.
+    bool ok1 = ringRotate(V3(0, 0, 1), pivot, c0 + 1, 0.55);
+    assert(ok1, "rotate-1 ring grab never recorded (ring-grab flake)");
+    V3 f1Rot = rotateRight();
+    long c1 = undoCount();
+    double travel1 = maxDev(f1Rot, preRot);
+    assert(travel1 > 0.1,
+        "rotate-1 did not rotate the rendered frame (travel=" ~ travel1.to!string ~ ")");
+
+    // GESTURE 2 (SAME session, no selection change) — a 2nd world-Z rotation
+    // CHAINS on the persisted f1 frame, leaving f2. Pivot is unchanged (rotation
+    // about its own pivot), but re-read for safety.
+    pivot = acenCenter();
+    bool ok2 = ringRotate(V3(0, 0, 1), pivot, c1 + 1, 0.55);
+    assert(ok2, "rotate-2 ring grab never recorded — gestures did not chain");
+    V3 f2Rot = rotateRight();
+    long c2 = undoCount();
+    assert(c2 > c1, "rotate-2 recorded no in-session entry — gestures did not chain");
+    double travel2 = maxDev(f2Rot, f1Rot);
+    assert(travel2 > 0.05,
+        "rotate-2 did not further rotate the chained frame (travel=" ~ travel2.to!string ~ ")");
+
+    import std.stdio : writeln;
+    writeln("[CHAIN] preRot=", preRot, " f1=", f1Rot, " f2=", f2Rot,
+            " travel1=", travel1, " travel2=", travel2);
+
+    // ---- UNDO #1 → back to f1 (post-first), NOT pristine, NOT double-rotated.
+    undoStep();
+    V3 u1 = rotateRight();
+    double gapU1ToF1  = maxDev(u1, f1Rot);
+    double gapU1ToPre = maxDev(u1, preRot);
+    writeln("[CHAIN] undo1 frame=", u1, " gapToF1=", gapU1ToF1, " gapToPre=", gapU1ToPre);
+    assert(gapU1ToF1 < 1e-2,
+        "CHAIN undo#1: basis did NOT return to post-FIRST frame (gap=" ~ gapU1ToF1.to!string
+        ~ " f1=" ~ f1Rot.to!string ~ " undo1=" ~ u1.to!string ~ ")");
+    assert(gapU1ToPre > 0.05,
+        "CHAIN undo#1: basis jumped past f1 straight to pristine (it should step one gesture)");
+
+    // ---- UNDO #2 → back to pristine (pre-first).
+    undoStep();
+    V3 u2 = rotateRight();
+    double gapU2ToPre = maxDev(u2, preRot);
+    writeln("[CHAIN] undo2 frame=", u2, " gapToPre=", gapU2ToPre);
+    assert(gapU2ToPre < 1e-2,
+        "CHAIN undo#2: basis did NOT return to PRISTINE pre-gesture frame (gap=" ~ gapU2ToPre.to!string
+        ~ " pre=" ~ preRot.to!string ~ " undo2=" ~ u2.to!string ~ ")");
+
+    // ---- REDO #1 → forward to f1.
+    redoStep();
+    V3 r1 = rotateRight();
+    double gapR1ToF1 = maxDev(r1, f1Rot);
+    writeln("[CHAIN] redo1 frame=", r1, " gapToF1=", gapR1ToF1);
+    assert(gapR1ToF1 < 1e-2,
+        "CHAIN redo#1: basis did NOT walk forward to post-FIRST frame (gap=" ~ gapR1ToF1.to!string
+        ~ " f1=" ~ f1Rot.to!string ~ " redo1=" ~ r1.to!string ~ ")");
+
+    // ---- REDO #2 → forward to f2.
+    redoStep();
+    V3 r2 = rotateRight();
+    double gapR2ToF2 = maxDev(r2, f2Rot);
+    writeln("[CHAIN] redo2 frame=", r2, " gapToF2=", gapR2ToF2);
+    assert(gapR2ToF2 < 1e-2,
+        "CHAIN redo#2: basis did NOT walk forward to post-SECOND frame (gap=" ~ gapR2ToF2.to!string
+        ~ " f2=" ~ f2Rot.to!string ~ " redo2=" ~ r2.to!string ~ ")");
+}
+
+// =========================================================================
+// CROSS-BANK CHAIN — ROTATE then MOVE in ONE session, then undo / undo. The
+// bank switch consolidates the rotate run and opens a fresh move run, so the
+// two gestures are two INDEPENDENT undo steps. The move gesture re-settles the
+// live handler basis but does not rotate the frame, so:
+//
+//   pre → [rotate] → fRot → [move] → fRot (basis unchanged by the move)
+//   undo (move)   ⇒ rotate basis still fRot (move splice is identity here)
+//   undo (rotate) ⇒ rotate basis returns to pristine pre frame
+//
+// Pins that the basis restore stays coherent across a BANK boundary: the move
+// undo must not disturb the persisted rotate frame, and the rotate undo must
+// then return it all the way to pristine.
+//
+// RED without the fix: the rotate undo leaves the basis at the post-rotate
+// (rotated) frame over reverted-to-pristine geometry — the pristine assert fires.
+// =========================================================================
+unittest {
+    setupFlex();
+
+    V3 preRot = rotateRight();
+    V3 pivot  = acenCenter();
+    long c0 = undoCount();
+
+    // GESTURE 1 — rotate (establishes the rotated frame).
+    bool okR = ringRotate(V3(0, 0, 1), pivot, c0 + 1, 0.55);
+    assert(okR, "rotate ring grab never recorded (ring-grab flake)");
+    V3 fRot = rotateRight();
+    long c1 = undoCount();
+    double travel = maxDev(fRot, preRot);
+    assert(travel > 0.1,
+        "rotate did not rotate the rendered frame (travel=" ~ travel.to!string ~ ")");
+
+    // GESTURE 2 (SAME session) — move (cross-bank: consolidates the rotate run,
+    // opens a fresh move run ⇒ independent undo step).
+    Cam cam = fetchCam();
+    moveDragOnce(cam);
+    long c2 = undoCount();
+    assert(c2 > c1, "move recorded no independent entry — bank boundary did not split the run");
+    V3 afterMoveRot = rotateRight();
+    double moveDisturbed = maxDev(afterMoveRot, fRot);
+
+    import std.stdio : writeln;
+    writeln("[XBANK] preRot=", preRot, " fRot=", fRot,
+            " afterMoveRot=", afterMoveRot, " moveDisturbedRotFrame=", moveDisturbed);
+
+    // ---- UNDO #1 (move) → rotate basis must stay at fRot (move did not rotate it).
+    undoStep();
+    V3 u1 = rotateRight();
+    double gapU1ToFRot = maxDev(u1, fRot);
+    writeln("[XBANK] undo1(move) rotFrame=", u1, " gapToFRot=", gapU1ToFRot);
+    assert(gapU1ToFRot < 1e-2,
+        "XBANK undo#1 (move): rotate basis drifted off the persisted rotated frame (gap="
+        ~ gapU1ToFRot.to!string ~ " fRot=" ~ fRot.to!string ~ " undo1=" ~ u1.to!string ~ ")");
+
+    // ---- UNDO #2 (rotate) → rotate basis returns to pristine pre frame.
+    undoStep();
+    V3 u2 = rotateRight();
+    double gapU2ToPre = maxDev(u2, preRot);
+    writeln("[XBANK] undo2(rotate) rotFrame=", u2, " gapToPre=", gapU2ToPre);
+    assert(gapU2ToPre < 1e-2,
+        "XBANK undo#2 (rotate): basis did NOT return to PRISTINE pre-gesture frame (gap="
+        ~ gapU2ToPre.to!string ~ " pre=" ~ preRot.to!string ~ " undo2=" ~ u2.to!string ~ ")");
 }
