@@ -174,9 +174,6 @@ class MoveTool : TransformTool {
     // casts when needed.
     TransformTool wrapperRef;
 
-private:
-    int forcedNextDragAxis = -1;
-
     // Phase 3 — `dragDelta` + `dragDeltaAtDragStart` deleted. The
     // wrapper now owns the accumulated world delta (its
     // `accumulatedWorldDelta` / `accumulatedAtDragStart`) plus the
@@ -189,10 +186,6 @@ private:
     // the live click-outside snap preview now.)
 
 public:
-    void forceNextDragAxis(int axis) {
-        forcedNextDragAxis = axis >= 0 && axis <= 6 ? axis : -1;
-    }
-
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
         super(meshSrc, gpu, editMode);
         handler = new MoveHandler(Vec3(0, 0, 0));
@@ -463,12 +456,10 @@ public:
         return -1;
     }
 
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || e.button != SDL_BUTTON_LEFT) {
-            forcedNextDragAxis = -1;
-            return false;
-        }
-        scope(exit) forcedNextDragAxis = -1;
+    bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
+                                           ref VectorStack vts,
+                                           int resolvedAxis) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
         // Don't interfere with pan/rotate/zoom modifier combos.
         SDL_Keymod mods = SDL_GetModState();
         bool ctrl = (mods & KMOD_CTRL) != 0;
@@ -495,9 +486,7 @@ public:
 
         ctrlConstrain = false;
         lastClickWasRelocate = false;
-        dragAxis = forcedNextDragAxis >= 0
-                 ? forcedNextDragAxis
-                 : hitTestAxes(e.x, e.y);
+        dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {
@@ -543,6 +532,10 @@ public:
         lastClickWasRelocate = true;
         beginScreenPlaneDragAt(e.x, e.y, hit, ctrl, /*notifyAcen=*/true, vts);
         return true;
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        return onMouseButtonDownWithResolvedAxis(e, vts, -1);
     }
 
     // Start a screen-plane drag with the gizmo positioned at `hit`.
