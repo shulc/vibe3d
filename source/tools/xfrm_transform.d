@@ -3800,10 +3800,14 @@ public:
         moveGestureStartKnown = false;
         if (!moveAbsKnown) moveXfStart = moveXfEnd;   // inert
 
-        // BASIS undo splice (mirror of the rotate/scale hooks). Move's R_gesture is
-        // I, so frameStart == frameEnd and the restore is an identity no-op; it
-        // exists so the splice composes uniformly across the three banks. frameEnd
-        // is the gesture-END `frame` (settleGestureBasis above ran before this
+        // BASIS undo splice (mirror of the rotate/scale hooks). A Move gesture has
+        // R_gesture == I — it never ROTATES the frame — but it DOES re-settle the
+        // live handler basis via settleGestureBasis(moveSub.handler.axis*) above, so
+        // frameEnd == frameStart only on an unrotated selection; on a selection whose
+        // frame a prior gesture rotated, the re-settle equals frameStart there, so the
+        // restore is effectively an identity no-op in that case too. The splice exists
+        // so the basis restore composes uniformly across the three banks. frameEnd is
+        // the gesture-END `frame` (settleGestureBasis above ran before this
         // commitEdit), frameStart the mouse-down capture. Gated by moveAbsKnown.
         GestureFrame moveFrameEnd   = frame;
         GestureFrame moveFrameStartLocal = moveAbsKnown ? moveFrameStart : moveFrameEnd;
