@@ -167,6 +167,21 @@ version(unittest) int[2] xfrmLatchedHandlePartForTest(int hitPart)
     return [cast(int)p.bank, p.localPart];
 }
 
+private int compactScaleHeadFallbackHitPart(bool compact, bool scaleEnabled,
+                                            int hitPart, int scaleHeadAxis)
+        pure nothrow @safe @nogc {
+    if (compact && scaleEnabled && hitPart < 0 && scaleHeadAxis >= 0)
+        return SCALE_BASE + scaleHeadAxis;
+    return hitPart;
+}
+
+version(unittest) int xfrmCompactScaleHeadFallbackForTest(
+        bool compact, bool scaleEnabled, int hitPart, int scaleHeadAxis)
+        pure nothrow @safe @nogc {
+    return compactScaleHeadFallbackHitPart(compact, scaleEnabled,
+                                           hitPart, scaleHeadAxis);
+}
+
 unittest { // shared handle winner maps to the exact subtool latch part
     assert(latchedHandlePart(-1).bank == LatchedHandleBank.None);
     auto move = latchedHandlePart(MOVE_BASE + 6);
@@ -987,6 +1002,8 @@ public:
     // confirm a center-box grab actually engaged dragAxis==3 (the basis-free path
     // excluded from gesture-frame chaining), rather than a rotated arrow.
     public int moveDragAxisPublic() const { return moveSub.dragAxisPublic(); }
+    public int rotateDragAxisPublic() const { return rotateSub.dragAxisPublic(); }
+    public int scaleDragAxisPublic() const { return scaleSub.dragAxisPublic(); }
 
     // ----- Rendered-pose seam (flex_border_handles_plan.md Phase 4 step 1) ----
     //
@@ -1231,6 +1248,11 @@ public:
     // (§4.4). Pivot-agnostic for 4a's Offset path; the seam R/S needs in 4b.
     public Vec3 actionCenter(ref VectorStack vts) { return queryActionCenter(vts); }
 
+    version(unittest) bool routeResolvedHandlePartForTest(
+            ref const SDL_MouseButtonEvent e, ref VectorStack vts, int hitPart) {
+        return routeResolvedHandlePart(e, vts, hitPart);
+    }
+
     // consumesFalloff is inherited from TransformTool (NeedsFalloff flag).
 
     // Element-falloff hover gating — DYNAMIC, depends on the active
@@ -1284,64 +1306,9 @@ public:
     // FalloffStage.evaluate's `pickedCenter` snapshot (which now
     // reads state.actionCenter.center directly).
 
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        // Gizmo-handle hit test FIRST. When a click hits a registered shared
-        // handle, dispatch only to that handle's bank; otherwise the Move bank
-        // may consume a rotate/scale click as an off-gizmo relocate before R/S
-        // see it. Computing hitPart up front is also load-bearing for the
-        // element-pick gate below: a click on a transform handle is an
-        // on-handle drag, NEVER an element pick/relocate.
-        int hitPart = -1;
-        if (e.button == SDL_BUTTON_LEFT) {
-            toolHandles.begin();
-            registerGizmoHandles(toolHandles);
-            hitPart = toolHandles.test(e.x, e.y, cachedVp,
-                                       AiInteractionPhase.mouseDown);
-            if (compactPresentation() && flagS && hitPart < 0) {
-                int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
-                if (scaleHeadAxis >= 0)
-                    hitPart = SCALE_BASE + scaleHeadAxis;
-            }
-        }
-
-        // Element-falloff click-pick PRE-step: when falloff.element
-        // is active and the user clicks any element (vert/edge/face)
-        // with no modifier keys, we push the picked element's
-        // centroid through ACEN.setUserPlaced. ACEN.center then
-        // becomes that point for every consumer (gizmo via
-        // queryActionCenter, falloff sphere via state.actionCenter.center).
-        // This DOES NOT add the picked element to the moving set —
-        // ElementMove uses pick only as the pivot/anchor. The drag
-        // moves the prior selection through the falloff sphere.
-        //
-        // Gated on `hitPart < 0`: a click that landed on a gizmo handle is an
-        // on-handle drag and must NOT relocate. (Before the host refreshed
-        // hover at mouse-down, a STALE empty-space hover hid this — grabbing
-        // an arrow that overlaps a face would otherwise pick that face.)
-        bool picked = false;
-        bool ctrlMod = false;
-        if (e.button == SDL_BUTTON_LEFT) {
-            SDL_Keymod mods = SDL_GetModState();
-            ctrlMod = (mods & KMOD_CTRL) != 0;
-            // Ctrl is the axis-lock modifier for the screen-plane drag this pick
-            // opens (forwarded as `ctrlMod` to beginScreenPlaneDragAt below), so
-            // it MUST be allowed through the pick gate — gating on a no-modifier
-            // `plain` swallowed Ctrl, leaving Element Move with no axis-lock.
-            // Alt stays excluded (Ctrl+Alt+LMB = camera zoom, dispatched to the
-            // view before the tool); Shift stays excluded (selection add).
-            bool pickAllowed = (mods & (KMOD_ALT | KMOD_SHIFT)) == 0;   // Ctrl OK
-            if (pickAllowed && hitPart < 0) picked = tryPickElement(e.x, e.y);
-        }
-
-        // Falloff endpoint handles claim the click first (Linear/Radial),
-        // routed at the wrapper through the host-owned falloff emitter.
-        if (e.button == SDL_BUTTON_LEFT) {
-            FalloffPacket curFp = currentFalloff(vts);
-            if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
-                activeDrag = null;   // falloff owns the drag, no gizmo bank
-                return true;
-            }
-        }
+    private bool routeResolvedHandlePart(ref const SDL_MouseButtonEvent e,
+                                         ref VectorStack vts,
+                                         int hitPart) {
         bool hitMoveBank  = hitPart >= MOVE_BASE  && hitPart < MOVE_BASE  + 10;
         bool hitRotBank   = hitPart >= ROT_BASE   && hitPart < ROT_BASE   + 10;
         bool hitScaleBank = hitPart >= SCALE_BASE && hitPart < SCALE_BASE + 10;
@@ -1518,6 +1485,69 @@ tryScaleBank:
             activeDrag = scaleSub;  return true;
         }
 noBankConsumed:
+        return false;
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Gizmo-handle hit test FIRST. When a click hits a registered shared
+        // handle, dispatch only to that handle's bank; otherwise the Move bank
+        // may consume a rotate/scale click as an off-gizmo relocate before R/S
+        // see it. Computing hitPart up front is also load-bearing for the
+        // element-pick gate below: a click on a transform handle is an
+        // on-handle drag, NEVER an element pick/relocate.
+        int hitPart = -1;
+        if (e.button == SDL_BUTTON_LEFT) {
+            toolHandles.begin();
+            registerGizmoHandles(toolHandles);
+            hitPart = toolHandles.test(e.x, e.y, cachedVp,
+                                       AiInteractionPhase.mouseDown);
+            if (compactPresentation() && flagS && hitPart < 0) {
+                int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
+                hitPart = compactScaleHeadFallbackHitPart(
+                    compactPresentation(), flagS, hitPart, scaleHeadAxis);
+            }
+        }
+
+        // Element-falloff click-pick PRE-step: when falloff.element
+        // is active and the user clicks any element (vert/edge/face)
+        // with no modifier keys, we push the picked element's
+        // centroid through ACEN.setUserPlaced. ACEN.center then
+        // becomes that point for every consumer (gizmo via
+        // queryActionCenter, falloff sphere via state.actionCenter.center).
+        // This DOES NOT add the picked element to the moving set —
+        // ElementMove uses pick only as the pivot/anchor. The drag
+        // moves the prior selection through the falloff sphere.
+        //
+        // Gated on `hitPart < 0`: a click that landed on a gizmo handle is an
+        // on-handle drag and must NOT relocate. (Before the host refreshed
+        // hover at mouse-down, a STALE empty-space hover hid this — grabbing
+        // an arrow that overlaps a face would otherwise pick that face.)
+        bool picked = false;
+        bool ctrlMod = false;
+        if (e.button == SDL_BUTTON_LEFT) {
+            SDL_Keymod mods = SDL_GetModState();
+            ctrlMod = (mods & KMOD_CTRL) != 0;
+            // Ctrl is the axis-lock modifier for the screen-plane drag this pick
+            // opens (forwarded as `ctrlMod` to beginScreenPlaneDragAt below), so
+            // it MUST be allowed through the pick gate — gating on a no-modifier
+            // `plain` swallowed Ctrl, leaving Element Move with no axis-lock.
+            // Alt stays excluded (Ctrl+Alt+LMB = camera zoom, dispatched to the
+            // view before the tool); Shift stays excluded (selection add).
+            bool pickAllowed = (mods & (KMOD_ALT | KMOD_SHIFT)) == 0;   // Ctrl OK
+            if (pickAllowed && hitPart < 0) picked = tryPickElement(e.x, e.y);
+        }
+
+        // Falloff endpoint handles claim the click first (Linear/Radial),
+        // routed at the wrapper through the host-owned falloff emitter.
+        if (e.button == SDL_BUTTON_LEFT) {
+            FalloffPacket curFp = currentFalloff(vts);
+            if (pipeGizmoHost !is null && pipeGizmoHost.tryClaimDown(e, cachedVp, curFp, toolHandles)) {
+                activeDrag = null;   // falloff owns the drag, no gizmo bank
+                return true;
+            }
+        }
+        if (routeResolvedHandlePart(e, vts, hitPart))
+            return true;
 
         // Click landed OFF every gizmo handler bank. If we just
         // picked an element under falloff.element, snap moveSub's
@@ -1543,6 +1573,7 @@ noBankConsumed:
             // relocate condition is `picked && flagT`, not
             // `moveSub.lastClickWasRelocate` (this branch never routes
             // through moveSub.onMouseButtonDown).
+
             //
             // Ordering is load-bearing (same snapFrozen trap as Phase 1a):
             //   pick → setUserPlaced (no stage while snapFrozen, BEFORE this) →

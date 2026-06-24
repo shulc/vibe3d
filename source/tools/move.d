@@ -461,7 +461,8 @@ public:
                                            int resolvedAxis) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
         // Don't interfere with pan/rotate/zoom modifier combos.
-        SDL_Keymod mods = SDL_GetModState();
+        version(unittest) SDL_Keymod mods = 0;
+        else SDL_Keymod mods = SDL_GetModState();
         bool ctrl = (mods & KMOD_CTRL) != 0;
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
 

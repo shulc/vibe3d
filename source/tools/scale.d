@@ -654,7 +654,9 @@ public:
                                            ref VectorStack vts,
                                            int resolvedAxis) {
         if (!active || e.button != SDL_BUTTON_LEFT) return false;
-        if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
+        version(unittest) SDL_Keymod mods = 0;
+        else SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
         // Soft Drag: re-center the screen-falloff disc at the click on
         // every fresh grab AND flip the overlay-visibility flag on so
         // the disc renders for the duration of the LMB hold — even
@@ -681,8 +683,13 @@ public:
             dragStartScaleAccum = scaleAccum;
             dragScaleAccum = Vec3(1, 1, 1);
             dragScaleScalarDelta = 0.0f;
-            preDragRelativeMouse = SDL_GetRelativeMouseMode();
-            ownsRelativeMouse = SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
+            version(unittest) {
+                preDragRelativeMouse = SDL_FALSE;
+                ownsRelativeMouse = false;
+            } else {
+                preDragRelativeMouse = SDL_GetRelativeMouseMode();
+                ownsRelativeMouse = SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
+            }
 
             buildVertexCacheIfNeeded();
             // Capture falloff/symmetry so the standalone (no-wrapper)
