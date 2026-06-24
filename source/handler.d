@@ -60,6 +60,24 @@ void setHandleApplyCaptureSink(HandleApplyCaptureSink sink) {
     g_handleApplyCaptureSink = sink;
 }
 
+// Optional pluggable decision provider for the handle path (task 0028). When
+// set it REPLACES the default advisor call as the source of the handle
+// decision; when unset the path is byte-identical to before (the default
+// advisor). Module-level so a single app.d-owned provider reaches every
+// per-tool ToolHandles instance, mirror of g_handleAiAdvisor /
+// g_handleApplyCaptureSink above. Passes only POD (context + candidates) and
+// returns a POD decision, so handler.d stays ignorant of whatever produces the
+// decision — the provider is an opaque closure (app.d injects one that consults
+// an optional model first and falls through to the default advisor). The
+// produced decision is still re-gated by canApplyAdvisorDecision unchanged.
+alias HandleDecisionProvider = AiAdvisorDecision delegate(
+    const ref AiInteractionContext ctx, const(AiCandidate)[] candidates);
+private HandleDecisionProvider g_handleDecisionProvider;
+
+void setHandleDecisionProvider(HandleDecisionProvider p) {
+    g_handleDecisionProvider = p;
+}
+
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
 // All handlers use this program to draw line geometry.
@@ -1552,7 +1570,13 @@ class ToolHandles {
 
         AiAdvisorDecision decision;
         try {
-            decision = handleAiAdvisor().advise(context, aiCandidates);
+            // The decision provider, when set, is the pluggable source of the
+            // handle decision (task 0028); unset ⇒ exactly the prior advisor
+            // call. The try/catch wraps BOTH branches so a throwing provider
+            // (or advisor) cannot escape into the UI.
+            decision = g_handleDecisionProvider !is null
+                ? g_handleDecisionProvider(context, aiCandidates)
+                : handleAiAdvisor().advise(context, aiCandidates);
         } catch (Exception) {
             decision = AiAdvisorDecision();
         }
