@@ -72,10 +72,13 @@ D_CYCLES_PATH="$(echo "$DESCRIBE_JSON" \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='d-cycles'))")"
 BINDBC_RPR_PATH="$(echo "$DESCRIBE_JSON" \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='bindbc-rpr'))")"
+D_ONNX_PATH="$(echo "$DESCRIBE_JSON" \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='d-onnxruntime'))")"
 
 CYCLES_LIB_BASE="${D_CYCLES_PATH%/}/extern/blender/lib/linux_x64"
 RPR_BIN_BASE="${BINDBC_RPR_PATH%/}/extern/RadeonProRenderSDK/RadeonProRender/binUbuntu20"
 RPR_HIPBIN="${BINDBC_RPR_PATH%/}/extern/RadeonProRenderSDK/hipbin"
+ONNX_LIB_BASE="${D_ONNX_PATH%/}/build/onnxruntime/sdk/lib"
 
 echo "[bundle]   d-cycles base    : $CYCLES_LIB_BASE"
 echo "[bundle]   bindbc-rpr base  : $RPR_BIN_BASE"
@@ -138,6 +141,21 @@ for subdir in "${!CYCLES_DEPS[@]}"; do
                                           # entry usually points at one of them.
         done
     done
+done
+
+# --- ONNX Runtime (AI candidate ranker backend; hard dep) ------------------
+# Lands in lib/ — the onnxrt shim links it with an $ORIGIN/lib rpath, and the
+# ldd closure/verify below probes $STAGE/lib so it's covered.
+echo "[bundle] copying ONNX Runtime from $ONNX_LIB_BASE"
+shopt -s nullglob
+onnx_libs=( "$ONNX_LIB_BASE"/libonnxruntime.so* )
+shopt -u nullglob
+if ((${#onnx_libs[@]} == 0)); then
+    echo "[bundle] no libonnxruntime under $ONNX_LIB_BASE — is d-onnxruntime built?" >&2
+    exit 1
+fi
+for m in "${onnx_libs[@]}"; do
+    cp -P "$m" "$STAGE/lib/"
 done
 
 # --- Executable + config ---------------------------------------------------

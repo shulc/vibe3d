@@ -52,10 +52,12 @@ try {
     $j = $describe | ConvertFrom-Json
     $dCycles = ($j.packages | Where-Object { $_.name -eq 'd-cycles' }).path
     $rprPkg  = ($j.packages | Where-Object { $_.name -eq 'bindbc-rpr' }).path
+    $dOnnx   = ($j.packages | Where-Object { $_.name -eq 'd-onnxruntime' }).path
 
     $cyclesLibBase = Join-Path $dCycles 'extern\blender\lib\windows_x64'
     $rprBinBase    = Join-Path $rprPkg  'extern\RadeonProRenderSDK\RadeonProRender\binWin64'
     $rprHipbin     = Join-Path $rprPkg  'extern\RadeonProRenderSDK\hipbin'
+    $onnxLibBase   = Join-Path $dOnnx   'build\onnxruntime\sdk\lib'
 
     # --- RPR runtime (flat, next to exe) --------------------------------
     Write-Host "[bundle] copying RPR runtime from $rprBinBase"
@@ -85,6 +87,12 @@ try {
             Copy-Item $_.FullName "$stage\$($_.Name)"
         }
     }
+
+    # --- ONNX Runtime (AI candidate ranker backend; hard dep, flat) -----
+    Write-Host "[bundle] copying ONNX Runtime from $onnxLibBase"
+    $onnxDll = Join-Path $onnxLibBase 'onnxruntime.dll'
+    if (-not (Test-Path $onnxDll)) { throw "onnxruntime.dll not found at $onnxDll — is d-onnxruntime built?" }
+    Copy-Item $onnxDll "$stage\onnxruntime.dll"
 
     Copy-Item vibe3d.exe "$stage\vibe3d.exe"
 

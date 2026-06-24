@@ -48,10 +48,13 @@ D_CYCLES_PATH="$(echo "$DESCRIBE_JSON" \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='d-cycles'))")"
 BINDBC_RPR_PATH="$(echo "$DESCRIBE_JSON" \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='bindbc-rpr'))")"
+D_ONNX_PATH="$(echo "$DESCRIBE_JSON" \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='d-onnxruntime'))")"
 
 CYCLES_LIB_BASE="${D_CYCLES_PATH%/}/extern/blender/lib/macos_arm64"
 RPR_BIN_BASE="${BINDBC_RPR_PATH%/}/extern/RadeonProRenderSDK/RadeonProRender/binMacOS"
 RPR_HIPBIN="${BINDBC_RPR_PATH%/}/extern/RadeonProRenderSDK/hipbin"
+ONNX_LIB_BASE="${D_ONNX_PATH%/}/build/onnxruntime/sdk/lib"
 
 # --- RPR runtime ----------------------------------------------------------
 echo "[bundle] copying RPR runtime from $RPR_BIN_BASE"
@@ -75,6 +78,19 @@ for subdir in "${CYCLES_SUBDIRS[@]}"; do
         [[ -e "$f" ]] || continue
         cp -P "$f" "$STAGE/lib/"
     done
+done
+
+# --- ONNX Runtime (AI candidate ranker backend; hard dep) -----------------
+echo "[bundle] copying ONNX Runtime from $ONNX_LIB_BASE"
+shopt -s nullglob
+onnx_libs=( "$ONNX_LIB_BASE"/libonnxruntime*.dylib )
+shopt -u nullglob
+if ((${#onnx_libs[@]} == 0)); then
+    echo "[bundle] no libonnxruntime under $ONNX_LIB_BASE — is d-onnxruntime built?" >&2
+    exit 1
+fi
+for f in "${onnx_libs[@]}"; do
+    cp -P "$f" "$STAGE/lib/"     # found via the shim's @executable_path/lib rpath
 done
 
 cp -P ./vibe3d "$STAGE/vibe3d"

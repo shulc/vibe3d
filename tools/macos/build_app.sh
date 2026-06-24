@@ -85,6 +85,25 @@ install_name_tool -id "@rpath/${SDL2_DYLIB_NAME}" \
     "$APP_PATH/Contents/Frameworks/${SDL2_DYLIB_NAME}" 2>/dev/null || true
 echo "[app] bundled SDL2 from ${SDL2_SRC}"
 
+# Bundle ONNX Runtime (AI candidate ranker backend; hard dependency). The
+# onnxrt shim links it with an @executable_path/../Frameworks rpath, so the
+# .dylib lives next to SDL2 in Contents/Frameworks.
+ONNX_PKG_PATH="$("$DUB_BIN" describe --config=modeling 2>/dev/null | sed -n '/^{/,$p' \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(p['path'] for p in d['packages'] if p['name']=='d-onnxruntime'))")"
+ONNX_LIB_BASE="${ONNX_PKG_PATH%/}/build/onnxruntime/sdk/lib"
+shopt -s nullglob
+onnx_libs=( "$ONNX_LIB_BASE"/libonnxruntime*.dylib )
+shopt -u nullglob
+if ((${#onnx_libs[@]} == 0)); then
+    echo "[app] no libonnxruntime under $ONNX_LIB_BASE — is d-onnxruntime built?" >&2
+    exit 1
+fi
+for f in "${onnx_libs[@]}"; do
+    cp -P "$f" "$APP_PATH/Contents/Frameworks/$(basename "$f")"
+done
+chmod -R u+w "$APP_PATH/Contents/Frameworks"
+echo "[app] bundled ONNX Runtime from ${ONNX_LIB_BASE}"
+
 cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
