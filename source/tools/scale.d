@@ -124,7 +124,6 @@ public:
     Vec3 wrapperInputFrameY = Vec3(0, 1, 0);
     Vec3 wrapperInputFrameZ = Vec3(0, 0, 1);
     bool wrapperInputFrameValid = false;
-    int forcedNextDragAxis = -1;
 
     // Push the wrapper's unified gesture frame into this bank for the WRAPPED
     // scale input projection. `chained` is the wrapper's `frame.valid &&
@@ -136,10 +135,6 @@ public:
         wrapperInputFrameY     = u;
         wrapperInputFrameZ     = f;
         wrapperInputFrameValid = chained;
-    }
-
-    void forceNextDragAxis(int axis) {
-        forcedNextDragAxis = axis >= 0 && axis <= 6 ? axis : -1;
     }
 
     // Source selector for the WRAPPED-role DECOMPOSE read. Reads the unified
@@ -655,12 +650,10 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
-    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || e.button != SDL_BUTTON_LEFT) {
-            forcedNextDragAxis = -1;
-            return false;
-        }
-        scope(exit) forcedNextDragAxis = -1;
+    bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
+                                           ref VectorStack vts,
+                                           int resolvedAxis) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
         if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
         // Soft Drag: re-center the screen-falloff disc at the click on
         // every fresh grab AND flip the overlay-visibility flag on so
@@ -679,9 +672,7 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        dragAxis = forcedNextDragAxis >= 0
-                 ? forcedNextDragAxis
-                 : hitTestAxes(e.x, e.y);
+        dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             lastMX = e.x; lastMY = e.y;
             // Freeze the input-projection basis for the gesture (= the
@@ -747,6 +738,10 @@ public:
         // Auto), so a scale-tool click away from the gizmo can't fall
         // through to selection-picking and drop the user's selection.
         return true;
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        return onMouseButtonDownWithResolvedAxis(e, vts, -1);
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {

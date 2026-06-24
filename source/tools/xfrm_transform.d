@@ -1355,9 +1355,10 @@ public:
         auto latchedPart = latchedHandlePart(hitPart);
 
         if (flagT && allowMoveDispatch) {
-            if (latchedPart.bank == LatchedHandleBank.Move)
-                moveSub.forceNextDragAxis(latchedPart.localPart);
-            if (!moveSub.onMouseButtonDown(e, vts))
+            int resolvedMoveAxis = latchedPart.bank == LatchedHandleBank.Move
+                                 ? latchedPart.localPart : -1;
+            if (!moveSub.onMouseButtonDownWithResolvedAxis(e, vts,
+                                                           resolvedMoveAxis))
                 goto tryRotateBank;
             // An off-gizmo click-relocate during a live session is a new
             // logical run: commit the prior run, then re-stage the
@@ -1436,9 +1437,10 @@ public:
         }
 tryRotateBank:
         if (flagR && allowRotDispatch) {
-            if (latchedPart.bank == LatchedHandleBank.Rotate)
-                rotateSub.forceNextDragAxis(latchedPart.localPart);
-            if (!rotateSub.onMouseButtonDown(e, vts))
+            int resolvedRotateAxis = latchedPart.bank == LatchedHandleBank.Rotate
+                                   ? latchedPart.localPart : -1;
+            if (!rotateSub.onMouseButtonDownWithResolvedAxis(e, vts,
+                                                             resolvedRotateAxis))
                 goto tryScaleBank;
             // Principal-axis ring (0/1/2) AND view-ring (3) → wrapper owns
             // geometry via applyTRS (capture the drag state). Principal axes
@@ -1479,9 +1481,10 @@ tryRotateBank:
         }
 tryScaleBank:
         if (flagS && allowScaleDispatch) {
-            if (latchedPart.bank == LatchedHandleBank.Scale)
-                scaleSub.forceNextDragAxis(latchedPart.localPart);
-            if (!scaleSub.onMouseButtonDown(e, vts))
+            int resolvedScaleAxis = latchedPart.bank == LatchedHandleBank.Scale
+                                  ? latchedPart.localPart : -1;
+            if (!scaleSub.onMouseButtonDownWithResolvedAxis(e, vts,
+                                                            resolvedScaleAxis))
                 goto noBankConsumed;
             // Scale single-source: a real gizmo drag (dragAxis >= 0 — any
             // of single-axis 0/1/2, uniform disc 3, plane circle 4/5/6)
