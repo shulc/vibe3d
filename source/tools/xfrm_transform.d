@@ -3028,8 +3028,18 @@ public:
             // input side, so it stays on the LIVE basis here too — else decompose
             // (live) vs re-expand (rotated runFrame) would round-trip to R·worldDelta.
             Vec3 f0X = bX, f0Y = bY, f0Z = bZ;
-            if (softBasisValid && acenSettleAllowed() && !moveCenterBoxDragActive()) {
-                f0X = softBasisR; f0Y = softBasisU; f0Z = softBasisF;
+            // Gesture-frame unification, Phase 4 — runFrame's CHAINED source now
+            // reads the unified `frame` instead of softBasis directly. `frame.valid`
+            // IS `softBasisValid && acenSettleAllowed()` by construction, and
+            // `frame.{right,up,axis} == softBasis{R,U,F}` (parity guard), so this is
+            // a value-identical swap: when chained the frozen B0 triple is the same
+            // vectors as before. The non-chained default (bX/bY/bZ over the restored
+            // baseline) and the moveCenterBoxDragActive() exclusion stay verbatim —
+            // runFrame itself, its freeze, runFrameValid, the publish, and the
+            // translate read are untouched (runFrame is the 6->2 boundary, it stays).
+            if (frame.valid && !moveCenterBoxDragActive()) {
+                debug assertGestureFrameMirrorsSoftBasis();
+                f0X = frame.right; f0Y = frame.up; f0Z = frame.axis;
             }
             runFrameOrigin = pivot;
             runFrameR      = f0X;
