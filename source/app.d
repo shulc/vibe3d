@@ -136,6 +136,7 @@ import command;
 import registry;
 import shortcuts;
 import buttonset;
+import ai.debug_trace : latestHandleDebugTraceJson;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
 import args_dialog    : ArgsDialog;
@@ -2883,10 +2884,8 @@ void main(string[] args) {
                                g_hoveredVertex, g_hoveredEdge, g_hoveredFace));
             }
             {
-                auto decision = aiAdvisor.advise();
-                buf.put(format(`,"ai":{"enabled":%s,"advisor":{"intent":"keepDefault","confidence":%f}}`,
-                               aiState.enabled ? "true" : "false",
-                               decision.confidence));
+                buf.put(`,"ai":`);
+                buf.put(latestHandleDebugTraceJson(aiState.enabled));
             }
             buf.put(`}`);
             return buf.data;
