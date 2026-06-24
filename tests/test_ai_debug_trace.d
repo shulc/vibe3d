@@ -174,3 +174,43 @@ unittest { // element trace preserves ids, element shape, and default winner
     assert(e["defaultWinner"]["id"].str == "element:vertex:3");
     assert(e["appliedWinner"]["id"].str == "element:vertex:3");
 }
+
+unittest { // element trace serializes explicit advisor/applied decisions
+    clearLatestAiDebugTraces();
+
+    AiCandidate vertex;
+    vertex.id = "element:vertex:3";
+    vertex.kind = AiCandidateKind.element;
+    vertex.elementKind = AiElementCandidateKind.vertex;
+    vertex.intent = AiIntent.hoverElement;
+    vertex.isDefaultWinner = true;
+
+    AiCandidate face;
+    face.id = "element:face:8";
+    face.kind = AiCandidateKind.element;
+    face.elementKind = AiElementCandidateKind.face;
+    face.intent = AiIntent.hoverElement;
+
+    AiAdvisorDecision decision;
+    decision.intent = AiIntent.hoverElement;
+    decision.confidence = 0.9f;
+    decision.candidateIndex = 1;
+    decision.candidateId = "element:face:8";
+
+    publishElementDebugTrace([vertex, face], decision, 1);
+
+    auto trace = latestElementDebugTrace();
+    assert(trace.defaultWinnerIndex == 0);
+    assert(trace.defaultWinnerId == "element:vertex:3");
+    assert(trace.appliedWinnerIndex == 1);
+    assert(trace.appliedWinnerId == "element:face:8");
+    assert(trace.advisor.intent == AiIntent.hoverElement);
+    assert(trace.advisor.candidateIndex == 1);
+
+    auto j = parseJSON(latestHandleDebugTraceJson(true));
+    assert(j["advisor"]["intent"].str == "keepDefault");
+    auto e = j["elementTrace"];
+    assert(e["defaultWinner"]["id"].str == "element:vertex:3");
+    assert(e["appliedWinner"]["id"].str == "element:face:8");
+    assert(e["appliedWinner"]["index"].integer == 1);
+}
