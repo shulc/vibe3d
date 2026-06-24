@@ -213,6 +213,12 @@ public:
 
     // Override in subclasses to define the hover hit area.
     protected bool hitTest(int mx, int my, const ref Viewport vp) { return false; }
+    protected float aiScreenDistance(int mx, int my, const ref Viewport vp) {
+        return float.infinity;
+    }
+    protected AiIntent aiIntentForPart(int part) const {
+        return AiIntent.handle;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -239,13 +245,18 @@ public:
 
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
+        return aiScreenDistance(mx, my, vp) < 8.0f;
+    }
+
+    override float aiScreenDistance(int mx, int my, const ref Viewport vp)
+    {
         float sax, say, ndcZa, sbx, sby, ndcZb;
         if (!projectToWindowFull(start, vp, sax, say, ndcZa) ||
             !projectToWindowFull(end,   vp, sbx, sby, ndcZb))
-            return false;
+            return float.infinity;
         float t;
         return closestOnSegment2D(cast(float)mx, cast(float)my,
-                                  sax, say, sbx, sby, t) < 8.0f;
+                                  sax, say, sbx, sby, t);
     }
 }
 
@@ -490,10 +501,16 @@ public:
     // Fresh hit test — does not rely on cached hover state; used by ToolHandles.test.
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
+        return aiScreenDistance(mx, my, vp) < 8.0f;
+    }
+
+    override float aiScreenDistance(int mx, int my, const ref Viewport vp)
+    {
         Vec3 right, up;
         localFrame(normal, right, up);
         float[2][SEGS + 1] pts;
         bool[SEGS + 1]     valid;
+        float best = float.infinity;
         foreach (i; 0 .. SEGS + 1) {
             float a = startAngle + cast(float)i * PI / SEGS;
             Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
@@ -504,12 +521,12 @@ public:
         foreach (i; 0 .. SEGS) {
             if (!valid[i] || !valid[i + 1]) continue;
             float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   pts[i][0], pts[i][1],
-                                   pts[i+1][0], pts[i+1][1], t) < 8.0f)
-                return true;
+            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                         pts[i][0], pts[i][1],
+                                         pts[i+1][0], pts[i+1][1], t);
+            if (d < best) best = d;
         }
-        return false;
+        return best;
     }
 }
 
@@ -573,10 +590,16 @@ public:
     // Fresh hit test — does not rely on cached hover state; used by ToolHandles.test.
     override bool hitTest(int mx, int my, const ref Viewport vp)
     {
+        return aiScreenDistance(mx, my, vp) < 8.0f;
+    }
+
+    override float aiScreenDistance(int mx, int my, const ref Viewport vp)
+    {
         Vec3 right, up;
         localFrame(normal, right, up);
         float[2][SEGS + 1] pts;
         bool[SEGS + 1]     valid;
+        float best = float.infinity;
         foreach (i; 0 .. SEGS + 1) {
             float a = cast(float)i * 2.0f * PI / SEGS;
             Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
@@ -587,12 +610,12 @@ public:
         foreach (i; 0 .. SEGS) {
             if (!valid[i] || !valid[i + 1]) continue;
             float t;
-            if (closestOnSegment2D(cast(float)mx, cast(float)my,
-                                   pts[i][0], pts[i][1],
-                                   pts[i+1][0], pts[i+1][1], t) < 8.0f)
-                return true;
+            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                         pts[i][0], pts[i][1],
+                                         pts[i+1][0], pts[i+1][1], t);
+            if (d < best) best = d;
         }
-        return false;
+        return best;
     }
 }
 
@@ -881,6 +904,11 @@ public:
         return doHitTest(mx, my, vp);
     }
 
+    override float aiScreenDistance(int mx, int my, const ref Viewport vp)
+    {
+        return doHitTest(mx, my, vp) ? 0.0f : float.infinity;
+    }
+
 private:
     bool doHitTest(int mx, int my, const ref Viewport vp)
     {
@@ -971,6 +999,10 @@ public:
         return doHitTest(mx, my, vp);
     }
 
+    override float aiScreenDistance(int mx, int my, const ref Viewport vp) {
+        return doHitTest(mx, my, vp) ? 0.0f : float.infinity;
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
@@ -1058,6 +1090,10 @@ class CenterDiskGizmo : Handler {
 
     override bool hitTest(int mx, int my, const ref Viewport vp) {
         return diskHitCheck(mx, my, vp);
+    }
+
+    override float aiScreenDistance(int mx, int my, const ref Viewport vp) {
+        return diskHitCheck(mx, my, vp) ? 0.0f : float.infinity;
     }
 
 private:
@@ -1380,7 +1416,8 @@ class ToolHandles {
             AiCandidate c;
             c.id = "handle:" ~ e.part.to!string;
             c.kind = AiCandidateKind.handle;
-            c.intent = AiIntent.keepDefault;
+            c.intent = e.h.aiIntentForPart(e.part);
+            c.screenDist = e.h.aiScreenDistance(mx, my, vp);
             c.priorityFromCurrentRules = cast(float)priority;
             c.hasScreenPosition = true;
             c.screenPosition = [cast(float)mx, cast(float)my];

@@ -2,6 +2,7 @@ module ai.interaction;
 
 enum AiIntent {
     keepDefault,
+    handle,
     hoverElement,
     selectElement,
     boxOrLassoSelect,

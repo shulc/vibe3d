@@ -14,15 +14,22 @@ void main() {}
 
 private class TestHandle : Handler {
     bool shouldHit;
+    float screenDistance;
     int hitCalls;
 
-    this(bool shouldHit) {
+    this(bool shouldHit, float screenDistance = 0.0f) {
         this.shouldHit = shouldHit;
+        this.screenDistance = screenDistance;
     }
 
     override protected bool hitTest(int mx, int my, const ref Viewport vp) {
         ++hitCalls;
         return shouldHit;
+    }
+
+    override protected float aiScreenDistance(int mx, int my,
+                                              const ref Viewport vp) {
+        return shouldHit ? screenDistance : float.infinity;
     }
 }
 
@@ -88,6 +95,8 @@ unittest { // first-hit winner is preserved while all hit candidates are exposed
     assert(candidates.length == 2);
     assert(candidates[0].id == "handle:10");
     assert(candidates[0].kind == AiCandidateKind.handle);
+    assert(candidates[0].intent == AiIntent.handle);
+    assert(candidates[0].screenDist == 0.0f);
     assert(candidates[0].priorityFromCurrentRules == 0.0f);
     assert(candidates[0].isDefaultWinner);
     assert(candidates[0].hasScreenPosition);
@@ -95,6 +104,8 @@ unittest { // first-hit winner is preserved while all hit candidates are exposed
 
     assert(candidates[1].id == "handle:30");
     assert(candidates[1].kind == AiCandidateKind.handle);
+    assert(candidates[1].intent == AiIntent.handle);
+    assert(candidates[1].screenDist == 0.0f);
     assert(candidates[1].priorityFromCurrentRules == 2.0f);
     assert(!candidates[1].isDefaultWinner);
     assert(candidates[1].screenPosition == [123.0f, 456.0f]);
@@ -104,6 +115,88 @@ unittest { // first-hit winner is preserved while all hit candidates are exposed
     assert(trace.candidates[0].id == "handle:10");
     assert(trace.candidates[1].id == "handle:30");
     assert(trace.defaultWinnerIndex == 0);
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.advisor.keepDefault);
+    assert(trace.advisor.confidence == 0.0f);
+    assert(trace.advisor.candidateIndex == -1);
+}
+
+unittest { // real ToolHandles + real advisor can produce an advisory decision
+    clearLatestHandleDebugTrace();
+    setHandleAiAdvisor(new AiAdvisor(true));
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true, 42.0f);
+    auto later = new TestHandle(true, 6.0f);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+    handles.hot = 7;
+    handles.captured = 8;
+
+    int winner = handles.test(123, 456, vp, AiInteractionPhase.mouseDown);
+    assert(winner == 10);
+    assert(handles.hot == 7);
+    assert(handles.captured == 8);
+
+    auto candidates = handles.handleCandidates();
+    assert(candidates.length == 2);
+    assert(candidates[0].isDefaultWinner);
+    assert(candidates[0].screenDist == 42.0f);
+    assert(candidates[1].screenDist == 6.0f);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(!trace.advisor.keepDefault);
+    assert(trace.advisor.intent == AiIntent.handle);
+    assert(trace.advisor.confidence >= 0.75f);
+    assert(trace.advisor.candidateIndex == 1);
+    assert(trace.advisor.candidateId == "handle:30");
+}
+
+unittest { // disabled real advisor keeps default even for clear handle candidates
+    clearLatestHandleDebugTrace();
+    setHandleAiAdvisor(new AiAdvisor(false));
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true, 42.0f);
+    auto later = new TestHandle(true, 6.0f);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    assert(handles.test(123, 456, vp, AiInteractionPhase.mouseDown) == 10);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.advisor.keepDefault);
+    assert(trace.advisor.confidence == 0.0f);
+    assert(trace.advisor.candidateIndex == -1);
+}
+
+unittest { // real advisor keeps default when handle margin is low
+    clearLatestHandleDebugTrace();
+    setHandleAiAdvisor(new AiAdvisor(true));
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true, 12.0f);
+    auto later = new TestHandle(true, 6.0f);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    assert(handles.test(123, 456, vp, AiInteractionPhase.mouseDown) == 10);
+
+    auto trace = latestHandleDebugTrace();
     assert(trace.defaultWinnerId == "handle:10");
     assert(trace.advisor.keepDefault);
     assert(trace.advisor.confidence == 0.0f);
