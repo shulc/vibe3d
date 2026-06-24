@@ -1407,6 +1407,7 @@ private:
 
 class ToolHandles {
     private struct Entry { Handler h; int part; }
+    alias AiHoverPreviewPredicate = bool delegate(int part) const;
     private Entry[] entries;     // registration order = test priority
     private AiCandidate[] aiCandidates; // last observational hit-candidate pass
     private int[] aiCandidateParts;      // candidate index -> registered part id
@@ -1415,6 +1416,8 @@ class ToolHandles {
     int captured = -1;           // hauled part during a drag, -1 = none
     private bool suppressed;     // when set, update() forces every handle Normal
     private int lastDefaultPart = -1;
+    private bool aiHoverPreviewEnabled;
+    private AiHoverPreviewPredicate aiHoverPreviewPredicate;
 
     // Clear the per-frame registration list. Call at the start of each draw.
     void begin() {
@@ -1430,6 +1433,14 @@ class ToolHandles {
     // and capture. Used by ScaleTool, whose drag feedback is the animated
     // scale arrow — no gizmo handle should highlight while a scale drag runs.
     void suppress() { suppressed = true; }
+
+    void setAiHoverPreviewEnabled(bool enabled) {
+        aiHoverPreviewEnabled = enabled;
+    }
+
+    void setAiHoverPreviewPredicate(AiHoverPreviewPredicate predicate) {
+        aiHoverPreviewPredicate = predicate;
+    }
 
     // Register a handle with a stable part id, in priority order (first wins
     // on overlap).
@@ -1485,8 +1496,7 @@ class ToolHandles {
             lastDefaultPart = -1;
             aiCandidates.length = 0;
             aiCandidateParts.length = 0;
-            publishHandleTrace(mx, my, AiInteractionPhase.hover, -1,
-                               size_t.max);
+            publishHandleDebugTrace(aiCandidates);
             foreach (ref e; entries) e.h.setState(HandleState.Normal);
             return;
         }
@@ -1494,7 +1504,10 @@ class ToolHandles {
             hot = captured;
             secondaryDefault = -1;
         } else {
-            hot = test(mx, my, vp, AiInteractionPhase.hover);
+            hot = test(mx, my, vp,
+                       aiHoverPreviewEnabled
+                           ? AiInteractionPhase.hover
+                           : AiInteractionPhase.unknown);
             secondaryDefault = lastDefaultPart >= 0 && lastDefaultPart != hot
                 ? lastDefaultPart
                 : -1;
@@ -1563,6 +1576,13 @@ class ToolHandles {
             return false;
         if (aiCandidates[index].kind != AiCandidateKind.handle)
             return false;
+        if (phase == AiInteractionPhase.hover) {
+            if (!aiHoverPreviewEnabled)
+                return false;
+            if (aiHoverPreviewPredicate !is null &&
+                !aiHoverPreviewPredicate(aiCandidateParts[index]))
+                return false;
+        }
         if (decision.candidateId.length == 0 ||
             decision.candidateId != aiCandidates[index].id)
             return false;

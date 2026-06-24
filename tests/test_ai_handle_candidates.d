@@ -228,6 +228,7 @@ unittest { // AI hover preview shows applied winner and ghosts the old default
     auto handles = new ToolHandles();
     auto vp = Viewport();
 
+    handles.setAiHoverPreviewEnabled(true);
     handles.begin();
     handles.add(first, 10);
     handles.add(later, 30);
@@ -246,6 +247,62 @@ unittest { // AI hover preview shows applied winner and ghosts the old default
     assert(trace.advisor.candidateIndex == 1);
 }
 
+unittest { // shared ToolHandles stay deterministic on hover unless opted in
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 10);
+    assert(handles.secondaryDefault == -1);
+    assert(first.getState() == HandleState.Rollover);
+    assert(later.getState() == HandleState.Normal);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
+    assert(trace.advisor.candidateIndex == 1);
+}
+
+unittest { // hover preview opt-in can exclude parts with deterministic click paths
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.setAiHoverPreviewEnabled(true);
+    handles.setAiHoverPreviewPredicate((int part) const => part < 20);
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 10);
+    assert(handles.secondaryDefault == -1);
+    assert(first.getState() == HandleState.Rollover);
+    assert(later.getState() == HandleState.Normal);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
+    assert(trace.advisor.candidateIndex == 1);
+}
+
 unittest { // stable hover and mouse-down candidates resolve to the same handle
     clearLatestHandleDebugTrace();
     resetSpyAdvisor();
@@ -257,6 +314,7 @@ unittest { // stable hover and mouse-down candidates resolve to the same handle
     auto handles = new ToolHandles();
     auto vp = Viewport();
 
+    handles.setAiHoverPreviewEnabled(true);
     handles.begin();
     handles.add(first, 10);
     handles.add(later, 30);
@@ -502,7 +560,7 @@ unittest { // invalid advisory candidates fall back to the deterministic winner
     assert(secondTrace.advisor.candidateId == "handle:30");
 }
 
-unittest { // advisory choices are applied only to hover preview and mouse-down
+unittest { // advisory choices are applied only to opted-in hover and mouse-down
     clearLatestHandleDebugTrace();
     resetSpyAdvisor();
     setHandleAiAdvisor(new SpyAdvisor());
@@ -517,11 +575,21 @@ unittest { // advisory choices are applied only to hover preview and mouse-down
     handles.add(first, 10);
     handles.add(later, 30);
 
-    assert(handles.test(123, 456, vp, AiInteractionPhase.hover) == 30);
+    assert(handles.test(123, 456, vp, AiInteractionPhase.hover) == 10);
     auto hoverTrace = latestHandleDebugTrace();
     assert(hoverTrace.defaultWinnerId == "handle:10");
-    assert(hoverTrace.appliedWinnerId == "handle:30");
+    assert(hoverTrace.appliedWinnerId == "handle:10");
     assert(hoverTrace.advisor.candidateIndex == 1);
+
+    handles.setAiHoverPreviewEnabled(true);
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+    assert(handles.test(123, 456, vp, AiInteractionPhase.hover) == 30);
+    auto optedInHoverTrace = latestHandleDebugTrace();
+    assert(optedInHoverTrace.defaultWinnerId == "handle:10");
+    assert(optedInHoverTrace.appliedWinnerId == "handle:30");
+    assert(optedInHoverTrace.advisor.candidateIndex == 1);
 
     handles.begin();
     handles.add(first, 10);
@@ -592,6 +660,10 @@ unittest { // invisible hits are skipped exactly like default arbitration
 
 unittest { // suppressed updates publish an empty trace and do not test handles
     clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
     auto visible = new TestHandle(true);
     auto handles = new ToolHandles();
     auto vp = Viewport();
@@ -605,6 +677,7 @@ unittest { // suppressed updates publish an empty trace and do not test handles
     assert(handles.hot == -1);
     assert(handles.secondaryDefault == -1);
     assert(visible.hitCalls == 0);
+    assert(spyCalls == 0);
     assert(handles.handleCandidates().length == 0);
 
     auto trace = latestHandleDebugTrace();
