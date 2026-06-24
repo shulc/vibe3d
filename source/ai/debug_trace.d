@@ -36,6 +36,38 @@ string aiIntentId(AiIntent intent) {
     }
 }
 
+/// Reverse of `aiIntentId`: parse the serialized id back to its enum. Unknown
+/// ids fall back to `keepDefault` so a forward-compatible log never crashes the
+/// parser. Lives next to the forward helper it inverts.
+AiIntent aiIntentFromId(string id) {
+    switch (id) {
+        case "keepDefault":       return AiIntent.keepDefault;
+        case "handle":            return AiIntent.handle;
+        case "hoverElement":      return AiIntent.hoverElement;
+        case "selectElement":     return AiIntent.selectElement;
+        case "boxOrLassoSelect":  return AiIntent.boxOrLassoSelect;
+        case "dragAxisX":         return AiIntent.dragAxisX;
+        case "dragAxisY":         return AiIntent.dragAxisY;
+        case "dragAxisZ":         return AiIntent.dragAxisZ;
+        case "dragPlaneXY":       return AiIntent.dragPlaneXY;
+        case "dragPlaneYZ":       return AiIntent.dragPlaneYZ;
+        case "dragPlaneXZ":       return AiIntent.dragPlaneXZ;
+        case "dragCenterFree":    return AiIntent.dragCenterFree;
+        case "rotateAxisX":       return AiIntent.rotateAxisX;
+        case "rotateAxisY":       return AiIntent.rotateAxisY;
+        case "rotateAxisZ":       return AiIntent.rotateAxisZ;
+        case "rotateView":        return AiIntent.rotateView;
+        case "scaleAxisX":        return AiIntent.scaleAxisX;
+        case "scaleAxisY":        return AiIntent.scaleAxisY;
+        case "scaleAxisZ":        return AiIntent.scaleAxisZ;
+        case "scalePlaneXY":      return AiIntent.scalePlaneXY;
+        case "scalePlaneYZ":      return AiIntent.scalePlaneYZ;
+        case "scalePlaneXZ":      return AiIntent.scalePlaneXZ;
+        case "scaleUniform":      return AiIntent.scaleUniform;
+        default:                  return AiIntent.keepDefault;
+    }
+}
+
 private string jsonString(string s) {
     return JSONValue(s).toString();
 }
@@ -47,6 +79,19 @@ string aiElementCandidateKindId(AiElementCandidateKind kind) {
         case AiElementCandidateKind.edge:       return "edge";
         case AiElementCandidateKind.face:       return "face";
         case AiElementCandidateKind.background: return "background";
+    }
+}
+
+/// Reverse of `aiElementCandidateKindId`: parse the serialized id back to its
+/// enum (unknown ids → `none`). Lives next to the forward helper it inverts.
+AiElementCandidateKind aiElementCandidateKindFromId(string id) {
+    switch (id) {
+        case "none":       return AiElementCandidateKind.none;
+        case "vertex":     return AiElementCandidateKind.vertex;
+        case "edge":       return AiElementCandidateKind.edge;
+        case "face":       return AiElementCandidateKind.face;
+        case "background": return AiElementCandidateKind.background;
+        default:           return AiElementCandidateKind.none;
     }
 }
 
