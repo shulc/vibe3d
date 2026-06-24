@@ -1523,7 +1523,7 @@ void main(string[] args) {
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
     auto aiState       = new EditorAiState();
-    auto aiAdvisor     = new AiAdvisor();
+    auto aiAdvisor     = new AiAdvisor(() => aiState.enabled);
     setHandleAiAdvisor(aiAdvisor);
 
     // Phase C.2: every transform tool gets the same undo plumbing — the
