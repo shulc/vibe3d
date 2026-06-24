@@ -154,9 +154,11 @@ struct AiCandidateDebugTrace {
 
 alias AiHandleDebugTrace = AiCandidateDebugTrace;
 alias AiElementDebugTrace = AiCandidateDebugTrace;
+alias AiModeToolContextDebugTrace = AiCandidateDebugTrace;
 
 private AiHandleDebugTrace g_latestHandleTrace;
 private AiElementDebugTrace g_latestElementTrace;
+private AiModeToolContextDebugTrace g_latestModeToolContextTrace;
 
 private string tracesToJson(bool enabled) {
         auto buf = appender!string();
@@ -172,15 +174,19 @@ private string tracesToJson(bool enabled) {
 void clearLatestHandleDebugTrace() {
     g_latestHandleTrace.clear();
     g_latestElementTrace.clear();
+    g_latestModeToolContextTrace.clear();
 }
 
 void clearLatestElementDebugTrace() {
     g_latestElementTrace.clear();
 }
 
+void clearLatestModeToolContextDebugTrace() {
+    g_latestModeToolContextTrace.clear();
+}
+
 void clearLatestAiDebugTraces() {
     clearLatestHandleDebugTrace();
-    clearLatestElementDebugTrace();
 }
 
 void publishHandleDebugTrace(const(AiCandidate)[] candidates,
@@ -195,12 +201,22 @@ void publishElementDebugTrace(const(AiCandidate)[] candidates,
     g_latestElementTrace.set(candidates, decision, appliedWinnerIndex);
 }
 
+void publishModeToolContextDebugTrace(const(AiCandidate)[] candidates,
+                                      AiAdvisorDecision decision = AiAdvisorDecision(),
+                                      int appliedWinnerIndex = -1) {
+    g_latestModeToolContextTrace.set(candidates, decision, appliedWinnerIndex);
+}
+
 const(AiHandleDebugTrace) latestHandleDebugTrace() {
     return g_latestHandleTrace;
 }
 
 const(AiElementDebugTrace) latestElementDebugTrace() {
     return g_latestElementTrace;
+}
+
+const(AiModeToolContextDebugTrace) latestModeToolContextDebugTrace() {
+    return g_latestModeToolContextTrace;
 }
 
 string latestHandleDebugTraceJson(bool enabled) {
