@@ -45,6 +45,21 @@ private AiAdvisor handleAiAdvisor() {
     return g_handleAiAdvisor;
 }
 
+// Optional sink for live interaction-log capture (task 0027). Module-level so a
+// single app.d-owned writer reaches every per-tool ToolHandles instance, mirror
+// of g_handleAiAdvisor above. Passes only POD (context + candidates + decision +
+// applied index) so handler.d stays ignorant of the writer type. Fired from
+// publishHandleTrace on a genuine handle apply only.
+alias HandleApplyCaptureSink = void delegate(const ref AiInteractionContext ctx,
+                                             const(AiCandidate)[] candidates,
+                                             AiAdvisorDecision decision,
+                                             int appliedIndex);
+private HandleApplyCaptureSink g_handleApplyCaptureSink;
+
+void setHandleApplyCaptureSink(HandleApplyCaptureSink sink) {
+    g_handleApplyCaptureSink = sink;
+}
+
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
 // All handlers use this program to draw line geometry.
@@ -1553,6 +1568,19 @@ class ToolHandles {
             aiCandidates,
             decision,
             appliedCandidate == size_t.max ? -1 : cast(int)appliedCandidate);
+
+        // Capture exactly one record per genuine handle apply. The gate
+        // excludes the every-frame hover/unknown update() path, a mid-drag
+        // re-test (captured>=0), and a click that hit no handle (defaultPart<0).
+        // appliedCandidate is the index of the part actually applied (= default
+        // unless an advisor decision overrode it); it is a valid index here
+        // because defaultPart>=0 guarantees at least one hit candidate.
+        if (g_handleApplyCaptureSink !is null &&
+            phase == AiInteractionPhase.mouseDown &&
+            captured < 0 &&
+            defaultPart >= 0)
+            g_handleApplyCaptureSink(context, aiCandidates, decision,
+                                     cast(int)appliedCandidate);
         return appliedPart;
     }
 
