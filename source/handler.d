@@ -17,12 +17,21 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 // ---------------------------------------------------------------------------
-// HandleState — the three-state handle selection model
-// (unselected / rollover / selected).
+// HandleState — the handle selection model
+// (unselected / rollover / selected / secondary default hint).
 // One enum replaces the old hovered/selected bool soup at the colour-pick site.
 // ---------------------------------------------------------------------------
 
-enum HandleState { Normal, Rollover, Selected }
+enum HandleState { Normal, Rollover, Selected, SecondaryDefault }
+
+private Vec3 handleStateColor(HandleState state, Vec3 base) {
+    final switch (state) {
+        case HandleState.Normal:           return base;
+        case HandleState.Rollover:         return Vec3(1.0f, 0.95f, 0.15f);
+        case HandleState.Selected:         return Vec3(1.0f, 0.64f, 0.0f);
+        case HandleState.SecondaryDefault: return Vec3(0.55f, 0.75f, 1.0f);
+    }
+}
 
 private AiAdvisor g_handleAiAdvisor;
 
@@ -186,7 +195,7 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
 
 class Handler {
 private:
-    // Single source of truth for hover/selected state (the three-state model).
+    // Single source of truth for hover/selected/secondary-preview state.
     // Set by the central ToolHandles Test pass for registered handles; left at
     // the default Normal for draw-only (unregistered) handles, which therefore
     // never highlight — exactly as a handle absent from the
@@ -308,7 +317,7 @@ class Arrow : ShaftedArrow {
         float shaftLen   = len - coneLen;
         Vec3  coneBase   = end - fwd * coneLen;
 
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = handleStateColor(state, color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -378,7 +387,7 @@ class CubicArrow : ShaftedArrow {
         }
         if (shaftLen < 0.0f) shaftLen = 0.0f;
 
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = handleStateColor(state, color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -411,7 +420,7 @@ class CubicArrow : ShaftedArrow {
 
         float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * 0.03f;
         Vec3  cubeCenter = end - fwd * cubeHalf;
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = handleStateColor(state, color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -474,7 +483,7 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = handleStateColor(state, color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
@@ -579,7 +588,7 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
+        Vec3 c = handleStateColor(state, color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -884,9 +893,9 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
-        Vec3 c = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f)
-               : selected                      ? Vec3(1.0f, 0.64f, 0.0f)
-               :                                 color;
+        Vec3 c = selected && state == HandleState.Normal
+            ? handleStateColor(HandleState.Selected, color)
+            : handleStateColor(state, color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -1015,8 +1024,8 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 oc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : color;
-        Vec3 fc = state == HandleState.Rollover ? Vec3(1.0f, 0.95f, 0.15f) : fillColor;
+        Vec3 oc = handleStateColor(state, color);
+        Vec3 fc = handleStateColor(state, fillColor);
 
         auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
 
@@ -1085,8 +1094,26 @@ class CenterDiskGizmo : Handler {
         }
         if (!allValid) return;
 
-        uint fillCol    = state == HandleState.Rollover ? IM_COL32(255, 242,  38, 120) : IM_COL32(  0, 220, 220,  80);
-        uint outlineCol = state == HandleState.Rollover ? IM_COL32(255, 242,  38, 230) : IM_COL32(  0, 220, 220, 200);
+        uint fillCol;
+        uint outlineCol;
+        final switch (state) {
+            case HandleState.Rollover:
+                fillCol    = IM_COL32(255, 242,  38, 120);
+                outlineCol = IM_COL32(255, 242,  38, 230);
+                break;
+            case HandleState.SecondaryDefault:
+                fillCol    = IM_COL32(140, 190, 255,  90);
+                outlineCol = IM_COL32(140, 190, 255, 190);
+                break;
+            case HandleState.Selected:
+                fillCol    = IM_COL32(255, 163,   0, 120);
+                outlineCol = IM_COL32(255, 163,   0, 230);
+                break;
+            case HandleState.Normal:
+                fillCol    = IM_COL32(  0, 220, 220,  80);
+                outlineCol = IM_COL32(  0, 220, 220, 200);
+                break;
+        }
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();
         dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
@@ -1384,14 +1411,18 @@ class ToolHandles {
     private AiCandidate[] aiCandidates; // last observational hit-candidate pass
     private int[] aiCandidateParts;      // candidate index -> registered part id
     int hot      = -1;           // ROLLOVER part, -1 = none
+    int secondaryDefault = -1;   // deterministic default hint when AI changes hover
     int captured = -1;           // hauled part during a drag, -1 = none
     private bool suppressed;     // when set, update() forces every handle Normal
+    private int lastDefaultPart = -1;
 
     // Clear the per-frame registration list. Call at the start of each draw.
     void begin() {
         entries.length = 0;
         aiCandidates.length = 0;
         aiCandidateParts.length = 0;
+        secondaryDefault = -1;
+        lastDefaultPart = -1;
         suppressed = false;
     }
 
@@ -1450,6 +1481,8 @@ class ToolHandles {
     void update(int mx, int my, const ref Viewport vp) {
         if (suppressed) {
             hot = -1;
+            secondaryDefault = -1;
+            lastDefaultPart = -1;
             aiCandidates.length = 0;
             aiCandidateParts.length = 0;
             publishHandleTrace(mx, my, AiInteractionPhase.hover, -1,
@@ -1457,9 +1490,23 @@ class ToolHandles {
             foreach (ref e; entries) e.h.setState(HandleState.Normal);
             return;
         }
-        hot = captured >= 0 ? captured : test(mx, my, vp, AiInteractionPhase.hover);
-        foreach (ref e; entries)
-            e.h.setState(e.part == hot ? HandleState.Rollover : HandleState.Normal);
+        if (captured >= 0) {
+            hot = captured;
+            secondaryDefault = -1;
+        } else {
+            hot = test(mx, my, vp, AiInteractionPhase.hover);
+            secondaryDefault = lastDefaultPart >= 0 && lastDefaultPart != hot
+                ? lastDefaultPart
+                : -1;
+        }
+        foreach (ref e; entries) {
+            auto nextState = HandleState.Normal;
+            if (e.part == hot)
+                nextState = HandleState.Rollover;
+            else if (e.part == secondaryDefault)
+                nextState = HandleState.SecondaryDefault;
+            e.h.setState(nextState);
+        }
     }
 
     void setHaul(int part) { captured = part; }
@@ -1488,6 +1535,7 @@ class ToolHandles {
             appliedCandidate = cast(size_t)decision.candidateIndex;
             appliedPart = aiCandidateParts[appliedCandidate];
         }
+        lastDefaultPart = defaultPart;
         publishHandleDebugTrace(
             aiCandidates,
             decision,
@@ -1499,7 +1547,8 @@ class ToolHandles {
                                          const ref AiAdvisorDecision decision,
                                          size_t defaultCandidate) const {
         enum float minConfidence = 0.75f;
-        if (phase != AiInteractionPhase.mouseDown)
+        if (phase != AiInteractionPhase.mouseDown &&
+            phase != AiInteractionPhase.hover)
             return false;
         if (captured >= 0)
             return false;

@@ -10,7 +10,7 @@ import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import bindbc.sdl : SDL_BUTTON_LEFT, SDL_MouseButtonEvent;
 import editmode : EditMode;
-import handler : Handler, ToolHandles, setHandleAiAdvisor;
+import handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
 import math : Viewport;
 import mesh : GpuMesh, Mesh, makeCube;
 import operator : VectorStack;
@@ -189,6 +189,89 @@ unittest { // disabled real advisor keeps default even for clear handle candidat
     assert(trace.advisor.keepDefault);
     assert(trace.advisor.confidence == 0.0f);
     assert(trace.advisor.candidateIndex == -1);
+}
+
+unittest { // AI-off hover remains the deterministic first hit
+    clearLatestHandleDebugTrace();
+    setHandleAiAdvisor(new AiAdvisor(false));
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true, 42.0f);
+    auto later = new TestHandle(true, 6.0f);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 10);
+    assert(handles.secondaryDefault == -1);
+    assert(first.getState() == HandleState.Rollover);
+    assert(later.getState() == HandleState.Normal);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:10");
+    assert(trace.advisor.keepDefault);
+}
+
+unittest { // AI hover preview shows applied winner and ghosts the old default
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    handles.update(123, 456, vp);
+    assert(handles.hot == 30);
+    assert(handles.secondaryDefault == 10);
+    assert(first.getState() == HandleState.SecondaryDefault);
+    assert(later.getState() == HandleState.Rollover);
+    assert(spyCalls == 1);
+    assert(spyContext.phase == AiInteractionPhase.hover);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:30");
+    assert(trace.advisor.candidateIndex == 1);
+}
+
+unittest { // stable hover and mouse-down candidates resolve to the same handle
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+    handles.update(123, 456, vp);
+    assert(handles.hot == 30);
+    assert(handles.secondaryDefault == 10);
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+    assert(handles.test(123, 456, vp, AiInteractionPhase.mouseDown) == 30);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.appliedWinnerId == "handle:30");
 }
 
 unittest { // real advisor keeps default when handle margin is low
@@ -419,7 +502,7 @@ unittest { // invalid advisory candidates fall back to the deterministic winner
     assert(secondTrace.advisor.candidateId == "handle:30");
 }
 
-unittest { // advisory choices are not applied outside the mouse-down gate
+unittest { // advisory choices are applied only to hover preview and mouse-down
     clearLatestHandleDebugTrace();
     resetSpyAdvisor();
     setHandleAiAdvisor(new SpyAdvisor());
@@ -434,11 +517,20 @@ unittest { // advisory choices are not applied outside the mouse-down gate
     handles.add(first, 10);
     handles.add(later, 30);
 
-    assert(handles.test(123, 456, vp, AiInteractionPhase.hover) == 10);
-    auto trace = latestHandleDebugTrace();
-    assert(trace.defaultWinnerId == "handle:10");
-    assert(trace.appliedWinnerId == "handle:10");
-    assert(trace.advisor.candidateIndex == 1);
+    assert(handles.test(123, 456, vp, AiInteractionPhase.hover) == 30);
+    auto hoverTrace = latestHandleDebugTrace();
+    assert(hoverTrace.defaultWinnerId == "handle:10");
+    assert(hoverTrace.appliedWinnerId == "handle:30");
+    assert(hoverTrace.advisor.candidateIndex == 1);
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+    assert(handles.test(123, 456, vp, AiInteractionPhase.dragUpdate) == 10);
+    auto dragTrace = latestHandleDebugTrace();
+    assert(dragTrace.defaultWinnerId == "handle:10");
+    assert(dragTrace.appliedWinnerId == "handle:10");
+    assert(dragTrace.advisor.candidateIndex == 1);
 }
 
 unittest { // captured drags preserve the latched handle and skip retesting
@@ -459,7 +551,10 @@ unittest { // captured drags preserve the latched handle and skip retesting
 
     handles.update(123, 456, vp);
     assert(handles.hot == 30);
+    assert(handles.secondaryDefault == -1);
     assert(handles.captured == 30);
+    assert(first.getState() == HandleState.Normal);
+    assert(later.getState() == HandleState.Rollover);
     assert(first.hitCalls == 0);
     assert(later.hitCalls == 0);
     assert(spyCalls == 0);
@@ -508,6 +603,7 @@ unittest { // suppressed updates publish an empty trace and do not test handles
     handles.update(10, 20, vp);
 
     assert(handles.hot == -1);
+    assert(handles.secondaryDefault == -1);
     assert(visible.hitCalls == 0);
     assert(handles.handleCandidates().length == 0);
 
