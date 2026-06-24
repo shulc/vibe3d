@@ -9,6 +9,7 @@ import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import handler : Handler, ToolHandles, setHandleAiAdvisor;
 import math : Viewport;
+import tools.xfrm_transform : xfrmLatchedHandlePartForTest;
 
 void main() {}
 
@@ -256,6 +257,29 @@ unittest { // advisor decision can switch only to a valid hit candidate
     assert(j["advisor"]["candidateId"].str == "handle:30");
     assert(j["handleTrace"]["defaultWinner"]["id"].str == "handle:10");
     assert(j["handleTrace"]["appliedWinner"]["id"].str == "handle:30");
+}
+
+unittest { // advisor-applied shared winner decodes to the production latch part
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto defaultMove = new TestHandle(true);
+    auto laterScaleZ = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(defaultMove, 0);
+    handles.add(laterScaleZ, 22);
+
+    int winner = handles.test(123, 456, vp, AiInteractionPhase.mouseDown);
+    assert(winner == 22);
+
+    auto latch = xfrmLatchedHandlePartForTest(winner);
+    assert(latch[0] == 3); // scale bank
+    assert(latch[1] == 2); // local Z part consumed by ScaleTool.forceNextDragAxis
 }
 
 private class InvalidAdvisor : AiAdvisor {

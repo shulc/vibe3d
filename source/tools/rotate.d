@@ -76,6 +76,7 @@ private:
     Vec3     wrapperInputFrameY = Vec3(0, 1, 0);
     Vec3     wrapperInputFrameZ = Vec3(0, 0, 1);
     bool     wrapperInputFrameValid = false;
+    int      forcedNextDragAxis = -1;
 
     Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
     Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
@@ -119,6 +120,10 @@ public:
     // import (mirrors `MoveTool.wrapperRef`); cast to `XfrmTransformTool`
     // locally where needed. Null for any standalone (unit-test) instance.
     TransformTool wrapperRef;
+
+    void forceNextDragAxis(int axis) {
+        forcedNextDragAxis = axis >= 0 && axis <= 3 ? axis : -1;
+    }
 
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
         super(meshSrc, gpu, editMode);
@@ -636,7 +641,11 @@ public:
     }
 
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        if (!active || e.button != SDL_BUTTON_LEFT) {
+            forcedNextDragAxis = -1;
+            return false;
+        }
+        scope(exit) forcedNextDragAxis = -1;
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
         // Soft Drag: re-center the screen-falloff disc at the click on
@@ -656,7 +665,9 @@ public:
                 screenFalloffLMBBegin();
             }
         }
-        dragAxis = hitTestAxes(e.x, e.y);
+        dragAxis = forcedNextDragAxis >= 0
+                 ? forcedNextDragAxis
+                 : hitTestAxes(e.x, e.y);
         if (dragAxis < 0) {
             // Click outside gizmo: relocate ACEN to the click projected
             // onto the per-mode plane (most-facing world plane through
