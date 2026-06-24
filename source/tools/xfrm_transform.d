@@ -73,6 +73,7 @@ module tools.xfrm_transform;
 import bindbc.sdl;
 import operator : VectorStack;
 
+import ai.interaction : AiInteractionPhase;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
@@ -1258,7 +1259,8 @@ public:
         if (e.button == SDL_BUTTON_LEFT) {
             toolHandles.begin();
             registerGizmoHandles(toolHandles);
-            hitPart = toolHandles.test(e.x, e.y, cachedVp);
+            hitPart = toolHandles.test(e.x, e.y, cachedVp,
+                                       AiInteractionPhase.mouseDown);
             if (compactPresentation() && flagS) {
                 int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
                 if (scaleHeadAxis >= 0)

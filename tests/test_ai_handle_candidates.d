@@ -1,8 +1,13 @@
 // Pure tests for handle candidate collection in the shared handle arbiter.
 
-import ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace;
-import ai.interaction : AiCandidateKind;
-import handler : Handler, ToolHandles;
+import std.json : parseJSON;
+
+import ai.advisor : AiAdvisor;
+import ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace,
+    latestHandleDebugTraceJson;
+import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+    AiInteractionContext, AiInteractionPhase, AiIntent;
+import handler : Handler, ToolHandles, setHandleAiAdvisor;
 import math : Viewport;
 
 void main() {}
@@ -18,6 +23,41 @@ private class TestHandle : Handler {
     override protected bool hitTest(int mx, int my, const ref Viewport vp) {
         ++hitCalls;
         return shouldHit;
+    }
+}
+
+private int spyCalls;
+private AiInteractionContext spyContext;
+private string[] spyCandidateIds;
+
+private void resetSpyAdvisor() {
+    spyCalls = 0;
+    spyContext = AiInteractionContext();
+    spyCandidateIds.length = 0;
+}
+
+private class SpyAdvisor : AiAdvisor {
+    override AiAdvisorDecision advise(const ref AiInteractionContext context,
+                                      const(AiCandidate)[] candidates) const {
+        ++spyCalls;
+        spyContext.phase = context.phase;
+        spyContext.defaultIntent = context.defaultIntent;
+        spyContext.mouseX = context.mouseX;
+        spyContext.mouseY = context.mouseY;
+        spyContext.isDragging = context.isDragging;
+
+        spyCandidateIds.length = 0;
+        foreach (ref c; candidates)
+            spyCandidateIds ~= c.id;
+
+        AiAdvisorDecision decision;
+        decision.intent = AiIntent.keepDefault;
+        decision.confidence = 0.0f;
+        if (candidates.length > 1) {
+            decision.candidateIndex = 1;
+            decision.candidateId = candidates[1].id;
+        }
+        return decision;
     }
 }
 
@@ -66,6 +106,50 @@ unittest { // first-hit winner is preserved while all hit candidates are exposed
     assert(trace.defaultWinnerIndex == 0);
     assert(trace.defaultWinnerId == "handle:10");
     assert(trace.advisor.keepDefault);
+    assert(trace.advisor.confidence == 0.0f);
+    assert(trace.advisor.candidateIndex == -1);
+}
+
+unittest { // advisor decision is traced while first-hit behavior remains default
+    clearLatestHandleDebugTrace();
+    resetSpyAdvisor();
+    setHandleAiAdvisor(new SpyAdvisor());
+    scope (exit) setHandleAiAdvisor(null);
+
+    auto first = new TestHandle(true);
+    auto later = new TestHandle(true);
+    auto handles = new ToolHandles();
+    auto vp = Viewport();
+
+    handles.begin();
+    handles.add(first, 10);
+    handles.add(later, 30);
+
+    int winner = handles.test(123, 456, vp, AiInteractionPhase.mouseDown);
+    assert(winner == 10);
+    assert(handles.handleCandidates()[0].isDefaultWinner);
+    assert(!handles.handleCandidates()[1].isDefaultWinner);
+
+    assert(spyCalls == 1);
+    assert(spyContext.phase == AiInteractionPhase.mouseDown);
+    assert(spyContext.defaultIntent == AiIntent.keepDefault);
+    assert(spyContext.mouseX == 123);
+    assert(spyContext.mouseY == 456);
+    assert(!spyContext.isDragging);
+    assert(spyCandidateIds == ["handle:10", "handle:30"]);
+
+    auto trace = latestHandleDebugTrace();
+    assert(trace.defaultWinnerIndex == 0);
+    assert(trace.defaultWinnerId == "handle:10");
+    assert(trace.advisor.keepDefault);
+    assert(trace.advisor.confidence == 0.0f);
+    assert(trace.advisor.candidateIndex == 1);
+    assert(trace.advisor.candidateId == "handle:30");
+
+    auto j = parseJSON(latestHandleDebugTraceJson(true));
+    assert(j["advisor"]["candidateIndex"].integer == 1);
+    assert(j["advisor"]["candidateId"].str == "handle:30");
+    assert(j["handleTrace"]["defaultWinner"]["id"].str == "handle:10");
 }
 
 unittest { // invisible hits are skipped exactly like default arbitration

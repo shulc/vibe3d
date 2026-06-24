@@ -1524,6 +1524,7 @@ void main(string[] args) {
     auto formsPanel    = new forms_render.FormsPanel();
     auto aiState       = new EditorAiState();
     auto aiAdvisor     = new AiAdvisor();
+    setHandleAiAdvisor(aiAdvisor);
 
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to

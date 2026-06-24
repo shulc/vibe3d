@@ -5,8 +5,10 @@ import bindbc.opengl;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv : to;
 
+import ai.advisor : AiAdvisor;
 import ai.debug_trace : publishHandleDebugTrace;
-import ai.interaction : AiCandidate, AiCandidateKind, AiIntent;
+import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+    AiInteractionContext, AiInteractionPhase, AiIntent;
 import math;
 import eventlog;
 import shader;
@@ -21,6 +23,18 @@ import d_imgui.imgui_h;
 // ---------------------------------------------------------------------------
 
 enum HandleState { Normal, Rollover, Selected }
+
+private AiAdvisor g_handleAiAdvisor;
+
+void setHandleAiAdvisor(AiAdvisor advisor) {
+    g_handleAiAdvisor = advisor;
+}
+
+private AiAdvisor handleAiAdvisor() {
+    if (g_handleAiAdvisor is null)
+        g_handleAiAdvisor = new AiAdvisor();
+    return g_handleAiAdvisor;
+}
 
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
@@ -1353,7 +1367,8 @@ class ToolHandles {
     // Skips invisible handles. Returns its part id, or -1 on miss. Also records
     // the full ordered list of hit handle candidates for future advisory/debug
     // paths; this cache is observational and does not drive the winner.
-    int test(int mx, int my, const ref Viewport vp) {
+    int test(int mx, int my, const ref Viewport vp,
+             AiInteractionPhase phase = AiInteractionPhase.unknown) {
         aiCandidates.length = 0;
         int firstPart = -1;
         size_t defaultCandidate = size_t.max;
@@ -1377,7 +1392,7 @@ class ToolHandles {
         }
         if (defaultCandidate != size_t.max)
             aiCandidates[defaultCandidate].isDefaultWinner = true;
-        publishHandleDebugTrace(aiCandidates);
+        publishHandleTrace(mx, my, phase);
         return firstPart;
     }
 
@@ -1391,15 +1406,32 @@ class ToolHandles {
         if (suppressed) {
             hot = -1;
             aiCandidates.length = 0;
-            publishHandleDebugTrace(aiCandidates);
+            publishHandleTrace(mx, my, AiInteractionPhase.hover);
             foreach (ref e; entries) e.h.setState(HandleState.Normal);
             return;
         }
-        hot = captured >= 0 ? captured : test(mx, my, vp);
+        hot = captured >= 0 ? captured : test(mx, my, vp, AiInteractionPhase.hover);
         foreach (ref e; entries)
             e.h.setState(e.part == hot ? HandleState.Rollover : HandleState.Normal);
     }
 
     void setHaul(int part) { captured = part; }
     void clearHaul()       { captured = -1;  }
+
+    private void publishHandleTrace(int mx, int my, AiInteractionPhase phase) {
+        auto context = AiInteractionContext();
+        context.phase = phase;
+        context.defaultIntent = AiIntent.keepDefault;
+        context.mouseX = mx;
+        context.mouseY = my;
+        context.isDragging = captured >= 0;
+
+        AiAdvisorDecision decision;
+        try {
+            decision = handleAiAdvisor().advise(context, aiCandidates);
+        } catch (Exception) {
+            decision = AiAdvisorDecision();
+        }
+        publishHandleDebugTrace(aiCandidates, decision);
+    }
 }
