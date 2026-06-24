@@ -44,16 +44,21 @@ struct AiHandleDebugTrace {
     AiCandidate[] candidates;
     int defaultWinnerIndex = -1;
     string defaultWinnerId = "";
+    int appliedWinnerIndex = -1;
+    string appliedWinnerId = "";
 
     void clear() {
         advisor = AiAdvisorDecision();
         candidates.length = 0;
         defaultWinnerIndex = -1;
         defaultWinnerId = "";
+        appliedWinnerIndex = -1;
+        appliedWinnerId = "";
     }
 
     void set(const(AiCandidate)[] observed,
-             AiAdvisorDecision decision = AiAdvisorDecision()) {
+             AiAdvisorDecision decision = AiAdvisorDecision(),
+             int appliedIndex = -1) {
         clear();
         advisor = decision;
         foreach (i, ref c; observed) {
@@ -76,6 +81,14 @@ struct AiHandleDebugTrace {
             }
             candidates ~= copy;
         }
+        if (appliedIndex >= 0 &&
+            cast(size_t)appliedIndex < candidates.length) {
+            appliedWinnerIndex = appliedIndex;
+            appliedWinnerId = candidates[cast(size_t)appliedIndex].id;
+        } else if (defaultWinnerIndex >= 0) {
+            appliedWinnerIndex = defaultWinnerIndex;
+            appliedWinnerId = defaultWinnerId;
+        }
     }
 
     string toJson(bool enabled) const {
@@ -95,6 +108,11 @@ struct AiHandleDebugTrace {
                        defaultWinnerIndex >= 0 ? "true" : "false",
                        jsonString(defaultWinnerId),
                        defaultWinnerIndex));
+        buf.put(`},"appliedWinner":{`);
+        buf.put(format(`"present":%s,"id":%s,"index":%d`,
+                       appliedWinnerIndex >= 0 ? "true" : "false",
+                       jsonString(appliedWinnerId),
+                       appliedWinnerIndex));
         buf.put(`}}}`);
         return buf.data;
     }
@@ -117,8 +135,9 @@ void clearLatestHandleDebugTrace() {
 }
 
 void publishHandleDebugTrace(const(AiCandidate)[] candidates,
-                             AiAdvisorDecision decision = AiAdvisorDecision()) {
-    g_latestHandleTrace.set(candidates, decision);
+                             AiAdvisorDecision decision = AiAdvisorDecision(),
+                             int appliedWinnerIndex = -1) {
+    g_latestHandleTrace.set(candidates, decision, appliedWinnerIndex);
 }
 
 const(AiHandleDebugTrace) latestHandleDebugTrace() {
@@ -135,10 +154,13 @@ unittest {
     assert(empty.candidates.length == 0);
     assert(empty.defaultWinnerIndex == -1);
     assert(empty.defaultWinnerId.length == 0);
+    assert(empty.appliedWinnerIndex == -1);
+    assert(empty.appliedWinnerId.length == 0);
     assert(empty.advisor.keepDefault);
     assert(empty.toJson(false) ==
            `{"enabled":false,"advisor":{"intent":"keepDefault","confidence":0.000000,` ~
            `"candidateIndex":-1,"candidateId":"","keepDefault":true},` ~
            `"handleTrace":{"candidateCount":0,"candidateIds":[],` ~
-           `"defaultWinner":{"present":false,"id":"","index":-1}}}`);
+           `"defaultWinner":{"present":false,"id":"","index":-1},` ~
+           `"appliedWinner":{"present":false,"id":"","index":-1}}}`);
 }

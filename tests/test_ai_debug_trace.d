@@ -24,6 +24,9 @@ unittest { // default-empty trace is deterministic and safe
     assert(trace["defaultWinner"]["present"].type == JSONType.false_);
     assert(trace["defaultWinner"]["id"].str.length == 0);
     assert(trace["defaultWinner"]["index"].integer == -1);
+    assert(trace["appliedWinner"]["present"].type == JSONType.false_);
+    assert(trace["appliedWinner"]["id"].str.length == 0);
+    assert(trace["appliedWinner"]["index"].integer == -1);
 }
 
 unittest { // populated trace preserves candidate order and default winner
@@ -58,9 +61,12 @@ unittest { // populated trace preserves candidate order and default winner
     assert(trace["defaultWinner"]["present"].type == JSONType.true_);
     assert(trace["defaultWinner"]["id"].str == "handle:10");
     assert(trace["defaultWinner"]["index"].integer == 0);
+    assert(trace["appliedWinner"]["present"].type == JSONType.true_);
+    assert(trace["appliedWinner"]["id"].str == "handle:10");
+    assert(trace["appliedWinner"]["index"].integer == 0);
 }
 
-unittest { // explicit advisor decisions serialize without affecting winners
+unittest { // explicit advisor decisions serialize with the applied winner
     clearLatestHandleDebugTrace();
 
     AiCandidate candidate;
@@ -74,7 +80,7 @@ unittest { // explicit advisor decisions serialize without affecting winners
     decision.candidateIndex = 0;
     decision.candidateId = "handle:42";
 
-    publishHandleDebugTrace([candidate], decision);
+    publishHandleDebugTrace([candidate], decision, 0);
 
     auto j = parseJSON(latestHandleDebugTraceJson(true));
     assert(j["advisor"]["intent"].str == "keepDefault");
@@ -83,4 +89,5 @@ unittest { // explicit advisor decisions serialize without affecting winners
     assert(j["advisor"]["candidateId"].str == "handle:42");
     assert(j["advisor"]["keepDefault"].type == JSONType.true_);
     assert(j["handleTrace"]["defaultWinner"]["id"].str == "handle:42");
+    assert(j["handleTrace"]["appliedWinner"]["id"].str == "handle:42");
 }

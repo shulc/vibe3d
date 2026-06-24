@@ -1377,6 +1377,7 @@ class ToolHandles {
     private struct Entry { Handler h; int part; }
     private Entry[] entries;     // registration order = test priority
     private AiCandidate[] aiCandidates; // last observational hit-candidate pass
+    private int[] aiCandidateParts;      // candidate index -> registered part id
     int hot      = -1;           // ROLLOVER part, -1 = none
     int captured = -1;           // hauled part during a drag, -1 = none
     private bool suppressed;     // when set, update() forces every handle Normal
@@ -1385,6 +1386,7 @@ class ToolHandles {
     void begin() {
         entries.length = 0;
         aiCandidates.length = 0;
+        aiCandidateParts.length = 0;
         suppressed = false;
     }
 
@@ -1406,6 +1408,7 @@ class ToolHandles {
     int test(int mx, int my, const ref Viewport vp,
              AiInteractionPhase phase = AiInteractionPhase.unknown) {
         aiCandidates.length = 0;
+        aiCandidateParts.length = 0;
         int firstPart = -1;
         size_t defaultCandidate = size_t.max;
 
@@ -1426,11 +1429,11 @@ class ToolHandles {
                 defaultCandidate = aiCandidates.length;
             }
             aiCandidates ~= c;
+            aiCandidateParts ~= e.part;
         }
         if (defaultCandidate != size_t.max)
             aiCandidates[defaultCandidate].isDefaultWinner = true;
-        publishHandleTrace(mx, my, phase);
-        return firstPart;
+        return publishHandleTrace(mx, my, phase, firstPart, defaultCandidate);
     }
 
     const(AiCandidate)[] handleCandidates() const {
@@ -1443,7 +1446,9 @@ class ToolHandles {
         if (suppressed) {
             hot = -1;
             aiCandidates.length = 0;
-            publishHandleTrace(mx, my, AiInteractionPhase.hover);
+            aiCandidateParts.length = 0;
+            publishHandleTrace(mx, my, AiInteractionPhase.hover, -1,
+                               size_t.max);
             foreach (ref e; entries) e.h.setState(HandleState.Normal);
             return;
         }
@@ -1455,7 +1460,9 @@ class ToolHandles {
     void setHaul(int part) { captured = part; }
     void clearHaul()       { captured = -1;  }
 
-    private void publishHandleTrace(int mx, int my, AiInteractionPhase phase) {
+    private int publishHandleTrace(int mx, int my, AiInteractionPhase phase,
+                                   int defaultPart,
+                                   size_t defaultCandidate) {
         auto context = AiInteractionContext();
         context.phase = phase;
         context.defaultIntent = AiIntent.keepDefault;
@@ -1469,6 +1476,42 @@ class ToolHandles {
         } catch (Exception) {
             decision = AiAdvisorDecision();
         }
-        publishHandleDebugTrace(aiCandidates, decision);
+
+        auto appliedCandidate = defaultCandidate;
+        int appliedPart = defaultPart;
+        if (canApplyAdvisorDecision(phase, decision, defaultCandidate)) {
+            appliedCandidate = cast(size_t)decision.candidateIndex;
+            appliedPart = aiCandidateParts[appliedCandidate];
+        }
+        publishHandleDebugTrace(
+            aiCandidates,
+            decision,
+            appliedCandidate == size_t.max ? -1 : cast(int)appliedCandidate);
+        return appliedPart;
+    }
+
+    private bool canApplyAdvisorDecision(AiInteractionPhase phase,
+                                         const ref AiAdvisorDecision decision,
+                                         size_t defaultCandidate) const {
+        enum float minConfidence = 0.75f;
+        if (phase != AiInteractionPhase.mouseDown)
+            return false;
+        if (captured >= 0)
+            return false;
+        if (decision.keepDefault || decision.confidence < minConfidence)
+            return false;
+        if (decision.candidateIndex < 0)
+            return false;
+        auto index = cast(size_t)decision.candidateIndex;
+        if (index >= aiCandidates.length || index >= aiCandidateParts.length)
+            return false;
+        if (index == defaultCandidate)
+            return false;
+        if (aiCandidates[index].kind != AiCandidateKind.handle)
+            return false;
+        if (decision.candidateId.length == 0 ||
+            decision.candidateId != aiCandidates[index].id)
+            return false;
+        return true;
     }
 }
