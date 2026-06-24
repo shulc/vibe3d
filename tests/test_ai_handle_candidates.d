@@ -51,8 +51,8 @@ private class SpyAdvisor : AiAdvisor {
             spyCandidateIds ~= c.id;
 
         AiAdvisorDecision decision;
-        decision.intent = AiIntent.keepDefault;
-        decision.confidence = 0.0f;
+        decision.intent = AiIntent.dragAxisZ;
+        decision.confidence = 0.9f;
         if (candidates.length > 1) {
             decision.candidateIndex = 1;
             decision.candidateId = candidates[1].id;
@@ -141,12 +141,15 @@ unittest { // advisor decision is traced while first-hit behavior remains defaul
     auto trace = latestHandleDebugTrace();
     assert(trace.defaultWinnerIndex == 0);
     assert(trace.defaultWinnerId == "handle:10");
-    assert(trace.advisor.keepDefault);
-    assert(trace.advisor.confidence == 0.0f);
+    assert(!trace.advisor.keepDefault);
+    assert(trace.advisor.intent == AiIntent.dragAxisZ);
+    assert(trace.advisor.confidence == 0.9f);
     assert(trace.advisor.candidateIndex == 1);
     assert(trace.advisor.candidateId == "handle:30");
 
     auto j = parseJSON(latestHandleDebugTraceJson(true));
+    assert(j["advisor"]["intent"].str == "dragAxisZ");
+    assert(j["advisor"]["confidence"].floating == 0.9);
     assert(j["advisor"]["candidateIndex"].integer == 1);
     assert(j["advisor"]["candidateId"].str == "handle:30");
     assert(j["handleTrace"]["defaultWinner"]["id"].str == "handle:10");
