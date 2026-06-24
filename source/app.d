@@ -125,6 +125,7 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
+import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
 import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
@@ -135,6 +136,8 @@ import command;
 import registry;
 import shortcuts;
 import buttonset;
+import ai.state      : EditorAiState;
+import ai.advisor    : AiAdvisor;
 import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
 import forms_render;
@@ -1518,6 +1521,8 @@ void main(string[] args) {
     auto argsDialog    = new ArgsDialog();
     auto propertyPanel = new PropertyPanel();
     auto formsPanel    = new forms_render.FormsPanel();
+    auto aiState       = new EditorAiState();
+    auto aiAdvisor     = new AiAdvisor();
 
     // Phase C.2: every transform tool gets the same undo plumbing — the
     // history stack + a factory that builds a MeshVertexEdit pre-wired to
@@ -1939,6 +1944,15 @@ void main(string[] args) {
             new SnapToggleCommand(&mesh(), cameraView, editMode);
         reg.commandFactories["snap.toggleType"] = () => cast(Command)
             new SnapToggleTypeCommand(&mesh(), cameraView, editMode);
+    }
+    {
+        Command delegate() makeAiFactory(AiToggleAction action) {
+            return () => cast(Command)
+                new AiToggleCommand(&mesh(), cameraView, editMode, aiState, action);
+        }
+        reg.commandFactories["ai.toggle"]  = makeAiFactory(AiToggleAction.toggle);
+        reg.commandFactories["ai.enable"]  = makeAiFactory(AiToggleAction.enable);
+        reg.commandFactories["ai.disable"] = makeAiFactory(AiToggleAction.disable);
     }
     {
         import commands.symmetry.toggle : SymmetryToggleCommand;
@@ -2867,6 +2881,12 @@ void main(string[] args) {
                 import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
                 buf.put(format(`,"hover":{"vertex":%d,"edge":%d,"face":%d}`,
                                g_hoveredVertex, g_hoveredEdge, g_hoveredFace));
+            }
+            {
+                auto decision = aiAdvisor.advise();
+                buf.put(format(`,"ai":{"enabled":%s,"advisor":{"intent":"keepDefault","confidence":%f}}`,
+                               aiState.enabled ? "true" : "false",
+                               decision.confidence));
             }
             buf.put(`}`);
             return buf.data;

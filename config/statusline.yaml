@@ -116,6 +116,9 @@ groups:
                 - label: Local
                   action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
                   checked: { path: "axis/mode", equals: "local" }
+      - label: "AI"
+        action: { kind: command, id: ai.toggle }
+        checked: { path: "ai/enabled", equals: "true" }
       # MODO-style Snapping pulldown. Master toggle on top (matches the
       # default @x keybind → tool.snapState true), divider,
       # then a checkbox per SnapType. Button face stays highlighted as
