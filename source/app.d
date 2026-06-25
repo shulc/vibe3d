@@ -4509,6 +4509,21 @@ void main(string[] args) {
                                 !pointInPolygon2D(sxa, sya, pxs, pys) ||
                                 !pointInPolygon2D(sxb, syb, pxs, pys)) {
                                 cageAllInside[cage] = false;
+                            } else {
+                                // STRICT: both preview-segment endpoints must be
+                                // un-occluded in the Edge ID-FBO. The probe is
+                                // window-space / key-agnostic so no preview-to-cage
+                                // vertex mapping is needed (we are asking "any
+                                // surviving edge pixel near this window point").
+                                import std.math : lround;
+                                if (!gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxa), cast(int)lround(sya),
+                                        gpu, vp2) ||
+                                    !gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxb), cast(int)lround(syb),
+                                        gpu, vp2)) {
+                                    cageAllInside[cage] = false;
+                                }
                             }
                         }
                         foreach (ei; 0 .. mesh.edges.length) {
@@ -4527,6 +4542,19 @@ void main(string[] args) {
                             if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
                             if (pointInPolygon2D(sxa, sya, pxs, pys) &&
                                 pointInPolygon2D(sxb, syb, pxs, pys)) {
+                                // STRICT: both endpoints must be un-occluded in the
+                                // Edge ID-FBO (depth-pre-pass baked). Probe a small
+                                // window around each projected endpoint; reject the
+                                // edge if either window has no surviving edge pixel.
+                                // This is intentionally stricter than click (which
+                                // only requires a surviving pixel near the cursor).
+                                import std.math : lround;
+                                if (!gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxa), cast(int)lround(sya),
+                                        gpu, vp2)) continue;
+                                if (!gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxb), cast(int)lround(syb),
+                                        gpu, vp2)) continue;
                                 symmetricSelectEdge(&mesh(), cameraView, editMode,
                                                     cast(int)ei, /*deselect=*/ctrl);
                             }

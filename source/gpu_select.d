@@ -298,6 +298,83 @@ public:
         foreach (ref s; slots) s.valid = false;
     }
 
+    // Default window radius for endpointVisibleEdgeFbo.
+    enum RP_DEFAULT = 2;
+
+    /// Probe the Edge ID-FBO in a (2*rp+1)² window centred on the
+    /// window-space point (wx, wy) and return true iff any non-zero
+    /// pixel exists there — i.e. any surviving (un-occluded) edge
+    /// rasterised within `rp` pixels of the endpoint projection.
+    ///
+    /// Used by the lasso STRICT both-endpoints rule: an edge is only
+    /// selected if BOTH endpoint probes return true (the edge FBO
+    /// already holds the depth-pre-pass result from the preceding
+    /// elementVisibility(Edge) call, so this is a cache-hit small
+    /// readback with no extra full render).
+    ///
+    /// The probe asks "any surviving edge pixel near this endpoint",
+    /// NOT "a pixel of THIS specific edge". This is exact for the
+    /// common case: near a genuinely occluded endpoint, the depth
+    /// pre-pass zeroes the whole neighbourhood so no surviving edge
+    /// pixel exists. A rare false-pass could occur if a DIFFERENT
+    /// visible edge happens to pass within rp pixels of an occluded
+    /// endpoint; that leak is accepted for v1. If it ever bites,
+    /// tighten by matching the VBO segment id (elementVisibility
+    /// semantics already expose per-id pixels, gpu_select.d:365-369).
+    bool endpointVisibleEdgeFbo(int wx, int wy,
+                                ref const GpuMesh gpu, ref const Viewport vp,
+                                int rp = RP_DEFAULT)
+    {
+        if (vp.width <= 0 || vp.height <= 0) return false;
+        ensureSize(vp.width, vp.height);
+
+        // Ensure the Edge ID-FBO slot is current (render if stale).
+        // Identical guard to elementVisibility(SelectMode.Edge).
+        Slot* slot = &slots[SelectMode.Edge];
+        if (!slot.valid
+            || slot.uploadVer != gpu.uploadVersion
+            || slot.w != fboW || slot.h != fboH
+            || !matricesEqual(slot.view, vp.view)
+            || !matricesEqual(slot.proj, vp.proj))
+        {
+            renderMode(SelectMode.Edge, gpu, vp);
+            foreach (mi, ref s; slots) {
+                if (cast(SelectMode)mi != SelectMode.Edge) s.valid = false;
+            }
+            slot.valid     = true;
+            slot.uploadVer = gpu.uploadVersion;
+            slot.view      = vp.view;
+            slot.proj      = vp.proj;
+            slot.w         = fboW;
+            slot.h         = fboH;
+        }
+
+        // Map window coords to FBO texel space (same as readbackNearest).
+        int vx    = wx - vp.x;
+        int vyTop = wy - vp.y;
+        if (vx < 0 || vx >= fboW || vyTop < 0 || vyTop >= fboH) return false;
+        int fbY = fboH - 1 - vyTop;
+
+        int x0 = vx  - rp; if (x0 < 0)     x0 = 0;
+        int y0 = fbY - rp; if (y0 < 0)     y0 = 0;
+        int x1 = vx  + rp; if (x1 >= fboW) x1 = fboW - 1;
+        int y1 = fbY + rp; if (y1 >= fboH) y1 = fboH - 1;
+        int rw = x1 - x0 + 1;
+        int rh = y1 - y0 + 1;
+        if (rw <= 0 || rh <= 0) return false;
+
+        uint[] buf = new uint[](rw * rh);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glReadPixels(x0, y0, rw, rh, GL_RED_INTEGER, GL_UNSIGNED_INT, buf.ptr);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        foreach (px; buf) {
+            if (px != 0) return true;
+        }
+        return false;
+    }
+
     /// Per-VBO-entry visibility derived from the cached ID FBO for
     /// `mode`. `out[k] == true` iff the k-th VBO entry (vertex /
     /// edge segment / face) has at least one non-zero pixel in the
