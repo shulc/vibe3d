@@ -143,6 +143,8 @@ import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
 import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
+import ai.exploration : AiExplorationController, buildCandidateKey,
+    defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
@@ -1608,6 +1610,32 @@ void main(string[] args) {
     immutable aiLogSource = defaultLiveSource();
     scope(exit) aiLogWriter.close();
 
+    // ε-exploration controller (task 0033).  Reads VIBE3D_AI_EXPLORE + _SEED.
+    // When disabled (ε=0 / flag absent), enabled()==false and EVERY exploration
+    // path is a strict no-op — output is byte-identical to today.
+    // Guards: ε forced to 0 under g_testMode AND playbackMode (independent).
+    auto aiExplore = (command.g_testMode || playbackMode)
+        ? new AiExplorationController(0.0f, 42u)
+        : AiExplorationController.fromEnv();
+    // Source tag — distinguishes exploration records in the corpus.
+    immutable aiExploreSource = aiExplore.enabled
+        ? defaultExploreSource()
+        : "";
+    // Per-frame re-grab event forwarded from the capture sink to step().
+    // Set when a mouseDown fires while a pending is AwaitingRegrab; consumed
+    // once per frame in the per-frame step() call above.
+    OptionalGrab lastExploreGrab;
+    // Wire exploration hooks when enabled + the writer is live.
+    if (aiExplore.enabled && aiLogWriter.enabled) {
+        setHandleExploreHook(
+            (const(AiCandidate)[] candidates, int defaultIdx) {
+                return aiExplore.sampleOverrideIndex(
+                    candidates.length, cast(size_t)defaultIdx);
+            });
+        // Silent-hover is set per-ToolHandles instance below, after tool
+        // construction, so each instance's flag is set at construction time.
+    }
+
     // Maps the current EditMode enum to the schema's editModeId string for the
     // captured context (mirrors the per-mode labels used elsewhere).
     string aiEditModeId() {
@@ -1622,7 +1650,12 @@ void main(string[] args) {
     // (mouse-DOWN, not a drag, a default part was hit — gated in
     // publishHandleTrace). The handler-supplied context lacks tool/edit-mode
     // ids, so enrich it here before appending. appliedIndex is the part the
-    // user actually applied (= default unless an advisor decision overrode it).
+    // user actually applied (= default unless an advisor decision overrode it,
+    // or ε-exploration overrode it).
+    //
+    // When ε-exploration is enabled: instead of immediate append, stage the
+    // record in the pending buffer and wait for the outcome.  When not
+    // exploring, the path is byte-identical to the pre-exploration 0027 path.
     if (aiLogWriter.enabled) {
         setHandleApplyCaptureSink(
             (const ref AiInteractionContext ctx,
@@ -1633,9 +1666,37 @@ void main(string[] args) {
                 enriched.activeToolId = activeToolId;
                 enriched.editModeId = aiEditModeId();
                 auto record = makeAiInteractionLogRecord(
-                    aiLogSource, "handles", enriched, candidates,
+                    aiExplore.enabled ? aiExploreSource : aiLogSource,
+                    "handles", enriched, candidates,
                     decision, appliedIndex);
-                aiLogWriter.append(record);
+
+                if (aiExplore.enabled) {
+                    string key = buildCandidateKey(candidates);
+                    if (aiExplore.hasPending()) {
+                        // A pending record is already staged: this new grab is
+                        // a potential re-grab.  Forward it to step() via
+                        // lastExploreGrab so the state machine can resolve.
+                        // Parse the part integer from the applied candidate id.
+                        import ai.exploration : parseHandlePart;
+                        string appliedId = (appliedIndex >= 0 &&
+                                            appliedIndex < cast(int)candidates.length)
+                            ? candidates[cast(size_t)appliedIndex].id
+                            : "";
+                        int partInt = parseHandlePart(appliedId);
+                        lastExploreGrab.present   = (partInt >= 0);
+                        lastExploreGrab.sortedKey = key;
+                        lastExploreGrab.partInt   = partInt;
+                    } else {
+                        // No pending: stage this grab as the new pending record.
+                        auto vpNow = cameraView.viewport();
+                        aiExplore.stagePending(record, key, appliedIndex,
+                                               history.undoEpoch(),
+                                               vpNow.view);
+                    }
+                } else {
+                    // Non-exploration path: immediate append (unchanged).
+                    aiLogWriter.append(record);
+                }
             });
     }
 
@@ -1699,6 +1760,8 @@ void main(string[] args) {
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
+        if (aiExplore.enabled && aiLogWriter.enabled)
+            t.setAiExploreSilentHover(true);
         return cast(Tool)t;
     };
     reg.toolFactories["rotate"] = () {
@@ -1709,6 +1772,8 @@ void main(string[] args) {
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
+        if (aiExplore.enabled && aiLogWriter.enabled)
+            t.setAiExploreSilentHover(true);
         return cast(Tool)t;
     };
     reg.toolFactories["scale"]  = () {
@@ -1719,6 +1784,8 @@ void main(string[] args) {
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
+        if (aiExplore.enabled && aiLogWriter.enabled)
+            t.setAiExploreSilentHover(true);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.transform"] = () {
@@ -1726,6 +1793,8 @@ void main(string[] args) {
         auto t = new XfrmTransformTool(() => &mesh(), &gpu, &editMode);
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
+        if (aiExplore.enabled && aiLogWriter.enabled)
+            t.setAiExploreSilentHover(true);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.push"] = () {
@@ -3830,6 +3899,10 @@ void main(string[] args) {
             // (the order is otherwise session-persistent, like editMode itself).
             selTypeOrder.touch(geometrySelType(editMode));
             history.record(cmd);
+            // Discard any exploration pending on reset — the candidate set is
+            // stale after a reset and any undo that follows belongs to the new
+            // scene, not the pre-reset grab.
+            aiExplore.discardPending();
         });
 
         // Test-only raw-mesh injection (POST /api/load-mesh). Parses the
@@ -6033,6 +6106,25 @@ void main(string[] args) {
         cameraView.setSize(layout.vpW, layout.vpH);
 
         Viewport vp = cameraView.viewport();
+
+        // ---- ε-exploration per-frame state machine (task 0033) ----
+        // Tick the pending buffer with the current undo epoch + view matrix.
+        // When not exploring (enabled()==false), step() returns None immediately
+        // with no allocation — byte-identical to the pre-exploration path.
+        // lastExploreGrab is set in the capture sink below when a grab arrives
+        // while a pending is AwaitingRegrab; it is reset after each step().
+        if (aiExplore.enabled && aiLogWriter.enabled && aiExplore.hasPending()) {
+            // Re-grab detection: the capture sink sets lastExploreGrab when a
+            // mouseDown fires while a pending is awaiting a re-grab.  The grab
+            // is forwarded to step() and cleared afterward.
+            auto res = aiExplore.step(history.undoEpoch(), vp.view,
+                                       lastExploreGrab);
+            lastExploreGrab = OptionalGrab();  // consume after step
+            if (res.kind == ResolutionKind.Emit)
+                aiLogWriter.append(res.record);
+            // Discard and None both require no action (Discard already cleared
+            // the pending buffer inside step()).
+        }
 
         // ---- ImGui ----
         ImGui_ImplOpenGL3_NewFrame();
