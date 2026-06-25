@@ -185,6 +185,53 @@ Changes expectPublish(string label, long delegate(Changes) pick, void delegate()
     return now;
 }
 
+// Drain any deferred change-bus flush that is still in-flight before taking a
+// counter snapshot. The bus delivers once per frame (source/app.d flush site);
+// cmd() returns on HTTP status:ok BEFORE that frame's flush, so snapshots taken
+// immediately after a cmd() may precede delivery.
+//
+// Discipline (mirrors expectPublish): capture the current flushCount, then poll
+// until it advances AND a subsequent read is stable (two equal flushCounts ~25ms
+// apart). If nothing is pending the flushCount may never advance — the timeout
+// guard returns once the two-read quiescence is confirmed without an advance.
+//
+// Early-out (idle-bus fast path): two consecutive reads ~25ms apart with the
+// same flushCount means at least one full frame window elapsed with no delivery.
+// The bus was already quiescent on entry — nothing is pending — so we return
+// immediately without burning ~1s in Phase 1. The advance-then-quiescent path
+// below is only entered when Phase 0 sees the flushCount move.
+void settle() {
+    auto base = changes();
+    // Phase 0: idle-bus fast path — one 25ms sleep then re-read.
+    // If flushCount hasn't moved in that window (~one frame), the bus was
+    // already quiescent on entry and there is nothing pending to drain.
+    Thread.sleep(dur!"msecs"(25));
+    auto probe = changes();
+    if (probe.flushCount == base.flushCount) return;  // nothing pending, return immediately
+
+    // Something was delivered during Phase 0 (probe.flushCount advanced).
+    // Phase 1: continue waiting for any further in-flight flushes to land
+    // (or time out after ~1000ms from here).
+    long prevFlush = probe.flushCount;
+    for (int i = 0; i < 40; ++i) {
+        Thread.sleep(dur!"msecs"(25));
+        auto now = changes();
+        if (now.flushCount > prevFlush) prevFlush = now.flushCount;
+        // no early-exit here — let Phase 2 confirm quiescence
+        else break;  // no new flush in this tick, move to quiescence check
+    }
+    // Phase 2: confirm quiescence — two consecutive reads that agree on flushCount.
+    // Uses the same 40-iteration budget as Phase 1 so trailing flushes under
+    // -j8 scheduler pressure cannot slip past the quiescence window.
+    for (int i = 0; i < 40; ++i) {
+        Thread.sleep(dur!"msecs"(25));
+        auto now = changes();
+        if (now.flushCount == prevFlush) return;  // stable
+        prevFlush = now.flushCount;
+    }
+    // Still not quiescent after the extra window — accept and move on.
+}
+
 void moveVertexActive(double[3] from, double[3] to) {
     string v3(double[3] p) {
         return "[" ~ p[0].to!string ~ "," ~ p[1].to!string ~ "," ~ p[2].to!string ~ "]";
@@ -259,6 +306,7 @@ unittest {
     cmd("layer.select index:1 mode:add");   // A,B selected, B primary
     cmd("layer.select index:2 mode:add");   // A,B,C selected, C primary
     assertPrimaryInvariant("after re-add B,C");
+    settle();                               // drain ActiveChanged from the two adds above
     auto beforeBg = changes();
     expectPublish("background B (remove)", c => c.totalSelItem,
         () { cmd("layer.select index:1 mode:remove"); });
@@ -274,6 +322,7 @@ unittest {
     assertPrimaryInvariant("after background B");
 
     // --- Phase 3: reorder + delete + delete-undo, invariant after each. ---
+    settle();                               // drain any pending flush before reorder snapshot
     auto beforeReorder = changes();
     cmd("layer.reorder from:0 to:2");        // move A to the end
     auto afterReorder = changes();
