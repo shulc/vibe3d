@@ -1247,6 +1247,12 @@ public:
     // session) exactly like MoveTool. No apply-path change.
     public RotateTool rotateBank() { return rotateSub; }
     public ScaleTool  scaleBank()  { return scaleSub; }
+    // ε-exploration silent-hover setter (task 0033, Phase 3). Forwards to the
+    // shared ToolHandles instance.  Called from app.d after tool construction
+    // when ε-exploration is enabled; default false is byte-identical to before.
+    public void setAiExploreSilentHover(bool silent) {
+        toolHandles.setAiExploreSilentHover(silent);
+    }
     // Public forwarder to the protected TransformTool.queryActionCenter so the
     // host can read the ACEN center to FREEZE as the kernel pivot at drag-start
     // (§4.4). Pivot-agnostic for 4a's Offset path; the seam R/S needs in 4b.

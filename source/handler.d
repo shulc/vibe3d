@@ -78,6 +78,20 @@ void setHandleDecisionProvider(HandleDecisionProvider p) {
     g_handleDecisionProvider = p;
 }
 
+// Optional ε-exploration override hook (task 0033).  When set, called from
+// publishHandleTrace on a genuine mouseDown with ≥2 candidates and no active
+// haul.  The hook draws the PRNG and may return a non-default candidate index;
+// -1 means "no override" (use the default).  Module-level so a single
+// app.d-owned controller reaches every ToolHandles instance, mirroring the
+// other module-level hooks above.  Default null ⇒ byte-identical to before.
+alias HandleExploreHook = int delegate(const(AiCandidate)[] candidates,
+                                       int defaultCandidateIdx);
+private HandleExploreHook g_handleExploreHook;
+
+void setHandleExploreHook(HandleExploreHook hook) {
+    g_handleExploreHook = hook;
+}
+
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().
 // All handlers use this program to draw line geometry.
@@ -1452,6 +1466,18 @@ class ToolHandles {
     private bool aiHoverPreviewEnabled;
     private AiHoverPreviewPredicate aiHoverPreviewPredicate;
 
+    // ε-exploration silent-hover flag (task 0033, Phase 3).  When true,
+    // update() still calls test() (so aiCandidates / handleCandidates() fill
+    // for trace capture) but forces every handle's nextState to Normal — the
+    // random grab is not telegraphed to the user.  Default FALSE; flag-off ⇒
+    // the update() loop is byte-identical to the pre-exploration code.
+    // NOTE: explicitly NOT routed through suppress() which zeroes aiCandidates.
+    private bool aiExploreSilent = false;
+
+    void setAiExploreSilentHover(bool silent) {
+        aiExploreSilent = silent;
+    }
+
     // Clear the per-frame registration list. Call at the start of each draw.
     void begin() {
         entries.length = 0;
@@ -1545,6 +1571,14 @@ class ToolHandles {
                 ? lastDefaultPart
                 : -1;
         }
+        // In exploration silent-hover mode: test() already ran (candidates
+        // filled), but every handle is forced to Normal so the random grab is
+        // not telegraphed.  At flag-off this if-block is absent and the loop
+        // below is byte-identical to the pre-exploration code.
+        if (aiExploreSilent) {
+            foreach (ref e; entries) e.h.setState(HandleState.Normal);
+            return;
+        }
         foreach (ref e; entries) {
             auto nextState = HandleState.Normal;
             if (e.part == hot)
@@ -1587,6 +1621,24 @@ class ToolHandles {
             appliedCandidate = cast(size_t)decision.candidateIndex;
             appliedPart = aiCandidateParts[appliedCandidate];
         }
+        // ε-exploration override (task 0033).  Applied AFTER the advisor
+        // decision, BEFORE the capture-sink fire.  The hook draws the PRNG
+        // and may return a non-default index; -1 = no override.  The guard
+        // matches the capture-sink gate (mouseDown, not mid-drag, ≥2 hits).
+        if (g_handleExploreHook !is null &&
+            phase == AiInteractionPhase.mouseDown &&
+            captured < 0 &&
+            aiCandidates.length >= 2) {
+            int overrideIdx = g_handleExploreHook(aiCandidates,
+                                                   cast(int)appliedCandidate);
+            if (overrideIdx >= 0 &&
+                overrideIdx < cast(int)aiCandidates.length &&
+                overrideIdx != cast(int)appliedCandidate) {
+                appliedCandidate = cast(size_t)overrideIdx;
+                appliedPart      = aiCandidateParts[appliedCandidate];
+            }
+        }
+
         lastDefaultPart = defaultPart;
         publishHandleDebugTrace(
             aiCandidates,
@@ -1597,8 +1649,9 @@ class ToolHandles {
         // excludes the every-frame hover/unknown update() path, a mid-drag
         // re-test (captured>=0), and a click that hit no handle (defaultPart<0).
         // appliedCandidate is the index of the part actually applied (= default
-        // unless an advisor decision overrode it); it is a valid index here
-        // because defaultPart>=0 guarantees at least one hit candidate.
+        // unless an advisor decision overrode it, or ε-exploration overrode it);
+        // it is a valid index here because defaultPart>=0 guarantees at least one
+        // hit candidate.
         if (g_handleApplyCaptureSink !is null &&
             phase == AiInteractionPhase.mouseDown &&
             captured < 0 &&
