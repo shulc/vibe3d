@@ -1105,16 +1105,17 @@ public:
         //
         // Fix the RENDER ONLY: when a prior gesture persisted a rotated frame
         // (frame.settled, selection/mode unchanged), source B0 from `frame` even
-        // when runFrameValid. This is DELIBERATELY render-only — runFrame and the
-        // apply fold are UNTOUCHED. The apply path already lands the move along the
-        // cursor world delta: composeFor folds M = run.r · T(runFrame · run.t) and
-        // the chained move's INPUT basis is the same `frame`, so
-        // run.t = frameᵀ·worldDelta and the fold's run.r cancels the frame's
-        // rotation → net Δ = worldDelta (verified by the fold algebra). Re-sourcing
-        // runFrame instead would inject a SECOND run.r (runFrame=run.r·B0 with the
-        // input already pre-counter-rotated) → Δ = run.r·worldDelta, drifting the
-        // applied translate by the held angle, AND would re-interpret any already-
-        // accumulated run.t (move→rotate→move). So render is the only safe locus.
+        // when runFrameValid. This corrects the rendered arrow/ring orientation.
+        //
+        // NOTE (task 0032, plan invariant ★): the claim that the apply path
+        // "already lands worldDelta" held only for the ROTATED-INPUT case
+        // (axis=Select/SelectAuto/Local, where the move projects onto run.r·B0 and
+        // the fold's run.r cancels it). For the WORLD-INPUT case (Auto/None ACEN
+        // where the rotate settles WORLD frame into `frame`, giving inputBasis=B0
+        // and run.t=worldDelta), the old apply path yielded M=run.r·T(worldDelta)
+        // — a rotated geometry delta. The `applyFold` translate de-rotation fix
+        // (tdX/tdY/tdZ = run.rᵀ·inputBasis) corrects this for ALL configs;
+        // render-only here remains the correct locus for the b0X/b0Y/b0Z source.
         Vec3 b0X, b0Y, b0Z;
         if (frame.valid) {
             // Persisted rotated frame — render it whether or not runFrame is valid
@@ -4644,9 +4645,64 @@ private:
         // from the baseline; with the baseline frozen all-run the sampled pivot
         // equals runFrameOrigin every frame). Keeping the live pivot avoids perturbing
         // the SHARED-fold Move/Scale terms.
+
+        // TRANSLATE-TERM DE-ROTATION (task 0032, plan invariant ★):
+        //
+        // The fold builds M = run.r · T(applyBasis · run.t). For geometry to track
+        // the rendered arrow/handle, net Δ must equal worldDelta. The move decomposed
+        //   run.t = inputBasisᵀ · worldDelta
+        // where `inputBasis` is EXACTLY what beginMoveDragSession pushed via
+        // setWrapperInputFrame (`:2059-2060`):
+        //   inputBasis = frame.valid ? (frame.right, frame.up, frame.axis) : runFrame
+        //
+        // Substituting into net Δ = run.r · applyBasis · inputBasisᵀ · worldDelta:
+        //   applyBasis = run.rᵀ · inputBasis   (★ the fix)
+        // This lands net Δ = worldDelta whenever applyFold's inputBasis read matches
+        // the basis the move actually decomposed against — world-input (Auto/None
+        // ACEN where frame settles WORLD), rotated-input (axis=Select settles
+        // run.r·B0, giving applyBasis=B0 so double-correction cannot occur), and
+        // run.r==I (tdX/tdY/tdZ = inputBasis = tX/tY/tZ, byte-identical).
+        //
+        // EXCEPTION (pre-existing, not fully closed here): ACEN=Element never settles
+        // a frame (acenSettleAllowed() false ⇒ frame.valid false), so this reads
+        // `runFrame` (frozen at rotate-start) while the Element move projects onto a
+        // LIVE element basis that drifts per-frame. A residual skew remains — but the
+        // fix strictly IMPROVES it (it removes the dominant run.r term), so Element
+        // rotate→move is closer to the handle than before, just not exact. Closing
+        // that residual is out of scope (it predates this fix).
+        //
+        // The de-rotation is TRANSLATE-ONLY: tdX/tdY/tdZ is a SEPARATE triple;
+        // tX/tY/tZ (and sX=tX above) are NOT modified, so the scale term is
+        // byte-stable (BLOCKER 2). The gate `flagR && !runRotIsIdentity()` is a
+        // no-op shortcut for the identity case; the algebra self-corrects without it.
+        // center-box free-plane drag (dragAxis 3) is excluded — its decompose and
+        // re-expand share the live basis, so the round-trip already cancels.
+        //
+        // SCOPE: the fix applies ONLY when an active move DRAG produced run.t via
+        // the inputBasis decomposition (`:779-782` in move.d). In the panel/headless
+        // path (tool.attr TX + RY, tool.doApply) `run.t` is a direct panel value in
+        // the tX/tY/tZ basis — no decomposition, no de-rotation needed. The gate
+        // `activeDrag is moveSub` distinguishes the two: live drag = true, panel =
+        // false. (Panel path: `applyBasis = tX` → `M = run.r · T(worldDelta)` which
+        // is the correct T-before-R chain semantics for numeric TX/RY attrs.)
+        Vec3 tdX = tX, tdY = tY, tdZ = tZ;   // translate axes for composeFor
+        if (activeDrag is moveSub
+                && flagR && !runRotIsIdentity() && !moveCenterBoxDragActive()) {
+            // inputBasis = what beginMoveDragSession pushed (`:2059-2060`)
+            Vec3 ibX = frame.valid ? frame.right : tX;
+            Vec3 ibY = frame.valid ? frame.up    : tY;
+            Vec3 ibZ = frame.valid ? frame.axis  : tZ;
+            // applyBasis = run.rᵀ · inputBasis
+            import math : transformPoint;
+            float[16] rT = transpose3x3(run.r);
+            tdX = transformPoint(rT, ibX);
+            tdY = transformPoint(rT, ibY);
+            tdZ = transformPoint(rT, ibZ);
+        }
+
         float[16] M = composeFor(/*useRotM=*/true, run.r,
                                  Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,0),
-                                 sX, sY, sZ, tX, tY, tZ);
+                                 sX, sY, sZ, tdX, tdY, tdZ);
 
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
