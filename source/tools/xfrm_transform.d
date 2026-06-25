@@ -2745,13 +2745,25 @@ noBankConsumed:
             // bit-exact recompute the relocate-boundary tests pin.
             enum float kMoveEps = 1e-5f;
             bool gestureMoved = accumulatedWorldDelta.length() > kMoveEps;
-            if (gestureMoved && currentFalloff(vts).enabled) {
+            // Set-or-keep discipline (stale-soft-pin fix): when a prior gesture
+            // (a moved rotate in Auto/None/Screen, or a scale under falloff)
+            // left a display soft pin, the Move mouse-up
+            // must overwrite it with the moved pivot so the gizmo follows the
+            // move instead of snapping back to the stale pin. Without a prior
+            // soft pin AND without falloff, the predicate stays false and the
+            // live centroid is already bit-exact — byte-identical baseline (R1).
+            // Routes through pendingMoveSoftPin → commitEdit → settleGestureCenter
+            // → acenSettleAllowed() so Element/Local stay excluded (R2), and the
+            // END soft-pin capture in commitEdit sees the updated state (R5).
+            bool softActive = false;
+            if (auto ac = activeAcenStage()) softActive = ac.isSoftPlaced();
+            if (gestureMoved && (currentFalloff(vts).enabled || softActive)) {
                 pendingMoveSoftPin    = true;
                 pendingMoveSoftCenter = moveSub.handler.center;
                 // COMMIT B — persist the move bank's gesture-end rendered basis
                 // (R_gesture=I ⇒ B0) so the idle gizmo holds it, gated identically
-                // to the center settle (real motion + falloff) for a byte-identical
-                // no-falloff path.
+                // to the center settle (real motion + falloff/softActive) for a
+                // byte-identical no-falloff / no-prior-pin path.
                 settleGestureBasis(moveSub.handler.axisX,
                                    moveSub.handler.axisY,
                                    moveSub.handler.axisZ);
