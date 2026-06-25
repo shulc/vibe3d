@@ -42,6 +42,51 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 //     `applyMovePanelDelta`.
 // ---------------------------------------------------------------------------
 
+// Byte-identical extraction of the axis-selection math from ctrlConstrain
+// (move.d:691-727 pre-refactor).  Takes integer tdx/tdy exactly as the live
+// path does (int arithmetic, no float reassociation).  The <25 wait-gate is
+// NOT in here — it stays in ctrlConstrain.  Arguments mirror the live read
+// sites verbatim so the call in ctrlConstrain is a cut-paste of the inputs
+// it was already using.  Not marked pure because projectToWindowFull reads
+// matrix state — the determinism is in the inputs, not the qualifier.
+int chooseConstraintAxis(Vec3 camBack,
+                              Vec3 inX, Vec3 inY, Vec3 inZ,
+                              Vec3 endX, Vec3 endY, Vec3 endZ,
+                              Vec3 center,
+                              const ref Viewport vp,
+                              int tdx, int tdy)
+{
+    import std.math : abs, sqrt;
+    float aXdot = abs(dot(camBack, inX));
+    float aYdot = abs(dot(camBack, inY));
+    float aZdot = abs(dot(camBack, inZ));
+    int ax1, ax2;
+    if      (aXdot >= aYdot && aXdot >= aZdot) { ax1 = 1; ax2 = 2; }
+    else if (aYdot >= aXdot && aYdot >= aZdot) { ax1 = 0; ax2 = 2; }
+    else                                       { ax1 = 0; ax2 = 1; }
+
+    float cx, cy, dummy;
+    float dmag = sqrt(cast(float)(tdx*tdx + tdy*tdy));
+    float ndx = tdx / dmag, ndy = tdy / dmag;
+    Vec3[3] axisEnds = [endX, endY, endZ];
+    int result = ax1; // fallback
+    if (projectToWindowFull(center, vp, cx, cy, dummy)) {
+        float bestDot = -1.0f;
+        foreach (a; [ax1, ax2]) {
+            float ax, ay, andcZ;
+            if (!projectToWindowFull(axisEnds[a], vp, ax, ay, andcZ)) continue;
+            float sdx = ax - cx, sdy = ay - cy;
+            float slen = sqrt(sdx*sdx + sdy*sdy);
+            if (slen < 1.0f) continue;
+            float d = abs(ndx * sdx/slen + ndy * sdy/slen);
+            if (d > bestDot) { bestDot = d; result = a; }
+        }
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+
 class MoveTool : TransformTool {
     MoveHandler handler;
 
@@ -182,8 +227,18 @@ class MoveTool : TransformTool {
 
     bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
     int      constrainStartMX, constrainStartMY;
+    // Set true at the two Ctrl-lock entry sites (button-down Ctrl path +
+    // beginScreenPlaneDragAt Ctrl path); cleared at BOTH drag-end
+    // (onMouseButtonUp) AND fresh button-DOWN reset so a following non-Ctrl
+    // drag never inherits a stale flag.
+    bool     ctrlLockActive;
     // (lastSnap moved to TransformTool — same semantics, also drives
     // the live click-outside snap preview now.)
+
+    // Constraint-line VAO (lazy, 2 world-space vertices).
+    // Updated each draw when ctrlLockActive; 0 until first lock.
+    private GLuint constraintLineVao;
+    private GLuint constraintLineVbo;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
@@ -194,6 +249,22 @@ public:
 
     void destroy() {
         handler.destroy();
+        version(unittest) {} else {
+            if (constraintLineVao != 0) {
+                glDeleteVertexArrays(1, &constraintLineVao);
+                glDeleteBuffers(1, &constraintLineVbo);
+                constraintLineVao = 0;
+                constraintLineVbo = 0;
+            }
+        }
+    }
+
+    // Returns the locked axis index (0=X 1=Y 2=Z) when a Ctrl-lock is live
+    // during an active drag, else -1.  Also returns -1 during the <25-px
+    // wait-gate (dragAxis still ==3 and ctrlLockActive true but not yet
+    // resolved) and for any ordinary single-axis drag (ctrlLockActive false).
+    int constraintLockedAxis() const {
+        return (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
     }
 
     override string name() const { return "Move"; }
@@ -333,6 +404,15 @@ public:
 
         handler.draw(shader, vp);
 
+        // Constraint line: drawn along the locked axis through the pivot
+        // when a Ctrl-lock is active.  Depth disabled so it reads as an
+        // overlay (mirrors CrossGizmo.draw handler.d:1402-1406).
+        // No arrow setState override — the arbiter already highlights the
+        // captured arrow Rollover-yellow via setHaul+update.
+        if (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) {
+            drawConstraintLine(shader, vp);
+        }
+
         // Phase 7.3d: snap visual feedback. Yellow ring (highlighted)
         // + filled disc (snapped) at the snap candidate's screen pixel,
         // plus a cyan highlight on the actual mesh element being
@@ -386,6 +466,54 @@ public:
         drawSnapOverlay(lastSnap, vp, *mesh);
     }
 
+    // Draw a world-space constraint line along the locked axis through the gizmo
+    // pivot.  Uses the rendered arrow geometry (handler.arrow{X|Y|Z}.end - center)
+    // so the line matches the arrow the arbiter highlighted.  Called from draw()
+    // only when ctrlLockActive && dragAxis in [0,2].
+    private void drawConstraintLine(const ref Shader shader, const ref Viewport vp)
+    {
+        version(unittest) return; // no GL in unit tests
+
+        // Build the direction from the already-oriented rendered arrow geometry.
+        Vec3[3] ends = [handler.arrowX.end, handler.arrowY.end, handler.arrowZ.end];
+        Vec3 dir = normalize(ends[dragAxis] - handler.center);
+
+        // Choose a screen-stable world length: use the gizmo arm length × 3 so
+        // the line extends clearly in both directions past the visible arrow.
+        float k = (ends[dragAxis] - handler.center).length * 3.0f;
+
+        Vec3 p0 = handler.center - dir * k;
+        Vec3 p1 = handler.center + dir * k;
+        float[6] data = [p0.x, p0.y, p0.z, p1.x, p1.y, p1.z];
+
+        // Lazy VAO init + update with GL_DYNAMIC_DRAW each draw.
+        if (constraintLineVao == 0) {
+            glGenVertexArrays(1, &constraintLineVao);
+            glGenBuffers(1, &constraintLineVbo);
+            glBindVertexArray(constraintLineVao);
+            glBindBuffer(GL_ARRAY_BUFFER, constraintLineVbo);
+            glBufferData(GL_ARRAY_BUFFER, data.sizeof, data.ptr, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*float.sizeof, cast(void*)0);
+            glEnableVertexAttribArray(0);
+            glBindVertexArray(0);
+        } else {
+            glBindBuffer(GL_ARRAY_BUFFER, constraintLineVbo);
+            glBufferData(GL_ARRAY_BUFFER, data.sizeof, data.ptr, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        // Rollover yellow — matches the arbiter's highlight on the captured arrow.
+        // Keep visual language consistent (one locked thing = one colour).
+        immutable Vec3 color = Vec3(1.0f, 0.95f, 0.15f);
+        immutable float lineWidth = 1.5f;
+
+        import math : identityMatrix;
+        glDisable(GL_DEPTH_TEST);
+        drawThickLinesExt(constraintLineVao, 2, GL_LINES, identityMatrix, vp,
+                          color, lineWidth, shader.program);
+        glEnable(GL_DEPTH_TEST);
+    }
+
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
         // turned it on unconditionally when Screen falloff is active so
@@ -398,7 +526,8 @@ public:
         }
         if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
 
-        ctrlConstrain = false;
+        ctrlConstrain  = false;
+        ctrlLockActive = false;   // clear-site 1: drag-end
 
         // Phase 3 — the wrapper now owns the GPU upload / gpuMatrix
         // reset / wholeMeshDrag handling, the commit-edit hooks, and
@@ -486,12 +615,14 @@ public:
         }
 
         ctrlConstrain = false;
+        ctrlLockActive = false;   // clear stale lock before re-deciding
         lastClickWasRelocate = false;
         dragAxis = resolvedAxis >= 0 ? resolvedAxis : hitTestAxes(e.x, e.y);
         if (dragAxis >= 0) {
             // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
             if (ctrl && dragAxis == 3) {
                 ctrlConstrain = true;
+                ctrlLockActive = true;   // lock-entry site 1: button-down Ctrl path
                 constrainStartMX = e.x; constrainStartMY = e.y;
             }
             lastMX = e.x; lastMY = e.y;
@@ -578,6 +709,7 @@ public:
         buildVertexCacheIfNeeded();
         if (ctrl) {
             ctrlConstrain = true;
+            ctrlLockActive = true;   // lock-entry site 2: beginScreenPlaneDragAt Ctrl path
             constrainStartMX = mx; constrainStartMY = my;
         }
     }
@@ -688,44 +820,17 @@ public:
             int tdy = e.y - constrainStartMY;
             if (tdx*tdx + tdy*tdy < 25) { lastMX = e.x; lastMY = e.y; return true; }
 
-            // Identify the two basis axes that lie in the most-facing plane
-            // (the third axis — the one most parallel to the camera ray — is
-            // the plane normal).
-            import std.math : abs;
-            const ref float[16] vv = cachedVp.view;
-            Vec3 camBack = Vec3(vv[2], vv[6], vv[10]);
             // ctrlConstrain only ever runs for the center-box drag (dragAxis==3),
             // which the wrapper excludes from chaining (chained=false), so the
             // selector resolves to the live `inputBasis*` here — basis-free as
             // before. Routed through the selector for uniformity.
             debug assertWrapperInputFrameChained();
-            Vec3 di0 = inAxisX(), di1 = inAxisY(), di2 = inAxisZ();
-            float aXdot = abs(dot(camBack, di0));
-            float aYdot = abs(dot(camBack, di1));
-            float aZdot = abs(dot(camBack, di2));
-            int ax1, ax2;
-            if      (aXdot >= aYdot && aXdot >= aZdot) { ax1 = 1; ax2 = 2; } // normal=axisX → Y,Z
-            else if (aYdot >= aXdot && aYdot >= aZdot) { ax1 = 0; ax2 = 2; } // normal=axisY → X,Z
-            else                                       { ax1 = 0; ax2 = 1; } // normal=axisZ → X,Y
-
-            // Project each candidate axis onto screen; pick best alignment.
-            float cx, cy, dummy;
-            float dmag = sqrt(cast(float)(tdx*tdx + tdy*tdy));
-            float ndx = tdx / dmag, ndy = tdy / dmag;
-            Vec3[3] axisEnds = [handler.arrowX.end, handler.arrowY.end, handler.arrowZ.end];
-            dragAxis = ax1; // fallback
-            if (projectToWindowFull(handler.center, cachedVp, cx, cy, dummy)) {
-                float bestDot = -1.0f;
-                foreach (a; [ax1, ax2]) {
-                    float ax, ay, andcZ;
-                    if (!projectToWindowFull(axisEnds[a], cachedVp, ax, ay, andcZ)) continue;
-                    float sdx = ax - cx, sdy = ay - cy;
-                    float slen = sqrt(sdx*sdx + sdy*sdy);
-                    if (slen < 1.0f) continue;
-                    float dot = abs(ndx * sdx/slen + ndy * sdy/slen);
-                    if (dot > bestDot) { bestDot = dot; dragAxis = a; }
-                }
-            }
+            const ref float[16] vv = cachedVp.view;
+            Vec3 camBack = Vec3(vv[2], vv[6], vv[10]);
+            dragAxis = chooseConstraintAxis(camBack,
+                inAxisX(), inAxisY(), inAxisZ(),
+                handler.arrowX.end, handler.arrowY.end, handler.arrowZ.end,
+                handler.center, cachedVp, tdx, tdy);
             ctrlConstrain = false;
             lastMX = e.x; lastMY = e.y;
             return true; // axis locked — movement starts on the next motion event

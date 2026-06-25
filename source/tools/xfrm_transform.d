@@ -1008,6 +1008,11 @@ public:
     public int rotateDragAxisPublic() const { return rotateSub.dragAxisPublic(); }
     public int scaleDragAxisPublic() const { return scaleSub.dragAxisPublic(); }
 
+    // Constraint-lock affordance seam — returns the Ctrl-locked axis index
+    // (0=X 1=Y 2=Z) while a Ctrl center-drag lock is live, else -1.
+    // Passthrough to MoveTool.constraintLockedAxis().
+    public int constraintLockedAxis() const { return moveSub.constraintLockedAxis(); }
+
     // ----- Rendered-pose seam (flex_border_handles_plan.md Phase 4 step 1) ----
     //
     // The LIVE rendered per-bank gizmo orientation, so tests can witness the

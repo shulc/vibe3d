@@ -236,6 +236,18 @@ private void drawThickLines(GLuint vao, int vertCount, GLenum mode,
     glUseProgram(restoreProgram);
 }
 
+// Public thin wrapper around drawThickLines for callers outside handler.d
+// (e.g. MoveTool's constraint-line overlay).  Same semantics as the private
+// version; the `restoreProgram` is typically shader.program.
+void drawThickLinesExt(GLuint vao, int vertCount, GLenum mode,
+                       const ref float[16] model,
+                       const ref Viewport vp,
+                       Vec3 color, float lineWidth,
+                       GLuint restoreProgram)
+{
+    drawThickLines(vao, vertCount, mode, model, vp, color, lineWidth, restoreProgram);
+}
+
 // ---------------------------------------------------------------------------
 // Handler — base class for interactive 3-D overlays (gizmos, manipulators…)
 // ---------------------------------------------------------------------------
