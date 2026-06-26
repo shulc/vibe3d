@@ -107,3 +107,39 @@ unittest { // file.load on a non-LWO file returns error
     assert(m["vertexCount"].integer == 8,
         "mesh should be intact after junk-file load");
 }
+
+unittest { // path-less file.load in test mode returns error without hanging
+    resetCube();
+    auto resp = runCmdAllowError("file.load");   // no params → no setPath → dialog path
+    auto j = parseJSON(resp);
+    assert(j["status"].str == "error",
+        "path-less file.load in test mode must error (dialog suppressed), got: " ~ resp);
+    // Mesh must be intact — the suppressed load is a no-op.
+    auto m = model();
+    assert(m["vertexCount"].integer == 8,
+        "mesh should be intact after suppressed-dialog load");
+}
+
+unittest { // path-less file.saveAs in test mode returns error without hanging
+    // file.saveAs (FileSaveMode.saveAs) has NO hasCurrentDoc() fast path —
+    // it always reaches the runSaveDialog() else-branch, which the gate now
+    // suppresses. This makes the test order-independent under -j8: even if a
+    // preceding test in the same worker slice set a current doc path, saveAs
+    // always hits the gated branch.
+    resetCube();
+    auto resp = runCmdAllowError("file.saveAs");  // no params → no setPath
+    auto j = parseJSON(resp);
+    assert(j["status"].str == "error",
+        "path-less file.saveAs in test mode must error (dialog suppressed), got: " ~ resp);
+}
+
+unittest { // path-less file.save (mode=save) in test mode returns error when untitled
+    // Stage 3 wires clearCurrentDoc() into SceneReset.apply(), so resetCube()
+    // guarantees hasCurrentDoc()==false here. file.save with no path and no
+    // remembered doc falls through to the dialog branch → gate fires → error.
+    resetCube();   // clears g_currentDocPath via clearCurrentDoc()
+    auto resp = runCmdAllowError("file.save");   // no params → no setPath
+    auto j = parseJSON(resp);
+    assert(j["status"].str == "error",
+        "path-less file.save (untitled) in test mode must error (dialog suppressed), got: " ~ resp);
+}
