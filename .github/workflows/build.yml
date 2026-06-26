@@ -266,19 +266,21 @@ jobs:
       # WITHOUT -d-version=ReleaseBuild and left stale objects for the real
       # build to trip over.
 
-      # bindbc-assimp6 and lwo2-writer are both `~master` git deps. dub resolves
-      # a branch dep ONCE and freezes it in the runner's persistent package cache
-      # — it never re-fetches when upstream master advances. Drop both so each run
+      # bindbc-assimp6, lwo2-writer and d-onnxruntime are `~master` git deps.
+      # dub resolves a branch dep ONCE and freezes it in the runner's persistent
+      # package cache — it never re-fetches when upstream master advances. Drop
+      # all three so each run
       # checks out the current master (otherwise a lib bump leaves vibe3d source
       # compiling against a stale frozen copy — e.g. lwo_export.d referencing
       # VMAP/VMAD symbols absent from a pre-UV cached lwo2-writer).
-      - name: Drop cached ~master git deps (Assimp, LWO2) (Linux/macOS)
+      - name: Drop cached ~master git deps (Assimp, LWO2, ONNX) (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
           rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6" \
-                 "$HOME/.dub/packages/lwo2-writer"    "$HOME/.dub/cache/lwo2-writer"
+                 "$HOME/.dub/packages/lwo2-writer"    "$HOME/.dub/cache/lwo2-writer" \
+                 "$HOME/.dub/packages/d-onnxruntime"  "$HOME/.dub/cache/d-onnxruntime"
 
-      - name: Drop cached ~master git deps (Assimp, LWO2) (Windows)
+      - name: Drop cached ~master git deps (Assimp, LWO2, ONNX) (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -286,7 +288,9 @@ jobs:
             "$env:DUB_HOME\packages\bindbc-assimp6", `
             "$env:DUB_HOME\cache\bindbc-assimp6", `
             "$env:DUB_HOME\packages\lwo2-writer", `
-            "$env:DUB_HOME\cache\lwo2-writer"
+            "$env:DUB_HOME\cache\lwo2-writer", `
+            "$env:DUB_HOME\packages\d-onnxruntime", `
+            "$env:DUB_HOME\cache\d-onnxruntime"
 
       # ---- Build ----
 
@@ -310,7 +314,25 @@ jobs:
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, config, assets -DestinationPath vibe3d-${{ matrix.name }}.zip
+        run: |
+          # ONNX Runtime is linked dynamically via the import library fetched by
+          # d-onnxruntime's CMake configure step. Stage the DLL next to the exe
+          # so the plain modeling release zip is runnable without PATH setup.
+          $describe = $null
+          & {
+            $ErrorActionPreference = 'Continue'
+            $script:describe = (dub describe 2>$null | Where-Object {
+              $_ -match '^[\{\}\[\]\"\s\d]' -or $_ -match '^\s+'
+            } | Out-String)
+          }
+          $j = $describe | ConvertFrom-Json
+          $dOnnx = ($j.packages | Where-Object { $_.name -eq 'd-onnxruntime' }).path
+          $onnxDll = Join-Path $dOnnx 'build\onnxruntime\sdk\lib\onnxruntime.dll'
+          if (-not (Test-Path $onnxDll)) {
+            throw "onnxruntime.dll not found at $onnxDll — is d-onnxruntime built?"
+          }
+          Copy-Item $onnxDll -Destination onnxruntime.dll
+          Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, onnxruntime.dll, config, assets -DestinationPath vibe3d-${{ matrix.name }}.zip
 
       # ---- Upload zip as artifact for the release job ----
 
@@ -439,19 +461,21 @@ jobs:
       # nfde is provisioned once in each runner's persistent dub cache (see the
       # note in the `build` job); the bundle scripts do a single build pass.
 
-      # bindbc-assimp6 and lwo2-writer are both `~master` git deps. dub resolves
-      # a branch dep ONCE and freezes it in the runner's persistent package cache
-      # — it never re-fetches when upstream master advances. Drop both so each run
+      # bindbc-assimp6, lwo2-writer and d-onnxruntime are `~master` git deps.
+      # dub resolves a branch dep ONCE and freezes it in the runner's persistent
+      # package cache — it never re-fetches when upstream master advances. Drop
+      # all three so each run
       # checks out the current master (otherwise a lib bump leaves vibe3d source
       # compiling against a stale frozen copy — e.g. lwo_export.d referencing
       # VMAP/VMAD symbols absent from a pre-UV cached lwo2-writer).
-      - name: Drop cached ~master git deps (Assimp, LWO2) (Linux/macOS)
+      - name: Drop cached ~master git deps (Assimp, LWO2, ONNX) (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
           rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6" \
-                 "$HOME/.dub/packages/lwo2-writer"    "$HOME/.dub/cache/lwo2-writer"
+                 "$HOME/.dub/packages/lwo2-writer"    "$HOME/.dub/cache/lwo2-writer" \
+                 "$HOME/.dub/packages/d-onnxruntime"  "$HOME/.dub/cache/d-onnxruntime"
 
-      - name: Drop cached ~master git deps (Assimp, LWO2) (Windows)
+      - name: Drop cached ~master git deps (Assimp, LWO2, ONNX) (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -459,7 +483,9 @@ jobs:
             "$env:DUB_HOME\packages\bindbc-assimp6", `
             "$env:DUB_HOME\cache\bindbc-assimp6", `
             "$env:DUB_HOME\packages\lwo2-writer", `
-            "$env:DUB_HOME\cache\lwo2-writer"
+            "$env:DUB_HOME\cache\lwo2-writer", `
+            "$env:DUB_HOME\packages\d-onnxruntime", `
+            "$env:DUB_HOME\cache\d-onnxruntime"
 
       # `shell:` can't take a ${{ matrix.* }} expression (GitHub rejects the whole
       # workflow file), so the bundle step is split per-OS with a literal shell.
