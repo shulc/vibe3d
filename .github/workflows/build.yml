@@ -266,6 +266,31 @@ jobs:
       # WITHOUT -d-version=ReleaseBuild and left stale objects for the real
       # build to trip over.
 
+      # A canceled/interrupted assimp clone can leave the persistent dub cache
+      # with a broken submodule checkout. Repair only that corrupted state; do
+      # not force a heavyweight assimp clone on every ONNX iteration.
+      - name: Repair cached bindbc-assimp6 if submodule is broken (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          pkg="$HOME/.dub/packages/bindbc-assimp6/~master/bindbc-assimp6"
+          if [ -d "$pkg" ] && ! git -C "$pkg" submodule status extern/assimp >/dev/null 2>&1; then
+            rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
+          fi
+
+      - name: Repair cached bindbc-assimp6 if submodule is broken (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $pkg = Join-Path $env:DUB_HOME 'packages\bindbc-assimp6\~master\bindbc-assimp6'
+          if (Test-Path $pkg) {
+            git -C $pkg submodule status extern/assimp *> $null
+            if ($LASTEXITCODE -ne 0) {
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
+                "$env:DUB_HOME\packages\bindbc-assimp6", `
+                "$env:DUB_HOME\cache\bindbc-assimp6"
+            }
+          }
+
       # d-onnxruntime is a `~master` git dep while the ONNX package is being
       # iterated. dub resolves a branch dep once and freezes it in the runner's
       # persistent package cache, so drop just this package to pick up the
@@ -452,7 +477,30 @@ jobs:
       # nfde is provisioned once in each runner's persistent dub cache (see the
       # note in the `build` job); the bundle scripts do a single build pass.
 
-      # See the modeling build job above: refresh only the ONNX git dep here.
+      # See the modeling build job above: repair a corrupted assimp cache, then
+      # refresh only the ONNX git dep.
+      - name: Repair cached bindbc-assimp6 if submodule is broken (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          pkg="$HOME/.dub/packages/bindbc-assimp6/~master/bindbc-assimp6"
+          if [ -d "$pkg" ] && ! git -C "$pkg" submodule status extern/assimp >/dev/null 2>&1; then
+            rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
+          fi
+
+      - name: Repair cached bindbc-assimp6 if submodule is broken (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $pkg = Join-Path $env:DUB_HOME 'packages\bindbc-assimp6\~master\bindbc-assimp6'
+          if (Test-Path $pkg) {
+            git -C $pkg submodule status extern/assimp *> $null
+            if ($LASTEXITCODE -ne 0) {
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
+                "$env:DUB_HOME\packages\bindbc-assimp6", `
+                "$env:DUB_HOME\cache\bindbc-assimp6"
+            }
+          }
+
       - name: Drop cached d-onnxruntime (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
