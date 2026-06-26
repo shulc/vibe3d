@@ -10,6 +10,7 @@ import document : Document, Layer, ItemXform;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
+import io.doc_state : clearCurrentDoc;
 
 /// Reset the scene to a chosen primitive
 /// (cube/diamond/octahedron/lshape/grid/subdivcube). Replaces the legacy
@@ -134,6 +135,12 @@ class SceneReset : Command {
         viewPtr.reset();
         mesh.resetSelection();
         *editModePtr = EditMode.Vertices;
+        // Forget the remembered save target: a reset is a clean slate and
+        // the prior document path no longer applies. This prevents a later
+        // path-less file.save from silently overwriting the pre-reset file.
+        // Intentionally NOT restored in revert() — session/UI state, same
+        // policy as the camera (see the revert() note below).
+        clearCurrentDoc();
         // Reset EVERY toolpipe stage to its declaration-time defaults.
         // Stage state — Snap on, Symmetry plane, Falloff type, ACEN /
         // AXIS modes, Workplane tilt — is session-level UI state, and
