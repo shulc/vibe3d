@@ -258,55 +258,9 @@ jobs:
           Add-Content $env:GITHUB_PATH $gitBin
           $env:PATH = "$gitBin;$env:PATH"
 
-      # nfde's nativefiledialog-extended checkout (+ its wayland-protocols
-      # submodule on Linux) is provisioned once in the persistent dub cache on
-      # each self-hosted runner, so a single Build pass is enough. The old
-      # two-pass dance (a throwaway build to clone nfde, then a submodule init)
-      # is gone — on the ReleaseBuild path that first pass compiled vibe3d
-      # WITHOUT -d-version=ReleaseBuild and left stale objects for the real
-      # build to trip over.
-
-      # A canceled/interrupted assimp clone can leave the persistent dub cache
-      # with a broken submodule checkout. Repair only that corrupted state; do
-      # not force a heavyweight assimp clone on every ONNX iteration.
-      - name: Repair cached bindbc-assimp6 if submodule is broken (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          pkg="$HOME/.dub/packages/bindbc-assimp6/~master/bindbc-assimp6"
-          if [ -d "$pkg" ] && ! git -C "$pkg/extern/assimp" rev-parse --verify HEAD >/dev/null 2>&1; then
-            rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
-          fi
-
-      - name: Repair cached bindbc-assimp6 if submodule is broken (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $pkg = Join-Path $env:DUB_HOME 'packages\bindbc-assimp6\~master\bindbc-assimp6'
-          if (Test-Path $pkg) {
-            git -C (Join-Path $pkg 'extern\assimp') rev-parse --verify HEAD *> $null
-            if ($LASTEXITCODE -ne 0) {
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
-                "$env:DUB_HOME\packages\bindbc-assimp6", `
-                "$env:DUB_HOME\cache\bindbc-assimp6"
-            }
-          }
-
-      # d-onnxruntime is a `~master` git dep while the ONNX package is being
-      # iterated. dub resolves a branch dep once and freezes it in the runner's
-      # persistent package cache, so drop just this package to pick up the
-      # latest ONNX Windows linking fixes without re-cloning heavyweight deps.
-      - name: Drop cached d-onnxruntime (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          rm -rf "$HOME/.dub/packages/d-onnxruntime" "$HOME/.dub/cache/d-onnxruntime"
-
-      - name: Drop cached d-onnxruntime (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
-            "$env:DUB_HOME\packages\d-onnxruntime", `
-            "$env:DUB_HOME\cache\d-onnxruntime"
+      # Git dependencies are pinned to commit SHAs in dub.json/dub.selections.json.
+      # Keep the persistent dub cache intact so heavyweight deps (notably assimp
+      # via lwo2-writer/bindbc-assimp6) are not re-cloned on every CI run.
 
       # ---- Build ----
 
@@ -474,45 +428,8 @@ jobs:
           Add-Content $env:GITHUB_PATH $gitBin
           $env:PATH = "$gitBin;$env:PATH"
 
-      # nfde is provisioned once in each runner's persistent dub cache (see the
-      # note in the `build` job); the bundle scripts do a single build pass.
-
-      # See the modeling build job above: repair a corrupted assimp cache, then
-      # refresh only the ONNX git dep.
-      - name: Repair cached bindbc-assimp6 if submodule is broken (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          pkg="$HOME/.dub/packages/bindbc-assimp6/~master/bindbc-assimp6"
-          if [ -d "$pkg" ] && ! git -C "$pkg/extern/assimp" rev-parse --verify HEAD >/dev/null 2>&1; then
-            rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
-          fi
-
-      - name: Repair cached bindbc-assimp6 if submodule is broken (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $pkg = Join-Path $env:DUB_HOME 'packages\bindbc-assimp6\~master\bindbc-assimp6'
-          if (Test-Path $pkg) {
-            git -C (Join-Path $pkg 'extern\assimp') rev-parse --verify HEAD *> $null
-            if ($LASTEXITCODE -ne 0) {
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
-                "$env:DUB_HOME\packages\bindbc-assimp6", `
-                "$env:DUB_HOME\cache\bindbc-assimp6"
-            }
-          }
-
-      - name: Drop cached d-onnxruntime (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          rm -rf "$HOME/.dub/packages/d-onnxruntime" "$HOME/.dub/cache/d-onnxruntime"
-
-      - name: Drop cached d-onnxruntime (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
-            "$env:DUB_HOME\packages\d-onnxruntime", `
-            "$env:DUB_HOME\cache\d-onnxruntime"
+      # Git dependencies are pinned to commit SHAs; keep the persistent dub cache
+      # intact for heavyweight render deps.
 
       # `shell:` can't take a ${{ matrix.* }} expression (GitHub rejects the whole
       # workflow file), so the bundle step is split per-OS with a literal shell.
