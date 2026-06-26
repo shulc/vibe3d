@@ -299,7 +299,7 @@ jobs:
           $dOnnx = ($j.packages | Where-Object { $_.name -eq 'd-onnxruntime' }).path
           $onnxDll = Join-Path $dOnnx 'build\onnxruntime\sdk\lib\onnxruntime.dll'
           if (-not (Test-Path $onnxDll)) {
-            throw "onnxruntime.dll not found at $onnxDll — is d-onnxruntime built?"
+            throw "onnxruntime.dll not found at $onnxDll - is d-onnxruntime built?"
           }
           Copy-Item $onnxDll -Destination onnxruntime.dll
           Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, onnxruntime.dll, config, assets -DestinationPath vibe3d-${{ matrix.name }}.zip
