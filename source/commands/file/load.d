@@ -105,6 +105,11 @@ class FileLoad : Command {
         string path = explicitPath;
         const fromDialog = path is null;
         if (path is null) {
+            if (command.g_testMode) {
+                import std.stdio : stderr;
+                stderr.writeln("file.load: no path in test mode; native dialog suppressed");
+                return false;
+            }
             path = runOpenDialog();
             if (path is null) return false;
         }

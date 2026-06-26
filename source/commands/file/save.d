@@ -107,6 +107,11 @@ class FileSave : Command {
             if (mode == FileSaveMode.save && hasCurrentDoc())
                 path = currentDocPath();
             else {
+                if (command.g_testMode) {
+                    import std.stdio : stderr;
+                    stderr.writeln("file.save: no path in test mode; native dialog suppressed");
+                    return false;
+                }
                 path = runSaveDialog();
                 fromDialog = true;
             }
