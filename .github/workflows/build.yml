@@ -273,7 +273,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           pkg="$HOME/.dub/packages/bindbc-assimp6/~master/bindbc-assimp6"
-          if [ -d "$pkg" ] && ! git -C "$pkg" submodule status extern/assimp >/dev/null 2>&1; then
+          if [ -d "$pkg" ] && ! git -C "$pkg/extern/assimp" rev-parse --verify HEAD >/dev/null 2>&1; then
             rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
           fi
 
@@ -283,7 +283,7 @@ jobs:
         run: |
           $pkg = Join-Path $env:DUB_HOME 'packages\bindbc-assimp6\~master\bindbc-assimp6'
           if (Test-Path $pkg) {
-            git -C $pkg submodule status extern/assimp *> $null
+            git -C (Join-Path $pkg 'extern\assimp') rev-parse --verify HEAD *> $null
             if ($LASTEXITCODE -ne 0) {
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
                 "$env:DUB_HOME\packages\bindbc-assimp6", `
@@ -483,7 +483,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           pkg="$HOME/.dub/packages/bindbc-assimp6/~master/bindbc-assimp6"
-          if [ -d "$pkg" ] && ! git -C "$pkg" submodule status extern/assimp >/dev/null 2>&1; then
+          if [ -d "$pkg" ] && ! git -C "$pkg/extern/assimp" rev-parse --verify HEAD >/dev/null 2>&1; then
             rm -rf "$HOME/.dub/packages/bindbc-assimp6" "$HOME/.dub/cache/bindbc-assimp6"
           fi
 
@@ -493,7 +493,7 @@ jobs:
         run: |
           $pkg = Join-Path $env:DUB_HOME 'packages\bindbc-assimp6\~master\bindbc-assimp6'
           if (Test-Path $pkg) {
-            git -C $pkg submodule status extern/assimp *> $null
+            git -C (Join-Path $pkg 'extern\assimp') rev-parse --verify HEAD *> $null
             if ($LASTEXITCODE -ne 0) {
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
                 "$env:DUB_HOME\packages\bindbc-assimp6", `
