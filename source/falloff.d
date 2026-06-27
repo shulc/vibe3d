@@ -578,6 +578,54 @@ unittest { // radial falloff: center = 1, surface = 0, outside = 0
     assert(isClose(evaluateFalloff(p, Vec3(0, 1, 0), 0, vp), 0.0f));
 }
 
+unittest { // cylinder falloff: radial-perpendicular linear profile (axis-responsiveness)
+    // Locks the cylinder kernel: weight decays linearly with radial distance
+    // from the cylinder axis (measured perpendicular to it), reaching 0 at
+    // r = max(size). Position along the axis is ignored entirely.
+    //
+    // The +Z sub-case proves axis-responsiveness: the same displacement that
+    // produces w=0.3333 on the X component under +Y axis produces the same
+    // weight on the Y component under +Z axis, and z-displacement (along the
+    // axis) is ignored. This guards against any future "make it 1-D /
+    // fixed-axis" regression that forgets to use cfg.normal.
+    //
+    // Golden values are analytic: r=0.75, shape=Linear, w = clamp(1-plen/r,0,1)
+    // where plen = hypot of the two perpendicular-to-axis components.
+    import std.math : isClose, sqrt;
+    enum float tol = 1e-4f;
+
+    // --- axis +Y: perpendicular plane is XZ ---
+    FalloffPacket p;
+    p.enabled = true;
+    p.type    = FalloffType.Cylinder;
+    p.shape   = FalloffShape.Linear;
+    p.center  = Vec3(0, 0, 0);
+    p.size    = Vec3(0.75f, 0.75f, 0.75f);
+    p.normal  = Vec3(0, 1, 0);
+    Viewport vp;
+
+    // On-axis: plen=0 → w=1.0
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0.5f, 0), 0, vp), 1.0f, tol));
+    // plen=0.5 → t=0.5/0.75=0.6667 → w=0.3333
+    assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0.5f, 0), 0, vp), 1.0f/3.0f, tol));
+    // Same radius from a different XZ direction (plen=0.5 via Z) → same weight
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0.5f, 0.5f), 0, vp), 1.0f/3.0f, tol));
+    // Diagonal: plen=sqrt(0.5)≈0.7071 → t≈0.9428 → w≈0.05719
+    assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0.5f, 0.5f), 0, vp),
+                   1.0f - sqrt(0.5f)/0.75f, tol));
+    // Outside (plen=0.8 > r=0.75) → w=0.0
+    assert(isClose(evaluateFalloff(p, Vec3(0.8f, 0, 0), 0, vp), 0.0f, tol));
+
+    // --- axis +Z: perpendicular plane is XY; z-displacement is ignored ---
+    p.normal = Vec3(0, 0, 1);
+    // On-axis (large z, plen=0) → w=1.0 regardless of z value
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0, 5.0f), 0, vp), 1.0f, tol));
+    // plen from X only → same 0.3333
+    assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0), 0, vp), 1.0f/3.0f, tol));
+    // plen from Y only → same 0.3333
+    assert(isClose(evaluateFalloff(p, Vec3(0, 0.5f, 0), 0, vp), 1.0f/3.0f, tol));
+}
+
 unittest { // screen falloff: behind-camera handling
     import std.math : isClose;
     // Default Viewport has zero matrices; projectToWindowFull returns
