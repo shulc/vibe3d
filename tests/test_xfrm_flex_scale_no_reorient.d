@@ -157,11 +157,12 @@ unittest {
     cmd("tool.attr xfrm.flex S true");
 
     // ---- locate the SCALE Z-axis box handle (same pixel the scale-flip
-    //      regression uses; registerGizmoHandles registers scale first in
-    //      compact mode so the scale box wins the overlap with the move arrow).
+    //      regression uses; local-Z = world+Y → box straight above gizmo center;
+    //      registerGizmoHandles registers scale first in compact mode so the
+    //      scale box wins the overlap with the move arrow).
     Cam cam = fetchCam();
-    int x0 = 400, y0 = 402;     // on the scale Z-axis arrow shaft
-    int x1 = x0 - 60, y1 = y0;  // drag 60 px toward screen-left (scale up)
+    int x0 = 475, y0 = 260;     // on the scale Z-axis box handle (local-Z = world+Y)
+    int x1 = x0, y1 = y0 - 60;  // drag 60 px upward (toward world+Y, scale up)
 
     auto tp0 = getJson("/api/toolpipe/eval");
     auto ac = tp0["actionCenter"]["center"].array;

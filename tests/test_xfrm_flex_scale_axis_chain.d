@@ -331,16 +331,35 @@ unittest {
     V3 scaleY = norm(scaleUp());
 
     // ---- GESTURE 2 (SAME SESSION): drag the DISPLAYED scale Z box -------------
-    // No reset / selection change / tool drop. Use the proven scale Z-arrow shaft
-    // pixel (400,402 — see test_xfrm_scale_flip_drag.d: hitPart 2, the single-axis
-    // scale path, NOT the uniform centre disc) at the SAME camera. Drag 70px toward
-    // screen-left (scale up) in CHUNKS — one play-events per step, button held.
+    // No reset / selection change / tool drop. Use the proven scale Z-box handle
+    // pixel (475,260 — local-Z = world+Y, box straight above gizmo center;
+    // see test_xfrm_scale_flip_drag.d: hitPart 2, the single-axis scale path,
+    // NOT the uniform centre disc) at the SAME camera. Drag 70px upward (toward
+    // world+Y, scale up) in CHUNKS — one play-events per step, button held.
     Cam cam = fetchCam();
     // Confirm the scale pivot projects on-camera (camera-setup guard).
     double px, py;
     assert(projWorld(cam, pivot, px, py), "scale pivot off-camera — camera changed");
-    int x0 = 400, y0 = 402;
-    int x1 = x0 - 70, y1 = y0;
+    // Compute the scale Z-box screen pixel dynamically: the box sits at
+    // pivot + scaleZ * gizmoUnits (≈90 px out from center along the fwd axis).
+    // After gesture-1 (Z rotation), scaleZ is no longer world+Y — the rotated
+    // frame's fwd points in a different direction. Projecting analytically avoids
+    // hard-coding a pixel that breaks whenever the pre-gesture frame changes.
+    double gUnits = gizmoUnits(cam, pivot);
+    V3 boxWorld = add(pivot, scl(scaleZ, gUnits));
+    double bx0, by0;
+    assert(projWorld(cam, boxWorld, bx0, by0),
+        "scale Z-box projects off-camera — camera or gizmo setup changed");
+    // Drag endpoint: 70 px further along the scaleZ screen direction (scale up).
+    V3 boxFar = add(pivot, scl(scaleZ, gUnits + 0.5 * gUnits)); // far end
+    double bx1, by1;
+    if (!projWorld(cam, boxFar, bx1, by1)) { bx1 = bx0; by1 = by0 - 70; }
+    // Normalise drag to 70 px.
+    double dlen = sqrt((bx1-bx0)*(bx1-bx0) + (by1-by0)*(by1-by0));
+    if (dlen > 1e-3) { bx1 = bx0 + (bx1-bx0)/dlen*70; by1 = by0 + (by1-by0)/dlen*70; }
+    else { bx1 = bx0; by1 = by0 - 70; }
+    int x0 = cast(int)bx0, y0 = cast(int)by0;
+    int x1 = cast(int)bx1, y1 = cast(int)by1;
     enum int steps = 20;
 
     want = undoCount() + 1;

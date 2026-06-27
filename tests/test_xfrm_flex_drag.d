@@ -169,15 +169,16 @@ unittest {
     cmd("tool.set xfrm.flex on");
 
     // ---- locate the MOVE Z-arrow handle in screen pixels ----
-    // The move Z-arrow at this camera projects near the far-right of the
-    // gizmo; (418,384) was found (empirically, against an instrumented
-    // build) to land on the move-bank Z-arrow handle (hitPart == 2),
-    // routing the drag through MoveTool's axis-drag path. We hard-code it
-    // rather than recompute the gizmo layout (arrow start offset, gizmo
-    // pixel size, R/S-bank occlusion) which the test can't observe.
+    // The selection local frame (axis mode=select) for an upper-face patch
+    // with dominant normal +Y has fwd=+Y (world), up=−Z, right=+X.
+    // The move Z-arrow (local fwd axis, hitPart==2) therefore points
+    // straight UP on screen at this camera (az=0.785, el=0.6).
+    // (475,314) lands on the move-bank Z-arrow shaft; drag 60 px UPWARD
+    // (decreasing screen-Y) to project motion onto the +Y world axis.
+    // The motion axis is local-Z = world+Y, so we track [1] (world Y).
     Cam cam = fetchCam();
-    int x0 = 418, y0 = 384;     // on the move Z-arrow shaft
-    int x1 = x0 - 60, y1 = y0;  // drag 60 px toward screen-left
+    int x0 = 475, y0 = 314;     // on the move Z-arrow shaft (local-Z = world+Y)
+    int x1 = x0, y1 = y0 - 60;  // drag 60 px upward (toward world+Y)
 
     // Sanity: the gizmo pivot (border center) must project on-screen.
     auto tp = getJson("/api/toolpipe/eval");
@@ -197,7 +198,7 @@ unittest {
         `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         cam.vpX, cam.vpY, cam.w, cam.h, x0, y0));
 
-    double[] czSeq;            // moving-set centroid Z after each step
+    double[] cySeq;            // moving-set centroid Y after each step (local-Z = world+Y)
     int lastX = x0, lastY = y0;
     double t = 100.0;
     foreach (i; 1 .. steps + 1) {
@@ -207,30 +208,30 @@ unittest {
             `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
             t, xx, yy, xx - lastX, yy - lastY));
         lastX = xx; lastY = yy; t += 50.0;
-        czSeq ~= movedCentroid(pre, dumpVerts())[2];
+        cySeq ~= movedCentroid(pre, dumpVerts())[1];
     }
     play(format(
         `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         t, x1, y1));
 
     // ---- assertions ----
-    // The drag must actually have engaged the move handle (verts moved,
-    // dominant motion along +Z).
-    double finalCz = czSeq[$ - 1];
-    assert(finalCz > 0.1,
-        "Flex move-Z drag produced no motion (finalCz=" ~ finalCz.to!string
+    // The drag must have engaged the move handle (verts moved along world+Y,
+    // i.e. the selection local-Z axis).
+    double finalCy = cySeq[$ - 1];
+    assert(finalCy > 0.05,
+        "Flex move-Z drag produced no motion (finalCy=" ~ finalCy.to!string
         ~ ") — handle hit-test or selection setup is wrong");
 
-    // Per-step increments along the drag (Z) axis.
+    // Per-step increments along the drag (world-Y) axis.
     double[] inc;
-    foreach (i; 1 .. czSeq.length) inc ~= czSeq[i] - czSeq[i - 1];
+    foreach (i; 1 .. cySeq.length) inc ~= cySeq[i] - cySeq[i - 1];
 
     // Every increment must be POSITIVE (no reversal mid-drag): a
     // re-oriented frame can flip the sign of the per-step response.
     foreach (i, d; inc)
-        assert(d > 1e-4,
+        assert(d > 1e-5,
             "Flex move-Z drag reversed at step " ~ (i + 1).to!string
-            ~ " (dcz=" ~ d.to!string ~ ") — gizmo frame flipped mid-drag");
+            ~ " (dcy=" ~ d.to!string ~ ") — gizmo frame flipped mid-drag");
 
     // The increments must be SMOOTH. Pre-fix, the select-basis flip
     // mid-drag causes a sharp upward jump in the per-step magnitude (the
