@@ -26,13 +26,22 @@ import popup_state       : setStatePath;
 //                  popup clears userPlaced. The same click-outside
 //                  hook also applies to None and Screen — see those
 //                  modes below.
-//   - Select     — strict selection centroid (no fallback to geometry).
-//                  `selectSubMode` picks which side of the bounding
-//                  box of the selection (center / top / bottom / back
-//                  / front / left / right — bbox in world XYZ).
-//   - SelectAuto — selection centroid, axis is realigned to the
-//                  major world axis (the axis pick lives in AxisStage;
-//                  ActionCenterStage just emits centroid).
+//   - Select     — world-BBOX CENTER of the selection (not the per-vertex
+//                  average). Implemented via centroidWithGeometryFallback()
+//                  → mesh.selectionBBoxCenter* = (min+max)*0.5 over selected
+//                  elements. On an EMPTY selection falls back to the whole-mesh
+//                  bbox center (the "any" flag in selectionBBoxCenter* bboxes
+//                  all geometry when nothing is selected — intentional, kept
+//                  as-is). `selectSubMode` picks which side of the bbox
+//                  (center / top / bottom / back / front / left / right in
+//                  world XYZ); the non-Center paths compute the bbox extremes
+//                  directly (actcenter.d selectionCentroid body) and return
+//                  Vec3(0,0,0) on an empty set — a minor inconsistency vs the
+//                  Center path's whole-mesh fallback, intentionally unchanged.
+//   - SelectAuto — same bbox-center POSITION as Select (calls
+//                  selectionCentroid(SelectSubMode.Center) directly,
+//                  actcenter.d:737); AxisStage realigns the basis to the
+//                  major world axis — the action-center POSITION is lockstep.
 //   - Origin     — world (0,0,0).
 //   - Screen     — selection centroid (the "screen" aspect is the
 //                  AXIS orientation handled by AxisStage; the action-
