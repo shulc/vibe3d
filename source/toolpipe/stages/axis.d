@@ -370,37 +370,50 @@ private:
         Vec3[3] worldAxes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
         float[3] extents = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
 
-        // Decide `up` direction.
+        // Decide the selection local frame.
         bool haveNormal = normalAcc.x != 0 || normalAcc.y != 0 || normalAcc.z != 0;
         if (haveNormal && (*editMode_ == EditMode.Polygons
                            || *editMode_ == EditMode.Vertices))
         {
+            // Selection local frame convention (axis-aligned faces):
+            //   fwd  = snapped face normal (outward, keeps sign).
+            //   up   = per-normal-AXIS fixed vector, sign-independent:
+            //            normal on X-axis → up = world −Y
+            //            normal on Y-axis → up = world −Z
+            //            normal on Z-axis → up = world +Y
+            //   right = cross(up, fwd)  — right-handed.
+            //
+            // For a non-axis-aligned normalAcc (e.g. a diagonal or mixed
+            // selection where no single world axis dominates cleanly),
+            // the frame falls through to the edge bbox-extent sort below.
+            // This matches the observed identity/default frame the
+            // reference returns for such cases (not a bisector).
+
             // Snap avg normal to the nearest world axis. Sign follows
-            // the dominant component so the basis points outward.
+            // the dominant component so fwd points outward.
             float ax = abs(normalAcc.x);
             float ay = abs(normalAcc.y);
             float az = abs(normalAcc.z);
-            int upIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
-            float sign = ((upIdx == 0 ? normalAcc.x
-                         : upIdx == 1 ? normalAcc.y
-                                       : normalAcc.z) >= 0) ? 1.0f : -1.0f;
-            up = worldAxes[upIdx] * sign;
+            int fwdIdx = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            float fwdSign = ((fwdIdx == 0 ? normalAcc.x
+                            : fwdIdx == 1 ? normalAcc.y
+                                          : normalAcc.z) >= 0) ? 1.0f : -1.0f;
+            fwd = worldAxes[fwdIdx] * fwdSign;
 
-            // `right` = world axis with the largest in-plane bbox
-            // extent. Walk in natural (X, Y, Z) order and pick the
-            // first non-up axis with strictly the larger extent — on
-            // ties the lower-indexed axis wins.
-            int rightIdx = -1;
-            float bestExt = -1;
-            foreach (k; 0 .. 3) {
-                if (k == upIdx) continue;
-                if (extents[k] > bestExt + 1e-6f) {
-                    bestExt = extents[k];
-                    rightIdx = k;
-                }
-            }
-            right = worldAxes[rightIdx];
-            fwd = cross(right, up);
+            // Per-axis in-plane secondary (up/Y): fixed lookup, sign-
+            // independent of the face normal's sign.
+            //   X-axis → up = −Y   (upIdx=1, upSign=−1)
+            //   Y-axis → up = −Z   (upIdx=2, upSign=−1)
+            //   Z-axis → up = +Y   (upIdx=1, upSign=+1)
+            int upIdx;
+            float upSign;
+            if (fwdIdx == 0) { upIdx = 1; upSign = -1.0f; }       // X→−Y
+            else if (fwdIdx == 1) { upIdx = 2; upSign = -1.0f; }  // Y→−Z
+            else { upIdx = 1; upSign = 1.0f; }                    // Z→+Y
+            up = worldAxes[upIdx] * upSign;
+
+            // right = cross(up, fwd) — right-handed (right × up = fwd).
+            right = cross(up, fwd);
             return true;
         }
         // Edge mode (no robust normal) — fall back to pure bbox-extent
@@ -622,10 +635,22 @@ private:
                     if (mesh_.isEdgeSelected(i)) {
                         Vec3 t = mesh_.vertices[edge[1]] - mesh_.vertices[edge[0]];
                         nRight = normalize(t);
-                        // Up = workplane normal projected perpendicular
-                        // to edge tangent, fallback to world Y.
+                        // Up = workplane normal projected perpendicular to
+                        // edge tangent. Falls back to world Z when the
+                        // workplane normal is parallel to the edge tangent
+                        // (dot = ±1 → proj = zero-vector → NaN otherwise).
                         Vec3 wpUp = lastWpNormal_;
                         Vec3 proj = wpUp - nRight * dot(wpUp, nRight);
+                        if (proj.x == 0 && proj.y == 0 && proj.z == 0) {
+                            // Edge is parallel to workplane normal; pick
+                            // world Z as secondary, fall back to world X.
+                            Vec3 worldZ = Vec3(0, 0, 1);
+                            proj = worldZ - nRight * dot(worldZ, nRight);
+                            if (proj.x == 0 && proj.y == 0 && proj.z == 0) {
+                                Vec3 worldX = Vec3(1, 0, 0);
+                                proj = worldX - nRight * dot(worldX, nRight);
+                            }
+                        }
                         nUp = normalize(proj);
                         got = true;
                         break;

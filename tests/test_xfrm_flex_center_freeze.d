@@ -178,10 +178,11 @@ unittest {
     setupFlex();
     Cam cam = fetchCam();
 
-    // The move Z-arrow at this camera lands near (418,384) — same hard-coded
+    // The move Z-arrow at this camera lands near (475,314) — same hard-coded
     // pixel test_xfrm_flex_drag.d uses (hitPart 2, MoveTool axis-drag path).
-    int x0 = 418, y0 = 384;
-    int x1 = x0 - 60, y1 = y0;
+    // local-Z = world+Y so drag upward.
+    int x0 = 475, y0 = 314;
+    int x1 = x0, y1 = y0 - 60;
 
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera — camera changed");
@@ -319,12 +320,10 @@ unittest {
 
     double ppx, ppy;
     assert(projectPivot(cam, ppx, ppy), "gizmo pivot off-camera — camera changed");
-    // The scale Z-box at this camera lands near the move Z-arrow tip; the scale
-    // bank draws at the same shared basis. Grab the Z-box at the move-arrow pixel
-    // region but route via the scale bank by offsetting onto the box past the
-    // arrow tip (empirically ~ (400,402)). Drag toward screen-left to scale up.
-    int x0 = 400, y0 = 402;
-    int x1 = x0 - 55, y1 = y0;
+    // The scale Z-box at this camera lands at (475,260) with the new select-basis
+    // (local-Z = world+Y, box above the gizmo center). Drag upward to scale up.
+    int x0 = 475, y0 = 260;
+    int x1 = x0, y1 = y0 - 55;
 
     enum int steps = 20;
     play(format(

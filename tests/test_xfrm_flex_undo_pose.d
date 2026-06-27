@@ -96,7 +96,12 @@ V3 readRight(JSONValue blk) {
     auto a = blk["right"].array;
     return V3(a[0].floating, a[1].floating, a[2].floating);
 }
+V3 readFwd(JSONValue blk) {
+    auto a = blk["fwd"].array;
+    return V3(a[0].floating, a[1].floating, a[2].floating);
+}
 V3 moveRight()  { return readRight(getJson("/api/toolpipe/eval")["transform"]["moveRenderFrame"]); }
+V3 moveFwd()    { return readFwd(getJson("/api/toolpipe/eval")["transform"]["moveRenderFrame"]); }
 V3 scaleRight() { return readRight(getJson("/api/toolpipe/eval")["transform"]["scaleRenderFrame"]); }
 V3 rotateRight(){ return readRight(getJson("/api/toolpipe/eval")["transform"]["rotateRenderFrame"]); }
 double maxDev(V3 a, V3 b) {
@@ -237,10 +242,26 @@ bool ringRotate(V3 axisVec, V3 center, long wantCount, double arcDelta) {
     return false;
 }
 
-// Drive ONE flex MOVE arrow drag (same screen coords the MOVE unittest uses).
+// Drive ONE flex MOVE arrow drag. Computes the move Z-arrow screen pixel
+// dynamically so the hit is valid even after a prior rotate gesture has
+// re-oriented the frame (the arrow points along local-fwd, not always world+Y).
 void moveDragOnce(Cam cam) {
-    int x0 = 418, y0 = 384;
-    int x1 = x0 - 60, y1 = y0;
+    V3 center = acenCenter();
+    V3 mFwd   = norm(moveFwd());
+    double gr = gizmoRadius(cam, center);
+    // Arrow tip at center + fwd * gr (≈90 px out from center on screen).
+    V3 tipWorld = add(center, scl(mFwd, gr));
+    double bx0, by0;
+    if (!projWorld(cam, tipWorld, bx0, by0)) { bx0 = 475; by0 = 314; }
+    // Drag 60px further along the arrow direction in screen space.
+    V3 farWorld = add(center, scl(mFwd, gr * 1.67));
+    double bx1, by1;
+    if (!projWorld(cam, farWorld, bx1, by1)) { bx1 = bx0; by1 = by0 - 60; }
+    double dlen = sqrt((bx1-bx0)*(bx1-bx0) + (by1-by0)*(by1-by0));
+    if (dlen > 1e-3) { bx1 = bx0 + (bx1-bx0)/dlen*60; by1 = by0 + (by1-by0)/dlen*60; }
+    else { bx1 = bx0; by1 = by0 - 60; }
+    int x0 = cast(int)bx0, y0 = cast(int)by0;
+    int x1 = cast(int)bx1, y1 = cast(int)by1;
     enum int steps = 20;
     play(format(
         `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
@@ -336,8 +357,8 @@ unittest {
 unittest {
     setupFlex();
     Cam cam = fetchCam();
-    int x0 = 418, y0 = 384;
-    int x1 = x0 - 60, y1 = y0;
+    int x0 = 475, y0 = 314;
+    int x1 = x0, y1 = y0 - 60;
     double ppx, ppy; assert(projectPivot(cam, ppx, ppy), "pivot off-camera");
 
     V3 preMoveRight = moveRight();
@@ -389,8 +410,8 @@ unittest {
     setupFlex();
     Cam cam = fetchCam();
     double ppx, ppy; assert(projectPivot(cam, ppx, ppy), "pivot off-camera");
-    int x0 = 400, y0 = 402;
-    int x1 = x0 - 55, y1 = y0;
+    int x0 = 475, y0 = 260;
+    int x1 = x0, y1 = y0 - 55;
 
     V3 preScaleRight = scaleRight();
     V3 preCenter     = acenCenter();

@@ -132,23 +132,21 @@ double[3][] dumpVerts() {
     return outv;
 }
 
-// Mean distance of the verts that moved away from `pre`, measured from
-// the scale pivot. A clean single-axis scale grows this monotonically;
-// a mid-drag axis flip makes the per-step growth oscillate.
-double movedMeanRadius(double[3][] pre, double[3][] now, V3 pivot) {
-    double s = 0; int n = 0;
+// Mean signed displacement (per axis) along each world axis for verts that
+// moved away from `pre`. Using displacement (now - pre) rather than absolute
+// position avoids set-expansion bias: as cumulative scale grows the "moved"
+// set can expand to include lower-Y verts, pulling the position centroid down
+// even though every individual vert moved further. The mean displacement is
+// monotone because every vert in the moving set displaces more each step.
+double[3] movedMeanDisp(double[3][] pre, double[3][] now) {
+    double[3] s = [0, 0, 0]; int n = 0;
     foreach (k; 0 .. pre.length) {
         bool moved = false;
         foreach (c; 0 .. 3) if (fabs(now[k][c] - pre[k][c]) > 1e-4) moved = true;
-        if (moved) {
-            double dx = now[k][0] - pivot.x;
-            double dy = now[k][1] - pivot.y;
-            double dz = now[k][2] - pivot.z;
-            s += sqrt(dx*dx + dy*dy + dz*dz);
-            n++;
-        }
+        if (moved) { foreach (c; 0 .. 3) s[c] += now[k][c] - pre[k][c]; n++; }
     }
-    return n > 0 ? s / n : 0;
+    if (n > 0) foreach (c; 0 .. 3) s[c] /= n;
+    return s;
 }
 
 unittest {
@@ -188,17 +186,16 @@ unittest {
     cmd("tool.attr xfrm.flex S true");
 
     // ---- locate the SCALE Z-axis box handle in screen pixels ----
-    // The scale Z-axis arrow at this camera projects toward the lower-left
-    // of the gizmo; (400,402) was found (empirically, against an
-    // instrumented build) to land on the scale-bank Z-axis arrow shaft
-    // (hitPart == 2), routing the drag through ScaleTool's single-axis
-    // drag path — NOT the uniform centre disc (dragAxis == 3) which is
-    // immune because it never reads handler.axis*. We hard-code it rather
-    // than recompute the gizmo layout (arrow start offset, gizmo pixel
-    // size) which the test can't observe.
+    // The selection local frame for an upper-face patch (dominant normal +Y)
+    // has fwd=+Y (world), so the scale Z-axis box handle points straight UP on
+    // screen at this camera (az=0.785, el=0.6). (475,260) lands on the
+    // scale-bank Z-axis box handle (hitPart==2), routing the drag through
+    // ScaleTool's single-axis drag path — NOT the uniform centre disc
+    // (dragAxis==3) which is immune. Drag 60 px UPWARD (screen-Y decreasing)
+    // to project motion onto the local-Z (world+Y) axis.
     Cam cam = fetchCam();
-    int x0 = 400, y0 = 402;     // on the scale Z-axis arrow shaft
-    int x1 = x0 - 60, y1 = y0;  // drag 60 px toward screen-left (scale up)
+    int x0 = 475, y0 = 260;     // on the scale Z-axis box handle (local-Z = world+Y)
+    int x1 = x0, y1 = y0 - 60;  // drag 60 px upward (toward world+Y, scale up)
 
     // The scale pivot (border center) must project on-screen.
     auto tp = getJson("/api/toolpipe/eval");
@@ -211,6 +208,10 @@ unittest {
         "gizmo pivot projects off-camera — camera setup changed");
 
     // ---- chunked drag: one play-events per motion step, button held ----
+    // Track the mean world-Y displacement of moved verts (local-Z = world+Y
+    // in the new select-basis). Using displacement (now−pre) avoids set-
+    // expansion bias: a frozen-frame scale grows this monotonically; a mid-drag
+    // axis flip makes the per-step increment oscillate.
     enum int steps = 20;
     double[3][] pre = dumpVerts();
     play(format(
@@ -218,7 +219,7 @@ unittest {
         `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         cam.vpX, cam.vpY, cam.w, cam.h, x0, y0));
 
-    double[] radSeq;           // moving-set mean radius (from pivot) after each step
+    double[] cySeq;            // moving-set mean Y-displacement after each step
     int lastX = x0, lastY = y0;
     double t = 100.0;
     foreach (i; 1 .. steps + 1) {
@@ -228,41 +229,41 @@ unittest {
             `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
             t, xx, yy, xx - lastX, yy - lastY));
         lastX = xx; lastY = yy; t += 50.0;
-        radSeq ~= movedMeanRadius(pre, dumpVerts(), pivot);
+        cySeq ~= movedMeanDisp(pre, dumpVerts())[1];
     }
     play(format(
         `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
         t, x1, y1));
 
     // ---- assertions ----
-    // The drag must actually have engaged the scale handle: verts moved,
-    // the moving set grew its mean radius from the pivot (scaling up).
-    assert(radSeq.length == steps);
-    double firstRad = radSeq[0];
-    double finalRad = radSeq[$ - 1];
-    assert(firstRad > 0.1,
-        "Flex scale-Z drag produced no motion (firstRad=" ~ firstRad.to!string
+    // The drag must have engaged the scale handle: verts displaced along world+Y
+    // (the selection local-Z axis with the new select-basis convention).
+    assert(cySeq.length == steps);
+    double firstCy = cySeq[0];
+    double finalCy = cySeq[$ - 1];
+    assert(firstCy > 0.005,
+        "Flex scale-Z drag produced no motion (firstDisp=" ~ firstCy.to!string
         ~ ") — handle hit-test or selection setup is wrong");
-    assert(finalRad > firstRad,
-        "Flex scale-Z drag did not grow the moving-set radius (first="
-        ~ firstRad.to!string ~ " final=" ~ finalRad.to!string ~ ")");
+    assert(finalCy > firstCy,
+        "Flex scale-Z drag did not grow the mean Y-displacement (first="
+        ~ firstCy.to!string ~ " final=" ~ finalCy.to!string ~ ")");
 
-    // Per-step mean-radius increments along the drag.
+    // Per-step increments along the drag (world-Y) axis.
     double[] inc;
-    foreach (i; 1 .. radSeq.length) inc ~= radSeq[i] - radSeq[i - 1];
+    foreach (i; 1 .. cySeq.length) inc ~= cySeq[i] - cySeq[i - 1];
 
     // Every increment must be POSITIVE (no reversal mid-drag): a
     // re-oriented frame can flip the sign of the per-step scale response.
     foreach (i, d; inc)
         assert(d > 1e-5,
             "Flex scale-Z drag reversed at step " ~ (i + 1).to!string
-            ~ " (drad=" ~ d.to!string ~ ") — gizmo frame flipped mid-drag");
+            ~ " (ddisp=" ~ d.to!string ~ ") — gizmo frame flipped mid-drag");
 
     // The increments must be SMOOTH. Pre-fix, the select-basis flip
-    // mid-drag makes the per-step radial growth OSCILLATE (the screen→
-    // world projection of the scale axis alternates), measured at ~42 %
-    // step-to-step. Post-fix the frame is frozen and the increments vary
-    // < 2 %. Assert no step-to-step jump exceeds 12 %.
+    // mid-drag makes the per-step response OSCILLATE (the screen→world
+    // projection of the scale axis alternates), measured at ~42 % step-to-step.
+    // Post-fix the frame is frozen and the increments vary < 6 % monotonically.
+    // Assert no step-to-step jump exceeds 12 %.
     double maxJump = 0;
     size_t jumpAt = 0;
     foreach (i; 1 .. inc.length) {
