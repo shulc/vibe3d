@@ -626,3 +626,82 @@ unittest { // Box Ctrl+Z ladder: height -> base -> no pending box
     assert(vertCount() == 0,
         "second Ctrl+Z should leave no pending box to commit on tool drop");
 }
+
+// ---------------------------------------------------------------------------
+// Panned-camera AUTO workplane primitive-placement (task 0066).
+//
+// The existing interactive tests all use un-panned cameras (focus={0,0,0}),
+// so the old through-origin behaviour and the new through-focus behaviour
+// produce the same result. This test uses a PANNED camera (focus.y = 0.6)
+// with AUTO workplane (no workplane.edit pin) and asserts that the base
+// polygon's out-of-plane coordinate lands at ≈ focus.y, NOT at 0 (origin).
+//
+// Classification (plan Phase 4 audit): this is class (a) "flip-to-focus
+// lockstep" — the only new test that asserts the actually-changed behaviour.
+// It FAILS pre-fix (base at Y≈0) and PASSES post-fix (base at Y≈focus.y).
+//
+// Camera choice: eye nearly straight above focus → view forward dominantly -Y,
+// so the auto-picked construction plane normal is Y. Focus is panned along
+// Y (focus.y=0.6) so the Y-normal plane passes through Y=focus.y=0.6: the
+// base polygon's Y coordinates must all be ≈ 0.6, not ≈ 0.
+// ---------------------------------------------------------------------------
+unittest { // Box base lands on focus plane, not origin plane, with panned AUTO workplane (task 0066)
+    // Reset to empty (no mesh), clear history.
+    auto r = postJson("/api/reset?empty=true", "");
+    assert(r["status"].str == "ok", "reset empty failed: " ~ r.toString);
+    cmd("history.clear");
+
+    // Panned camera: focus.y = 0.6 (clearly off-origin). High elevation (1.3 rad
+    // ≈ 75°) so view forward is dominantly -Y (avy dominant), making the auto
+    // construction plane normal = Y. Focus is off-origin ALONG Y: that is the
+    // discriminating axis. (The /api/camera handler takes azimuth/elevation/
+    // distance/focus, not an explicit eye — eye is derived from focus+spherical.)
+    auto cam = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.3,"distance":3.0,"focus":{"x":0.0,"y":0.6,"z":0.0}}`);
+    assert(cam["status"].str == "ok", "camera set failed: " ~ cam.toString);
+
+    // Activate the box create tool with AUTO workplane (no workplane.edit).
+    cmd("tool.set prim.cube");
+
+    // Verify the auto-picked normal is Y (avy dominant for this camera).
+    auto vp = viewportFromCamera(fetchCamera(BASE));
+    float avx = fabs(vp.view[2]);
+    float avy = fabs(vp.view[6]);
+    float avz = fabs(vp.view[10]);
+    assert(avy >= avx && avy >= avz,
+        format("Expected Y-dominant camera for this test; avx=%.3f avy=%.3f avz=%.3f",
+               avx, avy, avz));
+
+    // Drag a base: project the focus point to screen (it lies on the
+    // construction plane at Y=focus.y), then drag a modest distance in the
+    // construction plane.
+    int cx, cy;
+    projectOrDie(Vec3(0.0f, 0.6f, 0.0f), cx, cy, "focus point on construction plane");
+    dragPixels(cx, cy, cx + 100, cy + 80);
+
+    // Drop (base-only commit — no height drag).
+    cmd("tool.set prim.cube off");
+
+    // The committed mesh must have exactly 4 vertices (one base quad).
+    assert(vertCount() == 4,
+        "panned-auto base-only commit should create 4 vertices, got " ~
+        vertCount().to!string);
+    assert(faceCount() == 1,
+        "panned-auto base-only commit should create exactly one polygon, got " ~
+        faceCount().to!string);
+
+    // All 4 base vertices must lie at Y ≈ focus.y (on the focus plane),
+    // NOT at Y ≈ 0 (origin plane). This is the discriminating assertion:
+    // PRE-FIX → fails (Y≈0); POST-FIX → passes (Y≈0.6).
+    auto m = getJson("/api/model");
+    foreach (i; 0 .. 4) {
+        Vec3 v = vertexAt(m, i);
+        assert(abs(v.y - 0.6f) < 0.05f,
+            format("Vertex %d Y=%.4f: expected ≈0.6 (focus plane). "
+                   ~ "Base is on the origin plane, not the focus plane (0066 fix not applied?)",
+                   i, v.y));
+        assert(abs(v.y) > 0.4f,
+            format("Vertex %d Y=%.4f is near the ORIGIN plane (Y≈0), "
+                   ~ "not the focus plane (Y≈0.6)", i, v.y));
+    }
+}

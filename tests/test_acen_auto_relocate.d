@@ -367,44 +367,34 @@ unittest { // Auto off-gizmo click relocates onto the GROUND plane, not the came
     postJson("/api/script", "tool.set move off");
 }
 
-unittest { // Auto relocate plane passes through the ORIGIN, not the camera FOCUS (task 0063)
+unittest { // Auto relocate plane passes through the camera FOCUS, not the ORIGIN (task 0064/0066)
     // ---------------------------------------------------------------------
-    // ORIGIN-vs-FOCUS plane discriminator (task 0063).
+    // FOCUS-vs-ORIGIN plane discriminator (task 0063 guard FLIPPED by 0066).
     //
-    // The owner observed that the reference editor's work / most-facing
-    // plane appears to follow the camera FOCUS (View3D.Center()) when the
-    // camera is panned (focus ≠ origin), whereas vibe3d's plane is ALWAYS
-    // through the world origin (create_common.d currentWorkplaneFrame:
-    // f.origin = (0,0,0) in every auto branch).
+    // Task 0063 verdict was ORIGIN-supported based on panned captures with a
+    // small focus offset (focus.z ≈ 0.015–0.053u), where the focus vs origin
+    // difference fell below the in-plane residual noise. Task 0064 repeated the
+    // capture with a LARGE pan (focus.y ≈ 0.6u) and three agreeing probes
+    // (the reference editor's work-plane center tracked the camera focus to
+    // Δ0.001u after a big pan; the default un-panned camera returned origin). The fresh evidence
+    // overturns the 0063 verdict. See doc/focus_plane_fresh_capture_findings.md.
     //
-    // Task 0063 re-analysed task 0058's already-captured PANNED reference
-    // rows (tools/local/modo_diff/phase58_panA.json / panB.json, both with
-    // focus.z ≈ 0.015 / -0.053) and found the reference relocate lands at
-    // z = 0.0000 EXACTLY on every panned row — i.e. on the work plane
-    // through the ORIGIN, NOT shifted by the focus's out-of-plane component
-    // (a focus-plane would carry z = focus.z ≠ 0). The origin↔focus offset
-    // along fwd (|delta| ≈ 0.02–0.09u) is far below the provisional in-plane
-    // residual (0.10–0.51u), so RESIDUAL MAGNITUDE alone is indistinguishable;
-    // the exact-zero out-of-plane coordinate is the decisive evidence.
-    // Verdict: ORIGIN-supported. See doc/auto_relocate_focus_plane_findings.md.
-    //
-    // This test pins vibe3d's CURRENT through-ORIGIN behaviour on a
-    // discriminating PANNED camera (focus.y ≠ 0, so the origin plane Y=0 and
-    // the focus plane Y=focus.y differ clearly) and DOCUMENTS — via the
-    // second computed value focusHit — where a focus-plane editor would land.
-    // It is the before/after discriminator for any eventual 0057 refinement:
-    //   CURRENT (origin plane Y=0):  cen.y ≈ 0
-    //   focus-plane refinement:      cen.y ≈ focus.y   (focusHit.y)
+    // Task 0066 implements the fix: the auto work plane now passes through
+    // vp.focus (carried as Viewport.focus from View.viewport()). This test
+    // pins the NEW behaviour on the same discriminating panned camera:
+    //   POST-FIX (focus plane):   cen.y ≈ focusHit.y ≈ focus.y   (0.6)
+    //   PRE-FIX  (origin plane):  cen.y ≈ 0                       (fails)
+    // The Y axis is the out-of-plane discriminator (tight tol);
+    // X/Z are in-plane PROVISIONAL (0058) and use loose tolerance.
     // ---------------------------------------------------------------------
     resetCubeAuto();
     postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
     postJson("/api/script", "tool.set move");
     settle();
 
-    // Panned camera: focus is lifted to y=0.6 (a non-origin focus, the
-    // "panned focus" condition). eye is offset so forward is dominantly -X
-    // (same family as the ground-plane test) and the ray is well clear of
-    // parallel-to-Y=0.
+    // Panned camera: focus is lifted to y=0.6 (a large, discriminating pan).
+    // eye is offset so forward is dominantly -X (same family as the ground-plane
+    // test) and the ray is well clear of parallel-to-Y=0.
     postJson("/api/camera",
         `{"eye":{"x":3.0,"y":1.6,"z":0.5},"focus":{"x":0.0,"y":0.6,"z":0.0}}`);
     settle();
@@ -429,7 +419,7 @@ unittest { // Auto relocate plane passes through the ORIGIN, not the camera FOCU
     int yoff = cast(int)(ya - 220.0f * ux);
 
     // Two expected hits on the SAME normal (0,1,0), differing only by the
-    // plane through-point: ORIGIN (Y=0) vs FOCUS (Y=focus.y).
+    // plane through-point: FOCUS (Y=focus.y) vs ORIGIN (Y=0).
     Vec3 dir = testScreenRay(cast(float)xoff, cast(float)yoff, vp);
     Vec3 originHit, focusHit;
     bool oOk = testRayPlaneIntersect(vp.eye, dir, Vec3(0,0,0), Vec3(0,1,0), originHit);
@@ -447,20 +437,138 @@ unittest { // Auto relocate plane passes through the ORIGIN, not the camera FOCU
     settle();
     Vec3 cen = evalPivotLocal();
 
-    // CURRENT (and reference-supported) behaviour: lands on the ORIGIN plane
-    // Y=0, NOT the focus plane Y=focus.y. The out-of-plane coordinate is the
-    // decisive check (tight tol), mirroring the z≈0 evidence from the
-    // reference panned captures.
-    assert(abs(cen.y - originHit.y) < 1e-2f,
-        format("cenY expected ≈%.4f (originHit, through-origin plane) but got %.4f",
-               originHit.y, cen.y));
-    // DOCUMENT the focus-plane alternative: a focus-plane editor would land
-    // ~focus.y away. This assert is the before/after marker for a 0057
-    // refinement — if vibe3d ever moves the plane onto the focus, cen.y would
-    // approach focusHit.y and this assert (current behaviour) would flip.
-    assert(abs(cen.y - focusHit.y) > 0.4f,
-        format("cenY ≈ focusHit.y (%.4f) — plane has moved onto the camera focus "
-               ~ "(0057 refinement landed); update this discriminator", focusHit.y));
+    // NEW behaviour (task 0066): lands on the FOCUS plane Y=focus.y, NOT the
+    // origin plane Y=0. The out-of-plane Y coordinate is the decisive check
+    // (tight tolerance); X/Z are in-plane PROVISIONAL (0058), loose tolerance.
+    assert(abs(cen.y - focusHit.y) < 1e-2f,
+        format("cenY expected ≈%.4f (focusHit, through-focus plane) but got %.4f "
+               ~ "(diff %.4f — still on origin plane?)",
+               focusHit.y, cen.y, abs(cen.y - focusHit.y)));
+    // Guard: must NOT be on the old origin plane.
+    assert(abs(cen.y - originHit.y) > 0.4f,
+        format("cenY ≈ originHit.y (%.4f) — plane is still through the world origin, "
+               ~ "not the camera focus (0066 fix not applied?)", originHit.y));
+
+    postJson("/api/script", "tool.set move off");
+}
+
+unittest { // Auto relocate tracks camera focus on two axes (task 0066 focus-tracking)
+    // ---------------------------------------------------------------------
+    // Focus-tracking discriminator on TWO out-of-plane axes.
+    //
+    // Pan the camera so focus = (0.5, 0.6, 0): both X and Y are off-origin.
+    // Camera forward is kept dominantly -Z (elevation near 0, azimuth near 0)
+    // so the auto-picked plane normal is Z and focus.x / focus.y both lie
+    // ON the plane. A relocate ray aimed along -Z would be parallel to the
+    // plane; instead use a large elevation so the ray crosses the Z-plane
+    // from a non-degenerate angle, and assert the hit tracks (focus.x, focus.y)
+    // out-of-plane along Z.
+    //
+    // The cleanest discriminator: use high elevation (Y-dominant forward) so
+    // autoNormal=Y, and set focus=(0.5,0.6,0). The Y hit should be ≈ focus.y
+    // = 0.6. X/Z are loose (in-plane PROVISIONAL, 0058). FAILS pre-fix (Y≈0).
+    // ---------------------------------------------------------------------
+    resetCubeAuto();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/script", "tool.set move");
+    settle();
+
+    // Camera panned on TWO axes: focus=(0.5,0.6,0). High elevation (1.3 rad ≈
+    // 75°) keeps view forward Y-dominant (avy dominant), making autoNormal=Y
+    // and focus.y the out-of-plane discriminator. The /api/camera handler
+    // takes azimuth/elevation/distance/focus — eye key is ignored by the server.
+    postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.3,"distance":3.0,"focus":{"x":0.5,"y":0.6,"z":0.0}}`);
+    settle();
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    assert(abs(cam.focus.x - 0.5f) < 1e-3f, "focus.x not applied");
+    assert(abs(cam.focus.y - 0.6f) < 1e-3f, "focus.y not applied");
+
+    // Determine which axis is most-facing (highest abs of view[2/6/10]).
+    float avx = abs(vp.view[2]);
+    float avy = abs(vp.view[6]);
+    float avz = abs(vp.view[10]);
+    Vec3 autoNormal;
+    Vec3 focusOnPlane; // the focus component along the normal axis
+    if (avy >= avx && avy >= avz) {
+        autoNormal   = Vec3(0, 1, 0);
+        focusOnPlane = Vec3(cam.focus.x, cam.focus.y, cam.focus.z);
+    } else if (avx >= avy && avx >= avz) {
+        autoNormal   = Vec3(1, 0, 0);
+        focusOnPlane = Vec3(cam.focus.x, cam.focus.y, cam.focus.z);
+    } else {
+        autoNormal   = Vec3(0, 0, 1);
+        focusOnPlane = Vec3(cam.focus.x, cam.focus.y, cam.focus.z);
+    }
+
+    // The focus hit: ray from eye through the chosen off-gizmo pixel,
+    // intersected with the focus plane (point=cam.focus, normal=autoNormal).
+    auto pivot = evalPivotLocal();
+    float size = gizmoSize(pivot, vp);
+    float sx1, sy1, sx2, sy2;
+    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
+    int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
+    int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    float dxr = sx2 - sx1, dyr = sy2 - sy1;
+    float rlen = sqrt(dxr*dxr + dyr*dyr);
+    float ux = dxr/rlen, uy = dyr/rlen;
+    int xoff = cast(int)(xa + 220.0f * uy);
+    int yoff = cast(int)(ya - 220.0f * ux);
+
+    Vec3 dir = testScreenRay(cast(float)xoff, cast(float)yoff, vp);
+    Vec3 originHit, focusHit;
+    bool oOk = testRayPlaneIntersect(vp.eye, dir,
+                                     Vec3(0,0,0), autoNormal, originHit);
+    bool fOk = testRayPlaneIntersect(vp.eye, dir,
+                                     cam.focus, autoNormal, focusHit);
+    assert(oOk && fOk, "ray-plane intersect failed for focus-tracking test");
+
+    // The focus lift must be large enough to discriminate.
+    float normalComp; // focus's component along autoNormal
+    if (autoNormal.y > 0.5f)      normalComp = cam.focus.y;
+    else if (autoNormal.x > 0.5f) normalComp = cam.focus.x;
+    else                           normalComp = cam.focus.z;
+    assert(abs(normalComp) > 0.4f,
+        format("Camera not discriminating: focus component along normal = %.4f",
+               normalComp));
+
+    // Inject off-gizmo click.
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xoff, yoff, xoff, yoff, 1));
+    settle();
+    Vec3 cen = evalPivotLocal();
+
+    // Assert cen lies on the FOCUS plane (tight out-of-plane tol).
+    // The out-of-plane coordinate of the focus hit is focusHit dotted with autoNormal.
+    float cenOnNormal;
+    float focusHitOnNormal;
+    float originHitOnNormal;
+    if (autoNormal.y > 0.5f) {
+        cenOnNormal        = cen.y;
+        focusHitOnNormal   = focusHit.y;
+        originHitOnNormal  = originHit.y;
+    } else if (autoNormal.x > 0.5f) {
+        cenOnNormal        = cen.x;
+        focusHitOnNormal   = focusHit.x;
+        originHitOnNormal  = originHit.x;
+    } else {
+        cenOnNormal        = cen.z;
+        focusHitOnNormal   = focusHit.z;
+        originHitOnNormal  = originHit.z;
+    }
+
+    assert(abs(cenOnNormal - focusHitOnNormal) < 1e-2f,
+        format("Focus-tracking: cenOnNormal=%.4f expected ≈%.4f (focus plane); "
+               ~ "diff=%.4f (still on origin plane?)",
+               cenOnNormal, focusHitOnNormal,
+               abs(cenOnNormal - focusHitOnNormal)));
+    assert(abs(cenOnNormal - originHitOnNormal) > 0.4f,
+        format("Focus-tracking: cenOnNormal=%.4f ≈ originHitOnNormal=%.4f — "
+               ~ "relocate is still through the origin, not the focus",
+               cenOnNormal, originHitOnNormal));
 
     postJson("/api/script", "tool.set move off");
 }

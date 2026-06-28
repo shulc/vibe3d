@@ -109,3 +109,122 @@ unittest { // radial falloff: closer-to-center verts move more in a drag
             dy(i).to!string ~ " < " ~ dy6.to!string);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Radial-falloff RMB anchor stays at the work-plane ORIGIN under a panned
+// camera (task 0066 Phase 2a insulation guard).
+//
+// Task 0066 makes pickWorkplaneFrame(vp)'s auto branch return vp.focus as
+// the plane origin. falloff_handles.d:radialFalloffRMBDown immediately
+// overrides frame.origin = Vec3(0,0,0) when frame.isAuto, keeping the
+// radial anchor at the world origin (byte-identical to pre-0066). This test
+// pins that insulation: with the camera panned (focus.y = 0.6), an RMB-down
+// at the screen pixel that projects to the ORIGIN plane must land the radial
+// center near origin-plane-hit, NOT near focus-plane-hit.
+//
+// Mechanism: inject SDL_MOUSEBUTTONDOWN btn:3 (RMB) + SDL_MOUSEBUTTONUP btn:3
+// via /api/play-events. radialFalloffRMBDown fires at btn:3 DOWN and calls
+// pushRadialFalloff(hit, Vec3(0,0,0)) which sets the falloff stage's `center`
+// attr. Read it back via tool.pipe.attr after the gesture.
+// ---------------------------------------------------------------------------
+unittest { // Radial-falloff RMB anchor stays at origin plane under panned camera (task 0066 guard)
+    import std.format : format;
+    import core.thread : Thread;
+    import core.time : dur;
+
+    post("http://localhost:8080/api/reset", "");
+
+    // Panned camera: focus.y = 0.6 (discriminating pan on Y). High elevation
+    // (1.3 rad ≈ 75°) keeps view forward Y-dominant so the auto workplane
+    // normal = Y and focus.y is the out-of-plane discriminator. The /api/camera
+    // handler takes azimuth/elevation/distance/focus — the eye key is ignored.
+    post("http://localhost:8080/api/camera",
+         `{"azimuth":0.4,"elevation":1.3,"distance":3.0,"focus":{"x":0.0,"y":0.6,"z":0.0}}`);
+    Thread.sleep(dur!"msecs"(80));
+
+    // Activate move tool with radial falloff.
+    string script =
+        "tool.set move\n" ~
+        "tool.pipe.attr falloff type radial\n";
+    auto setResp = post("http://localhost:8080/api/script", script);
+    assert(parseJSON(cast(string)setResp)["status"].str == "ok",
+        "tool.set + radial falloff failed: " ~ cast(string)setResp);
+    Thread.sleep(dur!"msecs"(80));
+
+    // Fetch camera and build the viewport to compute pixel coordinates.
+    auto camJ = parseJSON(cast(string)get("http://localhost:8080/api/camera"));
+    auto eye   = Vec3(cast(float)camJ["eye"]["x"].floating,
+                      cast(float)camJ["eye"]["y"].floating,
+                      cast(float)camJ["eye"]["z"].floating);
+    auto focus = Vec3(cast(float)camJ["focus"]["x"].floating,
+                      cast(float)camJ["focus"]["y"].floating,
+                      cast(float)camJ["focus"]["z"].floating);
+    int vpW = cast(int)camJ["width"].integer;
+    int vpH = cast(int)camJ["height"].integer;
+    int vpX = cast(int)camJ["vpX"].integer;
+    int vpY = cast(int)camJ["vpY"].integer;
+
+    assert(fabs(focus.y - 0.6f) < 1e-3f,
+        format("camera focus.y not applied: got %.4f", focus.y));
+
+    // Choose a screen pixel near the viewport center — it will project to
+    // both the origin plane (Y=0) and the focus plane (Y=0.6) at different
+    // world points. The insulation asserts the anchor lands on the ORIGIN
+    // plane (Y≈0), not the focus plane (Y≈0.6).
+    int px = vpX + vpW / 2;
+    int py = vpY + vpH / 2;
+
+    // Build an RMB-only event log: DOWN at (px,py) then UP at the same spot.
+    // No motion events — we only need the anchor set at DOWN time.
+    string rmbLog = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":100.000,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}`,
+        vpX, vpY, vpW, vpH, px, py, px, py);
+
+    auto playResp = post("http://localhost:8080/api/play-events", rmbLog);
+    assert(parseJSON(cast(string)playResp)["status"].str == "success",
+        "play-events failed: " ~ cast(string)playResp);
+    // Wait for playback to finish.
+    foreach (i; 0 .. 60) {
+        auto s = parseJSON(cast(string)get("http://localhost:8080/api/play-events/status"));
+        if (s["finished"].type == JSONType.TRUE) break;
+        Thread.sleep(dur!"msecs"(50));
+    }
+    Thread.sleep(dur!"msecs"(120)); // settle
+
+    // Read the falloff center attr back from the pipe.
+    auto pipeJ = parseJSON(cast(string)get("http://localhost:8080/api/toolpipe"));
+    float[3] falloffCenter = [0, 0, 0];
+    bool foundFalloff = false;
+    foreach (st; pipeJ["stages"].array) {
+        // The falloff stage is task "WGHT" (weight), id "falloff".
+        if (st["task"].str == "WGHT") {
+            auto cv = st["attrs"]["center"].str;
+            // Parse "x,y,z" string.
+            import std.string : split;
+            import std.conv : to;
+            auto parts = cv.split(",");
+            assert(parts.length == 3,
+                "falloff center attr not a 3-component string: " ~ cv);
+            falloffCenter[0] = parts[0].to!float;
+            falloffCenter[1] = parts[1].to!float;
+            falloffCenter[2] = parts[2].to!float;
+            foundFalloff = true;
+            break;
+        }
+    }
+    assert(foundFalloff, "FALLOFF stage not found in /api/toolpipe after RMB gesture");
+
+    // The anchor Y must be near ORIGIN (Y≈0), NOT near FOCUS (Y≈0.6).
+    // This asserts the Phase 2a insulation in falloff_handles.d held.
+    float anchorY = falloffCenter[1];
+    assert(fabs(anchorY) < 0.15f,
+        format("Radial anchor Y=%.4f: expected near ORIGIN (Y≈0), not focus (Y=0.6). "
+               ~ "Phase 2a insulation in falloff_handles.d may be broken.",
+               anchorY));
+    assert(fabs(anchorY - 0.6f) > 0.3f,
+        format("Radial anchor Y=%.4f is near the FOCUS plane (Y=0.6). "
+               ~ "The anchor must stay at the work-plane ORIGIN per 0066 design.",
+               anchorY));
+}
