@@ -24,7 +24,12 @@
 import std.net.curl;
 import std.json;
 import std.conv  : to;
-import std.math  : abs;
+import std.math  : abs, sqrt;
+import std.format : format;
+import core.thread : Thread;
+import core.time   : msecs;
+
+import drag_helpers;
 
 void main() {}
 
@@ -186,4 +191,178 @@ unittest { // Select mode ignores the relocate pin
         "Select pivot must stay the selection centroid, got " ~ a["cenY"]);
     assert(abs(floatAttr(a, "cenX")) < 1e-3, "cenX: " ~ a["cenX"]);
     assert(abs(floatAttr(a, "cenZ")) < 1e-3, "cenZ: " ~ a["cenZ"]);
+}
+
+// -------------------------------------------------------------------------
+// Projection-wiring: off-gizmo click in Auto mode relocates onto the
+// GROUND PLANE (Y=0), NOT onto the most-facing camera-axis plane.
+//
+// This test is the before/after discriminator for the Phase-1 fix:
+//   PRE-FIX:  the binary projects onto pickMostFacingPlane(vp)
+//             (camera-swinging axis plane) → center has cenY ≫ 0 for a
+//             side-view camera (old behaviour).
+//   POST-FIX: the binary projects onto the work plane (Y=0 default) →
+//             center lands on Y=0 (cenY ≈ 0).
+//
+// Mechanism: identical to test_relocate_boundary.d (proven) — off-gizmo
+// mouse-DOWN via buildDragLog/playAndWait, pivot read via evalPivot().
+//
+// Discriminating camera: eye=(3,1,0.5), focus=(0,0,0).  The camera
+// forward is dominantly −X (|view[2]|=avx is the largest component), so
+// pickMostFacingPlane returns normal=(1,0,0) (the X-plane through origin).
+// Projecting the click ray onto that plane gives a hit with Y ≠ 0, which
+// distinguishes it clearly from a ground-plane hit with Y≈0.
+//
+// The MANDATORY discriminator (plan Risk 8) is encoded in-test:
+//   groundHit  = rayPlaneIntersect(eye, dir, (0,0,0), (0,1,0))
+//   oldHit     = rayPlaneIntersect(eye, dir, (0,0,0), (1,0,0))
+// We assert:
+//   (a) relocated center ≈ groundHit  (full X/Y/Z)
+//   (b) relocated center ≠ oldHit     (Y component differs by > 0.5)
+// -------------------------------------------------------------------------
+
+// Inline screenRay + rayPlaneIntersect — duplicated from source/math.d
+// so the test binary compiles without pulling in the app sources.
+private Vec3 testScreenRay(float sx, float sy, const ref Viewport vp) {
+    float nx = ((sx - vp.x) / vp.width)  * 2.0f - 1.0f;
+    float ny = 1.0f - ((sy - vp.y) / vp.height) * 2.0f;
+    float vx = nx / vp.proj[0];
+    float vy = ny / vp.proj[5];
+    const ref float[16] v = vp.view;
+    Vec3 d = Vec3(v[0]*vx + v[1]*vy + v[2]*(-1.0f),
+                  v[4]*vx + v[5]*vy + v[6]*(-1.0f),
+                  v[8]*vx + v[9]*vy + v[10]*(-1.0f));
+    float len = sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+    return len > 1e-9f ? Vec3(d.x/len, d.y/len, d.z/len) : Vec3(0, 0, -1);
+}
+
+private bool testRayPlaneIntersect(Vec3 origin, Vec3 dir,
+                                    Vec3 planePoint, Vec3 n, out Vec3 hit) {
+    float denom = n.x*dir.x + n.y*dir.y + n.z*dir.z;
+    if (abs(denom) < 1e-6f) return false;
+    Vec3 d = Vec3(planePoint.x - origin.x,
+                  planePoint.y - origin.y,
+                  planePoint.z - origin.z);
+    float t = (n.x*d.x + n.y*d.y + n.z*d.z) / denom;
+    hit = Vec3(origin.x + dir.x*t,
+               origin.y + dir.y*t,
+               origin.z + dir.z*t);
+    return true;
+}
+
+// settle: identical to test_relocate_boundary.d — wait ~120ms for the
+// main loop to process the injected events before reading geometry/pivot.
+private void settle() { Thread.sleep(120.msecs); }
+
+// Read the authoritative gizmo pivot from /api/toolpipe/eval.
+private Vec3 evalPivotLocal() {
+    auto c = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;
+    return Vec3(cast(float)c[0].floating,
+                cast(float)c[1].floating,
+                cast(float)c[2].floating);
+}
+
+unittest { // Auto off-gizmo click relocates onto the GROUND plane, not the camera-facing axis plane
+    // --- Preamble ---
+    // resetCubeAuto() resets to a cube with Auto ACEN, no userPlaced pin.
+    resetCubeAuto();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/script", "tool.set move");
+    settle();
+
+    // --- Set a discriminating side-view camera ---
+    // eye=(3,1,0.5), focus=(0,0,0): camera forward is dominantly −X.
+    // For this eye the view matrix has |view[2]| (avx component) as the
+    // largest of avx/avy/avz, so pickMostFacingPlane returns normal=(1,0,0)
+    // (the X-plane through origin, cenY ≠ 0 pre-fix).
+    postJson("/api/camera", `{"eye":{"x":3.0,"y":1.0,"z":0.5},"focus":{"x":0,"y":0,"z":0}}`);
+    settle();
+
+    // Fetch the actual camera so our in-test projections use the same
+    // view/proj matrices as the running binary.
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+
+    // --- Choose an off-gizmo click pixel ---
+    // Compute the +X arrow handle grab point (0.7 along the arrow) and
+    // the +X screen direction (unit), then offset perpendicularly by 220px
+    // to land well clear of every handle. Mirrors arrowGrabPx +
+    // arrowDirPx from test_relocate_boundary.d (same logic, inlined here
+    // since those are local to that file, not in drag_helpers).
+    auto pivot = evalPivotLocal();
+    float size = gizmoSize(pivot, vp);
+    float sx1, sy1, sx2, sy2;
+    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
+    // Grab point: 0.7 along the arrow (matches arrowGrabPx).
+    int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
+    int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    // Unit direction along +X arrow in screen space.
+    float dxr = sx2 - sx1, dyr = sy2 - sy1;
+    float rlen = sqrt(dxr*dxr + dyr*dyr);
+    float ux = dxr/rlen, uy = dyr/rlen;
+    // Perpendicular offset of 220px, same as test_relocate_boundary.d.
+    int xoff = cast(int)(xa + 220.0f * uy);
+    int yoff = cast(int)(ya - 220.0f * ux);
+
+    // --- Compute the two expected hit points analytically (discriminator) ---
+    // POST-FIX expectation: ground plane Y=0, normal=(0,1,0).
+    Vec3 dir = testScreenRay(cast(float)xoff, cast(float)yoff, vp);
+    Vec3 groundHit, oldHit;
+    bool gOk = testRayPlaneIntersect(vp.eye, dir,
+                                      Vec3(0,0,0), Vec3(0,1,0), groundHit);
+    // PRE-FIX expectation: X-plane (normal=(1,0,0)) — the most-facing plane
+    // for this camera (avx is dominant). Replicated inline from
+    // create_common.d:50-61 (abs-compare on view[2/6/10]).
+    float avx = abs(vp.view[2]);
+    float avy = abs(vp.view[6]);
+    float avz = abs(vp.view[10]);
+    Vec3 oldNormal;
+    if (avx >= avy && avx >= avz)       oldNormal = Vec3(1,0,0);
+    else if (avy >= avx && avy >= avz)  oldNormal = Vec3(0,1,0);
+    else                                 oldNormal = Vec3(0,0,1);
+    bool oOk = testRayPlaneIntersect(vp.eye, dir,
+                                      Vec3(0,0,0), oldNormal, oldHit);
+    assert(gOk, "ground plane ray-intersect failed (ray parallel to Y=0?)");
+    assert(oOk, "old-plane ray-intersect failed");
+    // Sanity: the two hits differ clearly — if not, the camera is wrong.
+    float ydiff = abs(groundHit.y - oldHit.y);
+    assert(ydiff > 0.5f,
+        format("Camera is not discriminating: groundHit.y=%.4f oldHit.y=%.4f diff=%.4f",
+               groundHit.y, oldHit.y, ydiff));
+
+    // --- Inject the off-gizmo click ---
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xoff, yoff, xoff, yoff, 1));
+    settle();
+
+    // --- Read the relocated pivot ---
+    Vec3 cen = evalPivotLocal();
+
+    // (a) Assert full landed point ≈ groundHit (Y=0 work plane, post-fix).
+    //     Y tolerance: 1e-2 — the plane check is tight; cenY near zero proves
+    //     the projection is onto Y=0, not a camera-facing axis plane.
+    //     X/Z tolerance: 1.0 world unit — the in-plane landing point depends on
+    //     the perspective ray, which is PROVISIONAL (0058 follow-up; the app's
+    //     cachedVp and our reconstructed vp may differ by sub-frame rounding).
+    //     The discriminator against the old behaviour is the Y check + part (b).
+    assert(abs(cen.y - groundHit.y) < 1e-2f,
+        format("cenY expected ≈%.4f (groundHit) but got %.4f (diff %.4f)",
+               groundHit.y, cen.y, abs(cen.y - groundHit.y)));
+    assert(abs(cen.x - groundHit.x) < 1.0f,
+        format("cenX expected ≈%.4f (groundHit) but got %.4f (PROVISIONAL in-plane)",
+               groundHit.x, cen.x));
+    assert(abs(cen.z - groundHit.z) < 1.0f,
+        format("cenZ expected ≈%.4f (groundHit) but got %.4f (PROVISIONAL in-plane)",
+               groundHit.z, cen.z));
+
+    // (b) Assert the landed point is NOT on the old most-facing plane.
+    //     The camera ensures oldHit.y ≫ 0 (verified above), so a Y-near-0
+    //     result cannot equal oldHit.
+    assert(abs(cen.y - oldHit.y) > 0.4f,
+        format("cenY ≈ oldHit.y (%.4f) — still on old camera-facing plane, not ground",
+               oldHit.y));
+
+    // Clean up.
+    postJson("/api/script", "tool.set move off");
 }
