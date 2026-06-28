@@ -63,6 +63,10 @@ class ScaleTool : TransformTool {
     ScaleHeadHandle headX, headY, headZ;
 
 private:
+    // Standalone-only (`wrapperRef is null`): in the wrapped role the truth is
+    // `run.s` on the wrapper. Every wrapped read is re-pointed to
+    // `wrap.publishedScale()`; these fields are kept so the `wrapperRef is null`
+    // branches compile and the legacy FORMS=0 standalone panel continues to work.
     Vec3     scaleAccum     = Vec3(1, 1, 1);  // cumulative scale factor per axis since tool activated
     Vec3     dragScaleAccum = Vec3(1, 1, 1);  // scale within current drag (for yellow arrows)
     Vec3     propScale      = Vec3(1, 1, 1);  // persistent value shown in Tool Properties
@@ -75,6 +79,8 @@ private:
 
     // Phase C.3: Tool Properties state at the start of the current edit
     // session, restored by hooks on undo of the matching MeshVertexEdit.
+    // Standalone-only: the wrapped commit-hook restore is gated on
+    // `wrapperRef is null`.
     Vec3   preEditScaleAccum;
     Vec3   preEditPropScale;
 
@@ -384,7 +390,14 @@ public:
                 wrap = w;
             }
         }
-        if (!dragLive && scaleAccum != Vec3(1, 1, 1)) {
+        // Refire gate: in the WRAPPED role read wrapper truth (`publishedScale()`
+        // = run.s — never stale after undo) rather than the sub-tool accumulator.
+        // In the standalone role keep the accumulator gate. Note A: ships in the
+        // SAME commit as the commit-hook restore gate below.
+        bool heldNonIdentity = (wrap !is null)
+            ? (wrap.publishedScale() != Vec3(1, 1, 1))
+            : (scaleAccum != Vec3(1, 1, 1));
+        if (!dragLive && heldNonIdentity) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
                 // P-C: trigger spans falloff + snap + symmetry.
@@ -497,14 +510,19 @@ public:
         auto wrapRevert = wrapperFieldRevertHook;
         cmd.setHooks(
             () {
-                scaleAccum = accAfter;  propScale = propAfter;
+                // Accumulator restore is standalone-only: the wrapped role's
+                // geometry is driven by wrapApply (run.s restored by the wrapper
+                // hook). Gate on wrapperRef is null so a wrapped undo-to-identity
+                // leaves scaleAccum at its stale value without corrupting the
+                // refire gate (which now reads wrapper truth, not this accumulator).
+                if (wrapperRef is null) { scaleAccum = accAfter;  propScale = propAfter; }
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
                 if (wrapApply !is null) wrapApply();
             },
             () {
-                scaleAccum = accBefore; propScale = propBefore;
+                if (wrapperRef is null) { scaleAccum = accBefore; propScale = propBefore; }
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
@@ -572,12 +590,13 @@ public:
         // STANDALONE accumulator restore (wrapperRef is null): the
         // (activationVertices, scaleAccum) invariant must hold again once the
         // verts are restored, so peel the sub-tool accumulator back to its
-        // session start. In the WRAPPED role this is inert bookkeeping — the
-        // geometry is reverted from the wrapper's editBaseline
-        // (cancelOpenSessionGeometry), never from (activationVertices,
-        // scaleAccum) — but keeping it costs nothing.
-        scaleAccum = preEditScaleAccum;
-        propScale  = preEditPropScale;
+        // session start. In the WRAPPED role the geometry is reverted from the
+        // wrapper's editBaseline (cancelOpenSessionGeometry) and the refire gate
+        // reads wrapper truth, so the accumulator restore is skipped.
+        if (wrapperRef is null) {
+            scaleAccum = preEditScaleAccum;
+            propScale  = preEditPropScale;
+        }
         // Phase 5b — the pre-edit PANEL value returned to the wrapper (which
         // snaps its `run.s` truth to it) comes from the
         // WRAPPER TRUTH in the wrapped role, NOT this sub-tool's `propScale`
@@ -917,7 +936,18 @@ public:
     }
 
     override void drawProperties() {
-        if (dragAxis >= 0) propScale = scaleAccum;
+        if (wrapperRef !is null) {
+            // WRAPPED role (FORMS=0 kill-switch only — FORMS=1 suppresses this
+            // path entirely). Seed propScale from wrapper truth each frame;
+            // REPLACES the dragAxis>=0 accumulator mirror (Note B: publishedScale()
+            // already reflects the in-progress gizmo factor in the wrapped path,
+            // so assigning scaleAccum on top would double-count the drag).
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                propScale = wrap.publishedScale();
+        } else if (dragAxis >= 0) {
+            propScale = scaleAccum;
+        }
         ImGui.DragFloat("X", &propScale.x, 0.01f, 0.0f, float.max, "%.4f");
         bool xActive = ImGui.IsItemActive(), xDone = ImGui.IsItemDeactivatedAfterEdit();
         ImGui.DragFloat("Y", &propScale.y, 0.01f, 0.0f, float.max, "%.4f");

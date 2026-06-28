@@ -77,15 +77,19 @@ private:
     Vec3     wrapperInputFrameZ = Vec3(0, 0, 1);
     bool     wrapperInputFrameValid = false;
 
+    // Standalone-only (`wrapperRef is null`): in the wrapped role the truth is
+    // `run.r` / `headlessRotate` on the wrapper. Every wrapped read is re-pointed
+    // to `wrap.publishedRotate()` / the refire/commit-hook gate; these fields are
+    // kept so the `wrapperRef is null` branches compile and the legacy FORMS=0
+    // standalone panel continues to work.
     Vec3     angleAccum = Vec3(0, 0, 0);  // total rotation per axis since tool activated (radians)
     Vec3     propDeg = Vec3(0, 0, 0);     // persistent value shown in Tool Properties (degrees)
     Vec3[]   origVertices;                // snapshot of vertex positions at activate()
 
     // Phase C.3: Tool Properties state at the START of the current edit
     // session, captured by snapshotEditState() and restored on undo via
-    // hooks attached to the recorded MeshVertexEdit. Lets undo of a single
-    // slider release peel back ONLY that drag's contribution to propDeg /
-    // angleAccum without zeroing the other axes.
+    // hooks attached to the recorded MeshVertexEdit. Standalone-only: the
+    // wrapped commit-hook restore is gated on `wrapperRef is null`.
     Vec3     preEditAngleAccum;
     Vec3     preEditPropDeg;
 
@@ -327,7 +331,17 @@ public:
                 wrap = w;
             }
         }
-        if (!dragLive && angleAccum != Vec3(0, 0, 0)) {
+        // Refire gate: in the WRAPPED role read wrapper truth (`publishedRotate()`
+        // = headlessRotate in degrees, derived from run.r — never stale after
+        // undo) rather than the sub-tool accumulator. In the standalone role keep
+        // the accumulator gate (the only truth it has). Note A: this re-point
+        // ships in the SAME commit as the commit-hook restore gate below so that
+        // after a wrapped undo-to-identity the gate reads wrapper truth (identity
+        // = Vec3(0,0,0)) rather than the stale-nonzero `angleAccum`.
+        bool heldNonIdentity = (wrap !is null)
+            ? (wrap.publishedRotate() != Vec3(0, 0, 0))
+            : (angleAccum != Vec3(0, 0, 0));
+        if (!dragLive && heldNonIdentity) {
             if (editIsOpen()) {
                 // ARM 1 — panel session: old in-place coalesce, no record.
                 // P-C: trigger spans falloff + snap + symmetry. The wrapper's
@@ -460,14 +474,20 @@ public:
         auto wrapRevert = wrapperFieldRevertHook;
         cmd.setHooks(
             () {
-                angleAccum = accAfter;  propDeg = propAfter;
+                // Accumulator restore is standalone-only: the wrapped role's
+                // geometry is driven by wrapApply (run.r / headlessRotate
+                // restored by the wrapper hook). Gate on wrapperRef is null so
+                // a wrapped undo-to-identity leaves angleAccum at its stale
+                // pre-gesture value without corrupting the refire gate (which
+                // now reads wrapper truth, not this accumulator).
+                if (wrapperRef is null) { angleAccum = accAfter;  propDeg = propAfter; }
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
                 if (wrapApply !is null) wrapApply();
             },
             () {
-                angleAccum = accBefore; propDeg = propBefore;
+                if (wrapperRef is null) { angleAccum = accBefore; propDeg = propBefore; }
                 restoreFalloffSet(fSnap);
                 if (haveSn) if (auto sn = snapStageForHooks())     sn.restoreConfigFromPacket(snSnap);
                 if (haveSy) if (auto sy = symmetryStageForHooks()) sy.restoreConfigFromPacket(sySnap);
@@ -541,11 +561,14 @@ public:
         // STANDALONE accumulator restore (wrapperRef is null): the
         // (origVertices, angleAccum) invariant must hold again once the verts
         // are restored, so peel the sub-tool accumulator back to its session
-        // start. In the WRAPPED role this is inert bookkeeping — the geometry
-        // is reverted from the wrapper's editBaseline (cancelOpenSessionGeometry),
-        // never from (origVertices, angleAccum) — but keeping it costs nothing.
-        angleAccum = preEditAngleAccum;
-        propDeg    = preEditPropDeg;
+        // start. In the WRAPPED role the geometry is reverted from the wrapper's
+        // editBaseline (cancelOpenSessionGeometry) and the refire gate reads
+        // wrapper truth, so the accumulator restore is skipped to avoid leaving
+        // stale values that would be inert anyway.
+        if (wrapperRef is null) {
+            angleAccum = preEditAngleAccum;
+            propDeg    = preEditPropDeg;
+        }
         // Phase 5a — the pre-edit PANEL value returned to the wrapper (which
         // snaps its `headlessRotate` display mirror to it) comes from the
         // WRAPPER TRUTH in the wrapped role, NOT this sub-tool's `propDeg`
@@ -1021,7 +1044,18 @@ public:
 
     override void drawProperties() {
         import std.math : PI;
-        if (dragAxis >= 0) {
+        if (wrapperRef !is null) {
+            // WRAPPED role (FORMS=0 kill-switch only — FORMS=1 suppresses this
+            // path entirely). Seed propDeg from the wrapper truth each frame;
+            // REPLACES the dragAxis>=0 recompute (Note B: publishedRotate()
+            // already reflects the in-progress gizmo angle in the wrapped path,
+            // so adding dispAngle on top would double-count it).
+            import tools.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                propDeg = wrap.publishedRotate();
+        } else if (dragAxis >= 0) {
+            // STANDALONE role: derive propDeg from the sub-tool accumulator +
+            // the in-progress gizmo angle, as before.
             float dispAngle = (SDL_GetModState() & KMOD_CTRL) ? lastSnappedAngle : totalAngle;
             // For view-axis drag (==3) the in-progress angle is decomposed
             // onto the frozen INPUT basis (captured at drag start), not the
