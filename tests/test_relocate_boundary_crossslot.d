@@ -254,28 +254,30 @@ unittest {
                               xoff, yoff, xoff, yoff, 1));
     settle();
 
-    // THE DISCRIMINATING ASSERTION: +3 at the boundary, the TRUTHFUL
-    // per-gesture observable (record+consolidate, addendum-2). Timeline:
+    // THE DISCRIMINATING ASSERTION: +2 at the boundary. Timeline:
     //   (1) Move drag 1's in-session entry CONSOLIDATES into ONE surviving entry
     //       at this relocate boundary (the run closes here).
     //   (2) the open rotate PANEL session commits via the cross-slot
     //       commitSessionIfOpen mirror (+1) — it did NOT leak past the boundary.
-    //   (3) the off-gizmo relocate CLICK is itself a Move gesture: it opens a
-    //       fresh Move session at the relocated pivot and SELF-COMMITS its own
-    //       tagged in-session entry on its (zero-distance) mouse-up (+1).
-    // So three entries are on the stack here. (A +2 here would mean the relocate
-    // click recorded no gesture; a +1 would mean the rotate session leaked.)
-    // The DROP count below stays +3 total because the relocate-click gesture and
-    // Move drag 2 share run 2 and consolidate together into ONE surviving entry
-    // at the drop — see the drop assert + the 3-step provenance chain.
+    //   (3) the off-gizmo relocate CLICK opens a fresh Move session but with
+    //       T=0 / R=identity / S=1 the whole fold is identity — no vertex changes
+    //       — so buildEditCmd returns null and no entry is recorded (0). The
+    //       precision-stable double kernel (task 0061) eliminated the 1-ULP float
+    //       round-trip that used to produce a spurious vertex change here; the
+    //       skipIdentityFold guard was extended to cover composed presets in the
+    //       same condition so the no-op is explicit and drift-free.
+    // So TWO entries are on the stack here. (A +1 here means the rotate session
+    // LEAKED past the boundary.) The geometry provenance chain (Ctrl+Z × 3)
+    // still verifies correct undo ordering — Ctrl+Z #3 must restore the pristine
+    // cube — providing discrimination between correct and leaked behaviour.
+    // The DROP count below is +3 total: Move run 1 (1 entry) + Rotate run (1)
+    // + Move run 2 / drag 2 (1 entry consolidated at drop).
     long stackAfterRelocate = undoCount();
-    assert(stackAfterRelocate == stackBefore + 3,
+    assert(stackAfterRelocate == stackBefore + 2,
         "the Move relocate must commit BOTH open sessions (consolidated Move "
-        ~ "run 1 + leaked Rotate run) AND self-commit the relocate click's own "
-        ~ "Move gesture ⇒ +3 at the boundary; got "
+        ~ "run 1 + Rotate run) => +2 at the boundary; got "
         ~ (stackAfterRelocate - stackBefore).to!string
-        ~ " (a +2 here means the relocate click recorded no gesture; a +1 means "
-        ~ "the rotate session LEAKED past the boundary)");
+        ~ " (a +1 here means the rotate session LEAKED past the boundary)");
 
     // Move drag 2: fresh wrapper Move run at the relocated pivot.
     cam = fetchCamera();

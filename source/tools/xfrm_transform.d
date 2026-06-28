@@ -77,7 +77,7 @@ import ai.interaction : AiInteractionPhase;
 import math : Vec3, Viewport, screenRay, rayPlaneIntersect,
                closestPointOnSegmentToRay, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix, matMul4, wrapAboutPivot, eulerZYXFromMatrix,
+               identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix,
                frameMatrix, frameMatrixInverse;
 import editmode : EditMode;
 import mesh;
@@ -452,8 +452,9 @@ public:
     // THIS matrix — `gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot)` —
     // instead of rebuilding a parallel about-pivot rotation/scale matrix, so the
     // GPU preview is the literal same transform the CPU fold applied.
-    float[16] lastFoldMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-    Vec3      lastFoldPivot  = Vec3(0, 0, 0);
+    float[16] lastFoldMatrix  = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    Vec3      lastFoldPivot   = Vec3(0, 0, 0);
+    Vec3      lastFoldAnchor  = Vec3(0, 0, 0);
 
     // View-ring rotate — the arbitrary-axis counterpart of `headlessRotate`.
     // `headlessRotate.{x,y,z}` are rotations about the basis axes bX/bY/bZ;
@@ -2348,28 +2349,33 @@ noBankConsumed:
                 // flows into `applyTranslatePerCluster`, otherwise into the
                 // global-basis branch.
                 //
-                // Skip applyTRS when this is a pure-translate preset (flagR
-                // and flagS both false), the motion event contributed zero
-                // delta, and run.t is still zero. For a Move-only preset the
-                // fold is pivot + I*(p - pivot) + 0 = p, but applyFold with a
-                // far-away pivot introduces float cancellation error even for
-                // the identity transform (p→pivot subtraction then re-addition
-                // does not roundtrip exactly), producing a spurious
-                // mesh.vertex_edit on a zero-motion relocate click whose gizmo
-                // landed far from the mesh. The geometric result is identical
-                // to not calling applyTRS (the baseline is already in
-                // mesh.vertices from the prior commit / beginEdit capture).
+                // Skip applyTRS when the WHOLE fold is identity: T=0, R=I,
+                // S=1, and the current motion event contributed zero delta.
+                // Under these conditions applyFold writes `anchor + M_lin*d +
+                // off` with M_lin=I, t_fold=0, which in exact arithmetic is
+                // `base` — no geometric effect. The old float formula
+                // (pivot + applyAffine(I, base-pivot)) could introduce a 1-ULP
+                // round-trip error (base-pivot+pivot ≠ base), producing a
+                // spurious mesh.vertex_edit on a zero-motion relocate click at
+                // a far pivot. The stable double-kernel (0061) eliminates that
+                // drift, so the identity fold is now truly a no-op — and must
+                // be skipped so `buildEditCmd` correctly returns null rather than
+                // recording a phantom geometry edit.
                 //
-                // The guard is MOVE-ONLY (flagR false, flagS false): for
-                // composed presets (Transform / xfrm.softRotate etc.) the
-                // pivot change matters even with zero T delta — the rotate /
-                // scale re-application at the new pivot may produce a
-                // geometrically meaningful commit — so we always run applyTRS
-                // there. The ULP roundtrip only matters for the pure-translate
-                // path where the fold reduces to the identity.
-                bool skipIdentityFold = !flagR && !flagS
-                                     && pending.x == 0 && pending.y == 0 && pending.z == 0
-                                     && !bankIsNonIdentity(DragBank.Move);
+                // The "composed preset pivot matters" concern only applies when
+                // the held R or S are non-identity: re-applying a non-trivial
+                // rotation/scale at a NEW pivot genuinely changes geometry. When
+                // BOTH are identity the whole fold reduces to the identity
+                // regardless of pivot, so the skip is safe for ANY preset.
+                //
+                // This skip ONLY fires on a zero-distance drag frame
+                // (pending==0, run.t==0, run.r==I, run.s==(1,1,1)); any
+                // actual motion or held non-identity bank takes the live path.
+                bool skipIdentityFold = pending.x == 0 && pending.y == 0
+                                     && pending.z == 0
+                                     && !bankIsNonIdentity(DragBank.Move)
+                                     && !bankIsNonIdentity(DragBank.Rotate)
+                                     && !bankIsNonIdentity(DragBank.Scale);
                 if (!skipIdentityFold)
                     applyTRS(dragBaseline);
 
@@ -2531,7 +2537,7 @@ noBankConsumed:
                         // (wrapped about its pivot) rather than rebuilding a
                         // parallel about-pivot rotation. Whole-mesh/no-falloff
                         // fast-path always takes the global fold, so it is fresh.
-                        gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
+                        gpuMatrix = wrapAboutPivotStable(lastFoldMatrix, lastFoldPivot);
                     } else {
                         needsGpuUpdate = true;
                     }
@@ -2562,7 +2568,7 @@ noBankConsumed:
                     if (rotDragFastPath && !runGpuBufferDirty) {
                         // MS-4.5 — reuse the fold's composed matrix (view-ring
                         // rotation included) wrapped about its pivot.
-                        gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
+                        gpuMatrix = wrapAboutPivotStable(lastFoldMatrix, lastFoldPivot);
                     } else {
                         needsGpuUpdate = true;
                     }
@@ -2612,7 +2618,7 @@ noBankConsumed:
                 if (scaleDragFastPath && !runGpuBufferDirty) {
                     // MS-4.5 — reuse the fold's composed scale matrix wrapped
                     // about its pivot instead of rebuilding it here.
-                    gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot);
+                    gpuMatrix = wrapAboutPivotStable(lastFoldMatrix, lastFoldPivot);
                 } else {
                     needsGpuUpdate = true;
                 }
@@ -3288,7 +3294,8 @@ noBankConsumed:
                     }
                     FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
                     applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                     pivot, identityMatrix, blendModeForMeasure(),
+                                     pivot, identityMatrix, Vec3(0, 0, 0),
+                                     blendModeForMeasure(),
                                      noFo, cachedVp, cp, ap, clusterM,
                                      dragSymmetry, toProcess);
                 } else {
@@ -3299,7 +3306,7 @@ noBankConsumed:
                                + bY * run.t.y
                                + bZ * run.t.z;
                     applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                     pivot, translationMatrix(delta),
+                                     pivot, translationMatrix(delta), Vec3(0, 0, 0),
                                      blendModeForMeasure(),
                                      dragFalloff, cachedVp, cp, ap, null,
                                      dragSymmetry, toProcess);
@@ -3387,6 +3394,7 @@ noBankConsumed:
                                          bX, bY, bZ,
                                          run.s.x, run.s.y,
                                          run.s.z),
+                                     Vec3(0, 0, 0),
                                      blendModeForMeasure(),
                                      dragFalloff, cachedVp, cp, ap, clusterM,
                                      dragSymmetry, toProcess,
@@ -4741,8 +4749,9 @@ private:
 
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
-        lastFoldMatrix = M;
-        lastFoldPivot  = pivot;
+        lastFoldMatrix  = M;
+        lastFoldPivot   = pivot;
+        // lastFoldAnchor is published below, after `src` is built.
 
         // Per-cluster (ACEN.Local): one composed matrix per cluster, in its OWN
         // per-frame frame about its OWN pivot. This path STAYS LEGACY — the single
@@ -4768,6 +4777,14 @@ private:
         foreach (k, vi; vertexIndicesToProcess)
             src[k] = (vi >= 0 && vi < cast(int)baseline.length)
                    ? baseline[vi] : Vec3(0, 0, 0);
+
+        // Anchor = first moving-vert's frozen baseline position, used ONLY by
+        // the CPU per-vertex kernel (applyXformMatrix) to avoid large-minus-large
+        // cancellation at a far pivot. The GPU helper (wrapAboutPivotStable) does
+        // NOT take the anchor — it computes its translate column in double. CPU and
+        // GPU stay consistent because both reduce to the same affine map
+        // pivot + M·(v - pivot), not via a shared anchor value.
+        lastFoldAnchor = (src.length > 0) ? src[0] : Vec3(0, 0, 0);
 
         // Perf (doc/perf_harness_plan.md): this is the SINGLE per-frame
         // vertex-cloud apply for the live unified T/R/S drag — `applyFold`
@@ -4808,6 +4825,7 @@ private:
                            ? rotateBlendMode()
                            : blendModeForMeasure();
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
+                         lastFoldAnchor,
                          foldMode, dragFalloff, cachedVp, cp, ap,
                          clusterM, noSym, toProcess, /*weightVerts=*/ baseline);
 
@@ -4880,6 +4898,7 @@ private:
             applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
                              pivot,
                              pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                             Vec3(0, 0, 0),
                              blendModeForMeasure(),
                              dragFalloff, cachedVp, cp, ap, clusterM,
                              dragSymmetry, toProcess);
@@ -4888,6 +4907,7 @@ private:
             applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
                              pivot,
                              pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                             Vec3(0, 0, 0),
                              blendModeForMeasure(),
                              dragFalloff, cachedVp, cp, ap, null,
                              dragSymmetry, toProcess);

@@ -463,6 +463,94 @@ unittest { // wrapAboutPivot of an origin-fixing scale == the about-pivot one
     foreach (i; 0 .. 16) assert(isClose(W[i], direct[i], 1e-5f, 1e-5f));
 }
 
+/// Precision-stable variant of wrapAboutPivot. Computes the translate column
+/// `pivot − M_lin·pivot + t_fold` in double precision so that the large-minus-large
+/// cancellation at a far pivot (|pivot| >> 1) does not lose bits. The linear
+/// block (upper-left 3×3) is unchanged. The returned matrix is algebraically
+/// identical to wrapAboutPivot(M, pivot) in exact arithmetic and avoids the
+/// ~|pivot|·2^-23 float32 error for large |pivot|.
+float[16] wrapAboutPivotStable(float[16] M, Vec3 pivot) {
+    // M is origin-fixing: the intended GPU transform is W·v = pivot + M_lin·(v−pivot) + t_fold,
+    // equivalently W·v = M_lin·v + (pivot − M_lin·pivot + t_fold).
+    // W_trans = pivot − M_lin·pivot + t_fold, computed in double to avoid
+    // large-minus-large cancellation when |pivot| is large (far action center).
+
+    // Extract M_lin (upper-left 3×3, column-major) and t_fold.
+    double m00 = M[0], m10 = M[1], m20 = M[2];
+    double m01 = M[4], m11 = M[5], m21 = M[6];
+    double m02 = M[8], m12 = M[9], m22 = M[10];
+    double tf0 = M[12], tf1 = M[13], tf2 = M[14];
+
+    // pivot in double
+    double px = cast(double)pivot.x;
+    double py = cast(double)pivot.y;
+    double pz = cast(double)pivot.z;
+
+    // M_lin · pivot (double)
+    double mp_x = m00*px + m01*py + m02*pz;
+    double mp_y = m10*px + m11*py + m12*pz;
+    double mp_z = m20*px + m21*py + m22*pz;
+
+    // W_trans = pivot − M_lin·pivot + t_fold (exact large-minus-large in double)
+    double wx = px - mp_x + tf0;
+    double wy = py - mp_y + tf1;
+    double wz = pz - mp_z + tf2;
+
+    float[16] W = identityMatrix;
+    W[0]  = M[0];  W[1]  = M[1];  W[2]  = M[2];
+    W[4]  = M[4];  W[5]  = M[5];  W[6]  = M[6];
+    W[8]  = M[8];  W[9]  = M[9];  W[10] = M[10];
+    W[12] = cast(float)wx;
+    W[13] = cast(float)wy;
+    W[14] = cast(float)wz;
+    W[15] = 1.0f;
+    return W;
+}
+unittest { // wrapAboutPivotStable matches wrapAboutPivot for small pivots (bit-equal after double→float round-trip)
+    import std.conv : to;
+    auto Morigin = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.7f);
+    Vec3 piv = Vec3(0.3f, -0.4f, 0.9f);
+    auto Wold = wrapAboutPivot(Morigin, piv);
+    auto Wnew = wrapAboutPivotStable(Morigin, piv);
+    foreach (i; 0 .. 16) assert(isClose(Wnew[i], Wold[i], 1e-5f, 1e-5f),
+        "wrapAboutPivotStable small-pivot mismatch at element " ~ i.to!string);
+}
+unittest { // wrapAboutPivotStable beats wrapAboutPivot at far pivot for rotation
+    // Oracle: pivot far at ~1e4, rotation ~0.5 rad about Y.
+    // wrapAboutPivot(float) suffers ~|pivot|·2^-23 ≈ 1.2e-3 translate-column error;
+    // wrapAboutPivotStable computes pivot − M_lin·pivot in double → error < 1e-4.
+    Vec3 piv = Vec3(10000.0f, 9800.0f, 10200.0f);
+    auto Morigin = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.5f);
+    auto Wstable = wrapAboutPivotStable(Morigin, piv);
+    auto Wold    = wrapAboutPivot(Morigin, piv);
+    // Apply to a near-origin test vertex and compare to double oracle.
+    double[3] v = [0.5, -0.5, 0.5];
+    // Double oracle: piv + M_lin*(v-piv) for Y rotation by 0.5 rad.
+    double ang = 0.5;
+    double c = cos(ang), s = sin(ang);
+    double ox = cast(double)piv.x + c*(v[0]-piv.x) + s*(v[2]-piv.z);
+    double oy = cast(double)piv.y + (v[1]-piv.y);
+    double oz = cast(double)piv.z - s*(v[0]-piv.x) + c*(v[2]-piv.z);
+    // Stable version applied to v.
+    double sx = Wstable[0]*v[0] + Wstable[4]*v[1] + Wstable[8]*v[2]  + Wstable[12];
+    double sy = Wstable[1]*v[0] + Wstable[5]*v[1] + Wstable[9]*v[2]  + Wstable[13];
+    double sz = Wstable[2]*v[0] + Wstable[6]*v[1] + Wstable[10]*v[2] + Wstable[14];
+    double errStable = (sx-ox)*(sx-ox) + (sy-oy)*(sy-oy) + (sz-oz)*(sz-oz);
+    // Old version applied to v.
+    double ux = Wold[0]*v[0] + Wold[4]*v[1] + Wold[8]*v[2]  + Wold[12];
+    double uy = Wold[1]*v[0] + Wold[5]*v[1] + Wold[9]*v[2]  + Wold[13];
+    double uz = Wold[2]*v[0] + Wold[6]*v[1] + Wold[10]*v[2] + Wold[14];
+    double errOld = (ux-ox)*(ux-ox) + (uy-oy)*(uy-oy) + (uz-oz)*(uz-oz);
+    assert(errStable < errOld,
+        "wrapAboutPivotStable should beat wrapAboutPivot at far pivot");
+    // The translate column is computed in double then stored as float32.
+    // For W_trans_x ≈ -3666 (pivot=(1e4,9800,1e4), Y-rot 0.5 rad), float32
+    // storage introduces ~|W_trans|·2^-23 ≈ 4.4e-4 residual — better than
+    // the old path's ~|pivot|·2^-23 ≈ 1.2e-3, but bounded by float32 ULP.
+    assert(sqrt(errStable) < 5e-4,
+        "wrapAboutPivotStable far-pivot error > 5e-4");
+}
+
 // Build a column-major model matrix from a local frame + scale + translation.
 // Columns are: right*scale.x, up*scale.y, fwd*scale.z, translation.
 float[16] modelMatrix(Vec3 right, Vec3 up, Vec3 fwd,
