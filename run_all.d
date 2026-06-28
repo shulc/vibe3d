@@ -6,10 +6,17 @@
  *   2. rdmd tools/local/blender_diff/run.d
  *   3. rdmd tools/local/modo_diff/run.d
  *   4. ./tools/local/modo_diff/run_acen_drag.py -j N
- *   5. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
- *   6. snapshot: the key undo tests forced onto the legacy MeshSnapshot
+ *   5. snapshot: the key undo tests forced onto the legacy MeshSnapshot
  *      path (VIBE3D_UNDO_TRACKER=off) — anti-rot coverage for the escape
  *      hatch now that the change-tracker is default-on (Phase 4).
+ *   6. dub test --config=modeling — runs ALL module-level unittests in the
+ *      project source, including modules not directly imported by any test
+ *      binary (math.d, command_history.d, …). The HTTP-suite (run_test.d)
+ *      links a static lib and only pulls referenced members, so unittests
+ *      in imported modules are SILENT there. This lane catches what the
+ *      static-lib path misses.  See run_test.d:425-434 for the documented
+ *      limitation that motivated this lane.
+ *   7. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
  *
  * Opt-in (NOT in the default set, runs only via --only perf-abs):
  *   perf-abs: rdmd tools/perf/run.d --n 316 — the FULL ~100K-face matrix
@@ -32,11 +39,14 @@
  *                 (modo_diff/run.d + blender_diff/run.d don't have
  *                 their own -j today — they boot a single MODO/Blender
  *                 instance.) default = 4.
- *   --no-build    forwarded to suites that accept it.
- *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf, snapshot}.
+ *   --no-build    forwarded to suites that accept it. NOTE: the dubtest lane
+ *                 always compiles (dub test has no --no-build equivalent);
+ *                 --no-build is accepted but ignored for that lane.
+ *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf, snapshot,
+ *                 dubtest}.
  *   --only-X      run ONLY suite X (mutually exclusive with --skip-X).
- *                 X ∈ {unit, blender, modo, acen, perf, snapshot, perf-abs};
- *                 perf-abs is opt-in (n=316, ~5 min, absolute vs the
+ *                 X ∈ {unit, blender, modo, acen, perf, snapshot, dubtest,
+ *                 perf-abs}; perf-abs is opt-in (n=316, ~5 min, absolute vs the
  *                 committed baseline) and runs ONLY via --only perf-abs.
  *
  * Flake note (NO default exclusions as of the -j8 hardening pass). The
@@ -157,8 +167,8 @@ int main(string[] args) {
         "j|jobs",     "worker count for unit + ACEN drag suites "
                     ~ "(default = clamp(cpus/4, 4, 12))", &j,
         "no-build",   "skip dub build in unit + Blender + MODO suites", &noBuild,
-        "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | perf-abs)", &only,
-        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot)", &skip);
+        "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | dubtest | perf-abs)", &only,
+        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot | dubtest)", &skip);
 
     if (info.helpWanted) {
         writeln("usage: ./run_all.d [options]");
@@ -187,7 +197,7 @@ int main(string[] args) {
             cmd ~= "--exclude";
             cmd ~= e;
         }
-        suites ~= Suite("unit", "1/4 Unit tests (run_test.d)", cmd);
+        suites ~= Suite("unit", "1/7 Unit tests (run_test.d)", cmd);
     }
 
     // (MS-3.6) The MS-2 shadow lane was retired with the shadow itself: it gated
@@ -200,7 +210,7 @@ int main(string[] args) {
         if (exists("tools/local/blender_diff/run.d")) {
             string[] cmd = ["rdmd", "tools/local/blender_diff/run.d"];
             if (noBuild) cmd ~= "--no-build";
-            suites ~= Suite("blender", "2/4 reference geometry diff (blender)", cmd);
+            suites ~= Suite("blender", "2/7 reference geometry diff (blender)", cmd);
         } else {
             writeln(yellow("- skipped blender suite (tools/local/blender_diff not present)"));
         }
@@ -210,7 +220,7 @@ int main(string[] args) {
         if (exists("tools/local/modo_diff/run.d")) {
             string[] cmd = ["rdmd", "tools/local/modo_diff/run.d"];
             if (noBuild) cmd ~= "--no-build";
-            suites ~= Suite("modo", "3/4 reference geometry diff (bevel / prim)", cmd);
+            suites ~= Suite("modo", "3/7 reference geometry diff (bevel / prim)", cmd);
         } else {
             writeln(yellow("- skipped modo suite (tools/local/modo_diff not present)"));
         }
@@ -220,7 +230,7 @@ int main(string[] args) {
         if (exists("tools/local/modo_diff/run_acen_drag.py")) {
             string[] cmd = ["./tools/local/modo_diff/run_acen_drag.py",
                             "-j", j.format!"%d"];
-            suites ~= Suite("acen", "4/4 ACEN drag verification", cmd);
+            suites ~= Suite("acen", "4/7 ACEN drag verification", cmd);
         } else {
             writeln(yellow("- skipped acen suite (tools/local/modo_diff not present)"));
         }
@@ -244,8 +254,32 @@ int main(string[] args) {
                         "test_history_jump"];
         if (noBuild) cmd ~= "--no-build";
         suites ~= Suite("snapshot",
-                        "5/6 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
+                        "5/7 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
                         cmd, ["VIBE3D_UNDO_TRACKER": "off"]);
+    }
+
+    // dub-test lane — runs `dub test --config=modeling` to execute ALL module-level
+    // unittests in the project source tree.  The HTTP-suite (run_test.d) builds a
+    // static lib and only pulls referenced members, so any unittest that lives in a
+    // module that a given test binary does not import is SILENTLY SKIPPED there
+    // (documented at run_test.d:425-434).  This lane has no such blind spot: dub's
+    // test runner compiles everything and runs every `unittest { }` block.
+    //
+    // `--no-build` is accepted but does NOT suppress this lane: dub test always
+    // recompiles before running unittests; there is no stable artifact to skip.
+    // When --no-build is set we emit a note so the caller is not surprised by the
+    // extra compile.
+    //
+    // The lane must run BEFORE perf: the perf runner replaces ./vibe3d with the
+    // ldc-release perf binary.  dub test operates on its own configuration and
+    // doesn't touch ./vibe3d, so ordering here is merely defensive.
+    if (include("dubtest")) {
+        if (noBuild)
+            writeln(yellow("- note: dubtest lane always compiles (dub test has "
+                ~ "no --no-build equivalent)"));
+        string[] cmd = ["dub", "test", "--config=modeling"];
+        suites ~= Suite("dubtest",
+                        "6/7 module unittests (dub test --config=modeling)", cmd);
     }
 
     // Perf lane — RELATIVE INVARIANTS ONLY on a small (n=64) mesh. A full
@@ -274,7 +308,7 @@ int main(string[] args) {
         } else {
             string[] cmd = ["rdmd", "tools/perf/run.d", "--n", "64",
                             "--no-absolute"];
-            suites ~= Suite("perf", "6/6 perf relative invariants (n=64)", cmd);
+            suites ~= Suite("perf", "7/7 perf relative invariants (n=64)", cmd);
         }
     }
 
