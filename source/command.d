@@ -57,6 +57,19 @@ enum CmdFlags : uint {
                            // that sets this records NO undo entry — the author
                            // takes responsibility for the state change being
                            // unrecoverable / handled elsewhere. Highest priority.
+    UndoBoundary = 1 << 7, // Hard stop for the class-aware T-SEP undo cursor.
+                           // The entry IS on the stack and IS undoable (carries
+                           // Model), but the cursor scan stops here — it will not
+                           // step to this entry during a model undo. When the
+                           // boundary entry is the ONLY entry left (tail-at-
+                           // boundary), Case B applies: the boundary entry itself
+                           // IS reverted as the B1 fallback (it is a Model entry
+                           // that the cursor stopped in front of, so it becomes
+                           // the lone "UI head" in the fallback sense). Applied
+                           // to scene.reset and file.new: a reset delimits "current
+                           // editing session" from "prior session"; a plain geometry
+                           // undo should not reach across it, but if it is the only
+                           // thing on the stack the user CAN undo the reset.
 }
 
 // Result of comparing a freshly-applied command against the command that

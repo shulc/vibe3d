@@ -94,6 +94,13 @@ enum HistoryFlags : uint {
                          // The contiguous-run gather (consolidate) keys on
                          // InSession+runId, so a Refire entry merges normally;
                          // the n==1 tag-strip clears BOTH bits.
+    UndoBoundary = 1 << 9, // Entry is a hard-stop for the T-SEP cursor scan.
+                           // The entry IS undoable and stays on the stack, but
+                           // nearestModelIndexFromTail() stops before it (not at
+                           // it), triggering the B1 UI-head fallback. Mirrors
+                           // CmdFlags.UndoBoundary. Applied to scene.reset /
+                           // file.new so a plain geometry undo never reaches
+                           // across a session-reset boundary.
 }
 
 struct HistoryEntry {
@@ -142,11 +149,12 @@ private uint historyFlagsFor(const Command cmd) {
     uint flags = HistoryFlags.Succeeded;
     // Undoable mirrors "lands on the stack" — true for BOTH undo classes
     // (Model-undo and UI-undo). The UiUndo bit then narrows which class it is.
-    if (cmd.isUndoable())          flags |= HistoryFlags.Undoable;
-    if (cmd.isUiUndo())            flags |= HistoryFlags.UiUndo;
-    if (cf & CmdFlags.Quiet)       flags |= HistoryFlags.Quiet;
-    if (cf & CmdFlags.SideEffect)  flags |= HistoryFlags.SideEffect;
-    if (cf & CmdFlags.UndoForce)   flags |= HistoryFlags.UndoForced;
+    if (cmd.isUndoable())            flags |= HistoryFlags.Undoable;
+    if (cmd.isUiUndo())              flags |= HistoryFlags.UiUndo;
+    if (cf & CmdFlags.Quiet)         flags |= HistoryFlags.Quiet;
+    if (cf & CmdFlags.SideEffect)    flags |= HistoryFlags.SideEffect;
+    if (cf & CmdFlags.UndoForce)     flags |= HistoryFlags.UndoForced;
+    if (cf & CmdFlags.UndoBoundary)  flags |= HistoryFlags.UndoBoundary;
     return flags;
 }
 
@@ -226,12 +234,32 @@ final class CommandHistory {
     private size_t maxDepth = 50;
     private UndoState _state = UndoState.Active;
 
+    this() {
+        // Allow emergency rollback of class-aware stepping via env var.
+        // VIBE3D_UNDO_CLASS_STEP=0 disables T-SEP-cursor; any other value (or
+        // absent) keeps the default ON. Removed in Stage 6 once burn-in is done.
+        import std.process : environment;
+        string ev = environment.get("VIBE3D_UNDO_CLASS_STEP", "");
+        if (ev == "0") _classAwareStepping = false;
+    }
+
     // Undo-epoch counter — bumped exactly once in the SUCCESS branch of undo()
     // (after e.cmd.revert() succeeds, alongside redoStack ~= e). Never bumped
     // by redo(), record*(), consolidate(), replaceInSessionTail(), or coalesce.
     // Purpose: gives the exploration controller a reliable undo signal that is
     // immune to consolidate/coalesce/replace side-effects on stack length.
     private ulong _undoEpoch = 0;
+
+    // Class-aware stepping (T-SEP-cursor). When true, undo()/redo() use the
+    // carried-suffix algorithm: a plain undo finds the nearest Model-class entry
+    // from the tail and moves the SUFFIX (that entry + any trailing UI entries)
+    // to the redo stack as a unit, calling revert() only on the Model entry (so
+    // interleaved selection entries are carried inert — the selection holds).
+    // When the tail is all-UI (B1 fallback), the UI head is reverted normally.
+    // redo() is the inverse block move.
+    // The env-var override (VIBE3D_UNDO_CLASS_STEP=0) provides an emergency
+    // rollback during burn-in; it is removed in Stage 6.
+    private bool _classAwareStepping = true;
 
     /// Read-only access to the undo epoch counter. Callers snapshot the value
     /// at "interesting" moments and compare later; a strict increase means at
@@ -313,6 +341,14 @@ final class CommandHistory {
     /// entry's flags. The macro recorder, when active, appends the
     /// line to its capture buffer. nullable.
     void delegate(string commandLine, uint flags) onRecord;
+
+    // ----- class-aware stepping -------------------------------------------
+
+    /// Enable or disable class-aware (T-SEP-cursor) stepping. Default ON.
+    /// Exposed for emergency rollback during burn-in via env var
+    /// VIBE3D_UNDO_CLASS_STEP=0, and for in-module unit tests.
+    void setClassAwareStepping(bool on) { _classAwareStepping = on; }
+    bool classAwareStepping() const { return _classAwareStepping; }
 
     // ----- state -----------------------------------------------------------
 
@@ -843,39 +879,227 @@ final class CommandHistory {
     bool canUndo() const { return undoStack.length > 0; }
     bool canRedo() const { return redoStack.length > 0; }
 
+    // Scan undoStack from the tail toward the head for the nearest Model-class
+    // entry (Undoable && !UiUndo). Returns the index into undoStack, or
+    // undoStack.length if no Model entry is found (all-UI stack).
+    //
+    // The scan stops (returns "not found") when it hits an entry carrying
+    // HistoryFlags.UndoBoundary: a boundary entry (scene.reset / file.new)
+    // delimits the current editing session. A plain geometry undo must not
+    // reach across it to revert work from a prior session.
+    private size_t nearestModelIndexFromTail() const {
+        if (undoStack.length == 0) return 0;
+        size_t i = undoStack.length;
+        while (i > 0) {
+            --i;
+            uint f = undoStack[i].flags;
+            // Hard stop: boundary entries are not stepped to by a model undo.
+            if (f & HistoryFlags.UndoBoundary)
+                return undoStack.length; // sentinel: treat as "no model entry"
+            if ((f & HistoryFlags.Undoable) && !(f & HistoryFlags.UiUndo))
+                return i;
+        }
+        return undoStack.length; // sentinel: no Model entry found
+    }
+
+    // Count Model and UI entries currently on the undo stack (within the
+    // current session boundary). Boundary entries (UndoBoundary) are not
+    // counted — they are not reachable by the T-SEP cursor. Used by
+    // /api/undo/status to give tests fine-grained depth assertions.
+    void undoDepthCounts(out size_t modelCount, out size_t uiCount) const {
+        modelCount = 0;
+        uiCount    = 0;
+        foreach_reverse (ref e; undoStack) {
+            // Stop counting at a session boundary (same scope as the scan).
+            if (e.flags & HistoryFlags.UndoBoundary) break;
+            if (!(e.flags & HistoryFlags.Undoable)) continue;
+            if (e.flags & HistoryFlags.UiUndo) ++uiCount;
+            else                                ++modelCount;
+        }
+    }
+
+    // Whether a plain undo would step a Model entry (true) or fall back to
+    // the UI head (false). Used by /api/undo/status.
+    //
+    // When a session-boundary entry sits at the tail with no Model entry above
+    // it (nearestModelIndexFromTail returns the sentinel), the B1 fallback
+    // reverts the boundary entry itself — which IS a Model-class entry. Report
+    // canUndoModel=true in that case so callers see "Model undo available"
+    // rather than the misleading "UI undo available".
+    bool canUndoModel() const {
+        if (!_classAwareStepping) return canUndo();
+        size_t mi = nearestModelIndexFromTail();
+        if (mi < undoStack.length) return true; // found a reachable Model entry
+        // No reachable Model entry. Check whether the B1-fallback target (tail)
+        // is itself a Model-class entry (e.g. a boundary) — if so, the undo
+        // action is still a Model revert, not a UI revert.
+        if (undoStack.length == 0) return false;
+        uint tailFlags = undoStack[$ - 1].flags;
+        return (tailFlags & HistoryFlags.Undoable) != 0
+            && (tailFlags & HistoryFlags.UiUndo)   == 0;
+    }
+
     bool undo() {
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
-        auto e = undoStack[$ - 1];
-        undoStack.length -= 1;
-        // Suspend recording while reverting so any internal sub-commands
-        // the revert path triggers (e.g. selection/edge cache invalidate)
-        // don't pollute the redo timeline.
-        auto prev = _state;
-        _state = UndoState.Suspend;
-        scope(exit) _state = prev;
-        if (!e.cmd.revert()) {
-            // Revert failed; drop the entry (don't put back) to avoid a
-            // stuck stack. Caller can detect via state changes.
-            return false;
+
+        if (!_classAwareStepping) {
+            // Legacy LIFO path (OFF branch — emergency rollback, Stage 6 removes).
+            auto e = undoStack[$ - 1];
+            undoStack.length -= 1;
+            auto prev = _state;
+            _state = UndoState.Suspend;
+            scope(exit) _state = prev;
+            if (!e.cmd.revert()) return false;
+            redoStack ~= e;
+            ++_undoEpoch;
+            return true;
         }
-        redoStack ~= e;
-        ++_undoEpoch;  // bump exactly once per successful undo (Phase 0)
+
+        // T-SEP-cursor: carried-suffix move over the chronological stack.
+        //
+        // Find the nearest Model-class entry from the tail (mi).
+        // Case A — Model entry found (mi < undoStack.length):
+        //   Revert undoStack[mi] only. Move the suffix undoStack[mi..$]
+        //   (the Model entry + any trailing UI entries) to the FRONT of
+        //   redoStack as a unit. The trailing UI entries are carried inert
+        //   (no revert() called) — the selection holds (B2).
+        // Case B — all-UI tail (mi == undoStack.length, B1 fallback):
+        //   The tail is all UI entries and no Model entry exists. Revert
+        //   the top UI entry and move it to redo — this is B1 (select A →
+        //   select B → undo → A).
+        size_t mi = nearestModelIndexFromTail();
+
+        if (mi < undoStack.length) {
+            // Case A: model entry at index mi.
+            auto modelEntry = undoStack[mi];
+
+            // Suspend to keep internal sub-commands off the stack.
+            auto prev = _state;
+            _state = UndoState.Suspend;
+            scope(exit) _state = prev;
+
+            if (!modelEntry.cmd.revert()) {
+                // Revert failed — degenerate stuck-stack avoidance. Drop the
+                // failed model entry AND the entire trailing suffix [mi..$]
+                // from the undo stack (entry count is NOT conserved: the suffix
+                // that would have been carried to redoStack is silently
+                // discarded). This prevents the cursor from looping on the same
+                // broken entry forever. The caller sees false → no redo entry
+                // is pushed, and the suffix is gone. A command author who
+                // returns false from revert() accepts that the history beyond
+                // this point is unrecoverable.
+                undoStack = undoStack[0 .. mi];
+                return false;
+            }
+
+            // Move suffix [mi .. $] to the FRONT of redoStack (preserving
+            // chronological order: oldest carried entry = redoStack[0]).
+            HistoryEntry[] suffix = undoStack[mi .. $].dup;
+            undoStack = undoStack[0 .. mi];
+            redoStack = suffix ~ redoStack;
+        } else {
+            // Case B: no Model entry — B1 fallback, revert the UI head.
+            auto e = undoStack[$ - 1];
+            undoStack.length -= 1;
+
+            auto prev = _state;
+            _state = UndoState.Suspend;
+            scope(exit) _state = prev;
+
+            if (!e.cmd.revert()) return false;
+            redoStack = [e] ~ redoStack;
+        }
+
+        ++_undoEpoch;  // bump exactly once per successful undo
         return true;
     }
 
     bool redo() {
         if (_lockout) return false;
         if (redoStack.length == 0) return false;
-        auto e = redoStack[$ - 1];
-        redoStack.length -= 1;
+
+        if (!_classAwareStepping) {
+            // Legacy LIFO path.
+            auto e = redoStack[$ - 1];
+            redoStack.length -= 1;
+            auto prev = _state;
+            _state = UndoState.Suspend;
+            scope(exit) _state = prev;
+            if (!e.cmd.apply()) return false;
+            undoStack ~= e;
+            return true;
+        }
+
+        // T-SEP-cursor redo: inverse of the carried-suffix undo.
+        //
+        // The redo stack is organised so that the LEADING block
+        // (redoStack[0 .. blockLen]) is exactly the suffix that the
+        // matching undo detached as a unit. The first entry of that block
+        // is the Model entry (or, for a B1 fallback, the lone UI entry).
+        // We re-apply ONLY that first entry, then move the whole leading
+        // block back onto the undoStack tail in its original order.
+        //
+        // Determining block length: a block is delimited by the first
+        // Model-class entry at or after index 0 of the redo stack, plus
+        // all UI entries that follow it until the next Model entry (or
+        // end). Equivalently: the block spans from index 0 to (and
+        // including) the last consecutive UI entry before the NEXT
+        // Model entry.
+        //
+        // B1 fallback block: if redoStack[0] is itself UI-class, the
+        // undo that put it there was a B1-fallback (lone UI undo). The
+        // block is just that one UI entry.
+        size_t blockLen = 1; // at minimum we pop redoStack[0]
+        {
+            uint f0 = redoStack[0].flags;
+            bool head0isUi = (f0 & HistoryFlags.UiUndo) != 0;
+
+            if (!head0isUi) {
+                // redoStack[0] is the Model entry. The block also includes
+                // the run of UI entries immediately following it (those were
+                // carried inert by the undo that moved this block).
+                size_t j = 1;
+                while (j < redoStack.length) {
+                    uint fj = redoStack[j].flags;
+                    // Stop at the next Model entry — it belongs to a
+                    // different undo block.
+                    if ((fj & HistoryFlags.Undoable) && !(fj & HistoryFlags.UiUndo))
+                        break;
+                    ++j;
+                }
+                blockLen = j;
+            }
+            // If head0isUi: B1-fallback block = just redoStack[0].
+        }
+
+        // The model entry to re-apply is always redoStack[0].
+        auto modelEntry = redoStack[0];
+
         auto prev = _state;
         _state = UndoState.Suspend;
         scope(exit) _state = prev;
-        if (!e.cmd.apply()) {
-            return false;
+
+        if (!modelEntry.cmd.apply()) return false;
+
+        // Re-apply the UI suffix entries in the block (indices 1 .. blockLen-1).
+        // These are the selection/edit-mode entries that were carried INERT by
+        // the matching undo; on redo they ARE re-applied so the round-trip
+        // restores the selection to the state it was in after the original
+        // recording. Only the geometry undo carries them inert (B2 invariant);
+        // redo always restores the full block's effect.
+        foreach (k; 1 .. blockLen) {
+            // Best-effort: if a UI entry fails to re-apply, continue so the
+            // geometry redo still lands. A failing selection re-apply leaves the
+            // selection at whatever state it was in before — graceful degradation.
+            redoStack[k].cmd.apply();
         }
-        undoStack ~= e;
+
+        // Move the block [0 .. blockLen] from redoStack front to undoStack tail.
+        HistoryEntry[] block = redoStack[0 .. blockLen].dup;
+        redoStack = redoStack[blockLen .. $];
+        undoStack ~= block;
+
         return true;
     }
 
@@ -1108,6 +1332,38 @@ version (unittest) {
         override bool apply()  { return true; }
         override bool revert() { return true; }
     }
+
+    // Stub command for class-aware stepping unit tests.
+    // Tracks how many times apply()/revert() were called — used to verify
+    // UI entries are carried INERT during a model step (no revert()).
+    private final class _TrackedCmd : Command {
+        import mesh     : Mesh;
+        import view     : View;
+        import editmode : EditMode;
+        private Mesh  _mesh;
+        private View  _view = new View(0, 0, 1, 1);
+        CmdFlags _flags;
+        int applyCalls  = 0;
+        int revertCalls = 0;
+        this(CmdFlags f) {
+            super(&_mesh, _view, EditMode.Vertices);
+            _flags = f;
+        }
+        override string   name()     const { return "test.tracked"; }
+        override string   label()    const { return "Tracked"; }
+        override CmdFlags cmdFlags() const { return _flags; }
+        override bool apply()  { ++applyCalls;  return true; }
+        override bool revert() { ++revertCalls; return true; }
+    }
+
+    // Convenience: record a Model-class entry.
+    private void recModel(_TrackedCmd cmd, CommandHistory h) {
+        cmd.apply(); h.record(cmd);
+    }
+    // Convenience: record a UiState-class entry.
+    private void recUi(_TrackedCmd cmd, CommandHistory h) {
+        cmd.apply(); h.record(cmd);
+    }
 }
 
 unittest { // record→undo bumps undoEpoch by 1; redo does NOT bump
@@ -1157,4 +1413,167 @@ unittest { // consolidate does NOT bump undoEpoch
 
     h.consolidate(run);
     assert(h.undoEpoch == 0, "consolidate must not bump epoch");
+}
+
+// ---------------------------------------------------------------------------
+// Class-aware stepping unit tests (T-SEP-cursor).
+// All use _TrackedCmd stubs — no GL context needed.
+// ---------------------------------------------------------------------------
+
+// B1 analogue: pure-UI stack → undo falls back to the UI head.
+// Stack: [UI-A, UI-B] → undo → reverts UI-B → stack: [UI-A].
+unittest {
+    auto h = new CommandHistory();
+    // Force env-var to ON regardless of the test environment.
+    h.setClassAwareStepping(true);
+
+    auto uiA = new _TrackedCmd(CmdFlags.UiState);
+    auto uiB = new _TrackedCmd(CmdFlags.UiState);
+    recUi(uiA, h);
+    recUi(uiB, h);
+    assert(h.undoStack.length == 2, "B1 setup: expected 2 entries");
+
+    size_t mc, uc;
+    h.undoDepthCounts(mc, uc);
+    assert(mc == 0 && uc == 2, "B1: 0 model, 2 UI before undo");
+
+    // undo → B1 fallback: revert UI-B.
+    assert(h.undo(), "B1: undo should succeed");
+    assert(uiB.revertCalls == 1, "B1: UI-B must be revert()'d once");
+    assert(uiA.revertCalls == 0, "B1: UI-A must NOT be revert()'d");
+    assert(h.undoStack.length == 1,  "B1: undoStack should have 1 entry");
+    assert(h.redoStack.length == 1,  "B1: redoStack should have 1 entry");
+    assert(h.undoEpoch == 1, "B1: epoch bumped");
+}
+
+// B2 analogue: [UI-A, Model-mA, UI-B, Model-mB] → undo×2.
+// undo₁: suffix=[Model-mB] → reverts mB; UI-B NOT revert()'d.
+// undo₂: suffix=[Model-mA, UI-B] → reverts mA; UI-B carried inert.
+// Chronology: UI-B is never revert()'d during either model undo.
+unittest {
+    auto h = new CommandHistory();
+    h.setClassAwareStepping(true);
+
+    auto uiA  = new _TrackedCmd(CmdFlags.UiState);
+    auto modA = new _TrackedCmd(CmdFlags.Model);
+    auto uiB  = new _TrackedCmd(CmdFlags.UiState);
+    auto modB = new _TrackedCmd(CmdFlags.Model);
+    recUi(uiA, h);
+    recModel(modA, h);
+    recUi(uiB, h);
+    recModel(modB, h);
+    assert(h.undoStack.length == 4, "B2 setup: expected 4 entries");
+
+    size_t mc, uc;
+    h.undoDepthCounts(mc, uc);
+    assert(mc == 2 && uc == 2, "B2: 2 model, 2 UI");
+
+    // undo₁: nearest Model from tail = modB (index 3). suffix=[modB].
+    assert(h.undo(), "B2 undo₁ should succeed");
+    assert(modB.revertCalls == 1, "B2 undo₁: modB revert()'d");
+    assert(uiB.revertCalls  == 0, "B2 undo₁: uiB NOT revert()'d (carried inert)");
+    assert(uiA.revertCalls  == 0, "B2 undo₁: uiA NOT revert()'d");
+    assert(modA.revertCalls == 0, "B2 undo₁: modA NOT revert()'d");
+    // undoStack: [uiA, modA, uiB], redoStack: [modB]
+    assert(h.undoStack.length == 3, "B2 undo₁: undoStack has 3");
+    assert(h.redoStack.length == 1, "B2 undo₁: redoStack has 1");
+
+    // undo₂: nearest Model from tail = modA (index 1). suffix=[modA, uiB].
+    assert(h.undo(), "B2 undo₂ should succeed");
+    assert(modA.revertCalls == 1, "B2 undo₂: modA revert()'d");
+    assert(uiB.revertCalls  == 0, "B2 undo₂: uiB still NOT revert()'d (carried inert)");
+    assert(uiA.revertCalls  == 0, "B2 undo₂: uiA NOT revert()'d");
+    // undoStack: [uiA], redoStack: [modA, uiB, modB]
+    assert(h.undoStack.length == 1, "B2 undo₂: undoStack has 1");
+    assert(h.redoStack.length == 3, "B2 undo₂: redoStack has 3");
+    assert(h.undoEpoch == 2, "B2: epoch == 2 after two undos");
+}
+
+// CHRONOLOGY: [UI-A, Model-mA, UI-B, Model-mB] → undo×ALL → redo×ALL.
+// After the full round-trip the undo stack must have the SAME 4 entries
+// in the SAME order, and revert()/apply() must have been called ONLY on
+// model entries during model steps (UI entries carried inert).
+unittest {
+    auto h = new CommandHistory();
+    h.setClassAwareStepping(true);
+
+    auto uiA  = new _TrackedCmd(CmdFlags.UiState);
+    auto modA = new _TrackedCmd(CmdFlags.Model);
+    auto uiB  = new _TrackedCmd(CmdFlags.UiState);
+    auto modB = new _TrackedCmd(CmdFlags.Model);
+    recUi(uiA, h);
+    recModel(modA, h);
+    recUi(uiB, h);
+    recModel(modB, h);
+
+    // Snapshot the initial stack order by cmd identity.
+    Command[] initialOrder;
+    foreach (ref e; h.undoStack) initialOrder ~= e.cmd;
+
+    // Undo all the way down.
+    while (h.canUndo()) h.undo();
+
+    // Stack: empty; redo has all 4.
+    assert(h.undoStack.length == 0, "CHRON: undoStack empty after full undo");
+    assert(h.redoStack.length == 4, "CHRON: redoStack has 4 after full undo");
+
+    // UI entries were NEVER revert()'d during model steps.
+    assert(uiA.revertCalls == 1,
+        "CHRON: uiA should be revert()'d once (B1 fallback at the end)");
+    assert(uiB.revertCalls == 0,
+        "CHRON: uiB must NOT be revert()'d (always carried inert)");
+    assert(modA.revertCalls == 1, "CHRON: modA revert()'d once");
+    assert(modB.revertCalls == 1, "CHRON: modB revert()'d once");
+
+    // Reset apply counters so we can count redo-apply calls.
+    uiA.applyCalls = 0; modA.applyCalls = 0;
+    uiB.applyCalls = 0; modB.applyCalls = 0;
+
+    // Redo all the way back up.
+    while (h.canRedo()) h.redo();
+
+    // Stack restored to 4 entries; redo empty.
+    assert(h.undoStack.length == 4, "CHRON: undoStack restored to 4 after full redo");
+    assert(h.redoStack.length == 0, "CHRON: redoStack empty after full redo");
+
+    // Verify original chronological order is preserved.
+    foreach (i, ref e; h.undoStack) {
+        import std.conv : to;
+        assert(e.cmd is initialOrder[i],
+            "CHRON: entry " ~ i.to!string ~ " is wrong cmd after round-trip");
+    }
+
+    // Model entries are re-applied during their redo block.
+    // uiA was B1-reverted during undo → its redo block is B1 (just uiA) → apply()'d once.
+    // modA's redo block = [modA, uiB]: modA is re-applied AND the UI suffix uiB is
+    //   re-applied so the round-trip restores the full selection/active-layer state.
+    // uiB was NEVER revert()'d during undo (carried inert), but IS apply()'d during
+    //   its redo (as the UI suffix of modA's block) to restore the selection state.
+    // modB's redo block = [modB] (no UI suffix) → modB is re-applied once.
+    assert(modA.applyCalls == 1, "CHRON redo: modA apply()'d once");
+    assert(modB.applyCalls == 1, "CHRON redo: modB apply()'d once");
+    assert(uiA.applyCalls  == 1, "CHRON redo: uiA apply()'d once (it was B1-reverted)");
+    assert(uiB.applyCalls  == 1, "CHRON redo: uiB apply()'d once (UI suffix of modA block, restores selection state)");
+}
+
+// OFF path: class-aware OFF → legacy LIFO, all 4 entries reverted in order.
+unittest {
+    auto h = new CommandHistory();
+    h.setClassAwareStepping(false);
+
+    auto uiA  = new _TrackedCmd(CmdFlags.UiState);
+    auto modA = new _TrackedCmd(CmdFlags.Model);
+    auto uiB  = new _TrackedCmd(CmdFlags.UiState);
+    auto modB = new _TrackedCmd(CmdFlags.Model);
+    recUi(uiA, h);
+    recModel(modA, h);
+    recUi(uiB, h);
+    recModel(modB, h);
+
+    // undo×4: legacy LIFO reverts every entry in reverse.
+    assert(h.undo()); assert(modB.revertCalls == 1);
+    assert(h.undo()); assert(uiB.revertCalls  == 1); // LIFO hits uiB
+    assert(h.undo()); assert(modA.revertCalls  == 1);
+    assert(h.undo()); assert(uiA.revertCalls   == 1);
+    assert(!h.undo(), "OFF: stack empty, undo must fail");
 }
