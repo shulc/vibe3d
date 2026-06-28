@@ -136,9 +136,16 @@ class Command {
     //                      state (Model-undo class) OR undoable UI state
     //                      (UiState, the UI-undo class).
     //
-    // Backward-compatible: no existing command sets UndoForce / UndoSuppress,
-    // so the derived rule governs exactly as before. Kept as a final accessor
-    // so existing call sites need not change.
+    // UndoForce/UndoSuppress are GENUINE special cases the derived rule cannot
+    // express — NOT patches over a mis-derived rule (audit 0062 B5 re-verified,
+    // task 0070): a transient tool-preview edit (e.g. BoxLiveEditCommand,
+    // box.d) is correctly SideEffect (mutates no committed mesh) yet must be
+    // Ctrl+Z-steppable → UndoForce. UndoSuppress is its dual (a Model mutation
+    // the author marks unrecoverable). `box.d`'s BoxLiveEditCommand is the one
+    // production UndoForce user; UndoSuppress has only test users today but is
+    // kept as the legitimate opt-out. Do NOT remove these by "fixing" the rule —
+    // reclassifying box to Model would be factually wrong (and wouldn't even
+    // change its T-SEP cursor class, which is already Model via Undoable&&!UiUndo).
     final bool isUndoable() const {
         CmdFlags cf = cmdFlags();
         if (cf & CmdFlags.UndoSuppress) return false;
