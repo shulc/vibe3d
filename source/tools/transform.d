@@ -1083,11 +1083,14 @@ protected:
         final switch (mode) {
             case ActionCenterStage.Mode.Auto:
             case ActionCenterStage.Mode.None: {
-                // Project onto the active work plane. In auto mode this is the
-                // ground (Y=0, normal=(0,1,0)); in pinned mode it is the
-                // user-set plane. currentWorkplaneFrame() reads WorkplaneStage
-                // state directly — no pipeline.evaluate, no re-entrancy.
+                // Project onto the active work plane. currentWorkplaneFrame()
+                // reads WorkplaneStage state directly (no pipeline.evaluate,
+                // no re-entrancy) and returns the stored center for pinned
+                // (non-auto) mode. In auto mode the plane passes through the
+                // camera focus rather than the world origin so the relocate
+                // lands on the plane the user is actually looking at.
                 auto wf = currentWorkplaneFrame();
+                if (wf.isAuto) wf.origin = cachedVp.focus;
                 return rayPlaneIntersect(cachedVp.eye, dir,
                                          wf.origin, wf.normal, worldHit);
             }

@@ -118,7 +118,9 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
         f.normal = bp.normal;
         f.axis1  = bp.axis1;
         f.axis2  = bp.axis2;
-        f.origin = Vec3(0, 0, 0);
+        // Auto plane passes through the camera focus, not the world origin,
+        // so primitives and relocates land on the plane the user is looking at.
+        f.origin = vp.focus;
         f.isAuto = true;
     } else {
         SubjectPacket subj;
@@ -130,7 +132,11 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
             f.normal = wp.normal;
             f.axis1  = wp.axis1;
             f.axis2  = wp.axis2;
-            f.origin = wp.center;
+            // Non-auto: use the stored workplane center exactly.
+            // Auto: the WorkplaneStage publishes center=(0,0,0); override with
+            // the camera focus so the plane passes through what the user is
+            // looking at rather than the world origin.
+            f.origin = wp.isAuto ? vp.focus : wp.center;
             f.isAuto = wp.isAuto;
         }
     }

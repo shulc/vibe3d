@@ -679,6 +679,16 @@ bool radialFalloffRMBDown(int x, int y, bool ctrl, const ref Viewport vp) {
     // Idle or stale state — start fresh. Pick the most-facing
     // workplane axis as the plane normal.
     WorkplaneFrame frame = pickWorkplaneFrame(vp);
+    // The radial-falloff anchor stays at the WORK-PLANE ORIGIN (world origin
+    // in auto mode) by design — not the camera focus. Whether the anchor
+    // should track the camera focus is a separate unverified question and is
+    // deliberately not changed here; the insulation below keeps the anchor
+    // byte-identical to the pre-0066 behaviour while pickWorkplaneFrame's
+    // auto branch now returns vp.focus as the origin for other callers.
+    // NOTE: frame.toWorld/toLocal are now stale-by-design (still encode
+    // vp.focus); this function only consumes frame.origin + the basis axes,
+    // never the baked matrices. Recompute them if a future edit reads them.
+    if (frame.isAuto) frame.origin = Vec3(0, 0, 0);
     Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
     float aA = abs(dot(camBack, frame.axis1));
     float aN = abs(dot(camBack, frame.normal));
