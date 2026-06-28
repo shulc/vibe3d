@@ -1960,7 +1960,8 @@ void main(string[] args) {
         new ToolAttrCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.doApply"] = () => cast(Command)
         new ToolDoApplyCommand(&mesh(), cameraView, editMode, toolHost,
-                               &gpu, &vertexCache, &edgeCache, &faceCache);
+                               &gpu, &vertexCache, &edgeCache, &faceCache,
+                               history);
     reg.commandFactories["tool.reset"] = () => cast(Command)
         new ToolResetCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)

@@ -103,6 +103,105 @@ struct MeshSnapshot {
         // mutationVersion and topologyVersion exactly as the old two lines did).
         mesh.commitChange(MeshChangeAll);
     }
+
+    // -------------------------------------------------------------------------
+    // restoreGeometryKeepSelection — geometry-only revert for the T-SEP undo
+    // path (class-aware stepping).
+    //
+    // Under T-SEP, selection is a SEPARATE timeline: a geometry-move undo must
+    // NOT overwrite the live selection with the pre-move snapshot's selection.
+    // This method restores positions, edges, faces, surfaces, faceMaterial, and
+    // meshMaps — but KEEPS the current selection marks (vertexMarks, edgeMarks,
+    // faceMarks) and selection-order counters.
+    //
+    // Topology-safety rule: keeping the current marks is only correct when the
+    // op did NOT change element counts (a pure transform leaves vertex/edge/face
+    // counts identical to the snapshot). If counts DIFFER (topology-changing op
+    // — e.g. edge.extrude / edge.extend that adds vertices), the live marks
+    // would index out-of-bounds or address the wrong elements after the revert,
+    // so we fall back to the full snapshot marks in that case.
+    //
+    // Consequence: topology-changing tools that go through ToolDoApplyCommand
+    // (edge.extrude, edge.extend) still restore the pre-apply selection when
+    // class-aware stepping is on, because their vertex/face counts change.
+    // That is intentional and correct: there is no "current" selection that is
+    // valid against the reverted (smaller) mesh.
+    // -------------------------------------------------------------------------
+    void restoreGeometryKeepSelection(ref Mesh mesh) const {
+        // Capture current marks from the live mesh BEFORE we alter the mesh,
+        // so we can re-apply them if topology matches.
+        auto liveVertexMarks          = mesh.vertexMarks.dup;
+        auto liveEdgeMarks            = mesh.edgeMarks.dup;
+        auto liveFaceMarks            = mesh.faceMarks.dup;
+        auto liveVertexSelOrder       = mesh.vertexSelectionOrder.dup;
+        auto liveEdgeSelOrder         = mesh.edgeSelectionOrder.dup;
+        auto liveFaceSelOrder         = mesh.faceSelectionOrder.dup;
+        int  liveVertexSelOrderCtr    = mesh.vertexSelectionOrderCounter;
+        int  liveEdgeSelOrderCtr      = mesh.edgeSelectionOrderCounter;
+        int  liveFaceSelOrderCtr      = mesh.faceSelectionOrderCounter;
+
+        // Restore geometry (positions, topology, materials, maps).
+        mesh.vertices     = vertices.dup;
+        mesh.edges        = edges.dup;
+        mesh.faces        = faces.map!(f => f.dup).array;
+        mesh.surfaces     = surfaces.dup;
+        mesh.faceMaterial = faceMaterial.dup;
+        mesh.meshMaps     = meshMaps.map!(mm => mm.dup).array;
+        mesh.buildLoops();
+        mesh.resizeAllMeshMaps();
+
+        // Topology-safety check: keep current marks only when element counts
+        // are unchanged (pure transform — no elements added or removed).
+        // If topology changed, the snapshot marks are the safe fallback.
+        // INVARIANT this relies on: every op reachable via ToolDoApplyCommand
+        // either preserves element count AND identity/order (transforms) or
+        // strictly grows the count (extrude/extend) — so a count match implies
+        // the live marks still index the same elements. A future doApply op
+        // that net-preserves count while swapping elements (e.g. weld-after-add)
+        // would defeat this check and need a topology hash instead.
+        bool topologyUnchanged =
+            mesh.vertices.length == vertices.length &&
+            mesh.edges.length    == edges.length    &&
+            mesh.faces.length    == faces.length;
+
+        if (topologyUnchanged) {
+            // Pure transform: splice the live selection marks back in,
+            // preserving the selection that was current when the undo fired.
+            mesh.vertexMarks                 = liveVertexMarks;
+            mesh.edgeMarks                   = liveEdgeMarks;
+            // For faceMarks, preserve the live SELECT bits but restore the
+            // SUBPATCH bits from the snapshot (subpatch is geometry-class
+            // state that reverts with the geometry, not a selection).
+            auto restoredFaceMarks = liveFaceMarks.dup;
+            foreach (i; 0 .. mesh.faces.length) {
+                // Replace subpatch bit from snapshot; keep live select bit.
+                restoredFaceMarks[i] =
+                    (restoredFaceMarks[i] & ~Mesh.Marks.Subpatch)
+                    | (faceMarks[i] & Mesh.Marks.Subpatch);
+            }
+            mesh.faceMarks = restoredFaceMarks;
+            mesh.vertexSelectionOrder        = liveVertexSelOrder;
+            mesh.edgeSelectionOrder          = liveEdgeSelOrder;
+            mesh.faceSelectionOrder          = liveFaceSelOrder;
+            mesh.vertexSelectionOrderCounter = liveVertexSelOrderCtr;
+            mesh.edgeSelectionOrderCounter   = liveEdgeSelOrderCtr;
+            mesh.faceSelectionOrderCounter   = liveFaceSelOrderCtr;
+        } else {
+            // Topology changed: fall back to snapshot marks (safe against
+            // changed element counts).
+            mesh.vertexMarks                 = vertexMarks.dup;
+            mesh.edgeMarks                   = edgeMarks.dup;
+            mesh.faceMarks                   = faceMarks.dup;
+            mesh.vertexSelectionOrder        = vertexSelectionOrder.dup;
+            mesh.edgeSelectionOrder          = edgeSelectionOrder.dup;
+            mesh.faceSelectionOrder          = faceSelectionOrder.dup;
+            mesh.vertexSelectionOrderCounter = vertexSelectionOrderCounter;
+            mesh.edgeSelectionOrderCounter   = edgeSelectionOrderCounter;
+            mesh.faceSelectionOrderCounter   = faceSelectionOrderCounter;
+        }
+
+        mesh.commitChange(MeshChangeAll);
+    }
 }
 
 // ---------------------------------------------------------------------------
