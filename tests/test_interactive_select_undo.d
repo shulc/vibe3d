@@ -220,14 +220,17 @@ unittest { // select → geometry edit → select ⇒ THREE entries (edit breaks
     assert(seq == ["mesh.selection_edit", "mesh.transform", "mesh.selection_edit"],
         "unexpected entry sequence: " ~ seq.to!string);
 
-    // Undo the top selection run, then the transform: the transform's undo
-    // restores its captured state independently (geometry returns to pre-edit).
+    // Under T-SEP class-aware undo, the nearest Model entry from the tail is
+    // mesh.transform (index 1). Its suffix = [mesh.transform, mesh.selection_edit(2nd)].
+    // A single undo reverts the transform AND carries the 2nd selection inert —
+    // both the geometry revert and the suffix move happen in ONE undo step.
+    //
+    // After undo 1: undoStack = [sel1(UI)] — the first selection run is still
+    // present. The 2nd selection entry was carried inert (never revert()'d) but
+    // lives on the redo stack with the transform.
     auto vBefore = parseJSON(get("http://localhost:8080/api/model"));
-    // undo top selection
-    assert(postUndo()["status"].str == "ok", "undo top selection failed");
-    // undo the transform — its own before/after snapshot drives the revert,
-    // not the selection-undo class.
-    assert(postUndo()["status"].str == "ok", "undo transform failed");
+    // One undo: reverts transform + carries sel2 inert as suffix.
+    assert(postUndo()["status"].str == "ok", "undo (transform+sel2 suffix) failed");
     // The remaining stack still has the first selection run (still undoable).
     assert(countUndo("mesh.selection_edit") == 1,
         "first selection run should survive after undoing edit + 2nd run");

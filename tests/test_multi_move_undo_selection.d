@@ -1,46 +1,43 @@
-// Baseline-lock test for task 0056 Phase 4.
+// Regression anchor for task 0038 — T-SEP class-aware undo stepping.
 //
-// This file LOCKS vibe3d's CURRENT (known-divergent) post-undo selection
-// behavior so it cannot silently drift before task 0038 fixes it.
+// This test LOCKS vibe3d's post-0038 post-undo selection behaviour so it
+// cannot silently regress.  Prior to 0038, the test asserted the top-4
+// (divergent) set; task 0038 (class-aware carried-suffix undo) brings
+// vibe3d into alignment, and this test now asserts the bottom-4 set.
 //
 // --- What the sequence does ---
 //
 //   1. Reset to a unit cube (8 vertices at ±0.5 on each axis).
 //   2. Select the TOP-4 corners (y = +0.5) via /api/select.
-//   3. Translate them +0.3 in X via /api/transform  → gesture A commit
-//      (lands MeshSelect(A) + ToolDoApply(A) on the unified undo stack).
+//   3. Translate them +0.3 in X via /api/transform  → gesture A commit.
+//      Stack after: [MeshSelect(A:UiState), ToolDoApply(A:Model)]
 //   4. Re-select the BOTTOM-4 corners (y = −0.5) via /api/select.
-//   5. Translate them +0.1 in X via /api/transform  → gesture B commit
-//      (lands MeshSelect(B) + ToolDoApply(B) on the unified undo stack).
-//   6. undo₁  → pops ToolDoApply(B); selection = bottom-4.
-//   7. undo₂  → pops MeshSelect(B).revert; vibe3d's current implementation
-//      reverts the selection snapshot stored in MeshSelect(B), which was
-//      "top-4 *at the time of gesture B's select*".
+//   5. Translate them +0.1 in X via /api/transform  → gesture B commit.
+//      Stack after: [MeshSelect(A:UiState), ToolDoApply(A:Model),
+//                    MeshSelect(B:UiState), ToolDoApply(B:Model)]
+//   6. undo₁ → class-aware: nearest Model from tail = ToolDoApply(B).
+//      Suffix [ToolDoApply(B)] moved to redo (no trailing UI entries).
+//      Geometry of B reverted; selection stays bottom-4 (MeshSelect(B) not
+//      touched).
+//   7. undo₂ → class-aware: nearest Model from tail = ToolDoApply(A).
+//      Suffix [ToolDoApply(A), MeshSelect(B)] moved to redo as a unit.
+//      MeshSelect(B) is carried inert — selection HOLDS at bottom-4.
+//      Geometry of A reverted.
 //
-// --- What vibe3d currently yields (the LOCKED divergence) ---
+// --- What vibe3d yields after 0038 (the ALIGNED behaviour) ---
 //
-//   After undo₂, vibe3d selects the top-4 vertices — the ones at y = +0.5
-//   with x shifted by gesture A's delta (+0.3).  This is because MeshSelect
-//   is a Model-class command on the unified undo stack, so undo₂ literally
-//   restores the vertex-index snapshot that MeshSelect(B).before captured
-//   (= the top-4 set), not the selection that was live at the time of undo₁.
+//   After undo₂, selection is the BOTTOM-4 vertices (y ≈ −0.5).
+//   MeshSelect(B) was carried inert by the suffix move; it was never
+//   revert()'d, so the live selection remains "bottom-4" throughout.
+//   This matches the reference editor's T-SEP rule (B2): a geometry undo
+//   never pops an interleaved selection entry.
 //
-// --- Known divergence from the reference editor ---
+// --- Revert opens the divergence ---
 //
-//   The reference editor yields the BOTTOM-4 set after undo₂, because its
-//   separate model/UI undo timelines mean that undoing gesture B's geometry
-//   does not also undo the re-select that preceded it.  Task 0038 (separate
-//   model/UI undo timelines) will fix this: once that lands, undo₂ will
-//   leave the bottom-4 set selected, and the expectation in this test must
-//   be flipped to assert the bottom-4 corners instead.
-//
-// --- Root cause (for task 0038 context) ---
-//
-//   vibe3d pushes selection changes as Model-class commands onto the same
-//   unified undo stack as geometry edits.  Undoing a geometry command with
-//   Ctrl+Z pops the top entry, which may be a MeshSelect that the user did
-//   not intend to undo.  Separate timelines (task 0038) make selection
-//   non-model-undoable so only geometry steps appear on the model stack.
+//   Reverting task 0038 (restoring class-blind LIFO undo) causes undo₂ to
+//   revert MeshSelect(B), which restores the top-4 snapshot, and this test
+//   will fail (the bottom-4 assertion fires).  That is the intended
+//   regression gate.
 
 import std.net.curl;
 import std.json;
@@ -99,7 +96,7 @@ JSONValue getModel() {
 }
 
 // ---------------------------------------------------------------------------
-// The baseline-lock test
+// The aligned-behaviour test (now asserts bottom-4)
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -153,15 +150,28 @@ unittest {
     enum double gestureBDx = 0.1;
     postTranslate(gestureBDx, 0.0, 0.0);
 
-    // --- undo₁: pops ToolDoApply(B) → bottom-4 geometry reverts ---
+    // --- undo₁: class-aware step → ToolDoApply(B) reverted ---
+    //     MeshSelect(B) has no trailing UI entries; suffix = [ToolDoApply(B)].
     auto u1 = postUndo();
     assert(u1["status"].str == "ok",
         "undo₁ should succeed, got: " ~ u1.toString);
 
-    // --- undo₂: pops MeshSelect(B).revert ---
-    //     vibe3d's current behavior: selection reverts to the snapshot stored
-    //     in MeshSelect(B).before, which is the top-4 set (the selection that
-    //     was active just before gesture B's re-select).
+    // Bottom-4 geometry reverted; selection unchanged (still bottom-4).
+    {
+        auto s = getSelection();
+        assert(s["mode"].str == "vertices", "expected vertices mode after undo₁");
+        auto sv = s["selectedVertices"].array;
+        assert(sv.length == 4, "expected 4 selected after undo₁");
+        int[] got = sv.map!(v => cast(int)v.integer).array;
+        sort(got);
+        int[] exp = bot4.dup; sort(exp);
+        assert(got == exp,
+            "after undo₁ selection should still be bottom-4, got " ~ got.to!string);
+    }
+
+    // --- undo₂: class-aware step → ToolDoApply(A) reverted ---
+    //     Suffix = [ToolDoApply(A), MeshSelect(B)].
+    //     MeshSelect(B) carried inert → selection HOLDS at bottom-4.
     auto u2 = postUndo();
     assert(u2["status"].str == "ok",
         "undo₂ should succeed, got: " ~ u2.toString);
@@ -180,50 +190,42 @@ unittest {
     int[] selectedIdx = rawSel.map!(v => cast(int)v.integer).array;
     sort(selectedIdx);
 
-    // --- Resolve which vertices are currently at y ≈ +0.5 (top face) ---
-    //     After gesture A, the top corners moved in X but stayed at y = +0.5.
-    //     After undo₁ (geometry undo of gesture B), the top corners are still
-    //     shifted by gestureADx.  Their y coordinate is unchanged.
+    // After undo₂ the selection must be the BOTTOM-4 (y ≈ −0.5).
+    // MeshSelect(B) was carried inert by the suffix move; it was never
+    // revert()'d, so the live selection is still "bottom-4" (set by
+    // MeshSelect(B).apply() and never touched by either undo).
     auto modelFinal = getModel();
     auto vertsFinal = modelFinal["vertices"].array;
 
-    // vibe3d's CURRENT behavior: undo₂ restores the top-4 set.
-    // Verify each selected vertex is at y ≈ +0.5 (the top face).
     foreach (idx; selectedIdx) {
         double y = vertsFinal[idx].array[1].floating;
-        assert(approxEqual(y, 0.5),
-            "CURRENT BEHAVIOR LOCK: after undo₂, selected vertex v"
+        assert(approxEqual(y, -0.5),
+            "ALIGNED BEHAVIOUR: after undo₂, selected vertex v"
             ~ idx.to!string ~ " has y=" ~ y.to!string
-            ~ " but expected y≈+0.5 (top face). "
-            ~ "If this fails, vibe3d's undo selection behavior changed — "
-            ~ "verify whether task 0038 has landed and flip the assertion "
-            ~ "to expect the bottom-face set (y≈-0.5) instead.");
+            ~ " but expected y≈-0.5 (bottom face). "
+            ~ "If this fails, the class-aware carried-suffix undo has regressed "
+            ~ "(task 0038). The reference rule T-SEP requires that geometry undo "
+            ~ "never pops an interleaved selection entry.");
     }
 
-    // Also verify the selected set is exactly the top-4 indices (not just any
-    // 4 vertices that happen to have y=+0.5 — there should be exactly 4 and
-    // they should match the originally-identified top4 set).
+    // Verify the selected set is exactly the bottom-4 indices.
     {
-        int[] expectedSorted = top4.dup;
+        int[] expectedSorted = bot4.dup;
         sort(expectedSorted);
         assert(selectedIdx == expectedSorted,
-            "CURRENT BEHAVIOR LOCK: selected indices " ~ selectedIdx.to!string
-            ~ " do not match the top-4 set " ~ expectedSorted.to!string
-            ~ ". vibe3d's undo₂ should restore the MeshSelect(B).before "
-            ~ "snapshot = the top-4 corners at the time gesture B began. "
-            ~ "If this fails, verify whether task 0038 has landed.");
+            "ALIGNED BEHAVIOUR: selected indices " ~ selectedIdx.to!string
+            ~ " do not match the bottom-4 set " ~ expectedSorted.to!string
+            ~ ". undo₂ should leave MeshSelect(B) inert (carried suffix), "
+            ~ "so the bottom-4 set stays selected throughout both geometry undos.");
     }
 
-    // --- Cross-check: none of the selected vertices are on the bottom face ---
-    //     (Documents the divergence: the reference editor would leave the
-    //     bottom-4 selected here.  This assert confirms they are NOT bottom.)
+    // Cross-check: none of the selected vertices are on the top face.
     foreach (idx; selectedIdx) {
         double y = vertsFinal[idx].array[1].floating;
-        assert(!approxEqual(y, -0.5),
-            "DIVERGENCE NOTE: selected vertex v" ~ idx.to!string
-            ~ " is on the bottom face (y≈-0.5). "
-            ~ "The reference editor yields this set; vibe3d currently yields "
-            ~ "the top-4 set. If this assert fires, the divergence has been "
-            ~ "resolved (task 0038 landed) — flip the test expectations.");
+        assert(!approxEqual(y, 0.5),
+            "REGRESSION: selected vertex v" ~ idx.to!string
+            ~ " is on the top face (y≈+0.5). "
+            ~ "Task 0038 class-aware undo regressed — undo₂ is incorrectly "
+            ~ "reverting MeshSelect(B) (the class-blind LIFO bug).");
     }
 }
