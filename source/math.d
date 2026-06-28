@@ -45,6 +45,7 @@ struct Viewport {
     int x = 0;   // window-space left edge
     int y = 0;   // window-space top edge
     Vec3 eye;
+    Vec3 focus;  // camera look-at target; default (0,0,0) for headless / tests
 }
 
 Vec3 vec3Lerp(Vec3 a, Vec3 b, float t) @safe pure nothrow @nogc {
