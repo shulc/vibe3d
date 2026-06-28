@@ -1355,6 +1355,11 @@ void main(string[] args) {
     auto pipeGizmoHost = new PipeGizmoHost();
     scope(exit) pipeGizmoHost.destroyGL();
 
+    // Delegate wired AFTER history + reg + activateToolById are defined below.
+    // Called by setActiveTool() to emit a ToolDeactivationCommand on tool drop.
+    // Null until wired; setActiveTool guards on non-null before calling.
+    void delegate(string droppedId) lifecycleRecordHook;
+
     void setActiveTool(Tool t) {
         // One-shot falloff-drag cancel at the universal tool
         // activation/switch/drop chokepoint (BOTH activateToolById and
@@ -1370,7 +1375,23 @@ void main(string[] args) {
         // per-frame guard.
         pipeGizmoHost.cancelDrag();
         if (t is null) captureStickyToolDefaults();
-        if (activeTool) { activeTool.deactivate(); activeTool.destroy(); }
+        if (activeTool) {
+            // Capture the dropped tool id BEFORE destroying (emitsLifecycleUndo
+            // gate ensures only transform tools emit; no SDK names in tracked source).
+            string droppedId = (activeTool.emitsLifecycleUndo() && activeToolId.length > 0)
+                ? activeToolId : "";
+            activeTool.deactivate();
+            activeTool.destroy();
+            // Emit one ToolDeactivationCommand per tool drop, AFTER deactivate()
+            // (so consolidate() has already merged the run into one geometry entry).
+            // Guarded by _state != Active inside recordToolLifecycle, so re-entry
+            // during a Suspend-wrapped revert/apply is a no-op.
+            // lifecycleRevertHook / lifecycleApplyHook are wired after history +
+            // reg + activateToolById are defined (forward-reference workaround).
+            if (droppedId.length > 0 && lifecycleRecordHook !is null) {
+                lifecycleRecordHook(droppedId);
+            }
+        }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
         // next tool starts from defaults. For tool switches via
         // activateToolById, this fires AGAIN below — harmless since
@@ -2403,8 +2424,14 @@ void main(string[] args) {
         new HistorySaveAsScript(&mesh(), cameraView, editMode,
             () {
                 string[] lines;
-                foreach (i, ref e; history.undoEntries())
-                    lines ~= history.undoEntryCommandLine(i);
+                // ToolLifecycle entries (tool.deactivate) are not registered as
+                // command factories and cannot be replayed — exclude them so the
+                // script contains only replayable lines.
+                foreach (ref e; history.undoEntriesVisible()) {
+                    string line = e.args.length > 0
+                        ? (e.commandName ~ " " ~ e.args) : e.commandName;
+                    lines ~= line;
+                }
                 return lines;
             });
     // Phase 7 of the history-panel design doc — macro
@@ -2598,6 +2625,28 @@ void main(string[] args) {
             activeToolId = id;
         }
     }
+
+    // Wire the lifecycle-record hook now that history, reg, and activateToolById
+    // are all defined. Called by setActiveTool() on tool drop to emit a
+    // ToolDeactivationCommand (lifecycle undo entry).
+    lifecycleRecordHook = (string droppedId) {
+        import commands.tool.lifecycle : ToolDeactivationCommand;
+        auto lifecycleCmd = new ToolDeactivationCommand(
+            &mesh(), cameraView, editMode, droppedId);
+        lifecycleCmd.onRevert = (string id) {
+            // Re-activate the dropped tool by id. Runs under Suspend in undo(),
+            // so recordToolLifecycle inside setActiveTool will be a no-op.
+            if ((id in reg.toolFactories) !is null) {
+                activateToolById(id);
+            }
+        };
+        lifecycleCmd.onApply = () {
+            // Re-drop (redo): deactivate without emitting another entry.
+            // setActiveTool(null) runs under Suspend, so no new entry is pushed.
+            setActiveTool(null);
+        };
+        history.recordToolLifecycle(lifecycleCmd);
+    };
 
     // Declared at outer scope so the main-loop UI (status-line `kind: script`
     // actions, History panel replay button) can call them. They are assigned
@@ -3732,7 +3781,7 @@ void main(string[] args) {
         });
         // History panel Phase 2 — multi-step jump via /api/history/jump.
         httpServer.setJumpHandler((size_t target) {
-            return history.jumpTo(target);
+            return history.jumpToVisible(target);
         });
         httpServer.setHistoryProvider(() {
             // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
@@ -3749,7 +3798,7 @@ void main(string[] args) {
             import std.json : JSONValue;
             import command_history : HistoryFlags;
             JSONValue[] undoArr;
-            foreach (ref e; history.undoEntries()) {
+            foreach (ref e; history.undoEntriesVisible()) {
                 auto obj = JSONValue.emptyObject;
                 obj["label"]     = JSONValue(e.label);
                 obj["args"]      = JSONValue(e.args);
@@ -3766,7 +3815,7 @@ void main(string[] args) {
                 undoArr ~= obj;
             }
             JSONValue[] redoArr;
-            foreach (ref e; history.redoEntries()) {
+            foreach (ref e; history.redoEntriesVisible()) {
                 auto obj = JSONValue.emptyObject;
                 obj["label"]     = JSONValue(e.label);
                 obj["args"]      = JSONValue(e.args);
@@ -3809,8 +3858,10 @@ void main(string[] args) {
             payload["canRedo"]      = JSONValue(history.canRedo());
             payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
             payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
-            payload["canUndoModel"] = JSONValue(history.canUndoModel());
-            payload["canUndoUi"]    = JSONValue(history.canUndo() && !history.canUndoModel());
+            payload["canUndoModel"]       = JSONValue(history.canUndoModel());
+            payload["canUndoUi"]          = JSONValue(history.canUndo() && !history.canUndoModel());
+            payload["toolLifecycleCount"] = JSONValue(cast(long)history.toolLifecycleCount());
+            payload["canUndoLifecycle"]   = JSONValue(history.canUndoLifecycle());
             return payload.toString();
         });
 
