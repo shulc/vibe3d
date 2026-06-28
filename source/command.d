@@ -70,6 +70,9 @@ enum CmdFlags : uint {
                            // editing session" from "prior session"; a plain geometry
                            // undo should not reach across it, but if it is the only
                            // thing on the stack the user CAN undo the reset.
+    ToolLifecycle = 1 << 8, // Alters tool-lifecycle state (tool exit/entry). Undoable
+                            // (lands on the stack); cursor treats it as transparent when
+                            // its own-gesture Model entry sits below it.
 }
 
 // Result of comparing a freshly-applied command against the command that
@@ -150,7 +153,7 @@ class Command {
         CmdFlags cf = cmdFlags();
         if (cf & CmdFlags.UndoSuppress) return false;
         if (cf & CmdFlags.UndoForce)    return true;
-        return (cf & (CmdFlags.Model | CmdFlags.UiState)) != 0;
+        return (cf & (CmdFlags.Model | CmdFlags.UiState | CmdFlags.ToolLifecycle)) != 0;
     }
 
     // Which undo CLASS this command belongs to once it lands on the stack.

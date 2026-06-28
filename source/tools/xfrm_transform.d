@@ -1285,6 +1285,8 @@ public:
     // stays highlighted, not every element under the moving cursor).
     override bool isDragging() const { return activeDrag !is null; }
 
+    override bool emitsLifecycleUndo() const { return true; }
+
     override bool wantsHoverForType(EditMode type) const {
         auto fs = activeFalloffStage();
         if (fs is null || fs.type != FalloffType.Element) return false;

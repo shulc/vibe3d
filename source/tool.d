@@ -315,6 +315,11 @@ class Tool : ParamProvider {
     // rendering — preventing duplicate widgets.
     bool renderParamsAsPanel() const { return true; }
 
+    // Whether this tool emits a ToolDeactivationCommand on drop, enabling
+    // undo-cursor lifecycle stepping. Default false (only transform tools
+    // that interleave geometry commits with tool sessions opt in).
+    bool emitsLifecycleUndo() const { return false; }
+
 
     // Edit modes in which this tool makes sense. Side-panel /
     // status-bar buttons auto-disable when the current edit mode is
