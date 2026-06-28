@@ -1,5 +1,5 @@
 // Survey #3 P3 — layer.attr command: generic per-layer Param write/read,
-// UI-undo coalescing, and the "mesh untouched" (non-baked) contract.
+// Model-undo coalescing, and the "mesh untouched" (non-baked) contract.
 //
 // HTTP-driven, harness copied from tests/test_layers.d. The layer property
 // edited here (pos.x, pos.y) is render-only / non-baked: writing it mutates the
@@ -197,7 +197,7 @@ JSONValue writeName(int index, string value) {
 }
 
 // Set the name via `layer.attr`, read it back via `?`, and confirm the edit is
-// UI-undoable. This proves `name` participates in the generic param path; the
+// Model-undoable. This proves `name` participates in the generic param path; the
 // `.v3d` name round-trip is already covered by tests/test_v3d_layers.d (a
 // multi-layer file with distinct names Tri/Quad/Pent saves + loads), so it is
 // referenced rather than re-asserted here — the focus is the layer.attr path.
@@ -222,7 +222,7 @@ unittest {
         }
     assert(found, "layer 0 present in /api/layers");
 
-    // One undo restores the original name (UI-undoable, like any other attr).
+    // One undo restores the original name (Model-undoable, like any other attr).
     auto base = undoCount();
     undoOk("layer.attr name edit");
     assert(readName(0) == orig, "single undo restores the pre-edit name");

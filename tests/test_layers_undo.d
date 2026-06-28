@@ -288,34 +288,63 @@ unittest {
     assert(!anyVertNear(1, 3.0)  && !anyVertNear(1, 5.0), "B carries only B's edit");
     assert(!anyVertNear(2, 3.0)  && !anyVertNear(2, -4.0), "C carries only C's edit");
 
-    // --- Undo chain. C active. The history (top → bottom):
-    //   C edit | select C | B edit | select B | A edit
-    // Undo 1: C's edit reverts (C active, foreground).
+    // --- Undo chain. C active. The history (oldest → newest):
+    //   A-edit(Model) | sel-B(UI) | B-edit(Model) | sel-C(UI) | C-edit(Model)
+    //
+    // T-SEP class-aware undo: a plain undo steps to the nearest Model entry from
+    // the tail, moving that entry + any trailing UI entries as a unit (suffix).
+    // revert() is called ONLY on the Model entry; UI entries are carried inert
+    // so the active layer does NOT change during a geometry undo.
+    //
+    // Undo 1: nearest Model = C-edit (index 4). Suffix=[C-edit].
+    //   Reverts C-edit; sel-C not touched; C still active.
     expectPositionPublish("undo C edit", { undoOk("revert C edit"); });
     assert(!anyVertNear(2, 5.0), "C edit reverted");
     assert(anyVertNear(0, 3.0) && anyVertNear(1, -4.0),
-        "A and B edits untouched by C's undo");
+        "A and B edits untouched by undo 1");
+    assert(activeLayer() == 2,
+        "C still active after undo 1 (sel-C carried inert)");
 
-    // Undo 2: the select C reverts → B active. (UI undo, no position publish.)
-    undoOk("revert select C");
-    assert(activeLayer() == 1, "undo of select C returns active to B");
-
-    // Undo 3: B's edit reverts (B active).
+    // Undo 2: nearest Model = B-edit (index 2). Suffix=[B-edit, sel-C].
+    //   Reverts B-edit; sel-C carried inert → C stays active.
     expectPositionPublish("undo B edit", { undoOk("revert B edit"); });
     assert(!anyVertNear(1, -4.0), "B edit reverted");
-    assert(anyVertNear(0, 3.0), "A edit still present after B's undo");
+    assert(anyVertNear(0, 3.0), "A edit still present");
+    assert(activeLayer() == 2,
+        "C still active after undo 2 (sel-C carried inert in suffix)");
 
-    // --- Redo B's edit straight back (proves redo targets B, not a colliding
-    // layer). Redo 1: select B's edit redo path — first the B edit returns.
+    // Undo 3: nearest Model = A-edit (index 0). Suffix=[A-edit, sel-B].
+    //   Reverts A-edit; sel-B carried inert → C stays active.
+    //   After undo 3: undoStack is empty; redoStack=[A-edit,sel-B,B-edit,sel-C,C-edit].
+    expectPositionPublish("undo A edit", { undoOk("revert A edit"); });
+    assert(!anyVertNear(0, 3.0), "A edit reverted");
+    assert(activeLayer() == 2,
+        "C still active after undo 3 (sel-B carried inert in suffix)");
+
+    // --- Redo chain. redoStack (front→back): [A-edit, sel-B, B-edit, sel-C, C-edit]
+    //
+    // Redo re-applies both the Model entry AND any UI suffix entries in the block,
+    // so the round-trip restores the full state that existed after the original
+    // recording (geometry AND active layer).
+    //
+    // Redo 1: redo[0]=A-edit(Model). Block=[A-edit, sel-B].
+    //   Re-applies A-edit, then re-applies sel-B → B becomes active.
+    expectPositionPublish("redo A edit", { redoOk("redo A edit"); });
+    assert(anyVertNear(0, 3.0), "A edit restored by redo 1");
+    assert(activeLayer() == 1,
+        "B active after redo 1 (sel-B suffix re-applied)");
+
+    // Redo 2: redo[0]=B-edit(Model). Block=[B-edit, sel-C].
+    //   Re-applies B-edit, then re-applies sel-C → C becomes active.
     expectPositionPublish("redo B edit", { redoOk("redo B edit"); });
-    assert(anyVertNear(1, -4.0), "B edit restored by redo");
-    assert(activeLayer() == 1, "still on B after redoing its edit");
+    assert(anyVertNear(1, -4.0), "B edit restored by redo 2");
+    assert(activeLayer() == 2,
+        "C active after redo 2 (sel-C suffix re-applied)");
 
-    // Redo 2: select C (UI). Redo 3: C edit returns.
-    redoOk("redo select C");
-    assert(activeLayer() == 2, "redo of select C returns to C");
+    // Redo 3: redo[0]=C-edit(Model). Block=[C-edit] (no trailing UI).
+    //   Re-applies C-edit. C stays active.
     expectPositionPublish("redo C edit", { redoOk("redo C edit"); });
-    assert(anyVertNear(2, 5.0), "C edit restored by redo");
+    assert(anyVertNear(2, 5.0), "C edit restored by redo 3");
 
     // Full state restored: all three markers present, each on its own layer.
     assert(anyVertNear(0, 3.0) && anyVertNear(1, -4.0) && anyVertNear(2, 5.0),
