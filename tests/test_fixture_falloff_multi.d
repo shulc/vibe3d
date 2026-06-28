@@ -151,7 +151,7 @@ private void assertFold(string caseName, JSONValue op, JSONValue pairs, double t
 
     auto m = new Mesh(); m.vertices = before.dup;
     bool[] tp = new bool[](before.length); tp[] = true;
-    applyXformMatrix(m, idx, before, pivot, M, BlendMode.MatrixLerp,
+    applyXformMatrix(m, idx, before, pivot, M, Vec3(0,0,0), BlendMode.MatrixLerp,
                      fp, vp, cp, ca, null, sp, tp);
 
     float e = maxErr(m.vertices, after);

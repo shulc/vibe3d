@@ -210,3 +210,45 @@ double[3] vertexPos(int idx, string baseUrl = "http://localhost:8080") {
 JSONValue fetchSnapLast(string baseUrl = "http://localhost:8080") {
     return parseJSON(cast(string)get(baseUrl ~ "/api/snap/last"));
 }
+
+// Projects the X-axis scale/move arrow handle at `pivot` to screen space and
+// returns the grab pixel (gx,gy) at 70% along the shaft, plus the normalised
+// screen-space drag direction (ux,uy). Matches the CubicArrow / ArrowHandler
+// endpoints: shaft starts at pivot + X*(size/7) and ends at pivot + X*(size*1.18).
+// Requires projectToWindow and gizmoSize from this module.
+void axisGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy,
+                out double ux, out double uy)
+{
+    float size = gizmoSize(pivot, vp);
+    float sx1, sy1, sx2, sy2;
+    projectToWindow(Vec3(pivot.x + size / 7.0f,  pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size * 1.18f, pivot.y, pivot.z), vp, sx2, sy2);
+    gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
+    gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    double dx = sx2 - sx1, dy = sy2 - sy1;
+    double len = sqrt(dx*dx + dy*dy);
+    ux = dx / len; uy = dy / len;
+}
+
+// Set a UserPlaced action-center pivot via tool.pipe.attr.
+void setFarPivot(double px, double py, double pz,
+                 string baseUrl = "http://localhost:8080")
+{
+    import std.conv : to;
+    post(baseUrl ~ "/api/script", "tool.pipe.attr actionCenter userPlacedX " ~ px.to!string);
+    post(baseUrl ~ "/api/script", "tool.pipe.attr actionCenter userPlacedY " ~ py.to!string);
+    post(baseUrl ~ "/api/script", "tool.pipe.attr actionCenter userPlacedZ " ~ pz.to!string);
+}
+
+// Position camera so the gizmo at (px,py,pz) is on-screen.
+// Eye = pivot + (3,1,2) → view-space depth ≈ √14 ≈ 3.7 units, well within
+// the 100-unit far clip regardless of how large |pivot| is.
+void setCameraAtPivot(double px, double py, double pz,
+                      string baseUrl = "http://localhost:8080")
+{
+    import std.format : format;
+    string body_ = format(
+        `{"eye":{"x":%g,"y":%g,"z":%g},"focus":{"x":%g,"y":%g,"z":%g}}`,
+        px+3.0, py+1.0, pz+2.0, px, py, pz);
+    post(baseUrl ~ "/api/camera", body_);
+}

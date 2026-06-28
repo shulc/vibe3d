@@ -510,6 +510,7 @@ void applyXformMatrix(
     const(Vec3)[] baseline,
     Vec3 pivotFallback,
     float[16] M,
+    Vec3 anchor,
     BlendMode mode,
     const ref FalloffPacket dragFalloff,
     const ref Viewport vp,
@@ -558,7 +559,39 @@ void applyXformMatrix(
         if (w == 0.0f) continue;
 
         float[16] Mw = blendToIdentity(Mv, w, mode);
-        mesh.vertices[vi] = pivot + applyAffine(Mw, base - pivot);
+        // Precision-stable apply: re-center on `anchor` (near the geometry)
+        // so `base − anchor` is a small-magnitude difference and avoids the
+        // large-minus-large float32 cancellation `base − pivot` suffers at a
+        // far pivot. `off = M_lin*(anchor−pivot) + pivot − anchor + t_fold`
+        // is computed in double once per (Mw, pivot, anchor); under varying
+        // falloff weight Mw is per-vertex so off is per-vertex — CPU-only,
+        // never baked into the GPU matrix. The GPU fast-path (no-falloff) uses
+        // wrapAboutPivotStable built from the same anchor → matrix-INPUT
+        // consistency (not bit-identical apply — scalar CPU vs mat4 GPU).
+        {
+            double m00 = Mw[0], m10 = Mw[1], m20 = Mw[2];
+            double m01 = Mw[4], m11 = Mw[5], m21 = Mw[6];
+            double m02 = Mw[8], m12 = Mw[9], m22 = Mw[10];
+            double tf0 = Mw[12], tf1 = Mw[13], tf2 = Mw[14];
+            // c - pivot (double, small when anchor is near geometry)
+            double cpx = cast(double)anchor.x - cast(double)pivot.x;
+            double cpy = cast(double)anchor.y - cast(double)pivot.y;
+            double cpz = cast(double)anchor.z - cast(double)pivot.z;
+            // off = M_lin*(c-pivot) + (pivot-c) + t_fold
+            //     = M_lin*(c-pivot) - (c-pivot) + t_fold
+            double off0 = m00*cpx + m01*cpy + m02*cpz - cpx + tf0;
+            double off1 = m10*cpx + m11*cpy + m12*cpz - cpy + tf1;
+            double off2 = m20*cpx + m21*cpy + m22*cpz - cpz + tf2;
+            // d = base - anchor (exact, both geometry-scale)
+            double dx = cast(double)base.x - cast(double)anchor.x;
+            double dy = cast(double)base.y - cast(double)anchor.y;
+            double dz = cast(double)base.z - cast(double)anchor.z;
+            // v' = anchor + M_lin*d + off
+            mesh.vertices[vi] = Vec3(
+                cast(float)(cast(double)anchor.x + m00*dx + m01*dy + m02*dz + off0),
+                cast(float)(cast(double)anchor.y + m10*dx + m11*dy + m12*dz + off1),
+                cast(float)(cast(double)anchor.z + m20*dx + m21*dy + m22*dz + off2));
+        }
     }
     // NOTE (doc/symmetry_deform_plan.md Stage 2): the GLOBAL-fold symmetry
     // mirror tail that used to live here was DELETED. The live unified fold
