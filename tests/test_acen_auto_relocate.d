@@ -366,3 +366,101 @@ unittest { // Auto off-gizmo click relocates onto the GROUND plane, not the came
     // Clean up.
     postJson("/api/script", "tool.set move off");
 }
+
+unittest { // Auto relocate plane passes through the ORIGIN, not the camera FOCUS (task 0063)
+    // ---------------------------------------------------------------------
+    // ORIGIN-vs-FOCUS plane discriminator (task 0063).
+    //
+    // The owner observed that the reference editor's work / most-facing
+    // plane appears to follow the camera FOCUS (View3D.Center()) when the
+    // camera is panned (focus ≠ origin), whereas vibe3d's plane is ALWAYS
+    // through the world origin (create_common.d currentWorkplaneFrame:
+    // f.origin = (0,0,0) in every auto branch).
+    //
+    // Task 0063 re-analysed task 0058's already-captured PANNED reference
+    // rows (tools/local/modo_diff/phase58_panA.json / panB.json, both with
+    // focus.z ≈ 0.015 / -0.053) and found the reference relocate lands at
+    // z = 0.0000 EXACTLY on every panned row — i.e. on the work plane
+    // through the ORIGIN, NOT shifted by the focus's out-of-plane component
+    // (a focus-plane would carry z = focus.z ≠ 0). The origin↔focus offset
+    // along fwd (|delta| ≈ 0.02–0.09u) is far below the provisional in-plane
+    // residual (0.10–0.51u), so RESIDUAL MAGNITUDE alone is indistinguishable;
+    // the exact-zero out-of-plane coordinate is the decisive evidence.
+    // Verdict: ORIGIN-supported. See doc/auto_relocate_focus_plane_findings.md.
+    //
+    // This test pins vibe3d's CURRENT through-ORIGIN behaviour on a
+    // discriminating PANNED camera (focus.y ≠ 0, so the origin plane Y=0 and
+    // the focus plane Y=focus.y differ clearly) and DOCUMENTS — via the
+    // second computed value focusHit — where a focus-plane editor would land.
+    // It is the before/after discriminator for any eventual 0057 refinement:
+    //   CURRENT (origin plane Y=0):  cen.y ≈ 0
+    //   focus-plane refinement:      cen.y ≈ focus.y   (focusHit.y)
+    // ---------------------------------------------------------------------
+    resetCubeAuto();
+    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/script", "tool.set move");
+    settle();
+
+    // Panned camera: focus is lifted to y=0.6 (a non-origin focus, the
+    // "panned focus" condition). eye is offset so forward is dominantly -X
+    // (same family as the ground-plane test) and the ray is well clear of
+    // parallel-to-Y=0.
+    postJson("/api/camera",
+        `{"eye":{"x":3.0,"y":1.6,"z":0.5},"focus":{"x":0.0,"y":0.6,"z":0.0}}`);
+    settle();
+
+    auto cam = fetchCamera();
+    auto vp  = viewportFromCamera(cam);
+    assert(abs(cam.focus.y - 0.6f) < 1e-3f,
+        format("camera focus not applied: focus.y=%.4f (expected 0.6)", cam.focus.y));
+
+    // Off-gizmo click pixel (same construction as the ground-plane test).
+    auto pivot = evalPivotLocal();
+    float size = gizmoSize(pivot, vp);
+    float sx1, sy1, sx2, sy2;
+    projectToWindow(Vec3(pivot.x + size/6.0f, pivot.y, pivot.z), vp, sx1, sy1);
+    projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
+    int xa = cast(int)(sx1 + 0.7f * (sx2 - sx1));
+    int ya = cast(int)(sy1 + 0.7f * (sy2 - sy1));
+    float dxr = sx2 - sx1, dyr = sy2 - sy1;
+    float rlen = sqrt(dxr*dxr + dyr*dyr);
+    float ux = dxr/rlen, uy = dyr/rlen;
+    int xoff = cast(int)(xa + 220.0f * uy);
+    int yoff = cast(int)(ya - 220.0f * ux);
+
+    // Two expected hits on the SAME normal (0,1,0), differing only by the
+    // plane through-point: ORIGIN (Y=0) vs FOCUS (Y=focus.y).
+    Vec3 dir = testScreenRay(cast(float)xoff, cast(float)yoff, vp);
+    Vec3 originHit, focusHit;
+    bool oOk = testRayPlaneIntersect(vp.eye, dir, Vec3(0,0,0), Vec3(0,1,0), originHit);
+    bool fOk = testRayPlaneIntersect(vp.eye, dir,
+                                     Vec3(0, cam.focus.y, 0), Vec3(0,1,0), focusHit);
+    assert(oOk && fOk, "origin/focus plane ray-intersect failed (ray parallel to Y=0?)");
+    // Sanity: the two planes are clearly separated by the focus lift.
+    assert(abs(originHit.y - focusHit.y) > 0.5f,
+        format("Camera not discriminating origin vs focus: originHit.y=%.4f focusHit.y=%.4f",
+               originHit.y, focusHit.y));
+
+    // Inject the off-gizmo click and read the relocated pivot.
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              xoff, yoff, xoff, yoff, 1));
+    settle();
+    Vec3 cen = evalPivotLocal();
+
+    // CURRENT (and reference-supported) behaviour: lands on the ORIGIN plane
+    // Y=0, NOT the focus plane Y=focus.y. The out-of-plane coordinate is the
+    // decisive check (tight tol), mirroring the z≈0 evidence from the
+    // reference panned captures.
+    assert(abs(cen.y - originHit.y) < 1e-2f,
+        format("cenY expected ≈%.4f (originHit, through-origin plane) but got %.4f",
+               originHit.y, cen.y));
+    // DOCUMENT the focus-plane alternative: a focus-plane editor would land
+    // ~focus.y away. This assert is the before/after marker for a 0057
+    // refinement — if vibe3d ever moves the plane onto the focus, cen.y would
+    // approach focusHit.y and this assert (current behaviour) would flip.
+    assert(abs(cen.y - focusHit.y) > 0.4f,
+        format("cenY ≈ focusHit.y (%.4f) — plane has moved onto the camera focus "
+               ~ "(0057 refinement landed); update this discriminator", focusHit.y));
+
+    postJson("/api/script", "tool.set move off");
+}
