@@ -4759,15 +4759,33 @@ struct Mesh {
         // assignment (first → A, second → B) needs serial order to
         // avoid a race on the -1-sentinel comparison; the writeback
         // pass (twin from A/B) is parallelisable.
-        int[] edgeLoopA = new int[](edges.length);
-        int[] edgeLoopB = new int[](edges.length);
+        //
+        // Treatment A for non-manifold edges (3+ loops sharing one edge):
+        // on the third loop for an edge, reset A=B=-1 and mark it in
+        // edgeNonManifold so fillTwin's b==-1 short-circuit fires for ALL
+        // its loops, leaving twin=~0u (boundary-like).  This makes the twin
+        // graph consistent (involutive) on non-manifold input.  Manifold
+        // edges (≤2 loops after addEdge dedup) never reach the third-loop
+        // branch — byte-stable by construction.
+        int[]  edgeLoopA        = new int[] (edges.length);
+        int[]  edgeLoopB        = new int[] (edges.length);
+        bool[] edgeNonManifold  = new bool[](edges.length);  // zero-inited
         edgeLoopA[] = -1;
         edgeLoopB[] = -1;
         foreach (idx; 0 .. total) {
             uint ei = loopEdge[idx];
             if (ei == ~0u) continue;
-            if (edgeLoopA[ei] == -1) edgeLoopA[ei] = cast(int)idx;
-            else                     edgeLoopB[ei] = cast(int)idx;
+            if (edgeNonManifold[ei]) continue;          // already flagged — skip
+            if (edgeLoopA[ei] == -1)      edgeLoopA[ei] = cast(int)idx;
+            else if (edgeLoopB[ei] == -1) edgeLoopB[ei] = cast(int)idx;
+            else {
+                // Third (or later) loop for this edge: non-manifold.
+                // Reset A/B so fillTwin's b==-1 guard fires → all loops
+                // on this edge keep twin=~0u (indistinguishable from boundary).
+                edgeNonManifold[ei] = true;
+                edgeLoopA[ei] = -1;
+                edgeLoopB[ei] = -1;
+            }
         }
         void fillTwin(size_t idx) {
             uint ei = loopEdge[idx];
@@ -4794,9 +4812,15 @@ struct Mesh {
         // single biggest cost (~29% of CPU during a subpatch-mode
         // sphere drag profile) for closed-manifold inputs, which are
         // the common case in subpatch preview meshes.
+        //
+        // Non-manifold (treatment A) edges also set hasBoundary=true so
+        // the anchor walk runs and gives each affected vertex a deterministic
+        // start dart.  The walk still breaks on the first twin==~0u, so it
+        // re-seeds only one fan — NOT a complete fan enumeration.
         bool hasBoundary = false;
         foreach (ei; 0 .. edges.length) {
-            if (edgeLoopA[ei] != -1 && edgeLoopB[ei] == -1) {
+            if (edgeNonManifold[ei] ||
+                (edgeLoopA[ei] != -1 && edgeLoopB[ei] == -1)) {
                 hasBoundary = true;
                 break;
             }
@@ -6032,6 +6056,133 @@ unittest { // extendEdgesByMask seg3 — outermost ring selected on exit
     bool isOuter = (near_(va, Vec3(0.4f, 0.7f, 0.4f)) && near_(vb, Vec3(-0.4f, 0.7f, 0.4f))) ||
                    (near_(va, Vec3(-0.4f, 0.7f, 0.4f)) && near_(vb, Vec3(0.4f, 0.7f, 0.4f)));
     assert(isOuter, "seg3: selected edge is the OUTERMOST ring (Y=0.7)");
+}
+
+// ===========================================================================
+// Twin-graph invariant tests — cube control guard (R1) + non-manifold book.
+//
+// The cube-control test is the primary manifold byte-stability guard: no
+// existing test asserted twin values or verticesAroundVertex multisets before
+// this task.  The book test confirms treatment (A) — non-manifold spine loops
+// get twin==~0u (boundary-like) — and that all ring walks terminate cleanly.
+// ===========================================================================
+
+unittest { // cube twin graph: involutive + complete + correct vertex ring (R1 guard)
+    // A closed manifold cube has 24 loops (6 faces × 4 corners), 12 edges.
+    // Every loop must have a valid twin (no boundary on a closed cube).
+    Mesh m = makeCube();
+    assert(m.loops.length == 24, "cube: 24 loops");
+    assert(m.edges.length == 12, "cube: 12 edges");
+
+    // Involutive: twin-of-twin == self for every loop.
+    foreach (li; 0 .. m.loops.length) {
+        uint t = m.loops[li].twin;
+        assert(t != ~0u, "cube loop has no boundary twin");
+        assert(m.loops[t].twin == cast(uint)li,
+               "cube twin graph not involutive");
+    }
+
+    // verticesAroundVertex(0): cube vertex 0 is shared by 3 faces.
+    // makeCube() defines faces [0,3,2,1], [0,4,7,3], [0,1,5,4]
+    // → edges from 0: to 3, to 4, to 1 → neighbors {1, 3, 4}.
+    import std.algorithm : sort;
+    uint[] nb0;
+    foreach (v; m.verticesAroundVertex(0)) nb0 ~= v;
+    nb0.sort();
+    assert(nb0 == [1u, 3u, 4u], "cube v0 neighbors must be {1,3,4}");
+}
+
+unittest { // non-manifold book: spine edge (3 faces) → all spine twins == ~0u (treatment A)
+    // Three triangles sharing edge v0-v1 (the "spine"):
+    //   face 0: [0,1,2],  face 1: [0,1,3],  face 2: [0,1,4]
+    // After treatment A, the spine edge's 3 loops all get twin==~0u
+    // (boundary-like).  Page edges (v0-v2, v0-v3, v0-v4, v1-v2, v1-v3,
+    // v1-v4) are genuine boundary edges (one face each) → also twin==~0u.
+    // Twin graph everywhere is trivially involutive (all boundary).
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),      // 0 — spine endpoint A
+        Vec3(1, 0, 0),      // 1 — spine endpoint B
+        Vec3(0.5f,  1, 0),  // 2 — page 0 tip
+        Vec3(0.5f, -1, 0),  // 3 — page 1 tip
+        Vec3(-0.5f, 0, 1),  // 4 — page 2 tip
+    ];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([0u, 1u, 3u]);
+    m.addFace([0u, 1u, 4u]);
+    m.buildLoops();
+
+    // 3 triangles = 9 loops.  Spine + 6 page edges = 7 edges total.
+    assert(m.loops.length == 9, "book: 9 loops");
+    assert(m.edges.length == 7, "book: 7 edges (1 spine + 6 page)");
+
+    // Find the spine edge index (shared by all 3 faces).
+    uint spineEi = ~0u;
+    foreach (ei; 0 .. m.edges.length) {
+        uint va = m.edges[ei][0], vb = m.edges[ei][1];
+        bool isSpine = (va == 0 && vb == 1) || (va == 1 && vb == 0);
+        if (isSpine) { spineEi = cast(uint)ei; break; }
+    }
+    assert(spineEi != ~0u, "spine edge not found");
+
+    // Under treatment A: all 3 spine loops must have twin==~0u.
+    uint spineLoopCount = 0;
+    foreach (li; 0 .. m.loops.length) {
+        if (m.loopEdge[li] == spineEi) {
+            assert(m.loops[li].twin == ~0u,
+                   "spine loop twin must be ~0u under treatment A");
+            ++spineLoopCount;
+        }
+    }
+    assert(spineLoopCount == 3, "exactly 3 spine loops");
+
+    // Twin graph is involutive everywhere (every non-~0u twin reciprocates).
+    // On this all-boundary mesh every twin==~0u, so no pair violations.
+    foreach (li; 0 .. m.loops.length) {
+        uint t = m.loops[li].twin;
+        if (t != ~0u)
+            assert(m.loops[t].twin == cast(uint)li,
+                   "twin graph not involutive at loop");
+    }
+
+    // Ring walks terminate (length is finite — no MAX_STEPS truncation needed).
+    // verticesAroundVertex(0): all edges are boundary/non-manifold (twin==~0u).
+    // The anchor walk starts at vertLoop[0] = dart from the last face that
+    // wrote v0 in the serial seed pass.  With serial fill and faces in order
+    // [0,1,2],[0,1,3],[0,1,4], the last face touching v0 is face 2 ([0,1,4]),
+    // so vertLoop[0] = dart from face 2.  In face [0,1,4] the dart at v0 has
+    // next=v1; prev-dart is the dart at v4, whose edge v0-v4 is boundary →
+    // twin==~0u → _atExtra fires immediately.
+    // Result: front=v1 (next of start dart), _atExtra front=v4.
+    uint[] nb0;
+    foreach (v; m.verticesAroundVertex(0)) nb0 ~= v;
+    // Treatment A: walk truncates at first boundary/non-manifold edge.
+    // Each spine vertex sees exactly 2 neighbors from its single anchored dart.
+    assert(nb0.length == 2,
+           "book v0: truncated to 2 neighbors under treatment A (boundary-like)");
+
+    // Spine endpoint v1 is symmetric — also truncated to 2 neighbors.
+    uint[] nb1;
+    foreach (v; m.verticesAroundVertex(1)) nb1 ~= v;
+    assert(nb1.length == 2, "book v1: truncated to 2 neighbors");
+
+    // Page tip v2 has 2 incident edges (v0-v2 and v1-v2), both boundary → 2 neighbors.
+    uint[] nb2;
+    foreach (v; m.verticesAroundVertex(2)) nb2 ~= v;
+    assert(nb2.length == 2, "book v2: exactly 2 neighbors");
+
+    // adjacentFaces(face 0): all its edges are boundary/non-manifold (twin==~0u)
+    // → AdjacentFaceRange skips them → 0 adjacent faces.
+    uint adjCount = 0;
+    foreach (_; m.adjacentFaces(0)) ++adjCount;
+    assert(adjCount == 0,
+           "book face 0: no adjacent faces (spine treated as boundary under A)");
+
+    // edgesAroundVertex(0) terminates with a finite result.
+    uint[] edgeRing0;
+    foreach (e; m.edgesAroundVertex(0)) edgeRing0 ~= e;
+    assert(edgeRing0.length > 0 && edgeRing0.length < 64,
+           "book v0 edge ring terminates");
 }
 
 /// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
