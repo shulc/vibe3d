@@ -53,6 +53,10 @@ class SceneReset : Command {
     private MeshSnapshot snap;
     private EditMode     prevEditMode;
     private bool         captured;
+    // Funnel hook: when installed (app factory), apply/revert route the editMode
+    // write through promoteGeometryType so selTypeOrder stays in lockstep.
+    // Null in headless/unit construction — the raw-pointer fallback is used then.
+    private void delegate(EditMode) promoteType;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
@@ -89,6 +93,13 @@ class SceneReset : Command {
     /// Integer arg for the dense perf meshes (grid side / subdiv levels).
     /// Pass -1 (the default) to let the factory pick its own default.
     void setPrimitiveParam(int p) { primParam = p; }
+    /// Install the funnel hook so apply/revert route the editMode write through
+    /// promoteGeometryType (touches selTypeOrder before the field write). Returns
+    /// `this` for chaining. Null (default) = raw-pointer fallback for headless.
+    SceneReset setPromoteHook(void delegate(EditMode) hook) {
+        this.promoteType = hook;
+        return this;
+    }
 
     override bool apply() {
         snap         = MeshSnapshot.capture(*mesh);
@@ -142,7 +153,8 @@ class SceneReset : Command {
         }
         viewPtr.reset();
         mesh.resetSelection();
-        *editModePtr = EditMode.Vertices;
+        if (promoteType) promoteType(EditMode.Vertices);
+        else *editModePtr = EditMode.Vertices;
         // Forget the remembered save target: a reset is a clean slate and
         // the prior document path no longer applies. This prevents a later
         // path-less file.save from silently overwriting the pre-reset file.
@@ -184,7 +196,8 @@ class SceneReset : Command {
         // Restore the kept active layer's pre-reset geometry first (the snapshot
         // was captured against `*mesh`, which is the surviving active layer).
         snap.restore(*mesh);
-        *editModePtr = prevEditMode;
+        if (promoteType) promoteType(prevEditMode);
+        else *editModePtr = prevEditMode;
         // Then restore the full pre-reset layer list + active index (layers
         // Stage 2). The kept layer object is still in prevLayers (shallow dup),
         // so its just-restored geometry + restored name/flags ride back too.

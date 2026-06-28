@@ -288,3 +288,62 @@ unittest { // RMB lasso polygons → still undoable (UI-class); undo restores
     assert(sel["selectedFaces"].array.length > 0,
         "expected face selection back after redo");
 }
+
+unittest { // Cross-mode interactive-select undo: MeshSelectionEdit.revert()
+           // routes through promoteGeometryType(beforeMode), which re-fronts
+           // selTypeOrder in lockstep with editMode. This is the OBJ2
+           // discriminator — the case where selTypeOrder.front diverges from
+           // editMode between the commit and the undo.
+           //
+           // Scenario:
+           //   1. Reset → vertices mode (front=vertex, mode=vertices).
+           //   2. Lasso polygon front faces (lasso log: key-3 → polygons, then
+           //      lasso gesture). MeshSelectionEdit{before=Polygons, after=Polygons}.
+           //      selTypeOrder.front = Polygon (via key-3 in the log).
+           //   3. Switch BACK to vertex mode via select.typeFrom (front=vertex,
+           //      mode=vertices). selTypeOrder.front ≠ beforeMode=Polygons.
+           //   4. Undo the lasso: revert() must promote Polygons back to the front.
+           //      Old code: *editModePtr = Polygons (selTypeOrder stays Vertex → DESYNC).
+           //      New code: promoteGeometryType(Polygons) → both revert to Polygons.
+    resetCube();
+
+    // Step 1: verify starting state.
+    auto selInit = getSelection();
+    assert(selInit["mode"].str == "vertices",
+        "expected vertices mode after reset; got " ~ selInit["mode"].str);
+    assert(selInit["selType"].str == "vertex",
+        "expected vertex selType after reset; got " ~ selInit["selType"].str);
+
+    // Step 2: lasso some polygon faces (log starts with key-3 → polygon mode).
+    playEvents("tests/events/lasso_polygon_front.log");
+    auto selAfterLasso = getSelection();
+    assert(selAfterLasso["mode"].str == "polygons",
+        "expected polygons mode after lasso; got " ~ selAfterLasso["mode"].str);
+    assert(selAfterLasso["selType"].str == "polygon",
+        "expected polygon selType after lasso; got " ~ selAfterLasso["selType"].str);
+    assert(selAfterLasso["selectedFaces"].array.length > 0,
+        "expected at least one face selected after lasso");
+
+    // Step 3: switch back to vertex mode — selTypeOrder.front = Vertex now,
+    // but the recorded MeshSelectionEdit has beforeMode=Polygons.
+    auto resp = post("http://localhost:8080/api/command", "select.typeFrom vertex");
+    assert(parseJSON(cast(string)resp)["status"].str == "ok",
+        "select.typeFrom vertex failed");
+    auto selVertex = getSelection();
+    assert(selVertex["mode"].str == "vertices" && selVertex["selType"].str == "vertex",
+        "expected vertex mode after select.typeFrom; got "
+        ~ selVertex["mode"].str ~ "/" ~ selVertex["selType"].str);
+
+    // Step 4: undo the lasso. revert() calls promoteGeometryType(beforeMode=Polygons).
+    // Both editMode AND selTypeOrder front must revert to Polygons.
+    auto u = postUndo();
+    assert(u["status"].str == "ok",
+        "undo of cross-mode selection failed: " ~ u.toString);
+    auto selReverted = getSelection();
+    assert(selReverted["mode"].str == "polygons",
+        "cross-mode undo: editMode must revert to polygons; got "
+        ~ selReverted["mode"].str);
+    assert(selReverted["selType"].str == "polygon",
+        "cross-mode undo: selTypeOrder front must revert to polygon; got "
+        ~ selReverted["selType"].str);
+}

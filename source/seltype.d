@@ -20,6 +20,13 @@ import editmode : EditMode;
 // defined mode. Stage 1 never makes `Item` current — it lands in the enum +
 // ordering as forward-compatible shape, exercised only by the unittests.
 //
+// `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`:
+// it is written by exactly ONE writer path — `setEditModeFromOrder()` in
+// `app.d` (called from the geometry-type funnel `switchGeometryType` /
+// `promoteGeometryType`). No command or handler writes `editMode` independently
+// of the order. A debug-only invariant on the `/api/selection` read boundary
+// asserts `editMode == geometryEditMode(selTypeOrder.mostRecentGeometry)`.
+//
 // MIT-clean naming: vibe3d-native infrastructure. No proprietary / SDK symbol
 // names appear here — the neutral identifiers (`SelType`, `selTypeOrder`,
 // `currentSelType`, `touchSelType`, `mostRecentGeometryType`) are the public
@@ -132,6 +139,20 @@ SelType geometrySelType(EditMode m) pure nothrow @safe @nogc {
     }
 }
 
+/// The EditMode corresponding to a geometry SelType (the inverse of
+/// `geometrySelType`, restricted to Vertex/Edge/Polygon). Used by the single
+/// `setEditModeFromOrder()` writer in `app.d` to recompute the materialized
+/// `editMode` from `selTypeOrder.mostRecentGeometry`. Calling with `Item`
+/// is a logic error (Item has no EditMode counterpart); assert(false) guards it.
+EditMode geometryEditMode(SelType t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case SelType.Vertex:  return EditMode.Vertices;
+        case SelType.Edge:    return EditMode.Edges;
+        case SelType.Polygon: return EditMode.Polygons;
+        case SelType.Item:    assert(false); // Item has no EditMode counterpart
+    }
+}
+
 /// Lowercase SINGULAR token for a SelType — the HTTP wire vocabulary
 /// (vertex/edge/polygon/item), matching the existing geometry-payload spelling.
 string selTypeToken(SelType t) pure nothrow @safe @nogc {
@@ -226,4 +247,15 @@ unittest {
     assert(selTypeToken(SelType.Edge)    == "edge");
     assert(selTypeToken(SelType.Polygon) == "polygon");
     assert(selTypeToken(SelType.Item)    == "item");
+}
+
+// geometryEditMode is the inverse of geometrySelType over the geometry types.
+unittest {
+    assert(geometryEditMode(SelType.Vertex)  == EditMode.Vertices);
+    assert(geometryEditMode(SelType.Edge)    == EditMode.Edges);
+    assert(geometryEditMode(SelType.Polygon) == EditMode.Polygons);
+    // Round-trip: geometryEditMode(geometrySelType(m)) == m for all geometry modes.
+    assert(geometryEditMode(geometrySelType(EditMode.Vertices)) == EditMode.Vertices);
+    assert(geometryEditMode(geometrySelType(EditMode.Edges))    == EditMode.Edges);
+    assert(geometryEditMode(geometrySelType(EditMode.Polygons)) == EditMode.Polygons);
 }

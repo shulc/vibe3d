@@ -1151,6 +1151,12 @@ void main(string[] args) {
     ulong  loopHoverPrevTopo = ulong.max; // mesh.topologyVersion at last rebuild
 
     DragMode dragMode = DragMode.None;
+    // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`.
+    // It is written by exactly ONE path — `setEditModeFromOrder()` below —
+    // called from the geometry-type funnel (`switchGeometryType` /
+    // `promoteGeometryType`). No command or handler writes this field
+    // independently of the order. A debug-only invariant on the `/api/selection`
+    // read boundary asserts it equals `derivedEditMode()` as a regression guard.
     EditMode editMode = EditMode.Vertices;
     // Selection-types Stage 1: the most-recent-first ordering of selection types
     // is the "current type" authority. `editMode` stays the picking/draw
@@ -1384,13 +1390,36 @@ void main(string[] args) {
     }
 
     // -------------------------------------------------------------------------
+    // Selection-types — single-writer derivation helpers.
+    //
+    // `editMode` is a materialized view of `selTypeOrder.mostRecentGeometry`.
+    // `derivedEditMode()` computes it purely from the order; `setEditModeFromOrder()`
+    // is the SOLE write site for the field — called from both funnel functions
+    // AFTER the order has been touched, so mostRecentGeometry already equals the
+    // intended mode. No other code path writes `editMode` on a live app path.
+
+    // The geometry EditMode that the current recent-ordering implies.
+    // `editMode` must always equal this value — the debug invariant on
+    // `/api/selection` asserts it as a regression tripwire.
+    EditMode derivedEditMode() const {
+        return geometryEditMode(selTypeOrder.mostRecentGeometry());
+    }
+
+    // The sole writer: recomputes `editMode` from the order.
+    // Always call AFTER `selTypeOrder.touch(t)` so mostRecentGeometry is current.
+    void setEditModeFromOrder() {
+        editMode = derivedEditMode();
+    }
+
+    // -------------------------------------------------------------------------
     // Selection-types Stage 1: the single funnel for a GEOMETRY-type switch
     // (keys 1/2/3 and the `select.typeFrom` command both route through here).
     //
     // Contract:
     //   * Promote the matching SelType to the front of the recent ordering
-    //     (`touchSelType`). `editMode` is set in LOCKSTEP — it stays the
-    //     picking/draw authority and always mirrors the current geometry type.
+    //     (`touchSelType`). `editMode` is recomputed in LOCKSTEP via
+    //     `setEditModeFromOrder()` — it stays the picking/draw authority and
+    //     always mirrors the current geometry type.
     //   * A switch that FLIPS the front type DROPS the active tool (B2 — mirrors
     //     the documented tool-drop on a selection-mode change), routed through
     //     the same `setActiveTool(null)` path the active-layer switch hook uses.
@@ -1403,9 +1432,9 @@ void main(string[] args) {
         import change_bus : noteCurrentType;
         const t = geometrySelType(mode);
         const flipped = selTypeOrder.touch(t);
-        // editMode mirrors the geometry type unconditionally (idempotent when
-        // already that mode — keeps the lockstep invariant even on a no-flip).
-        editMode = mode;
+        // Recompute editMode from the order (idempotent when already that mode —
+        // keeps the lockstep invariant even on a no-flip).
+        setEditModeFromOrder();
         if (flipped) {
             setActiveTool(null);          // tool-drop on a front-flip (B2)
             noteCurrentType(t);           // current-type changed (bus, drained at flush)
@@ -1416,7 +1445,7 @@ void main(string[] args) {
     // changes the active element type (`mesh.select` to a different mode,
     // `select.convert`) must keep editMode and SelType in LOCKSTEP — editMode is
     // never written independently of the recent-ordering. This is the same
-    // promotion `switchGeometryType` does (touch the order + note the front flip)
+    // promotion `switchGeometryType` does (touch the order + recompute editMode)
     // but WITHOUT the key-1/2/3 tool-drop: a selection command does not change
     // the *interaction* mode the way pressing a mode key does, so dropping the
     // active tool here would be a behavior change (and break select-then-edit
@@ -1426,7 +1455,7 @@ void main(string[] args) {
         import change_bus : noteCurrentType;
         const t = geometrySelType(mode);
         const flipped = selTypeOrder.touch(t);
-        editMode = mode;                  // lockstep with the order
+        setEditModeFromOrder();           // lockstep with the order
         if (flipped) noteCurrentType(t);  // current-type changed (no tool-drop)
     }
 
@@ -2207,6 +2236,7 @@ void main(string[] args) {
                                  () { setActiveTool(null); resetAllPipeStages(); });
         c.setDocument(&document);
         c.setEmpty(true);
+        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
         return cast(Command) c;
     };
     {
@@ -2313,12 +2343,14 @@ void main(string[] args) {
                        &editMode, &cameraView,
                        () { setActiveTool(null); resetAllPipeStages(); });
         c.setDocument(&document);
+        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
         return cast(Command) c;
     };
     reg.commandFactories["scene.loadMesh"] = () => cast(Command)
-        new MeshLoadRaw(&mesh(), cameraView, editMode, &gpu,
-                        &vertexCache, &edgeCache, &faceCache,
-                        &editMode, &cameraView, () => setActiveTool(null));
+        (new MeshLoadRaw(&mesh(), cameraView, editMode, &gpu,
+                         &vertexCache, &edgeCache, &faceCache,
+                         &editMode, &cameraView, () => setActiveTool(null)))
+        .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["history.undo"] = () => cast(Command)
         new HistoryUndo(&mesh(), cameraView, editMode, history);
     reg.commandFactories["history.redo"] = () => cast(Command)
@@ -2799,6 +2831,13 @@ void main(string[] args) {
         });
         httpServer.setSelectionDataProvider(() {
             import std.format : format;
+            // Derivation invariant: editMode is a materialized view of
+            // selTypeOrder.mostRecentGeometry. Any bypassing writer (raw
+            // *editModePtr write without going through the funnel) surfaces
+            // here as a hard failure in a debug build — every selection test
+            // already reads /api/selection, so regressions are caught immediately.
+            debug assert(editMode == derivedEditMode(),
+                "editMode drifted from selTypeOrder — a writer bypassed the funnel");
             string modeName;
             final switch (editMode) {
                 case EditMode.Vertices: modeName = "vertices"; break;
@@ -3900,14 +3939,9 @@ void main(string[] args) {
                 import ai.debug_trace : clearLatestAiDebugTraces;
                 clearLatestAiDebugTraces();
             }
-            // Selection-types Stage 1: re-sync the SelType recent-ordering to the
-            // current geometry editMode after a reset. editMode is the persistent
-            // picking authority (scene.reset does not change it), so aligning the
-            // order's front to it keeps the current-type deterministic across a
-            // reset: a subsequent `select.typeFrom X` flips iff X differs from
-            // the live editMode, with no dependency on a prior test's ordering
-            // (the order is otherwise session-persistent, like editMode itself).
-            selTypeOrder.touch(geometrySelType(editMode));
+            // selTypeOrder is kept in lockstep with editMode by the
+            // promoteGeometryType hook installed on the scene.reset factory — no
+            // manual re-sync needed here (the old reverse-sync is deleted).
             history.record(cmd);
             // Discard any exploration pending on reset — the candidate set is
             // stale after a reset and any undo that follows belongs to the new
@@ -4205,7 +4239,8 @@ void main(string[] args) {
                     || pendingSelBefore.selectedFaces    != after.selectedFaces;
         if (!changed) return;
 
-        auto cmd = new MeshSelectionEdit(&mesh(), cameraView, editMode, &editMode);
+        auto cmd = (new MeshSelectionEdit(&mesh(), cameraView, editMode, &editMode))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
         cmd.setBefore(pendingSelBefore, pendingSelBeforeMode);
         cmd.setAfter (after,            editMode);
         // P5: coalesce consecutive interactive selects into one undo entry.
