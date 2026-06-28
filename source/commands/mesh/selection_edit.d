@@ -17,7 +17,8 @@ import snapshot : SelectionSnapshot;
 /// lasso), capture after on the matching mouse-up, and record one entry.
 class MeshSelectionEdit : Command, Operator {
     mixin OperatorActrCommon;
-    private EditMode*         editModePtr;
+    private EditMode*                  editModePtr;
+    private void delegate(EditMode)    promoteType; // null → raw-pointer fallback
     private SelectionSnapshot before;
     private SelectionSnapshot after;
     private EditMode          beforeMode;
@@ -26,6 +27,13 @@ class MeshSelectionEdit : Command, Operator {
     this(Mesh* mesh, ref View view, EditMode editMode, EditMode* editModePtr) {
         super(mesh, view, editMode);
         this.editModePtr = editModePtr;
+    }
+
+    /// Install the funnel hook so apply/revert route through the SelType order
+    /// instead of writing `*editModePtr` directly. Returns `this` for chaining.
+    MeshSelectionEdit setPromoteHook(void delegate(EditMode) hook) {
+        this.promoteType = hook;
+        return this;
     }
 
     override string name()  const { return "mesh.selection_edit"; }
@@ -83,13 +91,15 @@ class MeshSelectionEdit : Command, Operator {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         after.restore(*mesh);
-        *editModePtr = afterMode;
+        if (promoteType) promoteType(afterMode);
+        else *editModePtr = afterMode;
         return true;
     }
 
     override bool revert() {
         before.restore(*mesh);
-        *editModePtr = beforeMode;
+        if (promoteType) promoteType(beforeMode);
+        else *editModePtr = beforeMode;
         return true;
     }
 }

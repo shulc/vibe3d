@@ -36,6 +36,10 @@ class MeshLoadRaw : Command {
     private MeshSnapshot snap;
     private EditMode     prevEditMode;
     private bool         captured;
+    // Funnel hook: when installed (app factory), apply/revert route the editMode
+    // write through promoteGeometryType so selTypeOrder stays in lockstep.
+    // Null in headless/unit construction — the raw-pointer fallback is used then.
+    private void delegate(EditMode) promoteType;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc,
@@ -59,6 +63,14 @@ class MeshLoadRaw : Command {
     void setData(Vec3[] verts, uint[][] faces) {
         this.newVerts = verts;
         this.newFaces = faces;
+    }
+
+    /// Install the funnel hook so apply/revert route the editMode write through
+    /// promoteGeometryType (touches selTypeOrder before the field write). Returns
+    /// `this` for chaining. Null (default) = raw-pointer fallback for headless.
+    MeshLoadRaw setPromoteHook(void delegate(EditMode) hook) {
+        this.promoteType = hook;
+        return this;
     }
 
     override bool apply() {
@@ -98,7 +110,8 @@ class MeshLoadRaw : Command {
 
         viewPtr.reset();
         mesh.resetSelection();
-        *editModePtr = EditMode.Vertices;
+        if (promoteType) promoteType(EditMode.Vertices);
+        else *editModePtr = EditMode.Vertices;
         if (onResetTool !is null) onResetTool();
         // Bulk transition: the whole mesh was REPLACED (test-only raw load) —
         // every cache must invalidate. noteChange(All), after the `*mesh = m`
@@ -111,7 +124,8 @@ class MeshLoadRaw : Command {
     override bool revert() {
         if (!captured) return false;
         snap.restore(*mesh);
-        *editModePtr = prevEditMode;
+        if (promoteType) promoteType(prevEditMode);
+        else *editModePtr = prevEditMode;
         refreshCaches();
         return true;
     }

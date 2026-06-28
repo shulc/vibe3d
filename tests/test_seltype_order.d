@@ -134,6 +134,28 @@ unittest {
         ~ to!string(after - before));
 }
 
+// 4 (reset reroute + reverse-sync deletion): a scene.reset via /api/reset
+// leaves selType and mode in lockstep as vertices. This covers the Phase-2
+// SceneReset reroute (setPromoteHook) and confirms the deleted reverse-sync at
+// the /api/reset handler did not leave the order stale. The prior type before
+// reset (polygon here) must NOT survive into the post-reset ordering front.
+unittest {
+    post(baseUrl ~ "/api/reset", "");
+
+    // Switch to polygon mode, then reset — reset must front vertices.
+    cmd("select.typeFrom polygon");
+    auto sBefore = readSel();
+    assert(sBefore.selType == "polygon" && sBefore.mode == "polygons",
+        "pre-reset: polygon mode expected; got " ~ sBefore.selType ~ "/" ~ sBefore.mode);
+
+    post(baseUrl ~ "/api/reset", "");
+    auto sAfter = readSel();
+    assert(sAfter.mode == "vertices",
+        "post-reset: mode must be vertices; got " ~ sAfter.mode);
+    assert(sAfter.selType == "vertex",
+        "post-reset: selType must be vertex; got " ~ sAfter.selType);
+}
+
 // 3 (picking authority cross-check): editMode drives picking identically — a
 // face selection placed in polygon mode reads back the SAME indices whether the
 // mode was reached via select.typeFrom or via the /api/select polygons token.
