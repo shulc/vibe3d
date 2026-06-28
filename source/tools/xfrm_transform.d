@@ -2347,7 +2347,31 @@ noBankConsumed:
                 // carries the running basis-local scalar; under ACEN.Local it
                 // flows into `applyTranslatePerCluster`, otherwise into the
                 // global-basis branch.
-                applyTRS(dragBaseline);
+                //
+                // Skip applyTRS when this is a pure-translate preset (flagR
+                // and flagS both false), the motion event contributed zero
+                // delta, and run.t is still zero. For a Move-only preset the
+                // fold is pivot + I*(p - pivot) + 0 = p, but applyFold with a
+                // far-away pivot introduces float cancellation error even for
+                // the identity transform (p→pivot subtraction then re-addition
+                // does not roundtrip exactly), producing a spurious
+                // mesh.vertex_edit on a zero-motion relocate click whose gizmo
+                // landed far from the mesh. The geometric result is identical
+                // to not calling applyTRS (the baseline is already in
+                // mesh.vertices from the prior commit / beginEdit capture).
+                //
+                // The guard is MOVE-ONLY (flagR false, flagS false): for
+                // composed presets (Transform / xfrm.softRotate etc.) the
+                // pivot change matters even with zero T delta — the rotate /
+                // scale re-application at the new pivot may produce a
+                // geometrically meaningful commit — so we always run applyTRS
+                // there. The ULP roundtrip only matters for the pure-translate
+                // path where the fold reduces to the identity.
+                bool skipIdentityFold = !flagR && !flagS
+                                     && pending.x == 0 && pending.y == 0 && pending.z == 0
+                                     && !bankIsNonIdentity(DragBank.Move);
+                if (!skipIdentityFold)
+                    applyTRS(dragBaseline);
 
                 // GPU update policy: the fast-path uses the
                 // u_model matrix (one uniform per frame) instead
