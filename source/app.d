@@ -3746,9 +3746,11 @@ void main(string[] args) {
         });
 
         // Read-only undo-service status for automation: {state, lockout,
-        // canUndo, canRedo}. Reuses history.state()/lockedOut()/canUndo()/
-        // canRedo() — pure reads, safe on the HTTP server thread (mirrors the
-        // history provider above).
+        // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
+        // modelDepth/uiDepth — count of Model vs UI-class entries on the undo
+        // stack; canUndoModel — whether a plain undo would step a Model entry
+        // (false → B1 fallback to UI head). All are pure reads, safe on the
+        // HTTP server thread.
         httpServer.setUndoStatusProvider(() {
             import std.json : JSONValue;
             import command_history : UndoState;
@@ -3758,11 +3760,17 @@ void main(string[] args) {
                 case UndoState.Suspend: stateStr = "suspend"; break;
                 case UndoState.Invalid: stateStr = "invalid"; break;
             }
+            size_t modelDepth, uiDepth;
+            history.undoDepthCounts(modelDepth, uiDepth);
             JSONValue payload = JSONValue.emptyObject;
-            payload["state"]   = JSONValue(stateStr);
-            payload["lockout"] = JSONValue(history.lockedOut());
-            payload["canUndo"] = JSONValue(history.canUndo());
-            payload["canRedo"] = JSONValue(history.canRedo());
+            payload["state"]        = JSONValue(stateStr);
+            payload["lockout"]      = JSONValue(history.lockedOut());
+            payload["canUndo"]      = JSONValue(history.canUndo());
+            payload["canRedo"]      = JSONValue(history.canRedo());
+            payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
+            payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
+            payload["canUndoModel"] = JSONValue(history.canUndoModel());
+            payload["canUndoUi"]    = JSONValue(history.canUndo() && !history.canUndoModel());
             return payload.toString();
         });
 
