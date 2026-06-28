@@ -73,6 +73,14 @@ class SceneReset : Command {
         return emptyScene ? "Reset to empty" : "Reset to " ~ primitive;
     }
 
+    // Model (geometry changes) + UndoBoundary: the entry is undoable (Ctrl+Z
+    // can revert a reset if explicitly navigated to), but the T-SEP cursor scan
+    // stops here — a plain geometry undo will not reach across a reset to revert
+    // pre-reset edits. The reset is a session boundary, not a regular geometry op.
+    override CmdFlags cmdFlags() const {
+        return CmdFlags.Model | CmdFlags.UndoBoundary;
+    }
+
     void setPrimitive(string p) { primitive = p; emptyScene = false; }
     void setEmpty(bool b) { emptyScene = b; }
     /// Install the document handle so reset collapses to one default layer.

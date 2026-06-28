@@ -426,7 +426,9 @@ final class LayerSelect : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
-// layer.rename — UI-undo class. No active-index move (no switch hook).
+// layer.rename — Model-undo class. The name is saved to .v3d, so it is a
+// PERSISTENT document edit: plain Ctrl+Z must undo it. No active-index move
+// (no switch hook needed — rename never changes the edit target).
 // ---------------------------------------------------------------------------
 
 final class LayerRename : LayerCommandBase {
@@ -443,7 +445,7 @@ final class LayerRename : LayerCommandBase {
 
     override string name()  const { return "layer.rename"; }
     override string label() const { return "Rename Layer"; }
-    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+    override CmdFlags cmdFlags() const { return CmdFlags.Model; }
 
     override Param[] params() {
         return [ Param.int_("index", "Index", &indexArg, -1),
@@ -470,7 +472,10 @@ final class LayerRename : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
-// layer.setVisible — UI-undo class. No active-index move.
+// layer.setVisible — Model-undo class. Visibility is saved to .v3d, so it is
+// a PERSISTENT document edit: plain Ctrl+Z must undo it. Visibility can
+// trigger a primary promotion (promoteAwayFromHiddenPrimary), which is also
+// reverted cleanly by the stored prevPrimaryObj snapshot.
 // ---------------------------------------------------------------------------
 
 final class LayerSetVisible : LayerCommandBase {
@@ -488,7 +493,7 @@ final class LayerSetVisible : LayerCommandBase {
 
     override string name()  const { return "layer.setVisible"; }
     override string label() const { return "Set Layer Visible"; }
-    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+    override CmdFlags cmdFlags() const { return CmdFlags.Model; }
 
     override Param[] params() {
         return [ Param.int_("index", "Index", &indexArg, -1),
@@ -550,16 +555,15 @@ final class LayerSetVisible : LayerCommandBase {
 // makes a layer-props form edit take effect: the forms panel dispatches
 // `layer.attr <idx> pos.x <v>` (or `… ?` to read the live value back).
 //
-// Undo class: UI-undo (CmdFlags.UiState) — a layer property edit is document
-// state but NOT geometry, so it lands on the same stack as layer.rename /
-// layer.select and Ctrl+Z reverts it, distinct from Model-undo. Like
-// layer.rename it touches NO mesh-pending / mutation-version state (an item
-// transform/pivot is non-baked render data; vertices never move).
+// Undo class: Model-undo (CmdFlags.Model) — layer attrs (pos/rot/scl/pivot)
+// are saved to .v3d (v5 xform block), so they are PERSISTENT document state.
+// Plain Ctrl+Z must undo them by the same principle as layer.rename /
+// layer.setVisible. Vertices never move (non-baked render-only transform), but
+// the document on disk changes → the op is Model, not UiState.
 //
-// Coalescing (from scratch — layer.rename does NOT coalesce, so there is no
-// exemplar in this module): a run of writes to the SAME (index, attr) collapses
-// into one undo entry (a panel drag of one field = one Ctrl+Z), exactly like the
-// UiState select-coalescing path (commands/mesh/selection_edit.d). A write to a
+// Coalescing: a run of writes to the SAME (index, attr) collapses into one
+// undo entry (a panel drag of one field = one Ctrl+Z), exactly like the
+// select-coalescing path (commands/mesh/selection_edit.d). A write to a
 // DIFFERENT attr or a different layer breaks the run.
 //
 // Query (`?`) mode mirrors ToolAttrCommand: resolve the named param against the
@@ -591,7 +595,7 @@ final class LayerAttr : LayerCommandBase {
 
     override string name()  const { return "layer.attr"; }
     override string label() const { return "Set Layer Property"; }
-    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+    override CmdFlags cmdFlags() const { return CmdFlags.Model; }
 
     // Programmatic setters (wired from app.d's positional injector, mirroring
     // ToolAttrCommand). The value/`?` discriminator follows the forms idiom.

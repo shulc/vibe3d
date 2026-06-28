@@ -40,6 +40,12 @@ class MeshSelect : Command {
     override string name() const { return "mesh.select"; }
     override string label() const { return "Select"; }
 
+    // Selection is a UI-undo class operation (same class as interactive
+    // MeshSelectionEdit). Scripted (/api/select) and interactive picks are
+    // semantically equivalent — both change selection state, not geometry.
+    // UiState (not Model) so a plain geometry undo steps past it.
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+
     void setMode(string m)         { mode    = m; }
     void setIndices(int[] i)       { indices = i; }
     MeshSelect setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }
