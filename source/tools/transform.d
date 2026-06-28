@@ -1033,7 +1033,9 @@ protected:
     /// Project a click pixel onto the appropriate relocation plane for
     /// the current ACEN mode:
     ///
-    ///   Auto / None : most-facing world-axis plane through (0,0,0).
+    ///   Auto / None : active work plane (ground Y=0 by default; the
+    ///                 user-pinned work plane when one is set).
+    ///                 In-plane numeric point is PROVISIONAL (0058 follow-up).
     ///   Screen      : camera-perpendicular plane through the current
     ///                 selection bbox center.
     ///
@@ -1055,18 +1057,21 @@ protected:
     }
 
     // Geometry-only click-relocate: project the cursor ray onto the
-    // appropriate plane for the current ACEN mode (most-facing world
-    // plane through origin for Auto/None; camera-perpendicular through
+    // appropriate plane for the current ACEN mode (active work plane,
+    // ground Y=0 by default, for Auto/None; camera-perpendicular through
     // selection center for Screen). Returns false in modes that don't
     // allow click-relocate. No snap, no side-effects — pure geometry.
     // Used by computeClickRelocateHit (which then optionally snaps the
     // result) and by updateLiveSnapPreview (which decides separately
     // what to do with the hit).
+    // Note: in-plane numeric point is PROVISIONAL (0058 follow-up —
+    // perspective ray kept for harness compatibility; ortho model not yet
+    // matched).
     protected bool computeClickRelocateHitRaw(int sx, int sy, out Vec3 worldHit) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
-        import tools.create_common         : pickMostFacingPlane;
+        import tools.create_common         : currentWorkplaneFrame;
         import math : screenRay, rayPlaneIntersect;
         Vec3 dir = screenRay(sx, sy, cachedVp);
         auto mode = ActionCenterStage.Mode.Auto;
@@ -1078,9 +1083,13 @@ protected:
         final switch (mode) {
             case ActionCenterStage.Mode.Auto:
             case ActionCenterStage.Mode.None: {
-                auto bp = pickMostFacingPlane(cachedVp);
+                // Project onto the active work plane. In auto mode this is the
+                // ground (Y=0, normal=(0,1,0)); in pinned mode it is the
+                // user-set plane. currentWorkplaneFrame() reads WorkplaneStage
+                // state directly — no pipeline.evaluate, no re-entrancy.
+                auto wf = currentWorkplaneFrame();
                 return rayPlaneIntersect(cachedVp.eye, dir,
-                                         Vec3(0, 0, 0), bp.normal, worldHit);
+                                         wf.origin, wf.normal, worldHit);
             }
             case ActionCenterStage.Mode.Screen: {
                 Vec3 selCen = currentSelectionBBoxCenter();
