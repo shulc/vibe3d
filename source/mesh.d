@@ -4854,6 +4854,90 @@ struct Mesh {
         resizePolyVertexMaps();
     }
 
+    // -----------------------------------------------------------------------
+    // Make Polygon (mesh.makePolygon)
+    // -----------------------------------------------------------------------
+
+    /// Build one face from an ORDERED list of vertex indices.
+    /// Winding follows `orderedIdx` order; `flip` reverses it.
+    /// Generates missing deduped edges via addEdge. Returns the new face
+    /// index, or -1 on rejection.
+    ///
+    /// Rejections:
+    ///   - any index >= vertices.length
+    ///   - fewer than 3 distinct vertices (after collapsing consecutive dupes)
+    ///   - collinear / zero-area (Newell normal magnitude < 1e-6)
+    ///   - duplicate of an existing face (same unordered vertex set)
+    int makePolygonFromVerts(const(uint)[] orderedIdx, bool flip) {
+        if (orderedIdx.length < 3) return -1;
+
+        // --- 1. copy + optional winding reversal ---
+        uint[] idx = orderedIdx.dup;
+        if (flip) {
+            foreach (i; 0 .. idx.length / 2) {
+                uint tmp = idx[i]; idx[i] = idx[$ - 1 - i]; idx[$ - 1 - i] = tmp;
+            }
+        }
+
+        // --- 2. bounds check ---
+        foreach (vi; idx)
+            if (vi >= vertices.length) return -1;
+
+        // --- 3. collapse consecutive duplicates (including last→first wrap) ---
+        // Build deduped list: skip a vertex if it equals its predecessor.
+        uint[] deduped;
+        deduped.reserve(idx.length);
+        foreach (i; 0 .. idx.length) {
+            uint prev = idx[(i + idx.length - 1) % idx.length];
+            if (idx[i] != prev) deduped ~= idx[i];
+        }
+        // Also remove the last element if it equals the first (wrap-around dup).
+        while (deduped.length >= 2 && deduped[$ - 1] == deduped[0])
+            deduped = deduped[0 .. $ - 1];
+        if (deduped.length < 3) return -1;
+        idx = deduped;
+
+        // --- 4. collinearity / zero-area via Newell normal ---
+        {
+            float nx = 0, ny = 0, nz = 0;
+            foreach (i; 0 .. idx.length) {
+                Vec3 a = vertices[idx[i]];
+                Vec3 b = vertices[idx[(i + 1) % idx.length]];
+                nx += (a.y - b.y) * (a.z + b.z);
+                ny += (a.z - b.z) * (a.x + b.x);
+                nz += (a.x - b.x) * (a.y + b.y);
+            }
+            float len = sqrt(nx*nx + ny*ny + nz*nz);
+            if (len < 1e-6f) return -1;
+        }
+
+        // --- 5. duplicate-face guard (same unordered vertex set) ---
+        foreach (const ref f; faces) {
+            if (f.length != idx.length) continue;
+            if (makePolyVertexSetMatch_(f[], idx[])) return -1;
+        }
+
+        // --- 6. append face + rebuild ---
+        addFace(idx);
+        buildLoops();
+        syncSelection();
+        return cast(int)(faces.length - 1);
+    }
+
+    // Helper: true iff `a` and `b` contain the same multiset of vertex indices.
+    // O(n²) but n is typically small (poly arities ≤ 64 in practice).
+    private static bool makePolyVertexSetMatch_(const uint[] a, const uint[] b) {
+        if (a.length != b.length) return false;
+        bool[] used = new bool[](b.length);
+        outer: foreach (ai; a) {
+            foreach (j; 0 .. b.length) {
+                if (!used[j] && ai == b[j]) { used[j] = true; continue outer; }
+            }
+            return false;
+        }
+        return true;
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -7727,4 +7811,106 @@ struct GpuMesh {
         glPointSize(1.0f);
         glBindVertexArray(0);
     }
+}
+
+// ===========================================================================
+// makePolygonFromVerts unittests
+// ===========================================================================
+
+unittest { // happy-path quad: 4 free coplanar verts → 1 face, 4 edges, winding = click order
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+    ];
+    m.buildLoops();
+    int fi = m.makePolygonFromVerts([0, 1, 2, 3], false);
+    assert(fi == 0, "expected face index 0");
+    assert(m.faces.length == 1, "expected 1 face");
+    assert(m.edges.length == 4, "expected 4 edges");
+    assert(m.faces[0][] == [0u, 1u, 2u, 3u], "winding mismatch");
+}
+
+unittest { // winding follows selection order exactly (different from ascending index)
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+    ];
+    m.buildLoops();
+    int fi = m.makePolygonFromVerts([0, 3, 2, 1], false);
+    assert(fi == 0, "expected face 0");
+    assert(m.faces[0][] == [0u, 3u, 2u, 1u], "winding must follow click order, not index order");
+}
+
+unittest { // flip reverses winding
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+    ];
+    m.buildLoops();
+    int fi = m.makePolygonFromVerts([0, 1, 2, 3], true);
+    assert(fi == 0);
+    assert(m.faces[0][] == [3u, 2u, 1u, 0u], "flip must reverse winding");
+}
+
+unittest { // <3 distinct verts → reject
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0)];
+    m.buildLoops();
+    assert(m.makePolygonFromVerts([0, 1], false) == -1, "<2 verts must reject");
+    assert(m.makePolygonFromVerts([0, 0, 0], false) == -1, "all-same verts must reject");
+    assert(m.faces.length == 0, "no face should be added on reject");
+}
+
+unittest { // collinear / zero-area → reject
+    Mesh m;
+    // Three collinear points on the x-axis
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0)];
+    m.buildLoops();
+    assert(m.makePolygonFromVerts([0, 1, 2], false) == -1, "collinear must reject");
+    assert(m.faces.length == 0);
+}
+
+unittest { // duplicate face → no-op (returns -1, faceCount unchanged)
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+    ];
+    m.buildLoops();
+    int fi1 = m.makePolygonFromVerts([0, 1, 2, 3], false);
+    assert(fi1 == 0);
+    // Re-run with same vertices in a different order (same unordered set)
+    int fi2 = m.makePolygonFromVerts([2, 3, 0, 1], false);
+    assert(fi2 == -1, "duplicate vertex set must be rejected");
+    assert(m.faces.length == 1, "faceCount must stay 1 on dup reject");
+}
+
+unittest { // edge dedup: new face shares one edge with existing triangle → only 2 new edges
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+    ];
+    m.buildLoops();
+    // First triangle [0,1,2] creates 3 edges
+    m.makePolygonFromVerts([0, 1, 2], false);
+    size_t edgesAfterTri = m.edges.length;
+    assert(edgesAfterTri == 3, "triangle should have 3 edges");
+    // Second triangle [1,3,2] shares edge 1-2 with the first face
+    m.makePolygonFromVerts([1, 3, 2], false);
+    assert(m.edges.length == edgesAfterTri + 2,
+        "expected exactly 2 new edges (shared edge reused)");
+    assert(m.faces.length == 2);
+}
+
+unittest { // non-convex (concave) click order is ACCEPTED as-is (trust click order contract)
+    // 5-vertex concave polygon: v3=(2,1,0) is a reflex vertex pushed inward from
+    // the convex hull. Order [0,1,2,3,4] visits it in sequence and the kernel MUST
+    // preserve that order (no silent convex-hull reordering). Newell area ≈ 20 → passes.
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(4, 0, 0), Vec3(4, 4, 0), Vec3(2, 1, 0), Vec3(0, 4, 0),
+    ];
+    m.buildLoops();
+    int fi = m.makePolygonFromVerts([0, 1, 2, 3, 4], false);
+    assert(fi == 0, "concave click order must be accepted");
+    assert(m.faces[0][] == [0u, 1u, 2u, 3u, 4u], "concave order must not be reordered");
 }
