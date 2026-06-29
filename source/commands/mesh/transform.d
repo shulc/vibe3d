@@ -14,7 +14,7 @@ import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : SubjectPacket, SymmetryPacket;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.symmetry : SymmetryStage;
-import symmetry          : applySymmetryMirror, projectOnPlane;
+import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane;
 import operator          : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 // GpuMesh lives in mesh.d, already imported above.
 
@@ -154,6 +154,12 @@ class MeshTransform : Command, Operator {
         }
         captured = true;
 
+        // Snapshot baseline for the topological-symmetry delta-mirror path.
+        // Taken AFTER the touched-set capture (which reads mesh.vertices) so
+        // the snapshot and the touched-prev array are consistent.
+        Vec3[] baseAll;
+        if (symmActive && symm.topology) baseAll = mesh.vertices.dup;
+
         switch (kind) {
             case "translate":
                 foreach (i; 0 .. mesh.vertices.length)
@@ -196,7 +202,10 @@ class MeshTransform : Command, Operator {
         // projects on-plane selected verts back onto the plane.
         if (symmActive) {
             auto alsoTouched = new bool[](mesh.vertices.length);
-            applySymmetryMirror(mesh, symm, vmask, alsoTouched);
+            if (symm.topology)
+                applySymmetryMirrorDelta(mesh, symm, baseAll, vmask, alsoTouched);
+            else
+                applySymmetryMirror(mesh, symm, vmask, alsoTouched);
         }
 
         mesh.commitChange(MeshEditScope.Position);
