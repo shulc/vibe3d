@@ -2,7 +2,7 @@ module operator;
 
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
-                          FalloffPacket, ConstrainPacket;
+                          FalloffPacket, ConstrainPacket, PathPacket;
 
 // ---------------------------------------------------------------------------
 // Operator architecture — Phase 0 of doc/operator_refactor_plan.md.
@@ -38,6 +38,7 @@ enum Task : ubyte {
     Axis = 5,    // action axis
     Wght = 6,    // per-vert weight (falloff)
     Actr = 7,    // the actor: mutates the mesh
+    Path = 8,    // path generator: publishes a parametric-curve packet
 }
 
 /// Packet type index. Compile-time mapping via `packetKindOf!T`; the
@@ -55,7 +56,8 @@ enum PacketKind : ubyte {
     ActionAxis    = 5,
     Falloff       = 6,
     Constrain     = 7,
-    Count         = 8
+    Path          = 8,
+    Count         = 9
 }
 
 /// Compile-time map T → PacketKind. Used by VectorStack.put!T/get!T to
@@ -70,6 +72,7 @@ template packetKindOf(T) {
     else static if (is(T == AxisPacket))          enum packetKindOf = PacketKind.ActionAxis;
     else static if (is(T == FalloffPacket))       enum packetKindOf = PacketKind.Falloff;
     else static if (is(T == ConstrainPacket))     enum packetKindOf = PacketKind.Constrain;
+    else static if (is(T == PathPacket))          enum packetKindOf = PacketKind.Path;
     else                                          static assert(false,
         "packetKindOf: unregistered packet type " ~ T.stringof
         ~ " — add a branch in source/operator.d");
@@ -212,4 +215,24 @@ unittest {
     vts.put(&b);
     assert(vts.get!FalloffPacket is &b);
     assert(!vts.get!FalloffPacket.enabled);
+}
+
+unittest {
+    import math : Vec3;
+    // PathPacket put/get round-trip — pointer identity preserved.
+    VectorStack vts;
+    PathPacket pp;
+    pp.enabled = true;
+    pp.knots   = [Vec3(0, 0, 0), Vec3(1, 0, 0)];
+    vts.put(&pp);
+    assert(vts.has!PathPacket);
+    auto got = vts.get!PathPacket();
+    assert(got is &pp);
+    assert(got.enabled);
+    assert(got.knots.length == 2);
+    // PathPacket coexists independently with SubjectPacket.
+    SubjectPacket subj;
+    vts.put(&subj);
+    assert(vts.get!PathPacket() is &pp);
+    assert(vts.get!SubjectPacket() is &subj);
 }

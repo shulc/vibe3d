@@ -544,3 +544,21 @@ struct SnapPacket {
     // matches the visible grid (vibe3d's grid is hard-coded at 1.0).
     float  gridStep        = 1.0f;
 }
+
+/// Path packet — published by the PATH stage. Carries the resolved
+/// world-space polyline knots so a downstream consumer (curve-extrude,
+/// clone, sweep) can sweep geometry along the path without needing its
+/// own mesh access.
+///
+/// Fields mirror the PATH stage attrs: `start`/`end` clamp the active
+/// sub-range of t ∈ [0, 1]; `slide` adds a phase offset (clamped in
+/// the foundation, no wrap). `knots` are world-space positions resolved
+/// at evaluate() time from the stage's vertex-index source.
+struct PathPacket {
+    bool   enabled = false;
+    Vec3[] knots;
+    bool   closed  = false;
+    float  start   = 0.0f;
+    float  end     = 1.0f;
+    float  slide   = 0.0f;
+}
