@@ -87,6 +87,7 @@ import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.poly_inset : MeshPolygonInset;
 import commands.mesh.face_extrude : MeshFaceExtrude;
 import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
+import commands.mesh.bridge : MeshBridge;
 import commands.mesh.edge_extend : MeshEdgeExtend;
 import commands.mesh.edge_extend_edit : MeshEdgeExtendEdit;
 import commands.mesh.move_vertex;
@@ -2395,6 +2396,9 @@ void main(string[] args) {
     reg.commandFactories["poly.extrude"] = () => cast(Command)
         new MeshFaceExtrude(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.bridge"] = () => cast(Command)
+        new MeshBridge(&mesh(), cameraView, editMode, &gpu,
+                       &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.edge_extend"] = () => cast(Command)
         new MeshEdgeExtend(&mesh(), cameraView, editMode, &gpu,
                            &vertexCache, &edgeCache, &faceCache);
