@@ -60,6 +60,8 @@ float evaluateFalloff(const ref FalloffPacket cfg,
             return selectionWeight(cfg, vertIdx);
         case FalloffType.Composite:
             return compositeWeight(cfg, pos, vertIdx, vp);
+        case FalloffType.VertexMap:
+            return vertexMapWeight(cfg, vertIdx);
     }
 }
 
@@ -117,6 +119,17 @@ private float selectionWeight(const ref FalloffPacket cfg, int vertIdx) {
     auto arr = cfg.selectionWeights;
     if (cast(size_t)vertIdx >= arr.length) return 1.0f;
     return arr[cast(size_t)vertIdx];
+}
+
+/// VertexMap falloff: looks up the pre-baked `vertexMapWeights` slice at
+/// `vertIdx`. Values are clamped to [0, 1] here (the buffer stores raw map
+/// data). An empty / undersized / negative-index case degenerates to 1.0
+/// (full influence — same degenerate contract as selectionWeight).
+private float vertexMapWeight(const ref FalloffPacket cfg, int vertIdx) {
+    if (vertIdx < 0) return 1.0f;
+    auto arr = cfg.vertexMapWeights;
+    if (cast(size_t)vertIdx >= arr.length) return 1.0f;
+    return clamp01(arr[cast(size_t)vertIdx]);
 }
 
 /// Linear falloff: weight is 1.0 at `start`, 0.0 at `end`, attenuated
@@ -1055,4 +1068,25 @@ unittest {
     assert(isClose(evaluateFalloff(fp, Vec3(0,  1, 0), 0, vp), 1.0f));
     assert(isClose(evaluateFalloff(fp, Vec3(0,  0, 0), 0, vp), 0.5f));
     assert(isClose(evaluateFalloff(fp, Vec3(0, -1, 0), 0, vp), 0.0f));
+}
+
+unittest { // vertexMapWeight: lookup + clamp + degenerate cases
+    import std.math : isClose;
+    FalloffPacket fp;
+    fp.enabled = true;
+    fp.type    = FalloffType.VertexMap;
+    Viewport vp;
+
+    // empty slice → full influence
+    assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 0, vp), 1.0f));
+
+    float[3] raw = [0.0f, 0.5f, 1.5f]; // last entry above 1 → clamped to 1
+    fp.vertexMapWeights = raw[];
+    assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 0, vp), 0.0f));
+    assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 1, vp), 0.5f));
+    assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 2, vp), 1.0f)); // clamped
+    // out-of-range → full influence
+    assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 5, vp), 1.0f));
+    // negative vertIdx → full influence
+    assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), -1, vp), 1.0f));
 }

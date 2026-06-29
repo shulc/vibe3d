@@ -7,7 +7,7 @@ import std.math      : abs;
 
 import math : Vec3, Viewport, dot, projectToWindowFull;
 import std.math : sqrt;
-import mesh : Mesh;
+import mesh : Mesh, MapDomain;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : g_pipeCtx;
@@ -199,6 +199,13 @@ class FalloffStage : Stage, Operator {
     // in_, out_); a key miss recomputes.
     private float[] selWeights_;
 
+    // VertexMap: name of the active weight map + the pre-baked weight buffer.
+    // The buffer is re-baked in evaluate() whenever type == VertexMap and is
+    // cleared by reset(). NOT cached by mutationVersion (mesh maps can change
+    // without bumping the topology version) — always rebaked every pipe walk.
+    private string  mapName_;
+    private float[] vertexMapWeights_;
+
     // --- selWeights_ cache key (see recomputeSelectionWeights) ---
     // mutationVersion bumps on every topology/geometry-structure edit and is
     // NOT bumped by selection writes nor drag-time vertex moves. Selection
@@ -300,6 +307,8 @@ class FalloffStage : Stage, Operator {
         connectMask_.length = 0;
         connectMask.length  = 0;
         userLocked   = false;   // full reset clears the user-lock (SceneReset)
+        mapName_             = "";
+        vertexMapWeights_.length = 0;
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
         _selCacheValid     = false;
@@ -397,6 +406,28 @@ class FalloffStage : Stage, Operator {
             _selCacheValid = false;
         }
         pkt.selectionWeights = selWeights_;
+
+        // VertexMap: bake per-vertex weights from the named Point dim-1 map.
+        // Rebaked every pipe walk (mesh maps can change without bumping the
+        // topology version). An empty / missing name, null mesh, or absent map
+        // leaves vertexMapWeights_ empty → evaluateFalloff returns 1.0 per vert.
+        if (type == FalloffType.VertexMap) {
+            auto m = mesh_;
+            if (m !is null && mapName_.length > 0) {
+                auto map = m.meshMap(mapName_);
+                if (map !is null && map.domain == MapDomain.Point && map.dim == 1) {
+                    vertexMapWeights_.length = map.data.length;
+                    vertexMapWeights_[] = map.data[];
+                } else {
+                    vertexMapWeights_.length = 0;
+                }
+            } else {
+                vertexMapWeights_.length = 0;
+            }
+        } else {
+            vertexMapWeights_.length = 0;
+        }
+        pkt.vertexMapWeights = vertexMapWeights_;
         pkt.compoundPasses   = 1.0f;
         pkt.mix              = mix;
 
@@ -558,7 +589,7 @@ class FalloffStage : Stage, Operator {
             "type", "shape", "start", "end", "center", "size", "axis",
             "dist", "steps", "anchorRing", "connect", "mode", "screenCx", "screenCy",
             "screenSize", "transparent", "lassoStyle", "lassoPoly",
-            "softBorder", "in", "out", "mix",
+            "softBorder", "in", "out", "mix", "map",
         ];
     }
 
@@ -586,6 +617,7 @@ class FalloffStage : Stage, Operator {
             ["in",           format("%g", in_)],
             ["out",          format("%g", out_)],
             ["mix",          mixLabel()],
+            ["map",          mapName_],
         ];
     }
 
@@ -766,6 +798,25 @@ class FalloffStage : Stage, Operator {
                 // is a synthesized PACKET type the WGHT combiner publishes,
                 // not a value any single stage holds. No per-type config.
                 break;
+            case FalloffType.VertexMap: {
+                // Build weight-map name choices dynamically from the live mesh.
+                // Choices are rebuilt per call to params() (per frame) so a newly
+                // created weight map appears immediately. Empty / no-mesh
+                // fallback: one disabled placeholder entry.
+                import std.algorithm : map;
+                import std.array : array;
+                auto m = mesh_;
+                string[] names = (m !is null) ? m.weightMapNames() : [];
+                string[2][] choices;
+                if (names.length == 0) {
+                    choices = [["", "(no weight maps)"]];
+                } else {
+                    foreach (n; names)
+                        choices ~= [n, n];
+                }
+                ps ~= Param.enum_("map", "Weight Map", &mapName_, choices, "");
+                break;
+            }
         }
         return ps;
     }
@@ -797,6 +848,7 @@ class FalloffStage : Stage, Operator {
             case FalloffType.Element:         return "Element Falloff";
             case FalloffType.Selection:       return "Selection Falloff";
             case FalloffType.Composite:       return "Falloff";  // never a stage's own type
+            case FalloffType.VertexMap:       return "Vertex Map Falloff";
         }
     }
 
@@ -1179,6 +1231,7 @@ private:
                 else if (value == "cylinder")        type = FalloffType.Cylinder;
                 else if (value == "element")         type = FalloffType.Element;
                 else if (value == "selection")       type = FalloffType.Selection;
+                else if (value == "vertexMap")       type = FalloffType.VertexMap;
                 else return false;
                 // anchorRing is Element-only state — wipe on leaving
                 // Element so a later switch back to Element starts
@@ -1272,6 +1325,9 @@ private:
                 // tests + scripted setups that bypass the GPU-hover-
                 // driven click path. Empty string clears.
                 return parseAnchorRing(value);
+            case "map":
+                mapName_ = value;
+                return true;
             default: return false;
         }
     }
@@ -1331,6 +1387,7 @@ private:
             case FalloffType.Element:         return "element";
             case FalloffType.Selection:       return "selection";
             case FalloffType.Composite:       return "composite";  // never a stage's own type
+            case FalloffType.VertexMap:       return "vertexMap";
         }
     }
 
@@ -1413,6 +1470,8 @@ private:
                      type == FalloffType.Element  ? "true" : "false");
         setStatePath("falloff/types/selection",
                      type == FalloffType.Selection ? "true" : "false");
+        setStatePath("falloff/types/vertexMap",
+                     type == FalloffType.VertexMap ? "true" : "false");
     }
 
     static float parseFloat(string s) {
@@ -1582,6 +1641,9 @@ private:
                 break;
             case FalloffType.Composite:
                 // Never a stage's own type — nothing to auto-size.
+                break;
+            case FalloffType.VertexMap:
+                // Weights come from a named map — no spatial auto-sizing.
                 break;
         }
     }

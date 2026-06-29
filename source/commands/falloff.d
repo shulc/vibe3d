@@ -191,7 +191,7 @@ class FalloffReverseCommand : Command {
 private bool validFalloffType(string t) {
     switch (t) {
         case "linear", "radial", "screen", "lasso", "cylinder",
-             "element", "selection":
+             "element", "selection", "vertexMap":
             return true;
         default:
             return false;
