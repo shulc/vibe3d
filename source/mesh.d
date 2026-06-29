@@ -1255,6 +1255,223 @@ struct Mesh {
         return dissolved;
     }
 
+    // -----------------------------------------------------------------------
+    // Triangulation family: Triple / Quadruple / Detriangulate
+    // -----------------------------------------------------------------------
+
+    /// Split each masked face (n-gon, n > 3) into (n−2) triangles by fanning
+    /// from the first vertex: [f[0],f[i],f[i+1]] for i = 1 .. n−2. Already-
+    /// triangles (length ≤ 3) pass through untouched regardless of the mask.
+    /// Returns the number of faces changed.
+    ///
+    /// `faceOriginOut` (optional): receives a mapping new_fi → original_fi,
+    /// useful for re-selecting children of previously-selected parents after
+    /// the topology swap.
+    ///
+    /// v1 restriction: fan triangulation is correct for convex polygons (every
+    /// quad and convex n-gon). Concave polygons may produce inverted triangles;
+    /// ear-clipping is the planned follow-up upgrade (same API, no test changes).
+    size_t triangulateFacesByMask(in bool[] mask, uint[]* faceOriginOut = null) {
+        if (mask.length != faces.length) return 0;
+
+        // PolyVertex remap, mechanism (b): triangulation changes arity — each
+        // n-gon splits into (n-2) triangles; each triangle corner comes from a
+        // specific OLD face corner.
+        const bool remapUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        uint[] oldLoopOfNewLoop;
+
+        uint[][] newFaces;
+        bool[]   newSubpatch;
+        int[]    newOrder;
+        uint[]   newMaterial;
+        uint[]   faceOrigin;   // faceOrigin[new_fi] = original fi
+
+        size_t changed = 0;
+
+        foreach (fi; 0 .. faces.length) {
+            auto f   = faces[fi];
+            bool sub = isFaceSubpatch(fi);
+            int  ord = (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
+            uint mat = (fi < faceMaterial.length       ? faceMaterial[fi]       : 0u);
+
+            if (!mask[fi] || f.length <= 3) {
+                // Pass through untouched.
+                newFaces    ~= f.dup;
+                newSubpatch ~= sub;
+                newOrder    ~= ord;
+                newMaterial ~= mat;
+                faceOrigin  ~= cast(uint)fi;
+                if (remapUv)
+                    foreach (c; 0 .. f.length)
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop,
+                                                             cast(uint)fi,
+                                                             cast(uint)c);
+            } else {
+                // Fan from vertex 0: [f[0], f[i], f[i+1]] for i = 1 .. n-2.
+                ++changed;
+                for (uint i = 1; i + 1 < f.length; ++i) {
+                    newFaces    ~= [f[0], f[i], f[i + 1]];
+                    newSubpatch ~= sub;
+                    newOrder    ~= ord;
+                    newMaterial ~= mat;
+                    faceOrigin  ~= cast(uint)fi;
+                    if (remapUv) {
+                        // Triangle corners map to old corners 0, i, i+1 of fi.
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, 0u);
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, i);
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, i + 1);
+                    }
+                }
+            }
+        }
+
+        if (changed == 0) return 0;
+
+        faces              = newFaces;
+        setFaceSubpatchFrom(newSubpatch);
+        faceSelectionOrder = newOrder;
+        faceMaterial       = newMaterial;
+        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        clearFaceSelectionResize();
+        rebuildEdges();
+        clearEdgeSelectionResize();
+        compactUnreferenced();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+
+        if (faceOriginOut !is null) *faceOriginOut = faceOrigin;
+        return changed;
+    }
+
+    /// Return the vertex in `face` that is neither `va` nor `vb`.
+    /// Returns `uint.max` on a degenerate face (both shared verts absent or
+    /// the face has fewer than 3 corners).
+    private static uint findNonSharedVertex(const uint[] face,
+                                            uint va, uint vb) pure nothrow {
+        foreach (v; face)
+            if (v != va && v != vb) return v;
+        return uint.max;
+    }
+
+    /// Build the edge-dissolve mask for `removeEdgesByMask` by scanning
+    /// interior edges between masked faces and applying `accept`.
+    ///
+    /// When `matching` is true, uses a greedy matching (ascending edge index):
+    /// once both faces of an accepted edge are consumed no further edge
+    /// touching either face is accepted. This guarantees `removeEdgesByMask`
+    /// never fuses more than two faces per component (safe for Quadruple).
+    ///
+    /// When `matching` is false, selects ALL interior edges satisfying the
+    /// predicate, allowing multi-face coplanar-region merges (Detriangulate).
+    private bool[] selectMergeEdges(in bool[] faceMask,
+            bool delegate(uint edgeIdx, uint fA, uint fB) accept,
+            bool matching) {
+        // Build edge → up-to-2 adjacent MASKED faces. An edge whose second
+        // slot stays -1 is a boundary of the masked region and is skipped.
+        int[2][ulong] edgeFaces;
+        foreach (fi; 0 .. faces.length) {
+            if (fi >= faceMask.length || !faceMask[fi]) continue;
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeFaces;
+                if (p is null)
+                    edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        bool[] edgeMask = new bool[](edges.length);
+        bool[] consumed = matching ? new bool[](faces.length) : null;
+
+        foreach (ei; 0 .. edges.length) {
+            ulong key = edgeKeyOrdered(edges[ei][0], edges[ei][1]);
+            auto p = key in edgeFaces;
+            if (p is null) continue;
+            int fA = (*p)[0], fB = (*p)[1];
+            if (fA < 0 || fB < 0) continue;               // boundary
+            if (!accept(cast(uint)ei, cast(uint)fA, cast(uint)fB)) continue;
+            if (matching && (consumed[fA] || consumed[fB])) continue;
+            edgeMask[ei] = true;
+            if (matching) { consumed[fA] = true; consumed[fB] = true; }
+        }
+
+        return edgeMask;
+    }
+
+    /// Pair adjacent triangles in the mask into convex coplanar quads where
+    /// possible. The accept predicate requires BOTH:
+    ///   1. Coplanarity: dot(normalA, normalB) > 0.999  (in-repo threshold)
+    ///   2. Convexity: the merged 4-corner polygon projects convex in the
+    ///      face-normal plane (all consecutive cross-products same-sign).
+    /// Uses a greedy matching so each triangle is consumed at most once.
+    /// Unmatchable or non-convex/non-coplanar triangles stay as-is.
+    /// Returns the number of edges dissolved.
+    size_t quadrupleFacesByMask(in bool[] mask) {
+        if (mask.length != faces.length) return 0;
+        import math : cross, dot, normalize;
+
+        bool accept(uint edgeIdx, uint fA, uint fB) {
+            if (faces[fA].length != 3 || faces[fB].length != 3) return false;
+            Vec3 nA = faceNormal(fA);
+            Vec3 nB = faceNormal(fB);
+            if (dot(nA, nB) <= 0.999f) return false;       // not coplanar
+
+            // Find the 4 corners of the merged quad in boundary-walk order.
+            uint va = edges[edgeIdx][0], vb = edges[edgeIdx][1];
+            uint vp = findNonSharedVertex(faces[fA], va, vb);
+            uint vq = findNonSharedVertex(faces[fB], va, vb);
+            if (vp == uint.max || vq == uint.max) return false;
+
+            // Quad in removeEdgesByMask walk order: [vp, va, vq, vb].
+            Vec3 p0 = vertices[vp], p1 = vertices[va],
+                 p2 = vertices[vq], p3 = vertices[vb];
+            Vec3 n  = normalize(nA + nB);
+
+            // Reject degenerate edges.
+            Vec3 e0 = p1 - p0, e1 = p2 - p1, e2 = p3 - p2, e3 = p0 - p3;
+            if (e0.length < 1e-6f || e1.length < 1e-6f ||
+                e2.length < 1e-6f || e3.length < 1e-6f) return false;
+
+            // All four consecutive cross-products must align with n (convexity).
+            float c0 = dot(cross(e0, e1), n);
+            float c1 = dot(cross(e1, e2), n);
+            float c2 = dot(cross(e2, e3), n);
+            float c3 = dot(cross(e3, e0), n);
+            const float eps = 1e-5f;
+            return (c0 > -eps && c1 > -eps && c2 > -eps && c3 > -eps) ||
+                   (c0 <  eps && c1 <  eps && c2 <  eps && c3 <  eps);
+        }
+
+        bool[] edgeMask = selectMergeEdges(mask, &accept, true /* matching */);
+        return removeEdgesByMask(edgeMask);
+    }
+
+    /// Merge adjacent coplanar faces in the mask into n-gons by dissolving
+    /// every interior edge whose two incident faces satisfy
+    /// dot(normalA, normalB) > 0.999 (the in-repo ExEdge.coplanar threshold).
+    /// Non-coplanar neighbours and boundary edges are left untouched.
+    /// Returns the number of edges dissolved.
+    ///
+    /// v1 restriction: `removeEdgesByMask` does not dissolve 2-valent /
+    /// collinear boundary vertices that may survive on the merged n-gon when
+    /// a coplanar region is only partially dissolved. Tested cases (cube /
+    /// quad round-trips) have no such interior verts; the `dissolveDegree2Verts`
+    /// cleanup is a documented follow-up.
+    size_t detriangulateFacesByMask(in bool[] mask) {
+        if (mask.length != faces.length) return 0;
+        import math : dot;
+
+        bool accept(uint /*edgeIdx*/, uint fA, uint fB) {
+            return dot(faceNormal(fA), faceNormal(fB)) > 0.999f;
+        }
+
+        bool[] edgeMask = selectMergeEdges(mask, &accept, false /* region */);
+        return removeEdgesByMask(edgeMask);
+    }
+
     /// Edge Extrude: shift each selected edge outward along the average normal
     /// of its neighbor polygon(s) by `extrude`, inset the neighbor polygon(s) by
     /// `width` within their planes, and bridge with new faces. Boundary edges use
@@ -7104,6 +7321,156 @@ unittest { // flipFacesByMask: PolyVertex (UV) map follows reversed winding (R5)
     const nNoUV = mNoUV.flipFacesByMask(noUVMask);
     assert(nNoUV == 1, "no-UV mesh: should report 1 flipped");
     assert(mNoUV.meshMap(kUvMapName) is null, "no UV map should remain absent");
+}
+
+// ---------------------------------------------------------------------------
+// Triangulation-family kernel unittests (dub test --config=modeling gate)
+// ---------------------------------------------------------------------------
+
+unittest { // triangulateFacesByMask: cube (6 quads) → 12 tris, same verts
+    import std.conv : to;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto mask = new bool[](m.faces.length);
+    mask[] = true;
+    size_t changed = m.triangulateFacesByMask(mask);
+    assert(changed == 6, "triple: expected 6 changed faces, got " ~ changed.to!string);
+    assert(m.faces.length == 12, "triple: expected 12 faces");
+    assert(m.vertices.length == 8, "triple: expected 8 verts (no new verts)");
+    assert(m.edges.length == 18,   "triple: expected 18 edges");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi].length == 3,
+            "triple: face " ~ fi.to!string ~ " is not a triangle");
+}
+
+unittest { // triangulateFacesByMask: subpatch bit propagates to children
+    import std.conv : to;
+    Mesh m = makeCube();
+    m.buildLoops();
+    // Mark face 0 as subpatch before triangulating.
+    m.setFaceSubpatchFrom(new bool[](m.faces.length));  // ensure array exists
+    auto sp = m.isSubpatch.dup;
+    sp[0] = true;
+    m.setFaceSubpatchFrom(sp);
+    auto mask = new bool[](m.faces.length);
+    mask[0] = true;  // only face 0
+    m.triangulateFacesByMask(mask);
+    // faces 0..n-1 are now 2 tris from old face 0; the rest are the 5 old quads.
+    // The first two faces (children of old face 0) should be subpatch.
+    assert(m.isFaceSubpatch(0), "child tri 0 should inherit parent subpatch bit");
+    assert(m.isFaceSubpatch(1), "child tri 1 should inherit parent subpatch bit");
+    // The old untouched faces start at index 2; none should be subpatch.
+    foreach (fi; 2 .. m.faces.length)
+        assert(!m.isFaceSubpatch(fi),
+            "non-child face " ~ fi.to!string ~ " should not be subpatch");
+}
+
+unittest { // triangulateFacesByMask: faceOrigin maps children → parent
+    import std.conv : to;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto mask = new bool[](m.faces.length);
+    mask[] = true;
+    uint[] faceOrigin;
+    m.triangulateFacesByMask(mask, &faceOrigin);
+    assert(faceOrigin.length == 12,
+        "faceOrigin length should match new face count");
+    // Each original face produced 2 children; children 0,1 → parent 0,
+    // children 2,3 → parent 1, etc. (fan always produces 2 tris from a quad).
+    foreach (fi; 0 .. 12)
+        assert(faceOrigin[fi] == fi / 2,
+            "faceOrigin[" ~ fi.to!string ~ "] = " ~ faceOrigin[fi].to!string
+            ~ ", expected " ~ (fi / 2).to!string);
+}
+
+unittest { // quadrupleFacesByMask: triple → quadruple round-trips a cube
+    import std.conv : to;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto allF = new bool[](m.faces.length);
+    allF[] = true;
+    m.triangulateFacesByMask(allF);
+    assert(m.faces.length == 12);
+    auto allF2 = new bool[](m.faces.length);
+    allF2[] = true;
+    size_t dissolved = m.quadrupleFacesByMask(allF2);
+    assert(dissolved == 6,
+        "quadruple: expected 6 edges dissolved (one diagonal per cube face), got "
+        ~ dissolved.to!string);
+    assert(m.faces.length == 6,  "quadruple: expected 6 faces");
+    assert(m.vertices.length == 8, "quadruple: expected 8 verts");
+    assert(m.edges.length == 12,   "quadruple: expected 12 edges");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi].length == 4,
+            "quadruple: face " ~ fi.to!string ~ " is not a quad");
+}
+
+unittest { // quadrupleFacesByMask: planarity — every result quad is flat
+    import std.conv : to;
+    import math : dot;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto allF = new bool[](m.faces.length);
+    allF[] = true;
+    m.triangulateFacesByMask(allF);
+    auto allF2 = new bool[](m.faces.length);
+    allF2[] = true;
+    m.quadrupleFacesByMask(allF2);
+    foreach (fi; 0 .. m.faces.length) {
+        assert(m.faces[fi].length == 4);
+        // Split quad [a,b,c,d] into tris (a,b,c) and (a,c,d).
+        auto f  = m.faces[fi];
+        Vec3 pa = m.vertices[f[0]], pb = m.vertices[f[1]],
+             pc = m.vertices[f[2]], pd = m.vertices[f[3]];
+        import math : cross, normalize;
+        import std.math : sqrt;
+        Vec3 n1 = normalize(cross(pb - pa, pc - pa));
+        Vec3 n2 = normalize(cross(pc - pa, pd - pa));
+        float d = dot(n1, n2);
+        assert(d > 0.999f,
+            "quadruple planarity: face " ~ fi.to!string
+            ~ " bent-quad dot=" ~ d.to!string);
+    }
+}
+
+unittest { // detriangulateFacesByMask: triple → detriangulate round-trips a cube
+    import std.conv : to;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto allF = new bool[](m.faces.length);
+    allF[] = true;
+    m.triangulateFacesByMask(allF);
+    assert(m.faces.length == 12);
+    auto allF2 = new bool[](m.faces.length);
+    allF2[] = true;
+    size_t dissolved = m.detriangulateFacesByMask(allF2);
+    assert(dissolved == 6,
+        "detriangulate: expected 6 edges dissolved, got " ~ dissolved.to!string);
+    assert(m.faces.length == 6,   "detriangulate: expected 6 faces");
+    assert(m.vertices.length == 8,"detriangulate: expected 8 verts");
+    assert(m.edges.length == 12,  "detriangulate: expected 12 edges");
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi].length == 4,
+            "detriangulate: face " ~ fi.to!string ~ " not a quad");
+}
+
+unittest { // detriangulateFacesByMask: partial mask — only masked faces merge
+    // Mask only 2 tris (children of cube face 0) → 1 merge; other tris untouched.
+    import std.conv : to;
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto allF = new bool[](m.faces.length);
+    allF[] = true;
+    uint[] faceOrigin;
+    m.triangulateFacesByMask(allF, &faceOrigin);  // 12 tris
+    // Find the 2 children of original face 0.
+    bool[] partMask = new bool[](m.faces.length);
+    foreach (fi; 0 .. faceOrigin.length)
+        if (faceOrigin[fi] == 0) partMask[fi] = true;
+    m.detriangulateFacesByMask(partMask);
+    // 1 merge: 12 - 2 + 1 = 11 faces.
+    assert(m.faces.length == 11,
+        "detriangulate partial: expected 11 faces, got " ~ m.faces.length.to!string);
 }
 
 // ---------------------------------------------------------------------------
