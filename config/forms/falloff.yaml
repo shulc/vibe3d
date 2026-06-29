@@ -92,6 +92,9 @@ forms:
       - { control: "tool.pipe.attr falloff dist ?" }
       - { control: "tool.pipe.attr falloff steps ?" }
 
+      # ---- Vertex Map: named Point dim-1 weight map picker ----
+      - { control: "tool.pipe.attr falloff map ?", label: "Weight Map" }
+
       # ---- Mix Mode: multi-falloff combine op (present for every active type;
       #      unused for a single / first contributor, but the dropdown stays
       #      visible so a stacked falloff can pick its combine). Last, per the
