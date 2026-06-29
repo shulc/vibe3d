@@ -197,6 +197,21 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
     }
 }
 
+/// Return a point-in-time copy of the background snap sources under the
+/// grid lock, for use by the CONS stage's post-pass projection loop
+/// (xfrm_transform.d::applyTRS). Reuses the same g_snapSources the snap
+/// walk uses — no separate CONS registry, no leak class.
+///
+/// Returns null / empty slice when there are no background layers, so the
+/// caller's `sources.length == 0` early-out produces a no-op in the
+/// single-layer common case.
+const(Mesh)*[] backgroundSourcesSnapshot() {
+    synchronized (g_vgridMutex) {
+        if (g_snapSources.length == 0) return null;
+        return g_snapSources.dup;
+    }
+}
+
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
