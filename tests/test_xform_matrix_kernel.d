@@ -187,7 +187,7 @@ unittest { // (i-R) Rotate about each basis axis, single pass, falloff disabled
         // pivot-relative as the matrix kernel requires.
         applyXformMatrix(B, idx, baseB, pivot,
                          pivotRotationMatrix(Vec3(0,0,0), axes[a], ang),
-                     Vec3(0,0,0), 
+                         Vec3(0,0,0),
                          BlendMode.MatrixLerp, fp, vp, cp, ca, null, sp, tpB);
 
         import std.conv : to;
@@ -215,7 +215,7 @@ unittest { // (i-R-view) View-ring rotate (dragAxisIdx==-1, arbitrary axis)
     auto baseB = sampleVerts();
     applyXformMatrix(B, idx, baseB, pivot,
                      pivotRotationMatrix(Vec3(0,0,0), axis, ang),
-                     Vec3(0,0,0), 
+                     Vec3(0,0,0),
                      BlendMode.MatrixLerp, fp, vp, cp, ca, null, sp, tpB);
 
     assertClose(A.vertices, B.vertices, "i-R view-ring w==1");
@@ -243,7 +243,7 @@ unittest { // (i-S) Scale, per-axis factors, compoundPasses==1, falloff disabled
     auto baseB = sampleVerts();
     applyXformMatrix(B, idx, baseB, pivot,
                      pivotScaleMatrixBasis(Vec3(0,0,0), bx, by, bz, s.x, s.y, s.z),
-                     Vec3(0,0,0), 
+                     Vec3(0,0,0),
                      BlendMode.MatrixLerp, fp, vp, cp, ca, null, sp, tpB);
 
     assertClose(A.vertices, B.vertices, "i-S scale w==1");
@@ -278,7 +278,7 @@ unittest { // (ii) rotate + Linear-Z falloff: MatrixLerp == existing rotate kern
     auto baseB = sampleVerts();
     applyXformMatrix(B, idx, baseB, pivot,
                      pivotRotationMatrix(Vec3(0,0,0), axis, ang),
-                     Vec3(0,0,0), 
+                     Vec3(0,0,0),
                      BlendMode.MatrixLerp, fp, vp, cp, ca, null, sp, tpB);
 
     assertClose(A.vertices, B.vertices, "ii rotate fractional-weight MatrixLerp");
@@ -506,7 +506,7 @@ unittest { // (iv-oob-rotate) unclustered vert rotates GLOBALLY, not fixed
         clusterM ~= pivotRotationMatrix(Vec3(0,0,0), ca.right[cid], ang);
     applyXformMatrix(A, idx, baseA, pivot,
                      pivotRotationMatrix(Vec3(0,0,0), globalAxis, ang),
-                     Vec3(0,0,0), 
+                     Vec3(0,0,0),
                      BlendMode.MatrixLerp, fp, vp, cp, ca, clusterM, sp, tpA);
 
     // The unclustered vert MUST have moved (proves it is NOT left at identity).
@@ -525,7 +525,7 @@ unittest { // (iv-oob-rotate) unclustered vert rotates GLOBALLY, not fixed
         auto baseG = verts;
         applyXformMatrix(G, idx, baseG, pivot,
                          pivotRotationMatrix(Vec3(0,0,0), globalAxis, ang),
-                     Vec3(0,0,0), 
+                         Vec3(0,0,0),
                          BlendMode.MatrixLerp, fp, vp,
                          noClusterPivots(), noClusterAxes(), null, sp, tpG);
         float e = (A.vertices[oob] - G.vertices[oob]).length;
@@ -558,7 +558,7 @@ unittest { // (iv-oob-scale) unclustered vert scales GLOBALLY, not fixed
                         ca.right[cid], ca.up[cid], ca.fwd[cid], s.x, s.y, s.z);
     applyXformMatrix(A, idx, baseA, pivot,
                      pivotScaleMatrixBasis(Vec3(0,0,0), bx, by, bz, s.x, s.y, s.z),
-                     Vec3(0,0,0), 
+                     Vec3(0,0,0),
                      BlendMode.MatrixLerp, fp, vp, cp, ca, clusterM, sp, tpA);
 
     // The unclustered vert MUST have moved (proves it is NOT left at identity).
@@ -577,7 +577,7 @@ unittest { // (iv-oob-scale) unclustered vert scales GLOBALLY, not fixed
         applyXformMatrix(G, idx, baseG, pivot,
                          pivotScaleMatrixBasis(Vec3(0,0,0), bx, by, bz,
                                                s.x, s.y, s.z),
-                     Vec3(0,0,0), 
+                         Vec3(0,0,0),
                          BlendMode.MatrixLerp, fp, vp,
                          noClusterPivots(), noClusterAxes(), null, sp, tpG);
         float e = (A.vertices[oob] - G.vertices[oob]).length;
@@ -677,7 +677,7 @@ unittest { // (v) sparse non-identity indices, vid-indexed weightVerts (position
     foreach (vi; idx) baseB ~= verts[vi];
     applyXformMatrix(B, idx, baseB, pivot,
                      pivotScaleMatrixBasis(Vec3(0,0,0), bx, by, bz, s.x, s.y, s.z),
-                     Vec3(0,0,0), 
+                     Vec3(0,0,0),
                      BlendMode.MatrixLerp, fp, vp, cp, ca, null, sp, tpB,
                      weightVerts);
 
