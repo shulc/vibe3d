@@ -99,6 +99,12 @@ final class Layer {
     // via `xform.composedMatrix()`. Render/IO/forms/command wiring is P1-P4 —
     // after P0 this field is unused by the rest of the app (data model only).
     ItemXform xform;
+    // Task 0082 — single-level item-parent reference. Nullable; null = no parent.
+    // The Layer class (stable heap identity, GC-traced) makes this ref
+    // reorder/delete-renumber-safe. Not persisted to .v3d in this task —
+    // save/reload drops the parent link silently. One level only: Parent mode
+    // reads `l.parent` directly (no ancestor-chain walk).
+    Layer parent;
 }
 
 /// The layer list, the index of the one active (foreground) layer, and the

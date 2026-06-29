@@ -43,6 +43,9 @@ class SceneReset : Command {
     // transform returns to identity (default ItemXform). Snapshot the prior
     // value so undo brings the authored transform back.
     private ItemXform        keptPrevXform;
+    // Task 0082: snapshot the kept layer's parent ref (-j8 fix: a parent set in
+    // one test must not survive into the next via SceneReset).
+    private Layer            keptPrevParent;
 
     private string       primitive;     // "cube" / "diamond" / "octahedron" / "lshape" / "grid" / "subdivcube"
     private bool         emptyScene;    // true → reset to empty mesh (no primitive)
@@ -119,11 +122,14 @@ class SceneReset : Command {
             keptPrevName       = keep.name;
             keptPrevVisible    = keep.visible;
             keptPrevXform      = keep.xform;
+            keptPrevParent     = keep.parent;
             keep.name       = "Layer 1";
             keep.visible    = true;
             // Channels P4: reset clears the per-item transform back to identity
             // (render-only field — vertices are untouched either way).
             keep.xform      = ItemXform.init;
+            // Task 0082: clear the parent link on reset (-j8 bleed fix).
+            keep.parent     = null;
             document.layers      = [ keep ];
             // Stage-0 lockstep: one selected primary layer (the surviving
             // active one) — setActive(0) re-asserts the SET-of-one.
@@ -207,6 +213,7 @@ class SceneReset : Command {
             keep.name       = keptPrevName;
             keep.visible    = keptPrevVisible;
             keep.xform      = keptPrevXform;
+            keep.parent     = keptPrevParent;
             document.layers      = prevLayers;
             // Restore primary/selected/activeIndex in lockstep (setActive
             // clamps the index into range).
