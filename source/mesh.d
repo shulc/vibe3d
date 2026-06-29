@@ -5551,6 +5551,112 @@ struct Mesh {
         return true;
     }
 
+    // ------------------------------------------------------------------
+    // Bridge (task 0100): stitch two equal-length closed vertex loops.
+    // ------------------------------------------------------------------
+
+    /// Return the ordered vertex cycle of face `fi` — the face's vertex
+    /// list as a plain uint[].  Used by the bridge command (Polygon mode).
+    uint[] faceVertexRing(uint fi) const {
+        return faces[fi].dup;
+    }
+
+    /// Extract all disjoint simple closed vertex cycles from the currently
+    /// selected edges.  Each cycle is an ordered uint[] with no repeated
+    /// vertex (implied closed: last connects back to first).
+    ///
+    /// Returns [] if no edges are selected OR if any connected component
+    /// is not a simple closed cycle (vertex degree ≠ 2).
+    uint[][] extractSelectedEdgeCycles() const {
+        // Build adjacency restricted to selected edges.
+        uint[][uint] adj;
+        foreach (ei; 0 .. edges.length) {
+            if (ei >= edgeMarks.length) continue;
+            if (!(edgeMarks[ei] & Marks.Select)) continue;
+            uint a = edges[ei][0], b = edges[ei][1];
+            adj[a] ~= b;
+            adj[b] ~= a;
+        }
+        if (adj.length == 0) return [];
+
+        // Every selected vertex must have exactly two selected-edge neighbors.
+        foreach (v, nbrs; adj) {
+            if (nbrs.length != 2) return [];
+        }
+
+        // Walk connected components into ordered cycles.
+        bool[uint] visited;
+        uint[][] cycles;
+        foreach (startV; adj.byKey) {
+            if (startV in visited) continue;
+            uint[] cycle;
+            uint cur  = startV;
+            uint prev = uint.max;
+            while (!(cur in visited)) {
+                visited[cur] = true;
+                cycle ~= cur;
+                auto nbrs = adj[cur];
+                uint next = (nbrs[0] != prev) ? nbrs[0] : nbrs[1];
+                prev = cur;
+                cur  = next;
+            }
+            if (cur != startV) return [];   // did not close
+            if (cycle.length < 3) return [];
+            cycles ~= cycle;
+        }
+        return cycles;
+    }
+
+    /// Stitch two equal-length closed vertex loops into a ring of N quad faces.
+    /// Returns N (faces added) on success, 0 if loops are unequal or too short.
+    ///
+    /// Pairing rule: anchor B at the vertex nearest A[0]; pick forward vs.
+    /// reversed direction by minimum total paired Euclidean distance; `flip`
+    /// overrides the auto choice.  Quads wound [A[i], A[(i+1)%N], P[(i+1)%N], P[i]].
+    ///
+    /// Does NOT call buildLoops() — the caller must do so after all mutations.
+    ///
+    /// No empty-selection fallback: bridge requires exactly two loops.
+    /// Do NOT add a whole-mesh fallback here.
+    size_t bridgeLoops(const(uint)[] loopA, const(uint)[] loopB, bool flip = false) {
+        if (loopA.length != loopB.length || loopA.length < 3) return 0;
+        const size_t N = loopA.length;
+
+        // Step 1 — anchor: B-vertex nearest A[0].
+        Vec3   pa0    = vertices[loopA[0]];
+        size_t k      = 0;
+        float  bestSq = float.max;
+        foreach (i; 0 .. N) {
+            Vec3  d  = vertices[loopB[i]] - pa0;
+            float sq = d.x*d.x + d.y*d.y + d.z*d.z;
+            if (sq < bestSq) { bestSq = sq; k = i; }
+        }
+
+        // Step 2 — pick direction by minimum total paired distance.
+        float fwdSum = 0.0f, revSum = 0.0f;
+        foreach (i; 0 .. N) {
+            Vec3 ai   = vertices[loopA[i]];
+            Vec3 bFwd = vertices[loopB[(k + i)     % N]];
+            Vec3 bRev = vertices[loopB[(k + N - i) % N]];
+            fwdSum += (bFwd - ai).length;
+            revSum += (bRev - ai).length;
+        }
+        immutable bool useForward = (fwdSum <= revSum) != flip;
+
+        // Step 3 — build pairing array P[0..N).
+        uint[] P = new uint[](N);
+        foreach (i; 0 .. N)
+            P[i] = useForward ? cast(uint)loopB[(k + i)     % N]
+                              : cast(uint)loopB[(k + N - i) % N];
+
+        // Step 4 — emit quads.
+        foreach (i; 0 .. N)
+            addFace([cast(uint)loopA[i], cast(uint)loopA[(i + 1) % N],
+                     P[(i + 1) % N], P[i]]);
+
+        return N;
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -7927,6 +8033,81 @@ unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
            "spinEdge must be no-op when new diagonal already exists");
     assert(m3.edgeIndex(1, 3) != ~0u, "edge 1-3 still present after fold-over guard");
     assert(m3.edgeIndex(0, 2) != ~0u, "edge 0-2 still present (no spin happened)");
+}
+
+unittest { // bridgeLoops: two parallel square rings → 4 quads, no new verts
+    // Two coaxial unit squares: A at z=0, B at z=1, both CCW.
+    // A: 0(0,0,0), 1(1,0,0), 2(1,1,0), 3(0,1,0)
+    // B: 4(0,0,1), 5(1,0,1), 6(1,1,1), 7(0,1,1)
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+    assert(m.vertices.length == 8);
+    assert(m.faces.length == 0);
+
+    size_t added = m.bridgeLoops([0u,1u,2u,3u], [4u,5u,6u,7u]);
+    assert(added == 4, "expected 4 quads");
+    assert(m.faces.length == 4, "face count");
+    assert(m.vertices.length == 8, "no new verts");
+
+    // All faces must be quads.
+    foreach (f; m.faces) assert(f.length == 4, "all quads");
+
+    // Every new face's vertices are within the original 8.
+    foreach (f; m.faces)
+        foreach (vi; f) assert(vi < 8, "vertex index in range");
+}
+
+unittest { // bridgeLoops: mismatch rejection + too-short rejection
+    Mesh m;
+    foreach (i; 0 .. 8) m.addVertex(Vec3(cast(float)i, 0, 0));
+
+    // Unequal lengths → 0 faces added.
+    size_t r1 = m.bridgeLoops([0u,1u,2u,3u], [4u,5u,6u]);
+    assert(r1 == 0, "unequal length must be rejected");
+    assert(m.faces.length == 0, "no faces added on mismatch");
+
+    // Length 2 → too short → 0.
+    size_t r2 = m.bridgeLoops([0u,1u], [4u,5u]);
+    assert(r2 == 0, "length<3 must be rejected");
+}
+
+unittest { // extractSelectedEdgeCycles: two rings, figure-eight rejection
+    // Build a tiny mesh with two isolated quad rings as boundary edges.
+    // The mesh: two coaxial caps (faces 0 and 1), no other faces.
+    Mesh m;
+    // A cap: verts 0-3 at z=0
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    // B cap: verts 4-7 at z=1
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+    m.addFace([0u,1u,2u,3u]);
+    m.addFace([4u,5u,6u,7u]);
+    m.buildLoops();
+    m.syncSelection();   // resize edgeMarks to edges.length before selectEdge
+
+    // Select all edges (each cap's 4-edge perimeter = 8 edges total).
+    foreach (ei; 0 .. m.edges.length)
+        m.selectEdge(cast(int)ei);
+
+    auto cycles = m.extractSelectedEdgeCycles();
+    assert(cycles.length == 2, "two disjoint cycles");
+    assert(cycles[0].length == 4 || cycles[1].length == 4, "4-vertex cycles");
+
+    // Figure-eight: vertex shared by both triangles → degree 4 → rejected.
+    // Triangle A: [0,1,2], Triangle B: [2,3,4], vertex 2 is shared.
+    Mesh m2;
+    foreach (i; 0 .. 5) m2.addVertex(Vec3(cast(float)i, 0, 0));
+    m2.addFace([0u,1u,2u]);
+    m2.addFace([2u,3u,4u]);
+    m2.buildLoops();
+    m2.syncSelection();  // resize edgeMarks before selectEdge
+    foreach (ei; 0 .. m2.edges.length) m2.selectEdge(cast(int)ei);
+    auto c2 = m2.extractSelectedEdgeCycles();
+    assert(c2.length == 0, "figure-eight (degree-4 vertex) must be rejected");
 }
 
 // ---------------------------------------------------------------------------
