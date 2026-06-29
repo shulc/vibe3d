@@ -253,6 +253,9 @@ final class LayerDelete : LayerCommandBase {
     // by identity so the splice between apply and revert can't drift it.
     private bool[Layer] prevSelected;
     private Layer       prevPrimary;
+    // Task 0082: layers whose `parent` pointed at `removed` — cleared on apply,
+    // restored on revert (snapshot-by-identity, mirrors prevSelected pattern).
+    private Layer[] orphanedChildren_;
     private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
@@ -282,6 +285,13 @@ final class LayerDelete : LayerCommandBase {
         prevPrimary  = prevLayer;
         prevSelected = null;
         foreach (l; doc.layers) prevSelected[l] = l.selected;
+
+        // Task 0082: collect layers whose parent points at `removed`, snapshot
+        // them by identity, then clear their parent to avoid dangling refs.
+        orphanedChildren_ = null;
+        foreach (l; doc.layers)
+            if (l.parent is removed) orphanedChildren_ ~= l;
+        foreach (l; orphanedChildren_) l.parent = null;
 
         // Splice the layer out.
         doc.layers = doc.layers[0 .. removedIndex] ~ doc.layers[removedIndex + 1 .. $];
@@ -330,6 +340,8 @@ final class LayerDelete : LayerCommandBase {
         }
         if (prevPrimary !is null) doc.setPrimary(prevPrimary);  // selected ⇒ no-op reselect
         else                      doc.setActive(prevActiveIndex);
+        // Task 0082: restore parent links for any layers that had been orphaned.
+        foreach (l; orphanedChildren_) l.parent = removed;
         // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIdx);
@@ -700,6 +712,77 @@ final class LayerAttr : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
+// layer.parent — set/clear the item-parent reference for a given layer.
+// Model undo (persistent document state). Guards: refuse self-parent, refuse
+// cycles (bounded walk by doc.layers.length). parentArg < 0 or out-of-range
+// clears the parent link.
+// ---------------------------------------------------------------------------
+
+final class LayerParent : LayerCommandBase {
+    private int   childArg  = -1;    // -1 → active
+    private int   parentArg = -1;    // -1 → clear
+    private size_t childIdx_;
+    private Layer  prevParent_;
+    private bool   applied_;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
+         void delegate(size_t, size_t) onSwitch) {
+        super(mesh, view, editMode, doc, onSwitch);
+    }
+
+    override string name()  const { return "layer.parent"; }
+    override string label() const { return "Set Layer Parent"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+
+    override Param[] params() {
+        return [ Param.int_("child",  "Child",  &childArg,  -1),
+                 Param.int_("parent", "Parent", &parentArg, -1) ];
+    }
+
+    override bool apply() {
+        if (doc.layers.length == 0) return false;
+        childIdx_   = resolveIndex(childArg);
+        auto child  = doc.layers[childIdx_];
+        prevParent_ = child.parent;
+
+        // Clear: out-of-range or negative parentArg
+        if (parentArg < 0 || parentArg >= cast(int)doc.layers.length) {
+            child.parent = null;
+            applied_ = true;
+            noteLayerChange(LayerChange.PropertyChanged);
+            return true;
+        }
+        auto newParent = doc.layers[cast(size_t)parentArg];
+
+        if (newParent is child) return false;   // self-parent guard
+
+        // Cycle guard — bounded walk (cap = layers.length prevents infinite loop
+        // even if a pre-existing malformed cycle exists in the graph).
+        {
+            int cap = cast(int)doc.layers.length;
+            Layer cur = newParent;
+            while (cur !is null && cap-- > 0) {
+                if (cur is child) return false;
+                cur = cur.parent;
+            }
+        }
+
+        child.parent = newParent;
+        applied_ = true;
+        noteLayerChange(LayerChange.PropertyChanged);
+        return true;
+    }
+
+    override bool revert() {
+        if (!applied_) return false;
+        if (childIdx_ >= doc.layers.length) return false;
+        doc.layers[childIdx_].parent = prevParent_;
+        noteLayerChange(LayerChange.PropertyChanged);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // In-module unit test (P3): LayerAttr write/query/revert + coalescing.
 //
 // The HTTP-driven coalescing assertion in tests/test_layer_params.d already
@@ -801,3 +884,81 @@ unittest {
     }
 }
 
+// ---------------------------------------------------------------------------
+// In-module unit tests — LayerParent: set/clear, self-parent guard, cycle
+// guard, delete-clears-child, undo-delete-restores-child, reset-clears.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+
+    // Build a 3-layer doc: layer 0 = A (primary), 1 = B, 2 = C.
+    auto doc = Document.bootstrap(makeCube());
+    auto b = new Layer; b.name = "B"; doc.layers ~= b;
+    auto c = new Layer; c.name = "C"; doc.layers ~= c;
+    doc.setActive(0);
+    auto a = doc.layers[0];
+    auto mPtr = doc.activeMesh();
+
+    LayerParent mkPar(int child, int parent_) {
+        auto v = new View(0, 0, 800, 600);
+        auto cmd = new LayerParent(mPtr, v, EditMode.Vertices, &doc, null);
+        cmd.childArg  = child;
+        cmd.parentArg = parent_;
+        return cmd;
+    }
+    // set: B's parent = A
+    assert(mkPar(1, 0).apply(), "set B parent=A");
+    assert(b.parent is a, "B.parent is A after set");
+
+    // revert: B's parent cleared back to null.
+    // First clear B.parent so prevParent_ captures null before re-applying.
+    {
+        mkPar(1, -1).apply();    // clear to null first
+        auto cmd = mkPar(1, 0);
+        cmd.apply();
+        assert(b.parent is a, "apply must set B.parent = A");
+        assert(cmd.revert(), "revert LayerParent");
+        assert(b.parent is null, "revert clears B.parent");
+        // restore for further tests
+        mkPar(1, 0).apply();
+    }
+
+    // self-parent guard
+    assert(!mkPar(0, 0).apply(), "self-parent must be rejected");
+
+    // cycle guard: set A parent=B, then try B parent=A (A is already parent of B)
+    {
+        // Start clean: no parent links so mkPar(0,1) can succeed.
+        mkPar(1, -1).apply();   // clear B.parent
+        assert(mkPar(0, 1).apply(), "A.parent=B must succeed (no cycle yet)");
+        assert(!mkPar(1, 0).apply(), "cycle B→A must be rejected when A.parent=B");
+        // clean up
+        mkPar(0, -1).apply();   // clear A.parent
+    }
+
+    // clear: parentArg=-1
+    mkPar(1, 0).apply();            // ensure B.parent = A
+    assert(b.parent is a);
+    mkPar(1, -1).apply();
+    assert(b.parent is null, "clear via parentArg=-1");
+
+    // delete-clears-child + undo-delete-restores-child
+    mkPar(1, 0).apply();            // B.parent = A again
+    assert(b.parent is a);
+
+    // Delete A (layer index 0) — B's parent should be cleared
+    auto v2 = new View(0, 0, 800, 600);
+    auto del = new LayerDelete(mPtr, v2, EditMode.Vertices, &doc, null);
+    del.indexArg = 0;
+    assert(del.apply(), "delete layer 0 (A)");
+    assert(b.parent is null, "delete cleared B.parent");
+
+    // Undo the delete — B.parent must be restored to A
+    assert(del.revert(), "undo delete");
+    // A should be back in layers
+    bool foundA = false;
+    foreach (l; doc.layers) if (l is a) { foundA = true; break; }
+    assert(foundA, "A restored after undo-delete");
+    assert(b.parent is a, "undo-delete restored B.parent = A");
+}
