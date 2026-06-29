@@ -2,7 +2,7 @@ module operator;
 
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
-                          FalloffPacket;
+                          FalloffPacket, ConstrainPacket;
 
 // ---------------------------------------------------------------------------
 // Operator architecture — Phase 0 of doc/operator_refactor_plan.md.
@@ -33,10 +33,11 @@ enum Task : ubyte {
     Work = 0,    // workplane basis
     Symm = 1,    // symmetry mirror
     Snap = 2,    // snap candidates
-    Acen = 3,    // action center
-    Axis = 4,    // action axis
-    Wght = 5,    // per-vert weight (falloff)
-    Actr = 6,    // the actor: mutates the mesh
+    Cons = 3,    // background-mesh constraint (post-snap, pre-acen)
+    Acen = 4,    // action center
+    Axis = 5,    // action axis
+    Wght = 6,    // per-vert weight (falloff)
+    Actr = 7,    // the actor: mutates the mesh
 }
 
 /// Packet type index. Compile-time mapping via `packetKindOf!T`; the
@@ -53,7 +54,8 @@ enum PacketKind : ubyte {
     ActionCenter  = 4,
     ActionAxis    = 5,
     Falloff       = 6,
-    Count         = 7
+    Constrain     = 7,
+    Count         = 8
 }
 
 /// Compile-time map T → PacketKind. Used by VectorStack.put!T/get!T to
@@ -67,6 +69,7 @@ template packetKindOf(T) {
     else static if (is(T == ActionCenterPacket))  enum packetKindOf = PacketKind.ActionCenter;
     else static if (is(T == AxisPacket))          enum packetKindOf = PacketKind.ActionAxis;
     else static if (is(T == FalloffPacket))       enum packetKindOf = PacketKind.Falloff;
+    else static if (is(T == ConstrainPacket))     enum packetKindOf = PacketKind.Constrain;
     else                                          static assert(false,
         "packetKindOf: unregistered packet type " ~ T.stringof
         ~ " — add a branch in source/operator.d");

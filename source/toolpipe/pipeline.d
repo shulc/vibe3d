@@ -8,7 +8,7 @@ import math : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
-                          SnapPacket;
+                          SnapPacket, ConstrainPacket;
 import operator : Operator, Task, VectorStack, PacketKind;
 import perf_probe : g_perf, Cat;
 
@@ -203,6 +203,7 @@ public:
             case Task.Work: return -1;
             case Task.Symm: return cast(int)Cat.pipeSymmetry;
             case Task.Snap: return cast(int)Cat.pipeSnap;
+            case Task.Cons: return -1;
             case Task.Acen: return cast(int)Cat.pipeAcen;
             case Task.Axis: return cast(int)Cat.pipeAxis;
             case Task.Wght: return cast(int)Cat.pipeFalloff;
