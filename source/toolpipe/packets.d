@@ -435,6 +435,49 @@ struct SymmetryPacket {
     Vec3         pivot = Vec3(0, 0, 0);
 }
 
+// ---------------------------------------------------------------------------
+// CONS packet types
+// ---------------------------------------------------------------------------
+
+/// Geometry constraint mode — dispatches how CONS projects moving verts
+/// onto the background surface.
+///
+/// `off`    — disabled (packet present but no projection).
+/// `screen` — project along camera forward (capture-gated, currently no-op;
+///             ships accepted as an attr but returns identity until Stage 0
+///             of doc/cons_constraint_plan.md resolves the direction).
+/// `vector` — project along motion delta (capture-gated, same no-op policy).
+/// `point`  — nearest world-space point on background surface (default;
+///             ships as "nearest-foot closest-point" working assumption —
+///             see plan §stage-4 and DoD notes on the two unverified
+///             assumptions: nearest-foot vs camera-ray, and per-vertex vs
+///             per-delta application).
+///
+/// Int-backed so an IntEnum Param / dropdown can bind it the same way
+/// FalloffMix is (cast(int*)&geom).
+enum ConstrainGeom : int {
+    Off    = 0,
+    Screen = 1,
+    Vector = 2,
+    Point  = 3,
+}
+
+/// Constraint packet — published by the CONS stage into the VectorStack
+/// when the stage is enabled. Consumed by the transform apply path to
+/// re-project each moved vertex onto the nearest background-mesh surface.
+///
+/// `screen`/`vector` modes and the `offset`/`handle`/`dblSided` fields
+/// are capture-gated: they are round-trippable attrs (no-op in Stage 4)
+/// and will be wired in Stage 5 once the Stage-0 captures resolve their
+/// exact semantics. Default values match the survey §2 presets.
+struct ConstrainPacket {
+    bool          enabled  = false;
+    ConstrainGeom geom     = ConstrainGeom.Point;
+    float         offset   = 0.0f;    // standoff from surface; sign/direction capture-gated
+    bool          handle   = true;    // constrain handle vs geometry; capture-gated
+    bool          dblSided = false;   // project onto back faces; capture-gated
+}
+
 /// Geometry-snap candidate-type bitmask. Multiple types can be enabled
 /// simultaneously; the closest screen-pixel candidate across all
 /// enabled types wins. Covers the snap-element-mode types plus grid /
