@@ -2,7 +2,7 @@ module constraint;
 
 import std.math : sqrt;
 
-import math : Vec3, Viewport, dot, cross;
+import math : Vec3, Viewport, dot, cross, normalize;
 import mesh : Mesh;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom;
 
@@ -21,9 +21,12 @@ import toolpipe.packets : ConstrainPacket, ConstrainGeom;
 //     alternative that would move the hook to move.d:applySnapToDelta).
 // Both assumptions are documented as non-verified in the plan's DoD.
 //
-// `screen` and `vector` modes are capture-gated: they are accepted attrs
-// that round-trip cleanly, but `constrainPoint` returns `movingPos`
-// unchanged for those modes until Stage-0 captures resolve their direction.
+// `vector` projects each vertex along the normalised per-vertex edit delta
+// (motionDelta = finalPos − basePos); zero or near-zero delta returns the
+// vertex unchanged (keep-on-miss). `screen` projects along the camera-forward
+// axis extracted from the view matrix; a degenerate or uninitialised view
+// matrix also returns unchanged. Both modes keep the position on a forward
+// miss (no geometry hit in the projection direction).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -138,9 +141,8 @@ bool closestPointOnMeshes(Vec3 p,
 // projectAlongDirection
 //
 // Möller-Trumbore ray-triangle intersection along `dir` (world space).
-// Finds the nearest forward hit across all source faces. Backs
-// `vector`/`screen` modes (both capture-gated in Stage 4 — this function
-// exists for completeness and Stage-5 wiring). Returns false when no
+// Finds the nearest forward hit across all source faces. Backs the
+// `vector` and `screen` modes in constrainPoint. Returns false when no
 // forward hit is found (caller keeps movingPos unchanged).
 // ---------------------------------------------------------------------------
 bool projectAlongDirection(Vec3 pos,
@@ -216,14 +218,16 @@ Vec3 applyOffset(Vec3 hitPos, Vec3 normal, float offset)
 //   * cfg.enabled == false,
 //   * cfg.geom == Off,
 //   * no background sources are present,
-//   * the mode is screen/vector (capture-gated no-op in Stage 4).
+//   * vector mode: motionDelta is zero or near-zero (no meaningful direction),
+//   * screen mode: the view matrix is degenerate or uninitialised,
+//   * any mode: projectAlongDirection finds no forward hit (keep-on-miss).
 //
 // Parameters:
 //   movingPos   — the vertex's final world-space position after applyFold.
-//   motionDelta — overall translation delta (unused by `point` mode;
-//                 reserved for `vector` mode once Stage-0 resolves the dir).
-//   vp          — active viewport (unused by `point` mode; reserved for
-//                 `screen` mode).
+//   motionDelta — per-vertex edit delta (finalPos − basePos); consumed by
+//                 `vector` mode as the projection direction; unused by `point`.
+//   vp          — active viewport; consumed by `screen` mode to extract the
+//                 camera-forward axis; unused by `point`.
 //   sources     — background-mesh source list from snap.backgroundSourcesSnapshot().
 //   cfg         — live ConstrainPacket published by ConstrainStage.
 // ---------------------------------------------------------------------------
@@ -249,13 +253,33 @@ Vec3 constrainPoint(Vec3 movingPos,
             return applyOffset(hit, hitN, cfg.offset);
         }
 
-        case ConstrainGeom.Vector:
-        case ConstrainGeom.Screen:
-            // Capture-gated: projection direction is ambiguous from the
-            // spec headers alone. Returns identity until Stage-0 captures
-            // resolve the direction. Wire round-trips as "vector"/"screen"
-            // for headless attr testing.
-            return movingPos;
+        case ConstrainGeom.Vector: {
+            // Project along the normalized per-vertex edit direction.
+            Vec3 dir = motionDelta;
+            float lenSq = dot(dir, dir);
+            if (!(lenSq > 1e-12f)) return movingPos;  // zero / near-zero delta → identity
+            dir = normalize(dir);
+            Vec3 hit, hitN;
+            if (!projectAlongDirection(movingPos, dir, sources, cfg.dblSided, hit, hitN))
+                return movingPos;                      // forward miss → keep position
+            return applyOffset(hit, hitN, cfg.offset);
+        }
+
+        case ConstrainGeom.Screen: {
+            // Project along the camera view axis (into the scene).
+            if (vp.width == 0 || vp.height == 0) return movingPos;  // headless / uninitialised
+            // Extract camFwd from view matrix column-major layout: -f at m[2], m[6], m[10].
+            // (axis.d:336 reads the same indices, though the guard there covers the right-vector
+            // magnitude rather than the forward-vector magnitude checked below.)
+            Vec3 fwdVec = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+            float lenSq = dot(fwdVec, fwdVec);
+            if (!(lenSq > 1e-6f)) return movingPos;   // degenerate / NaN view matrix
+            Vec3 camFwd = normalize(fwdVec);
+            Vec3 hit, hitN;
+            if (!projectAlongDirection(movingPos, camFwd, sources, cfg.dblSided, hit, hitN))
+                return movingPos;                      // forward miss → keep position
+            return applyOffset(hit, hitN, cfg.offset);
+        }
     }
 }
 
@@ -388,23 +412,109 @@ unittest { // constrainPoint — empty sources → identity
         "empty sources: position unchanged");
 }
 
-unittest { // constrainPoint — vector/screen modes return identity (capture-gated)
+unittest { // constrainPoint — vector mode: downward delta hits +Y plane at Y=0
     import mesh : Mesh;
+    import std.math : fabs;
+    // Build a Y=0 quad wound for +Y normal: face [0,2,1] and [0,3,2].
+    // v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1)
+    // face [0,2,1]: e1=v2-v0=(1,0,1), e2=v1-v0=(1,0,0) → n=cross(e1,e2)=(0,1,0) +Y ✓
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.faces    = [[0u,2u,1u], [0u,3u,2u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    ConstrainPacket cfg;
+    cfg.enabled  = true;
+    cfg.geom     = ConstrainGeom.Vector;
+    cfg.dblSided = false;
+    cfg.offset   = 0.0f;
+    Viewport vp;  // unused by vector mode
+
+    // Forward hit: delta (0,-1,0) from (0.5,2,0.5) → hits Y=0 at (0.5,0,0.5)
+    Vec3 result = constrainPoint(Vec3(0.5f, 2.0f, 0.5f), Vec3(0,-1,0), vp, srcs, cfg);
+    assert(fabs(result.x - 0.5f) < 1e-4f, "vector hit: x preserved");
+    assert(fabs(result.y - 0.0f) < 1e-4f, "vector hit: y projected to 0");
+    assert(fabs(result.z - 0.5f) < 1e-4f, "vector hit: z preserved");
+}
+
+unittest { // constrainPoint — vector mode: upward delta misses +Y plane → identity
+    import mesh : Mesh;
+    import std.math : fabs;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.faces    = [[0u,2u,1u], [0u,3u,2u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    ConstrainPacket cfg;
+    cfg.enabled  = true;
+    cfg.geom     = ConstrainGeom.Vector;
+    cfg.dblSided = false;
+    cfg.offset   = 0.0f;
+    Viewport vp;
+    Vec3 pos    = Vec3(0.5f, 2.0f, 0.5f);
+    // Upward ray: forward direction is away from the plane → miss → keep pos
+    Vec3 result = constrainPoint(pos, Vec3(0,1,0), vp, srcs, cfg);
+    assert(fabs(result.y - 2.0f) < 1e-4f, "vector miss: y unchanged (keep-on-miss)");
+}
+
+unittest { // constrainPoint — vector mode: zero delta → identity
+    import mesh : Mesh;
+    import std.math : fabs;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    ConstrainPacket cfg;
+    cfg.enabled = true;
+    cfg.geom    = ConstrainGeom.Vector;
     Viewport vp;
-    Vec3 p = Vec3(0.3f, 5.0f, 0.3f);
-    ConstrainPacket cfgVec;
-    cfgVec.enabled = true;
-    cfgVec.geom    = ConstrainGeom.Vector;
-    Vec3 rv = constrainPoint(p, Vec3(0,0,0), vp, srcs, cfgVec);
+    Vec3 pos    = Vec3(0.3f, 5.0f, 0.3f);
+    Vec3 result = constrainPoint(pos, Vec3(0,0,0), vp, srcs, cfg);
+    assert(fabs(result.y - 5.0f) < 1e-5f, "vector zero-delta: identity");
+}
+
+unittest { // constrainPoint — screen mode: top-down view hits +Y plane at Y=0
+    import mesh : Mesh;
     import std.math : fabs;
-    assert(fabs(rv.y - 5.0f) < 1e-5f, "vector mode: no-op");
-    ConstrainPacket cfgScr;
-    cfgScr.enabled = true;
-    cfgScr.geom    = ConstrainGeom.Screen;
-    Vec3 rs = constrainPoint(p, Vec3(0,0,0), vp, srcs, cfgScr);
-    assert(fabs(rs.y - 5.0f) < 1e-5f, "screen mode: no-op");
+    // Same +Y quad as the vector test.
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.faces    = [[0u,2u,1u], [0u,3u,2u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    ConstrainPacket cfg;
+    cfg.enabled  = true;
+    cfg.geom     = ConstrainGeom.Screen;
+    cfg.dblSided = false;
+    cfg.offset   = 0.0f;
+    // Build a Viewport with camFwd = (0,-1,0) (top-down).
+    // Column-major lookAt convention: -f stored at m[2],m[6],m[10].
+    // f=(0,-1,0) → -f=(0,1,0) → view[2]=0, view[6]=1, view[10]=0.
+    // Right vector r=(1,0,0) at view[0]=1,view[4]=0,view[8]=0 (rLenSq=1>1e-6).
+    Viewport vp;
+    vp.width  = 800;
+    vp.height = 600;
+    vp.view[0]  = 1.0f;  // r.x
+    vp.view[2]  = 0.0f;  // -f.x
+    vp.view[6]  = 1.0f;  // -f.y  (f.y = -1 → -f.y = 1)
+    vp.view[10] = 0.0f;  // -f.z
+    // camFwd = normalize(-view[2],-view[6],-view[10]) = (0,-1,0) ✓
+
+    Vec3 result = constrainPoint(Vec3(0.5f, 2.0f, 0.5f), Vec3(0,0,0), vp, srcs, cfg);
+    assert(fabs(result.x - 0.5f) < 1e-4f, "screen hit: x preserved");
+    assert(fabs(result.y - 0.0f) < 1e-4f, "screen hit: y projected to 0");
+    assert(fabs(result.z - 0.5f) < 1e-4f, "screen hit: z preserved");
+}
+
+unittest { // constrainPoint — screen mode: zero-width viewport → identity
+    import mesh : Mesh;
+    import std.math : fabs;
+    auto m = new Mesh();
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
+    m.faces    = [[0u,1u,2u]];
+    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    ConstrainPacket cfg;
+    cfg.enabled = true;
+    cfg.geom    = ConstrainGeom.Screen;
+    Viewport vp;   // zero-init: width=0, height=0
+    Vec3 pos    = Vec3(0.3f, 5.0f, 0.3f);
+    Vec3 result = constrainPoint(pos, Vec3(0,0,0), vp, srcs, cfg);
+    assert(fabs(result.y - 5.0f) < 1e-5f, "screen degenerate-view: identity");
 }
