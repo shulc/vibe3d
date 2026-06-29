@@ -125,6 +125,7 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
+import commands.snap.mode        : SnapModeCommand;
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
@@ -155,6 +156,8 @@ import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
+import document       : Layer;
+import snap           : ItemSnapFrame;
 
 version (WithRender) import render.render_mvp   : initIPR, drawIPRPanel, shutdownIPR;
 version (WithRender) import render.render_diff  : runRenderDiff;
@@ -379,6 +382,46 @@ void setWindowIcon(SDL_Window* window) {
     if (!surf) return;
     SDL_SetWindowIcon(window, surf); // SDL copies the pixels; surface can go
     SDL_FreeSurface(surf);
+}
+
+/// Build the item-snap frame for one visible layer: world-space pivot +
+/// world-space AABB derived from ALL mesh vertices (whole-item bounds,
+/// independent of any active vertex sub-selection).  Called from both the
+/// render-thread per-frame install and the HTTP-thread JIT install.
+private ItemSnapFrame buildItemFrame(Layer lyr)
+{
+    ItemSnapFrame fr;
+    fr.pivot = lyr.xform.pos + lyr.xform.pivot;
+    Vec3 mn = Vec3( float.infinity,  float.infinity,  float.infinity);
+    Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+    bool seen = false;
+    foreach (v; lyr.mesh.vertices) {
+        if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+        if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+        if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+        seen = true;
+    }
+    if (seen) {
+        float[16] M = lyr.xform.composedMatrix();
+        Vec3[8] corners = [
+            Vec3(mn.x,mn.y,mn.z), Vec3(mx.x,mn.y,mn.z),
+            Vec3(mn.x,mx.y,mn.z), Vec3(mx.x,mx.y,mn.z),
+            Vec3(mn.x,mn.y,mx.z), Vec3(mx.x,mn.y,mx.z),
+            Vec3(mn.x,mx.y,mx.z), Vec3(mx.x,mx.y,mx.z),
+        ];
+        Vec3 wmn = transformPoint(M, corners[0]);
+        Vec3 wmx = wmn;
+        foreach (c; corners[1..$]) {
+            Vec3 w = transformPoint(M, c);
+            if (w.x < wmn.x) wmn.x = w.x; if (w.x > wmx.x) wmx.x = w.x;
+            if (w.y < wmn.y) wmn.y = w.y; if (w.y > wmx.y) wmx.y = w.y;
+            if (w.z < wmn.z) wmn.z = w.z; if (w.z > wmx.z) wmx.z = w.z;
+        }
+        fr.bboxMin = wmn;
+        fr.bboxMax = wmx;
+        fr.hasBBox = true;
+    }
+    return fr;
 }
 
 // ---------------------------------------------------------------------------
@@ -2179,10 +2222,13 @@ void main(string[] args) {
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(), cameraView, editMode);
     {
         import commands.snap.toggle : SnapToggleCommand;
+        import commands.snap.mode   : SnapModeCommand;
         reg.commandFactories["snap.toggle"] = () => cast(Command)
             new SnapToggleCommand(&mesh(), cameraView, editMode);
         reg.commandFactories["snap.toggleType"] = () => cast(Command)
             new SnapToggleTypeCommand(&mesh(), cameraView, editMode);
+        reg.commandFactories["snap.mode"] = () => cast(Command)
+            new SnapModeCommand(&mesh(), cameraView, editMode);
     }
     {
         Command delegate() makeAiFactory(AiToggleAction action) {
@@ -3250,17 +3296,31 @@ void main(string[] args) {
                 if (auto sp = vts.get!SnapPacket()) cfg = *sp;
             }
 
+            // Stage 3 D6: just-in-time item-frame install so the HTTP thread
+            // never races the render-thread's per-frame install. Build the same
+            // frames the render loop would, but from the current document state.
+            {
+                import snap : setItemSnapFrames, ItemSnapFrame;
+                ItemSnapFrame[] itemFrames;
+                foreach (lyr; document.layers) {
+                    if (!lyr.visible) continue;
+                    itemFrames ~= buildItemFrame(lyr);
+                }
+                setItemSnapFrames(itemFrames);
+            }
+
             SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, cfg, exclude);
 
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`
-              ~ `"targetIndex":%d,"targetSource":%d,"worldPos":[%f,%f,%f],`
-              ~ `"highlightPos":[%f,%f,%f]}`,
+              ~ `"targetIndex":%d,"targetSource":%d,"constraintType":%d,`
+              ~ `"worldPos":[%f,%f,%f],"highlightPos":[%f,%f,%f]}`,
                 sr.snapped ? "true" : "false",
                 sr.highlighted ? "true" : "false",
                 cast(int)sr.targetType,
                 sr.targetIndex,
                 sr.targetSource,
+                cast(int)sr.constraintType,
                 sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
                 sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
             return buf.data;
@@ -3425,6 +3485,15 @@ void main(string[] args) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             stt.setTypeName(pos[0].str);
+                    }
+                }
+            } else if (auto snm = cast(SnapModeCommand)cmd) {
+                // snap.mode <global|component|item>
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            snm.setModeName(pos[0].str);
                     }
                 }
             } else if (auto utp = cast(UiToolPropertiesCommand)cmd) {
@@ -7268,6 +7337,20 @@ void main(string[] args) {
                 }
             }
             setBackgroundSnapSources(snapSrc);
+        }
+
+        // Install item snap frames (Stage 3, all visible layers INCLUDING
+        // the active/primary — item snapping snaps to the active item's own
+        // pivot/box). The setItemSnapFrames CALL is unconditional so a reset
+        // to a one-layer document self-clears prior multi-layer frames.
+        {
+            import snap : setItemSnapFrames, ItemSnapFrame;
+            ItemSnapFrame[] itemFrames;
+            foreach (lyr; document.layers) {
+                if (!lyr.visible) continue;
+                itemFrames ~= buildItemFrame(lyr);
+            }
+            setItemSnapFrames(itemFrames);
         }
 
         // Draw faces with Blinn-Phong lighting.
