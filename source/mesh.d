@@ -4871,6 +4871,325 @@ struct Mesh {
         return processed;
     }
 
+    /// Polygon bevel: for each selected face, inset each corner by `inset`
+    /// AND displace the inset cap by `+faceNormal*shift` along the face normal,
+    /// bridging the original boundary to the offset cap with N ring quads.
+    /// Produces ONE slanted ring (not inset∘extrude, which would produce two rings).
+    /// inset=0, shift>0 degenerates to a one-ring face-extrude along the normal.
+    /// Returns 0 (no-op) when |inset|<1e-6 AND |shift|<1e-6.
+    size_t bevelFacesByMask(const bool[] mask, float inset, float shift) {
+        import std.math : abs;
+        if (abs(inset) < 1e-6f && abs(shift) < 1e-6f) return 0;
+        size_t processed = 0;
+        const size_t nFaces = faces.length;
+        foreach (fi; 0 .. nFaces) {
+            if (fi >= mask.length || !mask[fi]) continue;
+            const uint[] origFaceVerts = faces[fi].dup;
+            const int    N             = cast(int)origFaceVerts.length;
+            if (N < 3) continue;
+            Vec3[] origPos = new Vec3[](N);
+            foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
+            const Vec3 n = faceNormal(cast(uint)fi);
+            uint[] newVerts = new uint[](N);
+            foreach (i; 0 .. N)
+                newVerts[i] = addVertex(insetCorner(origPos, i, n, inset) + n * shift);
+            faces[fi] = newVerts.dup;
+            foreach (i; 0 .. N) {
+                const int next = (i + 1) % N;
+                addFace([origFaceVerts[i], origFaceVerts[next],
+                         newVerts[next],   newVerts[i]]);
+            }
+            ++processed;
+        }
+        if (processed == 0) return 0;
+        rebuildEdges();
+        buildLoops();
+        syncSelection();
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return processed;
+    }
+
+    /// Edge bevel (Candidate A — slide-along-adjacent-edge): replace each
+    /// qualifying selected edge with a flat 4-vertex chamfer strip.
+    ///
+    /// v1 scope (face-disjoint): a selected edge is processed only when ALL
+    /// hold: interior (exactly 2 incident faces); each endpoint valence-3;
+    /// no other selected edge at either endpoint (endpoint-disjoint); none
+    /// of its incident faces claimed by another selected edge (face-disjoint);
+    /// and the two endpoints' third faces are distinct. Conflicting edges are
+    /// silently skipped.
+    ///
+    /// Returns the count of edges actually processed (0 ⇒ no-op, all skipped).
+    size_t bevelEdgesByMask(const bool[] mask, float width) {
+        if (width < 1e-6f) return 0;
+        if (mask.length != edges.length) return 0;
+
+        // Edge→(≤2 faces) adjacency, one pass (same idiom as extrudeEdgesByMask).
+        int[2][ulong] edgeFaces;
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k+1)%f.length]);
+                auto p = key in edgeFaces;
+                if (p is null) edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        // Per-endpoint: count of selected edges incident at that vertex.
+        int[uint] selEndpt;
+        foreach (i; 0 .. edges.length) {
+            if (i < mask.length && mask[i]) {
+                selEndpt.update(edges[i][0], () => 1, (ref int c) { ++c; });
+                selEndpt.update(edges[i][1], () => 1, (ref int c) { ++c; });
+            }
+        }
+
+        // Utility: count faces around vertex (for valence-3 guard).
+        uint vertexFaceCount(uint vi) const {
+            uint n = 0;
+            foreach (_; facesAroundVertex(vi)) ++n;
+            return n;
+        }
+
+        // Utility: find face ring successor of v in face fi.
+        uint succInFace(uint fi, uint v) const {
+            auto f = faces[fi];
+            foreach (k; 0..f.length)
+                if (f[k] == v) return f[(k+1)%f.length];
+            return uint.max;
+        }
+
+        // Utility: find face ring predecessor of v in face fi.
+        uint predInFace(uint fi, uint v) const {
+            auto f = faces[fi];
+            foreach (k; 0..f.length)
+                if (f[k] == v) return f[(k + f.length - 1)%f.length];
+            return uint.max;
+        }
+
+        // Utility: does face fi contain vertex v?
+        bool faceHasVert(uint fi, uint v) const {
+            foreach (w; faces[fi]) if (w == v) return true;
+            return false;
+        }
+
+        // Collect qualified edges.
+        struct QEdge {
+            uint v0, v1;     // endpoints (v0 as-stored in edges[])
+            uint fL, fR;     // fL traverses v1→v0; fR traverses v0→v1
+            uint g0, g1;     // third face at v0, third face at v1
+            uint ipLv0, ipRv0, ipLv1, ipRv1; // new corner vert indices (filled later)
+        }
+        QEdge[] qEdges;
+
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            uint v0 = edges[i][0], v1 = edges[i][1];
+
+            // Interior edge (exactly 2 incident faces).
+            auto fp = edgeKeyOrdered(v0, v1) in edgeFaces;
+            if (fp is null) continue;
+            int fa = (*fp)[0], fb = (*fp)[1];
+            if (fa < 0 || fb < 0) continue;
+
+            // Each endpoint valence-3.
+            if (vertexFaceCount(v0) != 3) continue;
+            if (vertexFaceCount(v1) != 3) continue;
+
+            // Endpoint-disjoint: no other selected edge at either endpoint.
+            { auto cp = v0 in selEndpt; if (cp is null || *cp != 1) continue; }
+            { auto cp = v1 in selEndpt; if (cp is null || *cp != 1) continue; }
+
+            // Determine fL (traverses v1→v0) and fR (traverses v0→v1).
+            uint fL, fR;
+            bool found = false;
+            foreach (k; 0..faces[fa].length) {
+                uint u = faces[fa][k], w = faces[fa][(k+1)%faces[fa].length];
+                if (u == v1 && w == v0) { fL = fa; fR = fb; found = true; break; }
+                if (u == v0 && w == v1) { fR = fa; fL = fb; found = true; break; }
+            }
+            if (!found) continue;
+
+            // Third face at v0 (not fL, not fR, valence-3 so exactly one).
+            uint g0 = uint.max;
+            foreach (fi; facesAroundVertex(v0))
+                if (fi != fL && fi != fR) { g0 = fi; break; }
+            if (g0 == uint.max) continue;
+
+            // Third face at v1 (not fL, not fR).
+            uint g1 = uint.max;
+            foreach (fi; facesAroundVertex(v1))
+                if (fi != fL && fi != fR) { g1 = fi; break; }
+            if (g1 == uint.max) continue;
+
+            // Distinct third faces.
+            if (g0 == g1) continue;
+
+            qEdges ~= QEdge(v0, v1, fL, fR, g0, g1);
+        }
+
+        if (qEdges.length == 0) return 0;
+
+        // Face-disjoint guard (greedy first-come-first-served).
+        // An ok edge's four incident faces (fL, fR, g0, g1) must not be
+        // claimed by any previously accepted ok edge.
+        bool[] faceUsed = new bool[](faces.length);
+        bool[] edgeOk   = new bool[](qEdges.length);
+        foreach (qi; 0 .. qEdges.length) {
+            auto q = qEdges[qi];
+            if (faceUsed[q.fL] || faceUsed[q.fR] ||
+                faceUsed[q.g0] || faceUsed[q.g1]) {
+                edgeOk[qi] = false;
+            } else {
+                edgeOk[qi] = true;
+                faceUsed[q.fL] = faceUsed[q.fR] =
+                faceUsed[q.g0] = faceUsed[q.g1] = true;
+            }
+        }
+
+        size_t processed = 0;
+        foreach (qi; 0 .. qEdges.length) if (edgeOk[qi]) ++processed;
+        if (processed == 0) return 0;
+
+        // Add the four corner verts for each ok edge.
+        // Candidate A: p[face][v] = v + width * normalize(w - v)
+        //   where w is v's neighbor in `face` OTHER than the bevel-edge partner.
+        foreach (qi; 0 .. qEdges.length) {
+            if (!edgeOk[qi]) continue;
+            auto ref q = qEdges[qi];
+            uint v0 = q.v0, v1 = q.v1;
+
+            // Neighbor of v0 in fL along the non-bevel edge (fL traverses v1→v0,
+            // so the edge at v0 in fL is v0→succInFace(fL,v0) — that successor
+            // is the non-bevel neighbor).
+            // In fL (traverses v1→v0→w), the non-bevel neighbor of v0 is
+            // succInFace(fL, v0) (the vert after v0 in fL's ring). In fR
+            // (traverses ...→v0→v1→...), the vert after v0 is v1 (the bevel
+            // partner), so the non-bevel neighbor is predInFace(fR, v0).
+            uint wLv0 = succInFace(q.fL, v0);  // fL: v1→v0→wLv0
+            uint wRv0 = predInFace(q.fR, v0);  // fR: wRv0→v0→v1
+
+            uint wLv1 = predInFace(q.fL, v1);  // fL: wLv1→v1→v0
+            uint wRv1 = succInFace(q.fR, v1);  // fR: v0→v1→wRv1
+
+            Vec3 pLv0 = vertices[v0] + width * safeNormalize(vertices[wLv0] - vertices[v0]);
+            Vec3 pRv0 = vertices[v0] + width * safeNormalize(vertices[wRv0] - vertices[v0]);
+            Vec3 pLv1 = vertices[v1] + width * safeNormalize(vertices[wLv1] - vertices[v1]);
+            Vec3 pRv1 = vertices[v1] + width * safeNormalize(vertices[wRv1] - vertices[v1]);
+
+            q.ipLv0 = addVertex(pLv0);
+            q.ipRv0 = addVertex(pRv0);
+            q.ipLv1 = addVertex(pLv1);
+            q.ipRv1 = addVertex(pRv1);
+        }
+
+        // Build vertex-substitution map: face_index → (old_vert → new_verts[]).
+        // Each face can be touched by at most one ok edge (face-disjoint guard).
+        struct VertSub { uint oldV; uint[] newVs; }
+        VertSub[][uint] faceSubs;
+
+        foreach (qi; 0 .. qEdges.length) {
+            if (!edgeOk[qi]) continue;
+            auto q = qEdges[qi];
+            uint v0 = q.v0, v1 = q.v1;
+
+            // fL: single replacement for both v0 and v1.
+            faceSubs.require(q.fL) ~= VertSub(v0, [q.ipLv0]);
+            faceSubs.require(q.fL) ~= VertSub(v1, [q.ipLv1]);
+
+            // fR: single replacement for both v0 and v1.
+            faceSubs.require(q.fR) ~= VertSub(v0, [q.ipRv0]);
+            faceSubs.require(q.fR) ~= VertSub(v1, [q.ipRv1]);
+
+            // g0: split-into-two at v0. Insertion order depends on predecessor.
+            // If pred of v0 in g0 is in fL → insert [ipLv0, ipRv0]; else [ipRv0, ipLv0].
+            {
+                uint pred = predInFace(q.g0, v0);
+                bool predInFL = faceHasVert(q.fL, pred);
+                uint[] order = predInFL ? [q.ipLv0, q.ipRv0] : [q.ipRv0, q.ipLv0];
+                faceSubs.require(q.g0) ~= VertSub(v0, order);
+            }
+
+            // g1: split-into-two at v1.
+            {
+                uint pred = predInFace(q.g1, v1);
+                bool predInFL = faceHasVert(q.fL, pred);
+                uint[] order = predInFL ? [q.ipLv1, q.ipRv1] : [q.ipRv1, q.ipLv1];
+                faceSubs.require(q.g1) ~= VertSub(v1, order);
+            }
+        }
+
+        // Apply substitutions per face, then collect chamfer faces.
+        // Rebuild face arrays using the extrudeFacesByMask idiom.
+        uint[][] newFaces;
+        uint[]   newMat;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        foreach (fi; 0 .. faces.length) {
+            auto orig = faces[fi];
+            auto subsP = cast(uint)fi in faceSubs;
+            if (subsP is null) {
+                // Face untouched by any ok edge — copy as-is.
+                newFaces ~= orig.dup;
+            } else {
+                // Build a lookup: old vert → replacement list.
+                uint[][uint] repl;
+                foreach (s; *subsP) repl[s.oldV] = s.newVs;
+                uint[] rebuilt;
+                foreach (v; orig) {
+                    auto rp = v in repl;
+                    if (rp is null) rebuilt ~= v;
+                    else           rebuilt ~= *rp;
+                }
+                newFaces ~= rebuilt;
+            }
+            newMat ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newOrd ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub ~= isFaceSubpatch(fi);
+        }
+
+        // Emit one chamfer quad per ok edge.
+        size_t chamferStart = newFaces.length;
+        foreach (qi; 0 .. qEdges.length) {
+            if (!edgeOk[qi]) continue;
+            auto q = qEdges[qi];
+            newFaces ~= [q.ipLv0, q.ipLv1, q.ipRv1, q.ipRv0];
+            newMat   ~= 0u;
+            newOrd   ~= 0;
+            newSub   ~= false;
+        }
+
+        // Assign reconstructed arrays.
+        faces              = newFaces;
+        faceMaterial       = newMat;
+        faceSelectionOrder = newOrd;
+
+        // Rebuild faceMarks: zero all, then restore subpatch bits.
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
+
+        // New selection = chamfer faces; clear vertex + edge selections.
+        faceSelectionOrderCounter = 0;
+        foreach (fi; chamferStart .. faces.length)
+            selectFace(cast(int)fi);
+        resizeVertexSelection();
+        clearVertexSelection();
+        clearEdgeSelectionResize();
+
+        // Tail: rebuild topology + compact orphaned original endpoints.
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return processed;
+    }
+
     /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
     /// In debug builds, asserts that `vi` is actually one of the edge's endpoints.
     pragma(inline, true)
@@ -8534,6 +8853,113 @@ unittest { // insetFacesByMask: single flat quad — no-op guard + inner corners
     assert(hasVert( 0.4f, -0.4f), "inner corner ( 0.4,0,-0.4) missing");
     assert(hasVert( 0.4f,  0.4f), "inner corner ( 0.4,0, 0.4) missing");
     assert(hasVert(-0.4f,  0.4f), "inner corner (-0.4,0, 0.4) missing");
+}
+
+unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
+    import std.math : abs, sqrt;
+    // Cube top face is index 4: [3,7,6,2], normal +Y.
+    // Verts: 3=(-0.5,0.5,-0.5) 7=(-0.5,0.5,0.5) 6=(0.5,0.5,0.5) 2=(0.5,0.5,-0.5)
+    // inset=0.1, shift=0.2 → cap corners at (±0.4, 0.7, ±0.4), ring connects to
+    // original corners at y=0.5.  Total: 8+4=12 verts, 6−1+1+4=10 faces.
+    auto m = makeCube();
+    bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
+
+    // no-op guard
+    assert(m.bevelFacesByMask(mask, 0.0f, 0.0f) == 0, "inset=0, shift=0 must be no-op");
+    assert(m.vertices.length == 8);
+    assert(m.faces.length    == 6);
+
+    // inset=0.1, shift=0.2
+    assert(m.bevelFacesByMask(mask, 0.1f, 0.2f) == 1, "should process 1 face");
+    assert(m.vertices.length == 12, "expected 12 verts");
+    assert(m.faces.length    == 10, "expected 10 faces");
+
+    bool hasV(float x, float y, float z) {
+        foreach (v; m.vertices)
+            if (abs(v.x-x)<1e-4f && abs(v.y-y)<1e-4f && abs(v.z-z)<1e-4f) return true;
+        return false;
+    }
+    // inner cap corners at y=0.7 (shifted by 0.2 from y=0.5)
+    assert(hasV(-0.4f, 0.7f, -0.4f), "inner corner (-0.4,0.7,-0.4) missing");
+    assert(hasV( 0.4f, 0.7f, -0.4f), "inner corner ( 0.4,0.7,-0.4) missing");
+    assert(hasV( 0.4f, 0.7f,  0.4f), "inner corner ( 0.4,0.7, 0.4) missing");
+    assert(hasV(-0.4f, 0.7f,  0.4f), "inner corner (-0.4,0.7, 0.4) missing");
+
+    // shift-only: inset=0, shift=0.2 → cap corners at (±0.5, 0.7, ±0.5)
+    auto m2 = makeCube();
+    bool[] mask2; mask2.length = m2.faces.length; mask2[] = false; mask2[4] = true;
+    assert(m2.bevelFacesByMask(mask2, 0.0f, 0.2f) == 1, "shift-only: should process 1 face");
+    assert(m2.vertices.length == 12);
+    assert(m2.faces.length    == 10);
+    bool hasV2(float x, float y, float z) {
+        foreach (v; m2.vertices)
+            if (abs(v.x-x)<1e-4f && abs(v.y-y)<1e-4f && abs(v.z-z)<1e-4f) return true;
+        return false;
+    }
+    assert(hasV2(-0.5f, 0.7f, -0.5f), "shift-only inner corner (-0.5,0.7,-0.5) missing");
+    assert(hasV2( 0.5f, 0.7f, -0.5f), "shift-only inner corner ( 0.5,0.7,-0.5) missing");
+    assert(hasV2( 0.5f, 0.7f,  0.5f), "shift-only inner corner ( 0.5,0.7, 0.5) missing");
+    assert(hasV2(-0.5f, 0.7f,  0.5f), "shift-only inner corner (-0.5,0.7, 0.5) missing");
+}
+
+unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0.1
+    import std.math : abs, sqrt;
+    // Cube verts: 6=(0.5,0.5,0.5), 7=(-0.5,0.5,0.5).
+    // Edge (6,7) is shared by face1=[4,5,6,7](+Z) and face4=[3,7,6,2](+Y).
+    // After bevel: 10 verts (8+4-2), 7 faces, fv-dist {4:5,5:2}.
+    // Chamfer centroid (0, 0.45, 0.45), chamfer normal points in (+Y+Z) dir.
+    auto m = makeCube();
+
+    // Find edge (6,7)
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a==6&&b==7)||(a==7&&b==6)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "edge (6,7) not found in cube");
+
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+
+    // width=0 must be no-op
+    assert(m.bevelEdgesByMask(mask, 0.0f) == 0, "width=0 must be no-op");
+    assert(m.vertices.length == 8);
+    assert(m.faces.length    == 6);
+
+    assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+    assert(m.vertices.length == 10, "expected 10 verts");
+    assert(m.faces.length    == 7,  "expected 7 faces");
+
+    // fv-dist: 5 quads (4-gons) + 2 pentagons (5-gons)
+    int[int] fvd;
+    foreach (f; m.faces) { int n = cast(int)f.length; fvd[n]++; }
+    assert(fvd.get(4,0)==5 && fvd.get(5,0)==2, "fv-dist should be {4:5,5:2}");
+
+    // Chamfer centroid = (0, 0.45, 0.45)
+    // The chamfer face is the newly-selected face.
+    Vec3 cen = Vec3(0,0,0);
+    int chamferCount = 0;
+    foreach (fi; 0..m.faces.length) {
+        if (!m.isFaceSelected(fi)) continue;
+        foreach (vi; m.faces[fi]) cen = cen + m.vertices[vi];
+        chamferCount = cast(int)m.faces[fi].length;
+        cen = cen * (1.0f / cast(float)chamferCount);
+        break;
+    }
+    assert(chamferCount == 4, "chamfer should be a quad");
+    assert(abs(cen.x) < 1e-3f && abs(cen.y-0.45f)<1e-3f && abs(cen.z-0.45f)<1e-3f,
+           "chamfer centroid should be near (0,0.45,0.45)");
+
+    // Winding: chamfer normal should point outward (dot with (0,1,1)/sqrt(2) > 0.9)
+    Vec3 n = m.faceNormal(cast(uint)(m.faces.length-1));
+    // The chamfer is the last face added — or we find it by selection.
+    // Use the selected face.
+    foreach (fi; 0..m.faces.length) {
+        if (!m.isFaceSelected(fi)) continue;
+        n = m.faceNormal(cast(uint)fi);
+        break;
+    }
+    float dot = n.y * (1.0f/sqrt(2.0f)) + n.z * (1.0f/sqrt(2.0f));
+    assert(dot > 0.9f, "chamfer normal should point outward (+Y+Z direction)");
 }
 
 unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
