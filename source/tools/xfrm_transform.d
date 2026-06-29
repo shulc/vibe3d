@@ -4793,14 +4793,16 @@ private:
         // positions the driver pass produced just as it copies the global ones.
         if (dragSymmetry.enabled
             && dragSymmetry.pairOf.length == mesh.vertices.length) {
-            import symmetry : applySymmetryMirror;
+            import symmetry : applySymmetryMirror, applySymmetryMirrorDelta;
             // `toProcess` is passed as both the selected mask AND the
             // also-touched out-mask, so mirror writes fold into the GPU upload /
             // undo touched set (replacing the deleted Pass B's outAlsoTouched
             // OR-in). On-plane drivers are projected back onto the plane inside
-            // applySymmetryMirror, preserving the "center stays on the plane"
-            // contract.
-            applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+            // both paths, preserving the "center stays on the plane" contract.
+            if (dragSymmetry.topology)
+                applySymmetryMirrorDelta(mesh, dragSymmetry, baseline, toProcess, toProcess);
+            else
+                applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
         }
 
         // Change-notification (doc/change_notification_bus_plan, Stage 1): the
