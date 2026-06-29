@@ -88,6 +88,7 @@ import commands.mesh.edge_join : MeshEdgeJoin;
 import commands.mesh.spin_edge;
 import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
+import commands.mesh.vertex_extrude : MeshVertexExtrude;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.poly_inset : MeshPolygonInset;
 import commands.mesh.bevel : MeshBevel;
@@ -2450,6 +2451,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.edge_extrude"] = () => cast(Command)
         new MeshEdgeExtrude(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.vertexExtrude"] = () => cast(Command)
+        new MeshVertexExtrude(&mesh(), cameraView, editMode, &gpu,
+                              &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
         new MeshPolygonInset(&mesh(), cameraView, editMode, &gpu,
                              &vertexCache, &edgeCache, &faceCache);
