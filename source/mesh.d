@@ -4309,6 +4309,30 @@ struct Mesh {
             case EditMode.Polygons: return !hasAnySelectedFaces();
         }
     }
+    /// The geometry type that mesh.delete / mesh.remove should operate on.
+    ///
+    /// Normally the same as `current` (the caller's active edit mode). But
+    /// when `current` has NO selection while another geometry type DOES hold a
+    /// selection, return that type instead. Without this redirect the
+    /// "empty selection ⇒ whole mesh" convention (see nothingSelected) fires
+    /// against the active mode and wipes the mesh even though a selection
+    /// exists in a different element type (task 0110).
+    ///
+    /// Priority when the active mode is empty and more than one other type
+    /// holds a selection: Polygons > Edges > Vertices. This order is a
+    /// deterministic vibe3d-internal convention; any fixed order is safe
+    /// because the sole objective is to avoid the whole-mesh path.
+    ///
+    /// Returns `current` unchanged when (a) the active mode already holds a
+    /// selection, or (b) no geometry type holds any selection (truly empty
+    /// everywhere — the whole-mesh convention is intentional in that case).
+    EditMode effectiveDeleteMode(EditMode current) const {
+        if (!nothingSelected(current)) return current;  // active mode has a selection
+        if (hasAnySelectedFaces())     return EditMode.Polygons;
+        if (hasAnySelectedEdges())     return EditMode.Edges;
+        if (hasAnySelectedVertices())  return EditMode.Vertices;
+        return current;  // truly nothing selected anywhere → whole-mesh convention
+    }
     /// True iff every face is subpatch-marked AND there's at least one
     /// face. Gates the OSD-accelerated SubpatchPreview fast path:
     /// OpenSubdiv subdivides the WHOLE mesh, so selective subpatch
@@ -10951,4 +10975,71 @@ unittest {
     assert(m.vertices.length == vBefore, "vertex count must not change");
     assert(m.edges.length    == eBefore, "edge count must not change");
     assert(m.faces.length    == fBefore, "face count must not change");
+}
+
+// effectiveDeleteMode unittests (task 0110)
+unittest { // returns current when current mode has a selection
+    Mesh m = makeCube();
+    m.resetSelection();   // initialises faceMarks / edgeMarks / vertexMarks arrays
+    m.selectFace(0);
+    m.selectVertex(0);
+    // Both polygons and vertices have selections.
+    // When current == Polygons, active mode has a selection → return Polygons.
+    assert(m.effectiveDeleteMode(EditMode.Polygons) == EditMode.Polygons,
+        "active mode has face selection → must return Polygons");
+    // When current == Vertices, active mode has a selection → return Vertices.
+    assert(m.effectiveDeleteMode(EditMode.Vertices) == EditMode.Vertices,
+        "active mode has vertex selection → must return Vertices");
+}
+
+unittest { // redirects to the type that holds a selection (task 0110 cross-mode case)
+    Mesh m = makeCube();
+    m.resetSelection();
+    m.selectFace(0);   // face 0 selected; no verts or edges selected
+
+    // Active mode = Vertices (has NO selection) → redirect to Polygons.
+    assert(m.effectiveDeleteMode(EditMode.Vertices) == EditMode.Polygons,
+        "vertices active + only face selected → must redirect to Polygons");
+    // Active mode = Edges (has NO selection) → redirect to Polygons.
+    assert(m.effectiveDeleteMode(EditMode.Edges) == EditMode.Polygons,
+        "edges active + only face selected → must redirect to Polygons");
+    // Active mode = Polygons → no redirect (has the selection).
+    assert(m.effectiveDeleteMode(EditMode.Polygons) == EditMode.Polygons,
+        "polygons active + face selected → no redirect");
+}
+
+unittest { // priority: Polygons > Edges > Vertices when multiple types are selected
+    Mesh m = makeCube();
+    m.resetSelection();
+    m.selectFace(0);
+    m.selectEdge(0);
+    m.selectVertex(0);
+    // Active mode = Vertices, but all three types have selections.
+    // Vertices has a selection, so no redirect (returns Vertices).
+    assert(m.effectiveDeleteMode(EditMode.Vertices) == EditMode.Vertices,
+        "active mode has vertex selection → return Vertices (no redirect needed)");
+
+    // Now clear vertex selection to test Polygons-priority redirect.
+    m.deselectVertex(0);
+    // Active mode = Vertices (empty), face+edge selected → Polygons wins.
+    assert(m.effectiveDeleteMode(EditMode.Vertices) == EditMode.Polygons,
+        "vertices empty, faces+edges selected → Polygons priority");
+
+    // Edges > Vertices: deselect the face too; only edge 0 + vertex 0 remain.
+    // Active mode = Polygons (empty, no face selected) → Edges wins over Vertices.
+    m.deselectFace(0);
+    assert(m.effectiveDeleteMode(EditMode.Polygons) == EditMode.Edges,
+        "polygons empty, edges+verts selected → Edges priority over Vertices");
+}
+
+unittest { // truly empty (nothing selected anywhere) → return current (whole-mesh path)
+    Mesh m = makeCube();
+    m.resetSelection();
+    // No selection in any mode → effectiveDeleteMode returns current unchanged.
+    assert(m.effectiveDeleteMode(EditMode.Vertices) == EditMode.Vertices,
+        "nothing selected → return current (whole-mesh convention)");
+    assert(m.effectiveDeleteMode(EditMode.Edges) == EditMode.Edges,
+        "nothing selected → return current (whole-mesh convention)");
+    assert(m.effectiveDeleteMode(EditMode.Polygons) == EditMode.Polygons,
+        "nothing selected → return current (whole-mesh convention)");
 }
