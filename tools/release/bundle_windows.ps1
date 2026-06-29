@@ -96,6 +96,28 @@ try {
 
     Copy-Item vibe3d.exe "$stage\vibe3d.exe"
 
+    # Visual C++ runtime (app-local deployment): vibe3d.exe + onnxruntime.dll
+    # statically import the dynamic MSVC CRT - MSVCP140.dll, MSVCP140_1.dll,
+    # VCRUNTIME140*.dll, pulled in by the C++ deps (assimp / nfd) and onnx. They
+    # ship only with the VC++ Redistributable, absent on a clean Windows -
+    # without them the exe fails to start with 0xc0000142 (DLL_INIT_FAILED) /
+    # "MSVCP140.dll was not found". Copy the WHOLE CRT redist folder flat next to
+    # the exe so the bundle is self-contained regardless of which CRT DLLs the
+    # deps pull in. (UCRT api-ms-win-crt-* / ucrtbase.dll are in-box on Windows
+    # 10+, no bundling needed.)
+    $crtDir = $null
+    if ($env:VCToolsRedistDir) {
+        $crtDir = Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $crtDir) {
+        $crtDir = Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $crtDir) { throw "VC++ CRT redist folder not found (set VCToolsRedistDir via msvc-dev-cmd / vcvars)" }
+    $crtDlls = @(Get-ChildItem "$($crtDir.FullName)\*.dll")
+    if ($crtDlls.Count -eq 0) { throw "no DLLs in CRT redist folder $($crtDir.FullName)" }
+    Write-Host "[bundle] VC++ runtime <- $($crtDir.FullName) ($($crtDlls.Count) DLLs)"
+    $crtDlls | ForEach-Object { Copy-Item $_.FullName "$stage\$($_.Name)" }
+
     # SDL2.dll: try project root, then PATH, then C:\SDL2*\lib\x64\
     $sdl2src = $null
     if (Test-Path "SDL2.dll") {
