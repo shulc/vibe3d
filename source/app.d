@@ -90,8 +90,9 @@ import commands.mesh.mirror_      : MeshMirror;
 import commands.mesh.symmetrize   : MeshSymmetrize;
 import commands.mesh.array_       : MeshArray;
 import commands.mesh.radial_array_ : MeshRadialArray;
-import commands.mesh.vert_merge : MeshVertMerge;
-import commands.mesh.vert_join  : MeshVertJoin;
+import commands.mesh.vert_merge    : MeshVertMerge;
+import commands.mesh.vert_join     : MeshVertJoin;
+import commands.mesh.make_polygon  : MeshMakePolygon;
 import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
@@ -2388,6 +2389,9 @@ void main(string[] args) {
     reg.commandFactories["vert.join"] = () => cast(Command)
         new MeshVertJoin(&mesh(), cameraView, editMode, &gpu,
                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.makePolygon"] = () => cast(Command)
+        new MeshMakePolygon(&mesh(), cameraView, editMode, &gpu,
+                            &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.select"] = () => cast(Command)
         (new MeshSelect(&mesh(), cameraView, editMode, &editMode))
             .setPromoteHook((EditMode m) => promoteGeometryType(m));
