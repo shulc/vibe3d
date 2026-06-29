@@ -119,6 +119,7 @@ import commands.mesh.transform;
 import commands.mesh.quantize;
 import commands.mesh.jitter;
 import commands.mesh.smooth;
+import commands.mesh.weightmap;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
 import commands.mesh.radial_align;
@@ -2240,7 +2241,7 @@ void main(string[] args) {
                 new FalloffPresetCommand(&mesh(), cameraView, editMode, toolHost, ty);
         }
         static immutable string[] falloffTypes =
-            ["linear", "radial", "cylinder", "screen", "lasso"];
+            ["linear", "radial", "cylinder", "screen", "lasso", "vertexMap"];
         foreach (ty; falloffTypes)
             reg.commandFactories["falloff." ~ ty] = makeFalloffFactory(ty);
 
@@ -2514,6 +2515,14 @@ void main(string[] args) {
     reg.commandFactories["mesh.jitter"] = () => cast(Command)
         new MeshJitter(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.weightmap.create"] = () => cast(Command)
+        new WeightmapCreate(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.weightmap.remove"] = () => cast(Command)
+        new WeightmapRemove(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.weightmap.rename"] = () => cast(Command)
+        new WeightmapRename(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.weightmap.set"] = () => cast(Command)
+        new WeightmapSet(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
         new MeshEdgeSlide(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
