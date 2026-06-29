@@ -70,13 +70,21 @@ class MeshDelete : Command, Operator {
     private bool[]             preSubpatch_; // face Subpatch (POL_TYPE) plane, by pre-op face index
     private bool               useDelta_;
 
+    // Stable label: captured once in runKernel() after effectiveDeleteMode
+    // resolves the actual target type. Initialized to editMode at construction
+    // so a label() read before apply() is still valid (returns the raw mode in
+    // that case, consistent with pre-redirect behaviour). After apply() it
+    // reflects exactly what ran — even for a cross-mode redirect.
+    private EditMode appliedMode_;
+
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
+        this.gpu         = gpu;
+        this.vc          = vc;
+        this.ec          = ec;
+        this.fc          = fc;
+        this.appliedMode_ = editMode;   // stable default before apply() runs
     }
 
     override string name()  const { return "mesh.delete"; }
@@ -91,7 +99,7 @@ class MeshDelete : Command, Operator {
     override bool isOperationInverse() const { return useDelta_; }
 
     override string label() const {
-        final switch (editMode) {
+        final switch (appliedMode_) {
             case EditMode.Vertices: return "Delete Vertices";
             case EditMode.Edges:    return "Delete Edges";
             case EditMode.Polygons: return "Delete Polygons";
@@ -101,9 +109,17 @@ class MeshDelete : Command, Operator {
     // The kernel mutation, shared by the first run and the redo re-run.
     // Returns the number of affected elements. Selection is read live (after
     // undo the SelectionSnapshot has restored it, so the redo mask matches).
+    //
+    // effectiveDeleteMode is used instead of the raw editMode so that a
+    // selection that lives in a DIFFERENT element type from the active mode is
+    // honoured. Without the redirect, nothingSelected(current) fires true and
+    // the whole-mesh all-true mask wipes the mesh even though a selection
+    // exists elsewhere (task 0110).
     private size_t runKernel() {
-        const all = mesh.nothingSelected(editMode);
-        final switch (editMode) {
+        const mode = mesh.effectiveDeleteMode(editMode);
+        appliedMode_ = mode;   // freeze for label() — stable after apply()
+        const all  = mesh.nothingSelected(mode);
+        final switch (mode) {
             case EditMode.Vertices:
                 return mesh.dissolveVerticesByMask(
                     all ? allTrue(mesh.vertices.length) : mesh.selectedVertices);

@@ -51,13 +51,17 @@ class MeshRemove : Command, Operator {
     private bool[]             preSubpatch_;
     private bool               useDelta_;
 
+    // Stable label: captured once in runKernel() — see MeshDelete.appliedMode_.
+    private EditMode appliedMode_;
+
     this(Mesh* mesh, ref View view, EditMode editMode,
          GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
         super(mesh, view, editMode);
-        this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
+        this.gpu         = gpu;
+        this.vc          = vc;
+        this.ec          = ec;
+        this.fc          = fc;
+        this.appliedMode_ = editMode;   // stable default before apply() runs
     }
 
     override string name()  const { return "mesh.remove"; }
@@ -69,7 +73,7 @@ class MeshRemove : Command, Operator {
     override bool isOperationInverse() const { return useDelta_; }
 
     override string label() const {
-        final switch (editMode) {
+        final switch (appliedMode_) {
             case EditMode.Vertices: return "Remove Vertices";
             case EditMode.Edges:    return "Remove Edges";
             case EditMode.Polygons: return "Remove Polygons";
@@ -79,9 +83,17 @@ class MeshRemove : Command, Operator {
     // The kernel mutation, shared by the first run and the redo re-run.
     // Delete and Remove differ ONLY for edges (both dissolve there); for
     // vertices and polygons they are identical. Selection is read live.
+    //
+    // effectiveDeleteMode is used instead of the raw editMode so that a
+    // selection that lives in a DIFFERENT element type from the active mode is
+    // honoured. Without the redirect, nothingSelected(current) fires true and
+    // the whole-mesh all-true mask wipes the mesh even though a selection
+    // exists elsewhere (task 0110).
     private size_t runKernel() {
-        const all = mesh.nothingSelected(editMode);
-        final switch (editMode) {
+        const mode = mesh.effectiveDeleteMode(editMode);
+        appliedMode_ = mode;   // freeze for label() — stable after apply()
+        const all  = mesh.nothingSelected(mode);
+        final switch (mode) {
             case EditMode.Vertices:
                 return mesh.dissolveVerticesByMask(
                     all ? allTrue(mesh.vertices.length) : mesh.selectedVertices);
