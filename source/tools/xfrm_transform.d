@@ -3456,7 +3456,7 @@ noBankConsumed:
             import snap : backgroundSourcesSnapshot;
             import constraint : constrainPoint;
             if (auto consPkt = vts.get!ConstrainPacket()) {
-                if (consPkt.enabled && consPkt.geom == ConstrainGeom.Point) {
+                if (consPkt.enabled && consPkt.geom != ConstrainGeom.Off) {
                     auto bgSrc = backgroundSourcesSnapshot();
                     if (bgSrc.length > 0) {
                         foreach (vid; vertexIndicesToProcess) {
@@ -3470,9 +3470,13 @@ noBankConsumed:
                              && finalPos.y == basePos.y
                              && finalPos.z == basePos.z)
                                 continue;
+                            // editDelta is a meaningful projection direction only for
+                            // translation; for rotate/scale each vertex has its own
+                            // non-uniform displacement (vector-mode is analytic only for T).
+                            Vec3 editDelta = finalPos - basePos;
                             mesh.vertices[vid] = constrainPoint(
                                 finalPos,
-                                Vec3(0, 0, 0),  // motionDelta: unused by point mode
+                                editDelta,
                                 cachedVp,
                                 bgSrc,
                                 *consPkt);
