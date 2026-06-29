@@ -85,6 +85,7 @@ import commands.mesh.move_vertex;
 import commands.mesh.bevel_edit : MeshBevelEdit;
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
+import commands.mesh.flip    : MeshFlip;
 import commands.mesh.duplicate_ : MeshDuplicate;
 import commands.mesh.mirror_      : MeshMirror;
 import commands.mesh.symmetrize   : MeshSymmetrize;
@@ -2364,6 +2365,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.remove"] = () => cast(Command)
         new MeshRemove(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.flip"] = () => cast(Command)
+        new MeshFlip(&mesh(), cameraView, editMode, &gpu,
+                     &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.duplicate"] = () => cast(Command)
         new MeshDuplicate(&mesh(), cameraView, editMode, &gpu,
                           &vertexCache, &edgeCache, &faceCache);
