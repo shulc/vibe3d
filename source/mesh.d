@@ -590,6 +590,243 @@ struct Mesh {
         if (any) commitChange(MeshEditScope.Position | MeshEditScope.Geometry);
     }
 
+    /// Collapse each connected island of selected edges to a single point
+    /// (the centroid of the island's endpoint set — a single selected edge
+    /// collapses to its two-endpoint midpoint). Each island is processed
+    /// with a pass-1 `collapseVerticesByMask` (move only, no compaction),
+    /// then a single `weldVerticesByMask` over the union of all
+    /// selected-edge vertices. The move-all-then-weld-once order is
+    /// essential: per-island welding would compact after each island and
+    /// stale the remaining islands' index masks.
+    /// Returns the number of vertices welded; 0 means nothing changed.
+    size_t collapseEdgesByMask(in bool[] edgeMask) {
+        if (edgeMask.length != edges.length) return 0;
+
+        // Union-find over vertex indices: vertices connected through a
+        // chain of selected edges share an island.
+        int[] parent;
+        parent.length = vertices.length;
+        foreach (i; 0 .. vertices.length) parent[i] = cast(int)i;
+
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+
+        // Mark selected-edge verts and build connectivity.
+        bool[] inSelection;
+        inSelection.length = vertices.length;
+        bool anySelected = false;
+        foreach (i; 0 .. edges.length) {
+            if (!edgeMask[i]) continue;
+            uint a = edges[i][0], b = edges[i][1];
+            if (a >= vertices.length || b >= vertices.length) continue;
+            inSelection[a] = true;
+            inSelection[b] = true;
+            unite(cast(int)a, cast(int)b);
+            anySelected = true;
+        }
+        if (!anySelected) return 0;
+
+        // Accumulate per-island centroid (root → sum / count).
+        Vec3[int] islandSum;
+        int[int]  islandCount;
+        foreach (vi; 0 .. vertices.length) {
+            if (!inSelection[vi]) continue;
+            int root = findRoot(cast(int)vi);
+            if (root in islandSum) {
+                islandSum[root] = islandSum[root] + vertices[vi];
+                ++islandCount[root];
+            } else {
+                islandSum[root]   = vertices[vi];
+                islandCount[root] = 1;
+            }
+        }
+
+        // Pass 1 — move every island's verts to its centroid (no compaction).
+        foreach (root, cnt; islandCount) {
+            Vec3 s = islandSum[root];
+            Vec3 centroid = Vec3(s.x / cnt, s.y / cnt, s.z / cnt);
+            bool[] islandMask;
+            islandMask.length = vertices.length;
+            foreach (vi; 0 .. vertices.length) {
+                if (inSelection[vi] && findRoot(cast(int)vi) == root)
+                    islandMask[vi] = true;
+            }
+            collapseVerticesByMask(islandMask, centroid);
+        }
+
+        // Pass 2 — one weld over the union of all selected-edge verts.
+        // epsSq = 1e-12: welds only exactly-coincident verts (collapse
+        // set exact equality); distinct island centroids cannot cross-weld.
+        return weldVerticesByMask(inSelection, 1e-12);
+    }
+
+    /// Collapse each connected island of selected faces to a single point
+    /// (the centroid of the island's corner vertices). Two selected faces
+    /// sharing any vertex are in the same island. Uses the same
+    /// move-all-then-weld-once structure as `collapseEdgesByMask`.
+    /// Returns the number of vertices welded; 0 means nothing changed.
+    size_t collapseFacesByMask(in bool[] faceMask) {
+        if (faceMask.length != faces.length) return 0;
+
+        bool anySelected = false;
+        foreach (b; faceMask) if (b) { anySelected = true; break; }
+        if (!anySelected) return 0;
+
+        // Union-find over face indices: two selected faces sharing a vertex
+        // belong to the same island.
+        int[] parent;
+        parent.length = faces.length;
+        foreach (i; 0 .. faces.length) parent[i] = cast(int)i;
+
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+
+        // Map each vertex to the first selected face that contains it.
+        // When a second selected face shares that vertex, unite the two faces.
+        int[] vertToFace;
+        vertToFace.length = vertices.length;
+        vertToFace[] = -1;
+        foreach (fi; 0 .. faces.length) {
+            if (!faceMask[fi]) continue;
+            foreach (v; faces[fi]) {
+                if (v >= vertices.length) continue;
+                if (vertToFace[v] == -1)
+                    vertToFace[v] = cast(int)fi;
+                else
+                    unite(cast(int)fi, vertToFace[v]);
+            }
+        }
+
+        // Collect all verts touched by selected faces.
+        bool[] inSelection;
+        inSelection.length = vertices.length;
+        foreach (i; 0 .. vertices.length)
+            if (vertToFace[i] >= 0) inSelection[i] = true;
+
+        // Accumulate per-island centroid (face-root → sum / count).
+        Vec3[int] islandSum;
+        int[int]  islandCount;
+        foreach (vi; 0 .. vertices.length) {
+            if (!inSelection[vi]) continue;
+            int root = findRoot(vertToFace[vi]);
+            if (root in islandSum) {
+                islandSum[root] = islandSum[root] + vertices[vi];
+                ++islandCount[root];
+            } else {
+                islandSum[root]   = vertices[vi];
+                islandCount[root] = 1;
+            }
+        }
+
+        // Pass 1 — move every island's verts to its centroid (no compaction).
+        foreach (root, cnt; islandCount) {
+            Vec3 s = islandSum[root];
+            Vec3 centroid = Vec3(s.x / cnt, s.y / cnt, s.z / cnt);
+            bool[] islandMask;
+            islandMask.length = vertices.length;
+            foreach (vi; 0 .. vertices.length) {
+                if (inSelection[vi] && findRoot(vertToFace[vi]) == root)
+                    islandMask[vi] = true;
+            }
+            collapseVerticesByMask(islandMask, centroid);
+        }
+
+        // Pass 2 — one weld over the union of all selected-face verts.
+        return weldVerticesByMask(inSelection, 1e-12);
+    }
+
+    unittest {
+        import std.math : abs;
+
+        // collapseEdgesByMask: collapse edge 0 ([v0,v3]) of a cube.
+        // Edge 0 is the back-left vertical; midpoint = (-0.5, 0, -0.5).
+        // Two of the six faces lose a corner and become triangles.
+        {
+            auto m = makeCube();
+            bool[] mask = new bool[](m.edges.length);
+            mask[0] = true;
+            size_t n = m.collapseEdgesByMask(mask);
+            assert(n > 0, "collapseEdgesByMask single: expected weld");
+            assert(m.vertices.length == 7,
+                "collapseEdgesByMask single: expected 7 verts");
+            assert(m.faces.length == 6,
+                "collapseEdgesByMask single: expected 6 faces");
+            bool foundMid = false;
+            foreach (v; m.vertices) {
+                if (abs(v.x - (-0.5f)) < 1e-5f
+                 && abs(v.y -   0.0f ) < 1e-5f
+                 && abs(v.z - (-0.5f)) < 1e-5f) { foundMid = true; break; }
+            }
+            assert(foundMid, "collapseEdgesByMask single: midpoint absent");
+        }
+
+        // collapseEdgesByMask: two disjoint edges (0=[v0,v3], 6=[v6,v7])
+        // — no shared vertex, two independent islands. Both must collapse
+        // (if only the first collapsed, vertices.length would be 7 not 6).
+        {
+            auto m = makeCube();
+            bool[] mask = new bool[](m.edges.length);
+            mask[0] = true;   // [v0, v3]
+            mask[6] = true;   // [v6, v7]
+            size_t n = m.collapseEdgesByMask(mask);
+            assert(n > 0, "collapseEdgesByMask disjoint: expected weld");
+            assert(m.vertices.length == 6,
+                "collapseEdgesByMask disjoint: both islands must collapse");
+        }
+
+        // collapseFacesByMask: collapse front face (fi=1, [4,5,6,7]).
+        // Centroid = (0, 0, 0.5). Front face dropped; 4 neighbours → tris;
+        // back face untouched. Result: 5 verts, 5 faces.
+        {
+            auto m = makeCube();
+            bool[] mask = new bool[](m.faces.length);
+            mask[1] = true;   // front face [4,5,6,7]
+            size_t n = m.collapseFacesByMask(mask);
+            assert(n > 0, "collapseFacesByMask single: expected weld");
+            assert(m.vertices.length == 5,
+                "collapseFacesByMask single: expected 5 verts");
+            assert(m.faces.length == 5,
+                "collapseFacesByMask single: expected 5 faces");
+            bool foundCenter = false;
+            foreach (v; m.vertices) {
+                if (abs(v.x - 0.0f) < 1e-5f
+                 && abs(v.y - 0.0f) < 1e-5f
+                 && abs(v.z - 0.5f) < 1e-5f) { foundCenter = true; break; }
+            }
+            assert(foundCenter, "collapseFacesByMask single: centroid absent");
+        }
+
+        // collapseFacesByMask: two disjoint faces (fi=0=back, fi=1=front)
+        // — each collapses to its own centroid. All 6 faces degenerate and
+        // are dropped (every intermediate face has 2 verts from each island,
+        // which reduces to a 2-corner degenerate). Result: empty mesh.
+        // If only one island collapsed, we would get 5 verts / 5 faces.
+        {
+            auto m = makeCube();
+            bool[] mask = new bool[](m.faces.length);
+            mask[0] = true;   // back  face [0,3,2,1]
+            mask[1] = true;   // front face [4,5,6,7]
+            size_t n = m.collapseFacesByMask(mask);
+            assert(n > 0, "collapseFacesByMask disjoint: expected weld");
+            assert(m.vertices.length == 0,
+                "collapseFacesByMask disjoint: both islands must collapse");
+            assert(m.faces.length == 0,
+                "collapseFacesByMask disjoint: all faces must degenerate");
+        }
+    }
+
     size_t weldCoincidentVertices(double epsSq = 1e-12) {
         if (vertices.length < 2) return 0;
         int[] remap;
