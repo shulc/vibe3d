@@ -9398,7 +9398,140 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     return result;
 }
 
+/// Smooth subdivide: faceted (linear) topology + one uniform-Laplacian relax
+/// pass (λ = 0.5, 1 iteration, boundary-pinned). This is the "smooth" mode
+/// of `mesh.subdivide` — it produces positions strictly between the flat
+/// (faceted) limit and the Catmull-Clark limit.
+///
+/// Smoothing formula (Jacobi step): for each relaxable vert,
+///   new[v] = old[v] + 0.5·(avg(edge-neighbors) − old[v])
+/// where "old" is a snapshot taken before any updates (all updates are
+/// simultaneous). This is the same convention as `mesh.smooth` (smooth.d).
+///
+/// In-scope divergence: this kernel uses a *uniform* Laplacian (all
+/// edge-neighbors equally weighted). The reference smooth mode is
+/// angle-weighted (driven by a max-smooth-angle parameter) — different math;
+/// bit-parity with the reference is an explicit non-goal for this feature.
+/// Boundary pinning is load-bearing for open meshes (prevents border collapse)
+/// even though the unit-test cube is closed — do not remove as "dead code".
+///
+/// Partial-mask safety: only verts incident to ≥1 newly-created sub-face are
+/// relaxed. Pre-existing cage verts that border only unrefined faces are
+/// pinned, preventing silent corruption of faces the user never selected.
+/// Under a full mask every vert is incident to a new sub-face, so the relax
+/// set equals all non-boundary verts — reproduces the closed-cube analytic
+/// golden: corner ≈ 5/12 ≈ 0.41667.
+Mesh smoothSubdivide(ref const Mesh m, const bool[] faceMask)
+{
+    uint nFOrig = cast(uint)m.faces.length;
 
+    bool isSelected(size_t fi) {
+        return fi < faceMask.length && faceMask[fi];
+    }
+
+    // If nothing is selected, facetedSubdivide returns the mesh topologically
+    // unchanged and the relax set is empty — return early.
+    bool hadAny = false;
+    foreach (fi; 0 .. nFOrig) if (isSelected(fi)) { hadAny = true; break; }
+    if (!hadAny)
+        return facetedSubdivide(m, faceMask);
+
+    Mesh sub = facetedSubdivide(m, faceMask);
+
+    // -----------------------------------------------------------------------
+    // Build the relax set: verts incident to ≥1 newly-created sub-face.
+    // A sub-face is "new" when it came from a *selected* input face.
+    // Replay the same emit-cursor walk used by the selection rebuild so that
+    // the "new" designation is derived the same way as in runFacetedFamily.
+    // -----------------------------------------------------------------------
+    bool[] faceIsNew = new bool[](sub.faces.length);
+    {
+        size_t cursor = 0;
+        foreach (fi; 0 .. nFOrig) {
+            bool sel      = isSelected(fi);
+            size_t emitted = sel ? m.faces[fi].length : 1;
+            foreach (j; 0 .. emitted) {
+                if (sel && cursor < faceIsNew.length)
+                    faceIsNew[cursor] = true;
+                ++cursor;
+            }
+        }
+    }
+
+    bool[] relaxable = new bool[](sub.vertices.length);
+    foreach (fi; 0 .. sub.faces.length) {
+        if (!faceIsNew[fi]) continue;
+        foreach (vi; sub.faces[fi])
+            relaxable[vi] = true;
+    }
+
+    // Pin boundary verts (loop.twin == ~0u) to prevent border collapse on
+    // open meshes. facetedSubdivide already called buildLoops() on sub.
+    foreach (ref l; sub.loops) {
+        if (l.twin == uint.max) {
+            if (l.vert < relaxable.length)
+                relaxable[l.vert] = false;
+            uint nxt = sub.loops[l.next].vert;
+            if (nxt < relaxable.length)
+                relaxable[nxt] = false;
+        }
+    }
+
+    // Neighbor lists from sub.edges (both directions), same as smooth.d:243-247.
+    uint[][] neighbors = new uint[][](sub.vertices.length);
+    foreach (e; sub.edges) {
+        neighbors[e[0]] ~= e[1];
+        neighbors[e[1]] ~= e[0];
+    }
+
+    // One Jacobi Laplacian pass (λ = 0.5): read from `prev`, write to `cur`.
+    Vec3[] prev = sub.vertices.dup;
+    Vec3[] cur  = sub.vertices.dup;
+    foreach (vi; 0 .. sub.vertices.length) {
+        if (!relaxable[vi]) continue;
+        auto nbrs = neighbors[vi];
+        if (nbrs.length == 0) continue;
+        Vec3 sum = Vec3(0, 0, 0);
+        foreach (nb; nbrs) sum = sum + prev[nb];
+        Vec3 avg = sum * (1.0f / cast(float)nbrs.length);
+        cur[vi].x = prev[vi].x + 0.5f * (avg.x - prev[vi].x);
+        cur[vi].y = prev[vi].y + 0.5f * (avg.y - prev[vi].y);
+        cur[vi].z = prev[vi].z + 0.5f * (avg.z - prev[vi].z);
+    }
+    sub.vertices = cur;
+
+    return sub;
+}
+
+unittest { // smoothSubdivide: cube → same topology as faceted; corners ≈ 0.41667
+    import std.math : fabs;
+    Mesh m = makeCube();
+    bool[] mask = new bool[](m.faces.length);
+    mask[] = true;
+
+    Mesh sm = smoothSubdivide(m, mask);
+
+    // Topology: identical to facetedSubdivide (26 verts, 48 edges, 24 quads).
+    assert(sm.vertices.length == 26,
+        "smoothSubdivide: expected 26 verts, got " ~ sm.vertices.length.stringof);
+    assert(sm.edges.length    == 48,
+        "smoothSubdivide: expected 48 edges");
+    assert(sm.faces.length    == 24,
+        "smoothSubdivide: expected 24 faces");
+
+    // Analytic golden for cube corners after one Laplacian pass (λ=0.5):
+    // Original corner at (0.5, 0.5, 0.5) has exactly 3 edge-midpoint
+    // neighbors after faceted split. avg = (1/3, 1/3, 1/3) (by symmetry).
+    // new = 0.5 + 0.5*(1/3 - 0.5) = 0.5 - 1/12 = 5/12 ≈ 0.41667.
+    // facetedSubdivide preserves original vert indices: first 8 are cage corners.
+    foreach (vi; 0 .. 8) {
+        Vec3 v = sm.vertices[vi];
+        assert(fabs(fabs(v.x) - 5.0f/12.0f) < 1e-4f
+            && fabs(fabs(v.y) - 5.0f/12.0f) < 1e-4f
+            && fabs(fabs(v.z) - 5.0f/12.0f) < 1e-4f,
+            "smoothSubdivide: cage corner should relax to ≈ ±5/12 ≈ ±0.41667");
+    }
+}
 
 /// Back-references mapping a subdivided mesh's vertices/edges/faces to an
 /// "ultimate source" mesh (typically the cage). Indices are into the source
