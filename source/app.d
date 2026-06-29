@@ -113,6 +113,7 @@ import commands.mesh.vert_merge    : MeshVertMerge;
 import commands.mesh.vert_join     : MeshVertJoin;
 import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
 import commands.mesh.screen_slice  : MeshScreenSlice;
+import commands.mesh.edge_slice    : MeshEdgeSlice;
 import commands.mesh.collapse      : MeshCollapse;
 import commands.mesh.reduce        : MeshReduce;
 import commands.mesh.unify         : MeshUnify;
@@ -2475,6 +2476,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.screenSlice"] = () => cast(Command)
         new MeshScreenSlice(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.edgeSlice"] = () => cast(Command)
+        new MeshEdgeSlice(&mesh(), cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.thicken"] = () => cast(Command)
         new MeshThicken(&mesh(), cameraView, editMode, &gpu,
                         &vertexCache, &edgeCache, &faceCache);
