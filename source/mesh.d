@@ -6518,6 +6518,19 @@ struct Mesh {
         return cycles;
     }
 
+    /// Emit N quads [A[i], A[(i+1)%N], B[(i+1)%N], B[i]] where B is already
+    /// paired 1:1 with A (no heuristic — exact correspondence assumed).
+    /// Returns N on success, 0 if lengths differ or loop is too short.
+    /// Does NOT call buildLoops — the caller must do so after all mutations.
+    size_t bridgeLoopsPaired(const(uint)[] loopA, const(uint)[] pairedB) {
+        if (loopA.length != pairedB.length || loopA.length < 3) return 0;
+        const N = loopA.length;
+        foreach (i; 0 .. N)
+            addFace([cast(uint)loopA[i], cast(uint)loopA[(i + 1) % N],
+                     cast(uint)pairedB[(i + 1) % N], cast(uint)pairedB[i]]);
+        return N;
+    }
+
     /// Stitch two equal-length closed vertex loops into a ring of N quad faces.
     /// Returns N (faces added) on success, 0 if loops are unequal or too short.
     ///
@@ -6560,12 +6573,150 @@ struct Mesh {
             P[i] = useForward ? cast(uint)loopB[(k + i)     % N]
                               : cast(uint)loopB[(k + N - i) % N];
 
-        // Step 4 — emit quads.
-        foreach (i; 0 .. N)
-            addFace([cast(uint)loopA[i], cast(uint)loopA[(i + 1) % N],
-                     P[(i + 1) % N], P[i]]);
+        return bridgeLoopsPaired(loopA, P);
+    }
 
-        return N;
+    /// Oriented open-boundary loops over faces 0..faceLimit.
+    /// Each loop is an ordered uint[] of vertex indices along the directed
+    /// boundary half-edge as it appears in its sole face.
+    /// Returns [] for a closed surface (no boundary edges).
+    /// Non-manifold boundary vertices (two outgoing boundary edges) are skipped.
+    uint[][] boundaryLoops(size_t faceLimit = size_t.max) const {
+        const size_t nf = faceLimit < faces.length ? faceLimit : faces.length;
+
+        // Build edgeFaces map: open edge has slot [1] == -1.
+        int[2][ulong] edgeFaces;
+        foreach (fi; 0 .. nf) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeFaces;
+                if (p is null)
+                    edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        // Collect directed boundary half-edges into a next[] map.
+        uint[uint] next;
+        foreach (fi; 0 .. nf) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                uint a = f[k], b = f[(k + 1) % f.length];
+                ulong key = edgeKeyOrdered(a, b);
+                auto p = key in edgeFaces;
+                if (p !is null && (*p)[1] == -1) {
+                    if (a !in next)
+                        next[a] = b;
+                    // non-manifold: two outgoing boundary edges from one vert — skip
+                }
+            }
+        }
+
+        // Chain loops by following next[] until returning to start.
+        bool[uint] visited;
+        uint[][] loops;
+        foreach (start, _; next) {
+            if (start in visited) continue;
+            uint[] loop;
+            uint cur = start;
+            while (cur !in visited) {
+                if (cur !in next) break;
+                visited[cur] = true;
+                loop ~= cur;
+                cur = next[cur];
+            }
+            if (loop.length >= 3)
+                loops ~= loop;
+        }
+        return loops;
+    }
+
+    /// Build an offset copy of the surface (reversed winding), then stitch every
+    /// open boundary loop original↔offset with a ring of quads → closed shell.
+    /// Self-intersection on tight concavities is a known v1 limitation.
+    /// Returns total faces added (>0) or 0 (no-op: zero thickness or closed input).
+    size_t thickenSurface(float thickness, bool symmetric = false) {
+        import std.math : abs;
+        import std.algorithm : reverse;
+        // Step 1 — pre-mutation gates (mutation-free).
+        if (abs(thickness) < 1e-6f) return 0;
+        const size_t V0 = vertices.length;
+        const size_t F0 = faces.length;
+        uint[][] loops = boundaryLoops(F0);
+        if (loops.length == 0) return 0;
+
+        // Step 2 — per-vertex averaged unit face normals.
+        // Must zero-init: D's float.init is nan, which poisons accumulation.
+        Vec3[] vn = new Vec3[](V0);
+        vn[] = Vec3(0, 0, 0);
+        foreach (fi; 0 .. F0) {
+            Vec3 fn = faceNormal(cast(uint)fi);
+            foreach (vi; faces[fi])
+                vn[vi] = vn[vi] + fn;
+        }
+        foreach (i; 0 .. V0)
+            vn[i] = safeNormalize(vn[i]);
+
+        // Step 3 — create offset vertices (offset pushed toward −normal side).
+        uint[] off = new uint[](V0);
+        if (!symmetric) {
+            foreach (i; 0 .. V0)
+                off[i] = addVertex(vertices[i] - vn[i] * thickness);
+        } else {
+            Vec3[] orig = new Vec3[](V0);
+            foreach (i; 0 .. V0) orig[i] = vertices[i];
+            foreach (i; 0 .. V0)
+                vertices[i] = orig[i] + vn[i] * (thickness * 0.5f);
+            commitChange(MeshEditScope.Position);
+            foreach (i; 0 .. V0)
+                off[i] = addVertex(orig[i] - vn[i] * (thickness * 0.5f));
+        }
+
+        // Step 4 — inner faces with reversed winding (inner skin faces −normal).
+        foreach (fi; 0 .. F0) {
+            uint[] of = new uint[](faces[fi].length);
+            foreach (k; 0 .. faces[fi].length)
+                of[k] = off[faces[fi][k]];
+            reverse(of);
+            addFace(of);
+        }
+
+        // Step 5 — bridge each stored boundary loop to its offset counterpart.
+        // Outer boundary loops from boundaryLoops() are CCW (loop normal agrees
+        // with face normal) → reverse for outward-facing rim quads.
+        // Inner hole loops are CW (loop normal opposes face normal) → keep as-is.
+        Vec3 avgN = Vec3(0, 0, 0);
+        foreach (fi; 0 .. F0)
+            avgN = avgN + faceNormal(cast(uint)fi);
+        avgN = safeNormalize(avgN);
+
+        size_t rimTotal = 0;
+        foreach (ref loop; loops) {
+            // Compute loop orientation via Newell's method.
+            Vec3 ln = Vec3(0, 0, 0);
+            const size_t LN = loop.length;
+            foreach (k; 0 .. LN) {
+                Vec3 a = vertices[loop[k]];
+                Vec3 b = vertices[loop[(k + 1) % LN]];
+                ln.x += (a.y - b.y) * (a.z + b.z);
+                ln.y += (a.z - b.z) * (a.x + b.x);
+                ln.z += (a.x - b.x) * (a.y + b.y);
+            }
+            if (ln.x * avgN.x + ln.y * avgN.y + ln.z * avgN.z > 0.0f)
+                reverse(loop);
+
+            uint[] pairedB = new uint[](LN);
+            foreach (i; 0 .. LN)
+                pairedB[i] = off[loop[i]];
+            rimTotal += bridgeLoopsPaired(loop, pairedB);
+        }
+
+        // Step 6 — finalize.
+        buildLoops();
+        syncSelection();
+        return F0 + rimTotal;
     }
 
     // ---------------------------------------------------------------------------
@@ -11905,4 +12056,160 @@ unittest { // cutByPlane: cube mid-plane cut — correct face/vert counts and 0 
     foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after cut");
     // No degenerate faces.
     foreach (face; m.faces) assert(face.length >= 3, "no degenerate sub-faces");
+}
+
+unittest { // bridgeLoopsPaired: exact-correspondence quad emission
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+
+    size_t n = m.bridgeLoopsPaired([0u,1u,2u,3u], [4u,5u,6u,7u]);
+    assert(n == 4, "bridgeLoopsPaired: expected 4 quads");
+    assert(m.faces.length == 4, "bridgeLoopsPaired: face count");
+    foreach (f; m.faces) assert(f.length == 4, "bridgeLoopsPaired: all quads");
+
+    // bridgeLoops still produces the same count (its tail now calls bridgeLoopsPaired).
+    Mesh m2;
+    m2.addVertex(Vec3(0,0,0)); m2.addVertex(Vec3(1,0,0));
+    m2.addVertex(Vec3(1,1,0)); m2.addVertex(Vec3(0,1,0));
+    m2.addVertex(Vec3(0,0,1)); m2.addVertex(Vec3(1,0,1));
+    m2.addVertex(Vec3(1,1,1)); m2.addVertex(Vec3(0,1,1));
+    size_t n2 = m2.bridgeLoops([0u,1u,2u,3u], [4u,5u,6u,7u]);
+    assert(n2 == 4, "bridgeLoops via bridgeLoopsPaired: expected 4 quads");
+    assert(m2.faces.length == 4, "bridgeLoops: face count unchanged after refactor");
+}
+
+unittest { // boundaryLoops: single open grid → 1 loop; closed cube → 0 loops
+    Mesh g;
+    g.addVertex(Vec3(0,0,0)); g.addVertex(Vec3(1,0,0)); g.addVertex(Vec3(2,0,0));
+    g.addVertex(Vec3(0,1,0)); g.addVertex(Vec3(1,1,0)); g.addVertex(Vec3(2,1,0));
+    g.addFace([0u,1u,4u,3u]);
+    g.addFace([1u,2u,5u,4u]);
+    g.buildLoops();
+    auto loops = g.boundaryLoops();
+    assert(loops.length == 1, "2×1 grid: expected 1 boundary loop");
+    assert(loops[0].length == 6, "2×1 grid: boundary loop has 6 verts");
+
+    Mesh c = makeCube();
+    c.buildLoops();
+    assert(c.boundaryLoops().length == 0, "closed cube: expected 0 boundary loops");
+}
+
+unittest { // boundaryLoops: 3×3 grid with center quad removed → 2 loops
+    // 16 verts, 8 quads (3×3 minus center at face index 4).
+    Mesh m;
+    foreach (j; 0 .. 4)
+        foreach (i; 0 .. 4)
+            m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
+    size_t fi = 0;
+    foreach (j; 0 .. 3)
+        foreach (i; 0 .. 3) {
+            uint a = cast(uint)(i     + 4 * j    );
+            uint b = cast(uint)(i + 1 + 4 * j    );
+            uint c = cast(uint)(i + 1 + 4 * (j+1));
+            uint d = cast(uint)(i     + 4 * (j+1));
+            if (fi != 4) m.addFace([a, b, c, d]); // skip center (fi==4)
+            fi++;
+        }
+    m.buildLoops();
+    auto loops = m.boundaryLoops();
+    assert(loops.length == 2, "3×3 grid minus center: expected 2 boundary loops");
+}
+
+// Helper: count undirected edges shared by exactly one face.
+private size_t countOpenEdges(ref Mesh m) {
+    int[2][ulong] ef;
+    foreach (i, f; m.faces)
+        foreach (k; 0 .. f.length) {
+            ulong key = Mesh.edgeKeyOrdered(f[k], f[(k+1)%f.length]);
+            auto p = key in ef;
+            if (p is null) ef[key] = [cast(int)i, -1];
+            else if ((*p)[1] == -1 && (*p)[0] != cast(int)i) (*p)[1] = cast(int)i;
+        }
+    size_t cnt = 0;
+    foreach (_, fp; ef) if (fp[1] == -1) cnt++;
+    return cnt;
+}
+
+unittest { // thickenSurface: 2×2 grid → 16-face watertight shell
+    Mesh m;
+    foreach (j; 0 .. 3)
+        foreach (i; 0 .. 3)
+            m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
+    foreach (j; 0 .. 2)
+        foreach (i; 0 .. 2) {
+            uint a = cast(uint)(i     + 3 * j    );
+            uint b = cast(uint)(i + 1 + 3 * j    );
+            uint c = cast(uint)(i + 1 + 3 * (j+1));
+            uint d = cast(uint)(i     + 3 * (j+1));
+            m.addFace([a, b, c, d]);
+        }
+    m.buildLoops();
+
+    const size_t r = m.thickenSurface(0.2f);
+    assert(r > 0, "thicken 2×2: non-zero result");
+    assert(m.vertices.length == 18, "thicken 2×2: 18 verts");
+    assert(m.faces.length == 16, "thicken 2×2: 16 faces");
+    assert(m.boundaryLoops().length == 0, "thicken 2×2: watertight");
+    assert(countOpenEdges(m) == 0, "thicken 2×2: no open edges");
+}
+
+unittest { // thickenSurface: 3×3 holed grid → 32-face watertight shell
+    // 16 verts, 8 quads (center quad skipped).
+    Mesh m;
+    foreach (j; 0 .. 4)
+        foreach (i; 0 .. 4)
+            m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
+    size_t fi = 0;
+    foreach (j; 0 .. 3)
+        foreach (i; 0 .. 3) {
+            uint a = cast(uint)(i     + 4 * j    );
+            uint b = cast(uint)(i + 1 + 4 * j    );
+            uint c = cast(uint)(i + 1 + 4 * (j+1));
+            uint d = cast(uint)(i     + 4 * (j+1));
+            if (fi != 4) m.addFace([a, b, c, d]);
+            fi++;
+        }
+    m.buildLoops();
+
+    const size_t r = m.thickenSurface(0.2f);
+    assert(r > 0, "thicken holed: non-zero result");
+    assert(m.vertices.length == 32, "thicken holed: 32 verts");
+    assert(m.faces.length == 32, "thicken holed: 32 faces (8+8+12+4)");
+    assert(m.boundaryLoops().length == 0, "thicken holed: watertight");
+    assert(countOpenEdges(m) == 0, "thicken holed: no open edges");
+}
+
+unittest { // thickenSurface: closed cube → no-op
+    Mesh m = makeCube();
+    m.buildLoops();
+    const V0 = m.vertices.length, F0 = m.faces.length;
+    assert(m.thickenSurface(0.1f) == 0, "thicken cube: no-op");
+    assert(m.vertices.length == V0 && m.faces.length == F0, "thicken cube: unchanged");
+}
+
+unittest { // thickenSurface: zero thickness → no-op
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addFace([0u,1u,2u,3u]);
+    m.buildLoops();
+    assert(m.thickenSurface(0.0f) == 0, "zero thickness: no-op");
+    assert(m.vertices.length == 4 && m.faces.length == 1, "zero thickness: unchanged");
+}
+
+unittest { // thickenSurface: symmetric mode places originals at ±t/2
+    import std.math : abs;
+    Mesh m;
+    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+    m.addFace([0u,1u,2u,3u]);
+    m.buildLoops();
+    m.thickenSurface(0.4f, true);
+    foreach (i; 0 .. 4)
+        assert(abs(m.vertices[i].z - 0.2f) < 1e-5f, "symmetric: outer vert at +0.2");
+    foreach (i; 4 .. 8)
+        assert(abs(m.vertices[i].z + 0.2f) < 1e-5f, "symmetric: inner vert at -0.2");
 }
