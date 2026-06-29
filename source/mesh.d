@@ -3586,6 +3586,237 @@ struct Mesh {
         return toClone.length;
     }
 
+    /// Face Extrude: duplicate the selected polygon region as a lifted cap, bridge
+    /// the region boundary with side quads, and offset the cap by `distance` along
+    /// the averaged region normal. Region boundary = edges where exactly one
+    /// incident face is selected (including mesh-boundary edges whose single
+    /// incident face is selected). Internal edges shared by two selected faces
+    /// produce no wall, so contiguous multi-face selections extrude as one region.
+    ///
+    /// Returns the number of faces extruded (0 = no-op: distance==0, nothing
+    /// selected, mask length mismatch, or a closed island with no boundary edges).
+    ///
+    /// Winding of wall quads: each wall traverses the shared cap edge in the
+    /// OPPOSITE direction to the cap face (orientability rule), determined from the
+    /// original face traversal — the cap has the same winding as the original since
+    /// we only substitute vertex indices. No region-normal dot backstop (a wall's
+    /// normal is ⊥ to the region normal, so the dot ≈ 0 and would flip a
+    /// correctly-wound quad).
+    ///
+    /// Closed-island pin: a selection with no boundary edges (e.g. all 6 faces of
+    /// a closed cube) returns 0 BEFORE any geometry is emitted. This prevents a
+    /// degenerate-normal silent translation when the whole mesh is selected.
+    ///
+    /// Phase 5 (delta-path undo) is deferred: the drop+compact step makes the
+    /// append-only recordAddFaces revert insufficient, so only snapshot undo
+    /// (MeshFaceExtrudeEdit) is wired for Phases 1-4.
+    size_t extrudeFacesByMask(in bool[] mask, float distance) {
+        if (mask.length != faces.length) return 0;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+        if (distance == 0.0f) return 0;
+
+        // Region normal: normalized average of selected face normals.
+        Vec3 normSum = Vec3(0, 0, 0);
+        foreach (fi; 0 .. faces.length)
+            if (mask[fi]) normSum = normSum + faceNormal(cast(uint)fi);
+        {
+            float rlen = sqrt(normSum.x * normSum.x +
+                              normSum.y * normSum.y +
+                              normSum.z * normSum.z);
+            normSum = (rlen > 1e-6f) ? normSum * (1.0f / rlen) : Vec3(0, 1, 0);
+        }
+        immutable Vec3 regionNormal = normSum;
+
+        // Edge → (≤2 incident faces) adjacency, one pass.
+        int[2][ulong] edgeFaces;
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKeyOrdered(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeFaces;
+                if (p is null)
+                    edgeFaces[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi)
+                    (*p)[1] = cast(int)fi;
+            }
+        }
+
+        // Boundary edges: exactly one incident face is selected.
+        struct BEdge { uint va, vb; int selFi; }
+        BEdge[] bEdges;
+        foreach (key, fp; edgeFaces) {
+            bool s0 = fp[0] >= 0 && fp[0] < cast(int)mask.length && mask[fp[0]];
+            bool s1 = fp[1] >= 0 && fp[1] < cast(int)mask.length && mask[fp[1]];
+            if (s0 == s1) continue;   // both selected (internal) or neither
+            uint va = cast(uint)(key >> 32);
+            uint vb = cast(uint)(key & 0xffffffffUL);
+            bEdges ~= BEdge(va, vb, s0 ? fp[0] : fp[1]);
+        }
+
+        // Empty-boundary pin: closed island → clean no-op BEFORE any geometry.
+        // Without this, the degenerate-normal fallback (+Y) would silently
+        // translate the whole mesh.
+        if (bEdges.length == 0) return 0;
+
+        // Clone each vertex used by a selected face (once per vertex).
+        // Clones are offset by regionNormal * distance.
+        uint[uint] vertMap;
+        foreach (fi; 0 .. faces.length) {
+            if (!mask[fi]) continue;
+            foreach (vid; faces[fi]) {
+                if (vid !in vertMap)
+                    vertMap[vid] = addVertex(vertices[vid] + regionNormal * distance);
+            }
+        }
+
+        // Snapshot which face indices to clone before growing the array.
+        size_t[] toCloneFace;
+        foreach (fi; 0 .. faces.length) if (mask[fi]) toCloneFace ~= fi;
+
+        // Reconstruct faces + parallel arrays (deleteFacesByMask rebuild idiom).
+        // Order: [non-selected originals] + [cap clones] + [wall quads].
+        uint[][] newFaces;
+        uint[]   newMat;
+        int[]    newOrd;
+        bool[]   newSub;
+
+        // Non-selected originals, kept as-is.
+        foreach (fi; 0 .. faces.length) {
+            if (mask[fi]) continue;
+            newFaces ~= faces[fi];
+            newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
+            newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
+            newSub   ~= isFaceSubpatch(fi);
+        }
+        immutable size_t capStart = newFaces.length;   // first cap index in newFaces
+
+        // Cap clones: re-emit each selected face with cloned (offset) verts.
+        foreach (fi; toCloneFace) {
+            auto src = faces[fi];
+            uint[] cloned;
+            cloned.length = src.length;
+            foreach (k, vid; src) cloned[k] = vertMap[vid];
+            newFaces ~= cloned;
+            newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
+            newOrd   ~= 0;
+            newSub   ~= isFaceSubpatch(fi);
+        }
+
+        // Wall quads: one per boundary edge, oriented by the orientability rule.
+        // The cap face traverses (cloneA, cloneB) in the SAME direction as the
+        // original selected face traverses (a, b), since we only substituted indices.
+        // The wall must share the cap's top edge in the OPPOSITE direction.
+        foreach (ref be; bEdges) {
+            uint a = be.va, b = be.vb;
+            uint cloneA = vertMap[a], cloneB = vertMap[b];
+            // Determine direction (a → b) in the original selected face.
+            bool origAtoB = false;
+            auto orig = faces[be.selFi];
+            foreach (k; 0 .. orig.length) {
+                uint u = orig[k], w = orig[(k + 1) % orig.length];
+                if (u == a && w == b) { origAtoB = true;  break; }
+                if (u == b && w == a) { origAtoB = false; break; }
+            }
+            // Cap walks cloneA→cloneB iff orig walks a→b.
+            // Wall traverses the shared top edge in the opposite direction.
+            if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
+            else          newFaces ~= [cloneA, cloneB, b, a];
+            newMat ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
+            newOrd ~= 0;
+            newSub ~= false;
+        }
+
+        // Assign reconstructed arrays.
+        faces              = newFaces;
+        faceMaterial       = newMat;
+        faceSelectionOrder = newOrd;
+        // Rebuild faceMarks from scratch: resize+zero ALL bits (clears both
+        // Select and stale Subpatch from the old ordering), then set Subpatch.
+        faceMarks.length = faces.length;
+        faceMarks[]      = 0;
+        foreach (fi, s; newSub)
+            if (s) faceMarks[fi] |= Marks.Subpatch;
+
+        // New selection = cap faces (so a follow-up op chains off the top).
+        faceSelectionOrderCounter = 0;
+        foreach (fi; capStart .. capStart + selCount)
+            selectFace(cast(int)fi);
+
+        // Clear vertex + edge selections.
+        resizeVertexSelection();
+        clearVertexSelection();
+        clearEdgeSelectionResize();
+
+        // Tail: rebuild topology, drop orphaned original interior verts.
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();   // removes original selected-face verts not kept by walls
+        buildLoops();
+
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+        return selCount;
+    }
+
+    unittest {
+        import std.math : abs;
+
+        // Single-face extrude: cube face 0, distance 0.5.
+        // Cube: 6 faces, 8 verts. After extruding one quad face:
+        // 5 orig + 1 cap + 4 walls = 10 faces; 8 orig + 4 clones = 12 verts.
+        {
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
+            Vec3 origC = m.faceCentroid(0);
+            Vec3 origN = m.faceNormal(0);
+            size_t n = m.extrudeFacesByMask(mask, 0.5f);
+            assert(n > 0,
+                "extrudeFacesByMask: returned 0 on valid single-face selection");
+            assert(m.faces.length == 10,
+                "extrudeFacesByMask: expected 10 faces after single-face extrude");
+            assert(m.vertices.length == 12,
+                "extrudeFacesByMask: expected 12 verts after single-face extrude");
+            // Cap face is selected after the op; find it.
+            int capFi = -1;
+            foreach (fi; 0 .. m.faces.length)
+                if (m.isFaceSelected(fi)) { capFi = cast(int)fi; break; }
+            assert(capFi >= 0, "extrudeFacesByMask: no cap face selected after op");
+            Vec3 capC = m.faceCentroid(cast(uint)capFi);
+            Vec3 exp  = origC + origN * 0.5f;
+            assert(abs(capC.x - exp.x) < 1e-4f &&
+                   abs(capC.y - exp.y) < 1e-4f &&
+                   abs(capC.z - exp.z) < 1e-4f,
+                "extrudeFacesByMask: cap centroid not offset by 0.5 along face normal");
+        }
+
+        // distance == 0 → no-op (topology and vert count unchanged).
+        {
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
+            size_t n = m.extrudeFacesByMask(mask, 0.0f);
+            assert(n == 0,
+                "extrudeFacesByMask: distance==0 must return 0");
+            assert(m.faces.length == 6,
+                "extrudeFacesByMask: distance==0 changed face count");
+            assert(m.vertices.length == 8,
+                "extrudeFacesByMask: distance==0 changed vert count");
+        }
+
+        // Closed island (all 6 cube faces) → no boundary edges → no-op.
+        {
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = true;
+            size_t n = m.extrudeFacesByMask(mask, 0.5f);
+            assert(n == 0,
+                "extrudeFacesByMask: closed island must return 0");
+            assert(m.faces.length == 6,
+                "extrudeFacesByMask: closed island changed face count");
+            assert(m.vertices.length == 8,
+                "extrudeFacesByMask: closed island changed vert count");
+        }
+    }
+
     private static ulong edgeKeyOrdered(uint a, uint b) {
         return a < b ? (cast(ulong)a << 32) | b : (cast(ulong)b << 32) | a;
     }
