@@ -55,6 +55,8 @@ import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
 import tools.edge_slide : EdgeSlideTool;
 import tools.poly_extrude : PolyExtrudeTool;
+import tools.poly_bevel : PolyBevelTool;
+import tools.edge_bevel : EdgeBevelTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
@@ -86,6 +88,7 @@ import commands.mesh.spin_edge;
 import commands.mesh.edge_extrude : MeshEdgeExtrude;
 import commands.mesh.edge_extrude_edit : MeshEdgeExtrudeEdit;
 import commands.mesh.poly_inset : MeshPolygonInset;
+import commands.mesh.bevel : MeshBevel;
 import commands.mesh.face_extrude : MeshFaceExtrude;
 import commands.mesh.face_extrude_edit : MeshFaceExtrudeEdit;
 import commands.mesh.bridge : MeshBridge;
@@ -2069,6 +2072,24 @@ void main(string[] args) {
         return cast(Tool)t;
     };
 
+    // Poly Bevel — interactive + headless (inset, shift params). Topology-creating
+    // tool: reuses bevelEditFactory (MeshBevelEdit snapshot undo). Gated to Polygons.
+    reg.toolFactories["poly.bevel"] = () {
+        auto t = new PolyBevelTool(() => &mesh(), &gpu, &editMode, litShader,
+                                   &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
+    // Edge Bevel — interactive + headless (width param). Topology-creating tool:
+    // reuses bevelEditFactory (MeshBevelEdit snapshot undo). Gated to Edges mode.
+    reg.toolFactories["edge.bevel"] = () {
+        auto t = new EdgeBevelTool(() => &mesh(), &gpu, &editMode, litShader,
+                                   &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, bevelEditFactory);
+        return cast(Tool)t;
+    };
+
     // -------------------------------------------------------------------------
     // ToolHost — delegate bridge for tool.* commands
     // -------------------------------------------------------------------------
@@ -2406,6 +2427,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.poly_inset"] = () => cast(Command)
         new MeshPolygonInset(&mesh(), cameraView, editMode, &gpu,
                              &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.bevel"] = () => cast(Command)
+        new MeshBevel(&mesh(), cameraView, editMode, &gpu,
+                      &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["poly.extrude"] = () => cast(Command)
         new MeshFaceExtrude(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
