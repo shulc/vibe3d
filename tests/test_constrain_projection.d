@@ -51,10 +51,15 @@ void resetScene() {
 void loadBackgroundPlane() {
     // Two triangles covering X∈[-10,10], Z∈[-10,10] at Y=0.
     // Vertices: [0]=(-10,0,-10) [1]=(10,0,-10) [2]=(10,0,10) [3]=(-10,0,10)
-    // Faces: [[0,1,2],[0,2,3]]  — both CCW viewed from +Y
+    // Faces: [[0,2,1],[0,3,2]] — winding gives +Y geometric normal:
+    //   face [0,2,1]: e1=v2-v0=(20,0,20), e2=v1-v0=(20,0,0)
+    //   n=cross(e1,e2)=(0,+400,0) → +Y ✓
+    // A downward ray (delta=(0,-1,0) or top-down camFwd) opposes the +Y normal
+    // and passes the dblSided=false front-face test in projectAlongDirection.
+    // Point mode (closestPointOnMeshes) is facing-independent — no behaviour change.
     string body_ = `{
         "vertices":[[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
-        "faces":[[0,1,2],[0,2,3]]
+        "faces":[[0,2,1],[0,3,2]]
     }`;
     auto r = postJson("/api/load-mesh", body_);
     assert(r["status"].str == "ok",
@@ -149,28 +154,50 @@ unittest { // background plane + enabled → Y projected to 0
 }
 
 // -------------------------------------------------------------------------
-// Stage 3: /api/constrain bridge — vector/screen modes are identity (no-op).
+// Stage 5: /api/constrain bridge — vector mode projects along delta.
 // -------------------------------------------------------------------------
 
-unittest { // vector mode → identity (capture-gated)
+unittest { // vector mode + background plane → projects to Y≈0
     buildTwoLayerScene();
     cmd("tool.pipe.attr constrain enabled true");
     cmd("tool.pipe.attr constrain geometry vector");
-    auto r = probeConstrain([0.5, 2.0, 0.5]);
-    // vector mode is a no-op; resultPos should equal input pos
+    // delta (0,-1,0): downward ray from (0.5,2,0.5) hits the +Y plane at Y=0.
+    auto r = probeConstrain([0.5, 2.0, 0.5], [0.0, -1.0, 0.0]);
+    assert(r["projected"].boolean == true,
+        "vector mode: expected projected:true; got " ~ r.toString);
     auto rp = r["resultPos"].array;
-    assert(approx(rp[1].floating, 2.0, 0.05),
-        "vector mode: Y should be unchanged (2.0); got " ~ rp[1].toString);
+    assert(approx(rp[0].floating, 0.5, 0.05),
+        "vector mode: X should be ≈0.5; got " ~ rp[0].toString);
+    assert(approx(rp[1].floating, 0.0, 0.05),
+        "vector mode: Y should be ≈0 (on plane); got " ~ rp[1].toString);
+    assert(approx(rp[2].floating, 0.5, 0.05),
+        "vector mode: Z should be ≈0.5; got " ~ rp[2].toString);
 }
 
-unittest { // screen mode → identity (capture-gated)
+// -------------------------------------------------------------------------
+// Stage 5: /api/constrain bridge — screen mode projects along view axis.
+// -------------------------------------------------------------------------
+
+unittest { // screen mode + top-down camera + background plane → projects to Y≈0
     buildTwoLayerScene();
+    // elevation=1.55 rad ≈ 88.8° — camera nearly straight down.
+    // camFwd ≈ (0, -1, 0); carried by the viewport the probe reads from.
+    postJson("/api/camera", `{"azimuth":0,"elevation":1.55,"distance":5}`);
     cmd("tool.pipe.attr constrain enabled true");
     cmd("tool.pipe.attr constrain geometry screen");
+    // No delta needed — screen mode ignores delta and uses camFwd from viewport.
     auto r = probeConstrain([0.5, 2.0, 0.5]);
+    assert(r["projected"].boolean == true,
+        "screen mode: expected projected:true; got " ~ r.toString);
     auto rp = r["resultPos"].array;
-    assert(approx(rp[1].floating, 2.0, 0.05),
-        "screen mode: Y should be unchanged (2.0); got " ~ rp[1].toString);
+    // At elevation≈1.55 the forward axis is nearly -Y; hit X/Z may shift
+    // slightly so use tolerance 0.15 for X/Z and 0.05 for Y.
+    assert(approx(rp[0].floating, 0.5, 0.15),
+        "screen mode: X should be ≈0.5; got " ~ rp[0].toString);
+    assert(approx(rp[1].floating, 0.0, 0.05),
+        "screen mode: Y should be ≈0 (on plane); got " ~ rp[1].toString);
+    assert(approx(rp[2].floating, 0.5, 0.15),
+        "screen mode: Z should be ≈0.5; got " ~ rp[2].toString);
 }
 
 // -------------------------------------------------------------------------
@@ -244,6 +271,77 @@ unittest { // headless doApply: moved vertex lands on background plane
         assert(approx(yAfter, yBefore, 0.01),
             "vertex " ~ i.to!string
             ~ " should not have been yanked: before=" ~ yBefore.to!string
+            ~ " after=" ~ yAfter.to!string);
+    }
+}
+
+// -------------------------------------------------------------------------
+// Stage 5: headless tool.doApply (vector mode) — selected TOP vertex projects
+//          onto the background plane via edit delta.
+//
+// Recipe:
+//   1. Build two-layer scene (A=cube, B=flat plane at Y=0 with +Y normal).
+//   2. Enable CONS (geometry=vector).
+//   3. Activate xfrm.move.
+//   4. Find the first cube vertex with Y > 0 (a top vertex, Y≈+0.5).
+//   5. Select that vertex; apply TY=-0.4 → finalPos.y ≈ 0.1 (still > 0,
+//      never crosses the plane).  Edit delta = (0,-0.4,0) → normalized (0,-1,0).
+//      Forward ray from Y=0.1 hits Y=0 at t=0.1.
+//   6. tool.doApply — assert top vertex lands at Y≈0, X/Z preserved.
+//   7. Teleport-guard negative control: all other verts unchanged.
+// -------------------------------------------------------------------------
+
+unittest { // headless doApply (vector): selected top vertex projected to Y=0 via edit delta
+    buildTwoLayerScene();
+
+    // Enable CONS with vector geometry.
+    cmd("tool.pipe.attr constrain enabled true");
+    cmd("tool.pipe.attr constrain geometry vector");
+
+    // Activate xfrm.move.
+    cmd("tool.set move");
+
+    // Read cube vertices; find the first one with Y > 0 (top face).
+    auto vertsBefore = readActiveVerts();
+    assert(vertsBefore.length >= 8, "expected cube (8 verts)");
+
+    int topVid = -1;
+    foreach (i, v; vertsBefore) {
+        if (v[1] > 0.0) { topVid = cast(int)i; break; }
+    }
+    assert(topVid >= 0, "no top vertex found (y > 0) in default cube");
+
+    selectVert(topVid);
+
+    // TY=-0.4: finalPos.y ≈ 0.5 - 0.4 = 0.1  (still above the plane).
+    // Edit delta ≈ (0,-0.4,0) → normalized (0,-1,0).
+    // Ray from Y=0.1 pointing down hits Y=0 at t=0.1 → projected to Y=0.
+    cmd("tool.attr move TY -0.4");
+    cmd("tool.doApply");
+
+    auto vertsAfter = readActiveVerts();
+    assert(vertsAfter.length == vertsBefore.length,
+        "vertex count changed after vector doApply");
+
+    // The selected top vertex must land at Y≈0 (CONS projection).
+    double topY = vertsAfter[topVid][1];
+    assert(approx(topY, 0.0, 0.05),
+        "top vertex Y after CONS vector doApply should be ≈0; got " ~ topY.to!string);
+
+    // X/Z of the selected vertex should be preserved (vertical delta).
+    assert(approx(vertsAfter[topVid][0], vertsBefore[topVid][0], 0.05),
+        "top vertex X should be preserved after vector doApply");
+    assert(approx(vertsAfter[topVid][2], vertsBefore[topVid][2], 0.05),
+        "top vertex Z should be preserved after vector doApply");
+
+    // Teleport-guard: unselected vertices must stay at their baseline positions.
+    foreach (i; 0 .. vertsAfter.length) {
+        if (i == cast(size_t)topVid) continue;
+        double yBefore = vertsBefore[i][1];
+        double yAfter  = vertsAfter[i][1];
+        assert(approx(yAfter, yBefore, 0.01),
+            "unselected vertex " ~ i.to!string
+            ~ " should not move: before=" ~ yBefore.to!string
             ~ " after=" ~ yAfter.to!string);
     }
 }
