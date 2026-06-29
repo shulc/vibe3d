@@ -1282,7 +1282,11 @@ class HttpServer {
                         if ("id" !in j || j["id"].type != JSONType.string)
                             throw new Exception("missing 'id' string field");
                         pendingCmdId     = j["id"].str;
-                        pendingCmdParams = ("params" in j) ? j["params"].toString : "";
+                        // When the body has a nested "params" object, use it.
+                        // Otherwise treat the whole body as the param dict (flat
+                        // params style, matching the argstring convention).  The
+                        // "id" field is just ignored by injectParamsInto.
+                        pendingCmdParams = ("params" in j) ? j["params"].toString : body_;
                     } else {
                         auto parsed = parseArgstring(body_);
                         if (parsed.isEmpty)
