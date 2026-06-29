@@ -4201,6 +4201,65 @@ struct Mesh {
         return len > 1e-6f ? Vec3(nx / len, ny / len, nz / len) : Vec3(0, 1, 0);
     }
 
+    // Per-corner inset helper: given the origPos ring and corner index i,
+    // return the inset position using the perpendicular-offset meeting
+    // formula (offsetMeet from math.d). ePrev/eNext are unit directions from
+    // origPos[i] toward the previous and next corners respectively.
+    private Vec3 insetCorner(const Vec3[] origPos, int i, Vec3 n, float inset) {
+        const int  N     = cast(int)origPos.length;
+        const int  prevI = (i + N - 1) % N;
+        const int  nextI = (i + 1)     % N;
+        const Vec3 ePrev = safeNormalize(origPos[prevI] - origPos[i]);
+        const Vec3 eNext = safeNormalize(origPos[nextI] - origPos[i]);
+        return offsetMeet(origPos[i], ePrev, eNext, n, inset, inset);
+    }
+
+    /// Per-face polygon inset: for each face flagged true in `mask`, shrink
+    /// the face inward by `inset` units (perpendicular-offset meeting at each
+    /// corner via `offsetMeet`) and bridge the original boundary to the new
+    /// inner boundary with N ring quads. The original face slot is replaced
+    /// by the inner face so its selection mark is preserved.
+    ///
+    /// `|inset| < 1e-6` is a whole-operation no-op (returns 0).
+    /// Returns the number of faces processed (>0 on success, 0 on no-op).
+    size_t insetFacesByMask(const bool[] mask, float inset) {
+        import std.math : abs;
+        if (abs(inset) < 1e-6f) return 0;
+        size_t processed = 0;
+        const size_t nFaces = faces.length; // snapshot before appending ring quads
+        foreach (fi; 0 .. nFaces) {
+            if (fi >= mask.length || !mask[fi]) continue;
+            const uint[] origFaceVerts = faces[fi].dup;
+            const int    N             = cast(int)origFaceVerts.length;
+            if (N < 3) continue;
+            // Build per-corner position slice.
+            Vec3[] origPos = new Vec3[](N);
+            foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
+            // Newell face normal (robust to collinear leading triples).
+            const Vec3 n = faceNormal(cast(uint)fi);
+            // Add one inset vertex per corner.
+            uint[] newVerts = new uint[](N);
+            foreach (i; 0 .. N)
+                newVerts[i] = addVertex(insetCorner(origPos, i, n, inset));
+            // Replace the original face with the inner (inset) face.
+            // The face slot index is unchanged, so faceMarks[fi] (select mark)
+            // carries over to the inner face automatically.
+            faces[fi] = newVerts.dup;
+            // Emit N ring quads bridging original boundary to inner boundary.
+            foreach (i; 0 .. N) {
+                const int next = (i + 1) % N;
+                addFace([origFaceVerts[i], origFaceVerts[next],
+                         newVerts[next],   newVerts[i]]);
+            }
+            ++processed;
+        }
+        if (processed == 0) return 0;
+        rebuildEdges();
+        buildLoops();
+        syncSelection();
+        return processed;
+    }
+
     /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
     /// In debug builds, asserts that `vi` is actually one of the edge's endpoints.
     pragma(inline, true)
@@ -7471,6 +7530,42 @@ unittest { // detriangulateFacesByMask: partial mask — only masked faces merge
     // 1 merge: 12 - 2 + 1 = 11 faces.
     assert(m.faces.length == 11,
         "detriangulate partial: expected 11 faces, got " ~ m.faces.length.to!string);
+}
+
+unittest { // insetFacesByMask: single flat quad — no-op guard + inner corners at ±0.4
+    import std.math : abs;
+    // 1×1 quad at y=0, corners (±0.5, 0, ±0.5), winding [0,1,2,3].
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f, 0f, -0.5f), // 0
+        Vec3( 0.5f, 0f, -0.5f), // 1
+        Vec3( 0.5f, 0f,  0.5f), // 2
+        Vec3(-0.5f, 0f,  0.5f), // 3
+    ];
+    m.addFace([0, 1, 2, 3]);
+    m.buildLoops();
+
+    // inset=0 must be a no-op (no-op guard).
+    bool[] allOne = [true];
+    assert(m.insetFacesByMask(allOne, 0.0f) == 0, "inset=0 must return 0");
+    assert(m.vertices.length == 4, "no-op must not add verts");
+    assert(m.faces.length    == 1, "no-op must not add faces");
+
+    // inset=0.1: 4 new verts, 4 ring quads + 1 inner face = 5 faces total.
+    assert(m.insetFacesByMask(allOne, 0.1f) == 1, "inset=0.1 must process 1 face");
+    assert(m.vertices.length == 8, "expected 8 verts after single-face inset");
+    assert(m.faces.length    == 5, "expected 5 faces (1 inner + 4 ring quads)");
+
+    // Inner corners must be at (±0.4, 0, ±0.4) — NOT ±0.6 (which would be outset).
+    bool hasVert(float x, float z) {
+        foreach (v; m.vertices)
+            if (abs(v.x - x) < 1e-4f && abs(v.z - z) < 1e-4f) return true;
+        return false;
+    }
+    assert(hasVert(-0.4f, -0.4f), "inner corner (-0.4,0,-0.4) missing");
+    assert(hasVert( 0.4f, -0.4f), "inner corner ( 0.4,0,-0.4) missing");
+    assert(hasVert( 0.4f,  0.4f), "inner corner ( 0.4,0, 0.4) missing");
+    assert(hasVert(-0.4f,  0.4f), "inner corner (-0.4,0, 0.4) missing");
 }
 
 // ---------------------------------------------------------------------------
