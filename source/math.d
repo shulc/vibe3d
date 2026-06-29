@@ -725,6 +725,79 @@ bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,
     return true;
 }
 
+// Build the camera plane through the eye and the screen-space line (ax,ay)→(bx,by).
+//
+// Under a PERSPECTIVE camera every ray originates at vp.eye, so the two endpoint
+// rays dA and dB span a unique plane through the eye:
+//   nRaw = cross(dA, dB),  n = normalize(nRaw),  p = vp.eye
+//
+// NOTE (ortho): for an orthographic camera rays are parallel with distinct origins;
+// that branch is not implemented — current View is always perspective (view.d:58).
+// If an ortho mode is ever added, replace this with p=originA,
+// n=normalize(cross(dA, originB - originA)).
+//
+// Returns true when the plane is well-defined.
+// Returns false (no-op; p and n are undefined) when:
+//   - screen endpoints are too close  (Euclidean distance < pixelEps)
+//   - cross-product is near-zero      (|cross(dA,dB)| < crossEps)
+bool cameraPlaneFromScreenLine(const ref Viewport vp,
+                               float ax, float ay, float bx, float by,
+                               out Vec3 p, out Vec3 n,
+                               float pixelEps = 1.0f, float crossEps = 1e-6f)
+{
+    // Cheap pre-check: reject a sub-pixel drag before computing any rays.
+    float dx = bx - ax, dy = by - ay;
+    if (dx*dx + dy*dy < pixelEps*pixelEps) return false;
+
+    Vec3 dA = screenRay(ax, ay, vp);
+    Vec3 dB = screenRay(bx, by, vp);
+
+    Vec3 nRaw = cross(dA, dB);
+    if (nRaw.length < crossEps) return false;  // numerical backstop (parallel rays)
+
+    p = vp.eye;
+    n = normalize(nRaw);
+    return true;
+}
+
+unittest { // cameraPlaneFromScreenLine: vertical center line → normal parallel to world X
+    auto vp = makeTestViewport();
+    // makeTestViewport builds lookAt(Vec3(0,0,5), ...) but leaves vp.eye
+    // zero-initialised; set it explicitly so the plane point assertion is meaningful.
+    vp.eye = Vec3(0, 0, 5);
+
+    Vec3 p, n;
+    // A vertical center line (ax==bx==400): both rays have world-X component = 0
+    // because nx = (400/800)*2 - 1 = 0.  cross(dA, dB) lies along world X.
+    bool ok = cameraPlaneFromScreenLine(vp, 400, 100, 400, 700, p, n);
+    assert(ok, "expected valid plane for vertical center line");
+
+    // Normal must be unit length.
+    assert(isClose(n.length, 1.0f, 1e-4f), "normal must be unit length");
+
+    // Normal must be parallel to world X (Y and Z negligible).
+    // Use abs(n.x) to tolerate either cross-product sign.
+    assert(isClose(n.x * n.x, 1.0f, 1e-4f), "normal must be parallel to world X");
+    assert(isClose(n.y, 0, 1e-4f, 1e-4f),    "normal Y must be zero");
+    assert(isClose(n.z, 0, 1e-4f, 1e-4f),    "normal Z must be zero");
+
+    // Plane point must equal the camera eye.
+    assert(p.x == vp.eye.x && p.y == vp.eye.y && p.z == vp.eye.z,
+           "plane point must equal vp.eye");
+}
+
+unittest { // cameraPlaneFromScreenLine: degenerate short line → false, no NaN
+    auto vp = makeTestViewport();
+    vp.eye = Vec3(0, 0, 5);
+    Vec3 p, n;
+    // Exactly coincident endpoints.
+    assert(!cameraPlaneFromScreenLine(vp, 400, 400, 400, 400, p, n),
+           "zero-length line must be degenerate");
+    // Sub-pixel endpoints (distance ≈ 0.7 px < default pixelEps 1.0).
+    assert(!cameraPlaneFromScreenLine(vp, 400, 400, 400.5f, 400.5f, p, n),
+           "sub-pixel line must be degenerate");
+}
+
 // Closest point on segment [a, b] to ray (origin O, unit direction D).
 // Standard parameterisation: P(t) = a + t·(b-a), Q(s) = O + s·D.
 // Minimises |P(t) - Q(s)|² over (s, t); t is then clamped to [0, 1]
