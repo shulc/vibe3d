@@ -10,6 +10,49 @@ import viewcache;
 import snapshot : MeshSnapshot;
 import change_bus : MeshEditScope;
 
+/// Shared kernel dispatcher for the faceted family (flat and smooth modes).
+/// Runs `facetedSubdivide` (smooth=false) or `smoothSubdivide` (smooth=true),
+/// then rebuilds the post-op face selection using the same emit-cursor walk
+/// and publishes the Geometry change-bus notification.
+/// Snapshot capture and refreshCaches() are the caller's responsibility.
+package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
+{
+    // Selection-aware split only makes sense in Polygons mode where the user
+    // can see and curate the face selection.  Vertices / Edges mode ignores
+    // any stale face selection and falls through to the all-true mask.
+    bool polygonMode  = editMode == EditMode.Polygons;
+    bool hadSelection = polygonMode && mesh.hasAnySelectedFaces();
+    auto prevSelectedFaces = polygonMode
+        ? mesh.selectedFaces.dup : null;
+    auto prevFaceVertCounts = new size_t[](mesh.faces.length);
+    foreach (fi; 0 .. mesh.faces.length)
+        prevFaceVertCounts[fi] = mesh.faces[fi].length;
+    const bool[] mask = hadSelection
+        ? mesh.selectedFaces
+        : allTrueMask(mesh.faces.length);
+    *mesh = smooth ? smoothSubdivide(*mesh, mask) : facetedSubdivide(*mesh, mask);
+    mesh.resetSelection();
+    // Rebuild the output selection: each selected cage face produced
+    // len(fi) sub-quads (one per corner); unselected faces produced 1 face
+    // (possibly widened). Walk the cursor to re-select the children.
+    size_t cursor = 0;
+    foreach (fi; 0 .. prevSelectedFaces.length) {
+        bool wasSelected = prevSelectedFaces[fi];
+        bool splitsHere  = fi < mask.length && mask[fi];
+        size_t emitted   = splitsHere ? prevFaceVertCounts[fi] : 1;
+        foreach (j; 0 .. emitted) {
+            if (wasSelected && cursor < mesh.faces.length)
+                mesh.selectFace(cast(int)cursor);
+            ++cursor;
+        }
+    }
+    // Change-notification (Stage 1): faceted kernel REPLACED the whole mesh
+    // (new verts AND faces). noteChange (not commitChange): the `*mesh = ...`
+    // swap reset the version counters to 0; the bus only needs the class so
+    // caches rebuild.
+    mesh.noteChange(MeshEditScope.Geometry);
+}
+
 class SubdivideFaceted : Command, Operator {
     mixin OperatorActrCommon;
     private GpuMesh*        gpu;
@@ -40,51 +83,9 @@ class SubdivideFaceted : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        // Selection-aware subdivision (split only marked faces) only
-        // makes sense in Polygons mode where the user can see / curate
-        // the face selection. Vertices / Edges mode ignores any stale
-        // `mesh.selectedFaces` from a prior polygon session and falls
-        // through to the all-true mask (split every face).
         snap = MeshSnapshot.capture(*mesh);
         if (onTopologyChange !is null) onTopologyChange();
-        // Snapshot pre-subdivide selection + per-face vert counts so
-        // we can rebuild the output selection deterministically:
-        // facetedSubdivide emits sub-faces in cage order — each
-        // selected face produces `len_fi` quads, each unselected face
-        // produces 1 widened face. `mask` aliases mesh.selectedFaces
-        // and dies with the swap, so dup before the call.
-        bool polygonMode  = editMode == EditMode.Polygons;
-        bool hadSelection = polygonMode && mesh.hasAnySelectedFaces();
-        auto prevSelectedFaces = polygonMode
-            ? mesh.selectedFaces.dup : null;
-        auto prevFaceVertCounts = new size_t[](mesh.faces.length);
-        foreach (fi; 0 .. mesh.faces.length)
-            prevFaceVertCounts[fi] = mesh.faces[fi].length;
-        const bool[] mask = hadSelection
-            ? mesh.selectedFaces
-            : allTrueMask(mesh.faces.length);
-        *mesh = facetedSubdivide(*mesh, mask);
-        mesh.resetSelection();
-        size_t cursor = 0;
-        foreach (fi; 0 .. prevSelectedFaces.length) {
-            bool wasSelected = prevSelectedFaces[fi];
-            // Selection-active branch splits the face; otherwise it
-            // stays as a single widened face. `mask` here matches what
-            // facetedSubdivide saw, so the split-vs-pass decision is
-            // identical.
-            bool splitsHere = fi < mask.length && mask[fi];
-            size_t emitted = splitsHere ? prevFaceVertCounts[fi] : 1;
-            foreach (j; 0 .. emitted) {
-                if (wasSelected && cursor < mesh.faces.length)
-                    mesh.selectFace(cast(int)cursor);
-                ++cursor;
-            }
-        }
-        // Change-notification (Stage 1): facetedSubdivide REPLACED the whole
-        // mesh (new verts AND faces) — publish Geometry (Points|Polygons). Same
-        // rationale as mesh.subdivide: the `*mesh = ...` swap reset the version
-        // counters, so noteChange carries only the class.
-        mesh.noteChange(MeshEditScope.Geometry);
+        runFacetedFamily(mesh, editMode, /*smooth=*/false);
         refreshCaches();
         return true;
     }
@@ -99,11 +100,10 @@ class SubdivideFaceted : Command, Operator {
     private void refreshCaches() {
         refreshDisplay(mesh, gpu, vc, ec, fc);
     }
+}
 
-private:
-    static bool[] allTrueMask(size_t n) {
-        auto m = new bool[](n);
-        m[] = true;
-        return m;
-    }
+private bool[] allTrueMask(size_t n) {
+    auto m = new bool[](n);
+    m[] = true;
+    return m;
 }
