@@ -128,6 +128,7 @@ import commands.mesh.smooth;
 import commands.mesh.weightmap;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
+import commands.mesh.polygon_align;
 import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
@@ -2585,6 +2586,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.linear_align"] = () => cast(Command)
         new MeshLinearAlign(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.align"] = () => cast(Command)
+        new MeshAlign(&mesh(), cameraView, editMode, &gpu,
+                      &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.radial_align"] = () => cast(Command)
         new MeshRadialAlign(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
