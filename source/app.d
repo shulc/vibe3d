@@ -1834,8 +1834,10 @@ void main(string[] args) {
         g_pipeCtx.pipeline.add(new SymmetryStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ConstrainStage());
-        g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode));
-        g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode));
+        g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode,
+                                                       () => document.primary));
+        g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode,
+                                              () => document.primary));
         g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh(), &editMode));
         import toolpipe.stages.path : PathStage;
         g_pipeCtx.pipeline.add(new PathStage(() => &mesh()));
@@ -2085,7 +2087,7 @@ void main(string[] args) {
     {
         import commands.layer.commands : LayerAdd, LayerDelete, LayerSelect,
                                           LayerRename, LayerSetVisible,
-                                          LayerReorder, LayerAttr;
+                                          LayerReorder, LayerAttr, LayerParent;
         reg.commandFactories["layer.add"] = () => cast(Command)
             new LayerAdd(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
         reg.commandFactories["layer.delete"] = () => cast(Command)
@@ -2105,6 +2107,9 @@ void main(string[] args) {
         // uniformity.
         reg.commandFactories["layer.attr"] = () => cast(Command)
             new LayerAttr(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
+        // layer.parent — set/clear item-parent reference (task 0082).
+        reg.commandFactories["layer.parent"] = () => cast(Command)
+            new LayerParent(&mesh(), cameraView, editMode, &document, onActiveLayerChanged);
     }
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
@@ -2138,6 +2143,8 @@ void main(string[] args) {
             Preset("screen",     "screen",     "screen"),
             Preset("border",     "border",     "select"),   // border edges + selection-aligned axis
             Preset("none",       "none",       "none"),     // "(none)" — drops both, world fallback
+            Preset("pivot",      "pivot",      "pivot"),    // 0082: item pivot
+            Preset("parent",     "parent",     "parent"),   // 0082: parent item frame
         ];
         // IIFE capture by value — the bare-foreach + lambda pattern
         // closes over the loop variable by reference in D, so without
@@ -2838,11 +2845,17 @@ void main(string[] args) {
                     xb.put(format("%.6f", m[mi]));
                 }
                 xb.put("]}");
+                // Task 0082: find the parent layer's index (-1 = no parent).
+                int parentIdx = -1;
+                if (l.parent !is null) {
+                    foreach (pi, pl; document.layers)
+                        if (pl is l.parent) { parentIdx = cast(int)pi; break; }
+                }
                 a.put(format(
                     `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,` ~
                     `"vertexCount":%d,"faceCount":%d,` ~
-                    `"mutationVersion":%d,"xform":%s}`,
+                    `"mutationVersion":%d,"xform":%s,"parent":%d}`,
                     i, JSONValue(l.name).toString(),
                     l.visible ? "true" : "false",
                     Document.background(l) ? "true" : "false",
@@ -2850,7 +2863,7 @@ void main(string[] args) {
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
                     l.mesh.vertices.length, l.mesh.faces.length,
-                    cast(ulong)l.mesh.mutationVersion, xb.data));
+                    cast(ulong)l.mesh.mutationVersion, xb.data, parentIdx));
             }
             a.put("]}");
             return a.data;
