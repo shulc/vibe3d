@@ -140,6 +140,11 @@ void drawFalloffOverlay(const ref FalloffPacket cfg, const ref Viewport vp) {
             // are drawn from their own stages; the composite itself has
             // nothing extra to render.
             break;
+        case FalloffType.VertexMap:
+            // Per-vertex weights from a named map — no geometric outline.
+            // The mesh's vertex colour is the only meaningful visual cue
+            // (reserved for a future "weight paint" overlay mode).
+            break;
     }
 }
 

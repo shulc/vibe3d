@@ -50,7 +50,7 @@ private string[] falloffUniverse() {
         "type", "shape", "start", "end", "center", "size", "axis",
         "dist", "steps", "anchorRing", "connect", "mode", "screenCx", "screenCy",
         "screenSize", "transparent", "lassoStyle", "lassoPoly",
-        "softBorder", "in", "out", "mix",
+        "softBorder", "in", "out", "mix", "map",
     ];
 }
 
