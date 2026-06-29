@@ -3,7 +3,8 @@ module toolpipe.stages.axis;
 import std.format : format;
 import std.math   : abs, sqrt;
 
-import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrixInverse;
+import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrixInverse,
+                 applyAffine;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
@@ -11,6 +12,7 @@ import toolpipe.stage    : Stage, TaskCode, ordAxis;
 import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
+import document          : Layer;
 
 // ---------------------------------------------------------------------------
 // AxisStage — phase 7.2c. Sits at ordinal 0x70 (after ACEN).
@@ -125,6 +127,9 @@ class AxisStage : Stage, Operator {
         // tool.clearTask("axis","center") drops both. We keep the stage
         // installed but publish world XYZ as a sane default basis.
         None       = 10,
+        // Task 0082 — new item-hierarchy modes.
+        Pivot      = 11,  // basis = primary item's orientation (capture-inferred)
+        Parent     = 12,  // basis = parent item's world rotation
     }
 
     // flex_border_handles_plan.md Model C — the ONE general boolean the gizmo
@@ -174,11 +179,16 @@ private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     EditMode* editMode_;
+    // Task 0082: delegate supplying the primary Layer for Pivot/Parent modes.
+    Layer delegate() primarySrc_;
+    @property Layer primary_() const { return primarySrc_ ? primarySrc_() : null; }
 
 public:
-    this(Mesh* delegate() meshSrc = null, EditMode* editMode = null) {
-        this.meshSrc_ = meshSrc;
-        this.editMode_ = editMode;
+    this(Mesh* delegate() meshSrc = null, EditMode* editMode = null,
+         Layer delegate() primarySrc = null) {
+        this.meshSrc_    = meshSrc;
+        this.editMode_   = editMode;
+        this.primarySrc_ = primarySrc;
         publishState();
     }
 
@@ -298,6 +308,35 @@ private:
                 } else {
                     r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
                 }
+                return;
+            }
+            case Mode.Pivot: {
+                // basis = primary item orientation (strips scale via normalize).
+                // capture-inferred: pivot rotation was not independently varied;
+                // identity observed because pivot rotation == item rotation for
+                // unrotated items. The parent-case rotation evidence (v1/v2)
+                // proves the axis stage does reflect item rotation, so a rotated
+                // item (== rotated pivot) rotates this basis the same way.
+                // Not in modeTracksSelection (item-fixed, not selection-derived).
+                auto l = primary_();
+                if (l is null) { r = Vec3(1,0,0); u = Vec3(0,1,0); f = Vec3(0,0,1); return; }
+                float[16] m = l.xform.composedMatrix();
+                r = normalize(Vec3(m[0], m[1], m[2]));
+                u = normalize(Vec3(m[4], m[5], m[6]));
+                f = normalize(Vec3(m[8], m[9], m[10]));
+                return;
+            }
+            case Mode.Parent: {
+                // basis = parent item's world rotation (normalize to strip scale).
+                // Reads exactly ONE level. Capture-verified ~1e-4.
+                // Not in modeTracksSelection (parent-fixed, not selection-derived).
+                auto l = primary_();
+                auto p = (l !is null) ? l.parent : null;
+                if (p is null) { r = Vec3(1,0,0); u = Vec3(0,1,0); f = Vec3(0,0,1); return; }
+                float[16] m = p.xform.composedMatrix();
+                r = normalize(Vec3(m[0], m[1], m[2]));
+                u = normalize(Vec3(m[4], m[5], m[6]));
+                f = normalize(Vec3(m[8], m[9], m[10]));
                 return;
             }
         }
@@ -730,6 +769,8 @@ private:
                 else if (value == "screen")     m = Mode.Screen;
                 else if (value == "manual")     m = Mode.Manual;
                 else if (value == "none")       m = Mode.None;
+                else if (value == "pivot")      m = Mode.Pivot;
+                else if (value == "parent")     m = Mode.Parent;
                 else return false;
                 mode = m;
                 return true;
@@ -751,6 +792,8 @@ private:
             case Mode.Screen:     return "screen";
             case Mode.Manual:     return "manual";
             case Mode.None:       return "none";
+            case Mode.Pivot:      return "pivot";
+            case Mode.Parent:     return "parent";
         }
     }
 

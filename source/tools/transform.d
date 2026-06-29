@@ -1109,6 +1109,8 @@ protected:
             case ActionCenterStage.Mode.Origin:
             case ActionCenterStage.Mode.Manual:
             case ActionCenterStage.Mode.Border:
+            case ActionCenterStage.Mode.Pivot:
+            case ActionCenterStage.Mode.Parent:
                 return false;
         }
     }
