@@ -7,7 +7,7 @@ import std.algorithm : canFind;
 
 import toolpipe.stage    : Stage, TaskCode, ordSnap;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : SnapPacket, SnapType;
+import toolpipe.packets  : SnapPacket, SnapType, SnapMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 
@@ -46,6 +46,7 @@ class SnapStage : Stage, Operator {
         SnapPacket pkt;
         pkt.enabled       = enabled;
         pkt.enabledTypes  = enabledTypes;
+        pkt.snapScope     = snapScope;
         pkt.innerRangePx  = innerRangePx;
         pkt.outerRangePx  = outerRangePx;
         pkt.fixedGrid     = fixedGrid;
@@ -62,15 +63,16 @@ class SnapStage : Stage, Operator {
         return true;
     }
 
-    bool   enabled       = false;
-    uint   enabledTypes  = SnapType.Vertex
-                         | SnapType.EdgeCenter
-                         | SnapType.PolyCenter
-                         | SnapType.Grid;
-    float  innerRangePx  = 24.0f;
-    float  outerRangePx  = 40.0f;
-    bool   fixedGrid     = false;
-    float  fixedGridSize = 1.0f;
+    bool     enabled       = false;
+    uint     enabledTypes  = SnapType.Vertex
+                           | SnapType.EdgeCenter
+                           | SnapType.PolyCenter
+                           | SnapType.Grid;
+    SnapMode snapScope     = SnapMode.Global;
+    float    innerRangePx  = 24.0f;
+    float    outerRangePx  = 40.0f;
+    bool     fixedGrid     = false;
+    float    fixedGridSize = 1.0f;
 
     this() { publishState(); }
 
@@ -86,6 +88,7 @@ class SnapStage : Stage, Operator {
                       | SnapType.EdgeCenter
                       | SnapType.PolyCenter
                       | SnapType.Grid;
+        snapScope     = SnapMode.Global;
         innerRangePx  = 24.0f;
         outerRangePx  = 40.0f;
         fixedGrid     = false;
@@ -110,6 +113,7 @@ class SnapStage : Stage, Operator {
         SnapPacket p;
         p.enabled       = enabled;
         p.enabledTypes  = enabledTypes;
+        p.snapScope     = snapScope;
         p.innerRangePx  = innerRangePx;
         p.outerRangePx  = outerRangePx;
         p.fixedGrid     = fixedGrid;
@@ -128,6 +132,7 @@ class SnapStage : Stage, Operator {
     void restoreConfigFromPacket(const ref SnapPacket p) {
         enabled       = p.enabled;
         enabledTypes  = p.enabledTypes;
+        snapScope     = p.snapScope;
         innerRangePx  = p.innerRangePx;
         outerRangePx  = p.outerRangePx;
         fixedGrid     = p.fixedGrid;
@@ -139,6 +144,7 @@ class SnapStage : Stage, Operator {
         return [
             ["enabled",       enabled ? "true" : "false"],
             ["types",         typesLabel()],
+            ["snapMode",      snapModeLabel()],
             ["innerRange",    format("%g", innerRangePx)],
             ["outerRange",    format("%g", outerRangePx)],
             ["fixedGrid",     fixedGrid ? "true" : "false"],
@@ -157,18 +163,30 @@ private:
                 uint mask = 0;
                 foreach (tok; value.split(",")) {
                     auto t = tok.strip;
-                    if      (t.length == 0)         continue;
-                    else if (t == "vertex")         mask |= SnapType.Vertex;
-                    else if (t == "edge")           mask |= SnapType.Edge;
-                    else if (t == "edgeCenter")     mask |= SnapType.EdgeCenter;
-                    else if (t == "polygon")        mask |= SnapType.Polygon;
-                    else if (t == "polyCenter")     mask |= SnapType.PolyCenter;
-                    else if (t == "grid")           mask |= SnapType.Grid;
-                    else if (t == "workplane")      mask |= SnapType.Workplane;
-                    else                            return false;
+                    if      (t.length == 0)          continue;
+                    else if (t == "vertex")          mask |= SnapType.Vertex;
+                    else if (t == "edge")            mask |= SnapType.Edge;
+                    else if (t == "edgeCenter")      mask |= SnapType.EdgeCenter;
+                    else if (t == "polygon")         mask |= SnapType.Polygon;
+                    else if (t == "polyCenter")      mask |= SnapType.PolyCenter;
+                    else if (t == "grid")            mask |= SnapType.Grid;
+                    else if (t == "workplane")       mask |= SnapType.Workplane;
+                    else if (t == "pivot")           mask |= SnapType.Pivot;
+                    else if (t == "intersection")    mask |= SnapType.Intersection;
+                    else if (t == "worldAxis")       mask |= SnapType.WorldAxis;
+                    else if (t == "straightLine")    mask |= SnapType.StraightLine;
+                    else if (t == "rightAngle")      mask |= SnapType.RightAngle;
+                    else if (t == "box")             mask |= SnapType.Box;
+                    else                             return false;
                 }
                 enabledTypes = mask;
                 return true;
+            }
+            case "snapMode": {
+                if      (value == "global")    { snapScope = SnapMode.Global;    return true; }
+                else if (value == "component") { snapScope = SnapMode.Component; return true; }
+                else if (value == "item")      { snapScope = SnapMode.Item;      return true; }
+                return false;
             }
             case "innerRange": innerRangePx  = parseFloat(value); return true;
             case "outerRange": outerRangePx  = parseFloat(value); return true;
@@ -194,14 +212,20 @@ private:
 
     static uint typeBit(string name) {
         switch (name) {
-            case "vertex":     return SnapType.Vertex;
-            case "edge":       return SnapType.Edge;
-            case "edgeCenter": return SnapType.EdgeCenter;
-            case "polygon":    return SnapType.Polygon;
-            case "polyCenter": return SnapType.PolyCenter;
-            case "grid":       return SnapType.Grid;
-            case "workplane":  return SnapType.Workplane;
-            default:           return 0;
+            case "vertex":       return SnapType.Vertex;
+            case "edge":         return SnapType.Edge;
+            case "edgeCenter":   return SnapType.EdgeCenter;
+            case "polygon":      return SnapType.Polygon;
+            case "polyCenter":   return SnapType.PolyCenter;
+            case "grid":         return SnapType.Grid;
+            case "workplane":    return SnapType.Workplane;
+            case "pivot":        return SnapType.Pivot;
+            case "intersection": return SnapType.Intersection;
+            case "worldAxis":    return SnapType.WorldAxis;
+            case "straightLine": return SnapType.StraightLine;
+            case "rightAngle":   return SnapType.RightAngle;
+            case "box":          return SnapType.Box;
+            default:             return 0;
         }
     }
 
@@ -209,39 +233,66 @@ private:
         // Stable, human-readable serialisation — matches the input
         // format of `setAttr("types", ...)` so round-trip is exact.
         string[] tokens;
-        if (enabledTypes & SnapType.Vertex)     tokens ~= "vertex";
-        if (enabledTypes & SnapType.Edge)       tokens ~= "edge";
-        if (enabledTypes & SnapType.EdgeCenter) tokens ~= "edgeCenter";
-        if (enabledTypes & SnapType.Polygon)    tokens ~= "polygon";
-        if (enabledTypes & SnapType.PolyCenter) tokens ~= "polyCenter";
-        if (enabledTypes & SnapType.Grid)       tokens ~= "grid";
-        if (enabledTypes & SnapType.Workplane)  tokens ~= "workplane";
+        if (enabledTypes & SnapType.Vertex)       tokens ~= "vertex";
+        if (enabledTypes & SnapType.Edge)         tokens ~= "edge";
+        if (enabledTypes & SnapType.EdgeCenter)   tokens ~= "edgeCenter";
+        if (enabledTypes & SnapType.Polygon)      tokens ~= "polygon";
+        if (enabledTypes & SnapType.PolyCenter)   tokens ~= "polyCenter";
+        if (enabledTypes & SnapType.Grid)         tokens ~= "grid";
+        if (enabledTypes & SnapType.Workplane)    tokens ~= "workplane";
+        if (enabledTypes & SnapType.Pivot)        tokens ~= "pivot";
+        if (enabledTypes & SnapType.Intersection) tokens ~= "intersection";
+        if (enabledTypes & SnapType.WorldAxis)    tokens ~= "worldAxis";
+        if (enabledTypes & SnapType.StraightLine) tokens ~= "straightLine";
+        if (enabledTypes & SnapType.RightAngle)   tokens ~= "rightAngle";
+        if (enabledTypes & SnapType.Box)          tokens ~= "box";
         if (tokens.length == 0) return "";
         string s = tokens[0];
         foreach (t; tokens[1 .. $]) s ~= "," ~ t;
         return s;
     }
 
+    string snapModeLabel() const {
+        final switch (snapScope) {
+            case SnapMode.Global:    return "global";
+            case SnapMode.Component: return "component";
+            case SnapMode.Item:      return "item";
+        }
+    }
+
     void publishState() {
         setStatePath("snap/enabled",   enabled   ? "true" : "false");
         setStatePath("snap/types",     typesLabel());
+        setStatePath("snap/snapMode",  snapModeLabel());
         setStatePath("snap/fixedGrid", fixedGrid ? "true" : "false");
         // Per-type bits — drives the popup's checked-state on each
         // type entry. Mirrors `enabledTypes & SnapType.<X>` truthiness.
         setStatePath("snap/types/vertex",
-                     (enabledTypes & SnapType.Vertex)     ? "true" : "false");
+                     (enabledTypes & SnapType.Vertex)       ? "true" : "false");
         setStatePath("snap/types/edge",
-                     (enabledTypes & SnapType.Edge)       ? "true" : "false");
+                     (enabledTypes & SnapType.Edge)         ? "true" : "false");
         setStatePath("snap/types/edgeCenter",
-                     (enabledTypes & SnapType.EdgeCenter) ? "true" : "false");
+                     (enabledTypes & SnapType.EdgeCenter)   ? "true" : "false");
         setStatePath("snap/types/polygon",
-                     (enabledTypes & SnapType.Polygon)    ? "true" : "false");
+                     (enabledTypes & SnapType.Polygon)      ? "true" : "false");
         setStatePath("snap/types/polyCenter",
-                     (enabledTypes & SnapType.PolyCenter) ? "true" : "false");
+                     (enabledTypes & SnapType.PolyCenter)   ? "true" : "false");
         setStatePath("snap/types/grid",
-                     (enabledTypes & SnapType.Grid)       ? "true" : "false");
+                     (enabledTypes & SnapType.Grid)         ? "true" : "false");
         setStatePath("snap/types/workplane",
-                     (enabledTypes & SnapType.Workplane)  ? "true" : "false");
+                     (enabledTypes & SnapType.Workplane)    ? "true" : "false");
+        setStatePath("snap/types/pivot",
+                     (enabledTypes & SnapType.Pivot)        ? "true" : "false");
+        setStatePath("snap/types/intersection",
+                     (enabledTypes & SnapType.Intersection) ? "true" : "false");
+        setStatePath("snap/types/worldAxis",
+                     (enabledTypes & SnapType.WorldAxis)    ? "true" : "false");
+        setStatePath("snap/types/straightLine",
+                     (enabledTypes & SnapType.StraightLine) ? "true" : "false");
+        setStatePath("snap/types/rightAngle",
+                     (enabledTypes & SnapType.RightAngle)   ? "true" : "false");
+        setStatePath("snap/types/box",
+                     (enabledTypes & SnapType.Box)          ? "true" : "false");
     }
 
     static float parseFloat(string s) {
