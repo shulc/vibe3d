@@ -183,6 +183,12 @@ panels:
         buttons:
           - { label: Extrude, action: { kind: tool, id: edge.extrude } }
           - { label: Extend,  action: { kind: tool, id: edge.extend } }
+          - { label: Bridge,  action: { kind: command, id: mesh.bridge } }
+  - title: Polygon
+    items:
+      - title: Commands
+        buttons:
+          - { label: Bridge,  action: { kind: command, id: mesh.bridge } }
   - title: Selection
     items:
       - title: Grow / Shrink
