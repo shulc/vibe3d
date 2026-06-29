@@ -297,17 +297,46 @@ private:
             case Mode.SelectAuto:
                 if (computeSelectionBboxBasis(r, u, f)) return;
                 goto case Mode.Auto;
-            case Mode.Local:
-            case Mode.Screen: {
-                // 7.2 follow-up — degrade to Auto basis (manual
-                // workplane if set, world XYZ otherwise; never the
-                // camera-derived auto-workplane).
+            case Mode.Local: {
+                // Local GLOBAL fallback = workplane (manual) or world XYZ. The real
+                // per-cluster Local basis is published separately in evaluate()
+                // (clusterRight/Up/Fwd when ACEN.Local has ≥2 clusters).
                 Vec3 a1, n, a2;
-                if (queryWorkplaneBasis(a1, n, a2)) {
-                    r = a1; u = n; f = a2;
-                } else {
+                if (queryWorkplaneBasis(a1, n, a2)) { r = a1; u = n; f = a2; }
+                else { r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1); }
+                return;
+            }
+            case Mode.Screen: {
+                // Screen basis = camera frame remapped (capture-verified,
+                // selection-independent):
+                //   right = camera up,  up = camera right,  fwd = camera view-direction.
+                // The view matrix (math.lookAt, column-major) stores the camera
+                // basis in its rows:
+                //   camRight = (m[0],m[4],m[8]),  camUp = (m[1],m[5],m[9]),
+                //   camFwd   = -(m[2],m[6],m[10]).
+                if (lastView_.width == 0 || lastView_.height == 0) {
+                    // No live viewport yet (headless before first subject packet)
+                    // → world XYZ, same safe default the other branches use.
                     r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
+                    return;
                 }
+                const float[16] m = lastView_.view;
+                // Pole / gimbal guard: at elevation ±90° lookAt's cross product
+                // for the right vector degenerates to zero and normalize() would
+                // produce NaN (math.normalize has no zero-guard).
+                // `!(rLenSq > eps)` catches both NaN (NaN comparisons are always
+                // false) and near-zero magnitudes, falling back to world XYZ.
+                float rLenSq = m[0]*m[0] + m[4]*m[4] + m[8]*m[8];
+                if (!(rLenSq > 1e-6f)) {
+                    r = Vec3(1, 0, 0); u = Vec3(0, 1, 0); f = Vec3(0, 0, 1);
+                    return;
+                }
+                Vec3 camRight = normalize(Vec3( m[0],  m[4],  m[8]));
+                Vec3 camUp    = normalize(Vec3( m[1],  m[5],  m[9]));
+                Vec3 camFwd   = normalize(Vec3(-m[2], -m[6], -m[10]));
+                r = camUp;     // screen-X  ← camera up
+                u = camRight;  // screen-Y  ← camera right
+                f = camFwd;    // screen-Z  ← camera view direction (into scene)
                 return;
             }
             case Mode.Pivot: {
