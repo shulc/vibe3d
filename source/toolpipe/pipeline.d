@@ -208,6 +208,7 @@ public:
             case Task.Axis: return cast(int)Cat.pipeAxis;
             case Task.Wght: return cast(int)Cat.pipeFalloff;
             case Task.Actr: return -1;
+            case Task.Path: return -1;
         }
     }
 
