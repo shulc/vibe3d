@@ -53,6 +53,7 @@ import tools.torus;
 import tools.pen;
 import tools.edge_extrude : EdgeExtrudeTool;
 import tools.edge_extend : EdgeExtendTool;
+import tools.edge_slide : EdgeSlideTool;
 import tools.poly_extrude : PolyExtrudeTool;
 import tools.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
@@ -113,6 +114,7 @@ import commands.mesh.transform;
 import commands.mesh.quantize;
 import commands.mesh.jitter;
 import commands.mesh.smooth;
+import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
 import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
@@ -1949,6 +1951,13 @@ void main(string[] args) {
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
+    reg.toolFactories["edge.slide"] = () {
+        auto t = new EdgeSlideTool(&mesh(), cameraView, editMode, &gpu,
+                                   &vertexCache, &edgeCache, &faceCache);
+        t.setUndoBindings(history, vxEditFactory);
+        t.setPipeGizmoHost(pipeGizmoHost);
+        return cast(Tool)t;
+    };
     reg.toolFactories["xfrm.quantize"] = () {
         auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu,
                                       &vertexCache, &edgeCache, &faceCache);
@@ -2470,6 +2479,9 @@ void main(string[] args) {
     reg.commandFactories["mesh.jitter"] = () => cast(Command)
         new MeshJitter(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.edge_slide"] = () => cast(Command)
+        new MeshEdgeSlide(&mesh(), cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.smooth"] = () => cast(Command)
         new MeshSmooth(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
