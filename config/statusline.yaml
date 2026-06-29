@@ -207,6 +207,9 @@ groups:
             - label: Selection
               action: { kind: script, lines: ["tool.pipe.attr falloff type selection"] }
               checked: { path: "falloff/types/selection", equals: "true" }
+            - label: Vertex Map
+              action: { kind: script, lines: ["tool.pipe.attr falloff type vertexMap"] }
+              checked: { path: "falloff/types/vertexMap", equals: "true" }
             # Shape preset moved to Tool Properties → Falloff section
             # (Phase 7.9). Status-bar pulldown owns only the type, not
             # the per-type config.
@@ -232,7 +235,8 @@ groups:
                   - { label: Screen,    action: { kind: script, lines: ["falloff.add screen"] } }
                   - { label: Lasso,     action: { kind: script, lines: ["falloff.add lasso"] } }
                   - { label: Element,   action: { kind: script, lines: ["falloff.add element"] } }
-                  - { label: Selection, action: { kind: script, lines: ["falloff.add selection"] } }
+                  - { label: Selection,   action: { kind: script, lines: ["falloff.add selection"] } }
+                  - { label: Vertex Map, action: { kind: script, lines: ["falloff.add vertexMap"] } }
               - { kind: divider }
               - { label: "Clear Stacked", action: { kind: command, id: falloff.clear } }
       # Phase 7.6: Symmetry (SYMM) — MODO symmetry-popover parity.
