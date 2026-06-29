@@ -74,6 +74,9 @@ import commands.file.load;
 import commands.file.save;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
+import commands.mesh.triple      : MeshTriple;
+import commands.mesh.quadruple   : MeshQuadruple;
+import commands.mesh.detriangulate : MeshDetriangulate;
 import commands.mesh.subpatch_toggle;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
@@ -2345,6 +2348,18 @@ void main(string[] args) {
         new SubdivideFaceted(&mesh(), cameraView, editMode,
                              &gpu, &vertexCache, &edgeCache, &faceCache,
                              () => setActiveTool(null));
+    reg.commandFactories["mesh.triple"] = () => cast(Command)
+        new MeshTriple(&mesh(), cameraView, editMode,
+                       &gpu, &vertexCache, &edgeCache, &faceCache,
+                       () => setActiveTool(null));
+    reg.commandFactories["mesh.quadruple"] = () => cast(Command)
+        new MeshQuadruple(&mesh(), cameraView, editMode,
+                          &gpu, &vertexCache, &edgeCache, &faceCache,
+                          () => setActiveTool(null));
+    reg.commandFactories["mesh.detriangulate"] = () => cast(Command)
+        new MeshDetriangulate(&mesh(), cameraView, editMode,
+                              &gpu, &vertexCache, &edgeCache, &faceCache,
+                              () => setActiveTool(null));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.split_edge"] = () => cast(Command)
