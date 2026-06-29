@@ -48,16 +48,16 @@ void postSelect(string mode, int[] indices) {
 // TEST 1: Headless tool path.
 // `tool.set poly.extrude on` + `tool.attr poly.extrude distance 0.5` +
 // `tool.doApply` must produce the same topology as the one-shot command.
-void testHeadlessTool() {
+unittest { // HeadlessTool
     resetCube();
     postSelect("polygons", [0]);   // switch to Polygons mode + select face 0
 
     // Activate the interactive tool (does NOT extrude yet — distance=0 at activate).
-    postCommand(`{"name":"tool.set","params":{"name":"poly.extrude","on":true}}`);
+    postCommand("tool.set poly.extrude on");
     // Set the distance parameter.
-    postCommand(`{"name":"tool.attr","params":{"tool":"poly.extrude","name":"distance","value":0.5}}`);
+    postCommand("tool.attr poly.extrude distance 0.5");
     // Apply: runs the kernel once from the clean cage.
-    postCommand(`{"name":"tool.doApply","params":{}}`);
+    postCommand("tool.doApply");
 
     auto m = getModel();
     assert(m["faces"].array.length == 10,
@@ -69,13 +69,13 @@ void testHeadlessTool() {
 }
 
 // TEST 2: Undo restores the original mesh after a headless apply.
-void testHeadlessToolUndo() {
+unittest { // HeadlessToolUndo
     resetCube();
     postSelect("polygons", [0]);
 
-    postCommand(`{"name":"tool.set","params":{"name":"poly.extrude","on":true}}`);
-    postCommand(`{"name":"tool.attr","params":{"tool":"poly.extrude","name":"distance","value":0.5}}`);
-    postCommand(`{"name":"tool.doApply","params":{}}`);
+    postCommand("tool.set poly.extrude on");
+    postCommand("tool.attr poly.extrude distance 0.5");
+    postCommand("tool.doApply");
     assert(getModel()["faces"].array.length == 10, "testHeadlessToolUndo: after apply");
 
     postUndo();
@@ -90,20 +90,20 @@ void testHeadlessToolUndo() {
 
 // TEST 3: Tool↔command parity.
 // The headless tool and the one-shot command must produce the same face count.
-void testToolCommandParity() {
+unittest { // ToolCommandParity
     // One-shot command result.
     resetCube();
     postSelect("polygons", [0]);
-    postCommand(`{"name":"poly.extrude","params":{"distance":0.5}}`);
+    postCommand(`{"id":"poly.extrude","params":{"distance":0.5}}`);
     size_t cmdFaces = getModel()["faces"].array.length;
     size_t cmdVerts = getModel()["vertices"].array.length;
 
     // Headless tool result.
     resetCube();
     postSelect("polygons", [0]);
-    postCommand(`{"name":"tool.set","params":{"name":"poly.extrude","on":true}}`);
-    postCommand(`{"name":"tool.attr","params":{"tool":"poly.extrude","name":"distance","value":0.5}}`);
-    postCommand(`{"name":"tool.doApply","params":{}}`);
+    postCommand("tool.set poly.extrude on");
+    postCommand("tool.attr poly.extrude distance 0.5");
+    postCommand("tool.doApply");
     size_t toolFaces = getModel()["faces"].array.length;
     size_t toolVerts = getModel()["vertices"].array.length;
 

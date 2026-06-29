@@ -130,7 +130,7 @@ bool isHoleFree(JSONValue m) {
 // Select face 0 in polygon mode, extrude by 0.5.
 // Expected: 10 faces, 12 verts.  Cap centroid ≈ orig centroid + 0.5 * orig normal.
 // Undo restores 6 faces, 8 verts.
-void testSingleFaceExtrude() {
+unittest { // SingleFaceExtrude
     resetCube();
 
     auto before = getModel();
@@ -146,7 +146,7 @@ void testSingleFaceExtrude() {
     // Select face 0 (switches to Polygons mode).
     postSelect("polygons", [0]);
     // Run extrude command.
-    postCommand(`{"name":"poly.extrude","params":{"distance":0.5}}`);
+    postCommand(`{"id":"poly.extrude","params":{"distance":0.5}}`);
 
     auto after = getModel();
     assert(after["faces"].array.length == 10,
@@ -191,7 +191,7 @@ void testSingleFaceExtrude() {
 // Grid (n=2): 4 quads, 9 verts. Select f0 and f1 (adjacent, sharing edge (1,4)).
 // Region boundary has 6 edges (3 from f0 + 3 from f1; shared internal edge excluded).
 // Expected: 10 faces (2 orig + 2 caps + 6 walls), 15 verts (9 + 6 clones).
-void testMultiFaceRegion() {
+unittest { // MultiFaceRegion
     resetGrid(2);
 
     auto before = getModel();
@@ -199,7 +199,7 @@ void testMultiFaceRegion() {
     assert(before["vertices"].array.length == 9, "BEFORE: expected 9 grid verts");
 
     postSelect("polygons", [0, 1]);
-    postCommand(`{"name":"poly.extrude","params":{"distance":0.3}}`);
+    postCommand(`{"id":"poly.extrude","params":{"distance":0.3}}`);
 
     auto after = getModel();
     assert(after["faces"].array.length == 10,
@@ -223,12 +223,12 @@ void testMultiFaceRegion() {
 
 // TEST 3: Closed island (all 6 cube faces) — no boundary edges → no-op.
 // Nothing should change; the command must not extrude or translate anything.
-void testClosedIslandNoOp() {
+unittest { // ClosedIslandNoOp
     resetCube();
 
     // Select all 6 faces.
     postSelect("polygons", [0, 1, 2, 3, 4, 5]);
-    string raw = postCommandRaw(`{"name":"poly.extrude","params":{"distance":0.5}}`);
+    string raw = postCommandRaw(`{"id":"poly.extrude","params":{"distance":0.5}}`);
     // The command returns false (kernel returns 0); the API may still respond ok
     // or not-ok depending on how the command bus handles it.  The key invariant
     // is topology is UNCHANGED.
@@ -240,10 +240,10 @@ void testClosedIslandNoOp() {
 }
 
 // TEST 4: distance==0 → no-op (snapshot discarded, topology unchanged).
-void testDistanceZeroNoOp() {
+unittest { // DistanceZeroNoOp
     resetCube();
     postSelect("polygons", [0]);
-    string raw = postCommandRaw(`{"name":"poly.extrude","params":{"distance":0.0}}`);
+    string raw = postCommandRaw(`{"id":"poly.extrude","params":{"distance":0.0}}`);
     auto m = getModel();
     assert(m["faces"].array.length == 6,
         "testDistanceZeroNoOp: distance==0 must not change face count");
@@ -252,10 +252,10 @@ void testDistanceZeroNoOp() {
 }
 
 // TEST 5: Undo+redo round-trip.
-void testUndoRedo() {
+unittest { // UndoRedo
     resetCube();
     postSelect("polygons", [0]);
-    postCommand(`{"name":"poly.extrude","params":{"distance":0.5}}`);
+    postCommand(`{"id":"poly.extrude","params":{"distance":0.5}}`);
     assert(getModel()["faces"].array.length == 10, "testUndoRedo: after extrude");
 
     postUndo();
