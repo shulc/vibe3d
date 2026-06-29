@@ -316,3 +316,101 @@ unittest { // Pin the boundary-survival fix: delete ALL edges on an OPEN grid.
     assert(after["vertexCount"].integer == 0,
         "expected 0 verts after whole-grid edge delete, got " ~ after["vertexCount"].integer.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// Cross-mode redirect — task 0110 regression tests
+//
+// Scenario: a selection that lives in one element type is present while the
+// active edit mode is a DIFFERENT element type. The pre-fix code keyed the
+// "empty selection ⇒ whole mesh" check on the active mode alone and wiped the
+// mesh even though a face (or edge/vert) selection existed in another mode.
+// The fix redirects to the type that actually holds a selection.
+// ---------------------------------------------------------------------------
+
+unittest { // cross-mode: face selected, vertices mode active → delete ONLY that face
+    // Pre-fix: nothingSelected(Vertices)=true → dissolveVerticesByMask(allTrue) → 0 faces.
+    // Post-fix: effectiveDeleteMode → Polygons → deleteFacesByMask([face 0]) → 5 faces.
+    resetCube();
+    postSelect("polygons", [0]);   // face 0 selected; mode = polygons
+    postSelect("vertices", []);    // mode flips to vertices; face 0 mark survives
+    postCommand(`{"id":"mesh.delete"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 5,
+        "cross-mode delete (vertices active, face 0 selected) expected 5 faces, got "
+        ~ m["faceCount"].integer.to!string);
+    assert(m["vertexCount"].integer == 8,
+        "expected 8 verts (none orphaned), got " ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // cross-mode undo: undo restores the cube + redo re-deletes the face
+    resetCube();
+    postSelect("polygons", [0]);
+    postSelect("vertices", []);
+    postCommand(`{"id":"mesh.delete"}`);
+    assert(getModel()["faceCount"].integer == 5, "pre-undo: expected 5 faces");
+
+    auto u = postUndo();
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 6, "undo should restore 6 faces");
+    assert(m["vertexCount"].integer == 8, "undo should restore 8 verts");
+
+    auto r = postRedo();
+    assert(r["status"].str == "ok", "redo failed: " ~ r.toString);
+    assert(getModel()["faceCount"].integer == 5, "redo should re-delete face → 5 faces");
+}
+
+unittest { // cross-mode: face selected, edges mode active → delete ONLY that face
+    // Pre-fix on a closed cube: nothingSelected(Edges)=true → removeEdgesByMask(allTrue)
+    // + dissolveDegree2Verts → net no-op (cube stayed 6 faces — silently wrong).
+    // Post-fix: effectiveDeleteMode → Polygons → deleteFacesByMask([face 0]) → 5 faces.
+    resetCube();
+    postSelect("polygons", [0]);   // face 0 selected
+    postSelect("edges", []);       // mode flips to edges; face 0 mark survives
+    postCommand(`{"id":"mesh.delete"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 5,
+        "cross-mode delete (edges active, face 0 selected) expected 5 faces, got "
+        ~ m["faceCount"].integer.to!string);
+    assert(m["vertexCount"].integer == 8,
+        "expected 8 verts, got " ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // cross-mode mesh.remove parity: same redirect applies to mesh.remove
+    resetCube();
+    postSelect("polygons", [0]);
+    postSelect("vertices", []);
+    postCommand(`{"id":"mesh.remove"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 5,
+        "mesh.remove cross-mode: expected 5 faces, got " ~ m["faceCount"].integer.to!string);
+    assert(m["vertexCount"].integer == 8,
+        "expected 8 verts, got " ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // multi-face cross-mode: 2 faces selected, vertices active → 4 faces remain
+    resetCube();
+    postSelect("polygons", [0, 1]);  // back + front selected
+    postSelect("vertices", []);      // mode flips to vertices; face marks survive
+    postCommand(`{"id":"mesh.delete"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 4,
+        "cross-mode multi-face delete expected 4 faces, got " ~ m["faceCount"].integer.to!string);
+    assert(m["vertexCount"].integer == 8,
+        "expected 8 verts, got " ~ m["vertexCount"].integer.to!string);
+}
+
+unittest { // no-regression: truly-empty selection still wipes whole mesh (convention preserved)
+    // effectiveDeleteMode returns current when nothing is selected anywhere,
+    // so nothingSelected(current)=true fires and the whole-mesh all-true mask
+    // wipes the mesh. This is the intended behaviour pinned by the original test.
+    resetCube();
+    // No select call — default state: vertices mode, nothing selected anywhere.
+    postCommand(`{"id":"mesh.delete"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 0,
+        "truly-empty delete must still wipe whole mesh, got "
+        ~ m["faceCount"].integer.to!string ~ " faces");
+    assert(m["vertexCount"].integer == 0);
+    assert(m["edgeCount"].integer == 0);
+}
