@@ -10,7 +10,7 @@ import toolpipe.stage    : Stage, TaskCode, ordSymm;
 import toolpipe.packets  : SymmetryPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
-import symmetry          : rebuildPairing;
+import symmetry          : rebuildPairing, rebuildPairingTopological;
 import params            : Param, IntEnumEntry;
 
 // ---------------------------------------------------------------------------
@@ -78,14 +78,20 @@ class SymmetryStage : Stage, Operator {
             bool meshChanged =
                 cachedMeshAddr_        != cast(size_t)mesh_ ||
                 cachedMutationVersion_ != mesh_.mutationVersion;
-            if (!cachedReady_ || planeChanged || meshChanged) {
-                rebuildPairing(*mesh_, pkt,
-                               cachedPairOf_, cachedOnPlane_, cachedVertSign_);
+            bool topologyChanged = cachedTopology_ != topology;
+            if (!cachedReady_ || planeChanged || meshChanged || topologyChanged) {
+                if (topology)
+                    rebuildPairingTopological(*mesh_, pkt,
+                                             cachedPairOf_, cachedOnPlane_, cachedVertSign_);
+                else
+                    rebuildPairing(*mesh_, pkt,
+                                   cachedPairOf_, cachedOnPlane_, cachedVertSign_);
                 cachedMeshAddr_        = cast(size_t)mesh_;
                 cachedMutationVersion_ = mesh_.mutationVersion;
                 cachedPlanePoint_      = pkt.planePoint;
                 cachedPlaneNormal_     = pkt.planeNormal;
                 cachedEpsilon_         = epsilonWorld;
+                cachedTopology_        = topology;
                 cachedReady_           = true;
             }
             pkt.pairOf   = cachedPairOf_;
@@ -146,6 +152,7 @@ private:
     int[]  cachedPairOf_;
     bool[] cachedOnPlane_;
     int[]  cachedVertSign_;
+    bool   cachedTopology_         = false;
     bool   cachedReady_           = false;
 
 public:
@@ -181,6 +188,7 @@ public:
         cachedPairOf_.length   = 0;
         cachedOnPlane_.length  = 0;
         cachedVertSign_.length = 0;
+        cachedTopology_        = false;
         cachedReady_           = false;
         publishState();
     }
