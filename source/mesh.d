@@ -3847,7 +3847,7 @@ struct Mesh {
     /// Phase 5 (delta-path undo) is deferred: the drop+compact step makes the
     /// append-only recordAddFaces revert insufficient, so only snapshot undo
     /// (MeshFaceExtrudeEdit) is wired for Phases 1-4.
-    size_t extrudeFacesByMask(in bool[] mask, float distance) {
+    size_t extrudeFacesByMask(in bool[] mask, float distance, bool smooth = false) {
         if (mask.length != faces.length) return 0;
         size_t selCount = 0;
         foreach (b; mask) if (b) ++selCount;
@@ -3865,6 +3865,49 @@ struct Mesh {
             normSum = (rlen > 1e-6f) ? normSum * (1.0f / rlen) : Vec3(0, 1, 0);
         }
         immutable Vec3 regionNormal = normSum;
+
+        // Per-vertex offset table — FULLY built BEFORE the dedup clone loop.
+        // The clone loop visits each vid only once (on first sight), so any
+        // accumulation inside it would drop every face's contribution after
+        // the first for shared/ridge verts.  We pre-build here to guarantee
+        // the complete sum.
+        //
+        // Smooth (smooth=true): accumulate the unit normals of all selected
+        // incident faces for each vid, then normalize.  Fallback chain:
+        //   avg-normal degenerate → regionNormal → Vec3(0,1,0).
+        // vibe3d-divergence: UNIFORM weighting (each face's unit normal
+        // contributes equally).  Area- or angle-weighted averaging would be a
+        // one-line change to the accumulation; deferred as a documented
+        // divergence — the geometry-reference harness is absent from this
+        // checkout so empirical capture is infeasible.
+        //
+        // Rigid (smooth=false, default): every vid gets regionNormal*distance,
+        // byte-identical to the pre-refactor behaviour.
+        Vec3[uint] vertOffset;
+        if (smooth) {
+            Vec3[uint] vNormSum;
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                Vec3 fn = faceNormal(cast(uint)fi);
+                foreach (vid; faces[fi]) {
+                    auto p = vid in vNormSum;
+                    if (p is null) vNormSum[vid] = fn;
+                    else          *p = *p + fn;
+                }
+            }
+            foreach (vid, nsum; vNormSum) {
+                float nlen = sqrt(nsum.x*nsum.x + nsum.y*nsum.y + nsum.z*nsum.z);
+                Vec3 dir = (nlen > 1e-6f) ? nsum * (1.0f / nlen) : regionNormal;
+                vertOffset[vid] = dir * distance;
+            }
+        } else {
+            foreach (fi; 0 .. faces.length) {
+                if (!mask[fi]) continue;
+                foreach (vid; faces[fi])
+                    if (vid !in vertOffset)
+                        vertOffset[vid] = regionNormal * distance;
+            }
+        }
 
         // Edge → (≤2 incident faces) adjacency, one pass.
         int[2][ulong] edgeFaces;
@@ -3898,13 +3941,13 @@ struct Mesh {
         if (bEdges.length == 0) return 0;
 
         // Clone each vertex used by a selected face (once per vertex).
-        // Clones are offset by regionNormal * distance.
+        // Offset comes from the pre-built vertOffset table, not computed here.
         uint[uint] vertMap;
         foreach (fi; 0 .. faces.length) {
             if (!mask[fi]) continue;
             foreach (vid; faces[fi]) {
                 if (vid !in vertMap)
-                    vertMap[vid] = addVertex(vertices[vid] + regionNormal * distance);
+                    vertMap[vid] = addVertex(vertices[vid] + vertOffset[vid]);
             }
         }
 
@@ -4051,6 +4094,106 @@ struct Mesh {
                 "extrudeFacesByMask: closed island changed face count");
             assert(m.vertices.length == 8,
                 "extrudeFacesByMask: closed island changed vert count");
+        }
+
+        // ── Smooth-shift discriminator: symmetric two-quad tent ──────────────
+        // Geometry:
+        //   v0=(-1,0,0)  v1=(-1,0,1)   — outer left
+        //   v2=( 0,1,0)  v3=( 0,1,1)   — ridge (shared by both faces)
+        //   v4=( 1,0,0)  v5=( 1,0,1)   — outer right
+        //   face 0: [0,1,3,2]   face 1: [2,3,5,4]
+        //
+        // Face normals (Newell):
+        //   n0 = (-1/√2,  1/√2, 0)
+        //   n1 = ( 1/√2,  1/√2, 0)
+        //   regionNormal = (0, 1, 0)          (normalized n0+n1)
+        //   smooth-ridge avg = normalize(n0+n1) = (0, 1, 0)  ← same as rigid
+        //   smooth-outer-left  = n0            ← differs from rigid
+        //   smooth-outer-right = n1            ← differs from rigid
+        //
+        // The RIDGE assertion is the ordering-bug discriminator: if the
+        // vertOffset were accumulated inside the clone loop, the ridge vert
+        // would be offset by only the FIRST face's normal (n0 or n1),
+        // placing it at (~±0.354, ~1.354, *) instead of (0, 1.5, *).
+
+        // Test A: smooth=true — verify ridge AND outer-vert positions.
+        {
+            import std.math : abs, sqrt;
+            Mesh m;
+            m.vertices = [
+                Vec3(-1, 0, 0), Vec3(-1, 0, 1),   // 0,1 outer-left
+                Vec3( 0, 1, 0), Vec3( 0, 1, 1),   // 2,3 ridge
+                Vec3( 1, 0, 0), Vec3( 1, 0, 1),   // 4,5 outer-right
+            ];
+            m.addFace([0u, 1u, 3u, 2u]);  // left face
+            m.addFace([2u, 3u, 5u, 4u]);  // right face
+            m.buildLoops();
+
+            bool[] mask; mask.length = 2; mask[] = true;
+            size_t n = m.extrudeFacesByMask(mask, 0.5f, true);
+            assert(n > 0, "smooth tent: returned 0");
+
+            // Ridge cap verts: v2=(0,1,0) and v3=(0,1,1) offset by (0,1,0)*0.5
+            //   → clone at (0, 1.5, 0) and (0, 1.5, 1).
+            // If ordering-bug present: ridge offset by n0 only → (≈-0.354, ≈1.354, *)
+            bool ridgeFront = false, ridgeBack = false;
+            // Outer-left cap: v0=(-1,0,0) offset by n0*0.5 → x ≈ -1-0.5/√2 ≈ -1.354
+            bool outerLeft = false;
+            // Outer-right cap: v4=(1,0,0) offset by n1*0.5 → x ≈ 1+0.5/√2 ≈ 1.354
+            bool outerRight = false;
+            immutable float halfOverSqrt2 = 0.5f / sqrt(2.0f);
+            foreach (v; m.vertices) {
+                // Ridge front clone
+                if (abs(v.x) < 1e-4f && abs(v.y - 1.5f) < 1e-4f &&
+                    abs(v.z) < 1e-4f)
+                    ridgeFront = true;
+                // Ridge back clone
+                if (abs(v.x) < 1e-4f && abs(v.y - 1.5f) < 1e-4f &&
+                    abs(v.z - 1.0f) < 1e-4f)
+                    ridgeBack = true;
+                // Outer-left clone (x < -1, y ≈ halfOverSqrt2)
+                if (abs(v.x - (-1.0f - halfOverSqrt2)) < 1e-4f &&
+                    abs(v.y - halfOverSqrt2) < 1e-4f)
+                    outerLeft = true;
+                // Outer-right clone (x > 1, y ≈ halfOverSqrt2)
+                if (abs(v.x - (1.0f + halfOverSqrt2)) < 1e-4f &&
+                    abs(v.y - halfOverSqrt2) < 1e-4f)
+                    outerRight = true;
+            }
+            assert(ridgeFront,
+                "smooth tent: ridge front clone not at (0,1.5,0) — " ~
+                "ordering bug? (in-loop accum offsets ridge by first-face normal only)");
+            assert(ridgeBack,
+                "smooth tent: ridge back clone not at (0,1.5,1)");
+            assert(outerLeft,
+                "smooth tent: outer-left clone not offset along face-0 normal");
+            assert(outerRight,
+                "smooth tent: outer-right clone not offset along face-1 normal");
+        }
+
+        // Test B: smooth=true on a single flat face == smooth=false (rigid).
+        // With one selected face, faceNormal IS the regionNormal, so every
+        // cap vertex gets the same offset regardless of mode.
+        {
+            import std.math : abs;
+            auto m = makeCube();
+            bool[] mask; mask.length = m.faces.length; mask[] = false;
+            mask[0] = true;
+            Vec3 origC = m.faceCentroid(0);
+            Vec3 origN = m.faceNormal(0);
+            size_t n = m.extrudeFacesByMask(mask, 0.5f, true);
+            assert(n > 0, "smooth flat single-face: returned 0");
+            // Find cap face (selected after the op).
+            int capFi = -1;
+            foreach (fi; 0 .. m.faces.length)
+                if (m.isFaceSelected(fi)) { capFi = cast(int)fi; break; }
+            assert(capFi >= 0, "smooth flat single-face: no cap selected");
+            Vec3 capC = m.faceCentroid(cast(uint)capFi);
+            Vec3 exp  = origC + origN * 0.5f;
+            assert(abs(capC.x - exp.x) < 1e-4f &&
+                   abs(capC.y - exp.y) < 1e-4f &&
+                   abs(capC.z - exp.z) < 1e-4f,
+                "smooth flat single-face: cap centroid differs from rigid extrude");
         }
     }
 
