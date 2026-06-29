@@ -5,9 +5,10 @@ import core.sync.mutex : Mutex;
 
 import math : Vec3, Viewport, projectToWindowFull, screenRay,
               rayPlaneIntersect, pointInPolygon2D,
-              closestOnSegment2DSquared, cross, dot;
+              closestOnSegment2DSquared, cross, dot,
+              closestPointOnLineToRay;
 import mesh : Mesh;
-import toolpipe.packets : SnapPacket, SnapType;
+import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
@@ -29,21 +30,27 @@ import perf_probe : g_perf, Cat;
 // ---------------------------------------------------------------------------
 
 struct SnapResult {
-    Vec3     worldPos     = Vec3(0, 0, 0); /// snapped position; equals input when !snapped
-    Vec3     highlightPos = Vec3(0, 0, 0); /// candidate within outerRange (for pre-snap UI)
-    bool     snapped;           /// true iff input was within innerRange of a candidate
-    bool     highlighted;       /// true iff any candidate within outerRange
-    SnapType targetType  = SnapType.None;  /// which type fired (for feedback rendering)
-    int      targetIndex = -1;             /// mesh element index (vert/edge/face) or -1
-    int      targetSource = 0;             /// source slot the winner came from:
-                                           /// 0 = active mesh (the `mesh` arg to
-                                           /// snapCursor); 1..N = the background
-                                           /// source `snapSource(targetSource)`
-                                           /// (layers Stage 5). Default 0 ⇒ the
-                                           /// single-layer / active-only path is
-                                           /// byte-identical to pre-Stage-5: every
-                                           /// winner is from slot 0 and reads as
-                                           /// "active mesh".
+    Vec3     worldPos      = Vec3(0, 0, 0); /// snapped position; equals input when !snapped
+    Vec3     highlightPos  = Vec3(0, 0, 0); /// candidate within outerRange (for pre-snap UI)
+    bool     snapped;            /// true iff input was within innerRange of a candidate
+    bool     highlighted;        /// true iff any candidate within outerRange
+    SnapType targetType    = SnapType.None; /// discrete type that fired (for feedback rendering)
+    int      targetIndex   = -1;            /// mesh element index (vert/edge/face) or -1
+    int      targetSource  = 0;             /// source slot the winner came from:
+                                            /// 0 = active mesh (the `mesh` arg to
+                                            /// snapCursor); 1..N = the background
+                                            /// source `snapSource(targetSource)`
+                                            /// (layers Stage 5). Default 0 ⇒ the
+                                            /// single-layer / active-only path is
+                                            /// byte-identical to pre-Stage-5: every
+                                            /// winner is from slot 0 and reads as
+                                            /// "active mesh".
+    // Stage 2: constraint tier. Populated only when a constraint (LINE/PLANE)
+    // produced the snapped position (the discrete tier did not snap). When the
+    // discrete tier snapped, this stays None. The constraint owns the position
+    // (worldPos) while targetType/targetIndex/highlightPos stay the discrete
+    // highlight's (or None/-1 if no discrete highlight exists).
+    SnapType constraintType = SnapType.None;
 }
 
 /// Config-equality for two SnapPackets — compares only the user-facing CONFIG
@@ -57,6 +64,7 @@ bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
 {
     return a.enabled       == b.enabled
         && a.enabledTypes  == b.enabledTypes
+        && a.snapScope     == b.snapScope
         && a.innerRangePx  == b.innerRangePx
         && a.outerRangePx  == b.outerRangePx
         && a.fixedGrid     == b.fixedGrid
@@ -123,6 +131,72 @@ const(Mesh)* snapSource(int slot) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Item snap frames (Stage 3). One frame per visible layer, INCLUDING the
+// active/primary layer (item snapping deliberately snaps to the active item's
+// own pivot/box — unlike setBackgroundSnapSources which skips the primary).
+//
+// Install shape mirrors setBackgroundSnapSources exactly: the setItemSnapFrames
+// CALL is unconditional every frame (app.d, next to setBackgroundSnapSources)
+// so a /api/reset that collapses the document to one layer self-clears the
+// prior test's multi-layer frames. Only the slice-fill loop may early-out.
+// ---------------------------------------------------------------------------
+
+/// Per-layer (item) snap frame: world pivot point + world-space AABB.
+/// World pivot = layer.xform.pos + layer.xform.pivot (from composedMatrix
+/// derivation — M = T(pos)·T(pivot)·R·S·T(-pivot) maps local pivot → pos+pivot).
+/// World AABB = AABB of the 8 composedMatrix-transformed local AABB corners.
+struct ItemSnapFrame {
+    Vec3 pivot;              ///< world-space pivot point
+    Vec3 bboxMin;            ///< world-space AABB min (only valid when hasBBox)
+    Vec3 bboxMax;            ///< world-space AABB max (only valid when hasBBox)
+    bool hasBBox;            ///< false when the layer mesh has no vertices
+}
+
+// Guarded by the same g_vgridMutex as g_snapSources.
+private __gshared ItemSnapFrame[] g_itemSnapFrames;
+
+/// Install the item snap frames for all visible layers. Unlike
+/// setBackgroundSnapSources, this includes the active/primary layer.
+/// Pass an empty slice for a document with no visible layers (unusual).
+/// Copies into an owned buffer so the caller's slice need not outlive the call.
+void setItemSnapFrames(ItemSnapFrame[] frames) {
+    synchronized (g_vgridMutex) {
+        g_itemSnapFrames.length = frames.length;
+        foreach (i, ref f; frames) g_itemSnapFrames[i] = f;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scope filter (Stage 5). Total predicate over all SnapType values.
+// Component bucket: Vertex|Edge|EdgeCenter|Polygon|PolyCenter|Intersection.
+// Item bucket:      Pivot|Box.
+// Scope-independent (always eligible): Grid|Workplane|WorldAxis|
+//                                      StraightLine|RightAngle.
+// Under Global all types pass; under Component only Component + guides;
+// under Item only Item + guides.
+// ---------------------------------------------------------------------------
+bool typeEligible(SnapType t, SnapMode snapScope_)
+    pure nothrow @nogc @safe
+{
+    // Scope-independent guides pass in every mode.
+    if (t == SnapType.Grid        || t == SnapType.Workplane   ||
+        t == SnapType.WorldAxis   || t == SnapType.StraightLine ||
+        t == SnapType.RightAngle)
+        return true;
+
+    bool isComponent = (t == SnapType.Vertex    || t == SnapType.Edge        ||
+                        t == SnapType.EdgeCenter || t == SnapType.Polygon     ||
+                        t == SnapType.PolyCenter || t == SnapType.Intersection);
+    bool isItem      = (t == SnapType.Pivot      || t == SnapType.Box);
+
+    final switch (snapScope_) {
+        case SnapMode.Global:    return true;
+        case SnapMode.Component: return isComponent;
+        case SnapMode.Item:      return isItem;
+    }
+}
+
 /// Snap the world position `cursorWorld` corresponding to screen pixel
 /// (sx, sy) according to `cfg`. `excludeVerts` lists vertex indices
 /// the candidate walk must skip — typically the dragged element's own
@@ -149,13 +223,33 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     res.targetSource = 0;
     if (!cfg.enabled) return res;
 
-    // Best (closest) candidate across all enabled types. Screen-space
-    // distance — a pixel-range semantic.
+    // -----------------------------------------------------------------------
+    // Two-tier accumulators (Stage 2 / D2).
+    //
+    // DISCRETE tier: existing geometric types (Vertex/Edge/EdgeCenter/Polygon/
+    // PolyCenter) + new point types (Pivot/Box corners/Intersection) + the
+    // Grid and Workplane (which stay in the discrete tier per D2).
+    //
+    // CONSTRAINT tier: LINE (WorldAxis, StraightLine) and PLANE (box face-
+    // planes, RightAngle) constraints. Populated only when the discrete tier
+    // did NOT snap (D2 rule: discrete beats constraint).
+    //
+    // Workplane is INTENTIONALLY EXEMPT from the constraint tier and stays
+    // in the discrete tier (it keeps its always-wins behaviour; its distance
+    // to the cursor pixel is ~0, so it beats everything in the discrete walk).
+    // -----------------------------------------------------------------------
+
+    // Discrete tier accumulator.
     float    bestDist   = float.infinity;
     Vec3     bestWorld  = cursorWorld;
     int      bestIdx    = -1;
-    int      bestSource = 0;   // source slot of the current winner (0 = active)
+    int      bestSource = 0;
     SnapType bestType   = SnapType.None;
+
+    // Constraint tier accumulator (Stage 2).
+    float    cBestDist  = float.infinity;
+    Vec3     cBestWorld = cursorWorld;
+    SnapType cBestType  = SnapType.None;
 
     // `slot` identifies which snap SOURCE this candidate came from (0 = active
     // mesh, 1..N = background source). It is recorded on the winner so the
@@ -182,6 +276,23 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
 
+    // Constraint-tier consider — same screen-distance check but into a
+    // separate accumulator. Constraints own POSITION only; targetType/
+    // targetIndex/highlightPos stay the discrete tier's (Stage 2 merge rule).
+    void considerConstraint(Vec3 candWorld, SnapType type) {
+        float pxs, pys, ndcZ;
+        if (!projectToWindowFull(candWorld, vp, pxs, pys, ndcZ)) return;
+        float dx = pxs - cast(float)sx;
+        float dy = pys - cast(float)sy;
+        float d  = sqrt(dx * dx + dy * dy);
+        if (d > cfg.outerRangePx) return;
+        if (d < cBestDist) {
+            cBestDist  = d;
+            cBestWorld = candWorld;
+            cBestType  = type;
+        }
+    }
+
     // Vertex candidates (7.3a). Backed by a screen-space bucket grid
     // (built once per view, queried ~O(1)) instead of an O(verts)
     // per-frame projection scan. The grid query returns an
@@ -204,29 +315,22 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // never being dragged, so it passes an empty exclude). The body is the
     // pre-Stage-5 walk verbatim, parameterised on the mesh + grid slot.
     void walkSource(const ref Mesh m, int slot, const(uint)[] exclude) {
-        // id-buffer. Empty when the mesh has no faces (nothing can occlude) so
-        // point/edge-only geometry snaps unfiltered.
+        // Visibility array for occlusion/front-face gating. Built when any
+        // geometric type is enabled (faces present + at least one geo type active).
         bool[] vis;
-        if (m.faces.length > 0
+        bool needVis = m.faces.length > 0
             && (cfg.enabledTypes & (SnapType.Vertex | SnapType.Edge
-                  | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter)))
-            vis = m.visibleVertices(vp.eye, vp);
+                  | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter
+                  | SnapType.Intersection));
+        if (needVis) vis = m.visibleVertices(vp.eye, vp);
 
         bool vertVisible(uint vi) {
             return vis.length == 0 || (vi < vis.length && vis[vi]);
         }
-        // Edge / edge-midpoint: visible only when BOTH endpoints are visible. The
-        // occlusion-aware vertex mask already folds in front-facing + depth, so a
-        // hidden back edge has at least one hidden endpoint and drops out, while a
-        // silhouette edge (both ends shared with a front face) survives.
         bool edgeVisible(uint a, uint b) {
             return vis.length == 0
                 || (a < vis.length && b < vis.length && vis[a] && vis[b]);
         }
-        // Face / face-center: visible only when the face is front-facing AND all
-        // its corners are visible (rejects back faces directly, occluded ones via
-        // the corner mask). Conservative for large partly-hidden faces — fine for
-        // a snap gate. Same front-facing sign convention as Mesh.visibleVertices.
         bool faceVisible(const(uint)[] face) {
             if (vis.length == 0) return true;
             if (face.length < 3) return false;
@@ -237,7 +341,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             return true;
         }
 
-        if (cfg.enabledTypes & SnapType.Vertex) {
+        if ((cfg.enabledTypes & SnapType.Vertex)
+                && typeEligible(SnapType.Vertex, cfg.snapScope)) {
             auto cands = queryCandidateGrid(Kind.Vertex, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (vi; cands)
@@ -245,17 +350,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                     consider(m.vertices[vi], cast(int)vi, SnapType.Vertex, slot);
         }
 
-        // Edge candidates (7.3b) — closest point on each edge segment in
-        // screen space. Skipped when both endpoints are part of the
-        // dragged set (the entire edge is moving with the cursor).
-        //
-        // Broad-phase: a per-edge screen-bbox bucket grid (Kind.Edge)
-        // returns only edges whose projected bbox overlaps the cursor's
-        // 3×3 cell block; each is then run through the UNCHANGED exact
-        // segment-distance + consider() math below, so the winner is
-        // byte-identical to the old O(edges) scan. Exclusion (both
-        // endpoints dragged) is applied at query time.
-        if (cfg.enabledTypes & SnapType.Edge) {
+        if ((cfg.enabledTypes & SnapType.Edge)
+                && typeEligible(SnapType.Edge, cfg.snapScope)) {
             auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (ei; cands) {
@@ -267,22 +363,14 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 if (!projectToWindowFull(a, vp, px0, py0, ndcZ0)) continue;
                 if (!projectToWindowFull(b, vp, px1, py1, ndcZ1)) continue;
                 float t;
-                // Screen-space-closest t. The world point at the SAME
-                // parametric t is what we publish — strictly speaking
-                // perspective division means re-projecting that world
-                // point doesn't land exactly on the screen-closest pixel,
-                // but for typical viewports the deviation is sub-pixel
-                // and `consider()` will compute its actual screen
-                // distance against the cursor anyway.
                 closestOnSegment2DSquared(cast(float)sx, cast(float)sy,
                                            px0, py0, px1, py1, t);
                 consider(a + (b - a) * t, cast(int)ei, SnapType.Edge, slot);
             }
         }
 
-        // EdgeCenter candidates (7.3b) — midpoint of each edge. Point
-        // candidate ⇒ Kind.EdgeCenter point grid; same 3×3 query as Vertex.
-        if (cfg.enabledTypes & SnapType.EdgeCenter) {
+        if ((cfg.enabledTypes & SnapType.EdgeCenter)
+                && typeEligible(SnapType.EdgeCenter, cfg.snapScope)) {
             auto cands = queryCandidateGrid(Kind.EdgeCenter, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (ei; cands) {
@@ -293,15 +381,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             }
         }
 
-        // Polygon candidates (7.3b) — closest point on the polygon
-        // surface. Cursor inside the screen-projected polygon ⇒ ray-plane
-        // hit on the face. Outside ⇒ closest point on the boundary
-        // (= closest segment of the face's edge ring).
-        //
-        // Broad-phase: per-face screen-bbox bucket grid (Kind.Polygon).
-        // The expensive `closestOnPolygonSurface` (which projects all face
-        // verts + allocates) now runs ONLY on near faces.
-        if (cfg.enabledTypes & SnapType.Polygon) {
+        if ((cfg.enabledTypes & SnapType.Polygon)
+                && typeEligible(SnapType.Polygon, cfg.snapScope)) {
             auto cands = queryCandidateGrid(Kind.Polygon, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (fi; cands) {
@@ -313,9 +394,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             }
         }
 
-        // PolyCenter candidates (7.3b) — face centroid (average of verts).
-        // Point candidate ⇒ Kind.PolyCenter point grid.
-        if (cfg.enabledTypes & SnapType.PolyCenter) {
+        if ((cfg.enabledTypes & SnapType.PolyCenter)
+                && typeEligible(SnapType.PolyCenter, cfg.snapScope)) {
             auto cands = queryCandidateGrid(Kind.PolyCenter, slot, m, vp, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (fi; cands) {
@@ -326,6 +406,56 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 foreach (vi; face) c += m.vertices[vi];
                 c = c / cast(float)face.length;
                 consider(c, cast(int)fi, SnapType.PolyCenter, slot);
+            }
+        }
+
+        // Stage 6: Intersection — screen-space edge crossings (discrete tier).
+        // Pairs of mesh edges that share no vertex and cross in screen space.
+        // World point = midpoint of the two edges at their crossing parameters.
+        // Restricted to the near-cursor edge set (same grid as Edge type) for
+        // O(near²) cost. Deterministic lowest-(eiA,eiB) tie-break via ascending
+        // iteration + consider()'s strict-< distance accumulator.
+        if ((cfg.enabledTypes & SnapType.Intersection)
+                && typeEligible(SnapType.Intersection, cfg.snapScope)) {
+            auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
+                                            cfg.outerRangePx, exclude);
+            for (size_t ia = 0; ia < cands.length; ++ia) {
+                int eiA = cands[ia];
+                auto edgeA = m.edges[eiA];
+                if (!edgeVisible(edgeA[0], edgeA[1])) continue;
+                float pxA0, pyA0, ndcA0, pxA1, pyA1, ndcA1;
+                Vec3 a0 = m.vertices[edgeA[0]], a1 = m.vertices[edgeA[1]];
+                if (!projectToWindowFull(a0, vp, pxA0, pyA0, ndcA0)) continue;
+                if (!projectToWindowFull(a1, vp, pxA1, pyA1, ndcA1)) continue;
+
+                for (size_t ib = ia + 1; ib < cands.length; ++ib) {
+                    int eiB = cands[ib];
+                    auto edgeB = m.edges[eiB];
+                    // Skip pairs sharing a vertex.
+                    if (edgeB[0] == edgeA[0] || edgeB[0] == edgeA[1] ||
+                        edgeB[1] == edgeA[0] || edgeB[1] == edgeA[1]) continue;
+                    if (!edgeVisible(edgeB[0], edgeB[1])) continue;
+                    float pxB0, pyB0, ndcB0, pxB1, pyB1, ndcB1;
+                    Vec3 b0 = m.vertices[edgeB[0]], b1 = m.vertices[edgeB[1]];
+                    if (!projectToWindowFull(b0, vp, pxB0, pyB0, ndcB0)) continue;
+                    if (!projectToWindowFull(b1, vp, pxB1, pyB1, ndcB1)) continue;
+
+                    // 2D segment-segment intersection test.
+                    float dAx = pxA1 - pxA0, dAy = pyA1 - pyA0;
+                    float dBx = pxB1 - pxB0, dBy = pyB1 - pyB0;
+                    float wx  = pxB0 - pxA0, wy  = pyB0 - pyA0;
+                    float denom = dAx * dBy - dAy * dBx;
+                    import std.math : fabs;
+                    if (fabs(denom) < 1e-6f) continue; // parallel
+                    float tA = (wx * dBy - wy * dBx) / denom;
+                    float tB = (wx * dAy - wy * dAx) / denom;
+                    if (tA < 0 || tA > 1 || tB < 0 || tB > 1) continue;
+
+                    Vec3 wA    = a0 + (a1 - a0) * tA;
+                    Vec3 wB    = b0 + (b1 - b0) * tB;
+                    Vec3 world = (wA + wB) * 0.5f;
+                    consider(world, eiA, SnapType.Intersection, slot);
+                }
             }
         }
     }
@@ -352,12 +482,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         if (src !is null)
             walkSource(*src, cast(int)(i + 1), null);
 
-    // Grid candidate (7.3c). The grid lies on the workplane plane.
-    // Project the cursor ray onto the workplane to get a 3D hit, snap
-    // its workplane-local (axis1, axis2) coords to the nearest grid
-    // step, then re-construct the world point. Step is published as
-    // `cfg.gridStep` (= fixedGridSize when fixedGrid, else 1.0 to
-    // match vibe3d's visible grid).
+    // Grid candidate (7.3c). Scope-independent.
     if (cfg.enabledTypes & SnapType.Grid) {
         Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
         Vec3 hit;
@@ -377,12 +502,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
     }
 
-    // Workplane candidate (7.3c). The cursor ray's intersection with
-    // the workplane plane. Re-projects to exactly the cursor pixel
-    // (modulo float precision), so this candidate's screen distance
-    // is ~0 — geometric / grid candidates with smaller projected-
-    // pixel distance still take priority because they're considered
-    // first and `consider()`'s tie-break is strict less-than.
+    // Workplane candidate (7.3c). Stays in discrete tier (always-wins;
+    // intentionally EXEMPT from the discrete-beats-constraint rule — D2).
     if (cfg.enabledTypes & SnapType.Workplane) {
         Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
         Vec3 hit;
@@ -391,16 +512,133 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             consider(hit, -1, SnapType.Workplane, 0);
     }
 
-    if (bestDist <= cfg.outerRangePx) {
+    // -----------------------------------------------------------------------
+    // Stage 3: Pivot point targets — from item snap frames (discrete tier).
+    // Item frames are installed per-frame by app.d and just-in-time by
+    // the /api/snap provider. Scope: Item bucket (+ Global).
+    // -----------------------------------------------------------------------
+    if ((cfg.enabledTypes & SnapType.Pivot)
+            && typeEligible(SnapType.Pivot, cfg.snapScope)) {
+        ItemSnapFrame[] frames;
+        synchronized (g_vgridMutex) {
+            if (g_itemSnapFrames.length > 0)
+                frames = g_itemSnapFrames.dup;
+        }
+        foreach (fi, ref frame; frames)
+            consider(frame.pivot, cast(int)fi, SnapType.Pivot, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 4: Box corners (discrete tier) + face planes (constraint tier).
+    // Corners = 8 AABB corner points. Face planes = 6 axis-aligned planes.
+    // Scope: Item bucket (+ Global).
+    // -----------------------------------------------------------------------
+    if ((cfg.enabledTypes & SnapType.Box)
+            && typeEligible(SnapType.Box, cfg.snapScope)) {
+        ItemSnapFrame[] frames;
+        synchronized (g_vgridMutex) {
+            if (g_itemSnapFrames.length > 0)
+                frames = g_itemSnapFrames.dup;
+        }
+        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+
+        foreach (ref frame; frames) {
+            if (!frame.hasBBox) continue;
+            Vec3 mn = frame.bboxMin, mx = frame.bboxMax;
+
+            // 8 AABB corners — discrete tier.
+            Vec3[8] corners = [
+                Vec3(mn.x, mn.y, mn.z), Vec3(mx.x, mn.y, mn.z),
+                Vec3(mn.x, mx.y, mn.z), Vec3(mx.x, mx.y, mn.z),
+                Vec3(mn.x, mn.y, mx.z), Vec3(mx.x, mn.y, mx.z),
+                Vec3(mn.x, mx.y, mx.z), Vec3(mx.x, mx.y, mx.z),
+            ];
+            foreach (ci, c; corners)
+                consider(c, cast(int)ci, SnapType.Box, 0);
+
+            // 6 axis-aligned face planes — constraint tier.
+            // Centers and inward-pointing normals for the 6 AABB faces.
+            float mxm = (mn.x + mx.x) * 0.5f;
+            float mym = (mn.y + mx.y) * 0.5f;
+            float mzm = (mn.z + mx.z) * 0.5f;
+            Vec3[6] fpC = [
+                Vec3(mn.x, mym,  mzm),  Vec3(mx.x, mym,  mzm),
+                Vec3(mxm,  mn.y, mzm),  Vec3(mxm,  mx.y, mzm),
+                Vec3(mxm,  mym,  mn.z), Vec3(mxm,  mym,  mx.z),
+            ];
+            Vec3[6] fpN = [
+                Vec3(-1, 0, 0), Vec3(1, 0, 0),
+                Vec3( 0,-1, 0), Vec3(0, 1, 0),
+                Vec3( 0, 0,-1), Vec3(0, 0, 1),
+            ];
+            foreach (fpi; 0 .. 6) {
+                Vec3 hit;
+                if (rayPlaneIntersect(vp.eye, ray, fpC[fpi], fpN[fpi], hit))
+                    considerConstraint(hit, SnapType.Box);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 2: WorldAxis LINE constraints (constraint tier).
+    // Three infinite lines through origin along world X, Y, Z.
+    // Scope-independent (pass in all scope modes).
+    // -----------------------------------------------------------------------
+    if ((cfg.enabledTypes & SnapType.WorldAxis)
+            && typeEligible(SnapType.WorldAxis, cfg.snapScope)) {
+        Vec3 ray = screenRay(cast(float)sx, cast(float)sy, vp);
+        immutable Vec3[3] axes = [Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)];
+        immutable Vec3 origin  = Vec3(0, 0, 0);
+        foreach (ax; axes) {
+            Vec3 hit = closestPointOnLineToRay(origin, ax, vp.eye, ray);
+            considerConstraint(hit, SnapType.WorldAxis);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 2: Result merge rule (D2).
+    //
+    // Priority: discrete snap > constraint snap > discrete highlight only.
+    // Workplane (always-wins by ~0 screen distance) is in the discrete tier
+    // so it keeps its existing behaviour unchanged.
+    // -----------------------------------------------------------------------
+    bool discreteSnapped     = bestDist  <= cfg.innerRangePx;
+    bool discreteHighlighted = bestDist  <= cfg.outerRangePx;
+    bool constraintSnapped   = cBestDist <= cfg.innerRangePx;
+
+    if (discreteSnapped) {
+        // Discrete wins entirely — byte-identical to pre-Stage-2 for the
+        // existing 7 targets (position + highlight + targetType/Index/Source).
+        res.snapped      = true;
+        res.worldPos     = bestWorld;
         res.highlighted  = true;
         res.highlightPos = bestWorld;
         res.targetType   = bestType;
         res.targetIndex  = bestIdx;
         res.targetSource = bestSource;
-        if (bestDist <= cfg.innerRangePx) {
-            res.snapped  = true;
-            res.worldPos = bestWorld;
+        // res.constraintType stays None
+    } else if (constraintSnapped) {
+        // Constraint provides the position; discrete highlight (if any) stays
+        // for visual feedback — the user sees the nearby element hinted at.
+        res.snapped        = true;
+        res.worldPos       = cBestWorld;
+        res.constraintType = cBestType;
+        if (discreteHighlighted) {
+            res.highlighted  = true;
+            res.highlightPos = bestWorld;
+            res.targetType   = bestType;
+            res.targetIndex  = bestIdx;
+            res.targetSource = bestSource;
         }
+        // When no discrete highlight: targetType stays None, constraintType
+        // carries the identity of what constrained the position.
+    } else if (discreteHighlighted) {
+        // Discrete only highlighted (not snapped) — no constraint snap.
+        res.highlighted  = true;
+        res.highlightPos = bestWorld;
+        res.targetType   = bestType;
+        res.targetIndex  = bestIdx;
+        res.targetSource = bestSource;
     }
     return res;
 }

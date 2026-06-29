@@ -789,6 +789,58 @@ unittest {
     assert(eq(hit.x, 0.2f) && eq(hit.y, 0));
 }
 
+/// Closest world point on an INFINITE LINE (center + t*dir) to a cursor ray
+/// (O + s*D). Unlike `closestPointOnSegmentToRay`, t is unclamped — the result
+/// may lie anywhere along the infinite line. D is expected unit length.
+/// Used by the LINE constraint primitive in snap.d (WorldAxis candidates).
+Vec3 closestPointOnLineToRay(Vec3 center, Vec3 dir, Vec3 O, Vec3 D)
+    @safe pure nothrow @nogc
+{
+    import std.math : abs;
+    Vec3  w   = center - O;
+    float uu  = dot(dir, dir);
+    if (uu < 1e-12f) return center;     // degenerate direction
+    float uD  = dot(dir, D);
+    float Dw  = dot(D, w);
+    float uw  = dot(dir, w);
+    // Normal equations (D assumed unit, DD = 1):
+    //   [uu  -uD] [t]   [-uw]
+    //   [-uD  1 ] [s] = [ Dw]
+    float denom = uu - uD * uD;
+    float t;
+    if (abs(denom) < 1e-9f) {
+        // Ray parallel to line: project ray origin onto line.
+        t = -uw / uu;
+    } else {
+        t = (uD * Dw - uw) / denom;
+    }
+    return center + dir * t;  // t unclamped — infinite line
+}
+
+unittest {
+    import std.math : abs;
+    static bool eq(float x, float y) { return abs(x - y) < 1e-5f; }
+    Vec3 c = Vec3(0, 0, 0);
+    Vec3 d = Vec3(1, 0, 0);  // X axis
+
+    // Perpendicular ray at x=0.3 — same result as the clamped version.
+    Vec3 hit = closestPointOnLineToRay(c, d, Vec3(0.3f, 1, 0), Vec3(0, -1, 0));
+    assert(eq(hit.x, 0.3f) && eq(hit.y, 0) && eq(hit.z, 0));
+
+    // Ray past t=1 — NOT clamped (unlike closestPointOnSegmentToRay).
+    hit = closestPointOnLineToRay(c, d, Vec3(1.5f, 1, 0), Vec3(0, -1, 0));
+    assert(eq(hit.x, 1.5f) && eq(hit.y, 0));
+
+    // Ray before t=0 — NOT clamped (negative t).
+    hit = closestPointOnLineToRay(c, d, Vec3(-0.4f, 1, 0), Vec3(0, -1, 0));
+    assert(eq(hit.x, -0.4f) && eq(hit.y, 0));
+
+    // Parallel ray: t = -uw/uu = -dot(dir, center-O)/dot(dir,dir).
+    // O=(0.2,0.5,0) D=(1,0,0): w=(-0.2,-0.5,0), uw=-0.2, t=0.2 → (0.2,0,0).
+    hit = closestPointOnLineToRay(c, d, Vec3(0.2f, 0.5f, 0), Vec3(1, 0, 0));
+    assert(eq(hit.x, 0.2f) && eq(hit.y, 0));
+}
+
 // Project a screen pixel onto the Work Plane in world space.
 // Default Work Plane is the X-Z plane at world Y = `planeY` (0 = floor).
 // The Work Plane is used by `actr.auto` to relocate the action center on
