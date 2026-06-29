@@ -9896,3 +9896,269 @@ unittest { // all-stages-off + orphan: true no-op, topology version unchanged
     assert(m.topologyVersion == verBefore,
         "topology version must not change on a true no-op (no-op contract)");
 }
+
+// ---------------------------------------------------------------------------
+// Edge Slide kernel
+// ---------------------------------------------------------------------------
+
+/// BFS 2-colouring of faces relative to a selected-edge boundary.
+/// Crossing a selected edge flips the colour (0 ↔ 1); crossing an
+/// unselected edge preserves it.  Seeds from the first incident face of
+/// the lowest-index selected edge (colour 0).  Faces unreachable from
+/// the selection stay at -1.
+/// Precondition: buildLoops() has been called.
+private int[] colorFacesForSlide(const ref Mesh m, const bool[] edgeMask)
+{
+    int[] color = new int[](m.faces.length);
+    color[] = -1;
+
+    // Find seed: first incident face of the lowest-index selected edge.
+    uint seedFace = ~0u;
+    outer: foreach (ei; 0 .. (edgeMask.length < m.edges.length
+                              ? edgeMask.length : m.edges.length)) {
+        if (!edgeMask[ei]) continue;
+        foreach (fi; m.facesAroundEdge(cast(uint)ei)) {
+            seedFace = fi;
+            break outer;
+        }
+    }
+    if (seedFace == ~0u) return color;
+    color[seedFace] = 0;
+
+    uint[] queue;
+    uint   head = 0;
+    queue ~= seedFace;
+
+    while (head < queue.length) {
+        uint fi = queue[head++];
+        foreach (fe; m.faceEdges(fi)) {
+            uint ei = m.edgeIndex(fe.a, fe.b);
+            if (ei == ~0u) continue;
+            bool sel    = (ei < edgeMask.length) && edgeMask[ei];
+            int  adjCol = sel ? (1 - color[fi]) : color[fi];
+            foreach (adjFi; m.facesAroundEdge(ei)) {
+                if (adjFi == fi) continue;
+                if (adjFi >= m.faces.length) continue;
+                if (color[adjFi] == -1) {
+                    color[adjFi] = adjCol;
+                    queue       ~= adjFi;
+                }
+                // Bipartite conflict → v1 fall-through (winner unchanged).
+            }
+        }
+    }
+    return color;
+}
+
+/// Compute new vertex positions for an edge-slide of magnitude `t ∈ [-1, 1]`.
+///
+/// Each endpoint of every selected edge (the "slid set") moves linearly
+/// toward one of its two rail neighbours — the vertex at the far end of
+/// the non-selected face-edge at that vertex inside a flanking face.
+/// `sign(t)` chooses the side: face colour 1 when t > 0, colour 0 when
+/// t < 0.  t = ±1 places the vertex exactly on the rail neighbour (clamped).
+/// If no rail exists on the requested side the vertex is left unchanged
+/// (graceful degradation — no crash).
+///
+/// Positional only: topology is unchanged.
+/// Precondition: m.buildLoops() has been called.
+Vec3[] edgeSlidePositions(const ref Mesh m, const bool[] edgeMask, float t)
+{
+    Vec3[] out_ = m.vertices.dup;
+
+    if (t < -1.0f) t = -1.0f;
+    if (t >  1.0f) t =  1.0f;
+    if (t == 0.0f) return out_;   // identity — no work
+
+    float absT    = t < 0.0f ? -t : t;
+    bool  wantPos = t > 0.0f;     // true → use colour-1 rail
+
+    // Build slid-vertex set from edge endpoints (snapshot edgeMask once).
+    bool[] slidVert = new bool[](m.vertices.length);
+    bool   anyEdge  = false;
+    size_t minE     = edgeMask.length < m.edges.length
+                      ? edgeMask.length : m.edges.length;
+    foreach (ei; 0 .. minE) {
+        if (!edgeMask[ei]) continue;
+        slidVert[m.edges[ei][0]] = true;
+        slidVert[m.edges[ei][1]] = true;
+        anyEdge = true;
+    }
+    if (!anyEdge) return out_;
+
+    int[] faceColor = colorFacesForSlide(m, edgeMask);
+
+    foreach (size_t vi; 0 .. m.vertices.length) {
+        if (!slidVert[vi]) continue;
+        uint uvi     = cast(uint)vi;
+        uint railPos = ~0u;   // colour-1 (positive) side rail neighbour
+        uint railNeg = ~0u;   // colour-0 (negative) side rail neighbour
+
+        foreach (fi; m.facesAroundVertex(uvi)) {
+            if (fi >= m.faces.length) continue;
+            int fc = (fi < faceColor.length) ? faceColor[fi] : -1;
+            if (fc < 0) continue;  // face not reachable from selection
+
+            // Collect the two face-edges at uvi in this face.
+            uint selEdge  = ~0u;
+            uint railEdge = ~0u;
+            foreach (fe; m.faceEdges(fi)) {
+                if (fe.a != uvi && fe.b != uvi) continue;
+                uint ei = m.edgeIndex(fe.a, fe.b);
+                if (ei == ~0u) continue;
+                bool isSel = (ei < edgeMask.length) && edgeMask[ei];
+                if (isSel) selEdge  = ei;
+                else       railEdge = ei;
+            }
+            // Valid rail: exactly one selected face-edge and one unselected.
+            if (selEdge == ~0u || railEdge == ~0u) continue;
+
+            uint nb = m.edgeOtherVertex(railEdge, uvi);
+            if (fc == 1) { if (railPos == ~0u) railPos = nb; }
+            else         { if (railNeg == ~0u) railNeg = nb; }
+        }
+
+        uint rail = wantPos ? railPos : railNeg;
+        if (rail == ~0u) continue;   // no rail on this side → unchanged
+
+        Vec3 orig = m.vertices[vi];
+        Vec3 dest = m.vertices[rail];
+        out_[vi]  = orig + absT * (dest - orig);
+    }
+    return out_;
+}
+
+unittest { // two-quad strip: edge slides toward positive rail at t=0.5
+    // Layout (top view):
+    //   v3---v2---v5
+    //   |  f0 | f1 |
+    //   v0---v1---v4
+    // Selected edge: v1-v2.  Rails: v0/v3 (negative), v4/v5 (positive).
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),   // v0-v3
+        Vec3(2,0,0), Vec3(2,1,0),                               // v4, v5
+    ];
+    m.makePolygonFromVerts([0, 1, 2, 3], false);
+    m.makePolygonFromVerts([1, 4, 5, 2], false);
+    m.buildLoops();
+
+    uint selEi = m.edgeIndex(1, 2);
+    assert(selEi != ~0u, "edge v1-v2 must exist");
+    bool[] mask = new bool[](m.edges.length);
+    mask[selEi] = true;
+
+    // t=0: identity.
+    auto pos0 = edgeSlidePositions(m, mask, 0.0f);
+    foreach (i; 0 .. m.vertices.length)
+        assert(pos0[i] == m.vertices[i], "t=0 must be identity");
+
+    // t=0.5: both endpoints move halfway toward their same-side rails.
+    auto pos05 = edgeSlidePositions(m, mask, 0.5f);
+    // v1 moves from x=1 toward either v0(x=0) or v4(x=2) by 0.5.
+    assert(pos05[1].x != 1.0f, "v1 must move at t=0.5");
+    assert(pos05[2].x != 1.0f, "v2 must move at t=0.5");
+    // Both must move the same direction (same Δx sign).
+    float dv1 = pos05[1].x - 1.0f;
+    float dv2 = pos05[2].x - 1.0f;
+    assert((dv1 > 0) == (dv2 > 0), "v1 and v2 must slide the same direction");
+    // Magnitude: 0.5 × rail distance = 0.5 × 1.0 = 0.5.
+    assert(dv1 == 0.5f || dv1 == -0.5f, "magnitude must be 0.5");
+    assert(dv2 == 0.5f || dv2 == -0.5f, "magnitude must be 0.5");
+    // Non-slid vertices unchanged.
+    assert(pos05[0] == m.vertices[0]); assert(pos05[3] == m.vertices[3]);
+    assert(pos05[4] == m.vertices[4]); assert(pos05[5] == m.vertices[5]);
+
+    // t=1: both endpoints land exactly on their rail neighbours.
+    auto pos1 = edgeSlidePositions(m, mask, 1.0f);
+    assert(pos1[1].x == 0.0f || pos1[1].x == 2.0f,
+           "v1 at t=1 must coincide with v0 or v4");
+    assert(pos1[2].x == 0.0f || pos1[2].x == 2.0f,
+           "v2 at t=1 must coincide with v3 or v5");
+    // Both land on the SAME side.
+    assert(pos1[1].x == pos1[2].x, "v1 and v2 must land on the same-side rail");
+
+    // t=-0.5: opposite direction from t=+0.5.
+    auto posN = edgeSlidePositions(m, mask, -0.5f);
+    float dvN1 = posN[1].x - 1.0f;
+    assert((dv1 > 0) != (dvN1 > 0), "t and -t must slide opposite directions");
+}
+
+unittest { // degraded case: single quad, no positive-side rail → vertex unchanged
+    // Only one face at the selected edge: no colour-1 face at either endpoint.
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+    ];
+    m.makePolygonFromVerts([0, 1, 2, 3], false);
+    m.buildLoops();
+
+    uint selEi = m.edgeIndex(0, 1);
+    assert(selEi != ~0u);
+    bool[] mask = new bool[](m.edges.length);
+    mask[selEi] = true;
+
+    // t=+0.5 → positive side has no rail → both endpoints unchanged.
+    // t=-0.5 → negative side has a rail → both endpoints move.
+    auto posP = edgeSlidePositions(m, mask,  0.5f);
+    auto posN = edgeSlidePositions(m, mask, -0.5f);
+    // One of the two sides has no rail (the exposed boundary side).
+    // At least one side must leave the endpoints unchanged.
+    bool posUnchanged = (posP[0] == m.vertices[0] && posP[1] == m.vertices[1]);
+    bool negUnchanged = (posN[0] == m.vertices[0] && posN[1] == m.vertices[1]);
+    assert(posUnchanged || negUnchanged,
+           "boundary vertex must be unchanged on at least one side");
+}
+
+unittest { // loop consistency: all loop verts slide the same direction
+    // 3-ring tube (4 verts/ring, 2 rings of quads).
+    // Ring 0 (top y=+1): v0..v3   Ring 1 (mid y=0): v4..v7
+    // Ring 2 (bot y=-1): v8..v11
+    Mesh m;
+    m.vertices = [
+        Vec3( 1, 1, 0), Vec3( 0, 1, 1), Vec3(-1, 1, 0), Vec3( 0, 1,-1),  // v0-v3
+        Vec3( 1, 0, 0), Vec3( 0, 0, 1), Vec3(-1, 0, 0), Vec3( 0, 0,-1),  // v4-v7
+        Vec3( 1,-1, 0), Vec3( 0,-1, 1), Vec3(-1,-1, 0), Vec3( 0,-1,-1),  // v8-v11
+    ];
+    // Upper quads (ring 0 → ring 1).
+    m.makePolygonFromVerts([0, 1, 5, 4], false);
+    m.makePolygonFromVerts([1, 2, 6, 5], false);
+    m.makePolygonFromVerts([2, 3, 7, 6], false);
+    m.makePolygonFromVerts([3, 0, 4, 7], false);
+    // Lower quads (ring 1 → ring 2).
+    m.makePolygonFromVerts([ 4,  5,  9,  8], false);
+    m.makePolygonFromVerts([ 5,  6, 10,  9], false);
+    m.makePolygonFromVerts([ 6,  7, 11, 10], false);
+    m.makePolygonFromVerts([ 7,  4,  8, 11], false);
+    m.buildLoops();
+
+    // Select the middle ring (v4-v5, v5-v6, v6-v7, v7-v4).
+    bool[] mask = new bool[](m.edges.length);
+    foreach (pair; [[4u,5u],[5u,6u],[6u,7u],[7u,4u]]) {
+        uint ei = m.edgeIndex(pair[0], pair[1]);
+        assert(ei != ~0u, "middle-ring edge must exist");
+        mask[ei] = true;
+    }
+
+    // t=0.5: all 4 middle verts move the same direction with the same |ΔY|.
+    auto posP = edgeSlidePositions(m, mask, 0.5f);
+    float[4] dyP;
+    foreach (i; 0 .. 4) dyP[i] = posP[4 + i].y - m.vertices[4 + i].y;
+    foreach (i; 0 .. 4)
+        assert(dyP[i] != 0.0f, "middle vert must move with t=0.5");
+    // All deltas must have the same sign (consistency).
+    bool allPos = true, allNeg = true;
+    foreach (d; dyP) { if (d <= 0) allPos = false; if (d >= 0) allNeg = false; }
+    assert(allPos || allNeg, "all middle-ring verts must slide the same direction");
+    // All |ΔY| must be equal.
+    foreach (i; 1 .. 4)
+        assert(dyP[i] == dyP[0], "all middle-ring verts must slide the same amount");
+
+    // t=-0.5 must slide in the opposite direction.
+    auto posN = edgeSlidePositions(m, mask, -0.5f);
+    foreach (i; 0 .. 4) {
+        float dyN = posN[4 + i].y - m.vertices[4 + i].y;
+        assert((dyP[i] > 0) != (dyN > 0),
+               "t=+0.5 and t=-0.5 must slide in opposite Y directions");
+    }
+}
