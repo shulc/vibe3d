@@ -108,6 +108,7 @@ import commands.mesh.array_       : MeshArray;
 import commands.mesh.radial_array_ : MeshRadialArray;
 import commands.mesh.vert_merge    : MeshVertMerge;
 import commands.mesh.vert_join     : MeshVertJoin;
+import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
 import commands.mesh.collapse      : MeshCollapse;
 import commands.mesh.reduce        : MeshReduce;
 import commands.mesh.unify         : MeshUnify;
@@ -2445,6 +2446,12 @@ void main(string[] args) {
     reg.commandFactories["mesh.bridge"] = () => cast(Command)
         new MeshBridge(&mesh(), cameraView, editMode, &gpu,
                        &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.axisSlice"] = () => cast(Command)
+        new MeshAxisSlice(&mesh(), cameraView, editMode, &gpu,
+                          &vertexCache, &edgeCache, &faceCache);
+    reg.commandFactories["mesh.julienne"] = () => cast(Command)
+        new MeshJulienne(&mesh(), cameraView, editMode, &gpu,
+                         &vertexCache, &edgeCache, &faceCache);
     reg.commandFactories["mesh.smooth_shift"] = () => cast(Command)
         new MeshSmoothShift(&mesh(), cameraView, editMode, &gpu,
                             &vertexCache, &edgeCache, &faceCache);
