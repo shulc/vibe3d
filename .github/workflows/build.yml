@@ -302,7 +302,33 @@ jobs:
             throw "onnxruntime.dll not found at $onnxDll - is d-onnxruntime built?"
           }
           Copy-Item $onnxDll -Destination onnxruntime.dll
-          Compress-Archive -Path ${{ matrix.binary }}, SDL2.dll, onnxruntime.dll, config, assets -DestinationPath vibe3d-${{ matrix.name }}.zip
+
+          # Visual C++ runtime (app-local deployment): vibe3d.exe + onnxruntime.dll
+          # statically import the dynamic MSVC CRT - MSVCP140.dll, MSVCP140_1.dll,
+          # VCRUNTIME140*.dll, pulled in by the C++ deps (assimp / nfd) and onnx.
+          # These ship only with the VC++ Redistributable, which a clean Windows
+          # does NOT have - without them the exe fails to start with 0xc0000142
+          # (DLL_INIT_FAILED) / "MSVCP140.dll was not found" (the "doesn't start"
+          # symptom). Copy the WHOLE CRT redist folder next to the exe so the zip
+          # is self-contained regardless of which CRT DLLs the deps pull in (the
+          # 3-DLL hand-list missed MSVCP140_1.dll that onnxruntime needs). The
+          # UCRT (api-ms-win-crt-* / ucrtbase.dll) is in-box on Windows 10+, so it
+          # is not bundled. msvc-dev-cmd set VCToolsRedistDir.
+          $crtDir = $null
+          if ($env:VCToolsRedistDir) {
+            $crtDir = Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $crtDir) {
+            $crtDir = Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $crtDir) { throw "VC++ CRT redist folder not found (VCToolsRedistDir=$env:VCToolsRedistDir)" }
+          $crtDlls = @(Get-ChildItem "$($crtDir.FullName)\*.dll")
+          if ($crtDlls.Count -eq 0) { throw "no DLLs in CRT redist folder $($crtDir.FullName)" }
+          $crtDlls | ForEach-Object { Copy-Item $_.FullName -Destination $_.Name -Force }
+          Write-Host "[zip] bundled VC++ runtime: $(($crtDlls | ForEach-Object { $_.Name }) -join ', ')"
+
+          $zipItems = @('${{ matrix.binary }}','SDL2.dll','onnxruntime.dll') + ($crtDlls | ForEach-Object { $_.Name }) + @('config','assets')
+          Compress-Archive -Path $zipItems -DestinationPath vibe3d-${{ matrix.name }}.zip -Force
 
       # ---- Upload zip as artifact for the release job ----
 
