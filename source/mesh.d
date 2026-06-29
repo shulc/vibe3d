@@ -5900,6 +5900,166 @@ struct Mesh {
         return res;
     }
 
+    // -------------------------------------------------------------------------
+    // Loop-slice ring walk + insertion
+    // -------------------------------------------------------------------------
+
+    /// Per-face record from a ring walk: (a,b) = entry edge dart (p-rail
+    /// direction); (c,d) = exit edge in the quad's CCW winding; q-rail = d→c.
+    /// fi = face index at collection time (stable — we only append vertices).
+    private struct EdgeRingEntry {
+        uint a, b;  // entry edge: p-rail direction a→b
+        uint c, d;  // exit edge in CCW order (q-rail = lerp(d,c,t))
+        uint fi;    // face index at collection time
+    }
+
+    /// Walk one side of the ring from startFace, following the exit edge of each
+    /// quad until: the exit key equals seedKey (closed — sets closed=true), a
+    /// boundary is hit, the face is not a quad, or a face is revisited.
+    /// Does NOT include the initial seed edge itself in the entries.
+    private EdgeRingEntry[] walkRingSide(uint seedEdge, uint startFace,
+                                         out bool closed) const {
+        EdgeRingEntry[] result;
+        closed = false;
+        if (startFace >= faces.length) return result;
+        if (faces[startFace].length != 4) return result;
+
+        ulong seedKey = edgeKeyOf(seedEdge);
+        int j0 = findEdgeInFace(startFace, seedKey);
+        if (j0 < 0) return result;
+
+        uint curFi = startFace;
+        int  curJ  = j0;
+        bool[uint] vis;
+
+        for (;;) {
+            if (curFi in vis) break;
+            const f = faces[curFi];
+            if (f.length != 4) break;
+
+            uint a = f[curJ],       b = f[(curJ+1)%4],
+                 c = f[(curJ+2)%4], d = f[(curJ+3)%4];
+            result ~= EdgeRingEntry(a, b, c, d, curFi);
+            vis[curFi] = true;
+
+            uint exitEi = edgeIndex(c, d);
+            if (exitEi == ~0u) break;                       // no exit edge
+
+            ulong exitKey = edgeKeyOf(exitEi);
+            if (exitKey == seedKey) { closed = true; break; } // closed ring
+
+            int nf = adjacentFaceThrough(exitEi, curFi);
+            if (nf < 0) break;                              // open boundary
+            if (faces[nf].length != 4) break;               // non-quad stop
+
+            int j2 = findEdgeInFace(cast(uint)nf, exitKey);
+            if (j2 < 0) break;
+
+            curFi = cast(uint)nf;
+            curJ  = j2;
+        }
+        return result;
+    }
+
+    /// Collect the ordered quad ring crossed by a loop insert at seedEdge.
+    /// Each entry carries the ring-edge direction (p-rail a→b, q-rail d→c)
+    /// and face index.  closed==true when the ring wraps (e.g. a cube belt).
+    /// Returns an empty slice if no quad face is incident on seedEdge.
+    EdgeRingEntry[] collectEdgeRing(uint seedEdge, out bool closed) const {
+        closed = false;
+        if (seedEdge >= edges.length) return [];
+
+        uint[2] incFaces; uint nFaces = 0;
+        foreach (fi; facesAroundEdge(seedEdge))
+            if (nFaces < 2) incFaces[nFaces++] = fi;
+        if (nFaces == 0) return [];
+        // Both seed-incident faces must be quads.  If either is a non-quad the
+        // seed edge would still receive a midpoint vertex while the non-quad
+        // face stays unsplit → T-junction (non-manifold).  Return empty so the
+        // caller treats the op as a no-op / error.
+        foreach (i; 0 .. nFaces)
+            if (faces[incFaces[i]].length != 4) return [];
+
+        bool closedA;
+        auto sideA = walkRingSide(seedEdge, incFaces[0], closedA);
+        if (closedA) { closed = true; return sideA; }  // one pass hit closure
+
+        if (nFaces == 1) return sideA;                 // boundary edge, open
+
+        bool closedB;
+        auto sideB = walkRingSide(seedEdge, incFaces[1], closedB);
+        return sideA ~ sideB;
+    }
+
+    /// Insert `positions.length` parallel edge loops at parametric offsets
+    /// along the quad ring crossing seedEdge.  Positions must be in (0,1);
+    /// the call is a no-op (returns false) if the ring is empty or positions
+    /// is empty.  Rebuilds edges + half-edge loops; clears all selection.
+    bool insertEdgeLoops(uint seedEdge, const(float)[] positions) {
+        if (positions.length == 0) return false;
+        if (seedEdge >= edges.length) return false;
+
+        bool closed;
+        auto ring = collectEdgeRing(seedEdge, closed);
+        if (ring.length == 0) return false;
+
+        // Rail map: canonical edge key → (stored va direction, midpoint verts)
+        struct Rail { uint va; uint[] mids; }
+        Rail[]      rails;
+        uint[ulong] railByKey;
+
+        // Return (or create) the midpoint vertex list for directed edge va→vb.
+        // Handles anti-parallel reuse via reversal.
+        uint[] getMids(uint va, uint vb) {
+            ulong k = edgeKey(va, vb);
+            if (auto rp = k in railByKey) {
+                if (rails[*rp].va == va) return rails[*rp].mids;
+                // Anti-parallel: reversed copy.
+                auto rev = rails[*rp].mids.dup;
+                size_t i = 0, j = rev.length - 1;
+                while (i < j) { uint t = rev[i]; rev[i] = rev[j]; rev[j] = t; ++i; --j; }
+                return rev;
+            }
+            uint[] mids;
+            Vec3 va3 = vertices[va], vb3 = vertices[vb];
+            foreach (float t; positions)
+                mids ~= addVertex(va3 + (vb3 - va3) * t);
+            railByKey[k] = cast(uint)rails.length;
+            rails ~= Rail(va, mids);
+            return mids;
+        }
+
+        bool[uint]        ringSet;
+        EdgeRingEntry[uint] ringByFi;
+        foreach (ref e; ring) { ringSet[e.fi] = true; ringByFi[e.fi] = e; }
+
+        uint[][] newFaces;
+        newFaces.reserve(faces.length + ring.length * positions.length);
+
+        foreach (uint fi; 0 .. cast(uint)faces.length) {
+            if (fi !in ringSet) { newFaces ~= faces[fi].dup; continue; }
+
+            auto e = ringByFi[fi];
+            uint a = e.a, b = e.b, c = e.c, d = e.d;
+            uint[] p = getMids(a, b);  // p-rail: midpoints on a→b
+            uint[] q = getMids(d, c);  // q-rail: midpoints on d→c
+
+            // First sub-quad: [a, p0, q0, d]
+            newFaces ~= [a, p[0], q[0], d];
+            // Middle sub-quads (N>1 loops only)
+            foreach (k; 1 .. positions.length)
+                newFaces ~= [p[k-1], p[k], q[k], q[k-1]];
+            // Last sub-quad: [p_last, b, c, q_last]
+            newFaces ~= [p[$-1], b, c, q[$-1]];
+        }
+
+        faces = newFaces;
+        rebuildEdges();
+        buildLoops();
+        resetSelection();   // resizes + clears all selection; calls commitChange
+        return true;
+    }
+
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
     /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
     /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.
@@ -10587,4 +10747,208 @@ unittest { // loop consistency: all loop verts slide the same direction
         assert((dyP[i] > 0) != (dyN > 0),
                "t=+0.5 and t=-0.5 must slide in opposite Y directions");
     }
+}
+// insertEdgeLoops — connectivity correctness (Risk 2: orientation)
+// ---------------------------------------------------------------------------
+//
+// Tests two shapes:
+//   A) Closed ring: unit cube, seed = edge 0-1.
+//      Ring crosses four equatorial quad faces.  One loop at t=0.5.
+//      Expected: V=12, E=20, F=10, Euler=2.
+//      Must assert: rung edges by endpoint pair, one sub-quad by vertex set,
+//      midpoint position — counts/Euler alone cannot catch a twisted loop.
+//
+//   B) Open ring: 1×3 quad strip.
+//      Ring terminates at both strip boundaries.  One loop at t=0.5.
+//      Expected: V=12, E=17, F=6, Euler=1 (disk topology).
+//      Must assert: rung edges at the seed edge's midpoint on both sides.
+
+unittest {
+    import std.math : abs;
+
+    // Helper: true if any face in m has exactly the vertices in vs (order-independent).
+    static bool hasFace(const Mesh m, uint[] vs) {
+        outer: foreach (const f; m.faces) {
+            if (f.length != vs.length) continue;
+            foreach (v; vs) {
+                bool found = false;
+                foreach (fv; f) if (fv == v) { found = true; break; }
+                if (!found) continue outer;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // Helper: find a vertex near the given position; returns ~0u if none within eps.
+    static uint findVertNear(const Mesh m, float x, float y, float z,
+                             float eps = 1e-4f) {
+        foreach (uint i; 0 .. cast(uint)m.vertices.length) {
+            auto v = m.vertices[i];
+            if (abs(v.x - x) < eps && abs(v.y - y) < eps && abs(v.z - z) < eps)
+                return i;
+        }
+        return ~0u;
+    }
+
+    // ------------------------------------------------------------------
+    // A) Closed ring on the default cube — seed edge 0-1.
+    // Cube: v0=(-0.5,-0.5,-0.5) v1=(0.5,-0.5,-0.5)  edge 0-1 = bottom-front.
+    // ------------------------------------------------------------------
+    {
+        Mesh m = makeCube();
+        m.buildLoops();
+
+        uint eiSeed = m.edgeIndex(0, 1);
+        assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
+
+        bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+        assert(ok, "insertEdgeLoops must succeed on cube");
+
+        // Counts + Euler (V-E+F=2 for closed manifold).
+        assert(m.vertices.length == 12, "V must be 12 after one loop on cube");
+        assert(m.edges.length    == 20, "E must be 20 after one loop on cube");
+        assert(m.faces.length    == 10, "F must be 10 after one loop on cube");
+        assert(cast(int)m.vertices.length - cast(int)m.edges.length
+               + cast(int)m.faces.length == 2, "Euler must be 2 (closed manifold)");
+
+        // All faces must still be quads.
+        foreach (const f; m.faces)
+            assert(f.length == 4, "all faces must be quads after loop insert");
+
+        // Midpoint position: new vertex on edge 0-1 must be at x=0 (midpoint
+        // of v0.x=-0.5 and v1.x=0.5), y=-0.5, z=-0.5.
+        // The walk processes faces in fi order; fi=0 is F0=[0,3,2,1] which
+        // contains edge 0-1, so the first new vertex (index 8) is the midpoint
+        // of the edge traversed a→b in F0, which equals lerp(v1,v0,0.5) or
+        // lerp(v0,v1,0.5) — either way, x=0, y=-0.5, z=-0.5.
+        uint mA = findVertNear(m, 0.0f, -0.5f, -0.5f);
+        assert(mA != ~0u, "midpoint of edge 0-1 must exist at (0,-0.5,-0.5)");
+
+        // Corresponding midpoints on the three other belt edges.
+        uint mB = findVertNear(m,  0.0f,  0.5f, -0.5f); // midpoint of edge 2-3
+        uint mC = findVertNear(m,  0.0f,  0.5f,  0.5f); // midpoint of edge 6-7
+        uint mD = findVertNear(m,  0.0f, -0.5f,  0.5f); // midpoint of edge 4-5
+        assert(mB != ~0u, "midpoint of edge 2-3 must exist at (0,0.5,-0.5)");
+        assert(mC != ~0u, "midpoint of edge 6-7 must exist at (0,0.5,0.5)");
+        assert(mD != ~0u, "midpoint of edge 4-5 must exist at (0,-0.5,0.5)");
+
+        // Rung edges — these are the new loop edges connecting the midpoints.
+        // They form a closed belt: mA–mB–mC–mD–mA.
+        assert(m.edgeIndex(mA, mB) != ~0u, "rung edge mA-mB must exist");
+        assert(m.edgeIndex(mB, mC) != ~0u, "rung edge mB-mC must exist");
+        assert(m.edgeIndex(mC, mD) != ~0u, "rung edge mC-mD must exist");
+        assert(m.edgeIndex(mD, mA) != ~0u, "rung edge mD-mA must exist (closure)");
+
+        // One sub-quad by vertex set — orientation sanity.
+        // F0=[0,3,2,1] is split into [0,mA,mB,3] (or permutation) and [mA,1,2,mB].
+        // We accept either sub-quad of F0 to allow for orientation variants.
+        bool subQuadOk = hasFace(m, [0u, mA, mB, 3u]) || hasFace(m, [mA, 1u, 2u, mB]);
+        assert(subQuadOk, "at least one sub-quad of the F0 split must exist by vertex set");
+    }
+
+    // ------------------------------------------------------------------
+    // B) Open ring: 1×3 quad strip — seed = interior edge 1-5.
+    // Strip: F0=[0,1,5,4], F1=[1,2,6,5], F2=[2,3,7,6]
+    // Ring from seed 1-5: both sides stop at strip boundaries.
+    // ------------------------------------------------------------------
+    {
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0), Vec3(3,0,0),
+            Vec3(0,0,1), Vec3(1,0,1), Vec3(2,0,1), Vec3(3,0,1),
+        ];
+        m.addFace([0u, 1u, 5u, 4u]);  // F0
+        m.addFace([1u, 2u, 6u, 5u]);  // F1
+        m.addFace([2u, 3u, 7u, 6u]);  // F2
+        m.buildLoops();
+
+        uint eiSeed = m.edgeIndex(1, 5);
+        assert(eiSeed != ~0u, "seed edge 1-5 must exist in strip");
+
+        bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+        assert(ok, "insertEdgeLoops must succeed on open strip");
+
+        // V=12, E=17, F=6, Euler=1 (disk topology).
+        assert(m.vertices.length == 12, "V must be 12 after open-ring loop");
+        assert(m.edges.length    == 17, "E must be 17 after open-ring loop");
+        assert(m.faces.length    ==  6, "F must be 6 after open-ring loop");
+        assert(cast(int)m.vertices.length - cast(int)m.edges.length
+               + cast(int)m.faces.length == 1, "Euler must be 1 (disk topology)");
+
+        // All faces must still be quads.
+        foreach (const f; m.faces)
+            assert(f.length == 4, "all strip faces must be quads after loop insert");
+
+        // Midpoint on the seed edge 1-5.
+        uint mSeed = findVertNear(m, 1.0f, 0.0f, 0.5f);
+        assert(mSeed != ~0u, "midpoint of edge 1-5 must exist at (1,0,0.5)");
+
+        // The midpoint is shared between F0 and F1 ring entries, so it must
+        // appear as a vertex in a rung edge on EACH side of the seed.
+        // Left side (F0): rung connects mSeed to midpoint of 0-4.
+        // Right side (F1): rung connects mSeed to midpoint of 2-6.
+        uint mLeft  = findVertNear(m, 0.0f, 0.0f, 0.5f); // midpoint of 0-4
+        uint mRight = findVertNear(m, 2.0f, 0.0f, 0.5f); // midpoint of 2-6
+        assert(mLeft  != ~0u, "midpoint of edge 0-4 must exist at (0,0,0.5)");
+        assert(mRight != ~0u, "midpoint of edge 2-6 must exist at (2,0,0.5)");
+
+        assert(m.edgeIndex(mSeed, mLeft)  != ~0u,
+               "rung edge mSeed-mLeft must exist (F0 rung)");
+        assert(m.edgeIndex(mSeed, mRight) != ~0u,
+               "rung edge mSeed-mRight must exist (F1 rung)");
+
+        // mLeft and mRight must NOT be directly connected (open ring — not a closed loop).
+        assert(m.edgeIndex(mLeft, mRight) == ~0u,
+               "mLeft and mRight must NOT be directly connected (open ring)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// collectEdgeRing — non-quad guard (SHOULD-FIX: mixed tri/quad seed)
+// ---------------------------------------------------------------------------
+//
+// If EITHER seed-incident face is a non-quad, collectEdgeRing must return []
+// so that insertEdgeLoops never introduces a T-junction.
+//
+// Mesh: quad [0,1,2,3] + triangle [2,1,4] sharing edge 1-2.
+//
+//   v4=(0.5,2,0)
+//      |
+//   v3=(0,1,0)--v2=(1,1,0)
+//   |            |
+//   v0=(0,0,0)--v1=(1,0,0)
+//
+// Seed edge = 1-2 (shared by quad on one side, triangle on the other).
+// Expected: collectEdgeRing returns [], insertEdgeLoops returns false,
+//           vertex / edge / face counts unchanged.
+
+unittest {
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0), Vec3(0.5f,2,0),
+    ];
+    m.addFace([0u, 1u, 2u, 3u]);   // quad
+    m.addFace([2u, 1u, 4u]);       // triangle — shares edge 1-2 with the quad
+    m.buildLoops();
+
+    uint eiSeed = m.edgeIndex(1, 2);
+    assert(eiSeed != ~0u, "edge 1-2 must exist in the mixed-valence mesh");
+
+    // collectEdgeRing must return empty: the triangle makes the seed non-manifold-safe.
+    bool closed;
+    auto ring = m.collectEdgeRing(eiSeed, closed);
+    assert(ring.length == 0,
+           "collectEdgeRing must return [] when a non-quad is incident on the seed");
+
+    // insertEdgeLoops must propagate the no-op.
+    uint vBefore = cast(uint)m.vertices.length;
+    uint eBefore = cast(uint)m.edges.length;
+    uint fBefore = cast(uint)m.faces.length;
+
+    bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+    assert(!ok, "insertEdgeLoops must return false for a triangle-adjacent seed");
+    assert(m.vertices.length == vBefore, "vertex count must not change");
+    assert(m.edges.length    == eBefore, "edge count must not change");
+    assert(m.faces.length    == fBefore, "face count must not change");
 }
