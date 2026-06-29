@@ -13,6 +13,12 @@
 /// fallback exactly like the runtime advisor path.
 module ai.onnx_backend;
 
+// The entire backend is gated on WithAI. The `modeling-noai` build (Windows 7
+// target) omits the d-onnxruntime dependency, so `onnxrt.backend` is absent and
+// this module compiles to an empty placeholder. app.d's only use of
+// OnnxModelBackend is likewise under version(WithAI).
+version (WithAI):
+
 import ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext;
 import ai.model_adapter : AiModelAvailability, AiModelBackend,
     AiModelBackendPrediction, AiModelStatus;

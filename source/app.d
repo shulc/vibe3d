@@ -150,7 +150,7 @@ import ai.advisor    : AiAdvisor;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
     aiModelAdapterMinConfidence;
-import ai.onnx_backend : OnnxModelBackend;
+version (WithAI) import ai.onnx_backend : OnnxModelBackend;
 import args_dialog    : ArgsDialog;
 import property_panel : PropertyPanel;
 import forms_render;
@@ -1633,6 +1633,10 @@ void main(string[] args) {
     auto aiModelPath = aiModelCliPath.length
         ? aiModelCliPath
         : environment.get("VIBE3D_AI_MODEL", "");
+    // version(WithAI) only — `modeling-noai` (Win7) compiles out the ONNX
+    // backend entirely, so the model-backed provider is never installed and the
+    // handle path stays the deterministic advisor.
+    version (WithAI)
     if (aiModelPath.length) {
         auto aiBackend = new OnnxModelBackend(aiModelPath);  // never throws
         AiModelAdapterConfig aiModelCfg;
@@ -2522,6 +2526,18 @@ void main(string[] args) {
 
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
+    // AI-less build (config=modeling-noai, Win7): the ONNX ranker backend is
+    // compiled out, so render the AI master-switch button as a disabled
+    // placeholder (engraved, non-clickable) instead of a live toggle. Done
+    // before the id-validation pass below, which skips disabled buttons — so
+    // `ai.toggle` need not be a resolvable command in this build.
+    version (WithAI) {} else {
+        foreach (ref grp; statusLineGroups)
+            foreach (ref btn; grp.buttons)
+                if (btn.action.kind == ActionKind.command &&
+                    btn.action.id.length >= 3 && btn.action.id[0 .. 3] == "ai.")
+                    btn.disabled = true;
+    }
     version (OSX) {
         string shortcutsPath = command.g_testMode
             ? "config/shortcuts.yaml"
