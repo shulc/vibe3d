@@ -2,7 +2,7 @@ module toolpipe.stages.actcenter;
 
 import std.format : format;
 
-import math    : Vec3, Viewport, screenRay, rayPlaneIntersect;
+import math    : Vec3, Viewport, screenRay, rayPlaneIntersect, applyAffine;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
@@ -11,6 +11,7 @@ import params           : Param, IntEnumEntry;
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
+import document          : Layer;
 
 // ---------------------------------------------------------------------------
 // ActionCenterStage — phase 7.2a. Sits at ordinal 0x60. Replaces
@@ -102,7 +103,8 @@ class ActionCenterStage : Stage, Operator {
              && sym.vertSign.length > 0
              && !userPlaced
              && mode != Mode.Origin && mode != Mode.Manual
-             && mode != Mode.Element && mode != Mode.Local)
+             && mode != Mode.Element && mode != Mode.Local
+             && mode != Mode.Pivot  && mode != Mode.Parent)
             {
                 Vec3 baseCen;
                 if (baseSideCentroid(*sym, baseCen))
@@ -144,6 +146,9 @@ class ActionCenterStage : Stage, Operator {
         // mark the packet non-Auto, so transform tools can fall back to
         // world origin without a special-case.
         None       = 9,
+        // Task 0082 — new item-hierarchy modes.
+        Pivot      = 10,  // center = primary item's pivot world position
+        Parent     = 11,  // center = parent item's world position
     }
     enum SelectSubMode {
         Center = 0,
@@ -189,6 +194,10 @@ private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     EditMode* editMode_;
+    // Task 0082: delegate supplying the primary Layer for Pivot/Parent modes.
+    // Null in tests that don't need item-hierarchy modes.
+    Layer delegate() primarySrc_;
+    @property Layer primary_() const { return primarySrc_ ? primarySrc_() : null; }
     // Cached viewport from the last evaluate() — Screen mode needs it to
     // ray-cast the screen-center pixel onto the workplane. listAttrs()
     // doesn't run inside the pipeline, so it reads back the cache.
@@ -230,9 +239,11 @@ private:
                                       // _adjNeighbors[_adjOffset[v] .. _adjOffset[v+1]]
 
 public:
-    this(Mesh* delegate() meshSrc, EditMode* editMode) {
-        this.meshSrc_ = meshSrc;
-        this.editMode_ = editMode;
+    this(Mesh* delegate() meshSrc, EditMode* editMode,
+         Layer delegate() primarySrc = null) {
+        this.meshSrc_    = meshSrc;
+        this.editMode_   = editMode;
+        this.primarySrc_ = primarySrc;
         publishState();
     }
 
@@ -351,6 +362,8 @@ public:
             IntEnumEntry(cast(int)Mode.Screen,     "screen",     "Screen"),
             IntEnumEntry(cast(int)Mode.Origin,     "origin",     "Origin"),
             IntEnumEntry(cast(int)Mode.Local,      "local",      "Local"),
+            IntEnumEntry(cast(int)Mode.Pivot,      "pivot",      "Pivot"),
+            IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
         ];
         Param[] ps;
         ps ~= Param.intEnum_("mode", "Action Center",
@@ -778,6 +791,24 @@ private:
                     case EditMode.Edges:    return centroidWithGeometryFallback();
                     case EditMode.Polygons: return mesh_.selectionBorderBBoxCenterFaces();
                 }
+            case Mode.Pivot: {
+                // center = primary item's pivot world position.
+                // applyAffine(M, pivot) == pos + rotation·pivot for the general
+                // case; equals pos+pivot when unrotated. Capture-verified 3/3 exact.
+                auto l = primary_();
+                if (l is null) return Vec3(0, 0, 0);
+                return applyAffine(l.xform.composedMatrix(), l.xform.pivot);
+            }
+            case Mode.Parent: {
+                // center = parent item's world position (parent.pivot=0 → parent.pos).
+                // Reads exactly ONE level (l.parent) — no ancestor-chain walk.
+                // Capture-verified 3/3 exact. parent-pivot dimension is untested
+                // in the capture (same caveat as Pivot basis).
+                auto l = primary_();
+                auto p = (l !is null) ? l.parent : null;
+                if (p is null) return Vec3(0, 0, 0);
+                return applyAffine(p.xform.composedMatrix(), p.xform.pivot);
+            }
         }
     }
 
@@ -1437,6 +1468,8 @@ private:
                 else if (value == "border")     m = Mode.Border;
                 else if (value == "manual")     m = Mode.Manual;
                 else if (value == "none")       m = Mode.None;
+                else if (value == "pivot")      m = Mode.Pivot;
+                else if (value == "parent")     m = Mode.Parent;
                 else return false;
                 // Switching mode (including Auto→Auto re-pick) clears the
                 // Auto-userPlaced sub-state, as a popup re-click does, and the
@@ -1527,6 +1560,8 @@ private:
             case Mode.Border:     return "border";
             case Mode.Manual:     return "manual";
             case Mode.None:       return "none";
+            case Mode.Pivot:      return "pivot";
+            case Mode.Parent:     return "parent";
         }
     }
 
