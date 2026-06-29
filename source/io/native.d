@@ -102,9 +102,10 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 /// Was 3 when item-selection persistence (`selected` + `primaryLayer`) landed;
 /// 4 when the per-corner `uvMaps` block was added (UV-maps Stage 3); bumped to 5
 /// when the optional per-layer `xform` block was added (per-item channels Phase
-/// 1). v4 and earlier files are now rejected (deliberate clean break — no
-/// external clients, no migration).
-enum int kV3dFormatVersion = 5;
+/// 1); bumped to 6 when the optional per-mesh `weightMaps` block was added
+/// (per-vertex named weight maps, dim=1 Point domain). v5 and earlier files are
+/// now rejected (deliberate clean break — no external clients, no migration).
+enum int kV3dFormatVersion = 6;
 
 // ---------------------------------------------------------------------------
 // Write
@@ -198,6 +199,24 @@ JSONValue meshToJson(ref const Mesh mesh)
     if (uvMaps.length > 0)
         m["uvMaps"] = JSONValue(uvMaps);
 
+    // Point (per-vertex) dim-1 weight maps — v6 addition. Each registered
+    // Point dim-1 map is emitted as { "name", "data":[w0,w1,...] }; `dim` is
+    // implicit (always 1). Omitted entirely when no weight map exists.
+    JSONValue[] wMaps;
+    foreach (ref map; mesh.meshMaps) {
+        if (map.domain != MapDomain.Point || map.dim != 1) continue;
+        JSONValue wj;
+        wj["name"] = JSONValue(map.name);
+        JSONValue[] wdata;
+        wdata.reserve(map.data.length);
+        foreach (f; map.data)
+            wdata ~= JSONValue(f);
+        wj["data"] = JSONValue(wdata);
+        wMaps ~= wj;
+    }
+    if (wMaps.length > 0)
+        m["weightMaps"] = JSONValue(wMaps);
+
     return m;
 }
 
@@ -242,7 +261,7 @@ private bool xformToJson(ref const ItemXform x, out JSONValue xj)
 }
 
 /// Serialize a whole `Document` (every layer + which layer is primary) to a
-/// `.v3d` document at `path` under `formatVersion: 5`. Each layer persists its
+/// `.v3d` document at `path` under `formatVersion: 6`. Each layer persists its
 /// `selected` flag (the item-selection SET); `primaryLayer` names the edit
 /// target. There is NO `background` key (it derives from `visible && !selected`)
 /// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer also
@@ -284,18 +303,19 @@ void writeV3d(ref const Document document, string path)
 // ---------------------------------------------------------------------------
 
 /// Parse a `.v3d` document at `path` and rebuild a whole `Document`. Accepts
-/// ONLY `formatVersion == kV3dFormatVersion` (v5) — every earlier shape
-/// (v1/v2/v3/v4) is rejected at the version gate (clean break, no migration). A
-/// v5 file carries a `layers` array (each entry persisting its `selected` flag,
-/// plus an optional `xform` item-transform block) plus a `primaryLayer` index
-/// naming the edit target; the reader re-asserts the selection-set invariants
-/// via the Document mutators (`setActive` / `selectItem` / `setPrimary`),
-/// forcing the primary selected + visible if the file is inconsistent. Returns
-/// false (logging via the io subsystem, like importLWO) on a missing file,
-/// malformed JSON, a `formatVersion` other than v5, structurally wrong content,
-/// an empty `layers` array, or an out-of-range vertex index — and leaves the
-/// caller's `document` UNTOUCHED in every reject case (all layers are parsed
-/// into a temporary before the single atomic swap below).
+/// ONLY `formatVersion == kV3dFormatVersion` (v6) — every earlier shape
+/// (v1/v2/v3/v4/v5) is rejected at the version gate (clean break, no migration).
+/// A v6 file carries a `layers` array (each entry persisting its `selected` flag,
+/// plus an optional `xform` item-transform block and an optional `weightMaps`
+/// block per mesh) plus a `primaryLayer` index naming the edit target; the
+/// reader re-asserts the selection-set invariants via the Document mutators
+/// (`setActive` / `selectItem` / `setPrimary`), forcing the primary selected +
+/// visible if the file is inconsistent. Returns false (logging via the io
+/// subsystem, like importLWO) on a missing file, malformed JSON, a
+/// `formatVersion` other than v6, structurally wrong content, an empty `layers`
+/// array, or an out-of-range vertex index — and leaves the caller's `document`
+/// UNTOUCHED in every reject case (all layers are parsed into a temporary before
+/// the single atomic swap below).
 bool readV3d(string path, ref Document document)
 {
     v3dInfo(format("readV3d: path=%s", path));
@@ -324,10 +344,10 @@ bool readV3d(string path, ref Document document)
             return false;
         }
 
-        // Version gate (clean break). The reader accepts EXACTLY v4 — a newer
-        // file we can't parse, OR a legacy v1/v2/v3 file, is rejected here (the
-        // document is untouched). A missing `formatVersion` (the implicit v1
-        // shape) is likewise rejected. Unknown fields WITHIN v4 are ignored.
+        // Version gate (clean break). The reader accepts EXACTLY v6 — a newer
+        // file we can't parse, OR a legacy v1/v2/v3/v4/v5 file, is rejected here
+        // (the document is untouched). A missing `formatVersion` (the implicit v1
+        // shape) is likewise rejected. Unknown fields WITHIN v6 are ignored.
         int ver = 0;   // 0 = "no formatVersion key" → not v4 → reject
         if (auto vp = "formatVersion" in doc) {
             if (vp.type == JSONType.integer)
@@ -652,6 +672,42 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
     }
 
+    // --- optional: weightMaps (v6 per-vertex Point dim-1 maps) ---
+    // Parse the well-formed entries into a staging list; applied after the
+    // mesh is committed (vertices exist). Tolerant: wrong-length / malformed
+    // entries are skipped with a warning, geometry still loads.
+    struct StagedWm { string name; float[] data; }
+    StagedWm[] stagedWm;
+    if (auto wmp = "weightMaps" in m) {
+        if (wmp.type == JSONType.array) {
+            foreach (wi, wj; wmp.array) {
+                if (wj.type != JSONType.object) {
+                    v3dWarn(format("ignoring weightMaps[%d]: not an object", wi));
+                    continue;
+                }
+                string nm;
+                if (auto np = "name" in wj)
+                    if (np.type == JSONType.string) nm = np.str;
+                if (nm.length == 0) {
+                    v3dWarn(format("ignoring weightMaps[%d]: missing/empty name", wi));
+                    continue;
+                }
+                auto dap = "data" in wj;
+                if (dap is null || dap.type != JSONType.array) {
+                    v3dWarn(format("ignoring weightMaps[%s]: missing/non-array data", nm));
+                    continue;
+                }
+                float[] data;
+                data.reserve(dap.array.length);
+                foreach (fj; dap.array)
+                    data ~= jsonFloat(fj);
+                stagedWm ~= StagedWm(nm, data);
+            }
+        } else {
+            v3dWarn("ignoring non-array \"weightMaps\"");
+        }
+    }
+
     // --- commit: rebuild the mesh on a fresh struct (mirrors importLWO) ---
     mesh = Mesh.init;
     mesh.vertices = verts;
@@ -702,11 +758,33 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         ++uvMapCount;
     }
 
+    // Apply staged Point dim-1 weight maps (v6). Each map must have exactly
+    // `vertices.length` float entries. Mismatched lengths are skipped with a
+    // warning; the rest of the mesh is already committed so the load continues.
+    int wMapCount = 0;
+    foreach (ref sw; stagedWm) {
+        if (sw.data.length != mesh.vertices.length) {
+            v3dWarn(format("ignoring weightMaps[%s]: data length %d != "
+                           ~ "%d vertices", sw.name, sw.data.length,
+                           mesh.vertices.length));
+            continue;
+        }
+        auto map = mesh.addWeightMap(sw.name);
+        if (map is null) {
+            v3dWarn(format("ignoring weightMaps[%s]: could not register map",
+                           sw.name));
+            continue;
+        }
+        map.data[] = sw.data[];
+        ++wMapCount;
+    }
+
     v3dInfo(format("mesh ready: %d verts, %d edges, %d faces, "
-                    ~ "%d marked subpatch, %d surfaces, %d uv map(s)",
+                    ~ "%d marked subpatch, %d surfaces, %d uv map(s), "
+                    ~ "%d weight map(s)",
                     mesh.vertices.length, mesh.edges.length,
                     mesh.faces.length, subpatchCount, mesh.surfaces.length,
-                    uvMapCount));
+                    uvMapCount, wMapCount));
     return true;
 }
 

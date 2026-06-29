@@ -79,7 +79,7 @@ private void assertTriple(const JSONValue arr, double[3] want, string ctx) {
 unittest { // round-trip: a non-default xform survives load -> save byte-exact
     enum string path = "/tmp/vibe3d-test-xform-in.v3d";
     write(path,
-        `{"formatVersion":5,"primaryLayer":0,"layers":[`
+        `{"formatVersion":6,"primaryLayer":0,"layers":[`
         ~ `{"name":"Tri","visible":true,"selected":true,`
         ~ `"xform":{"pos":[1.5,-2.0,3.25],"rot":[10.0,20.0,-30.0],`
         ~ `"scl":[2.0,0.5,4.0],"pivot":[0.1,0.2,0.3]},`
@@ -101,7 +101,7 @@ unittest { // round-trip: a non-default xform survives load -> save byte-exact
     runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
     auto saved = parseJSON(readText(outp));
 
-    assert(saved["formatVersion"].integer == 5, "re-save is v5");
+    assert(saved["formatVersion"].integer == 6, "re-save is v6");
     auto l0 = saved["layers"].array[0];
     assert("xform" in l0, "non-default xform must be emitted on re-save");
     auto xf = l0["xform"];
@@ -117,7 +117,7 @@ unittest { // missing-block: a v5 layer with no xform loads as identity
     // proves the load left the transform at identity.
     enum string path = "/tmp/vibe3d-test-xform-missing.v3d";
     write(path,
-        `{"formatVersion":5,"primaryLayer":0,"layers":[`
+        `{"formatVersion":6,"primaryLayer":0,"layers":[`
         ~ `{"name":"Tri","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
@@ -144,7 +144,7 @@ unittest { // an identity reset cube re-saves with NO xform key (omit-when-defau
     resetCube();
     runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
     auto saved = parseJSON(readText(outp));
-    assert(saved["formatVersion"].integer == 5, "writer emits v5");
+    assert(saved["formatVersion"].integer == 6, "writer emits v6");
     assert("xform" !in saved["layers"].array[0],
         "a default (identity) layer must omit the xform key entirely");
 }
@@ -172,7 +172,7 @@ unittest { // version gate: a formatVersion-4 file is rejected cleanly (clean br
 unittest { // multi-layer: two layers carry distinct transforms, round-trip independent
     enum string path = "/tmp/vibe3d-test-xform-multilayer.v3d";
     write(path,
-        `{"formatVersion":5,"primaryLayer":0,"layers":[`
+        `{"formatVersion":6,"primaryLayer":0,"layers":[`
         ~ `{"name":"A","visible":true,"selected":true,`
         ~ `"xform":{"pos":[1.0,0.0,0.0],"rot":[0.0,0.0,0.0],`
         ~ `"scl":[1.0,1.0,1.0],"pivot":[0.0,0.0,0.0]},`
@@ -219,7 +219,7 @@ unittest { // tolerant read: a malformed xform sub-array degrades to identity, s
     // for the skipped fields) with the good rot/pivot preserved.
     enum string path = "/tmp/vibe3d-test-xform-malformed.v3d";
     write(path,
-        `{"formatVersion":5,"primaryLayer":0,"layers":[`
+        `{"formatVersion":6,"primaryLayer":0,"layers":[`
         ~ `{"name":"Tri","visible":true,"selected":true,`
         ~ `"xform":{"pos":42,"rot":[10.0,0.0,0.0],`
         ~ `"scl":[2.0,2.0],"pivot":[1.0,2.0,3.0]},`
