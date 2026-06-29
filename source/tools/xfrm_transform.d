@@ -3433,6 +3433,55 @@ noBankConsumed:
         // reference-parity fixtures (tests/fixtures/falloff_{rot,trs,local}_*.json,
         // tests/test_fixture_falloff_*).
 
+        // CONS post-pass (Stage 4 of doc/cons_constraint_plan.md):
+        // Re-project each MOVED vertex's final position onto the nearest
+        // background-mesh surface. Runs AFTER applyFold / legacy chain so
+        // it sees the final geometry, BEFORE `return true;`.
+        //
+        // Working assumptions (unverified — see plan DoD):
+        //   (a) `point` mode = nearest-foot (perpendicular closest-point),
+        //       not camera-ray projection (§6.5).
+        //   (b) Per-vertex projection applied post-fold, not per-delta at
+        //       move.d:applySnapToDelta (§6.6). Both are revisited if/when
+        //       Stage-0 captures contradict them (swap behind the same packet,
+        //       no API churn).
+        //
+        // Teleport guard: skip verts whose final position equals their
+        // baseline. The fold kernel's `w==0` early-continue leaves those
+        // verts at baseline; projecting them would yank them to the bg
+        // surface even though they didn't participate in the transform.
+        {
+            import toolpipe.packets : ConstrainPacket;
+            import toolpipe.packets : ConstrainGeom;
+            import snap : backgroundSourcesSnapshot;
+            import constraint : constrainPoint;
+            if (auto consPkt = vts.get!ConstrainPacket()) {
+                if (consPkt.enabled && consPkt.geom == ConstrainGeom.Point) {
+                    auto bgSrc = backgroundSourcesSnapshot();
+                    if (bgSrc.length > 0) {
+                        foreach (vid; vertexIndicesToProcess) {
+                            if (vid < 0 || vid >= cast(int)mesh.vertices.length)
+                                continue;
+                            // Teleport guard: leave w==0 verts (the fold left
+                            // them at baseline) undisturbed.
+                            Vec3 finalPos = mesh.vertices[vid];
+                            Vec3 basePos  = baseline[vid];
+                            if (finalPos.x == basePos.x
+                             && finalPos.y == basePos.y
+                             && finalPos.z == basePos.z)
+                                continue;
+                            mesh.vertices[vid] = constrainPoint(
+                                finalPos,
+                                Vec3(0, 0, 0),  // motionDelta: unused by point mode
+                                cachedVp,
+                                bgSrc,
+                                *consPkt);
+                        }
+                    }
+                }
+            }
+        }
+
         return true;
     }
 

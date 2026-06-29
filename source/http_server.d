@@ -63,6 +63,12 @@ class HttpServer {
     // toolpipeEvalProvider) — tests are quiescent during probing.
     private alias SnapQueryProvider = string delegate(string requestBody);
     private SnapQueryProvider snapQueryProvider;
+    // /api/constrain — POST. Body is {pos:[x,y,z], delta:[x,y,z]};
+    // evaluates the pipeline to pull the live ConstrainPacket, snapshots
+    // the background sources, and returns the projected point. Mirrors
+    // the /api/snap bridge — read-only, served from the HTTP thread.
+    private alias ConstrainQueryProvider = string delegate(string requestBody);
+    private ConstrainQueryProvider constrainQueryProvider;
     // /api/snap/last — GET. Returns the most recent SnapResult any
     // tool published via snap_render.publishLastSnap (7.3d). Lets
     // headless tests verify the visual-feedback wiring without a
@@ -339,6 +345,11 @@ class HttpServer {
     /// request body (JSON) and returns the SnapResult JSON.
     public void setSnapQueryProvider(SnapQueryProvider provider) {
         this.snapQueryProvider = provider;
+    }
+
+    /// `/api/constrain` POST — set the constraint query provider.
+    public void setConstrainQueryProvider(ConstrainQueryProvider provider) {
+        this.constrainQueryProvider = provider;
     }
 
     /// Phase 7.3d — `/api/snap/last` GET. Returns the last SnapResult
@@ -899,6 +910,23 @@ class HttpServer {
             } else {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"snap query provider not set\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else if (request.path == "/api/constrain" && request.method == "POST") {
+            if (constrainQueryProvider !is null) {
+                try {
+                    response.statusCode = 200;
+                    response.body = constrainQueryProvider(request.body);
+                    response.headers["Content-Type"] = "application/json";
+                } catch (Exception e) {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"constrain query failed\",\"message\":\"" ~
+                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                    response.headers["Content-Type"] = "application/json";
+                }
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"constrain query provider not set\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/camera" && request.method == "POST") {

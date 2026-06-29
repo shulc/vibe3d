@@ -1826,10 +1826,12 @@ void main(string[] args) {
         import toolpipe.stages.actcenter : ActionCenterStage;
         import toolpipe.stages.axis      : AxisStage;
         import toolpipe.stages.snap      : SnapStage;
+        import toolpipe.stages.constrain : ConstrainStage;
         import toolpipe.stages.falloff   : FalloffStage;
         import toolpipe.stages.symmetry  : SymmetryStage;
         g_pipeCtx.pipeline.add(new SymmetryStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new SnapStage());
+        g_pipeCtx.pipeline.add(new ConstrainStage());
         g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh(), &editMode));
@@ -2225,6 +2227,9 @@ void main(string[] args) {
         import commands.snap.mode   : SnapModeCommand;
         reg.commandFactories["snap.toggle"] = () => cast(Command)
             new SnapToggleCommand(&mesh(), cameraView, editMode);
+        import commands.constrain.toggle : ConstrainToggleCommand;
+        reg.commandFactories["constrain.toggle"] = () => cast(Command)
+            new ConstrainToggleCommand(&mesh(), cameraView, editMode);
         reg.commandFactories["snap.toggleType"] = () => cast(Command)
             new SnapToggleTypeCommand(&mesh(), cameraView, editMode);
         reg.commandFactories["snap.mode"] = () => cast(Command)
@@ -3347,6 +3352,84 @@ void main(string[] args) {
                 sr.targetSource,
                 sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
                 sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
+            return buf.data;
+        });
+
+        // /api/constrain — POST. Probe the constraint math directly with an
+        // explicit `pos` world point. Evaluates the pipeline to pull the live
+        // ConstrainPacket, snapshots the background sources, and returns the
+        // projected point. Mirrors /api/snap; read-only (HTTP thread safe).
+        httpServer.setConstrainQueryProvider((string body_) {
+            import std.array       : appender;
+            import std.format      : format;
+            import std.json        : parseJSON, JSONType, JSONValue;
+            import std.conv        : to;
+            import toolpipe.pipeline   : g_pipeCtx;
+            import toolpipe.packets    : ConstrainPacket, SubjectPacket;
+            import snap                : backgroundSourcesSnapshot;
+            import constraint          : constrainPoint;
+            import math                : Vec3;
+
+            auto buf = appender!string;
+            JSONValue req;
+            try req = parseJSON(body_);
+            catch (Exception e) {
+                buf.put(`{"error":"invalid JSON","message":"`
+                        ~ e.msg ~ `"}`);
+                return buf.data;
+            }
+
+            if ("pos" !in req) {
+                buf.put(`{"error":"missing field pos"}`);
+                return buf.data;
+            }
+            auto pa = req["pos"].array;
+            if (pa.length != 3) {
+                buf.put(`{"error":"pos must be [x,y,z]"}`);
+                return buf.data;
+            }
+            float toF(JSONValue v) {
+                if (v.type == JSONType.integer)  return cast(float)v.integer;
+                if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
+                return cast(float)v.floating;
+            }
+            Vec3 pos = Vec3(toF(pa[0]), toF(pa[1]), toF(pa[2]));
+            Vec3 delta = Vec3(0, 0, 0);
+            if ("delta" in req) {
+                auto da = req["delta"].array;
+                if (da.length == 3)
+                    delta = Vec3(toF(da[0]), toF(da[1]), toF(da[2]));
+            }
+
+            auto vp = cameraView.viewport();
+            ConstrainPacket cfg;
+            if (g_pipeCtx !is null) {
+                import operator : VectorStack;
+                SubjectPacket subj;
+                subj.mesh     = &mesh();
+                subj.editMode = editMode;
+                subj.viewport = vp;
+                VectorStack vts;
+                vts.put(&subj);
+                g_pipeCtx.pipeline.evaluate(vts);
+                if (auto cp = vts.get!ConstrainPacket()) cfg = *cp;
+            }
+
+            auto bgSrc = backgroundSourcesSnapshot();
+            Vec3 result = constrainPoint(pos, delta, vp, bgSrc, cfg);
+            // `projected` reflects whether constrainPoint actually moved
+            // the position. Identity cases (disabled / geometry=off /
+            // no-sources / vector-screen no-op) return the input unchanged,
+            // so a displacement magnitude check is the correct test.
+            float dx = result.x - pos.x;
+            float dy = result.y - pos.y;
+            float dz = result.z - pos.z;
+            bool hit = (dx*dx + dy*dy + dz*dz) > 1e-12f;
+
+            buf.put(format(
+                `{"projected":%s,"resultPos":[%f,%f,%f]}`,
+                hit ? "true" : "false",
+                result.x, result.y, result.z));
             return buf.data;
         });
 
