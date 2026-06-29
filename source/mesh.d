@@ -4660,6 +4660,34 @@ struct Mesh {
         return true;
     }
 
+    /// Return names of all registered `MapDomain.Point, dim==1` weight maps.
+    string[] weightMapNames() const {
+        string[] names;
+        foreach (ref m; meshMaps)
+            if (m.domain == MapDomain.Point && m.dim == 1)
+                names ~= m.name;
+        return names;
+    }
+
+    /// Convenience: add a Point dim-1 weight map. Delegates to addMeshMap.
+    MeshMap* addWeightMap(string name) {
+        return addMeshMap(name, 1, MapDomain.Point);
+    }
+
+    /// Per-vertex weight read. Returns 0.0 on missing map or out-of-range index.
+    float vertexWeight(string name, size_t vi) const {
+        auto m = meshMap(name);
+        if (m is null) return 0.0f;
+        if (m.domain != MapDomain.Point || m.dim != 1) return 0.0f;
+        if (vi >= m.data.length) return 0.0f;
+        return m.data[vi];
+    }
+
+    /// Per-vertex weight write. Returns true on success.
+    bool setVertexWeight(string name, size_t vi, float w) {
+        return setMeshMapValue(name, vi, [w]);
+    }
+
     // Resize the per-edge arrays to `edges` length and drop every edge
     // selection bit. The pick-order array is resized but NOT zeroed and the
     // counter is left alone (callers that reach here have already replaced the
@@ -11581,4 +11609,23 @@ unittest { // reduceToTarget preserveBoundary=true: boundary positions kept, int
     assert(m.faces.length <= 47, "face count must not increase");
     foreach (fi; 0 .. m.faces.length)
         assert(m.faces[fi].length >= 3, "degenerate face after reduce");
+}
+
+unittest { // weightMapNames + addWeightMap + vertexWeight + setVertexWeight
+    auto m = makeCube();
+    assert(m.weightMapNames().length == 0, "fresh cube has no weight maps");
+    auto wm = m.addWeightMap("test");
+    assert(wm !is null, "addWeightMap returned null");
+    assert(m.weightMapNames() == ["test"]);
+    assert(wm.data.length == m.vertices.length);
+    assert(wm.domain == MapDomain.Point && wm.dim == 1);
+    assert(m.vertexWeight("test", 0) == 0.0f, "fresh weight must be 0");
+    assert(m.setVertexWeight("test", 0, 0.75f));
+    import std.math : fabs;
+    assert(fabs(m.vertexWeight("test", 0) - 0.75f) < 1e-6f);
+    assert(m.addWeightMap("test") is null, "duplicate name must be rejected");
+    assert(m.removeMeshMap("test"));
+    assert(m.weightMapNames().length == 0);
+    assert(m.vertexWeight("missing", 0) == 0.0f);
+    assert(!m.setVertexWeight("missing", 0, 1.0f));
 }
