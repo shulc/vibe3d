@@ -189,30 +189,23 @@ enum ElementConnect : ubyte {
 }
 
 /// Element-falloff pick mode (Stage 14.8) — the `falloff.element`
-/// `element-mode` enum surfaced in the UI dropdown. Controls TWO axes
-/// at once:
+/// `element-mode` enum surfaced in the UI dropdown. Controls which
+/// element TYPE is eligible to be picked:
 ///
-///   * Type restriction: `auto*` accept vert / edge / face (priority
-///     vert → edge → face); `vertex`/`edge`/`polygon` restrict to
-///     that single component type regardless of the global edit-mode.
-///   * Pivot policy: bare (`auto`, `edge`, `polygon`) put the
-///     `pickedCenter` at the cursor's projection onto the picked
-///     element; `*Cent` variants put it at the element's geometric
-///     centre (vertex pos, edge midpoint, face centroid).
+///   * `auto`    — accept vertex / edge / face (priority vert → edge → face).
+///   * `vertex`  — vertices only.
+///   * `edge`    — edges only.
+///   * `polygon` — faces only.
 ///
-/// vibe3d's MVP collapses bare / Cent variants for edge / polygon
-/// onto the same centroid (ray-onto-edge / ray-onto-face projection
-/// is non-trivial without the cached cursor ray; defer until a user
-/// surfaces the need). `auto` and `autoCent` are likewise identical
-/// in vibe3d today.
+/// All modes anchor the gizmo pivot and falloff sphere at the picked
+/// element's geometric centre (vertex position, edge midpoint, face
+/// centroid). Values kept non-contiguous for byte-stability with
+/// serialised data (integers 1, 4, 6 are retired and must not be reused).
 enum ElementMode : ubyte {
-    Auto     = 0,
-    AutoCent = 1,
-    Vertex   = 2,
-    Edge     = 3,
-    EdgeCent = 4,
-    Polygon  = 5,
-    PolyCent = 6,
+    Auto    = 0,
+    Vertex  = 2,
+    Edge    = 3,
+    Polygon = 5,
 }
 
 /// Per-shape attenuation curve. `t ∈ [0, 1]` is the normalised

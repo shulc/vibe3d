@@ -133,11 +133,10 @@ class FalloffStage : Stage, Operator {
     // as a pre-resolved ring and copied through verbatim (idempotent), so
     // scripted tests can set the full ring directly via `anchorRing`.
     private uint[] loopRing_;
-    // Stage 14.8: pick mode for the Element-falloff click-pick path.
-    // `auto`/`autoCent`
-    // try all element types; vertex/edge/polygon restrict; bare vs
-    // Cent variants control the pivot policy. See ElementMode enum
-    // doc in toolpipe/packets.d for the full semantic.
+    // Stage 14.8: pick-type restriction for the Element-falloff click-pick
+    // path. `auto` accepts any element type; `vertex`/`edge`/`polygon`
+    // restrict to that type. All modes anchor at the element centroid.
+    // See ElementMode enum doc in toolpipe/packets.d for the full semantic.
     ElementMode    elementMode = ElementMode.Auto;
 
     float screenCx     = 0;
@@ -647,13 +646,10 @@ class FalloffStage : Stage, Operator {
         ];
 
         IntEnumEntry[] elementModeEntries = [
-            IntEnumEntry(cast(int)ElementMode.Auto,     "auto",     "Auto"),
-            IntEnumEntry(cast(int)ElementMode.AutoCent, "autoCent", "Auto Center"),
-            IntEnumEntry(cast(int)ElementMode.Vertex,   "vertex",   "Vertex"),
-            IntEnumEntry(cast(int)ElementMode.Edge,     "edge",     "Edge"),
-            IntEnumEntry(cast(int)ElementMode.EdgeCent, "edgeCent", "Edge Center"),
-            IntEnumEntry(cast(int)ElementMode.Polygon,  "polygon",  "Polygon"),
-            IntEnumEntry(cast(int)ElementMode.PolyCent, "polyCent", "Polygon Center"),
+            IntEnumEntry(cast(int)ElementMode.Auto,    "auto",    "Auto"),
+            IntEnumEntry(cast(int)ElementMode.Vertex,  "vertex",  "Vertex"),
+            IntEnumEntry(cast(int)ElementMode.Edge,    "edge",    "Edge"),
+            IntEnumEntry(cast(int)ElementMode.Polygon, "polygon", "Polygon"),
         ];
 
         IntEnumEntry[] elementConnectEntries = [
@@ -749,9 +745,8 @@ class FalloffStage : Stage, Operator {
                 ps ~= Param.vec3_("axis",   "Axis",   &normal, Vec3(0, 1, 0));
                 break;
             case FalloffType.Element:
-                // Element Mode dropdown first — primary control, drives
-                // pick-type restriction (7-mode: auto / autoCent /
-                // vertex / edge / edgeCent / polygon / polyCent).
+                // Element Mode dropdown first — primary control, restricts
+                // pick type (auto / vertex / edge / polygon).
                 // The `falloff.element` `mode` UI dropdown.
                 ps ~= Param.intEnum_("mode", "Element Mode",
                                      cast(int*)&elementMode, elementModeEntries,
@@ -1230,15 +1225,14 @@ private:
                 else if (value == "edgeLoops")       { connect = ElementConnect.EdgeLoops;        return true; }
                 return false;
             case "mode":
-                // 7-mode `element-mode` enum: auto / autoCent
-                // / vertex / edge / edgeCent / polygon / polyCent.
-                if      (value == "auto")     { elementMode = ElementMode.Auto;     return true; }
-                else if (value == "autoCent") { elementMode = ElementMode.AutoCent; return true; }
-                else if (value == "vertex")   { elementMode = ElementMode.Vertex;   return true; }
-                else if (value == "edge")     { elementMode = ElementMode.Edge;     return true; }
-                else if (value == "edgeCent") { elementMode = ElementMode.EdgeCent; return true; }
-                else if (value == "polygon")  { elementMode = ElementMode.Polygon;  return true; }
-                else if (value == "polyCent") { elementMode = ElementMode.PolyCent; return true; }
+                // 4-mode `element-mode` enum: auto / vertex / edge / polygon.
+                // Retired tokens autoCent / edgeCent / polyCent are accepted
+                // as aliases for their bare equivalents so old scripts keep
+                // working; listAttrs echoes back the bare token.
+                if      (value == "auto"     || value == "autoCent") { elementMode = ElementMode.Auto;    return true; }
+                else if (value == "vertex")                          { elementMode = ElementMode.Vertex;  return true; }
+                else if (value == "edge"     || value == "edgeCent") { elementMode = ElementMode.Edge;    return true; }
+                else if (value == "polygon"  || value == "polyCent") { elementMode = ElementMode.Polygon; return true; }
                 return false;
             case "screenCx":   screenCx     = parseFloat(value); return true;
             case "screenCy":   screenCy     = parseFloat(value); return true;
@@ -1351,13 +1345,10 @@ private:
 
     string elementModeLabel() const {
         final switch (elementMode) {
-            case ElementMode.Auto:     return "auto";
-            case ElementMode.AutoCent: return "autoCent";
-            case ElementMode.Vertex:   return "vertex";
-            case ElementMode.Edge:     return "edge";
-            case ElementMode.EdgeCent: return "edgeCent";
-            case ElementMode.Polygon:  return "polygon";
-            case ElementMode.PolyCent: return "polyCent";
+            case ElementMode.Auto:    return "auto";
+            case ElementMode.Vertex:  return "vertex";
+            case ElementMode.Edge:    return "edge";
+            case ElementMode.Polygon: return "polygon";
         }
     }
 
