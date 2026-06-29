@@ -1,0 +1,87 @@
+module commands.mesh.edge_slice;
+
+import display_sync : refreshDisplay;
+import command;
+import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import mesh;
+import view;
+import editmode;
+import viewcache;
+import params : Param;
+import snapshot : MeshSnapshot;
+
+// ---------------------------------------------------------------------------
+// MeshEdgeSlice — cut a strip of edges through the mesh between two given edges.
+//
+// Params:
+//   edges — two edge indices [edgeA, edgeB] (IntArray, required length == 2)
+//   tA    — cut position along edgeA (float, default 0.5; range [0,1])
+//   tB    — cut position along edgeB (float, default 0.5; range [0,1])
+//
+// The shortest dual-graph path from any face incident to edgeA to any face
+// incident to edgeB is found by BFS; every face on the path is split into two
+// sub-faces by a chord connecting the cut points on its two boundary edges.
+// Interior path edges are cut at their midpoint (t=0.5) in v1.
+//
+// Index-share (no T-junctions): the cut vertex on each interior edge is
+// inserted once and referenced by both adjacent path sub-faces by the same
+// vertex index, identical to mesh.axisSlice.
+//
+// Undo = MeshSnapshot; no snapshot is taken when nothing is cut (returns false).
+// ---------------------------------------------------------------------------
+class MeshEdgeSlice : Command, Operator {
+    mixin OperatorActrCommon;
+    private GpuMesh*         gpu;
+    private VertexCache*     vc;
+    private EdgeCache*       ec;
+    private FaceBoundsCache* fc;
+    private MeshSnapshot     snap;
+
+    private uint[] edges_; // IntArray: the two edge indices
+    private float  tA_   = 0.5f;
+    private float  tB_   = 0.5f;
+
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc)
+    {
+        super(mesh, view, editMode);
+        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
+    }
+
+    override string name()  const { return "mesh.edgeSlice"; }
+    override string label() const { return "Edge Slice"; }
+
+    override Param[] params() {
+        return [
+            Param.intArray_("edges", "Edges", &edges_),
+            Param.float_("tA", "t on Edge A", &tA_, 0.5f).min(0.0f).max(1.0f),
+            Param.float_("tB", "t on Edge B", &tB_, 0.5f).min(0.0f).max(1.0f),
+        ];
+    }
+
+    bool evaluate(ref VectorStack vts) {
+        import toolpipe.packets : SubjectPacket;
+        if (vts.get!SubjectPacket() is null) return false;
+        if (edges_.length != 2) return false;
+
+        snap = MeshSnapshot.capture(*mesh);
+
+        size_t nSplit = mesh.edgeSlice(edges_[0], edges_[1], tA_, tB_);
+
+        if (nSplit == 0) {
+            snap.restore(*mesh);
+            snap = MeshSnapshot.init;
+            return false;
+        }
+
+        refreshDisplay(mesh, gpu, vc, ec, fc);
+        return true;
+    }
+
+    override bool revert() {
+        if (!snap.filled) return false;
+        snap.restore(*mesh);
+        refreshDisplay(mesh, gpu, vc, ec, fc);
+        return true;
+    }
+}
